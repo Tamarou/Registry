@@ -5,6 +5,8 @@ import htmx from "@primate/htmx";
 export default {
   modules: [htmx(), dao(), handlebars()],
   http: {
+    host: '0.0.0.0',
+    port: 10000,
     csp: {
       "default-src": "'self' fonts.googleapis.com",
       "font-src": "fonts.googleapis.com",
