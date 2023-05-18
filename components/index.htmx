@@ -1,0 +1,5 @@
+<div class="row">
+    <div class="col s12 m6 l4" hx-get="/locations" hx-trigger="load">
+        <p>[Loading...]</p>
+    </div>
+</div>

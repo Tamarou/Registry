@@ -1,0 +1,15 @@
+{{#each locations}}
+    <div class="card small">
+        <div class="card-image">
+            <img src="https://live.staticflickr.com/65535/51798060841_61101d368c_5k.jpg" />
+        </div>
+        <span class="card-title">{{name}}</span>
+        <div class="card-content">
+            <address>{{address}}</address>
+            <p class="notes">{{notes}}</p>
+        </div>
+        <div class="card-action text-darken-2">
+            <a href="/location/{{id}}">Register</a>
+        </div>
+    </div>
+{{/each}}
