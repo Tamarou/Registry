@@ -5,7 +5,16 @@ This is port of the unfinished Super Awesome Cool Registry application to Primat
 ## Getting Started
 
 ```
+# install dependencies
+brew install postgresql
+brew install sqitch
 npm install
+
+# load the database
+createdb registry
+sqitch deploy
+
+# now run the dev server
 npx primate
 ```
 
