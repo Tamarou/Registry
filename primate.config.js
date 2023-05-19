@@ -5,7 +5,7 @@ import htmx from "@primate/htmx";
 export default {
   modules: [htmx(), dao(), handlebars()],
   http: {
-    host: '0.0.0.0',
+    host: "0.0.0.0",
     port: 10000,
     csp: {
       "default-src": "'self'",
@@ -16,7 +16,7 @@ export default {
       "form-action": "'self'",
       "base-uri": "'self'",
       "script-src": "'self' 'unsafe-inline' cdnjs.cloudflare.com unpkg.com",
-      "style-src":"'self' 'unsafe-inline' cdnjs.cloudflare.com fonts.googleapis.com fonts.gstatic.com"
+      "style-src": "'self' 'unsafe-inline' cdnjs.cloudflare.com fonts.googleapis.com fonts.gstatic.com"
     },
-  },
+  }
 };
