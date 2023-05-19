@@ -3,6 +3,6 @@
   "dependencies": {
     "@primate/htmx": "^0.13.0",
     "handlebars": "^4.7.7",
-    "primate": "latest"
+    "primate": "0.19.3"
   }
 }
