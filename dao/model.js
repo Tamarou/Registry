@@ -10,6 +10,7 @@ export class Company {
 
 export class Person {
     id = randomUUID();
+    image;
     preferred_name;
     age;
     contacts;
@@ -19,6 +20,8 @@ export class Person {
 
 export class Event {
     id = randomUUID();
+    name;
+    image;
     description;
     sessions;
     roster;
@@ -37,7 +40,9 @@ export class Session {
 
 export class Location {
     id = randomUUID();
+    image;
     name;
+    description;
     addresss;
     contacts;
     notes;

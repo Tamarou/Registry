@@ -1,7 +1,7 @@
 {{#each events}}
     <div class="card medium">
         <div class="card-image">
-            <img class="activator" src="https://live.staticflickr.com/65535/51795829956_c2aefe2a07_n.jpg" />
+            <img class="activator" src="{{image}}" />
         </div>
         <span class="card-title">{{name}} <i class="material-icons right">more_vert</i></span>
         <div class="card-content">
@@ -12,7 +12,8 @@
             <p class="description">{{description}}</p>
         </div>
         <div class="card-action text-darken-2">
-            <a href="/event/{{id}}/register">Register</a>
+            <a class="waves-effect btn activator" href="#">View</a>
+            <a class="waves-effect btn" href="/event/{{id}}/register">Register</a>
         </div>
     </div>
 {{/each}}
