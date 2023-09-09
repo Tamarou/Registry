@@ -1,0 +1,9 @@
+%syntax-version=1.0.0
+%project=sacregistry
+%uri=https://superawesomecoolregistry.dev/
+
+schema 2022-11-01T15:25:45Z Chris Prather <chris.prather@tamarou.com> # add initial generic schema for the app
+sessions [schema] 2022-11-02T02:02:23Z Chris Prather <chris.prather@tamarou.com> # Create sessions table
+locations [sessions schema] 2022-11-06T03:40:56Z Chris Prather <chris.prather@tamarou.com> # sessions have locations
+customers [schema] 2022-11-08T03:13:23Z Chris Prather <chris.prather@tamarou.com> # customers table
+students [schema customers sessions] 2022-11-08T03:38:25Z Chris Prather <chris.prather@tamarou.com> # add students and associated tables

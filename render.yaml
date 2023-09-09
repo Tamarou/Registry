@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: registry-app
+    env: node
+    region: ohio
+    plan: free
+    buildCommand: npm install
+    startCommand: npx primate serve
+
+databases:
+  - name: sac-registry-db
+    plan: free
+    region: ohio

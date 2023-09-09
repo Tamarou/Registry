@@ -1,0 +1,17 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@primate/frontend": "https://gitpkg.now.sh/primatejs/primate/packages/frontend?bc89fea",
+    "handlebars": "^4.7.8",
+    "htmx.org": "^1.9.5",
+    "primate": "https://gitpkg.now.sh/primatejs/primate/packages/primate?bc89fea",
+    "solid-js": "^1.7.11"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.22.17",
+    "babel-preset-solid": "^1.7.7",
+    "esbuild": "^0.19.2",
+    "react-dom": "^18.2.0",
+    "svelte": "^4.2.0"
+  }
+}

@@ -1,0 +1,221 @@
+/* visual styles */
+body {
+    font-family: 'Signika', Helvetica, sans-serif;
+}
+
+button {
+    font-family: 'Signika', Helvetica, sans-serif;
+    color: #3FBCDB;
+}
+
+section#curriculum {
+    background-color: #FFF9E5;
+}
+
+section#getstarted {
+    background-color: #3FBCDB;
+}
+
+section#howitworks span.arrow {
+    color: #3FBCDB;
+}
+
+
+.no_border { border: inherit !important }
+
+/* structural styles */
+body { width: 100%; padding: 0; margin: 0}
+
+body section#welcome {
+    display: grid;
+    grid-template-columns: repeat(1, 1fr);
+    grid-auto-rows: minmax(100px, auto);
+    grid-template-areas:
+        "header"
+        "content";
+    width: 100%;
+}
+
+
+div.content {
+    grid-area: content;
+    display: flex;
+    justify-content: center;
+}
+section#welcome div.card { content; max-width: 50rem; }
+
+body section#curriculum {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows: minmax(100px, auto);
+    grid-template-areas:
+        "header header"
+        "cards images"
+        "footer footer" ;
+}
+
+section#curriculum  > header { text-align: center }
+section#curriculum  > footer {
+    display: flex;
+    align-items: center;
+    justify-content: center
+}
+
+section#curriculum div.card { max-width: 30rem; }
+
+body section#howitworks {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(1, 1fr);
+    grid-auto-rows: minmax(100px, auto);
+    grid-template-areas:
+        "header"
+        "content"
+        "footer" ;
+}
+
+section#howitworks  > header { text-align: center }
+section#howitworks  > footer, section#howitworks > div.content {
+    display: flex;
+    align-items: center;
+    justify-content: center
+}
+
+section#howitworks > div.content { gap: 5rem; }
+
+section#howitworks span.arrow {
+    font-size: 300%;
+    font-weight: 300;
+}
+
+section#getstarted  > header { text-align: center }
+
+body section#getstarted {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows: minmax(100px, auto);
+    grid-template-areas:
+        "header header"
+        "enroll contact"
+        "footer footer" ;
+}
+
+section#getstarted div.card {  justify-self: center; text-align: center; }
+section#getstarted #enroll { grid-area: enroll; }
+section#getstarted #contact { grid-area: contact; }
+
+
+section > header {
+    grid-area: header;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+section > footer { grid-area: footer; }
+
+div.cards { grid-area: cards; }
+
+div.carousel {
+    grid-area: images;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    align-content: space-around;
+ }
+
+div.carousel p { font-size: 80% }
+
+p.caption {
+    font-size: 80%;
+    margin-top: 0px;
+}
+
+div.card {
+    align-content: space-around;
+    align-items: center;
+    background-color: white;
+    border-radius: 10px;
+    border: 1px solid black;
+    display: flex;
+    flex-direction: column;
+    font-weight: 300;
+    justify-content: center;
+    margin: 1rem;
+    max-width: 20rem;
+    min-width: 20rem;
+    padding: 1rem;
+}
+
+div.card > header { margin-bottom: 2rem; }
+div.card > header > h1 { margin: 0px; }
+
+button {
+    border-radius: 5px;
+    border: 1px solid;
+    box-shadow: 0 2px 4px 0 grey,0 5px 15px 0 silver;
+    cursor: pointer;
+    font-family: 'Signika', Helvetica, serif;
+    font-weight: 700;
+    font: inherit;
+    min-height: 44px;
+    padding: 0.6ex 2ex;
+}
+
+button.ghost {
+  background-color: inherit;
+  font: inherit;
+  font-size: 90%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: inherit;
+  min-height: inherit;
+  box-shadow: inherit;
+}
+
+div.button-set { align-self: start }
+
+button.ghost::after {
+  content: ' →'
+}
+
+header {
+    margin: 0px;
+    padding: 0px;
+}
+
+h1 { font-size: 325%; }
+h2 { font-size: 250%; }
+
+body > header {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
+}
+
+header .logo * {
+    display: inline-block;
+    vertical-align: middle;
+}
+
+header nav ul {
+    list-style: none;
+}
+header nav ul li {
+    grid-area: links;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 15px;
+}
+
+body > footer {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
+}
+

@@ -1,0 +1,35 @@
+{{#each locations}}
+    <div class="card medium">
+        <div class="card-image">
+            <img class="activator" src="https://live.staticflickr.com/65535/51795829956_c2aefe2a07_n.jpg" />
+        </div>
+        <span class="card-title">{{name}} <i class="material-icons right">more_vert</i></span>
+        <div class="card-content"></div>
+        <div class="card-reveal">
+            <span class="card-title">{{name}} <i class="material-icons right">close</i></span>
+            <address>{{address}}</address>
+            <p class="notes">{{notes}}</p>
+        </div>
+        <div class="card-action text-darken-2">
+            <a href="/location/{{id}}">Events at Location</a>
+        </div>
+    </div>
+{{/each}}
+<script>
+// external js: masonry.pkgd.js, imagesloaded.pkgd.js
+
+// init Masonry
+var grid = document.querySelector('.container');
+
+var msnry = new Masonry( grid, {
+  itemSelector: '.card',
+  columnWidth: 200,
+  gutter: 10,
+  fitWidth: true
+});
+
+imagesLoaded( grid, { background: true } ).on( 'done', function() {
+  // layout Masonry after each image loads
+  msnry.layout();
+});
+</script>

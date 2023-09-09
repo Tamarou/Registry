@@ -1,0 +1,37 @@
+{{#each events}}
+    <div class="card medium">
+        <div class="card-image">
+            <img class="activator" src="{{image}}" />
+        </div>
+        <span class="card-title">{{name}} <i class="material-icons right">more_vert</i></span>
+        <div class="card-content">
+            <p class="location">{{ location.name }}</p>
+        </div>
+        <div class="card-reveal">
+            <span class="card-title">{{name}} <i class="material-icons right">close</i></span>
+            <p class="description">{{description}}</p>
+        </div>
+        <div class="card-action text-darken-2">
+            <a class="waves-effect btn activator" href="#">View</a>
+            <a class="waves-effect btn" href="/event/{{id}}/register">Register</a>
+        </div>
+    </div>
+{{/each}}
+<script>
+// external js: masonry.pkgd.js, imagesloaded.pkgd.js
+
+// init Masonry
+var grid = document.querySelector('.container');
+
+var msnry = new Masonry( grid, {
+  itemSelector: '.card',
+  columnWidth: 200,
+  gutter: 10,
+  fitWidth: true
+});
+
+imagesLoaded( grid, { background: true } ).on( 'done', function() {
+  // layout Masonry after each image loads
+  msnry.layout();
+});
+</script>
