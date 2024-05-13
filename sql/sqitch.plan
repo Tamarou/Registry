@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=registry
+
+users 2024-05-13T17:21:58Z Chris Prather <chris@prather.org> # initial creation of users table and basic schema etc
+workflows [users] 2024-05-13T17:30:35Z Chris Prather <chris@prather.org> # add workflows\n\nWorkflows define a sequence of steps to be executed. We process each step and record the outcome in a workflow run.
