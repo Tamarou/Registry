@@ -1,16 +1,16 @@
-# Registry by Tamarou
+# Registry - Registration software for events
 
-Registry is a web application to track and manage event participants, and to
-provide a platform for event organizers to communicate with participants.
+This is a simple registration system for events. It's designed to be used by
+small to medium sized organizations to manage their events and attendees.
 
 ## Getting Started
 
-### Hosted Version
+The simplest is probably to just use the hosted platform at
+[registry.tamarou.com](https://registry.tamarou.com).
 
-Simply go to https://registry.tamarou.com and create an account for the hosted
-version. This is by far the easiest way to get started.
+## Copyright & License
 
-### Self-Hosted Version
+    This software is copyright (c) 2024 by Tamarou LLC.
 
-To host your own version of Registry, we highly recommend using the Docker
-Image and hosting on a platform like Digital Ocean or Render.com.
+    This is free software; you can redistribute it and/or modify it under
+    the same terms as the Perl 5 programming language system itself.
