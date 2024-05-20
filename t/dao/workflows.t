@@ -76,7 +76,10 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     $run->process( $dao->db, $step, { name => 'Test User' } );
 
     $step = $run->next_step( $dao->db );
-    is $step->slug,                  'done',      'next step is done';
+    is $step->slug, 'done', 'next step is done';
+    $run->process( $dao->db, $step );
+    is $run->next_step( $dao->db ),  undef,       'Next step is correct';
     is $run->data->{userinfo}{name}, 'Test User', 'run data is updated';
+
 }
 
