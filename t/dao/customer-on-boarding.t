@@ -31,7 +31,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     $run->process(
         $dao->db,
         $run->next_step( $dao->db ),
-        { name => 'Big Cups Ltd.' }
+        { slug => 'big_cups', name => 'Big Cups Ltd.' }
     );
     is $run->next_step( $dao->db )->slug, 'users', 'Next step is correct';
     $run->process(
@@ -52,5 +52,19 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     is $customer->primary_user( $dao->db )->username, 'Alice',
       'Primary user is correct';
 
+    my @users = $customer->users( $dao->db );
+    is $users[0]->username, 'Alice', 'First user is correct';
+    is $users[1]->username, 'Bob',   'Second user is correct';
+
+    # check that the customer is in their own schema
+    my $dao2 =
+      Registry::DAO->new( url => $dao->url, schema => $customer->slug );
+
+    is $dao2->find( User => { username => 'Alice' } )->username, 'Alice',
+      'User exists';
+    is $dao2->find( User => { username => 'Bob' } )->username, 'Bob',
+      'User exists';
+
+    is $dao2->find( Customer => {} ), undef, 'No customers exists';
 }
 

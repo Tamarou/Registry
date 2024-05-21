@@ -8,11 +8,12 @@ use Registry::DAO::Workflow;
 
 class Registry::DAO {
     field $url : param //= $ENV{DB_URL};
-    field $schema = 'registry';
-    field $pg     = Mojo::Pg->new($url)->search_path( [ $schema, 'public' ] );
-    field $db     = $pg->db;
+    field $schema : param = 'registry';
+    field $pg = Mojo::Pg->new($url)->search_path( [ $schema, 'public' ] );
+    field $db = $pg->db;
 
-    method db { $db }
+    method db  { $db }
+    method url { $url }
 
     sub import(@) {
         export_lexically(
@@ -71,11 +72,13 @@ class Registry::DAO::User {
 class Registry::DAO::Customer {
     field $id : param;
     field $name : param;
+    field $slug : param;
     field $created_at : param;
     field $primary_user_id : param;
 
     sub find ( $class, $db, $filter ) {
-        $class->new( $db->select( 'customers', '*', $filter )->hash->%* );
+        my $data = $db->select( 'customers', '*', $filter )->hash;
+        return $data ? $class->new( $data->%* ) : ();
     }
 
     sub create ( $class, $db, $data ) {
@@ -89,9 +92,19 @@ class Registry::DAO::Customer {
 
     method id   { $id }
     method name { $name }
+    method slug { $slug }
 
     method primary_user ($db) {
         Registry::DAO::User->find( $db, { id => $primary_user_id } );
+    }
+
+    method users ($db) {
+
+        # TODO: this should be a join
+        $db->select( 'customer_users', '*', { customer_id => $id } )
+          ->hashes->map(
+            sub { Registry::DAO::User->find( $db, { id => $_->{user_id} } ) } )
+          ->to_array->@*;
     }
 
     method add_user ( $db, $user ) {
@@ -118,6 +131,12 @@ class Registry::DAO::RegisterCustomer : isa(Registry::DAO::WorkflowStep) {
         my $customer = Registry::DAO::Customer->create( $db, $profile );
 
         $customer->add_user( $db, $_ ) for @users;
+
+        $db->query( 'SELECT clone_schema(dest_schema => ?)', $customer->slug );
+
+        $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
+            $customer->slug, $_->id )
+          for @users;
 
         # return the data to be stored in the workflow run
         return { customer => $customer->id };

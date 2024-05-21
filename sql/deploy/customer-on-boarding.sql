@@ -13,6 +13,7 @@ ADD COLUMN IF NOT EXISTS class TEXT NOT NULL DEFAULT 'Registry::DAO::WorkflowSte
 -- NEXT WE CREATE THE customer TABLES
 CREATE TABLE IF NOT EXISTS customers (
     id   uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+	slug TEXT UNIQUE NOT NULL,
     name TEXT UNIQUE NOT NULL,
     primary_user_id UUID NOT NULL references users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
