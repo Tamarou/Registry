@@ -1,7 +1,7 @@
 # Mission
 
-> Enable educators to build businesses that thrive.
+> Empowering teachers to create and grow successful education businesses, allowing them to dedicate their energy to inspiring and educating students.
 
 # Vision
 
-> Businesses are able to plan, market, execute, and analyze an event based education program, all from a single application.
+> To provide a comprehensive platform that enables education businesses to seamlessly plan, market, execute, and analyze event-based programs, all within a single application.
