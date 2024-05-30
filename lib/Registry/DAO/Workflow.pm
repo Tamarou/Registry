@@ -9,7 +9,9 @@ class Registry::DAO::Workflow {
     field $description : param;
     field $first_step : param;
 
-    method id { $id }
+    method id   { $id }
+    method slug { $slug }
+    method name { $name }
 
     method first_step ($db) {
         Registry::DAO::WorkflowStep->find( $db,
@@ -26,7 +28,6 @@ class Registry::DAO::Workflow {
 
     method add_step ( $db, $data ) {
         my $last = $self->last_step($db);
-        warn "adding $data->{slug} after ", $last->slug;
         Registry::DAO::WorkflowStep->create( $db,
             { $data->%*, workflow_id => $id, depends_on => $last->id } );
     }
@@ -82,17 +83,19 @@ class Registry::DAO::WorkflowStep {
     field $slug : param;
     field $template_id : param = undef;
     field $workflow_id : param;
+    field $class : param;
 
     method id { $id }
 
     sub find ( $, $db, $filter ) {
         my $data = $db->select( 'workflow_steps', '*', $filter )->hash;
         return unless $data;
-        return __PACKAGE__->new( $data->%* );
+        return $data->{class}->new( $data->%* );
     }
 
-    sub create ( $, $db, $data ) {
-        __PACKAGE__->new(
+    sub create ( $class, $db, $data ) {
+        $data->{class} //= __PACKAGE__;
+        $class->new(
             $db->insert( 'workflow_steps', $data, { returning => '*' } )
               ->hash->%* );
     }
@@ -113,7 +116,7 @@ class Registry::DAO::WorkflowStep {
         Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
     }
 
-    method process ($data) { $data }
+    method process ( $db, $data ) { $data }
 
     method runs ($db) {
         Registry::DAO::WorkflowRun->find(
@@ -160,11 +163,11 @@ class Registry::DAO::WorkflowRun {
         Registry::DAO::WorkflowStep->find( $db, { id => $latest_step_id } );
     }
 
-    method process ( $db, $step, $new_data ) {
+    method process ( $db, $step, $new_data = {} ) {
         unless ( $step isa Registry::DAO::WorkflowStep ) {
             $step = Registry::DAO::WorkflowStep->find( $db, $step );
         }
-        $data->{ $step->slug } = $step->process($new_data);
+        $data->{ $step->slug } = $step->process( $db, $new_data );
         ( $latest_step_id, $data ) = $db->update(
             'workflow_runs',
             {
@@ -173,7 +176,6 @@ class Registry::DAO::WorkflowRun {
             },
             { id        => $id },
             { returning => [qw(latest_step_id data)] }
-
         )->expand->hash->@{qw(latest_step_id data)};
     }
 
