@@ -4,4 +4,4 @@
 
 # Vision
 
-> We will provide a unified platform that enables educators to seamlessly plan, market, execute, and analyze event-based programs effortlessly.
+> We will provide a unified platform for educators to grow their businesses, helping them plan, market, execute, and analyze their events.
