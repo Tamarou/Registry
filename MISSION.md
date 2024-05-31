@@ -1,6 +1,6 @@
 # Mission
 
-> Empower teachers to create and grow successful education businesses, allowing them to dedicate their energy to inspiring students.
+> We empower teachers to create and grow successful education businesses, allowing them to dedicate their energy to inspiring students.
 
 # Vision
 
