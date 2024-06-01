@@ -4,7 +4,7 @@
 BEGIN;
 
 SET client_min_messages = 'warning';
-SET search_path TO registry,public;
+SET search_path TO registry, public;
 
 -- This was entirely taken from stack overflow here:
 -- https://stackoverflow.com/questions/2370614/copy-schema-and-create-new-schema-with-different-name-in-the-same-data-base/48732283#48732283
@@ -48,10 +48,10 @@ LANGUAGE plpgsql VOLATILE
 COST 100;
 
 CREATE OR REPLACE FUNCTION clone_schema(
-  dest_schema text,
-  source_schema text DEFAULT 'registry',
-  include_recs boolean DEFAULT false, -- include records
-  show_details boolean DEFAULT false  -- be verbose
+    dest_schema text,
+    source_schema text DEFAULT 'registry',
+    include_recs boolean DEFAULT false, -- include records
+    show_details boolean DEFAULT false  -- be verbose
 ) RETURNS void AS
 $BODY$
 
