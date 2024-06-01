@@ -21,7 +21,7 @@ SELECT
     template_id,
     metadata,
     depends_on
-FROM workfow_templates WHERE FALSE;
+FROM workflow_steps WHERE FALSE;
 
 SELECT
     id,

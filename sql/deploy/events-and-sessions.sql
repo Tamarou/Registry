@@ -106,4 +106,49 @@ VALUES (
     'Registry::DAO::CreateEvent'
 );
 
+-- CREATE THE BASIC SESSION CREATION WORKFLOW
+
+INSERT INTO workflows (name, slug, description)
+VALUES (
+    'Session Creation', 'session-creation', 'A workflow to create new sessions'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description)
+VALUES (
+    'landing',
+    (SELECT id FROM workflows WHERE slug = 'session-creation'),
+    'New Session Landing page'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
+VALUES (
+    'info',
+    (SELECT id FROM workflows WHERE slug = 'session-creation'),
+    'Session info',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'landing'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'session-creation')
+    )
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on, class)
+VALUES (
+    'complete',
+    (SELECT id FROM workflows WHERE slug = 'session-creation'),
+    'Session creation complete',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'info'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'session-creation')
+    ),
+    'Registry::DAO::CreateSession'
+);
+
 COMMIT;

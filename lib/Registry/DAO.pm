@@ -5,6 +5,7 @@ use builtin      qw(export_lexically true false);
 
 use Mojo::Pg;
 use Registry::DAO::Workflow;
+use Registry::DAO::Events;
 
 class Registry::DAO {
     field $url : param //= $ENV{DB_URL};
@@ -86,10 +87,6 @@ class Registry::DAO::Customer {
             $db->insert( 'customers', $data, { returning => '*' } )->hash->%* );
     }
 
-    sub find_or_create ( $class, $db, $data ) {
-        return ( find( $class, $db, $data ) || create( $class, $db, $data ) );
-    }
-
     method id   { $id }
     method name { $name }
     method slug { $slug }
@@ -153,117 +150,19 @@ class Registry::DAO::CreateEvent : isa(Registry::DAO::WorkflowStep) {
     }
 }
 
-class Registry::DAO::Collection {
-    field $id : param;
-    field $slug : param;
-    field $notes : param;
-    field $created_at : param;
+class Registry::DAO::CreateSession : isa(Registry::DAO::WorkflowStep) {
 
-    sub find ( $db, $filter ) {
-        __PACKAGE__->new(
-            $db->select( 'collections', '*', $filter )->hash->%* );
-    }
+    method process ( $db, $ ) {
+        my $run = $self->workflow($db)->latest_run($db);
 
-    sub create ( $db, $data ) {
-        __PACKAGE__->new(
-            $db->insert( 'collections', $data, { returning => '*' } )
-              ->hash->%* );
-    }
+        my $data    = $run->data->{info};
+        my $events  = delete $data->{events};
+        my $session = Registry::DAO::Session->create( $db, $data );
+        $session->add_events( $db, $events->@* );
 
-    sub find_or_create ( $db, $data ) {
-        return ( find( $db, $data ) || create( $db, $data ) );
-    }
-
-}
-
-class Registry::DAO::Product {
-    field $id : param;
-    field $slug : param;
-    field $notes : param;
-    field $created_at : param;
-
-    sub find ( $db, $filter ) {
-        __PACKAGE__->new( $db->select( 'products', '*', $filter )->hash->%* );
-    }
-
-    sub create ( $db, $data ) {
-        __PACKAGE__->new(
-            $db->insert( 'products', $data, { returning => '*' } )->hash->%* );
-    }
-
-    sub find_or_create ( $db, $data ) {
-        return ( find( $db, $data ) || create( $db, $data ) );
-    }
-
-}
-
-class Registry::DAO::Lesson {
-
-    sub find ( $db, $filter ) {
-        __PACKAGE__->new( $db->select( 'lessons', '*', $filter )->hash->%* );
-    }
-
-    sub create ( $db, $data ) {
-        __PACKAGE__->new(
-            $db->insert( 'lessons', $data, { returning => '*' } )->hash->%* );
-    }
-
-    sub find_or_create ( $db, $data ) {
-        return ( find( $db, $data ) || create( $db, $data ) );
+        return { session => $session->id };
     }
 }
-
-class Registry::DAO::Event {
-    field $id : param;
-    field $time : param;
-    field $duration : param;
-    field $location_id : param;
-    field $project_id : param;
-    field $teacher_id : param;
-    field $metadata : param;
-    field $notes : param;
-    field $created_at : param;
-
-    sub find ( $, $db, $filter ) {
-        my $data = $db->select( 'events', '*', $filter )->hash;
-        return $data ? __PACKAGE__->new( $data->%* ) : ();
-    }
-
-    sub create ( $, $db, $data ) {
-        __PACKAGE__->new(
-            $db->insert( 'events', $data, { returning => '*' } )
-              ->expand->hash->%* );
-    }
-
-    sub find_or_create ( $, $db, $data ) {
-        __PACKAGE__->new(
-            $db->insert(
-                'events', $data,
-                {
-                    on_conflict => [
-                        [ 'product_id', 'lesson_id', 'location_id', 'time' ] =>
-                          {
-                            product_id  => \'EXCLUDED.product_id',
-                            location_id => \'EXCLUDED.location_id',
-                            time        => \'EXCLUDED.time',
-                          }
-                    ],
-                    returning => '*'
-                }
-            )->expand->hash->%*
-        );
-    }
-
-    method id { $id }
-
-    method location ($db) {
-        Registry::DAO::Location->find( $db, { id => $location_id } );
-    }
-
-    method teacher ($db) {
-        Registry::DAO::User->find( $db, { id => $teacher_id } );
-    }
-}    # classes / days
 
 class Registry::DAO::Location {
     field $id : param;
@@ -280,11 +179,6 @@ class Registry::DAO::Location {
 
     sub create ( $, $db, $data ) {
         $data->{slug} //= $data->{name} =~ s/\s+/_/gr;
-        __PACKAGE__->new(
-            $db->insert( 'locations', $data, { returning => '*' } )->hash->%* );
-    }
-
-    sub find_or_create ( $, $db, $data ) {
         __PACKAGE__->new(
             $db->insert( 'locations', $data, { returning => '*' } )->hash->%* );
     }
@@ -308,11 +202,6 @@ class Registry::DAO::Project {
 
     sub create ( $, $db, $data ) {
         $data->{slug} //= $data->{name} =~ s/\s+/_/gr;
-        __PACKAGE__->new(
-            $db->insert( 'projects', $data, { returning => '*' } )->hash->%* );
-    }
-
-    sub find_or_create ( $, $db, $data ) {
         __PACKAGE__->new(
             $db->insert( 'projects', $data, { returning => '*' } )->hash->%* );
     }
