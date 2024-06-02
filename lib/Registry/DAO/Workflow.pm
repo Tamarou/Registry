@@ -18,6 +18,11 @@ class Registry::DAO::Workflow {
             { slug => $first_step, workflow_id => $id } );
     }
 
+    method get_step ( $db, $filter ) {
+        Registry::DAO::WorkflowStep->find( $db,
+            { workflow_id => $id, $filter->%* } );
+    }
+
     method last_step ($db) {
         my $step = $self->first_step($db);
         while ( my $next = $step->next_step($db) ) {
@@ -52,15 +57,8 @@ class Registry::DAO::Workflow {
         return __PACKAGE__->new(%data);
     }
 
-    method start ($db) {
-        Registry::DAO::WorkflowStep->find( $db,
-            { workflow_id => $id, slug => $first_step } );
-    }
-
     method latest_run ( $db, $filter = {} ) {
-        my ($run) = Registry::DAO::WorkflowRun->find( $db,
-            { workflow_id => $id, $filter->%* } );
-
+        my ($run) = $self->runs( $db, $filter );
         return $run;
     }
 
@@ -85,10 +83,8 @@ class Registry::DAO::WorkflowStep {
     field $workflow_id : param;
     field $class : param;
 
-    method id { $id }
-
     sub find ( $, $db, $filter ) {
-        my $data = $db->select( 'workflow_steps', '*', $filter )->hash;
+        my $data = $db->select( 'workflow_steps', '*', $filter )->expand->hash;
         return unless $data;
         return $data->{class}->new( $data->%* );
     }
@@ -100,9 +96,10 @@ class Registry::DAO::WorkflowStep {
               ->hash->%* );
     }
 
-    method workflow_id { $workflow_id }
+    method id          { $id }
     method slug        { $slug }
     method template_id { $template_id }
+    method workflow_id { $workflow_id }
 
     method next_step ($db) {
         Registry::DAO::WorkflowStep->find( $db, { depends_on => $id } );
@@ -117,16 +114,6 @@ class Registry::DAO::WorkflowStep {
     }
 
     method process ( $db, $data ) { $data }
-
-    method runs ($db) {
-        Registry::DAO::WorkflowRun->find(
-            $db,
-            {
-                workflow_id => $workflow_id,
-                step_id     => $id,
-            }
-        );
-    }
 }
 
 class Registry::DAO::WorkflowRun {
@@ -155,9 +142,16 @@ class Registry::DAO::WorkflowRun {
         return ( find( $class, $db, $data ) || create( $class, $db, $data ) );
     }
 
-    method id()             { $id }
-    method latest_step_id() { $latest_step_id }
-    method data()           { $data }
+    method id()   { $id }
+    method data() { $data }
+
+    method workflow ($db) {
+        Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
+    }
+
+    method is_complete ($db) {
+        return !$self->next_step($db);
+    }
 
     method latest_step ($db) {
         Registry::DAO::WorkflowStep->find( $db, { id => $latest_step_id } );

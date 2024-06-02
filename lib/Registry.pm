@@ -1,10 +1,35 @@
 use 5.38.2;
+use Object::Pad;
 
-package Registry;
+class Registry : isa(Mojolicious) {
+    our $VERSION = '0.000';
 
-our $VERSION = '0.000';
+    use Sys::Hostname qw( hostname );
+    use Registry::DAO;
 
-1;
+    method startup {
+        $self->secrets( [hostname] );
+
+        $self->helper(
+            dao => sub {
+                state $db = Registry::DAO->new( url => $ENV{DB_URL} );
+            }
+        );
+
+        # routes
+        $self->routes->get('/:workflow')->to('workflows#index')
+          ->name('workflow');
+        $self->routes->post('/:workflow/:step')->to('workflows#start_workflow')
+          ->name('workflow_start');
+        $self->routes->get('/:workflow/:run/:step')
+          ->to('workflows#get_workflow_run_step')->name('workflow_run_step');
+
+        $self->routes->post('/:workflow/:run/:step')
+          ->to('workflows#process_workflow_run_step')
+          ->name('workflow_process_step');
+    }
+
+}
 
 __END__
 
