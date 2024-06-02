@@ -3,7 +3,7 @@ use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 use builtin      qw(blessed);
 
-use Test::More import => [qw( done_testing is ok )];
+use Test::More import => [qw( done_testing is )];
 defer { done_testing };
 
 use Registry::DAO;
@@ -12,7 +12,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 {
     # create a new customer
-    my $workflow = $dao->find( Workflow => { slug => 'customer-signup' } );
+    my ($workflow) = $dao->find( Workflow => { slug => 'customer-signup' } );
     is $workflow->name, 'Customer Onboarding', 'Workflow name is correct';
     is $workflow->first_step( $dao->db )->slug, 'landing',
       'First step name is correct';
@@ -46,7 +46,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db ), undef, 'Next step is correct';
 
-    my $customer =
+    my ($customer) =
       $dao->find( Customer => { name => $run->data->{profile}{name} } );
     is $customer->name, 'Big Cups Ltd.', 'Customer exists';
     is $customer->primary_user( $dao->db )->username, 'Alice',
@@ -60,10 +60,10 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $dao2 =
       Registry::DAO->new( url => $dao->url, schema => $customer->slug );
 
-    is $dao2->find( User => { username => 'Alice' } )->username, 'Alice',
-      'User exists';
-    is $dao2->find( User => { username => 'Bob' } )->username, 'Bob',
-      'User exists';
+    my ($alice) = $dao2->find( User => { username => 'Alice' } );
+    is $alice->username, 'Alice', 'User exists';
+    my ($bob) = $dao2->find( User => { username => 'Bob' } );
+    is $bob->username, 'Bob', 'User exists';
 
     is $dao2->find( Customer => {} ), undef, 'No customers exists';
 }

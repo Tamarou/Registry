@@ -37,8 +37,9 @@ class Registry::DAO::Workflow {
             { $data->%*, workflow_id => $id, depends_on => $last->id } );
     }
 
-    sub find ( $, $db, $filter ) {
-        __PACKAGE__->new( $db->select( 'workflows', '*', $filter )->hash->%* );
+    sub find ( $class, $db, $filter ) {
+        $db->select( 'workflows', '*', $filter )
+          ->expand->hashes->map( sub { $class->new( $_->%* ) } )->to_array->@*;
     }
 
     sub create ( $, $db, $data ) {

@@ -49,14 +49,13 @@ our $project = $dao->create(
 
     my $t = Test::Mojo->new('Registry');
 
-    my $workflow   = $dao->find( Workflow => { slug => 'event-creation' } );
+    my ($workflow) = $dao->find( Workflow => { slug => 'event-creation' } );
     my $first_step = $workflow->first_step( $dao->db );
 
     # grab the url from the form action so we can post to it
     my $next_url =
       $t->get_ok( workflow_url($workflow) )->status_is(200)
-      ->element_exists( sprintf 'form[action="%s"]',
-        workflow_start_url( $workflow, $first_step ) )
+      ->element_exists('form[action="/event-creation/start"]')
       ->tx->res->dom->at('form[action]')->{action};
 
     $next_url =

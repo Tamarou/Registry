@@ -25,7 +25,7 @@ class Registry::DAO {
         );
     }
 
-    method find ( $class, $filter ) {
+    method find ( $class, $filter = {} ) {
         $class = "Registry::DAO::$class" unless $class =~ /Registry::DAO::/;
         return $class->find( $db, $filter );
     }
@@ -116,7 +116,8 @@ class Registry::DAO::Customer {
 class Registry::DAO::RegisterCustomer : isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
-        my $run = $self->workflow($db)->latest_run($db);
+        my ($workflow) = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
 
         my $user_data = $run->data->{users};
         my @users =
@@ -143,7 +144,8 @@ class Registry::DAO::RegisterCustomer : isa(Registry::DAO::WorkflowStep) {
 class Registry::DAO::CreateEvent : isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
-        my $run   = $self->workflow($db)->latest_run($db);
+        my ($workflow) = $self->workflow($db);
+        my ($run)      = $workflow->latest_run($db);
         my $event = Registry::DAO::Event->create( $db, $run->data->{info} );
 
         return { event => $event->id };
@@ -153,7 +155,8 @@ class Registry::DAO::CreateEvent : isa(Registry::DAO::WorkflowStep) {
 class Registry::DAO::CreateSession : isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
-        my $run = $self->workflow($db)->latest_run($db);
+        my ($workflow) = $self->workflow($db);
+        my ($run)      = $workflow->latest_run($db);
 
         my $data    = $run->data->{info};
         my $events  = delete $data->{events};

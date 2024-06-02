@@ -16,19 +16,27 @@ class Registry : isa(Mojolicious) {
             }
         );
 
-        # routes
-        $self->routes->get('/:workflow')->to('workflows#index')
-          ->name('workflow');
-        $self->routes->post('/:workflow/:step')->to('workflows#start_workflow')
-          ->name('workflow_start');
-        $self->routes->get('/:workflow/:run/:step')
-          ->to('workflows#get_workflow_run_step')->name('workflow_run_step');
+        my $r = $self->routes;
+        $r->add_shortcut(
+            workflow => sub ( $r, $name ) {
+                my $w =
+                  $r->any("/$name")->to( 'workflows#', workflow => $name );
+                $w->get('')->to('#index')->name($name);
+                $w->post('/start')->to('#start_workflow')
+                  ->name("${name}_start");
+                $w->get("/:run/:step")->to('#get_workflow_run_step')
+                  ->name("${name}_run_step");
+                $w->post("/:run/:step")->to('#process_workflow_run_step')
+                  ->name("${name}_process_step");
+                return $w;
+            }
+        );
 
-        $self->routes->post('/:workflow/:run/:step')
-          ->to('workflows#process_workflow_run_step')
-          ->name('workflow_process_step');
+        for my $workflow ( $self->dao->find('Workflow') ) {
+            $self->log->debug( "Adding workflow: " . $workflow->slug );
+            $r->workflow( $workflow->slug );
+        }
     }
-
 }
 
 __END__

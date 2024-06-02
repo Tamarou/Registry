@@ -4,38 +4,35 @@ use Object::Pad;
 class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
 
     method workflow_url ($workflow) {
-        return $self->url_for( 'workflow', workflow => $workflow->slug );
+        return $self->url_for( $workflow->slug );
     }
 
-    method workflow_start_url ( $workflow, $step ) {
+    method workflow_start_url ($step) {
+        my $name = $self->param('workflow');
+        return $self->url_for( "${name}_start", step => $step->slug );
+    }
+
+    method workflow_run_step_url ( $run, $step ) {
+        my $name = $self->param('workflow');
         return $self->url_for(
-            'workflow_start',
-            workflow => $workflow->slug,
-            step     => $step->slug
+            "${name}_run_step",
+            run  => $run->id,
+            step => $step->slug
         );
     }
 
-    method workflow_run_step_url ( $workflow, $run, $step ) {
+    method workflow_process_step_url ( $run, $step ) {
+        my $name = $self->param('workflow');
         return $self->url_for(
-            'workflow_run_step',
-            workflow => $workflow->slug,
-            run      => $run->id,
-            step     => $step->slug
-        );
-    }
-
-    method workflow_process_step_url ( $workflow, $run, $step ) {
-        return $self->url_for(
-            'workflow_process_step',
-            workflow => $workflow->slug,
-            run      => $run->id,
-            step     => $step->slug
+            "${name}_process_step",
+            run  => $run->id,
+            step => $step->slug
         );
     }
 
     method index() {
-        my $dao      = $self->app->dao;
-        my $workflow = $dao->find(
+        my $dao = $self->app->dao;
+        my ($workflow) = $dao->find(
             Workflow => {
                 slug => $self->param('workflow')
             }
@@ -45,29 +42,24 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
         my $step = $workflow->first_step( $dao->db );
         $self->render(
             inline => '<form action="<%= $action %>"></form>',
-            action => $self->workflow_start_url( $workflow, $step ),
+            action => $self->workflow_start_url($step),
         );
     }
 
     method start_workflow() {
-        my $dao      = $self->app->dao;
-        my $workflow = $dao->find(
+        my $dao = $self->app->dao;
+        my ($workflow) = $dao->find(
             Workflow => {
                 slug => $self->param('workflow')
             }
         );
 
         my $step = $workflow->first_step( $dao->db );
-        die "Not first step" unless $step->slug eq $self->param('step');
-
         my $run  = $workflow->new_run( $dao->db );
         my $data = $self->req->params->to_hash;
         $run->process( $dao->db, $step, $data );
         $self->redirect_to(
-            $self->workflow_run_step_url(
-                $workflow, $run, $run->next_step( $dao->db )
-            )
-        );
+            $self->workflow_run_step_url( $run, $run->next_step( $dao->db ) ) );
     }
 
     method get_workflow_run_step {
@@ -86,10 +78,7 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
         return $self->render(
             inline => '<form action="<%= $action %>"></form>',
             status => 200,
-            action => $self->workflow_process_step_url(
-                $run->workflow( $dao->db ),
-                $run, $step
-            )
+            action => $self->workflow_process_step_url( $run, $step )
         );
     }
 
@@ -113,7 +102,7 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
             my $workflow = $run->workflow( $dao->db );
             my $next     = $run->next_step( $dao->db );
             return $self->redirect_to(
-                $self->workflow_run_step_url( $workflow, $run, $next ) );
+                $self->workflow_run_step_url( $run, $next ) );
         }
 
         return $self->render( text => 'DONE', status => 201 );

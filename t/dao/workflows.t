@@ -17,8 +17,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         }
     );
 
-    is $dao->find( Workflow => { slug => 'test' } )->id, $workflow->id,
-      'find returns the correct workflow';
+    my ($test) = $dao->find( Workflow => { slug => 'test' } );
+    is $test->id, $workflow->id,       'find returns the correct workflow';
     is $workflow->runs( $dao->db ), 0, 'no runs for the workflow yet';
     is $workflow->first_step( $dao->db )->slug, 'landing',
       'the first step is landing';
