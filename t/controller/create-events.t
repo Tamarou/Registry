@@ -55,7 +55,7 @@ our $project = $dao->create(
     # grab the url from the form action so we can post to it
     my $next_url =
       $t->get_ok( workflow_url($workflow) )->status_is(200)
-      ->element_exists('form[action="/event-creation/start"]')
+      ->element_exists('form[action="/event-creation"]')
       ->tx->res->dom->at('form[action]')->{action};
 
     $next_url =
@@ -105,9 +105,8 @@ our $project = $dao->create(
     # refresh the run
     ($run) = $dao->find( WorkflowRun => { id => $run->id } );
 
-    is $run->data()->{'info'}{time}, '2021-12-31', 'run data time is updated';
-    is $run->data()->{'info'}{teacher_id}, $user->id,
-      'run data user_id is updated';
+    is $run->data()->{time},       '2021-12-31', 'run data time is updated';
+    is $run->data()->{teacher_id}, $user->id,    'run data user_id is updated';
 
     # post to the final step which saves everything
     $t->post_ok( $next_url => form => {} )->status_is(201);
@@ -115,7 +114,7 @@ our $project = $dao->create(
     # now check to see if the event was created
     my $event = $dao->find(
         Event => {
-            time        => $run->data()->{'info'}{time},
+            time        => $run->data()->{time},
             location_id => $location->id
         }
     );

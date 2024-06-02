@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     workflow_id uuid NOT NULL REFERENCES workflows,
     latest_step_id uuid REFERENCES workflow_steps,
+    continuation_id uuid NULL REFERENCES workflow_runs,
     user_id uuid NULL REFERENCES users,
     data jsonb NULL,
     created_at timestamp with time zone DEFAULT now()

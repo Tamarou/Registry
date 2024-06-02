@@ -16,9 +16,10 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
     is $workflow->name, 'Event Creation', 'Workflow name is correct';
     my $run = $workflow->new_run( $dao->db );
-    is $run->next_step( $dao->db )->slug, 'landing', 'Next step is correct';
-    ok $run->process( $dao->db, $run->next_step( $dao->db ), {} );
-    is $run->next_step( $dao->db )->slug, 'info', 'Next step is correct';
+    is $run->next_step( $dao->db )->slug, 'landing', 'Next step is landing';
+    ok $run->process( $dao->db, $run->next_step( $dao->db ), {} ),
+      'processed ok';
+    is $run->next_step( $dao->db )->slug, 'info', 'Next step is info';
 
     my $user = $dao->create(
         User => {
@@ -47,16 +48,15 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         }
     );
 
-    is $run->data()->{'info'}{time}, '2021-12-31', 'run data time is updated';
-    is $run->data()->{'info'}{teacher_id}, $user->id,
-      'run data user_id is updated';
+    is $run->data()->{time},       '2021-12-31', 'run data time is updated';
+    is $run->data()->{teacher_id}, $user->id,    'run data user_id is updated';
 
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is correct';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
 
     my ($event) = $dao->find(
         Event => {
-            time        => $run->data()->{'info'}{time},
+            time        => $run->data()->{time},
             location_id => $location->id
         }
     );

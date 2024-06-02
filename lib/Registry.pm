@@ -17,25 +17,15 @@ class Registry : isa(Mojolicious) {
         );
 
         my $r = $self->routes;
-        $r->add_shortcut(
-            workflow => sub ( $r, $name ) {
-                my $w =
-                  $r->any("/$name")->to( 'workflows#', workflow => $name );
-                $w->get('')->to('#index')->name($name);
-                $w->post('/start')->to('#start_workflow')
-                  ->name("${name}_start");
-                $w->get("/:run/:step")->to('#get_workflow_run_step')
-                  ->name("${name}_run_step");
-                $w->post("/:run/:step")->to('#process_workflow_run_step')
-                  ->name("${name}_process_step");
-                return $w;
-            }
-        );
-
-        for my $workflow ( $self->dao->find('Workflow') ) {
-            $self->log->debug( "Adding workflow: " . $workflow->slug );
-            $r->workflow( $workflow->slug );
-        }
+        my $w = $r->any("/:workflow")->to('workflows#');
+        $w->get('')->to('#index')->name("workflow_index");
+        $w->post('')->to('#start_workflow')->name("workflow_start");
+        $w->get("/:run/:step")->to('#get_workflow_run_step')
+          ->name("workflow_step");
+        $w->post("/:run/:step")->to('#process_workflow_run_step')
+          ->name("workflow_process_step");
+        $w->post('/:run/callcc/:target')->to('#start_continuation')
+          ->name("workflow_callcc");
     }
 }
 

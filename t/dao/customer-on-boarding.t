@@ -25,29 +25,31 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
       'Next step is a WorkflowStep';
 
     my $run = $workflow->new_run( $dao->db );
-    is $run->next_step( $dao->db )->slug, 'landing', 'Next step is correct';
+    is $run->next_step( $dao->db )->slug, 'landing', 'Next step is landing';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
-    is $run->next_step( $dao->db )->slug, 'profile', 'Next step is correct';
+    is $run->next_step( $dao->db )->slug, 'profile', 'Next step is profile';
     $run->process(
         $dao->db,
         $run->next_step( $dao->db ),
         { slug => 'big_cups', name => 'Big Cups Ltd.' }
     );
-    is $run->next_step( $dao->db )->slug, 'users', 'Next step is correct';
+    is $run->next_step( $dao->db )->slug, 'users', 'Next step is users';
     $run->process(
         $dao->db,
         $run->next_step( $dao->db ),
-        [
-            { username => 'Alice', password => 'abc123' },
-            { username => 'Bob',   password => 'password' }
-        ]
+        {
+            users => [
+                { username => 'Alice', password => 'abc123' },
+                { username => 'Bob',   password => 'password' },
+            ]
+        }
     );
-    is $run->next_step( $dao->db )->slug, 'complete', 'Next step is correct';
+    is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db ), undef, 'Next step is correct';
 
     my ($customer) =
-      $dao->find( Customer => { name => $run->data->{profile}{name} } );
+      $dao->find( Customer => { name => $run->data->{name} } );
     is $customer->name, 'Big Cups Ltd.', 'Customer exists';
     is $customer->primary_user( $dao->db )->username, 'Alice',
       'Primary user is correct';

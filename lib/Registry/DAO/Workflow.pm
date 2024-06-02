@@ -63,8 +63,9 @@ class Registry::DAO::Workflow {
         return $run;
     }
 
-    method new_run ($db) {
-        Registry::DAO::WorkflowRun->create( $db, { workflow_id => $id } );
+    method new_run ( $db, $config //= {} ) {
+        $config->{workflow_id} //= $id;
+        Registry::DAO::WorkflowRun->create( $db, $config );
     }
 
     method runs ( $db, $filter = {} ) {
@@ -118,23 +119,27 @@ class Registry::DAO::WorkflowStep {
 
 class Registry::DAO::WorkflowRun {
     use Mojo::JSON qw(encode_json);
+    use Carp       qw( croak );
 
-    field $id : param;
+    field $id : param      = 0;
     field $user_id : param = 0;
     field $workflow_id : param;
-    field $latest_step_id : param;
-    field $data : param = {};
+    field $latest_step_id : param  = undef;
+    field $continuation_id : param = undef;
+    field $data : param //=
+      {};    # might be null, we want it to always be an empty hash
     field $created_at : param;
 
-    sub find ( $, $db, $filter ) {
-        $db->select( 'workflow_runs', '*', $filter )
-          ->expand->hashes->map( sub { __PACKAGE__->new( $_->%* ) } )
-          ->to_array->@*;
+    use constant table_name => 'workflow_runs';
+
+    sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
+        $db->select( $class->table_name, '*', $filter, $order )
+          ->expand->hashes->map( sub { $class->new( $_->%* ) } )->to_array->@*;
     }
 
     sub create ( $class, $db, $data ) {
         $class->new(
-            $db->insert( 'workflow_runs', $data, { returning => '*' } )
+            $db->insert( $class->table_name, $data, { returning => '*' } )
               ->hash->%* );
     }
 
@@ -149,28 +154,44 @@ class Registry::DAO::WorkflowRun {
         Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
     }
 
-    method is_complete ($db) {
-        return !$self->next_step($db);
+    method completed ($db) {
+        my ($workflow) = $self->workflow($db);
+        $self->latest_step($db)->slug eq $workflow->last_step($db)->slug;
     }
 
     method latest_step ($db) {
         Registry::DAO::WorkflowStep->find( $db, { id => $latest_step_id } );
     }
 
+    method update_data ( $db, $new_data ||= {} ) {
+        croak "new data must be a hashref" unless ref $new_data eq 'HASH';
+        $data = $db->update(
+            'workflow_runs',
+            { data      => encode_json( { $data->%*, $new_data->%* } ) },
+            { id        => $id },
+            { returning => ['data'] }
+        )->expand->hash->{data};
+    }
+
     method process ( $db, $step, $new_data = {} ) {
         unless ( $step isa Registry::DAO::WorkflowStep ) {
             $step = Registry::DAO::WorkflowStep->find( $db, $step );
         }
-        $data->{ $step->slug } = $step->process( $db, $new_data );
-        ( $latest_step_id, $data ) = $db->update(
+
+        # TODO we really should inline these two calls into a single query
+        $self->update_data( $db, $step->process( $db, $new_data ) );
+        ($latest_step_id) = $db->update(
             'workflow_runs',
-            {
-                latest_step_id => $step->id,
-                data           => encode_json($data),
-            },
-            { id        => $id },
-            { returning => [qw(latest_step_id data)] }
-        )->expand->hash->@{qw(latest_step_id data)};
+            { latest_step_id => $step->id },
+            { id             => $id },
+            { returning      => [qw(latest_step_id)] }
+        )->expand->hash->@{qw(latest_step_id)};
+
+        if ($continuation_id) {
+            my ($parent) = $self->continuation($db);
+            $parent->update_data( $db, $data );
+        }
+        return $data;
     }
 
     method next_step ($db) {
@@ -181,5 +202,12 @@ class Registry::DAO::WorkflowRun {
                 depends_on  => $latest_step_id,
             }
         );
+    }
+
+    method has_continuation { defined $continuation_id }
+
+    method continuation ($db) {
+        return unless $continuation_id;
+        Registry::DAO::WorkflowRun->find( $db, { id => $continuation_id } );
     }
 }

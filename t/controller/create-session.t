@@ -4,7 +4,7 @@ use experimental qw(defer builtin);
 use builtin      qw(blessed);
 
 use Test::Mojo;
-use Test::More import => [qw( done_testing is )];
+use Test::More import => [qw( done_testing is like ok )];
 defer { done_testing };
 
 use Registry::DAO;
@@ -24,24 +24,23 @@ my $event = $dao->create(
     }
 );
 
+sub workflow_url ($workflow) {
+    sprintf '/%s', $workflow->slug;
+}
+
+sub workflow_start_url ( $workflow, $step ) {
+    sprintf '/%s/%s', $workflow->slug, $step->slug;
+}
+
+sub workflow_run_step_url ( $workflow, $run, $step ) {
+    sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
+}
+
+sub workflow_process_step_url ( $workflow, $run, $step ) {
+    sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
+}
+
 {
-
-    my sub workflow_url ($workflow) {
-        return sprintf '/%s', $workflow->slug;
-    }
-
-    my sub workflow_start_url ( $workflow, $step ) {
-        return sprintf '/%s/%s', $workflow->slug, $step->slug;
-    }
-
-    my sub workflow_run_step_url ( $workflow, $run, $step ) {
-        return sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
-    }
-
-    my sub workflow_process_step_url ( $workflow, $run, $step ) {
-        return sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
-    }
-
     my $t = Test::Mojo->new('Registry');
 
     my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
@@ -50,7 +49,7 @@ my $event = $dao->create(
     # grab the url from the form action so we can post to it
     my $next_url =
       $t->get_ok( workflow_url($workflow) )->status_is(200)
-      ->element_exists('form[action="/session-creation/start"]')
+      ->element_exists('form[action="/session-creation"]')
       ->tx->res->dom->at('form[action]')->{action};
 
     $next_url =
@@ -95,15 +94,20 @@ my $event = $dao->create(
     )->status_is(302)->header_like( Location => qr/complete$/ )
       ->tx->res->headers->location;
 
-    # refresh the run
-    ($run) = $dao->find( WorkflowRun => { id => $run->id } );
+    $next_url =
+      $t->get_ok($next_url)->status_is(200)->element_exists('form[action]')
+      ->tx->res->dom->at('form[action]')->{action};
 
-    is $run->data()->{'info'}{name}, 'Session 1', 'run data name is updated';
-    is $run->data()->{'info'}{events}, $event->id,
-      'run data events are updated';
+    ($run) = $dao->find( WorkflowRun => { id => $run->id } );
+    ok !$run->completed( $dao->db ), 'run is not completed';
+
+    is $run->data()->{name},   'Session 1', 'run data name is updated';
+    is $run->data()->{events}, $event->id,  'run data events are updated';
 
     # post to the final step which saves everything
     $t->post_ok( $next_url => form => {} )->status_is(201);
+    ($run) = $dao->find( WorkflowRun => { id => $run->id } );
+    ok $run->completed( $dao->db ), 'run is completed';
 
     # now check to see if the session was created
     my $session = $dao->find( Session => { slug => 'session-1', } );
@@ -114,3 +118,100 @@ my $event = $dao->create(
     is scalar @events, 1,          'Session has one event';
     is $events[0]->id, $event->id, 'Event Venue correct';
 }
+
+{
+    my $t          = Test::Mojo->new('Registry');
+    my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
+    my $first_step = $workflow->first_step( $dao->db );
+    my $next_url =
+      $t->get_ok( workflow_url($workflow) )->status_is(200)
+      ->element_exists('form[action="/session-creation"]')
+      ->tx->res->dom->at('form[action]')->{action};
+
+    $next_url =
+      $t->post_ok( $next_url => form => {} )->status_is(302)
+      ->header_like( Location => qr/info$/ )->tx->res->headers->location;
+
+    my ($run) = $workflow->latest_run( $dao->db );
+    my $id = $run->id;
+    like $next_url, qr/$id/, 'url looks like it has the the run id';
+
+    # save the DOM so we can check if we were redirected from the event creation
+    my $dom =
+      $t->get_ok($next_url)->status_is(200)
+      ->element_exists('a[rel="create-page event"]')->tx->res->dom;
+
+    my $continuation = $dom->at('a[rel="create-page event"]')->{href};
+
+    my $events_link =
+      $t->post_ok($continuation)->status_is(302)
+      ->header_like( Location => qr/^\/event-creation/ )
+      ->tx->res->headers->location;
+
+    my $event_next_action =
+      $t->get_ok($events_link)->status_is(200)->element_exists('form[action]')
+      ->tx->res->dom->at('form[action]')->{action};
+    my $location = $dao->create(
+        Location => {
+            name => 'Location ' . $$,
+        }
+    );
+    my $event_next = $t->post_ok(
+        $event_next_action => form => {
+            time       => '2021-12-31',
+            teacher_id => $dao->create(
+                User => {
+                    username => 'JohnnyTest' . $$,
+                }
+            )->id,
+            location_id => $location->id,
+            project_id  => $event->project( $dao->db )->id,
+        }
+    )->status_is(302)->header_like( Location => qr/complete$/ )
+      ->tx->res->headers->location;
+
+    $event_next_action =
+      $t->get_ok($event_next)->status_is(200)->element_exists('form[action]')
+      ->tx->res->dom->at('form[action]')->{action};
+
+    $next_url = $t->post_ok( $event_next_action => form => {} )->status_is(302)
+      ->header_is( Location => $next_url )->tx->res->headers->location;
+
+    is $next_url, $dom->at('form[action]')->{action},
+      'we are back at session creation';
+
+    $next_url = $t->post_ok(
+        $next_url => form => {
+            name => 'Session 2',
+        }
+    )->status_is(302)->header_like( Location => qr/complete$/ )
+      ->tx->res->headers->location;
+
+    ($run) = $dao->find( WorkflowRun => { id => $id } );
+    is $run->data()->{name}, 'Session 2', 'run data name is Session 2';
+
+    $next_url = $next_url =
+      $t->get_ok($next_url)->status_is(200)->element_exists('form[action]')
+      ->tx->res->dom->at('form[action]')->{action};
+
+    my $event2 = $dao->find(
+        Event => { time => '2021-12-31', location_id => $location->id } );
+    is $run->data()->{events}->[0], $event2->id, 'run data events are updated';
+
+    is $run->data()->{name}, 'Session 2', 'run data name is updated';
+
+    # post to the final step which saves everything
+    $t->post_ok( $next_url => form => {} )->status_is(201);
+    ($run) = $dao->find( WorkflowRun => { id => $id } );
+    ok $run->completed( $dao->db ), 'run is completed';
+
+    # now check to see if the session was created
+    my $session = $dao->find( Session => { slug => 'session-2', } );
+
+    die 'Session not created' unless $session;
+    is $session->name, 'Session 2', 'Session name is correct';
+    my @events = $session->events( $dao->db );
+    is scalar @events, 1,           'Session has one event';
+    is $events[0]->id, $event2->id, 'Event Venue correct';
+}
+

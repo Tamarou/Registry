@@ -1,29 +1,41 @@
 use v5.38.2;
 use utf8;
+use experimental qw(try);
 use Object::Pad;
 
 class Registry::DAO::Session {
-    field $id : param;
+    use Carp         qw( carp croak );
+    use experimental qw(try);
+
+    field $id : param = 0;
     field $name : param;
-    field $slug : param;
-    field $metadata : param;
-    field $notes : param;
-    field $created_at : param;
+    field $slug : param     //= lc( $name =~ s/\s+/-/gr );
+    field $metadata : param //= {};
+    field $notes : param    //= '';
+    field $created_at : param = time;
 
     sub find ( $, $db, $filter ) {
         my $data = $db->select( 'sessions', '*', $filter )->hash;
         return $data ? __PACKAGE__->new( $data->%* ) : ();
     }
 
-    sub create ( $, $db, $data ) {
-        $data->{slug} //= lc( $data->{name} =~ s/\s+/-/gr );
-        __PACKAGE__->new(
-            $db->insert( 'sessions', $data, { returning => '*' } )
-              ->expand->hash->%* );
+    sub create ( $class, $db, $data ) {
+        try {
+            $data->{slug} //= $class->new( $data->%* )->slug;
+        }
+        catch ($e) {
+            croak $e;
+        };
+
+        $data =
+          $db->insert( 'sessions', $data, { returning => '*' } )->expand->hash;
+
+        return $class->new( $data->%* );
     }
 
     method id   { $id }
     method name { $name }
+    method slug { $slug }
 
     method events ($db) {
 
@@ -42,6 +54,9 @@ class Registry::DAO::Session {
 }
 
 class Registry::DAO::Event {
+    use Carp         qw( carp croak );
+    use experimental qw(try);
+
     field $id : param;
     field $time : param;
     field $duration : param;
@@ -57,7 +72,8 @@ class Registry::DAO::Event {
         return $data ? __PACKAGE__->new( $data->%* ) : ();
     }
 
-    sub create ( $, $db, $data ) {
+    sub create ( $, $db, $data //= carp "must provide data" ) {
+
         __PACKAGE__->new(
             $db->insert( 'events', $data, { returning => '*' } )
               ->expand->hash->%* );
@@ -90,6 +106,10 @@ class Registry::DAO::Event {
 
     method teacher ($db) {
         Registry::DAO::User->find( $db, { id => $teacher_id } );
+    }
+
+    method project ($db) {
+        Registry::DAO::Project->find( $db, { id => $project_id } );
     }
 }    # classes / days
 

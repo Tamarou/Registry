@@ -29,7 +29,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
       'uatest run is the one we just created';
 
     ok $run->process( $dao->db, $run->next_step( $dao->db ), { count => 1 } );
-    is $run->data()->{landing}{count}, 1, 'run data is updated';
+    is $run->data()->{count}, 1, 'run data is updated';
 }
 
 {
@@ -65,7 +65,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     is $run->next_step( $dao->db )->slug, 'landing', 'next step is landing';
     is $run->latest_step( $dao->db ),     undef,     'no latest step yet';
 
-    is $run->data, undef, 'no data yet';
+    is keys $run->data->%*, 0, 'no data yet';
     ok $run->process( $dao->db, $run->next_step( $dao->db ), {} ),
       'process landing page';
     is $run->latest_step( $dao->db )->slug, 'landing', 'latest step is landing';
@@ -78,8 +78,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     $step = $run->next_step( $dao->db );
     is $step->slug, 'done', 'next step is done';
     $run->process( $dao->db, $step );
-    is $run->next_step( $dao->db ),  undef,       'Next step is correct';
-    is $run->data->{userinfo}{name}, 'Test User', 'run data is updated';
+    is $run->next_step( $dao->db ), undef,       'Next step is correct';
+    is $run->data->{name},          'Test User', 'run data is updated';
 
 }
 

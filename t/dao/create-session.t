@@ -38,8 +38,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         { name => 'Session 1', events => [ $event->id ] }
     );
 
-    is $run->data()->{'info'}{'events'}[0], $event->id,
-      'run data time is updated';
+    is $run->data()->{'events'}[0], $event->id, 'run data time is updated';
 
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is correct';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
