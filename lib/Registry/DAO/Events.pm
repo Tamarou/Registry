@@ -1,6 +1,6 @@
 use v5.38.2;
 use utf8;
-use experimental qw(class builtin);
+use Object::Pad;
 
 class Registry::DAO::Session {
     field $id : param;
@@ -22,7 +22,8 @@ class Registry::DAO::Session {
               ->expand->hash->%* );
     }
 
-    method id { $id }
+    method id   { $id }
+    method name { $name }
 
     method events ($db) {
 

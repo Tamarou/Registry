@@ -1,6 +1,6 @@
 use v5.38.2;
 use utf8;
-use experimental qw(class builtin);
+use Object::Pad;
 
 class Registry::DAO::Workflow {
     field $id : param;
@@ -74,7 +74,6 @@ class Registry::DAO::Workflow {
 }
 
 class Registry::DAO::WorkflowStep {
-
     field $id : param;
     field $depends_on : param = undef;
     field $description : param;

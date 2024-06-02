@@ -1,7 +1,8 @@
 use v5.38.2;
 use utf8;
-use experimental qw(class builtin);
+use experimental qw(builtin);
 use builtin      qw(export_lexically true false);
+use Object::Pad;
 
 use Mojo::Pg;
 use Registry::DAO::Workflow;
@@ -17,6 +18,7 @@ class Registry::DAO {
     method url { $url }
 
     sub import(@) {
+        no warnings;
         export_lexically(
             DAO          => sub () { 'Registry::DAO' },
             Workflow     => sub () { 'Registry::DAO::Workflow' },
@@ -158,8 +160,12 @@ class Registry::DAO::CreateSession : isa(Registry::DAO::WorkflowStep) {
         my ($workflow) = $self->workflow($db);
         my ($run)      = $workflow->latest_run($db);
 
-        my $data    = $run->data->{info};
-        my $events  = delete $data->{events};
+        my $data   = $run->data->{info};
+        my $events = delete $data->{events};
+
+        # Mojolicious unwinds form posts of only one value
+        $events = [$events] unless ref $events eq 'ARRAY';
+
         my $session = Registry::DAO::Session->create( $db, $data );
         $session->add_events( $db, $events->@* );
 
