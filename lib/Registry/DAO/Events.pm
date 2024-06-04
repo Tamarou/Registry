@@ -3,8 +3,10 @@ use utf8;
 use experimental qw(try);
 use Object::Pad;
 
-class Registry::DAO::Session {
-    use Carp         qw( carp croak );
+use Registry::DAO::Object;
+
+class Registry::DAO::Session : isa(Registry::DAO::Object) {
+    use Carp         ();
     use experimental qw(try);
 
     field $id : param = 0;
@@ -14,23 +16,11 @@ class Registry::DAO::Session {
     field $notes : param    //= '';
     field $created_at : param = time;
 
-    sub find ( $, $db, $filter ) {
-        my $data = $db->select( 'sessions', '*', $filter )->hash;
-        return $data ? __PACKAGE__->new( $data->%* ) : ();
-    }
+    use constant table => 'sessions';
 
     sub create ( $class, $db, $data ) {
-        try {
-            $data->{slug} //= $class->new( $data->%* )->slug;
-        }
-        catch ($e) {
-            croak $e;
-        };
-
-        $data =
-          $db->insert( 'sessions', $data, { returning => '*' } )->expand->hash;
-
-        return $class->new( $data->%* );
+        $data->{slug} //= lc( $data->{name} =~ s/\s+/-/gr );
+        $class->SUPER::create( $db, $data );
     }
 
     method id   { $id }
@@ -53,8 +43,8 @@ class Registry::DAO::Session {
 
 }
 
-class Registry::DAO::Event {
-    use Carp         qw( carp croak );
+class Registry::DAO::Event : isa(Registry::DAO::Object) {
+    use Carp         ();
     use experimental qw(try);
 
     field $id : param;
@@ -67,36 +57,7 @@ class Registry::DAO::Event {
     field $notes : param;
     field $created_at : param;
 
-    sub find ( $, $db, $filter ) {
-        my $data = $db->select( 'events', '*', $filter )->hash;
-        return $data ? __PACKAGE__->new( $data->%* ) : ();
-    }
-
-    sub create ( $, $db, $data //= carp "must provide data" ) {
-
-        __PACKAGE__->new(
-            $db->insert( 'events', $data, { returning => '*' } )
-              ->expand->hash->%* );
-    }
-
-    sub find_or_create ( $, $db, $data ) {
-        __PACKAGE__->new(
-            $db->insert(
-                'events', $data,
-                {
-                    on_conflict => [
-                        [ 'product_id', 'lesson_id', 'location_id', 'time' ] =>
-                          {
-                            product_id  => \'EXCLUDED.product_id',
-                            location_id => \'EXCLUDED.location_id',
-                            time        => \'EXCLUDED.time',
-                          }
-                    ],
-                    returning => '*'
-                }
-            )->expand->hash->%*
-        );
-    }
+    use constant table => 'events';
 
     method id { $id }
 

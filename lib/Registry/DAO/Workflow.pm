@@ -2,12 +2,31 @@ use v5.38.2;
 use utf8;
 use Object::Pad;
 
-class Registry::DAO::Workflow {
+use Registry::DAO::Object;
+
+class Registry::DAO::Workflow : isa(Registry::DAO::Object) {
     field $id : param;
     field $slug : param;
     field $name : param;
     field $description : param;
     field $first_step : param;
+
+    use constant table => 'workflows';
+
+    sub create ( $class, $db, $data ) {
+        my %data =
+          $db->insert( $class->table, $data, { returning => '*' } )->hash->%*;
+
+        # create the first step
+        Registry::DAO::WorkflowStep->create(
+            $db,
+            {
+                workflow_id => $data{id},
+                slug        => $data{first_step}
+            }
+        );
+        return $class->new(%data);
+    }
 
     method id   { $id }
     method slug { $slug }
@@ -37,27 +56,6 @@ class Registry::DAO::Workflow {
             { $data->%*, workflow_id => $id, depends_on => $last->id } );
     }
 
-    sub find ( $class, $db, $filter ) {
-        $db->select( 'workflows', '*', $filter )
-          ->expand->hashes->map( sub { $class->new( $_->%* ) } )->to_array->@*;
-    }
-
-    sub create ( $, $db, $data ) {
-        my %data =
-          $db->insert( 'workflows', $data, { returning => '*' } )->hash->%*;
-
-        # create the first step
-        Registry::DAO::WorkflowStep->create(
-            $db,
-            {
-                workflow_id => $data{id},
-                slug        => $data{first_step}
-            }
-        );
-
-        return __PACKAGE__->new(%data);
-    }
-
     method latest_run ( $db, $filter = {} ) {
         my ($run) = $self->runs( $db, $filter );
         return $run;
@@ -69,12 +67,13 @@ class Registry::DAO::Workflow {
     }
 
     method runs ( $db, $filter = {} ) {
-        Registry::DAO::WorkflowRun->find( $db,
+        my @runs = Registry::DAO::WorkflowRun->find( $db,
             { workflow_id => $id, $filter->%* } );
+        return @runs;
     }
 }
 
-class Registry::DAO::WorkflowStep {
+class Registry::DAO::WorkflowStep : isa(Registry::DAO::Object) {
     field $id : param;
     field $depends_on : param = undef;
     field $description : param;
@@ -84,17 +83,20 @@ class Registry::DAO::WorkflowStep {
     field $workflow_id : param;
     field $class : param;
 
-    sub find ( $, $db, $filter ) {
-        my $data = $db->select( 'workflow_steps', '*', $filter )->expand->hash;
+    use constant table => 'workflow_steps';
+
+    # we store the subclass name in the database
+    # so we need inflate the correct one
+    sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
+        my $data =
+          $db->select( $class->table, '*', $filter, $order )->expand->hash;
         return unless $data;
         return $data->{class}->new( $data->%* );
     }
 
     sub create ( $class, $db, $data ) {
-        $data->{class} //= __PACKAGE__;
-        $class->new(
-            $db->insert( 'workflow_steps', $data, { returning => '*' } )
-              ->hash->%* );
+        $data->{class} //= $class;
+        $class->SUPER::create( $db, $data );
     }
 
     method id          { $id }
@@ -117,7 +119,7 @@ class Registry::DAO::WorkflowStep {
     method process ( $db, $data ) { $data }
 }
 
-class Registry::DAO::WorkflowRun {
+class Registry::DAO::WorkflowRun : isa(Registry::DAO::Object) {
     use Mojo::JSON qw(encode_json);
     use Carp       qw( croak );
 
@@ -130,22 +132,7 @@ class Registry::DAO::WorkflowRun {
       {};    # might be null, we want it to always be an empty hash
     field $created_at : param;
 
-    use constant table_name => 'workflow_runs';
-
-    sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
-        $db->select( $class->table_name, '*', $filter, $order )
-          ->expand->hashes->map( sub { $class->new( $_->%* ) } )->to_array->@*;
-    }
-
-    sub create ( $class, $db, $data ) {
-        $class->new(
-            $db->insert( $class->table_name, $data, { returning => '*' } )
-              ->hash->%* );
-    }
-
-    sub find_or_create ( $class, $db, $data ) {
-        return ( find( $class, $db, $data ) || create( $class, $db, $data ) );
-    }
+    use constant table => 'workflow_runs';
 
     method id()   { $id }
     method data() { $data }
