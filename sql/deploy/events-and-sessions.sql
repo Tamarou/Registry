@@ -151,4 +151,142 @@ VALUES (
     'Registry::DAO::CreateSession'
 );
 
+-- CREATE THE BASIC LOCATION CREATION WORKFLOW
+INSERT INTO workflows (name, slug, description)
+VALUES (
+    'Location Creation',
+    'location-creation',
+    'A workflow to create new locations'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description)
+VALUES (
+    'landing',
+    (SELECT id FROM workflows WHERE slug = 'location-creation'),
+    'New Location Landing page'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
+VALUES (
+    'info',
+    (SELECT id FROM workflows WHERE slug = 'location-creation'),
+    'Location Info',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'landing'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'location-creation')
+    )
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on, class)
+VALUES (
+    'complete',
+    (SELECT id FROM workflows WHERE slug = 'location-creation'),
+    'Location creation complete',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'info'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'location-creation')
+    ),
+    'Registry::DAO::CreateLocation'
+);
+
+-- CREATE THE BASIC PROJECT CREATION WORKFLOW
+INSERT INTO workflows (name, slug, description)
+VALUES (
+    'Project Creation',
+    'project-creation',
+    'A workflow to create new projects'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description)
+VALUES (
+    'landing',
+    (SELECT id FROM workflows WHERE slug = 'project-creation'),
+    'New Project Landing page'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
+VALUES (
+    'info',
+    (SELECT id FROM workflows WHERE slug = 'project-creation'),
+    'Project Info',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'landing'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'project-creation')
+    )
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on, class)
+VALUES (
+    'complete',
+    (SELECT id FROM workflows WHERE slug = 'project-creation'),
+    'Project creation complete',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'info'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'project-creation')
+    ),
+    'Registry::DAO::CreateProject'
+);
+
+-- CREATE THE BASIC USER CREATION WORKFLOW
+INSERT INTO workflows (name, slug, description)
+VALUES (
+    'User Creation',
+    'user-creation',
+    'A workflow to create new users'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description)
+VALUES (
+    'landing',
+    (SELECT id FROM workflows WHERE slug = 'user-creation'),
+    'New User Landing page'
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
+VALUES (
+    'info',
+    (SELECT id FROM workflows WHERE slug = 'user-creation'),
+    'User Info',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'landing'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'user-creation')
+    )
+);
+
+INSERT INTO workflow_steps (slug, workflow_id, description, depends_on, class)
+VALUES (
+    'complete',
+    (SELECT id FROM workflows WHERE slug = 'user-creation'),
+    'User creation complete',
+    (
+        SELECT id
+        FROM workflow_steps
+        WHERE
+            slug = 'info'
+            AND workflow_id
+            = (SELECT id FROM workflows WHERE slug = 'user-creation')
+    ),
+    'Registry::DAO::CreateUser'
+);
+
 COMMIT;
