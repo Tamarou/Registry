@@ -4,24 +4,65 @@ use Object::Pad;
 
 use Registry::DAO::Workflow;
 
+class Registry::DAO::CreateProject : isa(Registry::DAO::WorkflowStep) {
+
+    method process ( $db, $ ) {
+        my ($workflow) = $self->workflow($db);
+        my $run        = $workflow->latest_run($db);
+        my %data       = $run->data->%{ 'name', 'metadata', 'notes' };
+        my $project    = Registry::DAO::Project->create( $db, \%data );
+        $run->update_data( $db, { projects => [ $project->id ] } );
+        if ( $run->has_continuation ) {
+            my ($continuation) = $run->continuation($db);
+            my $projects = $continuation->data->{projects} // [];
+            push $projects->@*, $project->id;
+            $continuation->update_data( $db, { projects => $projects } );
+        }
+        return { project => $project->id };
+    }
+}
+
+class Registry::DAO::CreateLocation : isa(Registry::DAO::WorkflowStep) {
+
+    method process ( $db, $ ) {
+        my ($workflow) = $self->workflow($db);
+        my $run        = $workflow->latest_run($db);
+        my %data       = $run->data->%{ 'name', 'metadata', 'notes' };
+        my $location   = Registry::DAO::Location->create( $db, \%data );
+        $run->update_data( $db, { locations => [ $location->id ] } );
+
+        if ( $run->has_continuation ) {
+            my ($continuation) = $run->continuation($db);
+            my $locations = $continuation->data->{locations} // [];
+            push $locations->@*, $location->id;
+            $continuation->update_data( $db, { locations => $locations } );
+        }
+        return { location => $location->id };
+    }
+}
+
 class Registry::DAO::RegisterCustomer : isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
         my $run = $workflow->latest_run($db);
 
-        # TODO this should be data from a continuation not created here
-        my $user_data = $run->data->{users};
+        my $profile = $run->data;
 
-        # TODO this should be a singl query not a loop
+        my $user_data = delete $profile->{users};
+
+        # TODO this should be a single query not a loop
         my @users =
           map { Registry::DAO::User->find_or_create( $db, $_ ) } $user_data->@*;
 
-        my $profile = $run->data;
-        delete $profile->{users};    # TODO clean this up in the workflow
-        $profile->{primary_user_id} = $users[0]->id;
+        if (@users) {
+            $profile->{primary_user_id} = $users[0]->id;
+        }
+        else {
+            die "No users found";
+        }
 
-        my $customer = Registry::DAO::Customer->create( $db, $profile );
+        my ($customer) = Registry::DAO::Customer->create( $db, $profile );
 
         $customer->add_user( $db, $_ ) for @users;
 
@@ -111,5 +152,36 @@ class Registry::DAO::CreateSession : isa(Registry::DAO::WorkflowStep) {
         }
 
         return { session => $session->id };
+    }
+}
+
+class Registry::DAO::CreateUser : isa(Registry::DAO::WorkflowStep) {
+
+    method process ( $db, $ ) {
+        my ($workflow) = $self->workflow($db);
+        my ($run)      = $workflow->latest_run($db);
+
+        my $data = $run->data;
+
+        my $user = Registry::DAO::User->create( $db,
+            { $data->%{ 'username', 'password' } } );
+
+        $run->update_data(
+            $db,
+            {
+                password => '',
+                passhash => $user->passhash,
+                id       => $user->id,
+            }
+        );
+
+        if ( $run->has_continuation ) {
+            my ($continuation) = $run->continuation($db);
+            my $users = $continuation->data->{users} // [];
+            push $users->@*, { id => $user->id };
+            $continuation->update_data( $db, { users => $users } );
+        }
+
+        return { user => $user->id };
     }
 }

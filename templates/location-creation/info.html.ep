@@ -1,0 +1,5 @@
+<form action="<%= $action %>">
+    <input type="text" name="name" placeholder="Location Name" />
+    <!-- TODO: add notes textarea -->
+    <input type="submit>Save</input>
+</form>

@@ -11,7 +11,7 @@ class Registry::DAO::Workflow : isa(Registry::DAO::Object) {
     field $description : param;
     field $first_step : param;
 
-    use constant table => 'workflows';
+    use constant table => 'registry.workflows';
 
     sub create ( $class, $db, $data ) {
         my %data =
@@ -83,7 +83,7 @@ class Registry::DAO::WorkflowStep : isa(Registry::DAO::Object) {
     field $workflow_id : param;
     field $class : param;
 
-    use constant table => 'workflow_steps';
+    use constant table => 'registry.workflow_steps';
 
     # we store the subclass name in the database
     # so we need inflate the correct one
@@ -132,7 +132,7 @@ class Registry::DAO::WorkflowRun : isa(Registry::DAO::Object) {
       {};    # might be null, we want it to always be an empty hash
     field $created_at : param;
 
-    use constant table => 'workflow_runs';
+    use constant table => 'registry.workflow_runs';
 
     method id()   { $id }
     method data() { $data }
@@ -153,7 +153,7 @@ class Registry::DAO::WorkflowRun : isa(Registry::DAO::Object) {
     method update_data ( $db, $new_data ||= {} ) {
         croak "new data must be a hashref" unless ref $new_data eq 'HASH';
         $data = $db->update(
-            'workflow_runs',
+            $self->table,
             { data      => encode_json( { $data->%*, $new_data->%* } ) },
             { id        => $id },
             { returning => ['data'] }
@@ -168,16 +168,12 @@ class Registry::DAO::WorkflowRun : isa(Registry::DAO::Object) {
         # TODO we really should inline these two calls into a single query
         $self->update_data( $db, $step->process( $db, $new_data ) );
         ($latest_step_id) = $db->update(
-            'workflow_runs',
+            $self->table,
             { latest_step_id => $step->id },
             { id             => $id },
             { returning      => [qw(latest_step_id)] }
         )->expand->hash->@{qw(latest_step_id)};
 
-        if ($continuation_id) {
-            my ($parent) = $self->continuation($db);
-            $parent->update_data( $db, $data );
-        }
         return $data;
     }
 

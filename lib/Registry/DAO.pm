@@ -11,6 +11,9 @@ use Registry::DAO::Events;
 use Registry::DAO::WorkflowSteps;
 
 class Registry::DAO {
+    use experimental qw(builtin);
+    use builtin      qw(blessed);
+
     field $url : param //= $ENV{DB_URL};
     field $schema : param = 'registry';
     field $pg = Mojo::Pg->new($url)->search_path( [ $schema, 'public' ] );
@@ -37,5 +40,9 @@ class Registry::DAO {
     method create ( $class, $data ) {
         $class = "Registry::DAO::$class" unless $class =~ /Registry::DAO::/;
         return $class->create( $db, $data );
+    }
+
+    method connect_schema ($schema) {
+        return blessed($self)->new( url => $url, schema => $schema );
     }
 }

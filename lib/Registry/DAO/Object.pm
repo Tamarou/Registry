@@ -3,6 +3,9 @@ use utf8;
 use Object::Pad;
 
 class Registry::DAO::Object {
+    use Carp         qw( carp );
+    use experimental qw(builtin try);
+    use builtin      qw(blessed);
     sub table($) { ... }
 
     sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
@@ -12,9 +15,15 @@ class Registry::DAO::Object {
     }
 
     sub create ( $class, $db, $data ) {
-        my %data =
-          $db->insert( $class->table, $data, { returning => '*' } )->hash->%*;
-        return $class->new(%data);
+        try {
+            my %data =
+              $db->insert( $class->table, $data, { returning => '*' } )
+              ->hash->%*;
+            return $class->new(%data);
+        }
+        catch ($e) {
+            carp "Error creating $class: $e";
+        };
     }
 
     sub find_or_create ( $class, $db, $filter, $data = $filter ) {
@@ -26,7 +35,8 @@ class Registry::DAO::Object {
 }
 
 class Registry::DAO::User : isa(Registry::DAO::Object) {
-    use Carp qw( carp );
+    use Carp         qw( carp );
+    use experimental qw(try);
     use Crypt::Passphrase;
 
     field $id : param;
@@ -45,19 +55,27 @@ class Registry::DAO::User : isa(Registry::DAO::Object) {
     }
 
     sub create ( $class, $db, $data //= carp "must provide data" ) {
-        my $crypt = Crypt::Passphrase->new(
-            encoder    => 'Argon2',
-            validators => [ 'Bcrypt', 'SHA1::Hex' ],
-        );
+        try {
+            my $crypt = Crypt::Passphrase->new(
+                encoder    => 'Argon2',
+                validators => [ 'Bcrypt', 'SHA1::Hex' ],
+            );
 
-        $data->{passhash} = $crypt->hash_password( delete $data->{password} );
-        my %data =
-          $db->insert( $class->table, $data, { returning => '*' } )->hash->%*;
-        return $class->new(%data);
+            $data->{passhash} =
+              $crypt->hash_password( delete $data->{password} );
+            my %data =
+              $db->insert( $class->table, $data, { returning => '*' } )
+              ->hash->%*;
+            return $class->new(%data);
+        }
+        catch ($e) {
+            carp "Error creating $class: $e";
+        };
     }
 
     method id       { $id }
     method username { $username }
+    method passhash { $passhash }
 }
 
 class Registry::DAO::Customer : isa(Registry::DAO::Object) {

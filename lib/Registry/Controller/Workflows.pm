@@ -51,18 +51,10 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
         my $dao = $self->app->dao;
         my $run = $self->run();
 
-        # TODO grab the template from the workflow step
-        my $template = q{
-            % my $events_url = url_for "workflow_callcc", target => 'event-creation';
-            <form action="<%= $action %>">
-                <a rel="create-page event" href="<%= $events_url %>">Add Event</a>
-            </form>
-        };
-
         return $self->render(
-            inline => $template,
-            status => 200,
-            action => $self->url_for('workflow_process_step'),
+            template => $self->param('workflow') . '/' . $self->param('step'),
+            status   => 200,
+            action   => $self->url_for('workflow_process_step'),
         );
     }
 
@@ -75,18 +67,23 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
             }
         );
 
-        my ($step)   = $run->next_step( $dao->db );
-        my ($latest) = $run->latest_step( $dao->db );
-        warn "done" if $run->completed( $dao->db );
+        # if we're done, stop now
+        if ( $run->completed( $dao->db ) ) {
+            return $self->render( text => 'DONE', status => 201 );
+        }
+
+        # we're not done so process the next step
+        my ($step) = $run->next_step( $dao->db );
         die "No step found" unless $step;
 
         die "Wrong step expected ${\$step->slug}"
           unless $step->slug eq $self->param('step');
 
         my $data = $self->req->params->to_hash;
+
         $run->process( $dao->db, $step, $data );
 
-        # if we're not done, redirect to the next step
+        # if we're still not done, redirect to the next step
         if ( !$run->completed( $dao->db ) ) {
             my ($next) = $run->next_step( $dao->db );
             my $url = $self->url_for( step => $next->slug );
@@ -107,7 +104,6 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
             return $self->redirect_to($url);
         }
 
-        # otherwise, we're done
         return $self->render( text => 'DONE', status => 201 );
     }
 

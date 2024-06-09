@@ -16,7 +16,7 @@ class Registry : isa(Mojolicious) {
             }
         );
 
-        my $r = $self->routes;
+        my $r = $self->routes->under('/')->to('customers#setup');
         my $w = $r->any("/:workflow")->to('workflows#');
         $w->get('')->to('#index')->name("workflow_index");
         $w->post('')->to('#start_workflow')->name("workflow_start");
