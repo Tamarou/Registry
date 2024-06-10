@@ -1,4 +1,4 @@
-use 5.38.2;
+use 5.40.0;
 use Object::Pad;
 
 class Registry : isa(Mojolicious) {
@@ -53,4 +53,3 @@ This software is copyright (c) 2024 by Tamarou LLC.
 
 This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.
-

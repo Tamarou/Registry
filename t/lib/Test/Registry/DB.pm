@@ -1,9 +1,6 @@
 use 5.38.0;
 use App::Sqitch;
 use Test::PostgreSQL;
-use Registry::DAO;
-use experimental qw(builtin);
-use builtin 'export_lexically';
 
 package Test::Registry::DB {
 

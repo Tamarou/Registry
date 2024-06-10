@@ -1,4 +1,4 @@
-use 5.38.2;
+use 5.40.0;
 use Object::Pad;
 
 class Registry::Controller::Customers : isa(Mojolicious::Controller) {

@@ -8,7 +8,7 @@ use Test::More import => [qw( done_testing is like ok )];
 defer { done_testing };
 
 use Registry::DAO;
-use Test::Registry::DB qw(DAO Workflow WorkflowRun WorkflowStep);
+use Test::Registry::DB;
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 $ENV{DB_URL} = $dao->url;
