@@ -1,4 +1,10 @@
-<form action="<%= $action %>">
+<h1>Company Profile</h1>
+<p>We're so glad you're joining us!</p>
+<p>Please provide some information about your company.</p>
+<form method="POST" action="<%= $action %>">
+    <label for="name">Name</label>
     <input type="text" name="name" placeholder="My Amazing Company" />
-    <input type="submit>Save</input>
+    <label for="description">Description</label>
+    <textarea name="description"></textarea>
+    <button type="submit">Save</button>
 </form>

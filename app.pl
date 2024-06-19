@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
 use 5.40.0;
-use lib qw(lib);
+use lib        qw(lib);
+use local::lib qw(local);
 
 use Mojolicious::Commands;
 

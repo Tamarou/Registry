@@ -23,4 +23,8 @@ class Registry::Controller::Customers : isa(Mojolicious::Controller) {
         );
         return 1;
     }
+
+    method index {
+        $self->render('index');
+    }
 }

@@ -26,12 +26,9 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
         my $dao = $self->app->dao;
         my ($workflow) = $self->workflow();
 
-        # TODO grab this from the first workflow first step
-        my $template =
-          '<form action="<%= $action %>"><button>Start</button></form>';
         $self->render(
-            inline => $template,
-            action => $self->url_for('workflow_start')
+            template => $self->param('workflow') . '/index',
+            action   => $self->url_for('workflow_start')
         );
     }
 

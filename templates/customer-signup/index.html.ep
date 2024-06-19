@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Customer Signup</title>
+    </head>
+    <body>
+        <header>
+            <h1>Join Regstry Today!</h1>
+            <p>Simplify Your Program Management</p>
+        </header>
+        <main>
+            <h2>Effortless Event Management</h2>
+            <p>Easily schedule and organize your sessions, assign locations and
+            teachers, all from one intuitive platform.</p>
+
+            <h2>Comprehensive Student Tracking</h2>
+            <p>Track attendance, monitor progress, and gain real-time insights
+            to improve your programs.</p>
+
+            <h2>Enhanced Parent-Teacher Communication</h2>
+            <p>Keep parents engaged with updates and notifications, fostering better
+            relationships and trust.</p>
+
+            <h2>Why Choose Registry?</h2>
+            <ul>
+                <li>User-Friendly: Easy to navigate and use.</li>
+                <li>All-in-One: Manage events, track students, and communicate with parents.</li>
+                <li>Real-Time Insights: Make informed decisions with up-to-date information.</li>
+            </ul>
+            <h2>Ready to Transform Your Programs?</h2>
+
+            <p>Join a community of forward-thinking educators revolutionizing their programs with [Your App Name]. Sign up now and see the difference!</p>
+
+            <form method="POST" action="<%= $action %>">
+                <button>Sign Up Now!</button>
+            </form>
+        </main>
+    </body>
+</html>

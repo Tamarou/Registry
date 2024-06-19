@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id uuid PRIMARY KEY REFERENCES users (id),
+    email text UNIQUE NOT NULL,
+    name text NOT NULL,
+    phone text NULL,
     data jsonb, -- we probably want to do something more strutured here
     created_at timestamp with time zone DEFAULT now()
 );
