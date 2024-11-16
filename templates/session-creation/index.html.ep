@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Create Event</title>
+    </head>
+    <body>
+        <header>
+            <h1>Create an Event</h1>
+            <p></p>
+        </header>
+        <main>
+            <form method="POST" action="<%= $action %>">
+                <button>Start Here</button>
+            </form>
+        </main>
+    </body>
+</html>
