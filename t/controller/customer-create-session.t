@@ -71,7 +71,7 @@ my $t = Test::Mojo->new('Registry');
     }
 
     process_workflow(
-        '/customer-signup' => {
+        '/tenant-signup' => {
             name     => 'Test Customer',
             username => 'Alice',
             password => 'password',

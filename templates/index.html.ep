@@ -31,11 +31,9 @@
 programs with Registry. It’s time to make your life easier and your programs
 more impactful.</p>
 
-<p><strong>Sign Up Now</strong> and see the difference Registry can make!</p>
-
 <p>Let’s create something amazing together!</p>
 
-% my $signup_url = url_for "workflow_start", workflow => 'customer-signup';
+% my $signup_url = url_for "workflow_start", workflow => 'tenant-signup';
 <a class="button" rel="create-page customer" href="<%= $signup_url %>">Sign Up</a>
 </main>
 

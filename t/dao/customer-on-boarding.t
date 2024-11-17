@@ -12,7 +12,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 {
     # create a new customer
-    my ($workflow) = $dao->find( Workflow => { slug => 'customer-signup' } );
+    my ($workflow) = $dao->find( Workflow => { slug => 'tenant-signup' } );
     is $workflow->name, 'Customer Onboarding', 'Workflow name is correct';
     is $workflow->first_step( $dao->db )->slug, 'landing',
       'First step name is correct';
@@ -69,4 +69,3 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
     is $dao2->find( Customer => {} ), undef, 'No customers exists';
 }
-

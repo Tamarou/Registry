@@ -37,21 +37,21 @@ CREATE TABLE IF NOT EXISTS customer_users (
 INSERT INTO workflows (name, slug, description)
 VALUES (
     'Customer Onboarding',
-    'customer-signup',
+    'tenant-signup',
     'A workflow to onboard new customers'
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description)
 VALUES (
     'landing',
-    (SELECT id FROM workflows WHERE slug = 'customer-signup'),
+    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
     'New Customer landing page'
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
 VALUES (
     'profile',
-    (SELECT id FROM workflows WHERE slug = 'customer-signup'),
+    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
     'Customer profile page',
     (
         SELECT id
@@ -59,14 +59,14 @@ VALUES (
         WHERE
             slug = 'landing'
             AND workflow_id
-            = (SELECT id FROM workflows WHERE slug = 'customer-signup')
+            = (SELECT id FROM workflows WHERE slug = 'tenant-signup')
     )
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
 VALUES (
     'users',
-    (SELECT id FROM workflows WHERE slug = 'customer-signup'),
+    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
     'Customer users page',
     (
         SELECT id
@@ -74,14 +74,14 @@ VALUES (
         WHERE
             slug = 'profile'
             AND workflow_id
-            = (SELECT id FROM workflows WHERE slug = 'customer-signup')
+            = (SELECT id FROM workflows WHERE slug = 'tenant-signup')
     )
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description, depends_on, class)
 VALUES (
     'complete',
-    (SELECT id FROM workflows WHERE slug = 'customer-signup'),
+    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
     'Customer onboarding complete',
     (
         SELECT id
@@ -89,7 +89,7 @@ VALUES (
         WHERE
             slug = 'users'
             AND workflow_id
-            = (SELECT id FROM workflows WHERE slug = 'customer-signup')
+            = (SELECT id FROM workflows WHERE slug = 'tenant-signup')
     ),
     'Registry::DAO::RegisterCustomer'
 );
