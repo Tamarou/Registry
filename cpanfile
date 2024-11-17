@@ -1,3 +1,4 @@
+requires 'perl' => 'v5.40.0';
 requires 'App::Sqitch';
 requires 'Crypt::Passphrase';
 requires 'Crypt::Passphrase::Argon2';
