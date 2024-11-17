@@ -14,13 +14,10 @@ class Registry::DAO {
     use experimental qw(builtin);
     use builtin      qw(blessed);
 
-    field $url : param //= $ENV{DB_URL};
+    field $url :param :reader//= $ENV{DB_URL};
     field $schema : param = 'registry';
     field $pg = Mojo::Pg->new($url)->search_path( [ $schema, 'public' ] );
-    field $db = $pg->db;
-
-    method db  { $db }
-    method url { $url }
+    field $db :reader = $pg->db;
 
     sub import(@) {
         no warnings;
