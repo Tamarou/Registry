@@ -1,4 +1,4 @@
-use 5.38.0;
+use 5.40.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 use builtin      qw(blessed);
@@ -214,4 +214,3 @@ sub workflow_process_step_url ( $workflow, $run, $step ) {
     is scalar @events, 1,           'Session has one event';
     is $events[0]->id, $event2->id, 'Event Venue correct';
 }
-

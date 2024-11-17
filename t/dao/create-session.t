@@ -1,4 +1,4 @@
-use 5.38.0;
+use 5.40.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 use builtin      qw(blessed);
