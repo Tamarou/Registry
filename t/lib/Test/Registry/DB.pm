@@ -1,6 +1,6 @@
-use 5.38.0;
-use App::Sqitch;
-use Test::PostgreSQL;
+use 5.40.0;
+use App::Sqitch ();
+use Test::PostgreSQL ();
 
 package Test::Registry::DB {
 
@@ -11,4 +11,3 @@ package Test::Registry::DB {
         return $pgsql->uri;
     }
 }
-

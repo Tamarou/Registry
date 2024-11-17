@@ -1,7 +1,6 @@
 use 5.40.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
-use builtin      qw(blessed);
 
 use Test::Mojo;
 use Test::More import => [qw( done_testing is like ok )];
