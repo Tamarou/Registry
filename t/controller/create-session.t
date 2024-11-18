@@ -8,6 +8,13 @@ defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(
+    workflow_url
+    workflow_start_url
+    workflow_run_step_url
+    workflow_process_step_url
+);
+
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 $ENV{DB_URL} = $dao->url;
@@ -22,22 +29,6 @@ my $event = $dao->create(
           $dao->create( Project => { name => 'Event Curriculum' } )->id,
     }
 );
-
-sub workflow_url ($workflow) {
-    sprintf '/%s', $workflow->slug;
-}
-
-sub workflow_start_url ( $workflow, $step ) {
-    sprintf '/%s/%s', $workflow->slug, $step->slug;
-}
-
-sub workflow_run_step_url ( $workflow, $run, $step ) {
-    sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
-}
-
-sub workflow_process_step_url ( $workflow, $run, $step ) {
-    sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
-}
 
 {
     my $t = Test::Mojo->new('Registry');

@@ -8,74 +8,23 @@ defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(process_workflow);
+
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 $ENV{DB_URL} = $dao->url;
 
 my $t = Test::Mojo->new('Registry');
 {
-
-    my sub get_form ( $url, $headers ) {
-        my $form = $t->get_ok( $url, $headers )->status_is(200)
-          ->tx->res->dom->at('form');
-        return unless $form;
-
-        my $action = $form->attr('action');
-        return unless $action;
-
-        my @fields =
-          $form->find('input')
-          ->grep( sub ( $field = $_ ) { $field->attr('name') } )
-          ->map( sub ( $f      = $_ ) { $f->attr('name') } )->to_array->@*;
-        my @workflows =
-          $form->find('a')
-          ->grep( sub ( $a = $_ ) { $a->attr('rel') =~ /\bcreate-page\b/ } )
-          ->map( sub ( $a  = $_ ) { $a->attr('href') } )->to_array->@*;
-        return $action, \@fields, \@workflows;
-    }
-
-    my sub submit_form ( $url, $headers, %data ) {
-        my $req = $t->post_ok( $url, $headers, form => \%data );
-        if ( $req->tx->res->code == 302 ) {
-            return $req->status_is(302)->tx->res->headers->location;
-        }
-        if ( $req->tx->res->code == 201 ) {
-            $req->status_is(201);
-            return;
-        }
-        else {
-            die "Unexpected response code: " . $req->tx->res->code;
-        }
-    }
-
-    my sub process_workflow ( $start, $data, $headers = {}, ) {
-        note "starting processing: $start";
-        state %seen;    # only process each sub-workflow once
-        my $url = $start;
-        while ($url) {
-            my ( $action, \@fields, \@workflows ) = get_form( $url, $headers );
-            for my $workflow (@workflows) {
-                next
-                  if $seen{ [ split( '/', $workflow ) ]->[-1] }++;
-                note "start sub-workflow: $workflow";
-                __SUB__->(
-                    submit_form( $workflow, $headers, $data->%{@fields} ),
-                    $data, $headers
-                );
-                note "done sub-workflow: $workflow";
-            }
-            $url = submit_form( $action, $headers, $data->%{@fields} );
-        }
-        note "done processing: $start";
-    }
-
     process_workflow(
+        $t,
         '/tenant-signup' => {
             name     => 'Test Customer',
             username => 'Alice',
             password => 'password',
         }
     );
+
     ok my ($customer) = $dao->find( Customer => { name => 'Test Customer' } ),
       'got customer';
     is $customer->primary_user( $dao->db )->username, 'Alice',
@@ -90,6 +39,7 @@ my $t = Test::Mojo->new('Registry');
       ->status_is(200);
     {
         process_workflow(
+            $t,
             '/user-creation' => {
                 username => 'Bob',
                 password => 'password',
@@ -107,6 +57,7 @@ my $t = Test::Mojo->new('Registry');
         use Time::Piece qw( localtime );
         my $time = localtime;
         process_workflow(
+            $t,
             '/session-creation' => {
                 name       => 'Test Session',
                 time       => $time->datetime,

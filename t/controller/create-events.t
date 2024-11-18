@@ -8,6 +8,13 @@ defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(
+    workflow_url
+    workflow_start_url
+    workflow_run_step_url
+    workflow_process_step_url
+);
+
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 $ENV{DB_URL} = $dao->url;
@@ -29,23 +36,6 @@ our $project = $dao->create(
 );
 
 {
-
-    my sub workflow_url ($workflow) {
-        return sprintf '/%s', $workflow->slug;
-    }
-
-    my sub workflow_start_url ( $workflow, $step ) {
-        return sprintf '/%s/%s', $workflow->slug, $step->slug;
-    }
-
-    my sub workflow_run_step_url ( $workflow, $run, $step ) {
-        return sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
-    }
-
-    my sub workflow_process_step_url ( $workflow, $run, $step ) {
-        return sprintf '/%s/%s/%s', $workflow->slug, $run->id, $step->slug;
-    }
-
     my $t = Test::Mojo->new('Registry');
 
     my ($workflow) = $dao->find( Workflow => { slug => 'event-creation' } );
