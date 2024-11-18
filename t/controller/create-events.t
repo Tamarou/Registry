@@ -6,8 +6,8 @@ use Test::Mojo;
 use Test::More import => [qw( done_testing is )];
 defer { done_testing };
 
-use Registry::DAO;
-use Test::Registry::DB;
+use Registry::DAO ();
+use Test::Registry::DB ();
 use Test::Registry::Helpers qw(
     workflow_url
     workflow_start_url

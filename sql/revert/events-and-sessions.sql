@@ -10,11 +10,11 @@ $$
 DECLARE
     s name;
 BEGIN
-   FOR s IN SELECT slug FROM registry.customers LOOP
-       EXECUTE format('DROP TABLE IF EXITS %I.session_events;', s);
+   FOR s IN SELECT slug FROM registry.tenants LOOP
+       EXECUTE format('DROP TABLE IF EXISTS %I.session_events;', s);
        EXECUTE format('DROP TABLE IF EXISTS %I.events;', s);
        EXECUTE format('DROP TABLE IF EXISTS %I.sessions;', s);
-       EXECUTE format('DROP TABLE IF EXITS %I.projects;', s);
+       EXECUTE format('DROP TABLE IF EXISTS %I.projects;', s);
        EXECUTE format('DROP TABLE IF EXISTS %I.locations;', s);
    END LOOP;
 END;

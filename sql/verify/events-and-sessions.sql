@@ -57,7 +57,7 @@ $$
 DECLARE
     s name;
 BEGIN
-   FOR s IN SELECT slug FROM registry.customers LOOP
+   FOR s IN SELECT slug FROM registry.tenants LOOP
 
        EXECUTE format('SELECT id, name, slug, metadata, notes, created_at FROM %I.locations WHERE FALSE;', s);
        EXECUTE format('SELECT id, name, slug, metadata, notes, created_at FROM %I.projects WHERE FALSE;', s);

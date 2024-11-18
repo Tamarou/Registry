@@ -1,4 +1,4 @@
--- Verify registry:customer-on-boarding on pg
+-- Verify registry:tenant-on-boarding on pg
 
 BEGIN;
 
@@ -8,22 +8,24 @@ SET search_path TO registry, public;
 SELECT
     id,
     name,
+    slug,
     created_at
-FROM customers
+FROM tenants
 WHERE FALSE;
 
 SELECT
-    customer_id,
-    data,
+    tenant_id,
+    description,
     created_at
-FROM customer_profiles
+FROM tenant_profiles
 WHERE FALSE;
 
 SELECT
-    customer_id,
+    tenant_id,
     user_id,
+    is_primary,
     created_at
-FROM customer_users
+FROM tenant_users
 WHERE FALSE;
 
 ROLLBACK;

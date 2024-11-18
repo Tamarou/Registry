@@ -1,5 +1,6 @@
--- Deploy registry:customer-on-boarding to pg
+-- Deploy registry:tenant-on-boarding to pg
 -- requires: workflows
+-- requires: users
 
 BEGIN;
 
@@ -11,48 +12,48 @@ ALTER TABLE workflow_steps
 ADD COLUMN IF NOT EXISTS
 class TEXT NOT NULL DEFAULT 'Registry::DAO::WorkflowStep';
 
--- NEXT WE CREATE THE customer TABLES
-CREATE TABLE IF NOT EXISTS customers (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    slug TEXT UNIQUE NOT NULL,
-    name TEXT UNIQUE NOT NULL,
-    primary_user_id UUID NOT NULL REFERENCES users (id),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+-- NEXT WE CREATE THE tenant TABLES
+CREATE TABLE IF NOT EXISTS tenants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS customer_profiles (
-    customer_id UUID PRIMARY KEY REFERENCES customers (id),
-    data JSONB, -- we probably want to do something more strutured here
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+CREATE TABLE IF NOT EXISTS tenant_profiles (
+    tenant_id UUID PRIMARY KEY REFERENCES tenants (id),
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS customer_users (
-    customer_id UUID NOT NULL REFERENCES customers (id),
+CREATE TABLE IF NOT EXISTS tenant_users (
+    tenant_id UUID NOT NULL REFERENCES tenants (id),
     user_id UUID NOT NULL REFERENCES users (id),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-    PRIMARY KEY (customer_id, user_id)
+    is_primary BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tenant_id, user_id)
 );
 
--- CREATE THE BASIC CUSTOMER SIGNUP WORKFLOW
-INSERT INTO workflows (name, slug, description)
+-- CREATE THE BASIC TENANT SIGNUP WORKFLOW
+INSERT INTO workflows (slug, name, description)
 VALUES (
-    'Customer Onboarding',
     'tenant-signup',
-    'A workflow to onboard new customers'
+    'Tenant Onboarding',
+    'A workflow to onboard new tenants'
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description)
 VALUES (
     'landing',
     (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
-    'New Customer landing page'
+    'New Tenant landing page'
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
 VALUES (
     'profile',
     (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
-    'Customer profile page',
+    'Tenant profile page',
     (
         SELECT id
         FROM workflow_steps
@@ -67,7 +68,7 @@ INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
 VALUES (
     'users',
     (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
-    'Customer users page',
+    'Tenant users page',
     (
         SELECT id
         FROM workflow_steps
@@ -82,7 +83,7 @@ INSERT INTO workflow_steps (slug, workflow_id, description, depends_on, class)
 VALUES (
     'complete',
     (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
-    'Customer onboarding complete',
+    'Tenant onboarding complete',
     (
         SELECT id
         FROM workflow_steps
@@ -91,7 +92,7 @@ VALUES (
             AND workflow_id
             = (SELECT id FROM workflows WHERE slug = 'tenant-signup')
     ),
-    'Registry::DAO::RegisterCustomer'
+    'Registry::DAO::RegisterTenant'
 );
 
 COMMIT;

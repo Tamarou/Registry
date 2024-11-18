@@ -41,7 +41,7 @@ class Registry::DAO::CreateLocation : isa(Registry::DAO::WorkflowStep) {
     }
 }
 
-class Registry::DAO::RegisterCustomer : isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::RegisterTenant : isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -55,32 +55,25 @@ class Registry::DAO::RegisterCustomer : isa(Registry::DAO::WorkflowStep) {
         my @users =
           map { Registry::DAO::User->find_or_create( $db, $_ ) } $user_data->@*;
 
-        if (@users) {
-            $profile->{primary_user_id} = $users[0]->id;
-        }
-        else {
-            die "No users found";
-        }
+        my $tenant = Registry::DAO::Tenant->create( $db, $profile );
 
-        my ($customer) = Registry::DAO::Customer->create( $db, $profile );
+        $tenant->add_user( $db, $_, $_ == $users[0] ) for @users;
 
-        $customer->add_user( $db, $_ ) for @users;
-
-        $db->query( 'SELECT clone_schema(dest_schema => ?)', $customer->slug );
+        $db->query( 'SELECT clone_schema(dest_schema => ?)', $tenant->slug );
 
         $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
-            $customer->slug, $_->id )
+            $tenant->slug, $_->id )
           for @users;
 
         if ( $run->has_continuation ) {
             my ($continuation) = $run->continuation($db);
-            my $customers = $continuation->data->{customers} // [];
-            push $customers->@*, $customer->id;
-            $continuation->update_data( $db, { customers => $customers } );
+            my $tenants = $continuation->data->{tenants} // [];
+            push $tenants->@*, $tenant->id;
+            $continuation->update_data( $db, { tenants => $tenants } );
         }
 
         # return the data to be stored in the workflow run
-        return { customer => $customer->id };
+        return { tenant => $tenant->id };
     }
 }
 

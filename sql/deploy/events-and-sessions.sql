@@ -59,7 +59,7 @@ $$
 DECLARE
     s name;
 BEGIN
-   FOR s IN SELECT slug FROM registry.customers LOOP
+   FOR s IN SELECT slug FROM registry.tenants LOOP
        EXECUTE format('CREATE TABLE IF NOT EXISTS %I.locations AS TABLE registry.locations;', s);
        EXECUTE format('CREATE TABLE IF NOT EXISTS %I.projects AS TABLE registry.projects;', s);
        EXECUTE format('CREATE TABLE IF NOT EXISTS %I.sessions AS TABLE registry.sessions;', s);

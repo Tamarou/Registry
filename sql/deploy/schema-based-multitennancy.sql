@@ -1,5 +1,5 @@
 -- Deploy registry:schema-based-multitennancy to pg
--- requires: customer-on-boarding
+-- requires: tenant-on-boarding
 
 BEGIN;
 

@@ -78,7 +78,7 @@ class Registry::DAO::User : isa(Registry::DAO::Object) {
     method passhash { $passhash }
 }
 
-class Registry::DAO::Customer : isa(Registry::DAO::Object) {
+class Registry::DAO::Tenant : isa(Registry::DAO::Object) {
     use Carp         qw( carp );
     use experimental qw(try);
 
@@ -86,9 +86,8 @@ class Registry::DAO::Customer : isa(Registry::DAO::Object) {
     field $name : param;
     field $slug : param //= lc( $name =~ s/\s+/_/gr );
     field $created_at : param;
-    field $primary_user_id : param;
 
-    use constant table => 'customers';
+    use constant table => 'tenants';
 
     sub create ( $class, $db, $data ) {
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
@@ -100,22 +99,22 @@ class Registry::DAO::Customer : isa(Registry::DAO::Object) {
     method slug { $slug }
 
     method primary_user ($db) {
-        Registry::DAO::User->find( $db, { id => $primary_user_id } );
+        my ($user_id) = $db->select('tenant_users', 'user_id', { tenant_id => $id, is_primary => 1 })->array;
+        Registry::DAO::User->find( $db, { id => $user_id } );
     }
 
     method users ($db) {
-
         # TODO: this should be a join
-        $db->select( 'customer_users', '*', { customer_id => $id } )
+        $db->select( 'tenant_users', '*', { tenant_id => $id } )
           ->hashes->map(
             sub { Registry::DAO::User->find( $db, { id => $_->{user_id} } ) } )
           ->to_array->@*;
     }
 
-    method add_user ( $db, $user ) {
+    method add_user ( $db, $user, $is_primary = 0 ) {
         $db->insert(
-            'customer_users',
-            { customer_id => $id, user_id => $user->id },
+            'tenant_users',
+            { tenant_id => $id, user_id => $user->id, is_primary => $is_primary ? 1 : 0 },
             { returning   => '*' }
         );
     }
