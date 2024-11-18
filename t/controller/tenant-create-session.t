@@ -19,23 +19,23 @@ my $t = Test::Mojo->new('Registry');
     process_workflow(
         $t,
         '/tenant-signup' => {
-            name     => 'Test Customer',
+            name     => 'Test Tenant',
             username => 'Alice',
             password => 'password',
         }
     );
 
-    ok my ($customer) = $dao->find( Customer => { name => 'Test Customer' } ),
-      'got customer';
-    is $customer->primary_user( $dao->db )->username, 'Alice',
+    ok my ($tenant) = $dao->find( Tenant => { name => 'Test Tenant' } ),
+      'got tenant';
+    is $tenant->primary_user( $dao->db )->username, 'Alice',
       'Primary user is correct';
 
-    ok my $customer_dao = $dao->connect_schema( $customer->slug ),
-      'connected to customer schema';
-    ok $customer_dao->find( User => { username => 'Alice' } ),
-      'found Alice in the customer schema';
+    ok my $tenant_dao = $dao->connect_schema( $tenant->slug ),
+      'connected to tenant schema';
+    ok $tenant_dao->find( User => { username => 'Alice' } ),
+      'found Alice in the tenant schema';
 
-    $t->get_ok( '/user-creation', { 'X-As-Customer' => $customer->slug } )
+    $t->get_ok( '/user-creation', { 'X-As-Tenant' => $tenant->slug } )
       ->status_is(200);
     {
         process_workflow(
@@ -44,15 +44,15 @@ my $t = Test::Mojo->new('Registry');
                 username => 'Bob',
                 password => 'password',
             },
-            { 'X-As-Customer' => $customer->slug }
+            { 'X-As-Tenant' => $tenant->slug }
         );
-        ok $customer_dao->find( User => { username => 'Bob' } ),
-          'found bob in the customer schema';
+        ok $tenant_dao->find( User => { username => 'Bob' } ),
+          'found bob in the tenant schema';
         is $dao->find( User => { username => 'Bob' } ), undef,
           'Bob not in the main schema';
     }
 
-    # customes can create sessions
+    # tenants can create sessions
     {
         use Time::Piece qw( localtime );
         my $time = localtime;
@@ -61,9 +61,9 @@ my $t = Test::Mojo->new('Registry');
             '/session-creation' => {
                 name       => 'Test Session',
                 time       => $time->datetime,
-                teacher_id => $customer->primary_user( $dao->db )->id,
+                teacher_id => $tenant->primary_user( $dao->db )->id,
             },
-            { 'X-As-Customer' => $customer->slug }
+            { 'X-As-Tenant' => $tenant->slug }
         );
     }
 }

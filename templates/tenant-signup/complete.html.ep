@@ -1,2 +1,3 @@
 <form action="<%= $action %>">
+<h1><%= $action %></h1>
 </form>

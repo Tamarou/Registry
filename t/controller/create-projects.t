@@ -3,11 +3,8 @@ use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
 use Test::Mojo;
-use Test::More import => [qw( done_testing ok todo )];
+use Test::More import => [qw( done_testing ok $TODO )];
 defer { done_testing };
-
-use Registry::DAO;
-use Test::Registry::DB;
 
 TODO: {
     our $TODO = "Implement project creation workflow tests";

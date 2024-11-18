@@ -53,8 +53,7 @@ package Test::Registry::Helpers {
         while ($url) {
             my ( $action, \@fields, \@workflows ) = get_form($t, $url, $headers );
             for my $workflow (@workflows) {
-                next
-                  if $seen{ [ split( '/', $workflow ) ]->[-1] }++;
+                next if $seen{ [ split( '/', $workflow ) ]->[-1] }++;
                 __SUB__->(
                     $t,
                     submit_form($t, $workflow, $headers, $data->%{@fields} ),

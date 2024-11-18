@@ -3,6 +3,6 @@
 
 users 2024-05-13T17:21:58Z Chris Prather <chris@prather.org> # initial creation of users table and basic schema etc
 workflows [users] 2024-05-13T17:30:35Z Chris Prather <chris@prather.org> # add workflows\n\nWorkflows define a sequence of steps to be executed. We process each step and record the outcome in a workflow run.
-customer-on-boarding [workflows users] 2024-05-20T21:00:32Z Chris Prather <chris@prather.org> # create an onboarding workflow for customers
-schema-based-multitennancy [customer-on-boarding] 2024-05-21T01:43:52Z Chris Prather <chris@prather.org> # add the tools to do the schema-based multi-tenancy
+tenant-on-boarding [workflows users] 2024-05-20T21:00:32Z Chris Prather <chris@prather.org> # create an onboarding workflow for tenants
+schema-based-multitennancy [tenant-on-boarding] 2024-05-21T01:43:52Z Chris Prather <chris@prather.org> # add the tools to do the schema-based multi-tenancy
 events-and-sessions [schema-based-multitennancy] 2024-05-31T03:36:11Z Chris Prather <chris.prather@tamarou.com> # Add events and sessions to the system

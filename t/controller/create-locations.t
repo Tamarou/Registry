@@ -7,8 +7,7 @@ use Test::More import => [qw( done_testing ok todo )];
 
 defer { done_testing };
 
-use Registry::DAO;
-use Test::Registry::DB;
+use Registry::DAO ();
 
 TODO: {
     our $TODO = "Implement location creation workflow tests";

@@ -1,17 +1,17 @@
 use 5.40.0;
 use Object::Pad;
 
-class Registry::Controller::Customers : isa(Mojolicious::Controller) {
+class Registry::Controller::Tenants : isa(Mojolicious::Controller) {
     use List::Util qw( first );
 
-    method customer_slug {
+    method tenant_slug {
         return first { defined }
-          $self->req->cookie('as-customer'),
-          $self->req->headers->header('X-As-Customer');
+          $self->req->cookie('as-tenant'),
+          $self->req->headers->header('X-As-Tenant');
     }
 
     method setup {
-        my $slug = $self->customer_slug;
+        my $slug = $self->tenant_slug;
         return 1 unless $slug;
 
         # set up the DAO helper
