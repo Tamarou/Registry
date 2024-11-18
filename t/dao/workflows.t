@@ -1,11 +1,11 @@
-use 5.38.0;
+use 5.40.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok )];
 defer { done_testing };
 
 use Registry::DAO;
-use Test::Registry::DB qw(DAO Workflow WorkflowRun WorkflowStep);
+use Test::Registry::DB;
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 {    # basics
@@ -17,8 +17,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         }
     );
 
-    is $dao->find( Workflow => { slug => 'test' } )->id, $workflow->id,
-      'find returns the correct workflow';
+    my ($test) = $dao->find( Workflow => { slug => 'test' } );
+    is $test->id, $workflow->id,       'find returns the correct workflow';
     is $workflow->runs( $dao->db ), 0, 'no runs for the workflow yet';
     is $workflow->first_step( $dao->db )->slug, 'landing',
       'the first step is landing';
@@ -29,7 +29,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
       'uatest run is the one we just created';
 
     ok $run->process( $dao->db, $run->next_step( $dao->db ), { count => 1 } );
-    is $run->data()->{landing}{count}, 1, 'run data is updated';
+    is $run->data()->{count}, 1, 'run data is updated';
 }
 
 {
@@ -65,7 +65,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     is $run->next_step( $dao->db )->slug, 'landing', 'next step is landing';
     is $run->latest_step( $dao->db ),     undef,     'no latest step yet';
 
-    is $run->data, undef, 'no data yet';
+    is keys $run->data->%*, 0, 'no data yet';
     ok $run->process( $dao->db, $run->next_step( $dao->db ), {} ),
       'process landing page';
     is $run->latest_step( $dao->db )->slug, 'landing', 'latest step is landing';
@@ -78,8 +78,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     $step = $run->next_step( $dao->db );
     is $step->slug, 'done', 'next step is done';
     $run->process( $dao->db, $step );
-    is $run->next_step( $dao->db ),  undef,       'Next step is correct';
-    is $run->data->{userinfo}{name}, 'Test User', 'run data is updated';
+    is $run->next_step( $dao->db ), undef,       'Next step is correct';
+    is $run->data->{name},          'Test User', 'run data is updated';
 
 }
-

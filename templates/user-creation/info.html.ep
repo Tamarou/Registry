@@ -1,0 +1,5 @@
+<form action="<%= $action %>">
+    <input type="text" name="username" placeholder="Alice" />
+    <input type="password" name="password"/>
+    <input type="submit>Save</input>
+</form>

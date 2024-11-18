@@ -1,13 +1,32 @@
-use v5.38.2;
+use v5.40.0;
 use utf8;
-use experimental qw(class builtin);
+use Object::Pad;
 
-class Registry::DAO::Workflow {
+use Registry::DAO::Object;
+
+class Registry::DAO::Workflow : isa(Registry::DAO::Object) {
     field $id : param;
     field $slug : param;
     field $name : param;
     field $description : param;
     field $first_step : param;
+
+    use constant table => 'registry.workflows';
+
+    sub create ( $class, $db, $data ) {
+        my %data =
+          $db->insert( $class->table, $data, { returning => '*' } )->hash->%*;
+
+        # create the first step
+        Registry::DAO::WorkflowStep->create(
+            $db,
+            {
+                workflow_id => $data{id},
+                slug        => $data{first_step}
+            }
+        );
+        return $class->new(%data);
+    }
 
     method id   { $id }
     method slug { $slug }
@@ -16,6 +35,11 @@ class Registry::DAO::Workflow {
     method first_step ($db) {
         Registry::DAO::WorkflowStep->find( $db,
             { slug => $first_step, workflow_id => $id } );
+    }
+
+    method get_step ( $db, $filter ) {
+        Registry::DAO::WorkflowStep->find( $db,
+            { workflow_id => $id, $filter->%* } );
     }
 
     method last_step ($db) {
@@ -32,50 +56,24 @@ class Registry::DAO::Workflow {
             { $data->%*, workflow_id => $id, depends_on => $last->id } );
     }
 
-    sub find ( $, $db, $filter ) {
-        __PACKAGE__->new( $db->select( 'workflows', '*', $filter )->hash->%* );
-    }
-
-    sub create ( $, $db, $data ) {
-        my %data =
-          $db->insert( 'workflows', $data, { returning => '*' } )->hash->%*;
-
-        # create the first step
-        Registry::DAO::WorkflowStep->create(
-            $db,
-            {
-                workflow_id => $data{id},
-                slug        => $data{first_step}
-            }
-        );
-
-        return __PACKAGE__->new(%data);
-    }
-
-    method start ($db) {
-        Registry::DAO::WorkflowStep->find( $db,
-            { workflow_id => $id, slug => $first_step } );
-    }
-
     method latest_run ( $db, $filter = {} ) {
-        my ($run) = Registry::DAO::WorkflowRun->find( $db,
-            { workflow_id => $id, $filter->%* } );
-
+        my ($run) = $self->runs( $db, $filter );
         return $run;
     }
 
-    method new_run ($db) {
-        Registry::DAO::WorkflowRun->create( $db, { workflow_id => $id } );
+    method new_run ( $db, $config //= {} ) {
+        $config->{workflow_id} //= $id;
+        Registry::DAO::WorkflowRun->create( $db, $config );
     }
 
     method runs ( $db, $filter = {} ) {
-        Registry::DAO::WorkflowRun->find( $db,
+        my @runs = Registry::DAO::WorkflowRun->find( $db,
             { workflow_id => $id, $filter->%* } );
+        return @runs;
     }
 }
 
-class Registry::DAO::WorkflowStep {
-
+class Registry::DAO::WorkflowStep : isa(Registry::DAO::Object) {
     field $id : param;
     field $depends_on : param = undef;
     field $description : param;
@@ -85,24 +83,26 @@ class Registry::DAO::WorkflowStep {
     field $workflow_id : param;
     field $class : param;
 
-    method id { $id }
+    use constant table => 'registry.workflow_steps';
 
-    sub find ( $, $db, $filter ) {
-        my $data = $db->select( 'workflow_steps', '*', $filter )->hash;
+    # we store the subclass name in the database
+    # so we need inflate the correct one
+    sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
+        my $data =
+          $db->select( $class->table, '*', $filter, $order )->expand->hash;
         return unless $data;
         return $data->{class}->new( $data->%* );
     }
 
     sub create ( $class, $db, $data ) {
-        $data->{class} //= __PACKAGE__;
-        $class->new(
-            $db->insert( 'workflow_steps', $data, { returning => '*' } )
-              ->hash->%* );
+        $data->{class} //= $class;
+        $class->SUPER::create( $db, $data );
     }
 
-    method workflow_id { $workflow_id }
+    method id          { $id }
     method slug        { $slug }
     method template_id { $template_id }
+    method workflow_id { $workflow_id }
 
     method next_step ($db) {
         Registry::DAO::WorkflowStep->find( $db, { depends_on => $id } );
@@ -117,66 +117,64 @@ class Registry::DAO::WorkflowStep {
     }
 
     method process ( $db, $data ) { $data }
-
-    method runs ($db) {
-        Registry::DAO::WorkflowRun->find(
-            $db,
-            {
-                workflow_id => $workflow_id,
-                step_id     => $id,
-            }
-        );
-    }
 }
 
-class Registry::DAO::WorkflowRun {
+class Registry::DAO::WorkflowRun : isa(Registry::DAO::Object) {
     use Mojo::JSON qw(encode_json);
+    use Carp       qw( croak );
 
-    field $id : param;
+    field $id : param      = 0;
     field $user_id : param = 0;
     field $workflow_id : param;
-    field $latest_step_id : param;
-    field $data : param = {};
+    field $latest_step_id : param  = undef;
+    field $continuation_id : param = undef;
+    field $data : param //=
+      {};    # might be null, we want it to always be an empty hash
     field $created_at : param;
 
-    sub find ( $, $db, $filter ) {
-        $db->select( 'workflow_runs', '*', $filter )
-          ->expand->hashes->map( sub { __PACKAGE__->new( $_->%* ) } )
-          ->to_array->@*;
+    use constant table => 'registry.workflow_runs';
+
+    method id()   { $id }
+    method data() { $data }
+
+    method workflow ($db) {
+        Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
     }
 
-    sub create ( $class, $db, $data ) {
-        $class->new(
-            $db->insert( 'workflow_runs', $data, { returning => '*' } )
-              ->hash->%* );
+    method completed ($db) {
+        my ($workflow) = $self->workflow($db);
+        $self->latest_step($db)->slug eq $workflow->last_step($db)->slug;
     }
-
-    sub find_or_create ( $class, $db, $data ) {
-        return ( find( $class, $db, $data ) || create( $class, $db, $data ) );
-    }
-
-    method id()             { $id }
-    method latest_step_id() { $latest_step_id }
-    method data()           { $data }
 
     method latest_step ($db) {
         Registry::DAO::WorkflowStep->find( $db, { id => $latest_step_id } );
+    }
+
+    method update_data ( $db, $new_data ||= {} ) {
+        croak "new data must be a hashref" unless ref $new_data eq 'HASH';
+        $data = $db->update(
+            $self->table,
+            { data      => encode_json( { $data->%*, $new_data->%* } ) },
+            { id        => $id },
+            { returning => ['data'] }
+        )->expand->hash->{data};
     }
 
     method process ( $db, $step, $new_data = {} ) {
         unless ( $step isa Registry::DAO::WorkflowStep ) {
             $step = Registry::DAO::WorkflowStep->find( $db, $step );
         }
-        $data->{ $step->slug } = $step->process( $db, $new_data );
-        ( $latest_step_id, $data ) = $db->update(
-            'workflow_runs',
-            {
-                latest_step_id => $step->id,
-                data           => encode_json($data),
-            },
-            { id        => $id },
-            { returning => [qw(latest_step_id data)] }
-        )->expand->hash->@{qw(latest_step_id data)};
+
+        # TODO we really should inline these two calls into a single query
+        $self->update_data( $db, $step->process( $db, $new_data ) );
+        ($latest_step_id) = $db->update(
+            $self->table,
+            { latest_step_id => $step->id },
+            { id             => $id },
+            { returning      => [qw(latest_step_id)] }
+        )->expand->hash->@{qw(latest_step_id)};
+
+        return $data;
     }
 
     method next_step ($db) {
@@ -187,5 +185,12 @@ class Registry::DAO::WorkflowRun {
                 depends_on  => $latest_step_id,
             }
         );
+    }
+
+    method has_continuation { defined $continuation_id }
+
+    method continuation ($db) {
+        return unless $continuation_id;
+        Registry::DAO::WorkflowRun->find( $db, { id => $continuation_id } );
     }
 }

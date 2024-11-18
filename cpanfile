@@ -1,9 +1,11 @@
-#requires "Mojolicious";
-#requires "Mojolicious::Plugin::HTMX";
+requires 'perl' => 'v5.40.0';
 requires 'App::Sqitch';
-requires 'Test::PostgreSQL';
-requires 'Mojo::Pg';
 requires 'Crypt::Passphrase';
 requires 'Crypt::Passphrase::Argon2';
 requires 'Crypt::Passphrase::Bcrypt';
+requires 'Mojo::Pg';
+requires 'Mojolicious';
 
+#requires "Mojolicious::Plugin::HTMX";
+requires 'Object::Pad';
+requires 'Test::PostgreSQL';

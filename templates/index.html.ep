@@ -1,0 +1,41 @@
+<html>
+<head>
+    <title>Registry</title>
+</head>
+<body>
+
+<header>
+    <h1>Welcome to Registry</h1>
+    <p class="subtitle">Transform Your Educational Programs with Ease</p>
+</header>
+<main>
+<p>Are you passionate about creating impactful after-school enrichment programs? Our all-in-one registry application is designed for advanced users and program developers like you who want to optimize, streamline, and elevate their educational offerings.</p>
+
+<h2>Why You'll Love Registry</h2>
+
+<ul>
+    <li><strong>Make a Meaningful Impact</strong>: Design and manage programs that truly make a difference. Whether you’re crafting unique sessions or tailoring classes to meet specific needs, we have the tools to help you inspire and engage your students.</li>
+
+    <li><strong>Streamline Your Processes</strong>: Say goodbye to juggling multiple spreadsheets and calendars. With our intuitive interface, you can plan, schedule, and track everything in one place. Create sessions, assign teachers, manage locations, and handle enrollments effortlessly.</li>
+
+    <li><strong>Stay Informed</strong>: Keep your finger on the pulse with real-time updates and notifications. From tracking attendance to monitoring progress, our app ensures you’re always in the loop. Plus, our detailed reports give you insights to continuously improve your programs.</li>
+
+    <li><strong>Easy Curriculum Management</strong>: Organize and access all your lesson plans, materials, and printouts in a few clicks. No more scrambling for resources at the last minute – everything you need is right at your fingertips.</li>
+
+    <li><strong>Collaborate and Communicate</strong>: Connect with your team seamlessly. Assign tasks, share updates, and ensure everyone is on the same page, making coordination a breeze.</li>
+</ul>
+
+<h2>Ready to Elevate Your Programs?</h2>
+
+<p>Join a community of forward-thinking educators who are transforming their
+programs with Registry. It’s time to make your life easier and your programs
+more impactful.</p>
+
+<p>Let’s create something amazing together!</p>
+
+% my $signup_url = url_for "workflow_start", workflow => 'tenant-signup';
+<a class="button" rel="create-page customer" href="<%= $signup_url %>">Sign Up</a>
+</main>
+
+</body>
+</html>

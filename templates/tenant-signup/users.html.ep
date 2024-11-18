@@ -1,0 +1,4 @@
+% my $users_url = url_for "workflow_callcc", target => 'user-creation';
+<form action="<%= $action %>">
+    <a rel="create-page user" href="<%= $users_url%>">Add User</a>
+</form>

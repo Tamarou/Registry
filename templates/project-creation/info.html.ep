@@ -1,0 +1,5 @@
+<form action="<%= $action %>">
+    <input type="text" name="name" placeholder="Project Name" />
+    <input type="text" name="notes" placeholder="Project Notes" />
+    <input type="submit>Save</input>
+</form>

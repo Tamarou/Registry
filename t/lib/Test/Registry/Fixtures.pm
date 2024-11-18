@@ -1,4 +1,4 @@
-use 5.38.0;
+use 5.40.0;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Registry::DAO;
@@ -13,4 +13,3 @@ package Test::Registry::Fixtures {
     }
 
 }
-
