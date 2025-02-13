@@ -4,7 +4,7 @@ use Object::Pad;
 
 use Registry::DAO::Workflow;
 
-class Registry::DAO::CreateProject : isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::CreateProject :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -22,7 +22,7 @@ class Registry::DAO::CreateProject : isa(Registry::DAO::WorkflowStep) {
     }
 }
 
-class Registry::DAO::CreateLocation : isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::CreateLocation :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -41,7 +41,7 @@ class Registry::DAO::CreateLocation : isa(Registry::DAO::WorkflowStep) {
     }
 }
 
-class Registry::DAO::RegisterTenant : isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -65,6 +65,19 @@ class Registry::DAO::RegisterTenant : isa(Registry::DAO::WorkflowStep) {
             $tenant->slug, $_->id )
           for @users;
 
+        my @workflows =
+          map { Registry::DAO::Workflow->find( $db, { slug => $_ } ) }
+          qw(
+          user-creation
+          session-creation
+          project-creation
+          location-creation
+          );    # TODO add workflow-creation
+
+        $db->query( 'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
+            $tenant->slug, $_->id )
+          for @workflows;
+
         if ( $run->has_continuation ) {
             my ($continuation) = $run->continuation($db);
             my $tenants = $continuation->data->{tenants} // [];
@@ -77,7 +90,7 @@ class Registry::DAO::RegisterTenant : isa(Registry::DAO::WorkflowStep) {
     }
 }
 
-class Registry::DAO::CreateEvent : isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::CreateEvent :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -121,7 +134,7 @@ class Registry::DAO::CreateEvent : isa(Registry::DAO::WorkflowStep) {
     }
 }
 
-class Registry::DAO::CreateSession : isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::CreateSession :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -148,7 +161,7 @@ class Registry::DAO::CreateSession : isa(Registry::DAO::WorkflowStep) {
     }
 }
 
-class Registry::DAO::CreateUser : isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::CreateUser :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);

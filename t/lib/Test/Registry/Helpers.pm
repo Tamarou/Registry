@@ -2,19 +2,21 @@ use 5.40.0;
 
 package Test::Registry::Helpers {
     use experimental qw(builtin declared_refs);
-    use builtin qw(export_lexically);
-    sub import(@){ 
+    use builtin      qw(export_lexically);
+
+    sub import(@) {
         no warnings;
-        export_lexically (
-            process_workflow => __PACKAGE__->can('process_workflow'),
-            workflow_process_step_url => __PACKAGE__->can('workflow_process_step_url'),
+        export_lexically(
+            process_workflow          => __PACKAGE__->can('process_workflow'),
+            workflow_process_step_url =>
+              __PACKAGE__->can('workflow_process_step_url'),
             workflow_run_step_url => __PACKAGE__->can('workflow_run_step_url'),
-            workflow_start_url => __PACKAGE__->can('workflow_start_url'),
-            workflow_url => __PACKAGE__->can('workflow_url'),
-        ); 
+            workflow_start_url    => __PACKAGE__->can('workflow_start_url'),
+            workflow_url          => __PACKAGE__->can('workflow_url'),
+        );
     }
 
-    my sub get_form ($t,  $url, $headers ) {
+    my sub get_form ( $t, $url, $headers ) {
         my $form = $t->get_ok( $url, $headers )->status_is(200)
           ->tx->res->dom->at('form');
         return unless $form;
@@ -30,10 +32,11 @@ package Test::Registry::Helpers {
           $form->find('a')
           ->grep( sub ( $a = $_ ) { $a->attr('rel') =~ /\bcreate-page\b/ } )
           ->map( sub ( $a  = $_ ) { $a->attr('href') } )->to_array->@*;
+
         return $action, \@fields, \@workflows;
     }
 
-    my sub submit_form ($t,  $url, $headers, %data ) {
+    my sub submit_form ( $t, $url, $headers, %data ) {
         my $req = $t->post_ok( $url, $headers, form => \%data );
         if ( $req->tx->res->code == 302 ) {
             return $req->status_is(302)->tx->res->headers->location;
@@ -47,20 +50,21 @@ package Test::Registry::Helpers {
         }
     }
 
-    sub process_workflow ($t, $start, $data, $headers = {}, ) {
+    sub process_workflow ( $t, $start, $data, $headers = {}, ) {
         state %seen;    # only process each sub-workflow once
         my $url = $start;
         while ($url) {
-            my ( $action, \@fields, \@workflows ) = get_form($t, $url, $headers );
+            my ( $action, \@fields, \@workflows ) =
+              get_form( $t, $url, $headers );
             for my $workflow (@workflows) {
                 next if $seen{ [ split( '/', $workflow ) ]->[-1] }++;
                 __SUB__->(
                     $t,
-                    submit_form($t, $workflow, $headers, $data->%{@fields} ),
+                    submit_form( $t, $workflow, $headers, $data->%{@fields} ),
                     $data, $headers
                 );
             }
-            $url = submit_form($t, $action, $headers, $data->%{@fields} );
+            $url = submit_form( $t, $action, $headers, $data->%{@fields} );
         }
     }
 

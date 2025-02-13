@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <title>Create Event</title>
+        <title>Login</title>
     </head>
     <body>
         <header>
-            <h1>Create an Event</h1>
+            <h1>Login</h1>
             <p></p>
         </header>
         <main>

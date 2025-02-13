@@ -34,15 +34,15 @@ class Registry::DAO::Object {
 
 }
 
-class Registry::DAO::User : isa(Registry::DAO::Object) {
+class Registry::DAO::User :isa(Registry::DAO::Object) {
     use Carp         qw( carp );
     use experimental qw(try);
     use Crypt::Passphrase;
 
-    field $id : param;
-    field $username : param;
-    field $passhash : param = '';
-    field $created_at : param;
+    field $id :param;
+    field $username :param;
+    field $passhash :param = '';
+    field $created_at :param;
 
     use constant table => 'users';
 
@@ -78,14 +78,14 @@ class Registry::DAO::User : isa(Registry::DAO::Object) {
     method passhash { $passhash }
 }
 
-class Registry::DAO::Tenant : isa(Registry::DAO::Object) {
+class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Carp         qw( carp );
     use experimental qw(try);
 
-    field $id : param = undef;
-    field $name : param;
-    field $slug : param //= lc( $name =~ s/\s+/_/gr );
-    field $created_at : param;
+    field $id :param = undef;
+    field $name :param;
+    field $slug :param //= lc( $name =~ s/\s+/_/gr );
+    field $created_at :param;
 
     use constant table => 'tenants';
 
@@ -99,11 +99,13 @@ class Registry::DAO::Tenant : isa(Registry::DAO::Object) {
     method slug { $slug }
 
     method primary_user ($db) {
-        my ($user_id) = $db->select('tenant_users', 'user_id', { tenant_id => $id, is_primary => 1 })->array;
+        my ($user_id) = $db->select( 'tenant_users', 'user_id',
+            { tenant_id => $id, is_primary => 1 } )->array;
         Registry::DAO::User->find( $db, { id => $user_id } );
     }
 
     method users ($db) {
+
         # TODO: this should be a join
         $db->select( 'tenant_users', '*', { tenant_id => $id } )
           ->hashes->map(
@@ -114,19 +116,23 @@ class Registry::DAO::Tenant : isa(Registry::DAO::Object) {
     method add_user ( $db, $user, $is_primary = 0 ) {
         $db->insert(
             'tenant_users',
-            { tenant_id => $id, user_id => $user->id, is_primary => $is_primary ? 1 : 0 },
-            { returning   => '*' }
+            {
+                tenant_id  => $id,
+                user_id    => $user->id,
+                is_primary => $is_primary ? 1 : 0
+            },
+            { returning => '*' }
         );
     }
 }
 
-class Registry::DAO::Location : isa(Registry::DAO::Object) {
-    field $id : param;
-    field $name : param;
-    field $slug : param;
-    field $metadata : param;
-    field $notes : param;
-    field $created_at : param;
+class Registry::DAO::Location :isa(Registry::DAO::Object) {
+    field $id :param;
+    field $name :param;
+    field $slug :param;
+    field $metadata :param;
+    field $notes :param;
+    field $created_at :param;
 
     use constant table => 'locations';
 
@@ -139,13 +145,13 @@ class Registry::DAO::Location : isa(Registry::DAO::Object) {
     method name { $name }
 }
 
-class Registry::DAO::Project : isa(Registry::DAO::Object) {
-    field $id : param;
-    field $name : param;
-    field $slug : param;
-    field $metadata : param;
-    field $notes : param;
-    field $created_at : param;
+class Registry::DAO::Project :isa(Registry::DAO::Object) {
+    field $id :param :reader;
+    field $name :param;
+    field $slug :param;
+    field $metadata :param;
+    field $notes :param;
+    field $created_at :param;
 
     use constant table => 'projects';
 
@@ -154,5 +160,15 @@ class Registry::DAO::Project : isa(Registry::DAO::Object) {
         $class->SUPER::create( $db, $data );
     }
 
-    method id { $id }
+}
+
+class Registry::DAO::Template :isa(Registry::DAO::Object) {
+    field $id :param :reader;
+    field $name :param :reader;
+    field $html :param :reader;
+    field $metadata :param;
+    field $notes :param;
+    field $created_at :param;
+
+    use constant table => 'templates';
 }

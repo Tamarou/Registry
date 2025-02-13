@@ -4,14 +4,15 @@ use Object::Pad;
 
 use Registry::DAO::Object;
 
-class Registry::DAO::Workflow : isa(Registry::DAO::Object) {
-    field $id : param;
-    field $slug : param;
-    field $name : param;
-    field $description : param;
-    field $first_step : param;
+class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
+    field $id :param :reader;
+    field $slug :param :reader;
+    field $name :param :reader;
+    field $description :param :reader;
 
-    use constant table => 'registry.workflows';
+    field $first_step :param;
+
+    use constant table => 'workflows';
 
     sub create ( $class, $db, $data ) {
         my %data =
@@ -27,10 +28,6 @@ class Registry::DAO::Workflow : isa(Registry::DAO::Object) {
         );
         return $class->new(%data);
     }
-
-    method id   { $id }
-    method slug { $slug }
-    method name { $name }
 
     method first_step ($db) {
         Registry::DAO::WorkflowStep->find( $db,
@@ -73,21 +70,23 @@ class Registry::DAO::Workflow : isa(Registry::DAO::Object) {
     }
 }
 
-class Registry::DAO::WorkflowStep : isa(Registry::DAO::Object) {
-    field $id : param;
-    field $depends_on : param = undef;
-    field $description : param;
-    field $metadata : param = {};
-    field $slug : param;
-    field $template_id : param = undef;
-    field $workflow_id : param;
-    field $class : param;
+class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
+    field $id :param :reader;
+    field $slug :param :reader;
+    field $workflow_id :param :reader;
+    field $template_id :param :reader = undef;
+    field $description :param :reader;
 
-    use constant table => 'registry.workflow_steps';
+    field $depends_on :param = undef;
+    field $metadata :param   = {};
+    field $class :param;
+
+    use constant table => 'workflow_steps';
 
     # we store the subclass name in the database
     # so we need inflate the correct one
     sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
+        $db = $db->db if $db isa Registry::DAO;
         my $data =
           $db->select( $class->table, '*', $filter, $order )->expand->hash;
         return unless $data;
@@ -99,17 +98,24 @@ class Registry::DAO::WorkflowStep : isa(Registry::DAO::Object) {
         $class->SUPER::create( $db, $data );
     }
 
-    method id          { $id }
-    method slug        { $slug }
-    method template_id { $template_id }
-    method workflow_id { $workflow_id }
-
     method next_step ($db) {
         Registry::DAO::WorkflowStep->find( $db, { depends_on => $id } );
     }
 
     method template ($db) {
-        Registry::DAO::Template->find( $db, { id => $template_id } );
+        die "no template set for step $slug ($id)" unless $template_id;
+        return Registry::DAO::Template->find( $db, { id => $template_id } );
+    }
+
+    method set_template ( $db, $template_id ) {
+        $template_id = $template_id->id
+          if $template_id isa Registry::DAO::Template;
+        $db = $db->db if $db isa Registry::DAO;
+        $db->update(
+            $self->table,
+            { template_id => $template_id },
+            { id          => $id }
+        );
     }
 
     method workflow ($db) {
@@ -119,20 +125,20 @@ class Registry::DAO::WorkflowStep : isa(Registry::DAO::Object) {
     method process ( $db, $data ) { $data }
 }
 
-class Registry::DAO::WorkflowRun : isa(Registry::DAO::Object) {
+class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(encode_json);
     use Carp       qw( croak );
 
-    field $id : param      = 0;
-    field $user_id : param = 0;
-    field $workflow_id : param;
-    field $latest_step_id : param  = undef;
-    field $continuation_id : param = undef;
-    field $data : param //=
+    field $id :param      = 0;
+    field $user_id :param = 0;
+    field $workflow_id :param;
+    field $latest_step_id :param  = undef;
+    field $continuation_id :param = undef;
+    field $data :param //=
       {};    # might be null, we want it to always be an empty hash
-    field $created_at : param;
+    field $created_at :param;
 
-    use constant table => 'registry.workflow_runs';
+    use constant table => 'workflow_runs';
 
     method id()   { $id }
     method data() { $data }
@@ -177,7 +183,19 @@ class Registry::DAO::WorkflowRun : isa(Registry::DAO::Object) {
         return $data;
     }
 
+    method first_step ($db) {
+        return $self->workflow($db)->first_step($db) unless $latest_step_id;
+        Registry::DAO::WorkflowStep->find(
+            $db,
+            {
+                workflow_id => $workflow_id,
+                depends_on  => $latest_step_id,
+            }
+        ) // $self->workflow($db)->first_step($db);
+    }
+
     method next_step ($db) {
+        return $self->first_step($db) unless $latest_step_id;
         Registry::DAO::WorkflowStep->find(
             $db,
             {

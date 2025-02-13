@@ -1,7 +1,7 @@
 use 5.40.0;
 use Object::Pad;
 
-class Registry::Controller::Tenants : isa(Mojolicious::Controller) {
+class Registry::Controller::Tenants :isa(Registry::Controller) {
     use List::Util qw( first );
 
     method tenant_slug {
@@ -25,6 +25,6 @@ class Registry::Controller::Tenants : isa(Mojolicious::Controller) {
     }
 
     method index {
-        $self->render('index');
+        $self->render( template => 'index' );
     }
 }

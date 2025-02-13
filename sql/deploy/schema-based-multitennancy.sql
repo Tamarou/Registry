@@ -9,9 +9,6 @@ SET search_path TO registry, public;
 -- This was entirely taken from stack overflow here:
 -- https://stackoverflow.com/questions/2370614/copy-schema-and-create-new-schema-with-different-name-in-the-same-data-base/48732283#48732283
 
--- Function: clone_schema(source text, dest text, include_records boolean
--- default true, show_details boolean default false)
-
 CREATE OR REPLACE FUNCTION copy_user(
     dest_schema text,
     user_id uuid,
@@ -47,10 +44,112 @@ $BODY$
 LANGUAGE plpgsql VOLATILE
 COST 100;
 
+CREATE OR REPLACE FUNCTION copy_workflow(
+    dest_schema text,
+    workflow_id uuid,
+    source_schema text DEFAULT 'registry'
+) RETURNS void AS
+$BODY$
+
+DECLARE
+    new_workflow_id uuid;
+    old_template_id uuid;
+    new_template_id uuid;
+    old_step_id uuid;
+    new_step_id uuid;
+BEGIN
+    -- Check that source_schema exists
+    PERFORM nspname
+    FROM pg_namespace
+    WHERE nspname = quote_ident(source_schema);
+    IF NOT FOUND THEN
+        RAISE NOTICE 'Source schema % does not exist!', source_schema;
+        RETURN;
+    END IF;
+
+    -- Check that dest_schema exists
+    PERFORM nspname
+    FROM pg_namespace
+    WHERE nspname = quote_ident(dest_schema);
+    IF NOT FOUND THEN
+        RAISE NOTICE 'Destination schema % does not exist!', dest_schema;
+        RETURN;
+    END IF;
+
+    -- Copy the workflow
+    EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflows (name, slug, description)
+              SELECT name, slug, description
+              FROM ' || quote_ident(source_schema) || '.workflows
+              WHERE id = ' || quote_literal(workflow_id) || ' RETURNING id'
+    INTO new_workflow_id;
+
+    IF new_workflow_id IS NULL THEN
+        RAISE NOTICE 'Workflow with ID % does not exist in source schema!', workflow_id;
+        RETURN;
+    END IF;
+
+    -- Create a temporary table for mapping old to new step IDs
+    CREATE TEMP TABLE old_to_new_step_ids (
+        old_step_id uuid,
+        new_step_id uuid
+    );
+
+    -- Copy associated templates and store new template IDs
+    FOR old_template_id IN
+        EXECUTE 'SELECT id
+                  FROM ' || quote_ident(source_schema) || '.templates
+                  WHERE id IN (
+                      SELECT template_id FROM ' || quote_ident(source_schema) || '.workflow_steps
+                      WHERE workflow_id = ' || quote_literal(workflow_id) || '
+                  )'
+    LOOP
+        -- Insert the template and get the new ID
+        EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.templates (name, html, metadata)
+                  SELECT name, html, metadata
+                  FROM ' || quote_ident(source_schema) || '.templates
+                  WHERE id = ' || quote_literal(old_template_id) || ' RETURNING id'
+        INTO new_template_id;
+
+        -- Copy associated steps using the new template ID
+        FOR old_step_id IN
+            EXECUTE 'SELECT id FROM ' || quote_ident(source_schema) || '.workflow_steps
+                      WHERE workflow_id = ' || quote_literal(workflow_id) || ' AND template_id = ' || quote_literal(old_template_id)
+        LOOP
+            EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflow_steps (workflow_id, slug, description, template_id)
+                      SELECT ' || quote_literal(new_workflow_id) || ', slug, description, ' || quote_literal(new_template_id) || '
+                      FROM ' || quote_ident(source_schema) || '.workflow_steps
+                      WHERE id = ' || quote_literal(old_step_id) || ' RETURNING id'
+            INTO new_step_id;  -- Capture only the new step ID
+
+            -- Store the mapping of old to new step IDs in the temporary table
+            EXECUTE 'INSERT INTO old_to_new_step_ids (old_step_id, new_step_id)
+                      VALUES (' || quote_literal(old_step_id) || ', ' || quote_literal(new_step_id) || ');';
+        END LOOP;  -- End of old_step_id loop
+    END LOOP;  -- End of old_template_id loop
+
+    -- Now update the depends_on relationships for the new steps
+    FOR old_step_id IN
+        EXECUTE 'SELECT id FROM ' || quote_ident(source_schema) || '.workflow_steps
+                  WHERE workflow_id = ' || quote_literal(workflow_id)
+    LOOP
+        -- Update the new step to reference the new dependency
+        EXECUTE 'UPDATE ' || quote_ident(dest_schema) || '.workflow_steps
+                  SET depends_on = (SELECT new_step_id FROM old_to_new_step_ids WHERE old_step_id = ' || quote_literal(old_step_id) || ')
+                  WHERE depends_on = ' || quote_literal(old_step_id) || ';';
+    END LOOP;  -- End of old_step_id loop
+
+    -- Clean up
+    DROP TABLE old_to_new_step_ids;
+    RAISE NOTICE 'Workflow % copied to % schema with ID %', workflow_id, dest_schema, new_workflow_id;
+
+END;
+$BODY$
+LANGUAGE plpgsql VOLATILE
+COST 100;
+
 CREATE OR REPLACE FUNCTION clone_schema(
     dest_schema text,
     source_schema text DEFAULT 'registry',
-    include_recs boolean DEFAULT false, -- include records
     show_details boolean DEFAULT false  -- be verbose
 ) RETURNS void AS
 $BODY$
@@ -153,7 +252,6 @@ BEGIN
     ELSE
       EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
     END IF;
-    IF show_details THEN RAISE NOTICE 'Sequence created: %', object; END IF;
   END LOOP;
 
   -- Create tables
@@ -167,12 +265,6 @@ BEGIN
     buffer := dest_schema || '.' || quote_ident(object);
     EXECUTE 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
 
-    IF include_recs
-    THEN
-      -- Insert records from source table
-      EXECUTE 'INSERT INTO ' || buffer || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';';
-    END IF;
-
     FOR column_, default_ IN
     SELECT column_name::text,
       REPLACE(column_default::text, source_schema, dest_schema)
@@ -184,7 +276,6 @@ BEGIN
       EXECUTE 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_;
     END LOOP;
 
-    IF show_details THEN RAISE NOTICE 'base table created: %', object; END IF;
 
   END LOOP;
 
@@ -199,7 +290,6 @@ BEGIN
         AND ct.contype = 'f'
 
   LOOP
-    IF show_details THEN RAISE NOTICE 'Creating FK constraint %.%...', xrec.tb_name, xrec.fk_name; END IF;
     --RAISE NOTICE 'DEF: %', xrec.qry;
     EXECUTE xrec.qry;
   END LOOP;
@@ -211,7 +301,6 @@ BEGIN
   WHERE pronamespace = src_oid
 
   LOOP
-    IF show_details THEN RAISE NOTICE 'Creating function %...', xrec.func_name; END IF;
     SELECT pg_get_functiondef(xrec.func_oid) INTO qry;
     SELECT replace(qry, source_schema_dot, '') INTO dest_qry;
     EXECUTE dest_qry;
@@ -260,7 +349,6 @@ BEGIN
 
   LOOP
     buffer := dest_schema || '.' || quote_ident(rec.trigger_table);
-    IF show_details THEN RAISE NOTICE 'Creating trigger % % % ON %...', rec.trigger_name, rec.action_timing, rec.trigger_event, rec.trigger_table; END IF;
     EXECUTE 'CREATE TRIGGER ' || rec.trigger_name || ' ' || rec.action_timing
             || ' ' || rec.trigger_event || ' ON ' || buffer || ' FOR EACH '
             || rec.trigger_level || ' ' || replace(rec.action_statement, source_schema_dot, '');
@@ -280,7 +368,6 @@ BEGIN
     FROM information_schema.views
     WHERE table_schema = quote_ident(source_schema)
           AND table_name = quote_ident(object);
-    IF show_details THEN RAISE NOTICE 'Creating view % AS %', object, regexp_replace(v_def, '[\n\r]+', ' ', 'g'); END IF;
     EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
 
   END LOOP;

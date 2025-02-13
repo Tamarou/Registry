@@ -14,8 +14,8 @@ class Registry::DAO {
     use experimental qw(builtin);
     use builtin      qw(blessed);
 
-    field $url :param :reader//= $ENV{DB_URL};
-    field $schema : param = 'registry';
+    field $url :param :reader //= $ENV{DB_URL};
+    field $schema :param = 'registry';
     field $pg = Mojo::Pg->new($url)->search_path( [ $schema, 'public' ] );
     field $db :reader = $pg->db;
 
@@ -41,5 +41,9 @@ class Registry::DAO {
 
     method connect_schema ($schema) {
         return blessed($self)->new( url => $url, schema => $schema );
+    }
+
+    method registry_tenant() {
+        return $self->find( 'Registry::DAO::Tenant', { slug => 'registry' } );
     }
 }

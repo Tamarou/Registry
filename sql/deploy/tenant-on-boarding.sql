@@ -20,6 +20,13 @@ CREATE TABLE IF NOT EXISTS tenants (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Add a system tenant 
+INSERT INTO tenants (name, slug)
+VALUES (
+    'Registry System',
+    'registry'
+) ON CONFLICT (slug) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS tenant_profiles (
     tenant_id UUID PRIMARY KEY REFERENCES tenants (id),
     description TEXT,

@@ -1,12 +1,7 @@
 use 5.38.0;
 use Object::Pad;
 
-class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
-
-    method workflow ( $slug = $self->param('workflow') ) {
-        my $dao = $self->app->dao;
-        return $dao->find( Workflow => { slug => $slug } );
-    }
+class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     method run ( $id = $self->param('run') ) {
         my $dao = $self->app->dao;
@@ -23,11 +18,11 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
     }
 
     method index() {
-        my $dao = $self->app->dao;
-        my ($workflow) = $self->workflow();
+        my $dao      = $self->app->dao;
+        my $workflow = $self->workflow();
 
         $self->render(
-            template => $self->param('workflow') . '/index',
+            workflow => $workflow,
             action   => $self->url_for('workflow_start')
         );
     }
@@ -39,7 +34,7 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
             $self->url_for(
                 'workflow_step',
                 run  => $run->id,
-                step => $run->next_step( $dao->db )->slug,
+                step => $run->first_step( $dao->db )->slug,
             )
         );
     }
@@ -49,7 +44,8 @@ class Registry::Controller::Workflows : isa(Mojolicious::Controller) {
         my $run = $self->run();
 
         return $self->render(
-            template => $self->param('workflow') . '/' . $self->param('step'),
+            workflow => $self->param('workflow'),
+            step     => $self->param('step'),
             status   => 200,
             action   => $self->url_for('workflow_process_step'),
         );

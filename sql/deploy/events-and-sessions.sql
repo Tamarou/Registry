@@ -69,6 +69,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- CREATE THE BASIC APP WORKFLOWS
+INSERT INTO workflows (name, slug, description)
+VALUES ('App Workflow', '__default__', 'The default workflow');
+
+INSERT INTO workflow_steps (slug, workflow_id, description)
+VALUES (
+    'landing',
+    (SELECT id FROM workflows WHERE slug = '__default__'),
+    'Default Landing page'
+);
 
 -- CREATE THE BASIC EVENT CREATION WORKFLOW
 

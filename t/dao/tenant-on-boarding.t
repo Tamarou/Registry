@@ -5,8 +5,9 @@ use experimental qw(defer builtin);
 use Test::More import => [qw( done_testing is )];
 defer { done_testing };
 
-use Registry::DAO;
-use Test::Registry::DB;
+use Registry::DAO qw(WorkflowStep);
+use Test::Registry::DB ();
+
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 {
@@ -17,7 +18,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
       'First step name is correct';
     is $workflow->last_step( $dao->db )->slug, 'complete',
       'Last step name is correct';
-    is $workflow->last_step( $dao->db ) isa WorkflowStep,
+    is $workflow->last_step( $dao->db ) isa Registry::DAO::WorkflowStep,
       1, 'Next step isa WorkflowStep';
     is blessed $workflow->last_step( $dao->db ),
       'Registry::DAO::RegisterTenant',
