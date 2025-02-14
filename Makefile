@@ -4,10 +4,13 @@ test:
 	carton exec prove -lr t/
 
 dev-server:
-	carton exec morbo ./app.pl
+	carton exec morbo ./registry
 
 clean-db:
-	dropdb registry; createdb registry; carton exec sqitch deploy
+	dropdb registry
+	createdb registry
+	carton exec sqitch deploy
+	carton exec ./registry template import registry
 
 
 help:

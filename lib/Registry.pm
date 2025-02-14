@@ -1,7 +1,7 @@
 use 5.40.0;
 use Object::Pad;
 
-class Registry : isa(Mojolicious) {
+class Registry :isa(Mojolicious) {
     our $VERSION = '0.000';
 
     use Sys::Hostname qw( hostname );
@@ -9,6 +9,9 @@ class Registry : isa(Mojolicious) {
 
     method startup {
         $self->secrets( [hostname] );
+
+        # Add another namespace to load commands from
+        push $self->commands->namespaces->@*, 'Registry::Command';
 
         $self->helper(
             dao => sub {
@@ -18,52 +21,9 @@ class Registry : isa(Mojolicious) {
 
         $self->hook(
             before_server_start => sub ( $server, @ ) {
-                my $dao             = Registry::DAO->new( url => $ENV{DB_URL} );
-                my $registry_tenant = $dao->registry_tenant;
-
-                my $template_dir = Mojo::File->new('templates');
-                my @template_files =
-                  $template_dir->list_tree->grep(qr/\.html\.ep$/)->each;
-
-                my $imported = 0;
-                for my $file (@template_files) {
-                    my $name = $file->to_rel('templates') =~ s/.html.ep//r;
-
-                    next
-                      if $dao->find(
-                        'Registry::DAO::Template' => { name => $name, } );
-
-                    my ( $workflow, $step ) = $name =~ /^(?:(.*)\/)?(.*)$/;
-                    $workflow //= '__default__';    # default workflow
-                    $step = 'landing'
-                      if $step eq 'index';    # landing is the default step
-
-                    $server->app->log->debug(
-                        "Importing template $name ($workflow / $step)");
-
-                    my $template = $dao->create(
-                        'Registry::DAO::Template' => {
-                            name => $name,
-                            html => $file->slurp,
-                        }
-                    );
-
-                    if ($template) {
-                        my $workflow = $dao->find(
-                            'Registry::DAO::Workflow' => { slug => $workflow, }
-                        );
-
-                        if ( my $step =
-                            $workflow->get_step( $dao, { slug => $step } ) )
-                        {
-                            $step->set_template( $dao, $template );
-                        }
-                    }
-
-                    $imported++;
-                }
-                $server->app->log->info("Imported $imported templates")
-                  if $imported;
+                my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
+                Registry::DAO::Template->import_templates( $dao,
+                    sub { $server->app->log->debug(@_) } );
             }
         );
 

@@ -6,6 +6,7 @@ class Registry::DAO::Object {
     use Carp         qw( carp );
     use experimental qw(builtin try);
     use builtin      qw(blessed);
+
     sub table($) { ... }
 
     sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
@@ -79,13 +80,10 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 }
 
 class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
-    use Carp         qw( carp );
-    use experimental qw(try);
-
-    field $id :param = undef;
-    field $name :param;
-    field $slug :param //= lc( $name =~ s/\s+/_/gr );
-    field $created_at :param;
+    field $id :param :reader = undef;
+    field $name :param :reader;
+    field $slug :param :reader //= lc( $name =~ s/\s+/_/gr );
+    field $created_at :param :reader;
 
     use constant table => 'tenants';
 
@@ -93,10 +91,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
         $class->SUPER::create( $db, $data );
     }
-
-    method id   { $id }
-    method name { $name }
-    method slug { $slug }
 
     method primary_user ($db) {
         my ($user_id) = $db->select( 'tenant_users', 'user_id',
@@ -166,9 +160,54 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $name :param :reader;
     field $html :param :reader;
-    field $metadata :param;
-    field $notes :param;
-    field $created_at :param;
+    field $metadata :param :reader;
+    field $notes :param :reader;
+    field $created_at :param :reader;
 
     use constant table => 'templates';
+
+    sub import_templates( $class, $dao, $log ) {
+
+        my $registry_tenant = $dao->registry_tenant;
+
+        my $template_dir = Mojo::File->new('templates');
+        my @template_files =
+          $template_dir->list_tree->grep(qr/\.html\.ep$/)->each;
+
+        my $imported = 0;
+        for my $file (@template_files) {
+            my $name = $file->to_rel('templates') =~ s/.html.ep//r;
+
+            next
+              if $dao->find( 'Registry::DAO::Template' => { name => $name, } );
+
+            my ( $workflow, $step ) = $name =~ /^(?:(.*)\/)?(.*)$/;
+            $workflow //= '__default__';    # default workflow
+
+            # landing is the default step
+            $step = 'landing' if $step eq 'index';
+
+            $log->("Importing template $name ($workflow / $step)");
+
+            my $template = $dao->create(
+                'Registry::DAO::Template' => {
+                    name => $name,
+                    html => $file->slurp,
+                }
+            );
+
+            if ($template) {
+                my $workflow = $dao->find(
+                    'Registry::DAO::Workflow' => { slug => $workflow, } );
+
+                if ( my $step = $workflow->get_step( $dao, { slug => $step } ) )
+                {
+                    $step->set_template( $dao, $template );
+                }
+            }
+
+            $imported++;
+        }
+        $log->("Imported $imported templates") if $imported;
+    }
 }

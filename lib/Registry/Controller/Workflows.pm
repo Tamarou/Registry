@@ -22,7 +22,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $workflow = $self->workflow();
 
         $self->render(
-            workflow => $workflow,
+            template => $self->param('workflow') . '/index',
             action   => $self->url_for('workflow_start')
         );
     }
@@ -34,7 +34,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             $self->url_for(
                 'workflow_step',
                 run  => $run->id,
-                step => $run->first_step( $dao->db )->slug,
+                step => $run->next_step( $dao->db )->slug,
             )
         );
     }
@@ -44,6 +44,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $run = $self->run();
 
         return $self->render(
+            template => $self->param('workflow') . '/' . $self->param('step'),
             workflow => $self->param('workflow'),
             step     => $self->param('step'),
             status   => 200,

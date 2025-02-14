@@ -29,7 +29,16 @@ class Registry::DAO {
         );
     }
 
+    method query ( $sql, @params ) {
+        return unless defined wantarray;
+
+        my $res = $db->query( $sql, @params )->expand->hashes;
+        wantarray ? $res->to_array->@* : $res->first;
+    }
+
     method find ( $class, $filter = {} ) {
+        return unless defined wantarray;
+
         $class = "Registry::DAO::$class" unless $class =~ /Registry::DAO::/;
         return $class->find( $db, $filter );
     }

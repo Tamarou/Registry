@@ -68,6 +68,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
             { workflow_id => $id, $filter->%* } );
         return @runs;
     }
+
 }
 
 class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
