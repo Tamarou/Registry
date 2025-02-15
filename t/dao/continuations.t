@@ -20,6 +20,14 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     $parent->add_step(
         $dao->db,
         {
+            slug        => 'landing',
+            description => 'Landing Page',
+        }
+    );
+
+    $parent->add_step(
+        $dao->db,
+        {
             slug        => 'done',
             description => 'Parent Workflow Complete',
         }
@@ -29,6 +37,14 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         Workflow => {
             slug => 'child',
             name => "Child Workflow",
+        }
+    );
+
+    $child->add_step(
+        $dao->db,
+        {
+            slug        => 'landing',
+            description => 'Landing Page',
         }
     );
 

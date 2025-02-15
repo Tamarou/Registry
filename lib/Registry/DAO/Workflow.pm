@@ -5,6 +5,8 @@ use Object::Pad;
 use Registry::DAO::Object;
 
 class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
+    use YAML::XS;
+
     field $id :param :reader;
     field $slug :param :reader;
     field $name :param :reader;
@@ -18,18 +20,11 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         my %data =
           $db->insert( $class->table, $data, { returning => '*' } )->hash->%*;
 
-        # create the first step
-        Registry::DAO::WorkflowStep->create(
-            $db,
-            {
-                workflow_id => $data{id},
-                slug        => $data{first_step}
-            }
-        );
         return $class->new(%data);
     }
 
     method first_step ($db) {
+        return unless $first_step;
         Registry::DAO::WorkflowStep->find( $db,
             { slug => $first_step, workflow_id => $id } );
     }
@@ -41,6 +36,8 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
     method last_step ($db) {
         my $step = $self->first_step($db);
+        return unless $step;
+
         while ( my $next = $step->next_step($db) ) {
             $step = $next;
         }
@@ -48,9 +45,17 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     }
 
     method add_step ( $db, $data ) {
-        my $last = $self->last_step($db);
-        Registry::DAO::WorkflowStep->create( $db,
-            { $data->%*, workflow_id => $id, depends_on => $last->id } );
+        $data->{workflow_id} = $id;
+
+        if ( my $last = $self->last_step($db) ) {
+            $data->{depends_on} = $last->id;
+        }
+        my $step = Registry::DAO::WorkflowStep->create( $db, $data );
+        unless ( $self->first_step($db) ) {
+            $self->update( $db, { first_step => $step->slug }, { id => $id } );
+            $first_step = $step->slug;
+        }
+        return $step;
     }
 
     method latest_run ( $db, $filter = {} ) {
@@ -69,6 +74,101 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         return @runs;
     }
 
+    method to_yaml($db) {
+
+        # Build the basic workflow structure
+        my $workflow = {
+            name        => $name,
+            description => $description,
+            steps       => [],
+        };
+
+        # Start with the first step and traverse
+        my $current_step = $self->first_step($db);
+        while ($current_step) {
+
+            # Get template information if it exists
+            my $template;
+            if ( $current_step->template_id ) {
+                my $template_obj = $current_step->template($db);
+                $template = $template_obj->slug if $template_obj;
+            }
+
+            # Build step structure
+            my $step = {
+                slug        => $current_step->slug,
+                description => $current_step->description,
+                template    => $template,
+            };
+
+            # Add metadata if it exists
+            if ( $current_step->can('metadata')
+                && keys $current_step->metadata->%* )
+            {
+                $step->{metadata} = $current_step->metadata;
+            }
+
+            # Add conditions from metadata if they exist
+            if ( $step->{metadata} && $step->{metadata}->{conditions} ) {
+                $step->{conditions} = delete $step->{metadata}->{conditions};
+            }
+
+            # Add roles from metadata if they exist
+            if ( $step->{metadata} && $step->{metadata}->{roles} ) {
+                $step->{roles} = delete $step->{metadata}->{roles};
+            }
+
+            # Clean up empty metadata
+            delete $step->{metadata} unless keys $step->{metadata}->%*;
+
+            # Add step to workflow
+            push $workflow->{steps}->@*, $step;
+
+            # Move to next step
+            $current_step = $current_step->next_step($db);
+        }
+
+        # Return YAML string
+        return Dump($workflow);
+    }
+
+    sub from_yaml ( $class, $db, $yaml ) {
+        my $workflow_data = Load($yaml);
+
+        $workflow_data->{slug} //= lc( $workflow_data->{name} =~ s/\s+/-/gr );
+        for my $field (qw(name description)) {
+            die "Missing required field: $field"
+              unless $workflow_data->{$field};
+        }
+
+        my $steps = delete $workflow_data->{steps};
+        die "Missing required field: steps" unless $steps;
+
+        # Create new workflow
+        my $workflow = $class->create( $db, $workflow_data );
+
+        # Create subsequent steps
+        for my $i ( 0 .. $#{$steps} ) {
+            my $step = $steps->[$i];
+
+            for my $field (qw(slug)) {
+                die "Missing required field: $field" unless $step->{$field};
+            }
+
+            # Handle template if present
+            if ( $step->{template} ) {
+                my $template = Registry::DAO::Template->find_or_create( $db,
+                    { slug => delete $step->{template} } );
+                $step->{template_id} = $template->id if $template;
+            }
+
+            # Add step to workflow
+            $workflow->add_step( $db, $step );
+
+        }
+
+        return $workflow;
+    }
 }
 
 class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
@@ -135,8 +235,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     field $workflow_id :param;
     field $latest_step_id :param  = undef;
     field $continuation_id :param = undef;
-    field $data :param //=
-      {};    # might be null, we want it to always be an empty hash
+    field $data :param //= {};
     field $created_at :param;
 
     use constant table => 'workflow_runs';

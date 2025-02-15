@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS workflows (
 CREATE TABLE IF NOT EXISTS templates (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     name text UNIQUE NOT NULL,
+    slug text UNIQUE NOT NULL,
     html text NOT NULL,
     metadata jsonb NULL,
     notes text NULL,
@@ -26,8 +27,8 @@ CREATE TABLE IF NOT EXISTS templates (
 
 CREATE TABLE IF NOT EXISTS workflow_steps (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    description text NULL,
     slug text NOT NULL,
+    description text NULL,
     workflow_id uuid NOT NULL REFERENCES workflows,
     template_id uuid REFERENCES templates,
     metadata jsonb NULL,

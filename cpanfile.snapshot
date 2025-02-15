@@ -443,6 +443,47 @@ DISTRIBUTIONS
       perl 5.012
       strict 0
       warnings 0
+  Data-Printer-1.002001
+    pathname: G/GA/GARU/Data-Printer-1.002001.tar.gz
+    provides:
+      DDP 1.002001
+      Data::Printer 1.002001
+      Data::Printer::Common undef
+      Data::Printer::Config undef
+      Data::Printer::Filter undef
+      Data::Printer::Filter::ARRAY undef
+      Data::Printer::Filter::CODE undef
+      Data::Printer::Filter::ContentType undef
+      Data::Printer::Filter::DB undef
+      Data::Printer::Filter::DateTime undef
+      Data::Printer::Filter::Digest undef
+      Data::Printer::Filter::FORMAT undef
+      Data::Printer::Filter::GLOB undef
+      Data::Printer::Filter::GenericClass undef
+      Data::Printer::Filter::HASH undef
+      Data::Printer::Filter::OBJECT undef
+      Data::Printer::Filter::REF undef
+      Data::Printer::Filter::Regexp undef
+      Data::Printer::Filter::SCALAR undef
+      Data::Printer::Filter::VSTRING undef
+      Data::Printer::Filter::Web undef
+      Data::Printer::Object undef
+      Data::Printer::Profile undef
+      Data::Printer::Profile::Dumper undef
+      Data::Printer::Profile::JSON undef
+      Data::Printer::Theme undef
+      Data::Printer::Theme::Classic undef
+      Data::Printer::Theme::Material undef
+      Data::Printer::Theme::Monokai undef
+      Data::Printer::Theme::Solarized undef
+    requirements:
+      ExtUtils::MakeMaker 0
+      Fcntl 0
+      File::Spec 0
+      File::Temp 0
+      Scalar::Util 0
+      Test::More 0
+      version 0.77
   DateTime-1.65
     pathname: D/DR/DROLSKY/DateTime-1.65.tar.gz
     provides:
@@ -1287,6 +1328,13 @@ DISTRIBUTIONS
       IO::Socket::IP 0.37
       Sub::Util 1.41
       perl 5.016
+  Mojolicious-Plugin-HTMX-1.03
+    pathname: G/GD/GDT/Mojolicious-Plugin-HTMX-1.03.tar.gz
+    provides:
+      Mojolicious::Plugin::HTMX 1.03
+    requirements:
+      ExtUtils::MakeMaker 0
+      Mojolicious 9.0
   Moo-2.005005
     pathname: H/HA/HAARG/Moo-2.005005.tar.gz
     provides:
@@ -1660,6 +1708,14 @@ DISTRIBUTIONS
       ExtUtils::MakeMaker 0
       perl 5.006
       strict 0
+  Term-Prompt-1.04
+    pathname: P/PE/PERSICOM/Term-Prompt-1.04.tar.gz
+    provides:
+      Term::Prompt 1.04
+    requirements:
+      ExtUtils::MakeMaker 0
+      Term::ReadKey 1
+      Text::Wrap 1
   TermReadKey-2.38
     pathname: J/JS/JSTOWE/TermReadKey-2.38.tar.gz
     provides:
@@ -2046,6 +2102,21 @@ DISTRIBUTIONS
     requirements:
       ExtUtils::MakeMaker 0
       perl 5.008
+  YAML-LibYAML-v0.903.0
+    pathname: T/TI/TINITA/YAML-LibYAML-v0.903.0.tar.gz
+    provides:
+      YAML::LibYAML v0.903.0
+      YAML::XS v0.903.0
+    requirements:
+      B::Deparse 0
+      Exporter 0
+      ExtUtils::MakeMaker 0
+      Scalar::Util 0
+      base 0
+      constant 0
+      perl 5.008001
+      strict 0
+      warnings 0
   libintl-perl-1.33
     pathname: G/GU/GUIDO/libintl-perl-1.33.tar.gz
     provides:

@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp
 );
 
--- Add a system tenant 
+-- Add a system tenant
 INSERT INTO tenants (name, slug)
 VALUES (
     'Registry System',
@@ -30,14 +30,14 @@ VALUES (
 CREATE TABLE IF NOT EXISTS tenant_profiles (
     tenant_id UUID PRIMARY KEY REFERENCES tenants (id),
     description TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp
 );
 
 CREATE TABLE IF NOT EXISTS tenant_users (
     tenant_id UUID NOT NULL REFERENCES tenants (id),
     user_id UUID NOT NULL REFERENCES users (id),
     is_primary BOOLEAN NOT NULL DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
     PRIMARY KEY (tenant_id, user_id)
 );
 
@@ -52,52 +52,70 @@ VALUES (
 INSERT INTO workflow_steps (slug, workflow_id, description)
 VALUES (
     'landing',
-    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
+    (
+        SELECT id FROM workflows
+        WHERE slug = 'tenant-signup'
+    ),
     'New Tenant landing page'
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
 VALUES (
     'profile',
-    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
+    (
+        SELECT id FROM workflows
+        WHERE slug = 'tenant-signup'
+    ),
     'Tenant profile page',
     (
         SELECT id
         FROM workflow_steps
         WHERE
             slug = 'landing'
-            AND workflow_id
-            = (SELECT id FROM workflows WHERE slug = 'tenant-signup')
+            AND workflow_id = (
+                SELECT workflows.id FROM workflows
+                WHERE workflows.slug = 'tenant-signup'
+            )
     )
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description, depends_on)
 VALUES (
     'users',
-    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
+    (
+        SELECT id FROM workflows
+        WHERE slug = 'tenant-signup'
+    ),
     'Tenant users page',
     (
         SELECT id
         FROM workflow_steps
         WHERE
             slug = 'profile'
-            AND workflow_id
-            = (SELECT id FROM workflows WHERE slug = 'tenant-signup')
+            AND workflow_id = (
+                SELECT workflows.id FROM workflows
+                WHERE workflows.slug = 'tenant-signup'
+            )
     )
 );
 
 INSERT INTO workflow_steps (slug, workflow_id, description, depends_on, class)
 VALUES (
     'complete',
-    (SELECT id FROM workflows WHERE slug = 'tenant-signup'),
+    (
+        SELECT id FROM workflows
+        WHERE slug = 'tenant-signup'
+    ),
     'Tenant onboarding complete',
     (
         SELECT id
         FROM workflow_steps
         WHERE
             slug = 'users'
-            AND workflow_id
-            = (SELECT id FROM workflows WHERE slug = 'tenant-signup')
+            AND workflow_id = (
+                SELECT workflows.id FROM workflows
+                WHERE workflows.slug = 'tenant-signup'
+            )
     ),
     'Registry::DAO::RegisterTenant'
 );

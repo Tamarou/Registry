@@ -17,6 +17,14 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         }
     );
 
+    $workflow->add_step(
+        $dao,
+        {
+            slug        => 'landing',
+            description => 'Landing Page',
+        }
+    );
+
     my ($test) = $dao->find( Workflow => { slug => 'test' } );
     is $test->id, $workflow->id,       'find returns the correct workflow';
     is $workflow->runs( $dao->db ), 0, 'no runs for the workflow yet';
@@ -38,6 +46,14 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         Workflow => {
             slug => 'signup',
             name => "Customer Registration",
+        }
+    );
+
+    $workflow->add_step(
+        $dao,
+        {
+            slug        => 'landing',
+            description => 'Landing Page',
         }
     );
 
