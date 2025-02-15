@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS templates (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     name text UNIQUE NOT NULL,
     slug text UNIQUE NOT NULL,
-    html text NOT NULL,
+    content text NOT NULL,
     metadata jsonb NULL,
     notes text NULL,
     created_at timestamp with time zone DEFAULT now()

@@ -44,7 +44,7 @@ class Registry::Command::template :isa(Mojolicious::Command) {
 
             Content:
             ```
-            ${ \$template->html	}
+            ${ \$template->content	}
             ```
             END
 

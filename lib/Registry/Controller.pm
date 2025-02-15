@@ -43,7 +43,7 @@ class Registry::Controller :isa(Mojolicious::Controller) {
                     return $self->SUPER::render( template => $name, %args );
                 }
             }
-            return $self->SUPER::render( inline => $template->html, %args );
+            return $self->SUPER::render( inline => $template->content, %args );
         }
 
         $self->SUPER::render(%args);
