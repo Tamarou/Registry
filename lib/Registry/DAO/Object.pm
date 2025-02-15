@@ -171,8 +171,8 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
 class Registry::DAO::Template :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $name :param :reader;
-    field $slug :param :reader = lc( $name =~ s/\s+/-/gr );
-    field $content :param :reader;
+    field $slug :param :reader    = lc( $name =~ s/\s+/-/gr );
+    field $content :param :reader = '';
     field $metadata :param :reader;
     field $notes :param :reader;
     field $created_at :param :reader;

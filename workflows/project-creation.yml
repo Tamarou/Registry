@@ -1,0 +1,13 @@
+---
+description: A workflow to create new projects
+name: Project Creation
+steps:
+- description: New Project Landing page
+  slug: landing
+  template: project-creation-index
+- description: Project Info
+  slug: info
+  template: project-creation-info
+- description: Project creation complete
+  slug: complete
+  template: project-creation-complete

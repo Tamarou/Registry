@@ -1,0 +1,7 @@
+---
+description: The default workflow
+name: App Workflow
+steps:
+- description: Default Landing page
+  slug: landing
+  template: index

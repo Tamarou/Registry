@@ -29,6 +29,8 @@ class Registry::DAO {
         );
     }
 
+    method begin() { $db->begin }
+
     method query ( $sql, @params ) {
         return unless defined wantarray;
 
@@ -44,6 +46,8 @@ class Registry::DAO {
     }
 
     method create ( $class, $data ) {
+        return unless defined wantarray;
+
         $class = "Registry::DAO::$class" unless $class =~ /Registry::DAO::/;
         return $class->create( $db, $data );
     }

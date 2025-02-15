@@ -1,0 +1,13 @@
+---
+description: A workflow to create new events
+name: Event Creation
+steps:
+- description: New Event Landing page
+  slug: landing
+  template: event-creation-index
+- description: Event info
+  slug: info
+  template: event-creation-info
+- description: Event creation complete
+  slug: complete
+  template: event-creation-complete

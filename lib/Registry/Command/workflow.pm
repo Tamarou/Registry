@@ -1,8 +1,13 @@
 use v5.40.0;
 use utf8;
 use Object::Pad;
+use experimental qw(try);
 
 class Registry::Command::workflow :isa(Mojolicious::Command) {
+    use YAML::XS      qw(Load);
+    use Mojo::File    qw(path);
+    use Registry::DAO qw(Workflow);
+
     field $app :param = undef;
 
     field $description :reader = 'Workflow management commands';
@@ -14,75 +19,128 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
           commands:
             * list - list available workflows
             * show - show details about a workflow
+            * import - import workflows from YAML files
+            * export - export a workflow to YAML
 
         END
 
-    method run( $cmd, $schema, @args ) {
+    field $dao;
+    ADJUST { $dao = $self->app->dao }
 
-        my $dao = $self->app->dao->connect_schema($schema);
+    method list () {
+        my @workflows = $dao->find( Workflow, {} );
+        say "Workflows:";
+        say sprintf '  - %s (%s - %s)', $_->slug, $_->name, $_->id
+          for sort { $a->slug cmp $b->slug } @workflows;
 
-        if ( $cmd eq 'list' ) {
-            my @workflows = $dao->find( 'Registry::DAO::Workflow', {} );
-            say "Workflows:";
-            say sprintf '  - %s (%s - %s)', $_->slug, $_->name, $_->id
-              for sort { $a->slug cmp $b->slug } @workflows;
+        return;
+    }
 
-            return;
-        }
+    method show ($slug) {
 
-        if ( $cmd eq 'show' ) {
-            my ($slug) = @args;
+        my $workflow = $dao->find( Workflow, { slug => $slug } );
 
-            my $workflow =
-              $dao->find( 'Registry::DAO::Workflow', { slug => $slug } );
+        say <<~"END";
 
-            say <<~"END";
+            # ${ \$workflow->name } (${ \$workflow->id })
 
-				# ${ \$workflow->name } (${ \$workflow->id })
+            ${ \$workflow->description	}
+            END
 
-				${ \$workflow->description	}
-				END
+        my @steps = $dao->query( <<~END_SQL, $workflow->id, $workflow->id );
+            WITH RECURSIVE step_tree AS (
+                -- Base case: steps with no dependencies
+                SELECT ws.*, 0 as level
+                FROM workflow_steps ws
+                WHERE ws.workflow_id = ?
+                AND ws.depends_on IS NULL
 
-            my @steps = $dao->query( <<~END_SQL, $workflow->id, $workflow->id );
-				WITH RECURSIVE step_tree AS (
-					-- Base case: steps with no dependencies
-					SELECT ws.*, 0 as level
-					FROM workflow_steps ws
-					WHERE ws.workflow_id = ?
-					AND ws.depends_on IS NULL
+                UNION ALL
 
-					UNION ALL
+                -- Recursive case: steps that depend on previous steps
+                SELECT ws.*, st.level + 1
+                FROM workflow_steps ws
+                JOIN step_tree st ON ws.depends_on = st.id
+                WHERE ws.workflow_id = ?
+            )
+            SELECT st.*, t.id as template_id, t.name as template_name
+            FROM step_tree st
+            LEFT JOIN templates t ON t.id = st.template_id
+            ORDER BY level, slug;
+            END_SQL
 
-					-- Recursive case: steps that depend on previous steps
-					SELECT ws.*, st.level + 1
-					FROM workflow_steps ws
-					JOIN step_tree st ON ws.depends_on = st.id
-					WHERE ws.workflow_id = ?
-				)
-				SELECT st.*, t.id as template_id, t.name as template_name
-				FROM step_tree st
-				LEFT JOIN templates t ON t.id = st.template_id
-				ORDER BY level, slug;
-				END_SQL
+        say "Steps:";
+        for my $step (@steps) {
 
-            say "Steps:";
-            for my $step (@steps) {
+            my $template =
+              $step->{template_name}
+              ? "$step->{template_name} ($step->{template_id})"
+              : '[no template found]';
 
-                my $template =
-                  $step->{template_name}
-                  ? "$step->{template_name} ($step->{template_id})"
-                  : '[no template found]';
-
-                print <<~"END";
+            print <<~"END";
 				* /${\$workflow->slug}/:run/$step->{slug} ($step->{id})
 				  - Template: $template
 				  - Description: $step->{description}
 				END
+        }
+
+        print "\n";
+
+        return;
+    }
+
+    method import (@files) {
+        unless ( scalar @files ) {
+            @files = $self->app->home->child('workflows')->children('*.yml');
+        }
+
+        for my $file (@files) {
+            my $yaml = path($file)->slurp;
+
+            try {
+                my $workflow = Workflow->from_yaml( $dao, $yaml );
+                say sprintf "Imported workflow '%s' (%s) with %d steps",
+                  $workflow->name,
+                  $workflow->slug,
+                  scalar @{ Load($yaml)->{steps} };
+            }
+            catch ($e) {
+                die "Error importing workflow: $e";
             }
 
-            print "\n";
-
             return;
+        }
+    }
+
+    method export ( $slug = undef, $file = undef ) {
+        if ($slug) {
+            my $workflow = $dao->find( Workflow, { slug => $slug } );
+            die "Workflow '$slug' not found" unless $workflow;
+            my $yaml = $workflow->to_yaml($dao);
+
+            if ( defined $file ) {
+                path($file)->spew($yaml);
+            }
+            else {
+                say $yaml;
+            }
+        }
+        else {
+            my @workflows = $dao->find( Workflow, {} );
+            my $home      = $self->app->home;
+            for my $workflow (@workflows) {
+                my $yaml = $workflow->to_yaml($dao);
+                $home->child( 'workflows', $workflow->slug . '.yml' )
+                  ->spew($yaml);
+            }
+        }
+    }
+
+    method run( $cmd, $schema, @args ) {
+        $dao = $dao->connect_schema($schema);
+
+        if ( my $method = $self->can($cmd) ) {
+            return $self->$method(@args);
         }
 
         die <<~"END";
@@ -90,7 +148,6 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
 
         $usage
         END
-
     }
 }
 

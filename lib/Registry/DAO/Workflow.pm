@@ -17,6 +17,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     use constant table => 'workflows';
 
     sub create ( $class, $db, $data ) {
+        $db = $db->db if $db isa Registry::DAO;
         my %data =
           $db->insert( $class->table, $data, { returning => '*' } )->hash->%*;
 
@@ -144,6 +145,17 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         my $steps = delete $workflow_data->{steps};
         die "Missing required field: steps" unless $steps;
 
+        my $txn = $db->begin;
+
+        if (
+            $db->find(
+                'Registry::DAO::Workflow', { slug => $workflow_data->{slug} }
+            )
+          )
+        {
+            die "Workflow with slug $workflow_data->{slug} already exists";
+        }
+
         # Create new workflow
         my $workflow = $class->create( $db, $workflow_data );
 
@@ -166,6 +178,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
             $workflow->add_step( $db, $step );
 
         }
+        $txn->commit;
 
         return $workflow;
     }

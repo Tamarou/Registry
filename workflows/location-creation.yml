@@ -1,0 +1,13 @@
+---
+description: A workflow to create new locations
+name: Location Creation
+steps:
+- description: New Location Landing page
+  slug: landing
+  template: location-creation-index
+- description: Location Info
+  slug: info
+  template: location-creation-info
+- description: Location creation complete
+  slug: complete
+  template: location-creation-complete

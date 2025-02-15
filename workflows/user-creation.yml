@@ -1,0 +1,13 @@
+---
+description: A workflow to create new users
+name: User Creation
+steps:
+- description: New User Landing page
+  slug: landing
+  template: user-creation-index
+- description: User Info
+  slug: info
+  template: user-creation-info
+- description: User creation complete
+  slug: complete
+  template: user-creation-complete
