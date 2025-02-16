@@ -1,13 +1,17 @@
 ---
 description: A workflow to create new events
 name: Event Creation
+slug: event-creation
 steps:
-- description: New Event Landing page
+- class: Registry::DAO::WorkflowStep
+  description: New Event Landing page
   slug: landing
   template: event-creation-index
-- description: Event info
+- class: Registry::DAO::WorkflowStep
+  description: Event info
   slug: info
   template: event-creation-info
-- description: Event creation complete
+- class: Registry::DAO::CreateEvent
+  description: Event creation complete
   slug: complete
   template: event-creation-complete

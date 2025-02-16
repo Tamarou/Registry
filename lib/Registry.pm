@@ -6,6 +6,7 @@ class Registry :isa(Mojolicious) {
 
     use Sys::Hostname qw( hostname );
     use Registry::DAO;
+    use YAML::XS qw(Load);
 
     method startup {
         $self->secrets( [hostname] );
@@ -21,9 +22,8 @@ class Registry :isa(Mojolicious) {
 
         $self->hook(
             before_server_start => sub ( $server, @ ) {
-                my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
-                Registry::DAO::Template->import_templates( $dao,
-                    sub { $server->app->log->debug(@_) } );
+                $self->import_workflows;
+                $self->import_templates;
             }
         );
 
@@ -38,6 +38,36 @@ class Registry :isa(Mojolicious) {
           ->name("workflow_process_step");
         $w->post('/:run/callcc/:target')->to('#start_continuation')
           ->name("workflow_callcc");
+    }
+
+    method import_workflows () {
+        my $dao = $self->dao;
+        my @workflows =
+          $self->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+
+        for my $file (@workflows) {
+            my $yaml = $file->slurp;
+            next if Load($yaml)->{draft};
+            my $workflow = Workflow->from_yaml( $dao, $yaml );
+            my $msg      = sprintf( "Imported workflow '%s' (%s)",
+                $workflow->name, $workflow->slug );
+            $self->app->log->debug($msg);
+        }
+    }
+
+    method import_templates () {
+        my $dao = $self->dao;
+
+        my @templates =
+          $self->app->home->child('templates')
+          ->list_tree->grep(qr/\.html\.ep$/)->each;
+
+        for my $file (@templates) {
+            Registry::DAO::Template->import_from_file( $dao, $file );
+            my $msg =
+              sprintf( "Imported template '%s'", $file->to_rel('templates') );
+            $self->app->log->debug($msg);
+        }
     }
 }
 

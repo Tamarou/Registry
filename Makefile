@@ -6,12 +6,12 @@ test:
 dev-server:
 	carton exec morbo ./registry
 
-clean-db:
+reset:
 	dropdb registry
 	createdb registry
 	carton exec sqitch deploy
+	carton exec ./registry workflow import registry
 	carton exec ./registry template import registry
-
 
 help:
 	@echo "Available targets:"

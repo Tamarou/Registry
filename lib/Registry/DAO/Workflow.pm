@@ -81,7 +81,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         my $workflow = {
             name        => $name,
             description => $description,
-            steps       => [],
+            slug        => $slug,
         };
 
         # Start with the first step and traverse
@@ -100,29 +100,11 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
                 slug        => $current_step->slug,
                 description => $current_step->description,
                 template    => $template,
+                class       => $current_step->class,
             };
 
-            # Add metadata if it exists
-            if ( $current_step->can('metadata')
-                && keys $current_step->metadata->%* )
-            {
-                $step->{metadata} = $current_step->metadata;
-            }
-
-            # Add conditions from metadata if they exist
-            if ( $step->{metadata} && $step->{metadata}->{conditions} ) {
-                $step->{conditions} = delete $step->{metadata}->{conditions};
-            }
-
-            # Add roles from metadata if they exist
-            if ( $step->{metadata} && $step->{metadata}->{roles} ) {
-                $step->{roles} = delete $step->{metadata}->{roles};
-            }
-
-            # Clean up empty metadata
-            delete $step->{metadata} unless keys $step->{metadata}->%*;
-
             # Add step to workflow
+            $workflow->{steps} //= [];
             push $workflow->{steps}->@*, $step;
 
             # Move to next step
@@ -134,30 +116,27 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     }
 
     sub from_yaml ( $class, $db, $yaml ) {
-        my $workflow_data = Load($yaml);
+        my $data = Load($yaml);
 
-        $workflow_data->{slug} //= lc( $workflow_data->{name} =~ s/\s+/-/gr );
+        $data->{slug} //= lc( $data->{name} =~ s/\s+/-/gr );
         for my $field (qw(name description)) {
             die "Missing required field: $field"
-              unless $workflow_data->{$field};
+              unless $data->{$field};
         }
 
-        my $steps = delete $workflow_data->{steps};
+        my $steps = delete $data->{steps};
         die "Missing required field: steps" unless $steps;
+
+        if ( my $workflow =
+            $db->find( 'Registry::DAO::Workflow', { slug => $data->{slug} } ) )
+        {
+            return $workflow;
+        }
 
         my $txn = $db->begin;
 
-        if (
-            $db->find(
-                'Registry::DAO::Workflow', { slug => $workflow_data->{slug} }
-            )
-          )
-        {
-            die "Workflow with slug $workflow_data->{slug} already exists";
-        }
-
         # Create new workflow
-        my $workflow = $class->create( $db, $workflow_data );
+        my $workflow = $class->create( $db, $data );
 
         # Create subsequent steps
         for my $i ( 0 .. $#{$steps} ) {
@@ -169,7 +148,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
             # Handle template if present
             if ( $step->{template} ) {
-                my $template = Registry::DAO::Template->find_or_create( $db,
+                my $template = Registry::DAO::Template->find( $db,
                     { slug => delete $step->{template} } );
                 $step->{template_id} = $template->id if $template;
             }
@@ -193,7 +172,7 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
 
     field $depends_on :param = undef;
     field $metadata :param   = {};
-    field $class :param;
+    field $class :param :reader;
 
     use constant table => 'workflow_steps';
 

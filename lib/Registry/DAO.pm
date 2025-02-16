@@ -59,4 +59,6 @@ class Registry::DAO {
     method registry_tenant() {
         return $self->find( 'Registry::DAO::Tenant', { slug => 'registry' } );
     }
+
+    method current_tenant { $schema }
 }

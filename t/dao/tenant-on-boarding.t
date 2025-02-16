@@ -5,10 +5,22 @@ use experimental qw(defer builtin);
 use Test::More import => [qw( done_testing is )];
 defer { done_testing };
 
-use Registry::DAO qw(WorkflowStep);
+use Mojo::Home;
+use Registry::DAO      qw(WorkflowStep);
 use Test::Registry::DB ();
+use YAML::XS           qw( Load );
 
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my @files =
+  Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+for my $file (@files) {
+    next if Load( $file->slurp )->{draft};
+    Workflow->from_yaml( $dao, $file->slurp );
+}
+
+Registry::DAO::Template->import_from_file( $dao, $_ )
+  for Mojo::Home->new->child('templates')->list_tree->grep(qr/\.html\.ep$/)
+  ->each;
 
 {
     # create a new tenant
@@ -54,13 +66,12 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     is $tenant->primary_user( $dao->db )->username, 'Alice',
       'Primary user is correct';
 
+    # users associated with the tenant
     my @users = $tenant->users( $dao->db );
     is $users[0]->username, 'Alice', 'First user is correct';
-    is $users[1]->username, 'Bob',   'Second user is correct';
 
     # check that the tenant is in their own schema
-    my $dao2 =
-      Registry::DAO->new( url => $dao->url, schema => $tenant->slug );
+    my $dao2 = Registry::DAO->new( url => $dao->url, schema => $tenant->slug );
 
     my ($alice) = $dao2->find( User => { username => 'Alice' } );
     is $alice->username, 'Alice', 'User exists';

@@ -1,16 +1,21 @@
 ---
 description: A workflow to onboard new tenants
 name: Tenant Onboarding
+slug: tenant-signup
 steps:
-- description: New Tenant landing page
+- class: Registry::DAO::WorkflowStep
+  description: New Tenant landing page
   slug: landing
   template: tenant-signup-index
-- description: Tenant profile page
+- class: Registry::DAO::WorkflowStep
+  description: Tenant profile page
   slug: profile
   template: tenant-signup-profile
-- description: Tenant users page
+- class: Registry::DAO::WorkflowStep
+  description: Tenant users page
   slug: users
   template: tenant-signup-users
-- description: Tenant onboarding complete
+- class: Registry::DAO::RegisterTenant
+  description: Tenant onboarding complete
   slug: complete
   template: tenant-signup-complete

@@ -51,7 +51,14 @@ class Registry::Command::template :isa(Mojolicious::Command) {
             return;
         }
         if ( $cmd eq 'import' ) {
-            Registry::DAO::Template->import_templates( $dao, sub { say @_ } );
+            my @files = Mojo::Home->new->child('templates')
+              ->list_tree->grep(qr/\.html\.ep$/)->each;
+
+            for my $file (@files) {
+                Registry::DAO::Template->import_from_file( $dao, $file );
+                say sprintf "Imported template '%s'",
+                  $file->to_rel('templates');
+            }
             return;
         }
 

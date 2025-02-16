@@ -1,4 +1,6 @@
 name: Workflow Creation
+slug: workflow-creation
+draft: true
 description: |
   A guided process for creating new workflows in the system.
   Ensures all necessary components are defined and validated.

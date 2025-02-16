@@ -1,10 +1,12 @@
 name: Program Creation
+slug: program-creation
+draft: true
 description: |
   Workflow for creating and approving new after-school programs.
   Ensures programs meet educational standards and business requirements.
 
 steps:
-  - name: initial-draft
+  - slug: initial-draft
     template: program-draft-form
     description: Initial program proposal with basic details
     roles:
@@ -13,7 +15,7 @@ steps:
     conditions:
       registration_closed: true  # Can't create new programs during active registration
 
-  - name: curriculum-review
+  - slug: curriculum-review
     template: curriculum-review-form
     description: Review of educational content and alignment with standards
     roles:
@@ -22,7 +24,7 @@ steps:
     conditions:
       has_draft: true
 
-  - name: financial-review
+  - slug: financial-review
     template: financial-review-form
     description: Review of program costs, pricing, and resource requirements
     roles:
@@ -31,7 +33,7 @@ steps:
     conditions:
       curriculum_approved: true
 
-  - name: schedule-planning
+  - slug: schedule-planning
     template: schedule-planning-form
     description: Define program schedule and resource allocation
     roles:
@@ -40,7 +42,7 @@ steps:
     conditions:
       finances_approved: true
 
-  - name: final-approval
+  - slug: final-approval
     template: program-approval-form
     description: Final review and approval of the complete program
     roles:

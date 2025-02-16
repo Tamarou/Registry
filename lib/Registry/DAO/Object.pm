@@ -57,7 +57,7 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
     field $id :param :reader;
     field $username :param :reader;
-    field $passhash :param = '';
+    field $passhash :param :reader = '';
     field $created_at :param;
 
     use constant table => 'users';
@@ -104,10 +104,17 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         $class->SUPER::create( $db, $data );
     }
 
+    method dao($db) { Registry::DAO->new( db => $db, schema => $slug ) }
+
     method primary_user ($db) {
-        my ($user_id) = $db->select( 'tenant_users', 'user_id',
-            { tenant_id => $id, is_primary => 1 } )->array;
-        Registry::DAO::User->find( $db, { id => $user_id } );
+        my $sql = <<~'SQL';
+            SELECT u.*
+            FROM users u
+            INNER JOIN tenant_users tu ON u.id = tu.user_id
+            WHERE tu.tenant_id = ? AND tu.is_primary is true
+            SQL
+        my $user_data = $db->query( $sql, $id )->expand->hash;
+        return Registry::DAO::User->new( $user_data->%* );
     }
 
     method users ($db) {
@@ -119,7 +126,25 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
           ->to_array->@*;
     }
 
+    method set_primary_user ( $db, $user ) {
+        $db->insert(
+            'tenant_users',
+            {
+                tenant_id  => $id,
+                user_id    => $user->id,
+                is_primary => 1
+            },
+            {
+                on_conflict => [
+                    [ 'tenant_id', 'user_id' ] => { is_primary => 1 }
+                ]
+            }
+        );
+    }
+
     method add_user ( $db, $user, $is_primary = 0 ) {
+        Carp::croak 'user must be a Registry::DAO::User'
+          unless $user isa Registry::DAO::User;
         $db->insert(
             'tenant_users',
             {
@@ -179,49 +204,34 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
 
     use constant table => 'templates';
 
-    sub import_templates( $class, $dao, $log ) {
+    sub import_from_file( $class, $dao, $file ) {
 
-        my $registry_tenant = $dao->registry_tenant;
+        my $name = $file->to_rel('templates') =~ s/.html.ep//r;
 
-        my $template_dir = Mojo::File->new('templates');
-        my @template_files =
-          $template_dir->list_tree->grep(qr/\.html\.ep$/)->each;
+        return if $dao->find( 'Registry::DAO::Template' => { name => $name, } );
 
-        my $imported = 0;
-        for my $file (@template_files) {
-            my $name = $file->to_rel('templates') =~ s/.html.ep//r;
+        my ( $workflow, $step ) = $name =~ /^(?:(.*)\/)?(.*)$/;
+        $workflow //= '__default__';    # default workflow
 
-            next
-              if $dao->find( 'Registry::DAO::Template' => { name => $name, } );
+        # landing is the default step
+        $step = 'landing' if $step eq 'index';
 
-            my ( $workflow, $step ) = $name =~ /^(?:(.*)\/)?(.*)$/;
-            $workflow //= '__default__';    # default workflow
-
-            # landing is the default step
-            $step = 'landing' if $step eq 'index';
-
-            $log->("Importing template $name ($workflow / $step)");
-
-            my $template = $dao->create(
-                'Registry::DAO::Template' => {
-                    name    => $name,
-                    slug    => $name =~ s/\W+/-/gr,
-                    content => $file->slurp,
-                }
-            );
-
-            if ($template) {
-                my $workflow = $dao->find(
-                    'Registry::DAO::Workflow' => { slug => $workflow, } );
-
-                if ( my $step = $workflow->get_step( $dao, { slug => $step } ) )
-                {
-                    $step->set_template( $dao, $template );
-                }
+        my $template = $dao->create(
+            'Registry::DAO::Template' => {
+                name    => $name,
+                slug    => $name =~ s/\W+/-/gr,
+                content => $file->slurp,
             }
+        );
 
-            $imported++;
+        if ($template) {
+            my $workflow =
+              $dao->find( 'Registry::DAO::Workflow' => { slug => $workflow, } );
+            return $template unless $workflow;
+            if ( my $step = $workflow->get_step( $dao, { slug => $step } ) ) {
+                $step->set_template( $dao, $template );
+            }
         }
-        $log->("Imported $imported templates") if $imported;
+
     }
 }

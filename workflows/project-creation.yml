@@ -1,13 +1,17 @@
 ---
 description: A workflow to create new projects
 name: Project Creation
+slug: project-creation
 steps:
-- description: New Project Landing page
+- class: Registry::DAO::WorkflowStep
+  description: New Project Landing page
   slug: landing
   template: project-creation-index
-- description: Project Info
+- class: Registry::DAO::WorkflowStep
+  description: Project Info
   slug: info
   template: project-creation-info
-- description: Project creation complete
+- class: Registry::DAO::CreateProject
+  description: Project creation complete
   slug: complete
   template: project-creation-complete

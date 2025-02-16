@@ -16,11 +16,7 @@ class Registry::Controller::Tenants :isa(Registry::Controller) {
 
         # set up the DAO helper
         my $dao = $self->app->dao;
-        $self->app->helper(
-            dao => sub {
-                state $db = $dao->connect_schema($slug);
-            }
-        );
+        $self->app->helper( dao => sub { $dao->connect_schema($slug) } );
         return 1;
     }
 

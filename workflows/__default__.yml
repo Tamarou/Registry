@@ -1,7 +1,9 @@
 ---
 description: The default workflow
 name: App Workflow
+slug: __default__
 steps:
-- description: Default Landing page
+- class: Registry::DAO::WorkflowStep
+  description: Default Landing page
   slug: landing
   template: index

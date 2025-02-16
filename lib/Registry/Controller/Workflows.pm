@@ -2,6 +2,7 @@ use 5.38.0;
 use Object::Pad;
 
 class Registry::Controller::Workflows :isa(Registry::Controller) {
+    use Carp qw(confess);
 
     method run ( $id = $self->param('run') ) {
         my $dao = $self->app->dao;
@@ -9,7 +10,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method new_run ( $workflow, $config //= {} ) {
-        my $dao  = $self->app->dao;
+        my $dao = $self->app->dao;
+        confess "Missing workflow parameter" unless $workflow;
         my $step = $workflow->first_step( $dao->db );
         my $run  = $workflow->new_run( $dao->db, $config );
         my $data = $self->req->params->to_hash;
@@ -102,8 +104,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method start_continuation {
-        my $dao = $self->app->dao;
-        my ($workflow) = $dao->find(
+        my $dao      = $self->app->dao;
+        my $workflow = $dao->find(
             Workflow => {
                 slug => $self->param('target')
             }

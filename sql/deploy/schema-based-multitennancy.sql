@@ -65,6 +65,7 @@ BEGIN
         RAISE NOTICE 'Source schema % does not exist!', source_schema;
         RETURN;
     END IF;
+
     -- Check that dest_schema exists
     PERFORM nspname
     FROM pg_namespace
@@ -73,63 +74,96 @@ BEGIN
         RAISE NOTICE 'Destination schema % does not exist!', dest_schema;
         RETURN;
     END IF;
+
     -- Copy the workflow
     EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflows (name, slug, description)
               SELECT name, slug, description
               FROM ' || quote_ident(source_schema) || '.workflows
               WHERE id = ' || quote_literal(workflow_id) || ' RETURNING id'
     INTO new_workflow_id;
+
     IF new_workflow_id IS NULL THEN
         RAISE NOTICE 'Workflow with ID % does not exist in source schema!', workflow_id;
         RETURN;
     END IF;
+
     -- Create a temporary table for mapping old to new step IDs
     CREATE TEMP TABLE old_to_new_step_ids (
         old_step_id uuid,
         new_step_id uuid
     );
-    -- Copy associated templates and store new template IDs
-    FOR old_template_id IN
-        EXECUTE 'SELECT id
-                  FROM ' || quote_ident(source_schema) || '.templates
-                  WHERE id IN (
-                      SELECT template_id FROM ' || quote_ident(source_schema) || '.workflow_steps
-                      WHERE workflow_id = ' || quote_literal(workflow_id) || '
-                  )'
-    LOOP
-        -- Insert the template and get the new ID
-        EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.templates (name, html, metadata)
-                  SELECT name, html, metadata
-                  FROM ' || quote_ident(source_schema) || '.templates
-                  WHERE id = ' || quote_literal(old_template_id) || ' RETURNING id'
-        INTO new_template_id;
-        -- Copy associated steps using the new template ID
-        FOR old_step_id IN
-            EXECUTE 'SELECT id FROM ' || quote_ident(source_schema) || '.workflow_steps
-                      WHERE workflow_id = ' || quote_literal(workflow_id) || ' AND template_id = ' || quote_literal(old_template_id)
-        LOOP
-            EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflow_steps (workflow_id, slug, description, template_id)
-                      SELECT ' || quote_literal(new_workflow_id) || ', slug, description, ' || quote_literal(new_template_id) || '
-                      FROM ' || quote_ident(source_schema) || '.workflow_steps
-                      WHERE id = ' || quote_literal(old_step_id) || ' RETURNING id'
-            INTO new_step_id;  -- Capture only the new step ID
-            -- Store the mapping of old to new step IDs in the temporary table
-            EXECUTE 'INSERT INTO old_to_new_step_ids (old_step_id, new_step_id)
-                      VALUES (' || quote_literal(old_step_id) || ', ' || quote_literal(new_step_id) || ');';
-        END LOOP;  -- End of old_step_id loop
-    END LOOP;  -- End of old_template_id loop
-    -- Now update the depends_on relationships for the new steps
+
+    -- First, copy all workflow steps regardless of templates
     FOR old_step_id IN
         EXECUTE 'SELECT id FROM ' || quote_ident(source_schema) || '.workflow_steps
-                  WHERE workflow_id = ' || quote_literal(workflow_id)
+                 WHERE workflow_id = ' || quote_literal(workflow_id)
     LOOP
-        -- Update the new step to reference the new dependency
-        EXECUTE 'UPDATE ' || quote_ident(dest_schema) || '.workflow_steps
-                  SET depends_on = (SELECT new_step_id FROM old_to_new_step_ids WHERE old_step_id = ' || quote_literal(old_step_id) || ')
-                  WHERE depends_on = ' || quote_literal(old_step_id) || ';';
-    END LOOP;  -- End of old_step_id loop
+        -- Copy the step with a NULL template_id initially
+        EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflow_steps
+                 (workflow_id, slug, description, template_id, metadata, class)
+                 SELECT ' || quote_literal(new_workflow_id) || ', slug, description, NULL, metadata, class
+                 FROM ' || quote_ident(source_schema) || '.workflow_steps
+                 WHERE id = ' || quote_literal(old_step_id) || ' RETURNING id'
+        INTO new_step_id;
+
+        -- Store the mapping
+        INSERT INTO old_to_new_step_ids (old_step_id, new_step_id)
+        VALUES (old_step_id, new_step_id);
+    END LOOP;
+
+    -- Now handle templates
+    FOR old_template_id IN
+        EXECUTE 'SELECT DISTINCT template_id
+                FROM ' || quote_ident(source_schema) || '.workflow_steps
+                WHERE workflow_id = ' || quote_literal(workflow_id) || '
+                AND template_id IS NOT NULL'
+    LOOP
+        -- Copy the template
+        EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.templates
+                 (name, slug, content, metadata)
+                 SELECT name, slug, content, metadata
+                 FROM ' || quote_ident(source_schema) || '.templates
+                 WHERE id = ' || quote_literal(old_template_id) || ' RETURNING id'
+        INTO new_template_id;
+
+        -- Update the corresponding steps with the new template_id
+        EXECUTE 'UPDATE ' || quote_ident(dest_schema) || '.workflow_steps new_steps
+                 SET template_id = ' || quote_literal(new_template_id) || '
+                 WHERE new_steps.id IN (
+                     SELECT new_step_id
+                     FROM old_to_new_step_ids mapping
+                     JOIN ' || quote_ident(source_schema) || '.workflow_steps old_steps
+                          ON old_steps.id = mapping.old_step_id
+                     WHERE old_steps.template_id = ' || quote_literal(old_template_id) || '
+                 )';
+    END LOOP;
+
+    -- Update the depends_on relationships
+    FOR old_step_id IN
+        EXECUTE 'SELECT id FROM ' || quote_ident(source_schema) || '.workflow_steps
+                 WHERE workflow_id = ' || quote_literal(workflow_id) || '
+                 AND depends_on IS NOT NULL'
+    LOOP
+        EXECUTE 'UPDATE ' || quote_ident(dest_schema) || '.workflow_steps new_steps
+                 SET depends_on = (
+                     SELECT new_step_id
+                     FROM old_to_new_step_ids
+                     WHERE old_step_id = (
+                         SELECT depends_on
+                         FROM ' || quote_ident(source_schema) || '.workflow_steps
+                         WHERE id = ' || quote_literal(old_step_id) || '
+                     )
+                 )
+                 WHERE new_steps.id = (
+                     SELECT new_step_id
+                     FROM old_to_new_step_ids
+                     WHERE old_step_id = ' || quote_literal(old_step_id) || '
+                 )';
+    END LOOP;
+
     -- Clean up
     DROP TABLE old_to_new_step_ids;
+
     RAISE NOTICE 'Workflow % copied to % schema with ID %', workflow_id, dest_schema, new_workflow_id;
 END;
 $BODY$

@@ -13,17 +13,26 @@ class Registry::Controller :isa(Mojolicious::Controller) {
 
     method workflow ( $slug = $self->param('workflow') ) {
         return $slug if $slug isa Registry::DAO::Workflow;
+        Carp::confess "Missing workflow parameter" unless $slug;
 
-        my $dao = $self->app->dao;
-        return $dao->find( Workflow => { slug => $slug } );
+        my $dao      = $self->app->dao;
+        my $workflow = $dao->find( Workflow => { slug => $slug } );
+        unless ($workflow) {
+            Carp::confess sprintf 'Workflow %s not found in tenant %s', $slug,
+              $dao->current_tenant;
+        }
+        return $workflow;
     }
 
     # TODO make this smarter about Registry things like workflows and steps etc.
     method render(%args) {
         my $dao = $self->app->dao;
 
-        if ( my $workflow = $self->workflow( $args{workflow} ) ) {
-            $args{step} //= $self->workflow($workflow)->first_step( $dao->db );
+        if ( $args{workflow} ) {
+            if ( my $workflow = $self->workflow( $args{workflow} ) ) {
+                $args{step} //=
+                  $self->workflow($workflow)->first_step( $dao->db );
+            }
         }
 
         if ( my $step = $args{step} ) {
@@ -39,7 +48,6 @@ class Registry::Controller :isa(Mojolicious::Controller) {
             unless ( $template isa Registry::DAO::Template ) {
                 my $name = $template;
                 unless ( $template = $self->$find_template($name) ) {
-                    Carp::cluck "Could not find template '$name'";
                     return $self->SUPER::render( template => $name, %args );
                 }
             }

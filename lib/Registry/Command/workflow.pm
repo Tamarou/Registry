@@ -4,9 +4,10 @@ use Object::Pad;
 use experimental qw(try);
 
 class Registry::Command::workflow :isa(Mojolicious::Command) {
-    use YAML::XS      qw(Load);
+    use Carp          qw(carp);
     use Mojo::File    qw(path);
     use Registry::DAO qw(Workflow);
+    use YAML::XS      qw(Load);
 
     field $app :param = undef;
 
@@ -91,11 +92,11 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
 
     method import (@files) {
         unless ( scalar @files ) {
-            @files = $self->app->home->child('workflows')->children('*.yml');
+            @files = $self->app->home->child('workflows')
+              ->list_tree->grep(qr/\.ya?ml$/)->each;
         }
-
         for my $file (@files) {
-            my $yaml = path($file)->slurp;
+            my $yaml = $file->slurp;
 
             try {
                 my $workflow = Workflow->from_yaml( $dao, $yaml );
@@ -105,10 +106,8 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
                   scalar @{ Load($yaml)->{steps} };
             }
             catch ($e) {
-                die "Error importing workflow: $e";
+                carp "Error importing workflow: $e";
             }
-
-            return;
         }
     }
 

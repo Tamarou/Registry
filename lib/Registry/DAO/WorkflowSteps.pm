@@ -42,6 +42,7 @@ class Registry::DAO::CreateLocation :isa(Registry::DAO::WorkflowStep) {
 }
 
 class Registry::DAO::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
+    use Carp qw(carp croak);
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -51,32 +52,41 @@ class Registry::DAO::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
 
         my $user_data = delete $profile->{users};
 
-        # TODO this should be a single query not a loop
-        my @users =
-          map { Registry::DAO::User->find_or_create( $db, $_ ) } $user_data->@*;
+        # first we wanna create the Registry user account for our tenant
+        my $primary_user =
+          Registry::DAO::User->find_or_create( $db, $user_data->[0] );
+        unless ($primary_user) {
+            croak 'Could not create primary user';
+        }
 
         my $tenant = Registry::DAO::Tenant->create( $db, $profile );
-
-        $tenant->add_user( $db, $_, $_ == $users[0] ) for @users;
-
         $db->query( 'SELECT clone_schema(dest_schema => ?)', $tenant->slug );
 
-        $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
-            $tenant->slug, $_->id )
-          for @users;
+        $tenant->set_primary_user( $db, $primary_user );
 
-        my @workflows =
-          map { Registry::DAO::Workflow->find( $db, { slug => $_ } ) }
-          qw(
-          user-creation
-          session-creation
-          project-creation
-          location-creation
-          );    # TODO add workflow-creation
+        my $tx = $db->begin;
+        for my $data ( $user_data->@* ) {
+            if ( my $user = Registry::DAO::User->find( $db, $data ) ) {
+                $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
+                    $tenant->slug, $user->id );
+            }
+            else {
+                Registry::DAO::User->create( $tenant->dao($db)->db, $data );
+            }
+        }
 
-        $db->query( 'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
-            $tenant->slug, $_->id )
-          for @workflows;
+        for my $slug (
+            qw(user-creation session-creation event-creation location-creation project-creation)
+          )
+        {
+            my $workflow =
+              Registry::DAO::Workflow->find( $db, { slug => $slug } );
+            $db->query(
+                'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
+                $tenant->slug, $workflow->id );
+
+        }
+        $tx->commit;
 
         if ( $run->has_continuation ) {
             my ($continuation) = $run->continuation($db);
