@@ -17,10 +17,13 @@ best: inspiring students.
 Workflows are the backbone of Registry, representing the entire lifecycle of an
 educational event or program. Each workflow is a series of steps that guide
 users through processes like program registration, attendance tracking, or
-progress reporting.
+progress reporting. Workflows are usually defined by users via a Workflow
+construction workflow. This is driven via the Registration Web UI.
 
-Workflows are defined in YAML format for better readability and familiarity
-with other workflow systems (like Kubernetes, Ansible, or GitHub Actions).
+We bootstrap the system using serialized workflows in YAML format for better
+readability and familiarity with other workflow systems (like Kubernetes,
+Ansible, or GitHub Actions).
+
 Example:
 
 ```yaml
@@ -33,19 +36,19 @@ steps:
   - name: Initial Application
     outcome: student-application  # references outcome definition
     template: application-form   # references template
-    roles:
+    roles: # NOT IMPLEMENTED YET
       - parent
-    conditions:
+    conditions: # NOT IMPLEMENTED YET
       registration_open: true
       class_capacity_available: true
 
   - name: Teacher Review
     outcome: application-review
     template: review-form
-    roles:
+    roles: # NOT IMPLEMENTED YET
       - teacher
       - admin
-    requires:
+    requires: # NOT IMPLEMENTED YET
       - Initial Application
 ```
 
@@ -89,14 +92,29 @@ Outcomes are defined in JSON format. Example:
   ]
 }
 ```
+### Validations (NOT IMPLEMENTED YET)
+
+Validations define how system state is validated at each step of a workflow.
+See the [design doc](docs/architecture/validations.md) for more details.
 
 ### Templates
 
-Templates define how workflow steps are presented to users. They are HTML templates that:
+Templates define how workflow steps are presented to users. They are HTML
+templates that:
+
 - Display forms for data collection
 - Show progress and status information
 - Present relevant information to users
 - Handle user interactions
+
+## Roles (NOT IMPLEMENTED YET)
+
+Roles define which users are allowed to interact with a workflow step.
+
+## Conditions (NOT IMPLEMENTED YET)
+
+Conditions define what preconditions must be met to allow a user to interact
+with a workflow step.
 
 ## Example Content and Bootstrapping
 
