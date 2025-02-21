@@ -20,6 +20,16 @@ While we strive to keep documentation up-to-date, the source code is the ultimat
 - `/deployment` - Instructions and configurations for deploying Registry
 - `/personas` - User personas and scenarios that drive development
 - `MISSION.md` - Core mission and vision statements
+- `TECHNICAL.md` - More comprehensive technical overview for developers and system administrators
+- `ROADMAP.md` - Current development roadmap and project milestones
+
+## Documentation Types
+
+- **Personas**: Understand the users and stakeholders
+- **Architecture**: Deep dive into system design
+- **Technical Details**: Implementation specifics
+- **Deployment**: Installation and configuration guidance
+- **Roadmap**: Current development priorities and future plans
 
 ## Contributing
 
