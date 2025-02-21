@@ -98,6 +98,7 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
         for my $file (@files) {
             my $yaml = $file->slurp;
 
+            next if Load($yaml)->{draft};
             try {
                 my $workflow = Workflow->from_yaml( $dao, $yaml );
                 say sprintf "Imported workflow '%s' (%s) with %d steps",

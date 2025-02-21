@@ -48,10 +48,15 @@ class Registry :isa(Mojolicious) {
         for my $file (@workflows) {
             my $yaml = $file->slurp;
             next if Load($yaml)->{draft};
-            my $workflow = Workflow->from_yaml( $dao, $yaml );
-            my $msg      = sprintf( "Imported workflow '%s' (%s)",
-                $workflow->name, $workflow->slug );
-            $self->app->log->debug($msg);
+            try {
+                my $workflow = Workflow->from_yaml( $dao, $yaml );
+                my $msg      = sprintf( "Imported workflow '%s' (%s)",
+                    $workflow->name, $workflow->slug );
+                $self->app->log->debug($msg);
+            }
+            catch ($e) {
+                $self->app->log->error("Error importing workflow: $e");
+            }
         }
     }
 

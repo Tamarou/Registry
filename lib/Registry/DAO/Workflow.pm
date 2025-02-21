@@ -117,6 +117,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
     sub from_yaml ( $class, $db, $yaml ) {
         my $data = Load($yaml);
+        die "Cannot load draft workflow" if $data->{draft};
 
         $data->{slug} //= lc( $data->{name} =~ s/\s+/-/gr );
         for my $field (qw(name description)) {
@@ -147,9 +148,9 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
             }
 
             # Handle template if present
-            if ( $step->{template} ) {
+            if ( my $template_slug = delete $step->{template} ) {
                 my $template = Registry::DAO::Template->find( $db,
-                    { slug => delete $step->{template} } );
+                    { slug => $template_slug } );
                 $step->{template_id} = $template->id if $template;
             }
 
