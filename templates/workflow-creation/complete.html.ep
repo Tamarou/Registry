@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Workflow Created</title>
+    </head>
+    <body>
+        <header>
+            <h1>Workflow Created Successfully</h1>
+        </header>
+        <main>
+            <div class="success-message">
+                <p>Your new workflow "<%= $run->data->{name} %>" has been created successfully.</p>
+                <p>Workflow slug: <strong><%= $run->data->{slug} %></strong></p>
+            </div>
+            
+            <div class="workflow-summary">
+                <h2>Workflow Summary</h2>
+                <p><strong>Description:</strong> <%= $run->data->{description} %></p>
+                
+                <h3>Steps:</h3>
+                <ul>
+                <% foreach my $step (@{$run->data->{steps}}) { %>
+                    <li>
+                        <strong><%= $step->{slug} %></strong>: <%= $step->{description} %>
+                        <br>
+                        Template: <%= $step->{template} %>
+                        <br>
+                        Class: <%= $step->{class} %>
+                    </li>
+                <% } %>
+                </ul>
+            </div>
+            
+            <div class="next-actions">
+                <p>What would you like to do next?</p>
+                <a href="/" class="button">Return to Dashboard</a>
+                <a href="/workflows/<%= $run->data->{slug} %>/run" class="button">Test This Workflow</a>
+                <a href="/workflow-creation/start" class="button">Create Another Workflow</a>
+            </div>
+        </main>
+    </body>
+</html>

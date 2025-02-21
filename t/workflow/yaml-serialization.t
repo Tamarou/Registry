@@ -88,9 +88,13 @@ END_YAML
 }
 
 {
-    Registry::DAO::Template->import_from_file( $dao, $_ )
-      for Mojo::Home->new->child('templates')->list_tree->grep(qr/\.html\.ep$/)
+    my @templates =
+      Mojo::Home->new->child('templates')->list_tree->grep(qr/\.html\.ep$/)
       ->each;
+
+    for (@templates) {
+        Registry::DAO::Template->import_from_file( $dao, $_ );
+    }
 
     my @files =
       Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;

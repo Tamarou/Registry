@@ -1,0 +1,17 @@
+---
+description: A workflow to create new workflows
+name: Workflow Creation
+slug: workflow-creation
+steps:
+- class: Registry::DAO::WorkflowStep
+  description: New Workflow Landing page
+  slug: landing
+  template: workflow-creation-landing
+- class: Registry::DAO::WorkflowStep
+  description: Workflow Basic Information
+  slug: info
+  template: workflow-creation-info
+- class: Registry::DAO::CreateWorkflow
+  description: Workflow creation complete
+  slug: complete
+  template: workflow-creation-complete
