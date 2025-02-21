@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS workflows (
     name text UNIQUE NOT NULL,
     description text NULL,
     first_step text DEFAULT 'landing',
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS templates (
@@ -22,7 +23,8 @@ CREATE TABLE IF NOT EXISTS templates (
     content text NOT NULL,
     metadata jsonb NULL,
     notes text NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS workflow_steps (
@@ -35,9 +37,11 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
     depends_on uuid REFERENCES workflow_steps
     ON DELETE CASCADE ON UPDATE SET NULL,
     created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
     UNIQUE (workflow_id, slug) -- workflow steps are only unique per workflow
 );
 
+-- append only table
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     workflow_id uuid NOT NULL REFERENCES workflows,

@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS locations (
     slug text UNIQUE NOT NULL,
     metadata jsonb NULL,
     notes text NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT current_timestamp
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -21,7 +22,8 @@ CREATE TABLE IF NOT EXISTS projects (
     slug text UNIQUE NOT NULL,
     metadata jsonb NULL,
     notes text NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT current_timestamp
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -30,7 +32,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     slug text UNIQUE NOT NULL,
     metadata jsonb NULL,
     notes text NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT current_timestamp
+
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -43,6 +47,8 @@ CREATE TABLE IF NOT EXISTS events (
     metadata jsonb NULL,
     notes text NULL,
     created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT current_timestamp,
+
     -- only one event in one place at a time
     UNIQUE (project_id, location_id, time)
 );
@@ -51,7 +57,9 @@ CREATE TABLE IF NOT EXISTS session_events (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id uuid NOT NULL REFERENCES sessions,
     event_id uuid NOT NULL REFERENCES events,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT current_timestamp
+
 );
 
 DO
