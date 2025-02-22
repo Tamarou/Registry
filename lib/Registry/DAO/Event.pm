@@ -4,7 +4,7 @@ use experimental qw(try);
 use Object::Pad;
 
 class Registry::DAO::Session :isa(Registry::DAO::Object) {
-    use Carp         ();
+    use Carp         qw( carp );
     use experimental qw(try);
 
     field $id :param :reader;
@@ -119,7 +119,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
 }
 
 class Registry::DAO::Event :isa(Registry::DAO::Object) {
-    use Carp         ();
+    use Carp         qw( carp );
     use experimental qw(try);
 
     field $id :param :reader;

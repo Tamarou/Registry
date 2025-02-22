@@ -11,7 +11,8 @@ use Registry::DAO::Event;
 use Registry::DAO::WorkflowSteps;
 
 class Registry::DAO {
-    use experimental qw(builtin);
+    use Carp         qw(croak);
+    use experimental qw(builtin try);
     use builtin      qw(blessed);
 
     field $url :param :reader //= $ENV{DB_URL};
@@ -49,7 +50,8 @@ class Registry::DAO {
         return unless defined wantarray;
 
         $class = "Registry::DAO::$class" unless $class =~ /Registry::DAO::/;
-        return $class->create( $db, $data );
+        try { return $class->create( $db, $data ) }
+        catch ($e) { croak "Error creating $class: $e" };
     }
 
     method connect_schema ($schema) {

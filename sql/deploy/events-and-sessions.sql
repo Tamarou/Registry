@@ -10,11 +10,18 @@ CREATE TABLE IF NOT EXISTS locations (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     name text UNIQUE NOT NULL,
     slug text UNIQUE NOT NULL,
+    address_info jsonb NOT NULL DEFAULT '{}',
     metadata jsonb NULL,
     notes text NULL,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp NOT NULL DEFAULT current_timestamp
+    updated_at timestamp NOT NULL DEFAULT current_timestamp,
+    
+    -- Ensure address_info is a JSON object
+    CONSTRAINT valid_address_info CHECK (jsonb_typeof(address_info) = 'object')
 );
+
+-- Add GIN index for efficient querying on address_info
+CREATE INDEX IF NOT EXISTS location_address_gin ON locations USING gin (address_info);
 
 CREATE TABLE IF NOT EXISTS projects (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,

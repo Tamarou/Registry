@@ -98,13 +98,15 @@ ok $student, 'Created student user in tenant schema';
 my $location = $tenant_dao->create(
     'Registry::DAO::Location',
     {
-        name           => 'Pottery Studio',
-        address_street => '456 Clay Lane',
-        address_city   => 'Ceramicville',
-        address_state  => 'NY',
-        address_zip    => '12345',
-        capacity       => 15,
-        contact_info   =>
+        name         => 'Pottery Studio',
+        address_info => {
+            address_street => '456 Clay Lane',
+            address_city   => 'Ceramicville',
+            address_state  => 'NY',
+            address_zip    => '12345',
+        },
+        capacity     => 15,
+        contact_info =>
           { phone => '555-987-6543', email => 'pottery@example.com' },
         facilities => [ 'kiln', 'pottery wheels', 'glazing station' ],
         latitude   => 40.7128,
@@ -114,7 +116,7 @@ my $location = $tenant_dao->create(
 
 ok $location isa 'Registry::DAO::Location', 'Created location in tenant schema';
 is $location->name, 'Pottery Studio', 'Location name set correctly';
-is $location->address_city, 'Ceramicville',
+is $location->address_info->{address_city}, 'Ceramicville',
   'Location address_city set correctly';
 is $location->capacity, 15, 'Location capacity set correctly';
 
