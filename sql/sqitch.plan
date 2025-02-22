@@ -8,3 +8,4 @@ schema-based-multitennancy [tenant-on-boarding] 2024-05-21T01:43:52Z Chris Prath
 events-and-sessions [schema-based-multitennancy] 2024-05-31T03:36:11Z Chris Prather <chris.prather@tamarou.com> # Add events and sessions to the system
 edit-template-workflow 2025-02-11T23:59:19Z Chris Prather <chris.prather@tamarou.com> # default workflow for editing templates
 outcomes 2025-02-21T06:45:47Z Chris Prather <chris.prather@tamarou.com> # add outcome definitions
+summer-camp-module 2025-02-22T04:38:37Z Chris Prather <chris.prather@tamarou.com> # add summer-camp-module

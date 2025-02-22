@@ -58,8 +58,8 @@ CREATE TABLE IF NOT EXISTS session_events (
     session_id uuid NOT NULL REFERENCES sessions,
     event_id uuid NOT NULL REFERENCES events,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp NOT NULL DEFAULT current_timestamp
-
+    updated_at timestamp NOT NULL DEFAULT current_timestamp,
+    UNIQUE (session_id, event_id) -- session can only have one event
 );
 
 DO

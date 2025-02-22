@@ -7,7 +7,7 @@ use Object::Pad;
 use Mojo::Pg;
 use Registry::DAO::Object;
 use Registry::DAO::Workflow;
-use Registry::DAO::Events;
+use Registry::DAO::Event;
 use Registry::DAO::WorkflowSteps;
 
 class Registry::DAO {

@@ -158,22 +158,32 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 }
 
 class Registry::DAO::Location :isa(Registry::DAO::Object) {
-    field $id :param;
-    field $name :param;
-    field $slug :param;
-    field $metadata :param;
-    field $notes :param;
-    field $created_at :param;
+    field $id :param :reader;
+    field $name :param :reader;
+    field $slug :param :reader;
+    field $address_street :param :reader;
+    field $address_city :param :reader;
+    field $address_state :param :reader;
+    field $address_zip :param :reader;
+    field $capacity :param :reader;
+    field $contact_info :param :reader = {};
+    field $facilities :param :reader   = {};
+    field $metadata :param :reader;
+    field $notes :param :reader;
+    field $created_at :param :reader;
 
     use constant table => 'locations';
 
     sub create ( $class, $db, $data ) {
+        if ( exists $data->{contact_info} ) {
+            $data->{contact_info} = { -json => $data->{contact_info} };
+        }
+        if ( exists $data->{facilities} ) {
+            $data->{facilities} = { -json => $data->{facilities} };
+        }
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
         $class->SUPER::create( $db, $data );
     }
-
-    method id   { $id }
-    method name { $name }
 }
 
 class Registry::DAO::Project :isa(Registry::DAO::Object) {
