@@ -1,7 +1,8 @@
 # Contributing to Registry
 
 Welcome to the Registry project! This document will help you understand the
-core concepts and architecture of our platform.
+core concepts and architecture of our platform, as well as guide you through
+the development setup process.
 
 ## Mission
 
@@ -10,6 +11,118 @@ by providing a unified platform for managing educational events. Our goal is to
 handle the administrative complexity so teachers can focus on what they do
 best: inspiring students.
 
+## Development Environment Setup
+
+### Using Docker (Recommended)
+
+The easiest way to get started is using Docker and Docker Compose, which will
+set up everything you need in isolated containers.
+
+#### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+
+#### Setup Steps
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Tamarou/Registry.git
+   cd Registry
+   ```
+
+2. Start the development environment:
+   ```bash
+   docker-compose up
+   ```
+
+3. The application will be available at http://localhost:3000
+
+4. Database migrations will be automatically applied during the first startup.
+
+### Manual Setup
+
+If you prefer to set up the development environment directly on your system:
+
+#### Prerequisites
+
+- Perl 5.40.0 or higher
+- PostgreSQL 12 or higher
+- Git
+
+#### Setup Steps
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Tamarou/Registry.git
+   cd Registry
+   ```
+
+2. Install Perl dependencies:
+   ```bash
+   cpanm --installdeps .
+   ```
+
+3. Set up the PostgreSQL database:
+   ```bash
+   createdb registry
+   sqitch deploy
+   ```
+
+4. Set the database URL environment variable:
+   ```bash
+   export DB_URL=postgres://username:password@localhost/registry
+   ```
+
+5. Start the development server:
+   ```bash
+   morbo registry
+   ```
+
+6. The application will be available at http://localhost:3000
+
+## Running Tests
+
+The Registry project uses a comprehensive test suite to ensure functionality works as expected.
+
+### Running Tests with Docker
+
+```bash
+docker-compose run web prove -l t
+```
+
+### Running Tests Manually
+
+```bash
+prove -l t
+```
+
+### Testing Specific Components
+
+To run tests for specific components:
+
+```bash
+prove -l t/controller/        # Test controllers
+prove -l t/dao/               # Test data access objects
+prove -l t/workflows/         # Test workflow functionality
+```
+
+## Database Migrations
+
+Registry uses Sqitch for database migrations.
+
+### With Docker
+
+```bash
+docker-compose run web sqitch deploy
+```
+
+### Manually
+
+```bash
+sqitch deploy
+```
+
 ## Core Concepts
 
 ### Workflows
@@ -17,13 +130,10 @@ best: inspiring students.
 Workflows are the backbone of Registry, representing the entire lifecycle of an
 educational event or program. Each workflow is a series of steps that guide
 users through processes like program registration, attendance tracking, or
-progress reporting. Workflows are usually defined by users via a Workflow
-construction workflow. This is driven via the Registration Web UI.
+progress reporting.
 
-We bootstrap the system using serialized workflows in YAML format for better
-readability and familiarity with other workflow systems (like Kubernetes,
-Ansible, or GitHub Actions).
-
+Workflows are defined in YAML format for better readability and familiarity
+with other workflow systems (like Kubernetes, Ansible, or GitHub Actions).
 Example:
 
 ```yaml
@@ -36,19 +146,19 @@ steps:
   - name: Initial Application
     outcome: student-application  # references outcome definition
     template: application-form   # references template
-    roles: # NOT IMPLEMENTED YET
+    roles:
       - parent
-    conditions: # NOT IMPLEMENTED YET
+    conditions:
       registration_open: true
       class_capacity_available: true
 
   - name: Teacher Review
     outcome: application-review
     template: review-form
-    roles: # NOT IMPLEMENTED YET
+    roles:
       - teacher
       - admin
-    requires: # NOT IMPLEMENTED YET
+    requires:
       - Initial Application
 ```
 
@@ -92,29 +202,68 @@ Outcomes are defined in JSON format. Example:
   ]
 }
 ```
-### Validations (NOT IMPLEMENTED YET)
-
-Validations define how system state is validated at each step of a workflow.
-See the [design doc](docs/architecture/validations.md) for more details.
 
 ### Templates
 
-Templates define how workflow steps are presented to users. They are HTML
-templates that:
-
+Templates define how workflow steps are presented to users. They are HTML templates that:
 - Display forms for data collection
 - Show progress and status information
 - Present relevant information to users
 - Handle user interactions
 
-## Roles (NOT IMPLEMENTED YET)
+## Multi-tenant Architecture
 
-Roles define which users are allowed to interact with a workflow step.
+Registry uses a schema-based multi-tenancy approach where each tenant
+(organization) gets its own PostgreSQL schema with isolated data, while sharing
+the same database instance. The application automatically routes requests to
+the appropriate tenant schema based on the incoming request.
 
-## Conditions (NOT IMPLEMENTED YET)
+Key concepts:
+- Each tenant has a unique identifier
+- Workflows, templates, and outcomes are copied to each tenant's schema
+- Cross-tenant queries are explicitly prevented for security
+- Specialized workflow steps maintain their class information across tenant schemas
 
-Conditions define what preconditions must be met to allow a user to interact
-with a workflow step.
+## Development Workflow
+
+### Code Organization
+
+The Perl codebase uses the following namespace structure:
+- `Registry::DAO::OutcomeDefinition` - Handles outcome/schema definitions
+- `Registry::DAO::Outcome` - Manages actual outcome data
+- `Registry::DAO::Workflow` - Manages workflow execution (includes YAML parsing)
+- `Registry::DAO::Template` - Handles template rendering
+
+### Creating New Features
+
+1. Create a feature branch from `main`:
+   ```bash
+   git checkout -b feature/my-new-feature
+   ```
+
+2. Implement your changes, following these guidelines:
+   - Write tests in the appropriate test directory
+   - Keep the user personas in mind when developing features
+   - Follow the coding style of the existing codebase
+   - Document your code with appropriate comments
+   - Update documentation as needed
+
+3. Run the test suite to ensure everything works:
+   ```bash
+   prove -l t
+   ```
+
+4. Submit a pull request for review
+
+### File Formats
+
+- Workflows: YAML format for better readability and familiar workflow syntax
+- Outcomes: JSON format for structured data validation
+- Templates: HTML with template syntax for rendering
+
+The choice of YAML for workflows aligns with developer expectations from other
+workflow systems like Kubernetes, Ansible, and GitHub Actions, while providing
+better readability and comment support for complex workflow definitions.
 
 ## Example Content and Bootstrapping
 
@@ -135,41 +284,6 @@ These files are used to:
 - Provide working examples for developers
 - Define the core workflows that ship with the system
 - Document the expected structure and format of each content type
-
-When developing new features or modifying existing ones, these example files serve as valuable references, but remember that in a running system, this content will be stored and managed in the database.
-
-## Code Organization
-
-The Perl codebase uses the following namespace structure:
-- `Registry::DAO::OutcomeDefinition` - Handles outcome/schema definitions
-- `Registry::DAO::Outcome` - Manages actual outcome data
-- `Registry::DAO::Workflow` - Manages workflow execution (includes YAML parsing)
-- `Registry::DAO::Template` - Handles template rendering
-
-## File Formats
-
-- Workflows: YAML format for better readability and familiar workflow syntax
-- Outcomes: JSON format for structured data validation
-- Templates: HTML with template syntax for rendering
-
-The choice of YAML for workflows aligns with developer expectations from other workflow systems like Kubernetes, Ansible, and GitHub Actions, while providing better readability and comment support for complex workflow definitions.
-
-## Getting Started
-
-1. Familiarize yourself with the user personas in `docs/personas/`
-2. Review existing workflows in the `workflows/` directory (YAML format)
-3. Look at outcome definitions in `schemas/`
-4. Examine templates in `templates/`
-
-## Development Guidelines
-
-1. Keep the user personas in mind when developing features
-2. Ensure new workflows are clear and intuitive
-3. Write clear outcome definitions with helpful validation messages
-4. Make templates responsive and accessible
-5. Document any new features or changes
-6. Use YAML comments to explain complex workflow logic
-7. Remember these files are examples - production content lives in the database
 
 ## Need Help?
 
