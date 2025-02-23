@@ -172,6 +172,11 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     field $description :param :reader;
 
     field $depends_on :param = undef;
+    # TODO: WorkflowStep class needs:
+    # - Remove = {} default
+    # - Add BUILD for JSON decoding
+    # - Handle { -json => $metadata } in create/update
+    # - Add explicit metadata() accessor
     field $metadata :param   = {};
     field $class :param :reader;
 
@@ -228,6 +233,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     field $workflow_id :param;
     field $latest_step_id :param  = undef;
     field $continuation_id :param = undef;
+    # This is our reference implementation for JSONB handling
     field $data :param //= {};
     field $created_at :param;
 

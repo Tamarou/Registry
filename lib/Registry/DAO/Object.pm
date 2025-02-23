@@ -160,6 +160,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 }
 
 class Registry::DAO::Location :isa(Registry::DAO::Object) {
+    use Mojo::JSON qw(decode_json encode_json);
+
     field $id :param :reader;
     field $name :param :reader;
     field $slug :param :reader;
@@ -238,6 +240,12 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $name :param;
     field $slug :param;
+
+    # TODO: Project class needs:
+    # - Remove metadata default value
+    # - Add BUILD to decode JSON strings
+    # - Use { -json => $metadata } in create/update
+    # - Add explicit metadata() accessor
     field $metadata :param;
     field $notes :param;
     field $created_at :param;
@@ -256,6 +264,12 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     field $name :param :reader;
     field $slug :param :reader    = lc( $name =~ s/\s+/-/gr );
     field $content :param :reader = '';
+
+    # TODO: Template class needs:
+    # - Remove :reader metadata field
+    # - Add BUILD for JSON decoding
+    # - Handle { -json => $metadata } in create
+    # - Add explicit metadata() accessor
     field $metadata :param :reader;
     field $notes :param :reader;
     field $created_at :param :reader;

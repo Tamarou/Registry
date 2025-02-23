@@ -13,6 +13,11 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     field $start_date :param :reader;
     field $end_date :param :reader;
     field $status :param :reader   //= 'draft';
+    # TODO: Session class needs:
+    # - Remove //= {} default
+    # - Add BUILD for JSON decoding
+    # - Handle { -json => $metadata } in create/update
+    # - Add explicit metadata() accessor
     field $metadata :param :reader //= {};
     field $notes :param :reader    //= '';
     field $created_at :param :reader = time;
@@ -129,6 +134,11 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     field $min_age :param :reader;
     field $max_age :param :reader;
     field $capacity :param :reader;
+    # TODO: Event class needs:
+    # - Remove //= {} default
+    # - Add BUILD for JSON decoding
+    # - Use { -json => $metadata } in create/update
+    # - Add explicit metadata() accessor
     field $metadata :param :reader //= {};
     field $notes :param :reader    //= '';
     field $created_at :param :reader;
@@ -197,6 +207,11 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     field $session_id :param :reader;
     field $student_id :param :reader;
     field $status :param :reader   //= 'pending';
+    # TODO: Enrollment class needs:
+    # - Remove //= {} default
+    # - Add BUILD for JSON decoding
+    # - Use { -json => $metadata } in create/update
+    # - Add explicit metadata() accessor
     field $metadata :param :reader //= {};
     field $created_at :param :reader;
     field $updated_at :param :reader;
@@ -265,6 +280,11 @@ class Registry::DAO::Pricing :isa(Registry::DAO::Object) {
     field $early_bird_amount :param :reader;
     field $early_bird_cutoff_date :param :reader;
     field $sibling_discount :param :reader;
+    # TODO: Pricing class needs:
+    # - Remove //= {} default
+    # - Add BUILD for JSON decoding
+    # - Use { -json => $metadata } in create/update
+    # - Add explicit metadata() accessor
     field $metadata :param :reader //= {};
     field $created_at :param :reader;
     field $updated_at :param :reader;
