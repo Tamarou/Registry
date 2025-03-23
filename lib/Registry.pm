@@ -45,6 +45,10 @@ class Registry :isa(Mojolicious) {
         # Location routes
         $r->get('/locations/:slug')->to('locations#show')
           ->name('show_location');
+          
+        # Outcome definition routes
+        $r->get('/outcome/definition/:id')->to('workflows#get_outcome_definition')->name('outcome.definition');
+        $r->post('/outcome/validate')->to('workflows#validate_outcome')->name('outcome.validate');
     }
 
     method import_workflows () {

@@ -98,10 +98,9 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
             slug        => $slug,
         };
         
-        # Only include first_step if it's not the default value
-        if ($first_step && $first_step ne 'landing') {
-            $workflow->{first_step} = $first_step;
-        }
+        # Always include first_step value from database
+        $workflow->{first_step} = $first_step if $first_step;
+
 
         # Start with the first step and traverse
         my $current_step = $self->first_step($db);
@@ -207,6 +206,46 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
 
     use constant table => 'workflow_steps';
     
+    method outcome_definition($db) {
+        return unless $outcome_definition_id;
+        Registry::DAO::OutcomeDefinition->find($db, { id => $outcome_definition_id });
+    }
+    
+    method get_schema_definition($db) {
+        my $definition = $self->outcome_definition($db);
+        return unless $definition;
+        return $definition->schema;
+    }
+    
+    method validate($db, $data) {
+        my $definition = $self->outcome_definition($db);
+        return { valid => 1 } unless $definition; # Skip validation if no definition
+        
+        # Get validation rules from outcome definition
+        my $schema = $definition->schema;
+        my @errors;
+        
+        # Basic field validation using JSON Schema
+        for my $field ($schema->{fields}->@*) {
+            my $field_id = $field->{id};
+            # Check required fields
+            if ($field->{required} && !defined $data->{$field_id}) {
+                push @errors, {
+                    field => $field_id,
+                    message => "Field is required"
+                };
+                next;
+            }
+            
+            # Additional validation for specific field types could be added here
+        }
+        
+        return {
+            valid => @errors ? 0 : 1,
+            errors => \@errors
+        };
+    }
+    
     # we store the subclass name in the database
     # so we need inflate the correct one
     sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
@@ -277,7 +316,16 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
         Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
     }
 
-    method process ( $db, $data ) { $data }
+    method process ( $db, $data ) { 
+        # Always validate input
+        my $validation = $self->validate($db, $data);
+        if (!$validation->{valid}) {
+            return { _validation_errors => $validation->{errors} };
+        }
+        
+        # Default implementation - simple passthrough
+        return $data;
+    }
 }
 
 class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {

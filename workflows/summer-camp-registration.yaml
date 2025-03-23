@@ -1,0 +1,20 @@
+name: Summer Camp Registration
+slug: summer-camp-registration
+description: Registration workflow for summer camp programs
+first_step: landing
+steps:
+  - slug: landing
+    description: Welcome Page
+  - slug: camper-info
+    description: Camper Information
+    outcome-definition: Summer Camp Registration
+    class: Registry::DAO::WorkflowStep
+  - slug: session-selection
+    description: Session Selection
+    class: Registry::DAO::WorkflowStep
+  - slug: payment
+    description: Payment Information
+    class: Registry::DAO::WorkflowStep
+  - slug: complete
+    description: Registration Complete
+    class: Registry::DAO::WorkflowStep

@@ -1,0 +1,84 @@
+% layout 'default';
+% title 'Camper Information';
+
+<h2>Camper Information</h2>
+<p>Please provide information about the camper attending our summer program.</p>
+
+<% if (defined $outcome_definition_id && $outcome_definition_id ne '') { %>
+    <%# Load the Web Component script %>
+    <% content_for head => begin %>
+        <script src="/js/form-builder.js"></script>
+    <% end %>
+    
+    <%# Use the Form Builder component %>
+    <form-builder 
+        outcome-definition-url="<%= url_for('outcome.definition', id => $outcome_definition_id) %>" 
+        form-data="<%= $data_json %>"
+        validation-errors="<%= $errors_json %>">
+    </form-builder>
+<% } else { %>
+    <%# Fallback form if outcome definition is not available %>
+    <form method="POST" action="<%= $action %>">
+        <div class="form-field">
+            <label for="childName">Child's Name</label>
+            <input type="text" id="childName" name="childName" required>
+        </div>
+        
+        <div class="form-field">
+            <label for="childAge">Child's Age</label>
+            <input type="number" id="childAge" name="childAge" min="5" max="18" required>
+        </div>
+        
+        <div class="form-field">
+            <label for="gradeLevel">Grade Level (Fall 2025)</label>
+            <select id="gradeLevel" name="gradeLevel" required>
+                <option value="">Select grade...</option>
+                <option value="K">Kindergarten</option>
+                <option value="1">1st Grade</option>
+                <option value="2">2nd Grade</option>
+                <option value="3">3rd Grade</option>
+                <option value="4">4th Grade</option>
+                <option value="5">5th Grade</option>
+                <option value="6">6th Grade</option>
+                <option value="7">7th Grade</option>
+                <option value="8">8th Grade</option>
+                <option value="9">9th Grade</option>
+                <option value="10">10th Grade</option>
+                <option value="11">11th Grade</option>
+                <option value="12">12th Grade</option>
+            </select>
+        </div>
+        
+        <div class="form-field">
+            <label for="parentName">Parent/Guardian Name</label>
+            <input type="text" id="parentName" name="parentName" required>
+        </div>
+        
+        <div class="form-field">
+            <label for="parentEmail">Parent/Guardian Email</label>
+            <input type="email" id="parentEmail" name="parentEmail" required>
+        </div>
+        
+        <div class="form-field">
+            <label for="parentPhone">Parent/Guardian Phone</label>
+            <input type="tel" id="parentPhone" name="parentPhone" required>
+        </div>
+        
+        <div class="form-field">
+            <label for="emergencyContact">Emergency Contact Name</label>
+            <input type="text" id="emergencyContact" name="emergencyContact" required>
+        </div>
+        
+        <div class="form-field">
+            <label for="emergencyPhone">Emergency Contact Phone</label>
+            <input type="tel" id="emergencyPhone" name="emergencyPhone" required>
+        </div>
+        
+        <div class="form-field">
+            <label for="allergies">Allergies or Medical Conditions</label>
+            <textarea id="allergies" name="allergies"></textarea>
+        </div>
+        
+        <button type="submit">Continue</button>
+    </form>
+<% } %>

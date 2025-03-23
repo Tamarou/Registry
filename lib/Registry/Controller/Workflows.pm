@@ -166,13 +166,21 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     method get_workflow_run_step {
         my $dao = $self->app->dao;
         my $run = $self->run();
-
+        my $step = $run->latest_step($dao->db) || $run->next_step($dao->db);
+        
+        # Get data for rendering
+        my $data_json = Mojo::JSON::encode_json($run->data || {});
+        my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
+        
         return $self->render(
             template => $self->param('workflow') . '/' . $self->param('step'),
             workflow => $self->param('workflow'),
             step     => $self->param('step'),
             status   => 200,
             action   => $self->url_for('workflow_process_step'),
+            outcome_definition_id => $step->outcome_definition_id,
+            data_json => $data_json,
+            errors_json => $errors_json,
         );
     }
 
@@ -199,7 +207,15 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
 
         my $data = $self->req->params->to_hash;
 
-        $run->process( $dao->db, $step, $data );
+        my $result = $run->process( $dao->db, $step, $data );
+        
+        # Check for validation errors
+        if ($result->{_validation_errors}) {
+            # Store errors in flash for retrieval on redirect
+            $self->flash(validation_errors => $result->{_validation_errors});
+            
+            return $self->redirect_to($self->url_for);
+        }
 
         # if we're still not done, redirect to the next step
         if ( !$run->completed( $dao->db ) ) {
@@ -223,6 +239,32 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         }
 
         return $self->render( text => 'DONE', status => 201 );
+    }
+
+    method get_outcome_definition {
+        my $id = $self->param('id');
+        my $dao = $self->app->dao;
+        
+        my $definition = Registry::DAO::OutcomeDefinition->find($dao->db, { id => $id });
+        
+        if (!$definition) {
+            return $self->render(json => { error => 'Outcome definition not found' }, status => 404);
+        }
+        
+        return $self->render(json => $definition->schema);
+    }
+    
+    method validate_outcome {
+        my $dao = $self->app->dao;
+        my $json = $self->req->json;
+        
+        my $outcome_id = $json->{outcome_definition_id};
+        my $data = $json->{data};
+        
+        my $step = Registry::DAO::WorkflowStep->new(outcome_definition_id => $outcome_id);
+        my $validation = $step->validate($dao->db, $data);
+        
+        return $self->render(json => $validation);
     }
 
     method start_continuation {

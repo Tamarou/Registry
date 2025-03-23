@@ -1,0 +1,59 @@
+% layout 'default';
+% title 'Registration Complete';
+
+<div class="success-message">
+    <h2>Registration Complete!</h2>
+    
+    <p>Thank you for registering for our summer camp program. We're excited to have <%= $run->data->{childName} || 'your child' %> join us this summer!</p>
+    
+    <div class="next-steps">
+        <h3>Next Steps</h3>
+        <ol>
+            <li>You will receive a confirmation email with details about your registration.</li>
+            <li>A camp information packet will be sent to you two weeks before your registered session begins.</li>
+            <li>If you have any questions or need to make changes to your registration, please contact us at camp@example.com or (555) 123-4567.</li>
+        </ol>
+    </div>
+    
+    <div class="registration-details">
+        <h3>Registration Details</h3>
+        <div class="summary-details">
+            <p><strong>Camper:</strong> <%= $run->data->{childName} || 'N/A' %></p>
+            <p><strong>Grade Level:</strong> <%= $run->data->{gradeLevel} || 'N/A' %></p>
+            
+            <h4>Selected Sessions:</h4>
+            <ul>
+                <% if (ref $run->data->{sessions} eq 'ARRAY') { %>
+                    <% foreach my $session ($run->data->{sessions}->@*) { %>
+                        <li>
+                            <% if ($session eq 'week1') { %>Week 1: June 9-13 - Nature Explorers<% } %>
+                            <% if ($session eq 'week2') { %>Week 2: June 16-20 - Sports & Games<% } %>
+                            <% if ($session eq 'week3') { %>Week 3: June 23-27 - Science Discovery<% } %>
+                            <% if ($session eq 'week4') { %>Week 4: July 7-11 - Arts & Crafts<% } %>
+                            <% if ($session eq 'week5') { %>Week 5: July 14-18 - Coding & Technology<% } %>
+                            <% if ($session eq 'week6') { %>Week 6: July 21-25 - Performance Arts<% } %>
+                        </li>
+                    <% } %>
+                <% } else { %>
+                    <li>
+                        <% if ($run->data->{sessions} eq 'week1') { %>Week 1: June 9-13 - Nature Explorers<% } %>
+                        <% if ($run->data->{sessions} eq 'week2') { %>Week 2: June 16-20 - Sports & Games<% } %>
+                        <% if ($run->data->{sessions} eq 'week3') { %>Week 3: June 23-27 - Science Discovery<% } %>
+                        <% if ($run->data->{sessions} eq 'week4') { %>Week 4: July 7-11 - Arts & Crafts<% } %>
+                        <% if ($run->data->{sessions} eq 'week5') { %>Week 5: July 14-18 - Coding & Technology<% } %>
+                        <% if ($run->data->{sessions} eq 'week6') { %>Week 6: July 21-25 - Performance Arts<% } %>
+                    </li>
+                <% } %>
+            </ul>
+            
+            <p><strong>Extended Care:</strong> 
+                <% if ($run->data->{extendedCare} eq 'none') { %>None<% } %>
+                <% if ($run->data->{extendedCare} eq 'morning') { %>Morning care (8:00-9:00 AM)<% } %>
+                <% if ($run->data->{extendedCare} eq 'afternoon') { %>Afternoon care (3:00-5:00 PM)<% } %>
+                <% if ($run->data->{extendedCare} eq 'both') { %>Both morning and afternoon care<% } %>
+            </p>
+        </div>
+    </div>
+    
+    <a href="/" class="button">Return to Homepage</a>
+</div>
