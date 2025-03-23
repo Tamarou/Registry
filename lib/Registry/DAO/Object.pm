@@ -3,13 +3,13 @@ use utf8;
 use Object::Pad;
 
 class Registry::DAO::Object {
-    use Carp         qw( carp );
+    use Carp         qw( carp confess );
     use experimental qw(builtin try);
     use builtin      qw(blessed);
 
     sub table($) { ... }
 
-    sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
+    sub find ( $class, $db, $filter = {}, $order = { -desc => 'created_at' } ) {
         $db = $db->db if $db isa Registry::DAO;
         my $c = $db->select( $class->table, '*', $filter, $order )
           ->expand->hashes->map( sub { $class->new( $_->%* ) } );
@@ -25,7 +25,7 @@ class Registry::DAO::Object {
             return $class->new(%data);
         }
         catch ($e) {
-            carp "Error creating $class: $e";
+            confess "Error creating $class: $e";
         };
     }
 
@@ -106,7 +106,20 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         $class->SUPER::create( $db, $data );
     }
 
-    method dao($db) { Registry::DAO->new( db => $db, schema => $slug ) }
+    method dao($db = undef) { 
+        # If we have a db handle that's part of a Registry::DAO object, get the URL from there
+        if ($db && $db isa Registry::DAO) {
+            return Registry::DAO->new( url => $db->url, schema => $slug );
+        } 
+        # If we have a raw database handle, connect using ENV{DB_URL}
+        elsif ($db) {
+            return Registry::DAO->new( schema => $slug );
+        } 
+        # No db handle, just use the default URL
+        else {
+            return Registry::DAO->new( schema => $slug );
+        }
+    }
 
     method primary_user ($db) {
         my $sql = <<~'SQL';
@@ -277,33 +290,65 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     use constant table => 'templates';
 
     sub import_from_file( $class, $dao, $file ) {
-
+        # Parse the template name from the file path
         my $name = $file->to_rel('templates') =~ s/.html.ep//r;
-
-        return if $dao->find( 'Registry::DAO::Template' => { name => $name, } );
-
-        my ( $workflow, $step ) = $name =~ /^(?:(.*)\/)?(.*)$/;
-        $workflow //= '__default__';    # default workflow
-
-        # landing is the default step
-        $step = 'landing' if $step eq 'index';
-
-        my $template = $dao->create(
+        
+        # Generate a sensible slug from the name for special slug handling
+        my $slug;
+        if ($name =~ m{^(.*)/index$}) {
+            # For 'workflow/index' files, create a slug like 'workflow-index'
+            # This handles the case where a template is referenced as 'workflow-index' in YAML
+            $slug = lc( "$1-index" =~ s/\W+/-/gr );
+        } else {
+            # Normal slug generation
+            $slug = lc( $name =~ s/\W+/-/gr );
+        }
+        
+        # Check if template exists by name or slug (allowing for different ways to reference it)
+        my $template = $dao->find( 'Registry::DAO::Template' => { name => $name } )
+                    || $dao->find( 'Registry::DAO::Template' => { slug => $slug } );
+        
+        # If it exists, update the content if necessary
+        if ($template) {
+            my $content = $file->slurp;
+            if ($template->content ne $content) {
+                $template = $template->update( $dao->db, { content => $content });
+            }
+            return $template;
+        }
+        
+        # Create new template
+        my $content = $file->slurp;
+        $template = $dao->create(
             'Registry::DAO::Template' => {
                 name    => $name,
-                slug    => $name =~ s/\W+/-/gr,
-                content => $file->slurp,
+                slug    => $slug,
+                content => $content,
             }
         );
-
+        
+        # Try to link the template to a workflow step if it matches the pattern
         if ($template) {
-            my $workflow =
-              $dao->find( 'Registry::DAO::Workflow' => { slug => $workflow, } );
+            my ( $workflow_name, $step ) = $name =~ /^(?:(.*)\/)?(.*)$/;
+            
+            # Skip if no workflow name found
+            return $template unless $workflow_name;
+            
+            # Handle index template special case (as landing)
+            $step = 'landing' if $step eq 'index';
+            
+            # Try to find the workflow by slug
+            my $workflow = $dao->find( 'Registry::DAO::Workflow' => { slug => $workflow_name });
             return $template unless $workflow;
-            if ( my $step = $workflow->get_step( $dao, { slug => $step } ) ) {
-                $step->set_template( $dao, $template );
-            }
+            
+            # Try to find the step in the workflow
+            my $workflow_step = $workflow->get_step( $dao->db, { slug => $step });
+            return $template unless $workflow_step;
+            
+            # Set the template on the step
+            $workflow_step->set_template( $dao->db, $template );
         }
-
+        
+        return $template;
     }
 }

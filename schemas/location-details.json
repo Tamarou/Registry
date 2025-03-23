@@ -1,0 +1,38 @@
+{
+  "name": "Location Details",
+  "description": "Core location information",
+  "fields": [
+    {
+      "id": "name",
+      "type": "text",
+      "label": "Location Name",
+      "required": true
+    },
+    {
+      "id": "address_info",
+      "type": "object",
+      "properties": {
+        "street_address": {
+          "type": "string",
+          "label": "Street Address",
+          "required": true
+        },
+        "city": {
+          "type": "string",
+          "label": "City",
+          "required": true
+        },
+        "state": {
+          "type": "string",
+          "label": "State",
+          "required": true
+        },
+        "postal_code": {
+          "type": "string",
+          "label": "Postal Code",
+          "required": true
+        }
+      }
+    }
+  ]
+}

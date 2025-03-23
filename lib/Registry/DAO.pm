@@ -9,6 +9,8 @@ use Registry::DAO::Object;
 use Registry::DAO::Workflow;
 use Registry::DAO::Event;
 use Registry::DAO::WorkflowSteps;
+use Registry::DAO::OutcomeDefinition;
+use Registry::DAO::CreateOutcomeDefinition;
 
 class Registry::DAO {
     use Carp         qw(croak);
@@ -23,10 +25,11 @@ class Registry::DAO {
     sub import(@) {
         no warnings;
         export_lexically(
-            DAO          => sub () { 'Registry::DAO' },
-            Workflow     => sub () { 'Registry::DAO::Workflow' },
-            WorkflowRun  => sub () { 'Registry::DAO::WorkflowRun' },
-            WorkflowStep => sub () { 'Registry::DAO::WorkflowStep' },
+            DAO               => sub () { 'Registry::DAO' },
+            Workflow          => sub () { 'Registry::DAO::Workflow' },
+            WorkflowRun       => sub () { 'Registry::DAO::WorkflowRun' },
+            WorkflowStep      => sub () { 'Registry::DAO::WorkflowStep' },
+            OutcomeDefinition => sub () { 'Registry::DAO::OutcomeDefinition' },
         );
     }
 

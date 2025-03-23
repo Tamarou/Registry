@@ -1,0 +1,12 @@
+% layout 'default';
+% title 'Location Details';
+
+<div class="location-view">
+  <h1><%= $location->name %></h1>
+
+  <h2>Address</h2>
+  <address>
+    <%= $location->address_info->{street_address} %><br>
+    <%= $location->address_info->{city} %>, <%= $location->address_info->{state} %> <%= $location->address_info->{postal_code} %>
+  </address>
+</div>

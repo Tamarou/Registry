@@ -9,3 +9,4 @@ events-and-sessions [schema-based-multitennancy] 2024-05-31T03:36:11Z Chris Prat
 edit-template-workflow 2025-02-11T23:59:19Z Chris Prather <chris.prather@tamarou.com> # default workflow for editing templates
 outcomes 2025-02-21T06:45:47Z Chris Prather <chris.prather@tamarou.com> # add outcome definitions
 summer-camp-module 2025-02-22T04:38:37Z Chris Prather <chris.prather@tamarou.com> # add summer-camp-module
+fix-tenant-workflows [schema-based-multitennancy] 2025-03-22T18:57:13Z Chris Prather <chris.prather@tamarou.com> # Fix tenant workflows to include first_step

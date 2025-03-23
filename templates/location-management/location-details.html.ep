@@ -1,0 +1,37 @@
+% layout 'workflow';
+% title 'Location Details';
+
+%= form_for $action => begin
+  <div class="form-group">
+    %= label_for name => 'Location Name'
+    %= text_field 'name', class => 'form-control'
+  </div>
+
+  <fieldset>
+    <legend>Address</legend>
+
+    <div class="form-group">
+      %= label_for 'address_info.street_address' => 'Street Address'
+      %= text_field 'address_info.street_address', class => 'form-control'
+    </div>
+
+    <div class="form-group">
+      %= label_for 'address_info.city' => 'City'
+      %= text_field 'address_info.city', class => 'form-control'
+    </div>
+
+    <div class="form-group">
+      %= label_for 'address_info.state' => 'State'
+      %= text_field 'address_info.state', class => 'form-control'
+    </div>
+
+    <div class="form-group">
+      %= label_for 'address_info.postal_code' => 'Postal Code'
+      %= text_field 'address_info.postal_code', class => 'form-control'
+    </div>
+  </fieldset>
+
+  <div class="form-actions">
+    %= submit_button 'Save', class => 'btn btn-primary'
+  </div>
+% end

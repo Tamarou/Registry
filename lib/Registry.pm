@@ -1,12 +1,12 @@
 use 5.40.0;
+use experimental qw(try);
 use Object::Pad;
+use Registry::DAO;
 
 class Registry :isa(Mojolicious) {
-    our $VERSION = '0.000';
-
+    our $VERSION = v0.001;
     use Sys::Hostname qw( hostname );
-    use Registry::DAO;
-    use YAML::XS qw(Load);
+    use YAML::XS      qw(Load);
 
     method startup {
         $self->secrets( [hostname] );
@@ -22,13 +22,16 @@ class Registry :isa(Mojolicious) {
 
         $self->hook(
             before_server_start => sub ( $server, @ ) {
-                $self->import_workflows;
+                $self->import_schemas;
                 $self->import_templates;
+                $self->import_workflows;
             }
         );
 
         my $r = $self->routes->under('/')->to('tenants#setup');
         $r->get('')->to('#index')->name("tenants_landing");
+
+        # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
         $w->get('')->to('#index')->name("workflow_index");
         $w->post('')->to('#start_workflow')->name("workflow_start");
@@ -38,6 +41,10 @@ class Registry :isa(Mojolicious) {
           ->name("workflow_process_step");
         $w->post('/:run/callcc/:target')->to('#start_continuation')
           ->name("workflow_callcc");
+
+        # Location routes
+        $r->get('/locations/:slug')->to('locations#show')
+          ->name('show_location');
     }
 
     method import_workflows () {
@@ -72,6 +79,27 @@ class Registry :isa(Mojolicious) {
             my $msg =
               sprintf( "Imported template '%s'", $file->to_rel('templates') );
             $self->app->log->debug($msg);
+        }
+    }
+
+    method import_schemas () {
+        my $dao = $self->dao;
+
+        my @schemas =
+          $self->home->child('schemas')->list->grep(qr/\.json$/)->each;
+
+        for my $file (@schemas) {
+            try {
+                my $outcome =
+                  Registry::DAO::OutcomeDefinition->import_from_file( $dao,
+                    $file );
+                my $msg =
+                  sprintf( "Imported outcome definition '%s'", $outcome->name );
+                $self->app->log->debug($msg);
+            }
+            catch ($e) {
+                $self->app->log->error("Error importing schema: $e");
+            }
         }
     }
 }

@@ -10,9 +10,9 @@ steps:
     #template: workflow-basics-form
     description: Define the basic workflow step properties
 
-  - slug: outcome
+  - slug: outcome-definition
     #template: outcome-definition-form
-    description: Define the required outcomes for this workflow step
+    description: Define the required outcome definition for this workflow step
 
   - slug: template
     #template: template-selection-form

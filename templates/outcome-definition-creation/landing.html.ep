@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Create Outcome Definition</title>
+    </head>
+    <body>
+        <header>
+            <h1>Create New Form Definition</h1>
+            <p>This workflow will guide you through creating a new form (outcome definition).</p>
+        </header>
+        <main>
+            <form method="POST" action="<%= $action %>">
+                <button type="submit">Start</button>
+            </form>
+        </main>
+    </body>
+</html>

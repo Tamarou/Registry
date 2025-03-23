@@ -1,5 +1,6 @@
 use v5.40.0;
 use utf8;
+use experimental qw(try);
 use Object::Pad;
 
 use Registry::DAO::Object;
@@ -24,10 +25,23 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         return $class->new(%data);
     }
 
+    method first_step_slug ($db) {
+        return $first_step;
+    }
+
     method first_step ($db) {
         return unless $first_step;
-        Registry::DAO::WorkflowStep->find( $db,
+        my $step = Registry::DAO::WorkflowStep->find( $db,
             { slug => $first_step, workflow_id => $id } );
+            
+        # If step not found but slug is defined, check if we need to create it
+        if (!$step && $first_step) {
+            # Log warning for debugging
+            # TODO: Replace with proper logging
+            # warn "First step '$first_step' not found for workflow $id (slug: $slug)";
+        }
+        
+        return $step;
     }
 
     method get_step ( $db, $filter ) {
@@ -47,10 +61,10 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
     method add_step ( $db, $data ) {
         $data->{workflow_id} = $id;
-
         if ( my $last = $self->last_step($db) ) {
             $data->{depends_on} = $last->id;
         }
+        
         my $step = Registry::DAO::WorkflowStep->create( $db, $data );
         unless ( $self->first_step($db) ) {
             $self->update( $db, { first_step => $step->slug }, { id => $id } );
@@ -83,29 +97,18 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
             description => $description,
             slug        => $slug,
         };
+        
+        # Only include first_step if it's not the default value
+        if ($first_step && $first_step ne 'landing') {
+            $workflow->{first_step} = $first_step;
+        }
 
         # Start with the first step and traverse
         my $current_step = $self->first_step($db);
         while ($current_step) {
-
-            # Get template information if it exists
-            my $template;
-            if ( $current_step->template_id ) {
-                my $template_obj = $current_step->template($db);
-                $template = $template_obj->slug if $template_obj;
-            }
-
-            # Build step structure
-            my $step = {
-                slug        => $current_step->slug,
-                description => $current_step->description,
-                template    => $template,
-                class       => $current_step->class,
-            };
-
-            # Add step to workflow
+            # Use the step's as_hash method and add directly to steps array
             $workflow->{steps} //= [];
-            push $workflow->{steps}->@*, $step;
+            push $workflow->{steps}->@*, $current_step->as_hash($db);
 
             # Move to next step
             $current_step = $current_step->next_step($db);
@@ -154,8 +157,26 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
                 $step->{template_id} = $template->id if $template;
             }
 
+            # Handle outcome definition references if present
+            if (my $outcome_name = $step->{'outcome-definition'}) {
+                # No regex extraction needed - just use the name directly
+                my ($outcome_definition) = Registry::DAO::OutcomeDefinition->find(
+                    $db, { name => $outcome_name }
+                );
+                
+                if ($outcome_definition) {
+                    $step->{outcome_definition_id} = $outcome_definition->id;
+                }
+                
+                # Delete the key after processing
+                delete $step->{'outcome-definition'};
+            }
+
+            # We've already processed outcome-definition, no need for backwards compatibility
+            # code since our new method handles all cases
+
             # Add step to workflow
-            $workflow->add_step( $db, $step );
+            my $new_step = $workflow->add_step( $db, $step );
 
         }
         $txn->commit;
@@ -165,31 +186,40 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 }
 
 class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
+    use Carp qw(confess);
+
     field $id :param :reader;
     field $slug :param :reader;
     field $workflow_id :param :reader;
-    field $template_id :param :reader = undef;
+    field $template_id :param :reader           = undef;
+    field $outcome_definition_id :param :reader = undef;
     field $description :param :reader;
 
     field $depends_on :param = undef;
+
     # TODO: WorkflowStep class needs:
     # - Remove = {} default
     # - Add BUILD for JSON decoding
     # - Handle { -json => $metadata } in create/update
     # - Add explicit metadata() accessor
-    field $metadata :param   = {};
+    field $metadata :param = {};
     field $class :param :reader;
 
     use constant table => 'workflow_steps';
-
+    
     # we store the subclass name in the database
     # so we need inflate the correct one
     sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
-        $db = $db->db if $db isa Registry::DAO;
-        my $data =
-          $db->select( $class->table, '*', $filter, $order )->expand->hash;
-        return unless $data;
-        return $data->{class}->new( $data->%* );
+        try {
+            $db = $db->db if $db isa Registry::DAO;
+            my $data =
+              $db->select( $class->table, '*', $filter, $order )->expand->hash;
+            return unless $data;
+            return $data->{class}->new( $data->%* );
+        }
+        catch ($e) {
+            confess $e;
+        }
     }
 
     sub create ( $class, $db, $data ) {
@@ -204,6 +234,32 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     method template ($db) {
         die "no template set for step $slug ($id)" unless $template_id;
         return Registry::DAO::Template->find( $db, { id => $template_id } );
+    }
+
+    method as_hash ($db) {
+        # Create a base hash with only the fields that exist
+        my $json = {};
+        
+        # Add basic fields if they exist
+        $json->{slug} = $slug if $slug;
+        $json->{description} = $description if $description;
+        $json->{class} = $class if $class;
+        
+        # Get template information if it exists
+        if ($template_id) {
+            my $template_obj = $self->template($db);
+            $json->{template} = $template_obj->slug if $template_obj;
+        }
+        
+        # Get outcome definition information if it exists
+        if ($outcome_definition_id) {
+            my $outcome_obj = Registry::DAO::OutcomeDefinition->find($db, { id => $outcome_definition_id });
+            if ($outcome_obj) {
+                $json->{'outcome-definition'} = $outcome_obj->name;
+            }
+        }
+        
+        return $json;
     }
 
     method set_template ( $db, $template_id ) {
@@ -233,6 +289,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     field $workflow_id :param;
     field $latest_step_id :param  = undef;
     field $continuation_id :param = undef;
+
     # This is our reference implementation for JSONB handling
     field $data :param //= {};
     field $created_at :param;
@@ -259,8 +316,8 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         croak "new data must be a hashref" unless ref $new_data eq 'HASH';
         $data = $db->update(
             $self->table,
-            { data => encode_json( { $data->%*, $new_data->%* } ) },
-            { id => $id },
+            { data      => encode_json( { $data->%*, $new_data->%* } ) },
+            { id        => $id },
             { returning => ['data'] }
         )->expand->hash->{data};
     }

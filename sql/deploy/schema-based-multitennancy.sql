@@ -56,6 +56,7 @@ DECLARE
     new_template_id uuid;
     old_step_id uuid;
     new_step_id uuid;
+    v_first_step text;
 BEGIN
     -- Check that source_schema exists
     PERFORM nspname
@@ -74,10 +75,18 @@ BEGIN
         RAISE NOTICE 'Destination schema % does not exist!', dest_schema;
         RETURN;
     END IF;
+    
+    -- Get the workflow's first_step value
+    EXECUTE 'SELECT first_step FROM ' || quote_ident(source_schema) || '.workflows WHERE id = ' || quote_literal(workflow_id)
+    INTO v_first_step;
+    
+    IF v_first_step IS NULL THEN
+        RAISE NOTICE 'Workflow % has no first_step defined', workflow_id;
+    END IF;
 
     -- Copy the workflow
-    EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflows (name, slug, description)
-              SELECT name, slug, description
+    EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflows (name, slug, description, first_step)
+              SELECT name, slug, description, first_step
               FROM ' || quote_ident(source_schema) || '.workflows
               WHERE id = ' || quote_literal(workflow_id) || ' RETURNING id'
     INTO new_workflow_id;
@@ -92,23 +101,40 @@ BEGIN
         old_step_id uuid,
         new_step_id uuid
     );
+    
+    -- Track step slugs for verification
+    CREATE TEMP TABLE step_slugs (
+        step_id uuid,
+        slug text
+    );
 
     -- First, copy all workflow steps regardless of templates
     FOR old_step_id IN
         EXECUTE 'SELECT id FROM ' || quote_ident(source_schema) || '.workflow_steps
                  WHERE workflow_id = ' || quote_literal(workflow_id)
     LOOP
-        -- Copy the step with a NULL template_id initially
-        EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflow_steps
-                 (workflow_id, slug, description, template_id, metadata, class)
-                 SELECT ' || quote_literal(new_workflow_id) || ', slug, description, NULL, metadata, class
-                 FROM ' || quote_ident(source_schema) || '.workflow_steps
-                 WHERE id = ' || quote_literal(old_step_id) || ' RETURNING id'
-        INTO new_step_id;
-
-        -- Store the mapping
-        INSERT INTO old_to_new_step_ids (old_step_id, new_step_id)
-        VALUES (old_step_id, new_step_id);
+        -- Get the step slug
+        DECLARE
+            v_step_slug text;
+        BEGIN
+            EXECUTE 'SELECT slug FROM ' || quote_ident(source_schema) || '.workflow_steps WHERE id = ' || quote_literal(old_step_id)
+            INTO v_step_slug;
+            
+            -- Copy the step with a NULL template_id initially
+            EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflow_steps
+                     (workflow_id, slug, description, template_id, metadata, class, outcome_definition_id)
+                     SELECT ' || quote_literal(new_workflow_id) || ', slug, description, NULL, metadata, class, outcome_definition_id
+                     FROM ' || quote_ident(source_schema) || '.workflow_steps
+                     WHERE id = ' || quote_literal(old_step_id) || ' RETURNING id'
+            INTO new_step_id;
+            
+            -- Store mapping and slug information
+            INSERT INTO old_to_new_step_ids (old_step_id, new_step_id)
+            VALUES (old_step_id, new_step_id);
+            
+            INSERT INTO step_slugs (step_id, slug)
+            VALUES (new_step_id, v_step_slug);
+        END;
     END LOOP;
 
     -- Now handle templates
@@ -160,9 +186,39 @@ BEGIN
                      WHERE old_step_id = ' || quote_literal(old_step_id) || '
                  )';
     END LOOP;
+    
+    -- Verify first_step exists and has a matching step
+    DECLARE 
+        v_step_count integer;
+    BEGIN
+        IF v_first_step IS NOT NULL THEN
+            EXECUTE 'SELECT COUNT(*) FROM ' || quote_ident(dest_schema) || 
+                    '.workflow_steps WHERE workflow_id = $1 AND slug = $2'
+            INTO v_step_count
+            USING new_workflow_id, v_first_step;
+            
+            IF v_step_count = 0 THEN
+                RAISE WARNING 'Workflow %: first_step slug "% has no matching step in destination schema', new_workflow_id, v_first_step;
+                
+                -- Create a default landing step if needed
+                IF v_first_step = 'landing' THEN
+                    EXECUTE 'INSERT INTO ' || quote_ident(dest_schema) || '.workflow_steps ' ||
+                            '(workflow_id, slug, description) ' ||
+                            'VALUES ($1, $2, $3) RETURNING id'
+                    INTO new_step_id
+                    USING new_workflow_id, 'landing', 'Default landing page';
+                    
+                    RAISE NOTICE 'Created default landing step for workflow %', new_workflow_id;
+                END IF;
+            ELSE
+                RAISE NOTICE 'Verified first_step % exists for workflow %', v_first_step, new_workflow_id;
+            END IF;
+        END IF;
+    END;
 
     -- Clean up
     DROP TABLE old_to_new_step_ids;
+    DROP TABLE step_slugs;
 
     RAISE NOTICE 'Workflow % copied to % schema with ID %', workflow_id, dest_schema, new_workflow_id;
 END;
