@@ -60,6 +60,11 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $username :param :reader;
     field $passhash :param :reader = '';
+    field $name :param :reader = '';
+    field $email :param :reader = '';
+    field $birth_date :param :reader;
+    field $user_type :param :reader = 'parent';
+    field $grade :param :reader;
     field $created_at :param;
 
     use constant table => 'users';
@@ -89,6 +94,17 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         catch ($e) {
             carp "Error creating $class: $e";
         };
+    }
+    
+    method check_password ($password) {
+        return 0 unless $password && $passhash;
+        
+        my $crypt = Crypt::Passphrase->new(
+            encoder    => 'Argon2',
+            validators => [ 'Bcrypt', 'SHA1::Hex' ],
+        );
+        
+        return $crypt->verify_password($password, $passhash);
     }
 
 }

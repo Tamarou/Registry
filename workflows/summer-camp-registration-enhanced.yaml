@@ -1,0 +1,30 @@
+name: Summer Camp Registration (Enhanced)
+slug: summer-camp-registration-enhanced
+description: Enhanced registration workflow with account creation
+first_step: landing
+steps:
+  - slug: landing
+    description: Welcome Page
+    template: summer-camp-registration/landing
+    class: Registry::DAO::WorkflowStep
+  - slug: account-check
+    description: Account Check and Creation
+    template: summer-camp-registration/account-check
+    class: Registry::DAO::WorkflowSteps::AccountCheck
+  - slug: camper-info
+    description: Camper Information
+    outcome-definition: Summer Camp Registration
+    template: summer-camp-registration/camper-info
+    class: Registry::DAO::WorkflowStep
+  - slug: session-selection
+    description: Session Selection
+    template: summer-camp-registration/session-selection
+    class: Registry::DAO::WorkflowStep
+  - slug: payment
+    description: Payment Information
+    template: summer-camp-registration/payment
+    class: Registry::DAO::WorkflowStep
+  - slug: complete
+    description: Registration Complete
+    template: summer-camp-registration/complete
+    class: Registry::DAO::WorkflowStep

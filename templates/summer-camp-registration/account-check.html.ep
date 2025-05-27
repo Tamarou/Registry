@@ -1,0 +1,124 @@
+% layout 'workflow';
+% title 'Account Setup - Summer Camp Registration';
+
+<div class="max-w-2xl mx-auto">
+  <h2 class="text-2xl font-bold mb-6">Account Setup</h2>
+  
+  % if (my $user_id = stash('data_json') && decode_json(stash('data_json'))->{user_id}) {
+    <!-- User is already logged in -->
+    <div class="bg-green-50 border border-green-200 rounded-lg p-6 mb-6">
+      <h3 class="text-lg font-semibold text-green-800 mb-2">You're already logged in!</h3>
+      <p class="text-green-700">
+        Welcome back, <%= decode_json(stash('data_json'))->{user_name} %>!
+      </p>
+    </div>
+    
+    <form method="post" action="<%= $action %>">
+      <input type="hidden" name="action" value="continue_logged_in">
+      <input type="hidden" name="user_id" value="<%= $user_id %>">
+      
+      <button type="submit" 
+              class="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+        Continue with Registration
+      </button>
+    </form>
+  % } else {
+    <!-- User needs to login or create account -->
+    <p class="text-gray-700 mb-8">
+      To continue with summer camp registration, please login to your existing account or create a new one.
+    </p>
+    
+    <div class="grid md:grid-cols-2 gap-8">
+      <!-- Login Section -->
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h3 class="text-xl font-semibold mb-4">Login to Existing Account</h3>
+        
+        <form method="post" action="<%= $action %>" id="login-form">
+          <input type="hidden" name="action" value="login">
+          
+          <div class="mb-4">
+            <label for="username" class="block text-sm font-medium text-gray-700 mb-1">
+              Username
+            </label>
+            <input type="text" 
+                   id="username" 
+                   name="username" 
+                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                   required>
+          </div>
+          
+          <div class="mb-6">
+            <label for="password" class="block text-sm font-medium text-gray-700 mb-1">
+              Password
+            </label>
+            <input type="password" 
+                   id="password" 
+                   name="password" 
+                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                   required>
+          </div>
+          
+          <button type="submit" 
+                  class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+            Login
+          </button>
+        </form>
+      </div>
+      
+      <!-- Create Account Section -->
+      <div class="bg-gray-50 rounded-lg shadow-md p-6">
+        <h3 class="text-xl font-semibold mb-4">Create New Account</h3>
+        
+        <p class="text-gray-600 mb-6">
+          Don't have an account yet? Create one to manage your family's registrations, 
+          track attendance, and receive important updates.
+        </p>
+        
+        <form method="post" action="<%= $action %>">
+          <input type="hidden" name="action" value="create_account">
+          
+          <!-- Preserve enrollment data -->
+          % my $data = eval { decode_json(stash('data_json') || '{}') } || {};
+          % if ($data->{session_id}) {
+            <input type="hidden" name="session_id" value="<%= $data->{session_id} %>">
+          % }
+          % if ($data->{location_id}) {
+            <input type="hidden" name="location_id" value="<%= $data->{location_id} %>">
+          % }
+          % if ($data->{program_id}) {
+            <input type="hidden" name="program_id" value="<%= $data->{program_id} %>">
+          % }
+          
+          <button type="submit" 
+                  class="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">
+            Create New Account
+          </button>
+        </form>
+      </div>
+    </div>
+    
+    <!-- Error Messages -->
+    % if (my $errors = eval { decode_json(stash('errors_json') || '[]') } || []) {
+      % if (@$errors) {
+        <div class="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
+          <h4 class="text-red-800 font-semibold mb-2">Please correct the following:</h4>
+          <ul class="list-disc list-inside text-red-700">
+            % for my $error (@$errors) {
+              <li><%= $error %></li>
+            % }
+          </ul>
+        </div>
+      % }
+    % }
+  % }
+</div>
+
+<script>
+  // Auto-focus username field
+  document.addEventListener('DOMContentLoaded', function() {
+    const usernameField = document.getElementById('username');
+    if (usernameField) {
+      usernameField.focus();
+    }
+  });
+</script>
