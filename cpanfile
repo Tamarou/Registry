@@ -1,4 +1,4 @@
-requires 'perl' => 'v5.40.0';
+requires 'perl' => 'v5.34.0';
 requires "Mojolicious::Plugin::HTMX";
 requires 'App::Sqitch';
 requires 'Crypt::Passphrase';
@@ -9,3 +9,4 @@ requires 'Mojolicious';
 requires 'Object::Pad';
 requires 'YAML::XS';
 requires 'Test::PostgreSQL';
+requires 'WebService::Stripe';

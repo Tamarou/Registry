@@ -1,67 +1,149 @@
 % layout 'workflow';
 % title 'Payment Information';
 
+<% my $step_data = stash('step_data') || {}; %>
+<% my $show_stripe = $step_data->{show_stripe_form}; %>
+<% my $processing = $step_data->{processing}; %>
+
 <div class="max-w-4xl mx-auto p-6">
     <h1 class="text-3xl font-bold mb-6">Payment Information</h1>
+
+    <% if ($processing) { %>
+        <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6">
+            <p class="text-blue-800">
+                <strong>Processing payment...</strong> <%= $step_data->{message} || 'Please wait while we process your payment.' %>
+            </p>
+        </div>
+    <% } %>
 
     <div class="bg-white shadow rounded-lg p-6 mb-6">
         <h2 class="text-2xl font-semibold mb-4">Registration Summary</h2>
         
-        <% my $children = $run->data->{children} || []; %>
-        <% my $session_selections = $run->data->{session_selections} || {}; %>
-        
-        <div class="space-y-4">
-            <% my $total_cost = 0; %>
-            <% for my $child (@$children) { %>
-                <% my $child_key = $child->{id} || $loop->index; %>
-                <% my $session_id = $session_selections->{$child_key} || $session_selections->{all}; %>
-                <% next unless $session_id; %>
-                
-                <% my $session = Registry::DAO::Session->new(id => $session_id)->load($db); %>
-                <% my $pricing = $session->primary_pricing_plan; %>
-                <% my $price = $pricing ? $pricing->calculate_price($child, $session) : 0; %>
-                <% $total_cost += $price; %>
-                
-                <div class="border-l-4 border-blue-500 pl-4">
-                    <h3 class="font-semibold"><%= $child->{first_name} %> <%= $child->{last_name} %></h3>
-                    <p class="text-gray-600">
-                        <%= $session->name %><br>
-                        <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
-                        <span class="font-medium">Cost: $<%= $price %></span>
-                    </p>
-                </div>
-            <% } %>
-        </div>
-        
-        <div class="mt-6 pt-6 border-t">
-            <div class="flex justify-between items-center text-xl font-bold">
-                <span>Total:</span>
-                <span>$<%= $total_cost %></span>
+        <% if ($step_data->{items}) { %>
+            <div class="space-y-4">
+                <% for my $item (@{$step_data->{items}}) { %>
+                    <div class="border-l-4 border-blue-500 pl-4">
+                        <h3 class="font-semibold"><%= $item->{description} %></h3>
+                        <p class="text-gray-600">
+                            <span class="font-medium">Cost: $<%= $item->{amount} %></span>
+                        </p>
+                    </div>
+                <% } %>
             </div>
-        </div>
+            
+            <div class="mt-6 pt-6 border-t">
+                <div class="flex justify-between items-center text-xl font-bold">
+                    <span>Total:</span>
+                    <span>$<%= $step_data->{total} || 0 %></span>
+                </div>
+            </div>
+        <% } %>
     </div>
 
-    <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>" 
-          class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
-        <p class="text-gray-600 mb-4">For demo purposes, no actual payment information will be collected. In a production environment, this would integrate with a payment processor.</p>
-        
-        <div class="mb-6">
-            <label class="flex items-start">
-                <input type="checkbox" id="agreeTerms" name="agreeTerms" value="1" required 
-                       class="mt-1 mr-2">
-                <span class="text-sm">I agree to the camp registration terms and conditions.</span>
-            </label>
-        </div>
-        
-        <div class="flex justify-between">
-            <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
-               class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
-                Back
-            </a>
-            <button type="submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600">
-                Complete Registration
-            </button>
-        </div>
-    </form>
+    <% if ($show_stripe) { %>
+        <!-- Stripe Payment Form -->
+        <form id="payment-form" class="bg-white shadow rounded-lg p-6">
+            <h2 class="text-2xl font-semibold mb-4">Payment Details</h2>
+            
+            <div id="payment-element" class="mb-6">
+                <!-- Stripe Elements will be inserted here -->
+            </div>
+            
+            <div id="payment-message" class="hidden text-red-600 mb-4"></div>
+            
+            <div class="flex justify-between">
+                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+                   class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
+                    Back
+                </a>
+                <button id="submit" type="submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span id="button-text">Pay $<%= $step_data->{total} || 0 %></span>
+                    <span id="spinner" class="hidden">Processing...</span>
+                </button>
+            </div>
+        </form>
+
+        <script src="https://js.stripe.com/v3/"></script>
+        <script>
+            // Initialize Stripe
+            const stripe = Stripe('<%= $step_data->{stripe_publishable_key} %>');
+            const clientSecret = '<%= $step_data->{client_secret} %>';
+            
+            // Create payment element
+            const elements = stripe.elements({ clientSecret });
+            const paymentElement = elements.create('payment');
+            paymentElement.mount('#payment-element');
+            
+            // Handle form submission
+            const form = document.getElementById('payment-form');
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                
+                const {error} = await stripe.confirmPayment({
+                    elements,
+                    confirmParams: {
+                        return_url: window.location.href + '&payment_intent_id={PAYMENT_INTENT}',
+                    },
+                });
+                
+                if (error) {
+                    const messageContainer = document.querySelector('#payment-message');
+                    messageContainer.classList.remove('hidden');
+                    messageContainer.textContent = error.message;
+                    setLoading(false);
+                }
+            });
+            
+            function setLoading(isLoading) {
+                const submitBtn = document.querySelector('#submit');
+                const spinner = document.querySelector('#spinner');
+                const buttonText = document.querySelector('#button-text');
+                
+                if (isLoading) {
+                    submitBtn.disabled = true;
+                    spinner.classList.remove('hidden');
+                    buttonText.classList.add('hidden');
+                } else {
+                    submitBtn.disabled = false;
+                    spinner.classList.add('hidden');
+                    buttonText.classList.remove('hidden');
+                }
+            }
+        </script>
+    <% } else { %>
+        <!-- Initial Agreement Form -->
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>" 
+              class="bg-white shadow rounded-lg p-6">
+            <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
+            
+            <% if ($ENV{STRIPE_SECRET_KEY}) { %>
+                <p class="text-gray-600 mb-4">You will be redirected to a secure payment form to complete your registration.</p>
+            <% } else { %>
+                <p class="text-gray-600 mb-4">For demo purposes, no actual payment information will be collected. In a production environment, this would integrate with a payment processor.</p>
+            <% } %>
+            
+            <div class="mb-6">
+                <label class="flex items-start">
+                    <input type="checkbox" id="agreeTerms" name="agreeTerms" value="1" required 
+                           class="mt-1 mr-2">
+                    <span class="text-sm">I agree to the camp registration terms and conditions.</span>
+                </label>
+            </div>
+            
+            <div class="flex justify-between">
+                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+                   class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
+                    Back
+                </a>
+                <button type="submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600">
+                    <% if ($ENV{STRIPE_SECRET_KEY}) { %>
+                        Proceed to Payment
+                    <% } else { %>
+                        Complete Registration (Demo)
+                    <% } %>
+                </button>
+            </div>
+        </form>
+    <% } %>
 </div>

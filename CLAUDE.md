@@ -58,9 +58,19 @@ Registry is a Perl-based web application for managing after-school programs and 
 
 ### Key Patterns
 
-- **Feature Classes**: All DAOs and Controllers use `use feature 'class'` with Object::Pad
+- **Feature Classes**: All DAOs and Controllers use Object::Pad with the following structure
+```perl
+use 5.34.0;
+use experimental 'signatures';
+use Object::Pad;
+class Foo :isa(Bar) {
+    field $name :param :reader = 'default';
+
+    method update_name($new) { $name = $new }
+}
+````
 - **Database Migrations**: Managed via Sqitch (see `sql/` directory)
-- **Test Structure**: 
+- **Test Structure**:
   - Unit tests for DAOs in `t/dao/`
   - Controller tests in `t/controller/`
   - User journey tests in `t/user-journeys/`

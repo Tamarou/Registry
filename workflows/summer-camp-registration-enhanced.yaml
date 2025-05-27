@@ -27,7 +27,7 @@ steps:
   - slug: payment
     description: Payment Information
     template: summer-camp-registration/payment
-    class: Registry::DAO::WorkflowStep
+    class: Registry::DAO::WorkflowSteps::Payment
   - slug: complete
     description: Registration Complete
     template: summer-camp-registration/complete
