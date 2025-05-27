@@ -128,6 +128,19 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     method available_capacity($db) {
         return $self->total_capacity - $self->enrollments($db)->count;
     }
+    
+    # Get waitlist for this session
+    method waitlist($db) {
+        require Registry::DAO::Waitlist;
+        Registry::DAO::Waitlist->get_session_waitlist($db, $id);
+    }
+    
+    # Get waitlist count
+    method waitlist_count($db) {
+        require Registry::DAO::Waitlist;
+        my $waitlist = Registry::DAO::Waitlist->get_session_waitlist($db, $id, 'waiting');
+        return scalar @$waitlist;
+    }
 }
 
 class Registry::DAO::Event :isa(Registry::DAO::Object) {
