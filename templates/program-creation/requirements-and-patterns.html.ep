@@ -1,0 +1,185 @@
+% layout 'workflow';
+% title 'Set Requirements';
+
+<% my $data = stash('step_data') || {}; %>
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-2">Create New Program</h1>
+    <p class="text-gray-600 mb-6">
+        Program Type: <strong><%= $data->{program_type_name} %></strong> | 
+        Program: <strong><%= $data->{curriculum_name} %></strong>
+    </p>
+    
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Set Requirements and Schedule Pattern</h2>
+        
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'requirements-and-patterns') %>">
+            <!-- Age/Grade Requirements -->
+            <div class="mb-8">
+                <h3 class="text-lg font-semibold mb-4">Age and Grade Requirements</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label for="min_age" class="block text-sm font-medium text-gray-700 mb-1">Minimum Age</label>
+                        <input type="number" 
+                               id="min_age" 
+                               name="min_age" 
+                               min="0" 
+                               max="99"
+                               value="<%= $data->{min_age} %>"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label for="max_age" class="block text-sm font-medium text-gray-700 mb-1">Maximum Age</label>
+                        <input type="number" 
+                               id="max_age" 
+                               name="max_age" 
+                               min="0" 
+                               max="99"
+                               value="<%= $data->{max_age} %>"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label for="min_grade" class="block text-sm font-medium text-gray-700 mb-1">Minimum Grade</label>
+                        <input type="text" 
+                               id="min_grade" 
+                               name="min_grade" 
+                               value="<%= $data->{min_grade} %>"
+                               placeholder="K, 1, 2..."
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label for="max_grade" class="block text-sm font-medium text-gray-700 mb-1">Maximum Grade</label>
+                        <input type="text" 
+                               id="max_grade" 
+                               name="max_grade" 
+                               value="<%= $data->{max_grade} %>"
+                               placeholder="K, 1, 2..."
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Staff Requirements -->
+            <div class="mb-8">
+                <h3 class="text-lg font-semibold mb-4">Staff Requirements</h3>
+                <div class="space-y-4">
+                    <div>
+                        <label for="staff_ratio" class="block text-sm font-medium text-gray-700 mb-1">Staff to Student Ratio</label>
+                        <input type="text" 
+                               id="staff_ratio" 
+                               name="staff_ratio" 
+                               value="<%= $data->{staff_ratio} %>"
+                               placeholder="1:10"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label for="staff_qualifications" class="block text-sm font-medium text-gray-700 mb-1">Staff Qualifications</label>
+                        <textarea id="staff_qualifications" 
+                                  name="staff_qualifications" 
+                                  rows="2"
+                                  class="w-full px-3 py-2 border border-gray-300 rounded-md"
+                                  placeholder="Required certifications, experience, or skills..."
+                                  ><%= $data->{staff_qualifications} %></textarea>
+                    </div>
+                    <div>
+                        <label for="equipment_needed" class="block text-sm font-medium text-gray-700 mb-1">Equipment/Space Needed</label>
+                        <textarea id="equipment_needed" 
+                                  name="equipment_needed" 
+                                  rows="2"
+                                  class="w-full px-3 py-2 border border-gray-300 rounded-md"
+                                  placeholder="Classroom, gym, outdoor space, special equipment..."
+                                  ><%= $data->{equipment_needed} %></textarea>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Schedule Pattern -->
+            <div class="mb-8">
+                <h3 class="text-lg font-semibold mb-4">Schedule Pattern</h3>
+                <div class="space-y-4">
+                    <div>
+                        <label for="pattern_type" class="block text-sm font-medium text-gray-700 mb-1">Pattern Type</label>
+                        <select id="pattern_type" 
+                                name="pattern_type" 
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            <option value="weekly" <%= $data->{pattern_type} eq 'weekly' ? 'selected' : '' %>>Weekly Sessions</option>
+                            <option value="daily" <%= $data->{pattern_type} eq 'daily' ? 'selected' : '' %>>Daily Sessions</option>
+                            <option value="intensive" <%= $data->{pattern_type} eq 'intensive' ? 'selected' : '' %>>Intensive (Multi-day)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="duration_weeks" class="block text-sm font-medium text-gray-700 mb-1">Duration (weeks)</label>
+                            <input type="number" 
+                                   id="duration_weeks" 
+                                   name="duration_weeks" 
+                                   min="1" 
+                                   value="<%= $data->{duration_weeks} %>"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                        </div>
+                        <div>
+                            <label for="sessions_per_week" class="block text-sm font-medium text-gray-700 mb-1">Sessions per Week</label>
+                            <input type="number" 
+                                   id="sessions_per_week" 
+                                   name="sessions_per_week" 
+                                   min="1" 
+                                   max="7"
+                                   value="<%= $data->{sessions_per_week} %>"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Days of Week</label>
+                        <div class="flex flex-wrap gap-3">
+                            <% my @days = qw(Monday Tuesday Wednesday Thursday Friday Saturday Sunday); %>
+                            <% my $selected_days = ref $data->{days_of_week} eq 'ARRAY' ? {map {$_ => 1} @{$data->{days_of_week}}} : {}; %>
+                            <% for my $day (@days) { %>
+                                <label class="flex items-center">
+                                    <input type="checkbox" 
+                                           name="days_of_week" 
+                                           value="<%= $day %>"
+                                           <%= $selected_days->{$day} ? 'checked' : '' %>
+                                           class="mr-2">
+                                    <%= $day %>
+                                </label>
+                            <% } %>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="session_duration_minutes" class="block text-sm font-medium text-gray-700 mb-1">Session Duration (minutes)</label>
+                            <input type="number" 
+                                   id="session_duration_minutes" 
+                                   name="session_duration_minutes" 
+                                   min="15" 
+                                   step="15"
+                                   value="<%= $data->{session_duration_minutes} %>"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                        </div>
+                        <div>
+                            <label for="default_start_time" class="block text-sm font-medium text-gray-700 mb-1">Default Start Time</label>
+                            <input type="time" 
+                                   id="default_start_time" 
+                                   name="default_start_time" 
+                                   value="<%= $data->{default_start_time} %>"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-6 flex justify-between">
+                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'curriculum-details') %>" 
+                   class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
+                    Back
+                </a>
+                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600">
+                    Continue to Review
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

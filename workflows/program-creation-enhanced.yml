@@ -1,0 +1,25 @@
+name: Program Creation (Enhanced)
+slug: program-creation-enhanced
+description: Workflow for creating new educational programs
+first_step: program-type-selection
+steps:
+  - slug: program-type-selection
+    description: Select Program Type
+    template: program-creation/program-type-selection
+    class: Registry::DAO::WorkflowSteps::ProgramTypeSelection
+  - slug: curriculum-details
+    description: Define Curriculum
+    template: program-creation/curriculum-details
+    class: Registry::DAO::WorkflowSteps::CurriculumDetails
+  - slug: requirements-and-patterns
+    description: Set Requirements and Schedule Patterns
+    template: program-creation/requirements-and-patterns
+    class: Registry::DAO::WorkflowSteps::RequirementsAndPatterns
+  - slug: review-and-create
+    description: Review and Create Program
+    template: program-creation/review-and-create
+    class: Registry::DAO::WorkflowSteps::ReviewAndCreate
+  - slug: complete
+    description: Program Created Successfully
+    template: program-creation/complete
+    class: Registry::DAO::WorkflowStep

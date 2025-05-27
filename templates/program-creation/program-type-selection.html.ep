@@ -1,0 +1,49 @@
+% layout 'workflow';
+% title 'Select Program Type';
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Create New Program</h1>
+    
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Select Program Type</h2>
+        <p class="text-gray-600 mb-6">Choose the type of program you want to create. This will help configure default settings and requirements.</p>
+        
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'program-type-selection') %>">
+            <div class="space-y-4">
+                <% my $program_types = stash('step_data')->{program_types} || []; %>
+                <% for my $type (@$program_types) { %>
+                    <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
+                        <input type="radio" name="program_type_id" value="<%= $type->id %>" class="mr-3" required>
+                        <span class="font-semibold text-lg"><%= $type->name %></span>
+                        <% if ($type->config->{description}) { %>
+                            <p class="text-gray-600 mt-1 ml-6"><%= $type->config->{description} %></p>
+                        <% } %>
+                        <% if ($type->config->{enrollment_rules}) { %>
+                            <div class="text-sm text-gray-500 mt-2 ml-6">
+                                <% if ($type->config->{enrollment_rules}->{same_session_for_siblings}) { %>
+                                    • Siblings must be enrolled in the same session<br>
+                                <% } %>
+                                <% if ($type->config->{session_pattern}) { %>
+                                    • Default pattern: <%= $type->config->{session_pattern} %><br>
+                                <% } %>
+                            </div>
+                        <% } %>
+                    </label>
+                <% } %>
+                
+                <% unless (@$program_types) { %>
+                    <div class="bg-yellow-50 border border-yellow-200 p-4 rounded">
+                        <p class="text-yellow-800">No program types have been configured. Please contact an administrator to set up program types.</p>
+                    </div>
+                <% } %>
+            </div>
+            
+            <div class="mt-6 flex justify-end">
+                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:opacity-50" 
+                        <%= @$program_types ? '' : 'disabled' %>>
+                    Continue
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
