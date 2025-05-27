@@ -251,17 +251,19 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
 
 class Registry::DAO::Project :isa(Registry::DAO::Object) {
     field $id :param :reader;
-    field $name :param;
-    field $slug :param;
+    field $name :param :reader;
+    field $slug :param :reader;
+    field $program_type_slug :param :reader;
+    field $description :param :reader = '';
 
     # TODO: Project class needs:
     # - Remove metadata default value
     # - Add BUILD to decode JSON strings
     # - Use { -json => $metadata } in create/update
     # - Add explicit metadata() accessor
-    field $metadata :param;
-    field $notes :param;
-    field $created_at :param;
+    field $metadata :param :reader = {};
+    field $notes :param :reader = '';
+    field $created_at :param :reader;
 
     use constant table => 'projects';
 

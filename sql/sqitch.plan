@@ -14,3 +14,4 @@ program-types [schema-based-multitennancy] 2025-01-27T12:00:00Z Claude <noreply@
 enhanced-pricing-model [summer-camp-module] 2025-01-27T12:30:00Z Claude <noreply@anthropic.com> # Transform pricing to flexible pricing_plans with multiple tiers per session
 attendance-tracking [summer-camp-module] 2025-01-27T13:00:00Z Claude <noreply@anthropic.com> # Add attendance tracking infrastructure
 waitlist-management [summer-camp-module] 2025-01-27T13:30:00Z Claude <noreply@anthropic.com> # Add waitlist functionality to enrollment system
+add-program-type-to-projects [program-types] 2025-01-27T14:00:00Z Claude <noreply@anthropic.com> # Add program type reference to projects
