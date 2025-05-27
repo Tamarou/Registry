@@ -77,9 +77,16 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         return $self;
     }
 
-    # Get pricing for this session
-    method pricing($db) {
-        Registry::DAO::Pricing->find( $db, { session_id => $id } );
+    # Get pricing plans for this session
+    method pricing_plans($db) {
+        require Registry::DAO::PricingPlan;
+        Registry::DAO::PricingPlan->get_pricing_plans( $db, $id );
+    }
+    
+    # Get best price for this session given context
+    method get_best_price($db, $context = {}) {
+        require Registry::DAO::PricingPlan;
+        Registry::DAO::PricingPlan->get_best_price( $db, $id, $context );
     }
 
     # Get enrollments for this session
@@ -272,60 +279,5 @@ class Registry::DAO::SessionTeacher :isa(Registry::DAO::Object) {
     }
 }
 
-class Registry::DAO::Pricing :isa(Registry::DAO::Object) {
-    field $id :param :reader;
-    field $session_id :param;
-    field $amount :param :reader;
-    field $currency :param :reader //= 'USD';
-    field $early_bird_amount :param :reader;
-    field $early_bird_cutoff_date :param :reader;
-    field $sibling_discount :param :reader;
-    # TODO: Pricing class needs:
-    # - Remove //= {} default
-    # - Add BUILD for JSON decoding
-    # - Use { -json => $metadata } in create/update
-    # - Add explicit metadata() accessor
-    field $metadata :param :reader //= {};
-    field $created_at :param :reader;
-    field $updated_at :param :reader;
-
-    use constant table => 'pricing';
-
-    # Get the session this pricing belongs to
-    method session($db) {
-        Registry::DAO::Session->find( $db, { id => $session_id } );
-    }
-
-    # Helper method to check if early bird pricing is available
-    method is_early_bird_available {
-        return 0 unless $early_bird_amount && $early_bird_cutoff_date;
-
-        # In a real implementation, we'd compare against current date
-        # This is a simplified version
-        my $today = time;    # or use DateTime
-        return $today <= $early_bird_cutoff_date;
-    }
-
-    # Helper method to calculate effective price (early bird if applicable)
-    method effective_price {
-        if ( $self->is_early_bird_available ) {
-            return $early_bird_amount;
-        }
-        return $amount;
-    }
-
-    # Helper method to calculate sibling discounted price
-    method sibling_price {
-        return $amount unless $sibling_discount;
-        return $amount * ( 1 - ( $sibling_discount / 100 ) );
-    }
-
-    # Helper method to format price with currency
-    method formatted_price {
-        my $price = $self->effective_price;
-        if ( $currency eq 'USD' ) {
-            return sprintf( '$%.2f', $price );
-        }
-        return sprintf( '%.2f %s', $price, $currency );
-    }
-}
+# Note: Pricing class has been replaced by Registry::DAO::PricingPlan
+# to support multiple pricing tiers per session
