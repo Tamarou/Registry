@@ -11,6 +11,10 @@ steps:
     description: Account Check and Creation
     template: summer-camp-registration/account-check
     class: Registry::DAO::WorkflowSteps::AccountCheck
+  - slug: select-children
+    description: Select Children
+    template: summer-camp-registration/select-children
+    class: Registry::DAO::WorkflowSteps::SelectChildren
   - slug: camper-info
     description: Camper Information
     outcome-definition: Summer Camp Registration
@@ -19,7 +23,7 @@ steps:
   - slug: session-selection
     description: Session Selection
     template: summer-camp-registration/session-selection
-    class: Registry::DAO::WorkflowStep
+    class: Registry::DAO::WorkflowSteps::MultiChildSessionSelection
   - slug: payment
     description: Payment Information
     template: summer-camp-registration/payment

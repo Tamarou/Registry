@@ -31,7 +31,7 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     });
                     
                     # Move to next step
-                    return { next_step => 'camper-info' };
+                    return { next_step => 'select-children' };
                 }
                 else {
                     # Login failed
@@ -88,7 +88,7 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     });
                     
                     # Move to next step
-                    return { next_step => 'camper-info' };
+                    return { next_step => 'select-children' };
                 }
             }
             
@@ -118,7 +118,7 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     $continuation->complete($db);
                     
                     # Move to next step
-                    return { next_step => 'camper-info' };
+                    return { next_step => 'select-children' };
                 }
             }
             

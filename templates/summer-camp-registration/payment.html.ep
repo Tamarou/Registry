@@ -1,73 +1,67 @@
-% layout 'default';
+% layout 'workflow';
 % title 'Payment Information';
 
-<h2>Payment Information</h2>
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Payment Information</h1>
 
-<div class="registration-summary">
-    <h3>Registration Summary</h3>
-    <div class="summary-details">
-        <p><strong>Camper:</strong> <%= $run->data->{childName} || 'N/A' %></p>
-        <p><strong>Grade Level:</strong> <%= $run->data->{gradeLevel} || 'N/A' %></p>
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 class="text-2xl font-semibold mb-4">Registration Summary</h2>
         
-        <h4>Selected Sessions:</h4>
-        <ul>
-            <% if (ref $run->data->{sessions} eq 'ARRAY') { %>
-                <% foreach my $session ($run->data->{sessions}->@*) { %>
-                    <li>
-                        <% if ($session eq 'week1') { %>Week 1: June 9-13 - Nature Explorers<% } %>
-                        <% if ($session eq 'week2') { %>Week 2: June 16-20 - Sports & Games<% } %>
-                        <% if ($session eq 'week3') { %>Week 3: June 23-27 - Science Discovery<% } %>
-                        <% if ($session eq 'week4') { %>Week 4: July 7-11 - Arts & Crafts<% } %>
-                        <% if ($session eq 'week5') { %>Week 5: July 14-18 - Coding & Technology<% } %>
-                        <% if ($session eq 'week6') { %>Week 6: July 21-25 - Performance Arts<% } %>
-                    </li>
-                <% } %>
-            <% } else { %>
-                <li>
-                    <% if ($run->data->{sessions} eq 'week1') { %>Week 1: June 9-13 - Nature Explorers<% } %>
-                    <% if ($run->data->{sessions} eq 'week2') { %>Week 2: June 16-20 - Sports & Games<% } %>
-                    <% if ($run->data->{sessions} eq 'week3') { %>Week 3: June 23-27 - Science Discovery<% } %>
-                    <% if ($run->data->{sessions} eq 'week4') { %>Week 4: July 7-11 - Arts & Crafts<% } %>
-                    <% if ($run->data->{sessions} eq 'week5') { %>Week 5: July 14-18 - Coding & Technology<% } %>
-                    <% if ($run->data->{sessions} eq 'week6') { %>Week 6: July 21-25 - Performance Arts<% } %>
-                </li>
+        <% my $children = $run->data->{children} || []; %>
+        <% my $session_selections = $run->data->{session_selections} || {}; %>
+        
+        <div class="space-y-4">
+            <% my $total_cost = 0; %>
+            <% for my $child (@$children) { %>
+                <% my $child_key = $child->{id} || $loop->index; %>
+                <% my $session_id = $session_selections->{$child_key} || $session_selections->{all}; %>
+                <% next unless $session_id; %>
+                
+                <% my $session = Registry::DAO::Session->new(id => $session_id)->load($db); %>
+                <% my $pricing = $session->primary_pricing_plan; %>
+                <% my $price = $pricing ? $pricing->calculate_price($child, $session) : 0; %>
+                <% $total_cost += $price; %>
+                
+                <div class="border-l-4 border-blue-500 pl-4">
+                    <h3 class="font-semibold"><%= $child->{first_name} %> <%= $child->{last_name} %></h3>
+                    <p class="text-gray-600">
+                        <%= $session->name %><br>
+                        <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
+                        <span class="font-medium">Cost: $<%= $price %></span>
+                    </p>
+                </div>
             <% } %>
-        </ul>
+        </div>
         
-        <p><strong>Extended Care:</strong> 
-            <% if ($run->data->{extendedCare} eq 'none') { %>None<% } %>
-            <% if ($run->data->{extendedCare} eq 'morning') { %>Morning care (8:00-9:00 AM)<% } %>
-            <% if ($run->data->{extendedCare} eq 'afternoon') { %>Afternoon care (3:00-5:00 PM)<% } %>
-            <% if ($run->data->{extendedCare} eq 'both') { %>Both morning and afternoon care<% } %>
-        </p>
+        <div class="mt-6 pt-6 border-t">
+            <div class="flex justify-between items-center text-xl font-bold">
+                <span>Total:</span>
+                <span>$<%= $total_cost %></span>
+            </div>
+        </div>
     </div>
-    
-    <div class="cost-summary">
-        <h4>Cost Summary</h4>
-        <% my $sessions_count = ref $run->data->{sessions} eq 'ARRAY' ? scalar $run->data->{sessions}->@* : 1; %>
-        <p>Camp Tuition ($275 × <%= $sessions_count %> weeks): $<%= 275 * $sessions_count %></p>
-        
-        <% my $extended_care_cost = 0; %>
-        <% if ($run->data->{extendedCare} eq 'morning') { $extended_care_cost = 25 * $sessions_count; } %>
-        <% if ($run->data->{extendedCare} eq 'afternoon') { $extended_care_cost = 40 * $sessions_count; } %>
-        <% if ($run->data->{extendedCare} eq 'both') { $extended_care_cost = 60 * $sessions_count; } %>
-        
-        <% if ($extended_care_cost > 0) { %>
-            <p>Extended Care: $<%= $extended_care_cost %></p>
-        <% } %>
-        
-        <p class="total"><strong>Total: $<%= (275 * $sessions_count) + $extended_care_cost %></strong></p>
-    </div>
-</div>
 
-<form method="POST" action="<%= $action %>">
-    <h3>Payment Method</h3>
-    <p>For demo purposes, no actual payment information will be collected. In a production environment, this would integrate with a payment processor.</p>
-    
-    <div class="form-field">
-        <input type="checkbox" id="agreeTerms" name="agreeTerms" value="1" required>
-        <label for="agreeTerms">I agree to the camp registration terms and conditions.</label>
-    </div>
-    
-    <button type="submit">Complete Registration</button>
-</form>
+    <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>" 
+          class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
+        <p class="text-gray-600 mb-4">For demo purposes, no actual payment information will be collected. In a production environment, this would integrate with a payment processor.</p>
+        
+        <div class="mb-6">
+            <label class="flex items-start">
+                <input type="checkbox" id="agreeTerms" name="agreeTerms" value="1" required 
+                       class="mt-1 mr-2">
+                <span class="text-sm">I agree to the camp registration terms and conditions.</span>
+            </label>
+        </div>
+        
+        <div class="flex justify-between">
+            <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+               class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
+                Back
+            </a>
+            <button type="submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600">
+                Complete Registration
+            </button>
+        </div>
+    </form>
+</div>

@@ -1,64 +1,105 @@
-% layout 'default';
-% title 'Session Selection';
+% layout 'workflow';
+% title 'Select Sessions';
 
-<h2>Session Selection</h2>
-<p>Please select which session(s) you would like to register for.</p>
-
-<form method="POST" action="<%= $action %>">
-    <div class="session-options">
-        <div class="form-field">
-            <input type="checkbox" id="week1" name="sessions" value="week1">
-            <label for="week1">Week 1: June 9-13 - Nature Explorers</label>
-        </div>
-        
-        <div class="form-field">
-            <input type="checkbox" id="week2" name="sessions" value="week2">
-            <label for="week2">Week 2: June 16-20 - Sports & Games</label>
-        </div>
-        
-        <div class="form-field">
-            <input type="checkbox" id="week3" name="sessions" value="week3">
-            <label for="week3">Week 3: June 23-27 - Science Discovery</label>
-        </div>
-        
-        <div class="form-field">
-            <input type="checkbox" id="week4" name="sessions" value="week4">
-            <label for="week4">Week 4: July 7-11 - Arts & Crafts</label>
-        </div>
-        
-        <div class="form-field">
-            <input type="checkbox" id="week5" name="sessions" value="week5">
-            <label for="week5">Week 5: July 14-18 - Coding & Technology</label>
-        </div>
-        
-        <div class="form-field">
-            <input type="checkbox" id="week6" name="sessions" value="week6">
-            <label for="week6">Week 6: July 21-25 - Performance Arts</label>
-        </div>
-    </div>
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Select Sessions for Your Children</h1>
     
-    <h3>Extended Care Options</h3>
-    <div class="extended-care-options">
-        <div class="form-field">
-            <input type="radio" id="extendedCare_none" name="extendedCare" value="none" checked>
-            <label for="extendedCare_none">No extended care needed</label>
-        </div>
+    <form action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+          method="POST" class="space-y-6">
         
-        <div class="form-field">
-            <input type="radio" id="extendedCare_morning" name="extendedCare" value="morning">
-            <label for="extendedCare_morning">Morning care (8:00-9:00 AM) - $25/week</label>
-        </div>
+        <% my $children = $run->data->{children} || []; %>
+        <% my $program_type_id = $run->data->{program_type_id}; %>
+        <% my $program_type = $program_type_id ? Registry::DAO::ProgramType->new(id => $program_type_id)->load($db) : undef; %>
         
-        <div class="form-field">
-            <input type="radio" id="extendedCare_afternoon" name="extendedCare" value="afternoon">
-            <label for="extendedCare_afternoon">Afternoon care (3:00-5:00 PM) - $40/week</label>
-        </div>
+        <% if ($program_type && $program_type->same_session_for_siblings && @$children > 1) { %>
+            <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6">
+                <p class="text-blue-800">
+                    <strong>Note:</strong> All siblings must be enrolled in the same <%= $program_type->name %> session.
+                </p>
+            </div>
+            
+            <div class="bg-white shadow rounded-lg p-6">
+                <h2 class="text-xl font-semibold mb-4">Select Session for All Children</h2>
+                
+                <div class="space-y-2">
+                    <% for my $child (@$children) { %>
+                        <p class="text-gray-700">• <%= $child->{first_name} %> <%= $child->{last_name} %> (Age <%= $child->{age} %>)</p>
+                    <% } %>
+                </div>
+                
+                <div class="mt-4 space-y-3">
+                    <% for my $session (@$available_sessions) { %>
+                        <% my $spots_left = $session->capacity - $session->enrolled_count; %>
+                        <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer <%= $spots_left < @$children ? 'opacity-50 cursor-not-allowed' : '' %>">
+                            <input type="radio" 
+                                   name="session_all" 
+                                   value="<%= $session->id %>"
+                                   <%= $spots_left < @$children ? 'disabled' : '' %>
+                                   class="mr-2">
+                            <span class="font-medium"><%= $session->name %></span>
+                            <div class="text-sm text-gray-600 mt-1">
+                                <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
+                                <%= $spots_left >= @$children ? "$spots_left spots available" : "Not enough spots for all children" %>
+                            </div>
+                            <% if (my $pricing = $session->primary_pricing_plan) { %>
+                                <div class="text-sm font-medium text-green-600 mt-1">
+                                    $<%= $pricing->base_price %> per child
+                                </div>
+                            <% } %>
+                        </label>
+                    <% } %>
+                </div>
+            </div>
+        <% } else { %>
+            <% for my $child (@$children) { %>
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4">
+                        Select Session for <%= $child->{first_name} %> <%= $child->{last_name} %>
+                        <span class="text-gray-500 text-base">(Age <%= $child->{age} %>)</span>
+                    </h2>
+                    
+                    <div class="space-y-3">
+                        <% for my $session (@$available_sessions) { %>
+                            <% my $spots_left = $session->capacity - $session->enrolled_count; %>
+                            <% my $age_appropriate = ($child->{age} >= $session->min_age && $child->{age} <= $session->max_age); %>
+                            
+                            <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer <%= (!$age_appropriate || $spots_left <= 0) ? 'opacity-50 cursor-not-allowed' : '' %>">
+                                <input type="radio" 
+                                       name="session_<%= $child->{id} || $loop->index %>" 
+                                       value="<%= $session->id %>"
+                                       <%= (!$age_appropriate || $spots_left <= 0) ? 'disabled' : '' %>
+                                       class="mr-2">
+                                <span class="font-medium"><%= $session->name %></span>
+                                <div class="text-sm text-gray-600 mt-1">
+                                    <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
+                                    <% if (!$age_appropriate) { %>
+                                        <span class="text-red-600">Age range: <%= $session->min_age %>-<%= $session->max_age %> years</span>
+                                    <% } elsif ($spots_left <= 0) { %>
+                                        <span class="text-red-600">Full - Waitlist available</span>
+                                    <% } else { %>
+                                        <%= $spots_left %> spots available
+                                    <% } %>
+                                </div>
+                                <% if (my $pricing = $session->primary_pricing_plan) { %>
+                                    <div class="text-sm font-medium text-green-600 mt-1">
+                                        $<%= $pricing->base_price %>
+                                    </div>
+                                <% } %>
+                            </label>
+                        <% } %>
+                    </div>
+                </div>
+            <% } %>
+        <% } %>
         
-        <div class="form-field">
-            <input type="radio" id="extendedCare_both" name="extendedCare" value="both">
-            <label for="extendedCare_both">Both morning and afternoon care - $60/week</label>
+        <div class="flex justify-between">
+            <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'select-children') %>" 
+               class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
+                Back
+            </a>
+            <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                Continue to Payment
+            </button>
         </div>
-    </div>
-    
-    <button type="submit">Continue to Payment</button>
-</form>
+    </form>
+</div>
