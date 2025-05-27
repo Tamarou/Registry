@@ -9,6 +9,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $event_id :param :reader;
     field $student_id :param :reader;
+    field $family_member_id :param :reader;
     field $status :param :reader;
     field $marked_at :param :reader;
     field $marked_by :param :reader;
@@ -163,6 +164,12 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     method marked_by_user ($db) {
         require Registry::DAO;
         Registry::DAO::User->find($db, { id => $marked_by });
+    }
+    
+    method family_member ($db) {
+        return unless $family_member_id;
+        require Registry::DAO::Family;
+        Registry::DAO::FamilyMember->find($db, { id => $family_member_id });
     }
     
     # Helper methods

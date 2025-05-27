@@ -238,6 +238,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $session_id :param :reader;
     field $student_id :param :reader;
+    field $family_member_id :param :reader;
     field $status :param :reader   //= 'pending';
     # TODO: Enrollment class needs:
     # - Remove //= {} default
@@ -263,6 +264,13 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # Get the student associated with this enrollment
     method student($db) {
         Registry::DAO::User->find( $db, { id => $student_id } );
+    }
+    
+    # Get the family member associated with this enrollment
+    method family_member($db) {
+        return unless $family_member_id;
+        require Registry::DAO::Family;
+        Registry::DAO::FamilyMember->find( $db, { id => $family_member_id } );
     }
 
     # Helper methods for enrollment status

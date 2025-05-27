@@ -11,6 +11,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     field $location_id :param :reader;
     field $student_id :param :reader;
     field $parent_id :param :reader;
+    field $family_member_id :param :reader;
     field $position :param :reader;
     field $status :param :reader = 'waiting';
     field $offered_at :param :reader;
@@ -219,6 +220,12 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method parent ($db) {
         require Registry::DAO;
         Registry::DAO::User->find($db, { id => $parent_id });
+    }
+    
+    method family_member ($db) {
+        return unless $family_member_id;
+        require Registry::DAO::Family;
+        Registry::DAO::FamilyMember->find($db, { id => $family_member_id });
     }
     
     # Helper methods
