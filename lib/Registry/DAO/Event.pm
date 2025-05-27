@@ -207,6 +207,18 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         my $current_enrollment = 0;    # Replace with actual count
         return $capacity - $current_enrollment;
     }
+    
+    # Get attendance records for this event
+    method attendance_records($db) {
+        require Registry::DAO::Attendance;
+        Registry::DAO::Attendance->get_event_attendance($db, $id);
+    }
+    
+    # Get attendance summary for this event
+    method attendance_summary($db) {
+        require Registry::DAO::Attendance;
+        Registry::DAO::Attendance->get_event_summary($db, $id);
+    }
 }
 
 class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {

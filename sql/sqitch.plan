@@ -12,3 +12,4 @@ summer-camp-module 2025-02-22T04:38:37Z Chris Prather <chris.prather@tamarou.com
 fix-tenant-workflows [schema-based-multitennancy] 2025-03-22T18:57:13Z Chris Prather <chris.prather@tamarou.com> # Fix tenant workflows to include first_step
 program-types [schema-based-multitennancy] 2025-01-27T12:00:00Z Claude <noreply@anthropic.com> # Add program types configuration system
 enhanced-pricing-model [summer-camp-module] 2025-01-27T12:30:00Z Claude <noreply@anthropic.com> # Transform pricing to flexible pricing_plans with multiple tiers per session
+attendance-tracking [summer-camp-module] 2025-01-27T13:00:00Z Claude <noreply@anthropic.com> # Add attendance tracking infrastructure
