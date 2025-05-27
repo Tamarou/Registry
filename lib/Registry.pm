@@ -1,4 +1,4 @@
-use 5.40.0;
+use v5.34.0;
 use experimental qw(try);
 use Object::Pad;
 use Registry::DAO;
@@ -45,6 +45,10 @@ class Registry :isa(Mojolicious) {
         # Location routes
         $r->get('/locations/:slug')->to('locations#show')
           ->name('show_location');
+        
+        # Public school pages (no auth required)
+        $self->routes->get('/school/:slug')->to('schools#show')
+          ->name('show_school');
           
         # Outcome definition routes
         $r->get('/outcome/definition/:id')->to('workflows#get_outcome_definition')->name('outcome.definition');

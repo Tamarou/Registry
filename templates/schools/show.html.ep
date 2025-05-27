@@ -1,0 +1,132 @@
+% layout 'default';
+% title $location->name;
+
+<div class="container mx-auto px-4 py-8">
+  <header class="mb-8">
+    <h1 class="text-3xl font-bold mb-4"><%= $location->name %></h1>
+    
+    % if ($location->address) {
+      <div class="text-gray-600 mb-4">
+        <p><%= $location->address->{street} || $location->address_street %></p>
+        <p>
+          <%= $location->address->{city} || $location->address_city %>, 
+          <%= $location->address->{state} || $location->address_state %> 
+          <%= $location->address->{zip} || $location->address_zip %>
+        </p>
+      </div>
+    % }
+    
+    % if ($location->description) {
+      <div class="prose max-w-none">
+        <%= $location->description %>
+      </div>
+    % }
+  </header>
+
+  <section class="programs-section">
+    <h2 class="text-2xl font-semibold mb-6">Available Programs</h2>
+    
+    % if (@$programs) {
+      <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        % for my $program (@$programs) {
+          <div class="program-card border rounded-lg p-6 shadow-sm hover:shadow-md transition-shadow">
+            <h3 class="text-xl font-semibold mb-3"><%= $program->{project}->name %></h3>
+            
+            % if ($program->{project}->description) {
+              <p class="text-gray-600 mb-4 line-clamp-3">
+                <%= $program->{project}->description %>
+              </p>
+            % }
+            
+            <div class="sessions-list space-y-4">
+              % for my $session_info (@{$program->{sessions}}) {
+                % my $session = $session_info->{session};
+                <div class="session-item border-t pt-4">
+                  <h4 class="font-medium mb-2"><%= $session->name %></h4>
+                  
+                  <div class="session-details text-sm text-gray-600 space-y-1">
+                    % if ($session->start_date && $session->end_date) {
+                      <p>
+                        <span class="font-medium">Dates:</span> 
+                        <%= $session->start_date %> - <%= $session->end_date %>
+                      </p>
+                    % }
+                    
+                    % if (defined $session_info->{best_price}) {
+                      <p>
+                        <span class="font-medium">Starting at:</span> 
+                        $<%= sprintf('%.2f', $session_info->{best_price}) %>
+                      </p>
+                    % }
+                    
+                    <div class="availability-info mt-2">
+                      % if ($session_info->{is_full}) {
+                        <span class="inline-block px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">
+                          Full
+                        </span>
+                        % if ($session_info->{waitlist_count} > 0) {
+                          <span class="text-xs text-gray-500 ml-2">
+                            (<%= $session_info->{waitlist_count} %> on waitlist)
+                          </span>
+                        % }
+                      % } elsif (defined $session_info->{available_spots} && $session_info->{available_spots} < 5) {
+                        <span class="inline-block px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">
+                          Only <%= $session_info->{available_spots} %> spots left!
+                        </span>
+                      % } elsif (defined $session_info->{available_spots}) {
+                        <span class="text-sm text-green-600">
+                          <%= $session_info->{available_spots} %> spots available
+                        </span>
+                      % }
+                    </div>
+                  </div>
+                  
+                  <div class="mt-4">
+                    % if ($session_info->{is_full}) {
+                      <a href="<%= url_for('workflow_index', workflow => 'summer-camp-registration') %>?session_id=<%= $session->id %>&action=waitlist" 
+                         class="inline-block px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors text-sm">
+                        Join Waitlist
+                      </a>
+                    % } else {
+                      <a href="<%= url_for('workflow_index', workflow => 'summer-camp-registration') %>?session_id=<%= $session->id %>" 
+                         class="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm">
+                        Enroll Now
+                      </a>
+                    % }
+                  </div>
+                </div>
+              % }
+            </div>
+          </div>
+        % }
+      </div>
+    % } else {
+      <div class="text-center py-12 bg-gray-50 rounded-lg">
+        <p class="text-gray-600 text-lg">No programs are currently available at this location.</p>
+        <p class="text-gray-500 mt-2">Please check back later for updates.</p>
+      </div>
+    % }
+  </section>
+</div>
+
+<style>
+  /* Mobile-responsive styles */
+  @media (max-width: 640px) {
+    .program-card {
+      padding: 1rem;
+    }
+    
+    .container {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+  }
+  
+  /* Utility class for line clamping */
+  .line-clamp-3 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+</style>

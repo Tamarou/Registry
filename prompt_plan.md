@@ -78,7 +78,7 @@ Write:
 Ensure the DAO handles the relationship between events, enrollments, and attendance.
 ```
 
-### Step 4: Waitlist Management
+### Step 4: Waitlist Management ✅
 
 ```text
 Add waitlist functionality to the enrollment system.
