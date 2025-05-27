@@ -200,7 +200,7 @@ Modify enrollment workflow:
 Follow the existing continuation patterns from tenant-signup workflow.
 ```
 
-### Step 9: Enrollment Workflow - Multi-Child Support
+### Step 9: Enrollment Workflow - Multi-Child Support ✅
 
 ```text
 Add multi-child enrollment capability to the workflow.
