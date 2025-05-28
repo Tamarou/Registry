@@ -1,59 +1,135 @@
 % layout 'default';
-% title 'Registry - After-School Program Management Made Simple';
+% title stash('title');
+
+% content_for 'head' => begin
+  <!-- SEO Meta Tags -->
+  <meta name="description" content="<%= stash('description') %>">
+  <meta name="keywords" content="<%= stash('keywords') %>">
+  <meta name="robots" content="<%= stash('robots') %>">
+  <meta name="language" content="<%= stash('language') %>">
+  <link rel="canonical" href="<%= stash('canonical_url') %>">
+  
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="<%= stash('og_type') %>">
+  <meta property="og:url" content="<%= stash('og_url') %>">
+  <meta property="og:title" content="<%= stash('og_title') %>">
+  <meta property="og:description" content="<%= stash('og_description') %>">
+  <meta property="og:image" content="<%= stash('og_image') %>">
+  
+  <!-- Twitter -->
+  <meta property="twitter:card" content="<%= stash('twitter_card') %>">
+  <meta property="twitter:url" content="<%= stash('og_url') %>">
+  <meta property="twitter:title" content="<%= stash('twitter_title') %>">
+  <meta property="twitter:description" content="<%= stash('twitter_description') %>">
+  <meta property="twitter:image" content="<%= stash('twitter_image') %>">
+  
+  <!-- Performance optimizations -->
+  % for my $domain (@{stash('preconnect_domains') || []}) {
+    <link rel="preconnect" href="<%= $domain %>" crossorigin>
+  % }
+  
+  <!-- Critical CSS for above-the-fold content -->
+  <style>
+    /* Critical CSS for immediate render */
+    .hero {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 80px 0;
+      text-align: center;
+      min-height: 500px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .hero-title {
+      font-size: 3.5rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      line-height: 1.2;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 18px 36px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600;
+      background-color: #28a745;
+      color: white;
+      font-size: 1.1rem;
+      transition: all 0.3s ease;
+    }
+    @media (max-width: 768px) {
+      .hero-title { font-size: 2.5rem; }
+      .btn { padding: 15px 25px; font-size: 1rem; }
+    }
+  </style>
+  
+  <!-- Schema.org structured data -->
+  <script type="application/ld+json">
+    <%= encode_json(stash('schema_data')) %>
+  </script>
+% end
 
 <div class="marketing-page">
   <!-- Hero Section -->
-  <section class="hero">
+  <section class="hero" role="banner" aria-labelledby="hero-title">
     <div class="container">
       <div class="hero-content">
-        <h1 class="hero-title">After-School Program Management Made Simple</h1>
+        <h1 id="hero-title" class="hero-title">After-School Program Management Made Simple</h1>
         <p class="hero-subtitle">
           Streamline registrations, track attendance, manage payments, and communicate with families 
           all in one powerful platform designed specifically for after-school programs.
         </p>
         <div class="hero-cta">
           <a href="<%= url_for('workflow_index', workflow => 'tenant-signup') %>" 
-             class="btn btn-primary btn-lg">
+             class="btn btn-primary btn-lg"
+             role="button"
+             aria-describedby="trial-info">
             Start Your Free Trial
           </a>
-          <p class="trial-info">30 days free • No credit card required to start</p>
+          <p id="trial-info" class="trial-info">30 days free • No credit card required to start</p>
         </div>
       </div>
     </div>
   </section>
 
   <!-- Features Section -->
-  <section class="features">
+  <section class="features" role="main" aria-labelledby="features-title">
     <div class="container">
-      <h2 class="section-title">Everything You Need to Run Successful Programs</h2>
-      <div class="features-grid">
-        <div class="feature">
-          <div class="feature-icon">📝</div>
+      <h2 id="features-title" class="section-title">Everything You Need to Run Successful Programs</h2>
+      <div class="features-grid" role="list">
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">📝</div>
           <h3>Easy Registration</h3>
           <p>Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.</p>
         </div>
-        <div class="feature">
-          <div class="feature-icon">💳</div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">💳</div>
           <h3>Payment Processing</h3>
           <p>Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.</p>
         </div>
-        <div class="feature">
-          <div class="feature-icon">📊</div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">📊</div>
           <h3>Attendance Tracking</h3>
           <p>Real-time attendance management with mobile-friendly interfaces for staff and automated parent notifications.</p>
         </div>
-        <div class="feature">
-          <div class="feature-icon">💬</div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">💬</div>
           <h3>Family Communication</h3>
           <p>Built-in messaging system to keep families informed with program updates, announcements, and direct communication.</p>
         </div>
-        <div class="feature">
-          <div class="feature-icon">📋</div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">📋</div>
           <h3>Waitlist Management</h3>
           <p>Automated waitlist processing with email notifications and seamless enrollment when spots become available.</p>
         </div>
-        <div class="feature">
-          <div class="feature-icon">👥</div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">👥</div>
           <h3>Staff Management</h3>
           <p>Role-based access control for administrators, staff, and instructors with customizable permissions and workflows.</p>
         </div>
@@ -62,63 +138,69 @@
   </section>
 
   <!-- Pricing Section -->
-  <section class="pricing">
+  <section class="pricing" role="complementary" aria-labelledby="pricing-title">
     <div class="container">
       <div class="pricing-card">
-        <h2>Simple, Transparent Pricing</h2>
-        <div class="price">
-          <span class="currency">$</span>
+        <h2 id="pricing-title">Simple, Transparent Pricing</h2>
+        <div class="price" aria-label="Monthly price: $200">
+          <span class="currency" aria-hidden="true">$</span>
           <span class="amount">200</span>
           <span class="period">per month</span>
         </div>
-        <ul class="pricing-features">
-          <li>✓ Unlimited registrations</li>
-          <li>✓ Payment processing included</li>
-          <li>✓ Family communication tools</li>
-          <li>✓ Attendance tracking</li>
-          <li>✓ Waitlist management</li>
-          <li>✓ Staff management</li>
-          <li>✓ 24/7 support</li>
-          <li>✓ Regular updates & new features</li>
+        <ul class="pricing-features" aria-label="Included features">
+          <li><span aria-hidden="true">✓</span> Unlimited registrations</li>
+          <li><span aria-hidden="true">✓</span> Payment processing included</li>
+          <li><span aria-hidden="true">✓</span> Family communication tools</li>
+          <li><span aria-hidden="true">✓</span> Attendance tracking</li>
+          <li><span aria-hidden="true">✓</span> Waitlist management</li>
+          <li><span aria-hidden="true">✓</span> Staff management</li>
+          <li><span aria-hidden="true">✓</span> 24/7 support</li>
+          <li><span aria-hidden="true">✓</span> Regular updates & new features</li>
         </ul>
         <div class="pricing-cta">
           <a href="<%= url_for('workflow_index', workflow => 'tenant-signup') %>" 
-             class="btn btn-primary btn-lg">
+             class="btn btn-primary btn-lg"
+             role="button"
+             aria-describedby="trial-terms">
             Start 30-Day Free Trial
           </a>
-          <p class="trial-terms">No setup fees • Cancel anytime • Full access during trial</p>
+          <p id="trial-terms" class="trial-terms">No setup fees • Cancel anytime • Full access during trial</p>
         </div>
       </div>
     </div>
   </section>
 
   <!-- Footer -->
-  <footer class="marketing-footer">
+  <footer class="marketing-footer" role="contentinfo">
     <div class="container">
       <div class="footer-content">
         <div class="footer-section">
           <h4>Support</h4>
           <p>Need help getting started?</p>
-          <p>Email: <a href="mailto:support@registry.com">support@registry.com</a></p>
-          <p>Phone: 1-800-REGISTRY</p>
+          <p>Email: <a href="mailto:support@registry.com" aria-label="Send email to Registry support">support@registry.com</a></p>
+          <p>Phone: <a href="tel:1-800-REGISTRY" aria-label="Call Registry support">1-800-REGISTRY</a></p>
         </div>
         <div class="footer-section">
           <h4>Resources</h4>
-          <ul>
-            <li><a href="#documentation">Documentation</a></li>
-            <li><a href="#getting-started">Getting Started Guide</a></li>
-            <li><a href="#api">API Reference</a></li>
-            <li><a href="#status">System Status</a></li>
-          </ul>
+          <nav aria-label="Resource links">
+            <ul>
+              <li><a href="#documentation">Documentation</a></li>
+              <li><a href="#getting-started">Getting Started Guide</a></li>
+              <li><a href="#api">API Reference</a></li>
+              <li><a href="#status">System Status</a></li>
+            </ul>
+          </nav>
         </div>
         <div class="footer-section">
           <h4>Company</h4>
-          <ul>
-            <li><a href="#about">About Registry</a></li>
-            <li><a href="#privacy">Privacy Policy</a></li>
-            <li><a href="#terms">Terms of Service</a></li>
-            <li><a href="#security">Security</a></li>
-          </ul>
+          <nav aria-label="Company links">
+            <ul>
+              <li><a href="#about">About Registry</a></li>
+              <li><a href="#privacy">Privacy Policy</a></li>
+              <li><a href="#terms">Terms of Service</a></li>
+              <li><a href="#security">Security</a></li>
+            </ul>
+          </nav>
         </div>
       </div>
       <div class="footer-bottom">
@@ -127,6 +209,18 @@
     </div>
   </footer>
 </div>
+
+<!-- Load non-critical CSS asynchronously -->
+<link rel="preload" href="data:text/css;base64,LyogTm9uLWNyaXRpY2FsIENTUyB3aWxsIGJlIGxvYWRlZCBoZXJlICov" as="style" onload="this.onload=null;this.rel='stylesheet'">
+<noscript>
+  <style>
+    .marketing-page {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      color: #333;
+    }
+  </style>
+</noscript>
 
 <style>
 .marketing-page {
@@ -181,9 +275,15 @@
   color: white;
 }
 
-.btn-primary:hover {
+.btn-primary:hover, .btn-primary:focus {
   background-color: #218838;
   transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.btn-primary:focus {
+  outline: 3px solid #ffd700;
+  outline-offset: 2px;
 }
 
 .btn-lg {
@@ -346,8 +446,14 @@
   transition: color 0.3s ease;
 }
 
-.footer-section a:hover {
+.footer-section a:hover, .footer-section a:focus {
   color: #fff;
+  text-decoration: underline;
+}
+
+.footer-section a:focus {
+  outline: 2px solid #ffd700;
+  outline-offset: 2px;
 }
 
 .footer-bottom {
