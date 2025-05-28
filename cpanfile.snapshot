@@ -159,6 +159,119 @@ DISTRIBUTIONS
       strict 0
       warnings 0
       warnings::register 0
+  Email-Abstract-3.010
+    pathname: R/RJ/RJBS/Email-Abstract-3.010.tar.gz
+    provides:
+      Email::Abstract 3.010
+      Email::Abstract::EmailMIME 3.010
+      Email::Abstract::EmailSimple 3.010
+      Email::Abstract::MIMEEntity 3.010
+      Email::Abstract::MailInternet 3.010
+      Email::Abstract::MailMessage 3.010
+      Email::Abstract::Plugin 3.010
+    requirements:
+      Carp 0
+      Email::Simple 1.998
+      ExtUtils::MakeMaker 6.78
+      MRO::Compat 0
+      Module::Pluggable 1.5
+      Scalar::Util 0
+      perl 5.006
+      strict 0
+      warnings 0
+  Email-Address-XS-1.05
+    pathname: P/PA/PALI/Email-Address-XS-1.05.tar.gz
+    provides:
+      Email::Address::XS 1.05
+    requirements:
+      Carp 0
+      Exporter 0
+      ExtUtils::MakeMaker 0
+      XSLoader 0
+      base 0
+      overload 0
+      perl 5.006000
+      strict 0
+      warnings 0
+  Email-Date-Format-1.008
+    pathname: R/RJ/RJBS/Email-Date-Format-1.008.tar.gz
+    provides:
+      Email::Date::Format 1.008
+    requirements:
+      Exporter 5.57
+      ExtUtils::MakeMaker 6.78
+      Time::Local 1.27
+      perl 5.012
+      warnings 0
+  Email-Sender-2.601
+    pathname: R/RJ/RJBS/Email-Sender-2.601.tar.gz
+    provides:
+      Email::Sender 2.601
+      Email::Sender::Failure 2.601
+      Email::Sender::Failure::Multi 2.601
+      Email::Sender::Failure::Permanent 2.601
+      Email::Sender::Failure::Temporary 2.601
+      Email::Sender::Manual 2.601
+      Email::Sender::Manual::QuickStart 2.601
+      Email::Sender::Role::CommonSending 2.601
+      Email::Sender::Role::HasMessage 2.601
+      Email::Sender::Simple 2.601
+      Email::Sender::Success 2.601
+      Email::Sender::Success::Partial 2.601
+      Email::Sender::Transport 2.601
+      Email::Sender::Transport::DevNull 2.601
+      Email::Sender::Transport::Failable 2.601
+      Email::Sender::Transport::Maildir 2.601
+      Email::Sender::Transport::Mbox 2.601
+      Email::Sender::Transport::Print 2.601
+      Email::Sender::Transport::SMTP 2.601
+      Email::Sender::Transport::SMTP::Persistent 2.601
+      Email::Sender::Transport::Sendmail 2.601
+      Email::Sender::Transport::Test 2.601
+      Email::Sender::Transport::Wrapper 2.601
+      Email::Sender::Util 2.601
+    requirements:
+      Carp 0
+      Email::Abstract 3.006
+      Email::Address::XS 0
+      Email::Simple 1.998
+      ExtUtils::MakeMaker 6.78
+      Fcntl 0
+      File::Basename 0
+      File::Path 2.06
+      File::Spec 0
+      IO::File 1.11
+      IO::Handle 0
+      List::Util 1.45
+      Module::Runtime 0
+      Moo 2.000000
+      Moo::Role 0
+      MooX::Types::MooseLike 0.15
+      MooX::Types::MooseLike::Base 0
+      Net::SMTP 3.07
+      Scalar::Util 0
+      Sub::Exporter 0
+      Sub::Exporter::Util 0
+      Sys::Hostname 0
+      Throwable::Error 0.200003
+      Try::Tiny 0
+      perl 5.012
+      strict 0
+      utf8 0
+      warnings 0
+  Email-Simple-2.218
+    pathname: R/RJ/RJBS/Email-Simple-2.218.tar.gz
+    provides:
+      Email::Simple 2.218
+      Email::Simple::Creator 2.218
+      Email::Simple::Header 2.218
+    requirements:
+      Carp 0
+      Email::Date::Format 0
+      ExtUtils::MakeMaker 6.78
+      perl 5.012
+      strict 0
+      warnings 0
   Function-Parameters-2.002005
     pathname: M/MA/MAUKE/Function-Parameters-2.002005.tar.gz
     provides:
@@ -175,6 +288,14 @@ DISTRIBUTIONS
       perl 5.014000
       strict 0
       warnings 0
+  JSON-4.10
+    pathname: I/IS/ISHIGAKI/JSON-4.10.tar.gz
+    provides:
+      JSON 4.10
+      JSON::Backend::PP 4.10
+    requirements:
+      ExtUtils::MakeMaker 0
+      Test::More 0
   Lexical-SealRequireHints-0.012
     pathname: Z/ZE/ZEFRAM/Lexical-SealRequireHints-0.012.tar.gz
     provides:
@@ -186,6 +307,45 @@ DISTRIBUTIONS
       perl 5.006
       strict 0
       warnings 0
+  Minion-10.31
+    pathname: S/SR/SRI/Minion-10.31.tar.gz
+    provides:
+      LinkCheck undef
+      LinkCheck::Controller::Links undef
+      LinkCheck::Task::CheckLinks undef
+      Minion 10.31
+      Minion::Backend undef
+      Minion::Backend::Pg undef
+      Minion::Command::minion undef
+      Minion::Command::minion::job undef
+      Minion::Command::minion::worker undef
+      Minion::Iterator undef
+      Minion::Job undef
+      Minion::Worker undef
+      Mojolicious::Plugin::Minion undef
+      Mojolicious::Plugin::Minion::Admin undef
+    requirements:
+      ExtUtils::MakeMaker 0
+      Mojolicious 9.0
+      YAML::XS 0.67
+      perl 5.016
+  Module-Pluggable-6.3
+    pathname: S/SI/SIMONW/Module-Pluggable-6.3.tar.gz
+    provides:
+      Devel::InnerPackage 0.4
+      Module::Pluggable 6.3
+      Module::Pluggable::Object 5.2
+    requirements:
+      Exporter 5.57
+      ExtUtils::MakeMaker 0
+      File::Basename 0
+      File::Find 0
+      File::Spec 3.00
+      File::Spec::Functions 0
+      Scalar::Util 0
+      if 0
+      perl 5.006
+      strict 0
   Object-Pad-0.820
     pathname: P/PE/PEVANS/Object-Pad-0.820.tar.gz
     provides:

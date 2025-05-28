@@ -2,6 +2,7 @@ use 5.40.2;
 use experimental qw(try);
 use Object::Pad;
 use Registry::DAO;
+use Registry::Job::AttendanceCheck;
 
 class Registry :isa(Mojolicious) {
     our $VERSION = v0.001;
@@ -14,6 +15,14 @@ class Registry :isa(Mojolicious) {
         # Add another namespace to load commands from
         push $self->commands->namespaces->@*, 'Registry::Command';
 
+        # Setup Minion for background jobs
+        $self->plugin('Minion' => {
+            PostgreSQL => $ENV{DB_URL} || 'postgresql://localhost/registry'
+        });
+        
+        # Register background jobs
+        Registry::Job::AttendanceCheck->register($self);
+
         $self->helper(
             dao => sub {
                 state $db = Registry::DAO->new( url => $ENV{DB_URL} );
@@ -25,6 +34,7 @@ class Registry :isa(Mojolicious) {
                 $self->import_schemas;
                 $self->import_templates;
                 $self->import_workflows;
+                $self->setup_recurring_jobs;
             }
         );
 
@@ -114,6 +124,26 @@ class Registry :isa(Mojolicious) {
             catch ($e) {
                 $self->app->log->error("Error importing schema: $e");
             }
+        }
+    }
+
+    method setup_recurring_jobs {
+        # Schedule attendance check to run every minute
+        # Only schedule if not already scheduled
+        my $existing = $self->minion->jobs({
+            tasks => ['attendance_check'],
+            states => ['inactive', 'active']
+        })->total;
+        
+        unless ($existing) {
+            # Schedule to run every minute
+            $self->minion->enqueue('attendance_check', [], {
+                delay => 60, # Start after 1 minute
+                attempts => 3,
+                priority => 5
+            });
+            
+            $self->log->info("Scheduled recurring attendance check job");
         }
     }
 }

@@ -17,3 +17,7 @@ requires 'Sub::Identify';
 requires 'YAML::XS';
 requires 'Test::PostgreSQL';
 requires 'WebService::Stripe';
+requires 'Minion';
+requires 'Email::Simple';
+requires 'Email::Sender::Simple';
+requires 'JSON';
