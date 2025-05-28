@@ -175,6 +175,12 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         # Get workflow progress data
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
         
+        # For the review step, prepare structured data for template
+        my $template_data = $run->data || {};
+        if ($self->param('step') eq 'review') {
+            $template_data = $self->_prepare_review_data($run);
+        }
+        
         return $self->render(
             template => $self->param('workflow') . '/' . $self->param('step'),
             workflow => $self->param('workflow'),
@@ -185,6 +191,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
             data_json => $data_json,
             errors_json => $errors_json,
             workflow_progress => $workflow_progress,
+            data => $template_data,
         );
     }
 
@@ -210,6 +217,31 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
           unless $step->slug eq $self->param('step');
 
         my $data = $self->req->params->to_hash;
+        
+        # Special validation for review step
+        if ($step->slug eq 'review') {
+            unless ($data->{terms_accepted}) {
+                $self->flash(validation_errors => ['Terms of Service must be accepted to continue']);
+                return $self->redirect_to($self->url_for);
+            }
+            
+            # Validate that required data exists
+            my $run_data = $run->data || {};
+            my @missing_fields;
+            
+            # Check organization info
+            push @missing_fields, 'Organization name' unless $run_data->{name} || $run_data->{organization_name};
+            push @missing_fields, 'Billing email' unless $run_data->{billing_email};
+            push @missing_fields, 'Admin name' unless $run_data->{admin_name};
+            push @missing_fields, 'Admin email' unless $run_data->{admin_email};
+            
+            if (@missing_fields) {
+                $self->flash(validation_errors => [
+                    'Missing required information: ' . join(', ', @missing_fields)
+                ]);
+                return $self->redirect_to($self->url_for);
+            }
+        }
 
         my $result = $run->process( $dao->db, $step, $data );
         
@@ -416,6 +448,35 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     method _slug_exists($db, $slug) {
         my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
         return $result->array->[0] > 0;
+    }
+    
+    method _prepare_review_data($run) {
+        my $raw_data = $run->data || {};
+        
+        # Structure the data for the review template
+        return {
+            profile => {
+                name => $raw_data->{name} || $raw_data->{organization_name},
+                subdomain => $raw_data->{subdomain},
+                description => $raw_data->{description},
+                billing_email => $raw_data->{billing_email},
+                billing_phone => $raw_data->{billing_phone},
+                billing_address => $raw_data->{billing_address},
+                billing_address2 => $raw_data->{billing_address2},
+                billing_city => $raw_data->{billing_city},
+                billing_state => $raw_data->{billing_state},
+                billing_zip => $raw_data->{billing_zip},
+                billing_country => $raw_data->{billing_country},
+            },
+            team => {
+                admin => {
+                    name => $raw_data->{admin_name},
+                    email => $raw_data->{admin_email},
+                    username => $raw_data->{admin_username},
+                },
+                team_members => $raw_data->{team_members} || [],
+            },
+        };
     }
 
     method start_continuation {

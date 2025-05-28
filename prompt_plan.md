@@ -346,7 +346,7 @@ Success Criteria:
 - Error handling works for payment failures
 ```
 
-### Step 8: Payment Collection Step Implementation
+### Step 8: Payment Collection Step Implementation ✅
 
 ```text
 Add payment collection as the final step of tenant onboarding with Stripe Elements integration.

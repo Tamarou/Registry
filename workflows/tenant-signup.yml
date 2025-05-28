@@ -15,6 +15,10 @@ steps:
   description: Tenant users page
   slug: users
   template: tenant-signup-users
+- class: Registry::DAO::WorkflowStep
+  description: Review and confirm setup details
+  slug: review
+  template: tenant-signup-review
 - class: Registry::DAO::WorkflowSteps::TenantPayment
   description: Payment and subscription setup
   slug: payment
