@@ -1,0 +1,110 @@
+% layout 'default';
+% title 'Waitlist Status';
+
+<div class="container mx-auto px-4 py-8">
+    <div class="max-w-4xl mx-auto">
+        <div class="flex items-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-900">Waitlist Status</h1>
+        </div>
+
+        % if (@$waitlist_entries) {
+            <div class="space-y-6">
+                % for my $entry_data (@$waitlist_entries) {
+                    % my $entry = $entry_data->{entry};
+                    % my $session = $entry_data->{session};
+                    % my $location = $entry_data->{location};
+                    % my $student = $entry_data->{student};
+                    
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-3 mb-3">
+                                    % if ($entry->is_offered) {
+                                        <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">
+                                            🎉 Offer Available
+                                        </span>
+                                    % } else {
+                                        <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                                            📋 Waiting
+                                        </span>
+                                    % }
+                                    
+                                    <span class="text-sm text-gray-500">
+                                        Position #<%= $entry->position %>
+                                    </span>
+                                </div>
+                                
+                                <h3 class="text-lg font-semibold text-gray-900 mb-2">
+                                    <%= $session ? $session->name : 'Program TBD' %>
+                                </h3>
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                    <div>
+                                        <span class="font-medium text-gray-700">Student:</span>
+                                        <span class="text-gray-900"><%= $student ? $student->name : 'Your child' %></span>
+                                    </div>
+                                    
+                                    <div>
+                                        <span class="font-medium text-gray-700">Location:</span>
+                                        <span class="text-gray-900"><%= $location ? $location->name : 'TBD' %></span>
+                                    </div>
+                                    
+                                    <div>
+                                        <span class="font-medium text-gray-700">Added to waitlist:</span>
+                                        <span class="text-gray-900">
+                                            <%= DateTime->from_epoch(epoch => $entry->created_at)->strftime('%b %d, %Y') %>
+                                        </span>
+                                    </div>
+                                </div>
+                                
+                                % if ($entry->is_offered && $entry->offer_is_active) {
+                                    <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                                        <div class="flex items-center">
+                                            <svg class="h-5 w-5 text-yellow-400 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                                            </svg>
+                                            <div>
+                                                <p class="text-sm font-medium text-yellow-800">
+                                                    Offer expires: 
+                                                    <%= DateTime->from_epoch(epoch => $entry->expires_at)->strftime('%B %d, %Y at %I:%M %p') %>
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                % }
+                            </div>
+                            
+                            <div class="ml-6 flex flex-col gap-2">
+                                % if ($entry->is_offered && $entry->offer_is_active) {
+                                    <a href="/waitlist/<%= $entry->id %>" 
+                                       class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 text-center text-sm font-medium">
+                                        View Offer
+                                    </a>
+                                % } else {
+                                    <span class="text-sm text-gray-500 text-center">
+                                        Waiting for spot
+                                    </span>
+                                % }
+                            </div>
+                        </div>
+                    </div>
+                % }
+            </div>
+        % } else {
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+                <div class="text-gray-400 mb-4">
+                    <svg class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                </div>
+                <h3 class="text-lg font-medium text-gray-900 mb-2">No Active Waitlists</h3>
+                <p class="text-gray-500 mb-6">You don't have any children on waitlists at this time.</p>
+                
+                <a href="/school" 
+                   class="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 font-medium">
+                    Browse Programs
+                </a>
+            </div>
+        % }
+    </div>
+</div>

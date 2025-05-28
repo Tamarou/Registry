@@ -3,6 +3,8 @@ use experimental qw(try);
 use Object::Pad;
 use Registry::DAO;
 use Registry::Job::AttendanceCheck;
+use Registry::Job::ProcessWaitlist;
+use Registry::Job::WaitlistExpiration;
 
 class Registry :isa(Mojolicious) {
     our $VERSION = v0.001;
@@ -22,6 +24,8 @@ class Registry :isa(Mojolicious) {
         
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
+        Registry::Job::ProcessWaitlist->register($self);
+        Registry::Job::WaitlistExpiration->register($self);
 
         $self->helper(
             dao => sub {
@@ -77,6 +81,12 @@ class Registry :isa(Mojolicious) {
         $r->post('/messages/:id/mark_read')->to('messages#mark_read')->name('messages_mark_read');
         $r->get('/messages/preview_recipients')->to('messages#preview_recipients')->name('messages_preview_recipients');
         $r->get('/messages/unread_count')->to('messages#unread_count')->name('messages_unread_count');
+        
+        # Waitlist routes
+        $r->get('/waitlist/:id')->to('waitlist#show')->name('waitlist_show');
+        $r->post('/waitlist/:id/accept')->to('waitlist#accept')->name('waitlist_accept');
+        $r->post('/waitlist/:id/decline')->to('waitlist#decline')->name('waitlist_decline');
+        $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
     }
 
     method import_workflows () {
@@ -138,12 +148,12 @@ class Registry :isa(Mojolicious) {
     method setup_recurring_jobs {
         # Schedule attendance check to run every minute
         # Only schedule if not already scheduled
-        my $existing = $self->minion->jobs({
+        my $existing_attendance = $self->minion->jobs({
             tasks => ['attendance_check'],
             states => ['inactive', 'active']
         })->total;
         
-        unless ($existing) {
+        unless ($existing_attendance) {
             # Schedule to run every minute
             $self->minion->enqueue('attendance_check', [], {
                 delay => 60, # Start after 1 minute
@@ -152,6 +162,40 @@ class Registry :isa(Mojolicious) {
             });
             
             $self->log->info("Scheduled recurring attendance check job");
+        }
+        
+        # Schedule waitlist expiration check to run every 5 minutes
+        my $existing_expiration = $self->minion->jobs({
+            tasks => ['waitlist_expiration'],
+            states => ['inactive', 'active']
+        })->total;
+        
+        unless ($existing_expiration) {
+            # Schedule to run every 5 minutes
+            $self->minion->enqueue('waitlist_expiration', [], {
+                delay => 300, # Start after 5 minutes
+                attempts => 3,
+                priority => 6
+            });
+            
+            $self->log->info("Scheduled recurring waitlist expiration job");
+        }
+        
+        # Schedule waitlist processing to run every 10 minutes
+        my $existing_processing = $self->minion->jobs({
+            tasks => ['process_waitlist'],
+            states => ['inactive', 'active']
+        })->total;
+        
+        unless ($existing_processing) {
+            # Schedule to run every 10 minutes
+            $self->minion->enqueue('process_waitlist', [], {
+                delay => 600, # Start after 10 minutes
+                attempts => 3,
+                priority => 6
+            });
+            
+            $self->log->info("Scheduled recurring waitlist processing job");
         }
     }
 }
