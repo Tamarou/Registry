@@ -25,6 +25,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_program_types_updated_at ON program_types;
 CREATE TRIGGER update_program_types_updated_at BEFORE UPDATE ON program_types
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -44,6 +45,7 @@ BEGIN
             updated_at timestamp NOT NULL DEFAULT current_timestamp
         );', s);
         
+        EXECUTE format('DROP TRIGGER IF EXISTS update_program_types_updated_at ON %I.program_types;', s);
         EXECUTE format('CREATE TRIGGER update_program_types_updated_at BEFORE UPDATE ON %I.program_types
             FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();', s);
     END LOOP;

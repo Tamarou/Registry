@@ -1,4 +1,4 @@
-use 5.38.0;
+use 5.40.2;
 use Object::Pad;
 
 class Registry::Controller::Workflows :isa(Mojolicious::Controller) {

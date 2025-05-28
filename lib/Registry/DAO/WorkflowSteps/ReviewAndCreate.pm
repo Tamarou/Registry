@@ -1,10 +1,10 @@
 package Registry::DAO::WorkflowSteps::ReviewAndCreate;
-use v5.34.0;
+use 5.40.2;
 use warnings;
-use experimental 'signatures';
+use experimental 'signatures', 'try', 'builtin';
 
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::ReviewAndCreate :isa(Registry::DAO::WorkflowSteps);
+class Registry::DAO::WorkflowSteps::ReviewAndCreate :isa(Registry::DAO::WorkflowStep);
 
 use Registry::DAO::Project;
 use Registry::DAO::Event;

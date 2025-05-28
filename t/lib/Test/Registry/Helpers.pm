@@ -1,4 +1,4 @@
-use 5.40.0;
+use 5.40.2;
 
 package Test::Registry::Helpers {
     use experimental qw(builtin declared_refs);

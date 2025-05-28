@@ -1,4 +1,4 @@
-use 5.40.0;
+use 5.40.2;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing is )];

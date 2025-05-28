@@ -1,4 +1,4 @@
-use v5.34.0;
+use 5.40.2;
 use experimental qw(try);
 use Object::Pad;
 use Registry::DAO;
@@ -28,6 +28,16 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Teacher routes (before tenant setup to avoid conflicts)
+        my $teacher = $self->routes->under('/teacher')->to('teacher_dashboard#auth_check');
+        $teacher->get('/')->to('#dashboard')->name('teacher_dashboard');
+        $teacher->get('/attendance/:event_id')->to('#attendance')->name('teacher_attendance');
+        $teacher->post('/attendance/:event_id')->to('#mark_attendance')->name('teacher_mark_attendance');
+        
+        # Public school pages (no auth required)
+        $self->routes->get('/school/:slug')->to('schools#show')
+          ->name('show_school');
+
         my $r = $self->routes->under('/')->to('tenants#setup');
         $r->get('')->to('#index')->name("tenants_landing");
 
@@ -45,10 +55,6 @@ class Registry :isa(Mojolicious) {
         # Location routes
         $r->get('/locations/:slug')->to('locations#show')
           ->name('show_location');
-        
-        # Public school pages (no auth required)
-        $self->routes->get('/school/:slug')->to('schools#show')
-          ->name('show_school');
           
         # Outcome definition routes
         $r->get('/outcome/definition/:id')->to('workflows#get_outcome_definition')->name('outcome.definition');

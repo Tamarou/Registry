@@ -76,7 +76,7 @@ $$
 DECLARE
     s name;
 BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
+    FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         -- Rename table
         EXECUTE format('ALTER TABLE IF EXISTS %I.pricing RENAME TO pricing_plans;', s);
         

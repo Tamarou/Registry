@@ -46,7 +46,7 @@ $$
 DECLARE
     s name;
 BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
+    FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         -- Create family_members table
         EXECUTE format('CREATE TABLE IF NOT EXISTS %I.family_members (
             id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -89,7 +89,7 @@ $$ LANGUAGE plpgsql;
 INSERT INTO family_members (family_id, child_name, birth_date, grade)
 SELECT DISTINCT 
     COALESCE(e.student_id, w.parent_id) as family_id,
-    u.name as child_name,
+    u.username as child_name,
     COALESCE(u.birth_date, '2010-01-01'::date) as birth_date,
     u.grade
 FROM users u
@@ -100,25 +100,25 @@ AND u.user_type = 'student'
 AND NOT EXISTS (
     SELECT 1 FROM family_members fm 
     WHERE fm.family_id = COALESCE(e.student_id, w.parent_id)
-    AND fm.child_name = u.name
+    AND fm.child_name = u.username
 );
 
 -- Update enrollments with family_member_id
 UPDATE enrollments e
 SET family_member_id = fm.id
-FROM family_members fm
-JOIN users u ON u.id = e.student_id
-WHERE fm.family_id = e.student_id
-AND fm.child_name = u.name
+FROM family_members fm, users u
+WHERE u.id = e.student_id
+AND fm.family_id = e.student_id
+AND fm.child_name = u.username
 AND e.family_member_id IS NULL;
 
 -- Update waitlist with family_member_id
 UPDATE waitlist w
 SET family_member_id = fm.id
-FROM family_members fm
-JOIN users u ON u.id = w.student_id
-WHERE fm.family_id = w.parent_id
-AND fm.child_name = u.name
+FROM family_members fm, users u
+WHERE u.id = w.student_id
+AND fm.family_id = w.parent_id
+AND fm.child_name = u.username
 AND w.family_member_id IS NULL;
 
 -- Propagate data migration to tenant schemas
@@ -127,13 +127,13 @@ $$
 DECLARE
     s name;
 BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
+    FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         -- Migrate enrollment data
         EXECUTE format('
             INSERT INTO %I.family_members (family_id, child_name, birth_date, grade)
             SELECT DISTINCT 
                 COALESCE(e.student_id, w.parent_id) as family_id,
-                u.name as child_name,
+                u.username as child_name,
                 COALESCE(u.birth_date, ''2010-01-01''::date) as birth_date,
                 u.grade
             FROM %I.users u
@@ -144,7 +144,7 @@ BEGIN
             AND NOT EXISTS (
                 SELECT 1 FROM %I.family_members fm 
                 WHERE fm.family_id = COALESCE(e.student_id, w.parent_id)
-                AND fm.child_name = u.name
+                AND fm.child_name = u.username
             );', s, s, s, s, s);
         
         -- Update enrollments
@@ -154,7 +154,7 @@ BEGIN
             FROM %I.family_members fm
             JOIN %I.users u ON u.id = e.student_id
             WHERE fm.family_id = e.student_id
-            AND fm.child_name = u.name
+            AND fm.child_name = u.username
             AND e.family_member_id IS NULL;', s, s, s);
         
         -- Update waitlist
@@ -164,7 +164,7 @@ BEGIN
             FROM %I.family_members fm
             JOIN %I.users u ON u.id = w.student_id
             WHERE fm.family_id = w.parent_id
-            AND fm.child_name = u.name
+            AND fm.child_name = u.username
             AND w.family_member_id IS NULL;', s, s, s);
     END LOOP;
 END;

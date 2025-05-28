@@ -1,4 +1,4 @@
-use 5.40.0;
+use 5.40.2;
 use Object::Pad;
 
 class Registry::Controller::Locations :isa(Mojolicious::Controller) {

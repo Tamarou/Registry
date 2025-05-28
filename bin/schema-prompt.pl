@@ -1,4 +1,4 @@
-use 5.40.0;
+use 5.40.2;
 use Mojo::JSON qw(decode_json encode_json);
 use IO::Prompt;
 

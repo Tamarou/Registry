@@ -1,12 +1,11 @@
 package Registry::DAO::Payment;
-use v5.34.0;
+use 5.40.2;
 use warnings;
-use experimental 'signatures';
+use experimental 'signatures', 'try', 'builtin';
 
 use Object::Pad;
 class Registry::DAO::Payment :isa(Registry::DAO::Object);
 
-use Registry::Types;
 use WebService::Stripe;
 use Mojo::JSON qw(encode_json decode_json);
 

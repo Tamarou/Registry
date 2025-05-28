@@ -1,10 +1,10 @@
 package Registry::DAO::WorkflowSteps::CurriculumDetails;
-use v5.34.0;
+use 5.40.2;
 use warnings;
-use experimental 'signatures';
+use experimental 'signatures', 'try', 'builtin';
 
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::CurriculumDetails :isa(Registry::DAO::WorkflowSteps);
+class Registry::DAO::WorkflowSteps::CurriculumDetails :isa(Registry::DAO::WorkflowStep);
 
 method process ($db, $form_data) {
     my $workflow = $self->workflow($db);

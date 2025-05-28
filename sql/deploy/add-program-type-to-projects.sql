@@ -21,7 +21,7 @@ $$
 DECLARE
     s name;
 BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
+    FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         -- Add column
         EXECUTE format('ALTER TABLE %I.projects ADD COLUMN IF NOT EXISTS program_type_slug text;', s);
         

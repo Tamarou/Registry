@@ -21,7 +21,7 @@ $$
 DECLARE
     s name;
 BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
+    FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         -- Add columns
         EXECUTE format('ALTER TABLE %I.users ADD COLUMN IF NOT EXISTS birth_date date;', s);
         EXECUTE format('ALTER TABLE %I.users ADD COLUMN IF NOT EXISTS user_type text DEFAULT ''parent'';', s);

@@ -79,7 +79,7 @@ $$
 DECLARE
     s name;
 BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
+    FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         -- Create waitlist table
         EXECUTE format('CREATE TABLE IF NOT EXISTS %I.waitlist (
             id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -110,7 +110,7 @@ BEGIN
             FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();', s);
         
         -- Create reorder function
-        EXECUTE format('CREATE OR REPLACE FUNCTION %I.reorder_waitlist_positions() RETURNS TRIGGER AS $$
+        EXECUTE format('CREATE OR REPLACE FUNCTION %I.reorder_waitlist_positions() RETURNS TRIGGER AS $func$
         BEGIN
             IF (TG_OP = ''DELETE'') OR 
                (TG_OP = ''UPDATE'' AND OLD.status = ''waiting'' AND NEW.status != ''waiting'') THEN
@@ -122,7 +122,7 @@ BEGIN
             END IF;
             RETURN NEW;
         END;
-        $$ LANGUAGE plpgsql;', s, s);
+        $func$ LANGUAGE plpgsql;', s, s);
         
         -- Create reorder trigger
         EXECUTE format('CREATE TRIGGER reorder_waitlist_on_removal
@@ -131,7 +131,7 @@ BEGIN
             EXECUTE FUNCTION %I.reorder_waitlist_positions();', s, s);
         
         -- Create position function
-        EXECUTE format('CREATE OR REPLACE FUNCTION %I.get_next_waitlist_position(p_session_id uuid) RETURNS integer AS $$
+        EXECUTE format('CREATE OR REPLACE FUNCTION %I.get_next_waitlist_position(p_session_id uuid) RETURNS integer AS $func$
         BEGIN
             RETURN COALESCE(
                 (SELECT MAX(position) + 1 FROM %I.waitlist 
@@ -139,7 +139,7 @@ BEGIN
                 1
             );
         END;
-        $$ LANGUAGE plpgsql;', s, s);
+        $func$ LANGUAGE plpgsql;', s, s);
     END LOOP;
 END;
 $$ LANGUAGE plpgsql;

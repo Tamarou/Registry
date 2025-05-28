@@ -38,7 +38,7 @@ $$
 DECLARE
     s name;
 BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
+    FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         -- Create attendance_records table
         EXECUTE format('CREATE TABLE IF NOT EXISTS %I.attendance_records (
             id uuid DEFAULT gen_random_uuid() PRIMARY KEY,

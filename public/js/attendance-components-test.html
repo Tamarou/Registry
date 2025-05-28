@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Components Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+        
+        .student-list {
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Attendance Components Test</h1>
+        
+        <div class="test-section">
+            <h2>Student Attendance Rows</h2>
+            <div class="student-list">
+                <student-attendance-row
+                    student-id="student-1"
+                    student-name="Alice Smith"
+                    student-grade="8th"
+                    family-name="Smith Family"
+                    status="">
+                </student-attendance-row>
+                
+                <student-attendance-row
+                    student-id="student-2"
+                    student-name="Bob Johnson"
+                    student-grade="7th"
+                    family-name="Johnson Family"
+                    status="present">
+                </student-attendance-row>
+                
+                <student-attendance-row
+                    student-id="student-3"
+                    student-name="Carol Davis"
+                    student-grade="8th"
+                    family-name="Davis Family"
+                    status="absent">
+                </student-attendance-row>
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h2>Attendance Form</h2>
+            <attendance-form 
+                event-id="test-event-123" 
+                total-students="3">
+            </attendance-form>
+        </div>
+    </div>
+
+    <!-- Load the components -->
+    <script src="attendance-components.js"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Test page loaded');
+            
+            // Test initial attendance
+            const attendanceForm = document.querySelector('attendance-form');
+            if (attendanceForm) {
+                customElements.whenDefined('attendance-form').then(() => {
+                    console.log('Setting initial attendance data');
+                    attendanceForm.setInitialAttendance({
+                        'student-2': 'present',
+                        'student-3': 'absent'
+                    });
+                });
+                
+                // Listen for events
+                attendanceForm.addEventListener('attendance-saved', function(e) {
+                    console.log('✅ Attendance saved:', e.detail);
+                    alert('Attendance saved successfully!');
+                });
+            }
+            
+            // Listen for attendance changes
+            document.addEventListener('attendance-changed', function(e) {
+                console.log('📝 Attendance changed:', e.detail);
+            });
+            
+            // Test component registration
+            console.log('Custom elements defined:');
+            console.log('- student-attendance-row:', customElements.get('student-attendance-row'));
+            console.log('- attendance-form:', customElements.get('attendance-form'));
+        });
+    </script>
+</body>
+</html>

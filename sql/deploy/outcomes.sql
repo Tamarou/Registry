@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS outcome_definitions (
 );
 
 ALTER TABLE workflow_steps
-ADD COLUMN outcome_definition_id uuid REFERENCES outcome_definitions;
+ADD COLUMN IF NOT EXISTS outcome_definition_id uuid REFERENCES outcome_definitions;
 
 DO
 $$

@@ -1,15 +1,14 @@
 package Registry::DAO::WorkflowSteps::Payment;
-use v5.34.0;
+use 5.40.2;
 use warnings;
-use experimental 'signatures';
+use experimental 'signatures', 'try', 'builtin';
 
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::Payment :isa(Registry::DAO::WorkflowSteps);
+class Registry::DAO::WorkflowSteps::Payment :isa(Registry::DAO::WorkflowStep);
 
 use Registry::DAO::Payment;
 use Registry::DAO::Event;  # Contains Session class
 use Registry::DAO::User;
-use Try::Tiny;
 use Mojo::JSON qw(encode_json);
 
 method process ($db, $form_data) {
@@ -86,8 +85,7 @@ method create_payment ($db, $run, $form_data) {
             description => 'Program Enrollment',
             receipt_email => $user->email,
         });
-    } catch {
-        my $error = $_;
+    } catch ($error) {
         return {
             next_step => $self->id,
             errors => ["Payment processing error: $error"],

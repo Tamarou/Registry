@@ -1,10 +1,10 @@
 package Registry::DAO::WorkflowSteps::ProgramTypeSelection;
-use v5.34.0;
+use 5.40.2;
 use warnings;
-use experimental 'signatures';
+use experimental 'signatures', 'try', 'builtin';
 
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::ProgramTypeSelection :isa(Registry::DAO::WorkflowSteps);
+class Registry::DAO::WorkflowSteps::ProgramTypeSelection :isa(Registry::DAO::WorkflowStep);
 
 use Registry::DAO::ProgramType;
 

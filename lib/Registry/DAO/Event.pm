@@ -1,147 +1,5 @@
-use v5.34.0;
-use utf8;
-use experimental qw(try);
+use 5.40.2;
 use Object::Pad;
-
-class Registry::DAO::Session :isa(Registry::DAO::Object) {
-    use Carp         qw( carp );
-    use experimental qw(try);
-
-    field $id :param :reader;
-    field $name :param :reader;
-    field $slug :param :reader;
-    field $start_date :param :reader;
-    field $end_date :param :reader;
-    field $status :param :reader   //= 'draft';
-    # TODO: Session class needs:
-    # - Remove //= {} default
-    # - Add BUILD for JSON decoding
-    # - Handle { -json => $metadata } in create/update
-    # - Add explicit metadata() accessor
-    field $metadata :param :reader //= {};
-    field $notes :param :reader    //= '';
-    field $created_at :param :reader = time;
-    field $updated_at :param :reader;
-
-    use constant table => 'sessions';
-
-    sub create ( $class, $db, $data ) {
-        $data->{slug} //= lc( $data->{name} =~ s/\s+/-/gr )
-          if defined $data->{name};
-        $data->{status} //= 'draft';
-        $class->SUPER::create( $db, $data );
-    }
-
-    method events ($db) {
-
-        # TODO: this should be a join
-        $db->select( 'session_events', '*', { session_id => $id } )
-          ->hashes->map(
-            sub { Registry::DAO::Event->find( $db, { id => $_->{event_id} } ) }
-        )->to_array->@*;
-    }
-
-    method add_events ( $db, @events ) {
-        my $data = [ map { { session_id => $id, event_id => $_ } } @events ];
-        $db->insert( 'session_events', $_ ) for $data->@*;
-        return $self;
-    }
-
-    # Get teachers for this session
-    method teachers($db) {
-
-        # TODO: this should be a join
-        $db->select( 'session_teachers', '*', { session_id => $id } )
-          ->hashes->map(
-            sub { Registry::DAO::User->find( $db, { id => $_->{teacher_id} } ) }
-        )->to_array->@*;
-    }
-
-    # Add teachers to this session
-    method add_teachers( $db, @teacher_ids ) {
-        my $data =
-          [ map { { session_id => $id, teacher_id => $_ } } @teacher_ids ];
-        $db->insert( 'session_teachers', $_ ) for $data->@*;
-        return $self;
-    }
-
-    # Remove a teacher from this session
-    method remove_teacher( $db, $teacher_id ) {
-        $db->delete(
-            'session_teachers',
-            {
-                session_id => $id,
-                teacher_id => $teacher_id
-            }
-        );
-        return $self;
-    }
-
-    # Get pricing plans for this session
-    method pricing_plans($db) {
-        require Registry::DAO::PricingPlan;
-        Registry::DAO::PricingPlan->get_pricing_plans( $db, $id );
-    }
-    
-    # Get best price for this session given context
-    method get_best_price($db, $context = {}) {
-        require Registry::DAO::PricingPlan;
-        Registry::DAO::PricingPlan->get_best_price( $db, $id, $context );
-    }
-
-    # Get enrollments for this session
-    method enrollments($db) {
-        Registry::DAO::Enrollment->find( $db, { session_id => $id } );
-    }
-
-    # Helper method for duration days
-    method duration_days {
-        return undef unless $start_date && $end_date;
-
-   # In a real implementation, we'd parse the dates and calculate the difference
-        return ( $end_date - $start_date ) +
-          1;    # Include both start and end dates
-    }
-
-    my $update_status = method( $db, $new_status ) {
-        $status = $new_status;
-        return $self->update( $db, { status => $status } );
-    };
-
-    # Helper method for publication status
-    method publish($db) { $self->$update_status( $db, 'published' ) }
-    method close($db)   { $self->$update_status( $db, 'closed' ) }
-
-    method is_published { $status eq 'published' }
-    method is_closed    { $status eq 'closed' }
-
-    method total_capacity($db) {
-        return max( map { $_->total_capacity } $self->events($db) );
-    }
-
-    # Helper method to check if session is at capacity
-    method is_at_capacity($db) {
-        return 0 unless $self->available_capacity($db);
-    }
-
-    # Helper method to get available capacity
-    method available_capacity($db) {
-        return $self->total_capacity - $self->enrollments($db)->count;
-    }
-    
-    # Get waitlist for this session
-    method waitlist($db) {
-        require Registry::DAO::Waitlist;
-        Registry::DAO::Waitlist->get_session_waitlist($db, $id);
-    }
-    
-    # Get waitlist count
-    method waitlist_count($db) {
-        require Registry::DAO::Waitlist;
-        my $waitlist = Registry::DAO::Waitlist->get_session_waitlist($db, $id, 'waiting');
-        return scalar @$waitlist;
-    }
-}
 
 class Registry::DAO::Event :isa(Registry::DAO::Object) {
     use Carp         qw( carp );
@@ -232,83 +90,67 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         require Registry::DAO::Attendance;
         Registry::DAO::Attendance->get_event_summary($db, $id);
     }
-}
-
-class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
-    field $id :param :reader;
-    field $session_id :param :reader;
-    field $student_id :param :reader;
-    field $family_member_id :param :reader;
-    field $status :param :reader   //= 'pending';
-    # TODO: Enrollment class needs:
-    # - Remove //= {} default
-    # - Add BUILD for JSON decoding
-    # - Use { -json => $metadata } in create/update
-    # - Add explicit metadata() accessor
-    field $metadata :param :reader //= {};
-    field $created_at :param :reader;
-    field $updated_at :param :reader;
-
-    use constant table => 'enrollments';
-
-    sub create ( $class, $db, $data ) {
-        $data->{status} //= 'pending';
-        $class->SUPER::create( $db, $data );
-    }
-
-    # Get the session this enrollment belongs to
-    method session($db) {
-        Registry::DAO::Session->find( $db, { id => $session_id } );
-    }
-
-    # Get the student associated with this enrollment
-    method student($db) {
-        Registry::DAO::User->find( $db, { id => $student_id } );
+    
+    # Get events for a teacher on a specific date
+    sub get_teacher_events_for_date($class, $db, $teacher_id, $date, %opts) {
+        my $tenant = $opts{tenant} // 'public';
+        
+        my $results = $db->query(qq{
+            SELECT 
+                e.id,
+                e.metadata->>'title' as title,
+                e.metadata->>'start_time' as start_time,
+                e.metadata->>'end_time' as end_time,
+                l.name as location_name,
+                l.address,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count,
+                e.capacity
+            FROM registry.events e
+            JOIN registry.locations l ON e.location_id = l.id
+            JOIN registry.projects p ON e.project_id = p.id
+            LEFT JOIN registry.sessions s ON s.project_id = p.id
+            LEFT JOIN registry.enrollments en ON en.session_id = s.id AND en.status = 'active'
+            JOIN registry.session_teachers st ON st.teacher_id = ?
+            WHERE DATE(CAST(e.metadata->>'start_time' AS timestamp)) = ?
+              AND l.tenant = ?
+            GROUP BY e.id, e.metadata, l.name, l.address, p.name, e.capacity
+            ORDER BY CAST(e.metadata->>'start_time' AS timestamp)
+        }, $teacher_id, $date, $tenant);
+        
+        return $results->hashes->to_array;
     }
     
-    # Get the family member associated with this enrollment
-    method family_member($db) {
-        return unless $family_member_id;
-        require Registry::DAO::Family;
-        Registry::DAO::FamilyMember->find( $db, { id => $family_member_id } );
-    }
-
-    # Helper methods for enrollment status
-    method is_active     { $status eq 'active' }
-    method is_waitlisted { $status eq 'waitlisted' }
-    method is_cancelled  { $status eq 'cancelled' }
-    method is_pending    { $status eq 'pending' }
-
-    # Status transition methods
-    my $update_status = method( $db, $new_status ) {
-        $status = $new_status;
-        return $self->update( $db, { status => $new_status } );
-    };
-
-    method activate($db) { $self->$update_status( $db, 'active' ) }
-    method waitlist($db) { $self->$update_status( $db, 'waitlisted' ) }
-    method cancel($db)   { $self->$update_status( $db, 'cancelled' ) }
-    method pend($db)     { $self->$update_status( $db, 'pending' ) }
-
-}
-
-class Registry::DAO::SessionTeacher :isa(Registry::DAO::Object) {
-    field $id :param :reader;
-    field $session_id :param;
-    field $teacher_id :param;
-    field $created_at :param :reader;
-    field $updated_at :param :reader;
-
-    use constant table => 'session_teachers';
-
-    # Get the session this teacher assignment belongs to
-    method session($db) {
-        Registry::DAO::Session->find( $db, { id => $session_id } );
-    }
-
-    # Get the teacher assigned to the session
-    method teacher($db) {
-        Registry::DAO::User->find( $db, { id => $teacher_id } );
+    # Get upcoming events for a teacher (next N days)
+    sub get_teacher_upcoming_events($class, $db, $teacher_id, $days, %opts) {
+        my $tenant = $opts{tenant} // 'public';
+        my $end_date = DateTime->today->add(days => $days)->ymd;
+        
+        my $results = $db->query(qq{
+            SELECT 
+                e.id,
+                e.metadata->>'title' as title,
+                e.metadata->>'start_time' as start_time,
+                e.metadata->>'end_time' as end_time,
+                l.name as location_name,
+                l.address,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count,
+                e.capacity
+            FROM registry.events e
+            JOIN registry.locations l ON e.location_id = l.id
+            JOIN registry.projects p ON e.project_id = p.id
+            LEFT JOIN registry.sessions s ON s.project_id = p.id
+            LEFT JOIN registry.enrollments en ON en.session_id = s.id AND en.status = 'active'
+            JOIN registry.session_teachers st ON st.teacher_id = ?
+            WHERE DATE(CAST(e.metadata->>'start_time' AS timestamp)) > CURRENT_DATE
+              AND DATE(CAST(e.metadata->>'start_time' AS timestamp)) <= ?
+              AND l.tenant = ?
+            GROUP BY e.id, e.metadata, l.name, l.address, p.name, e.capacity
+            ORDER BY CAST(e.metadata->>'start_time' AS timestamp)
+        }, $teacher_id, $end_date, $tenant);
+        
+        return $results->hashes->to_array;
     }
 }
 

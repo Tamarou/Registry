@@ -1,4 +1,4 @@
-use v5.34.0;
+use 5.40.2;
 use utf8;
 use experimental qw(builtin);
 use builtin      qw(export_lexically);
@@ -6,9 +6,21 @@ use Object::Pad;
 
 use Mojo::Pg;
 use Registry::DAO::Object;
+use Registry::DAO::User;
+use Registry::DAO::Tenant;
+use Registry::DAO::Location;
+use Registry::DAO::Project;
+use Registry::DAO::Template;
 use Registry::DAO::Workflow;
+use Registry::DAO::WorkflowStep;
+use Registry::DAO::WorkflowRun;
 use Registry::DAO::Event;
+use Registry::DAO::Session;
+use Registry::DAO::Enrollment;
+use Registry::DAO::SessionTeacher;
 use Registry::DAO::WorkflowSteps;
+use Registry::DAO::Family;
+use Registry::DAO::FamilyMember;
 use Registry::DAO::OutcomeDefinition;
 use Registry::DAO::CreateOutcomeDefinition;
 

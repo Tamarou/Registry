@@ -1,4 +1,4 @@
-use v5.34.0;
+use 5.40.2;
 use utf8;
 use experimental qw(try);
 use Object::Pad;
@@ -68,7 +68,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     }
     
     # Get attendance records for an event
-    sub get_event_attendance ($class, $db, $event_id) {
+    sub get_event_attendance ($class, $db, $event_id, %opts) {
         my $results = $db->select(
             $class->table, 
             undef, 
@@ -76,7 +76,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
             { -asc => 'student_id' }
         )->hashes;
         
-        return [ map { $class->new(%$_) } @$results ];
+        return $results->to_array;
     }
     
     # Get attendance records for a student

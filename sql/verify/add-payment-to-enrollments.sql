@@ -2,6 +2,8 @@
 
 BEGIN;
 
+SET search_path TO registry, public;
+
 SELECT payment_id FROM enrollments WHERE FALSE;
 
 ROLLBACK;

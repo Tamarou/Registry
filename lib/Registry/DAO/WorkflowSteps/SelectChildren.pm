@@ -1,4 +1,4 @@
-use v5.34.0;
+use 5.40.2;
 use utf8;
 use experimental qw(try);
 use Object::Pad;

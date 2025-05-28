@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher Attendance Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: #007bff;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        
+        .content {
+            padding: 20px;
+        }
+        
+        .event-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        
+        .event-info h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        
+        .event-details {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .student-list {
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        /* Hide custom elements before they're defined to prevent FOUC */
+        student-attendance-row:not(:defined),
+        attendance-form:not(:defined) {
+            display: none;
+        }
+        
+        .demo-controls {
+            margin: 20px 0;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 6px;
+        }
+        
+        .demo-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 5px;
+        }
+        
+        .demo-btn:hover {
+            background: #0056b3;
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+        
+        .alert-info {
+            background: #cce5ff;
+            color: #004085;
+            border: 1px solid #99ccff;
+        }
+        
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 Take Attendance</h1>
+        </div>
+        <div class="content">
+            <div class="alert alert-info">
+                <strong>Demo Mode:</strong> This is a demonstration of the Web Components attendance interface. 
+                Clicks and submissions are logged below but not sent to a server.
+            </div>
+            
+            <div class="event-info">
+                <h3>Morning Math Session</h3>
+                <div class="event-details">
+                    <div><strong>Time:</strong> 9:00 AM - 10:00 AM</div>
+                    <div><strong>Location:</strong> Classroom 101</div>
+                    <div><strong>Program:</strong> Elementary Math Tutoring</div>
+                    <div><strong>Students:</strong> 4</div>
+                </div>
+            </div>
+
+            <div class="student-list">
+                <student-attendance-row
+                    student-id="student-1"
+                    student-name="Alice Johnson"
+                    student-grade="3rd"
+                    family-name="Johnson Family"
+                    status="">
+                </student-attendance-row>
+                
+                <student-attendance-row
+                    student-id="student-2"
+                    student-name="Bob Smith"
+                    student-grade="3rd"
+                    family-name="Smith Family"
+                    status="present">
+                </student-attendance-row>
+                
+                <student-attendance-row
+                    student-id="student-3"
+                    student-name="Carol Davis"
+                    student-grade="4th"
+                    family-name="Davis Family"
+                    status="">
+                </student-attendance-row>
+                
+                <student-attendance-row
+                    student-id="student-4"
+                    student-name="David Wilson"
+                    student-grade="3rd"
+                    family-name="Wilson Family"
+                    status="absent">
+                </student-attendance-row>
+            </div>
+
+            <attendance-form 
+                event-id="demo-event-123" 
+                total-students="4">
+            </attendance-form>
+            
+            <div class="demo-controls">
+                <h4>🧪 Demo Controls</h4>
+                <button class="demo-btn" onclick="markAllPresent()">Mark All Present</button>
+                <button class="demo-btn" onclick="markAllAbsent()">Mark All Absent</button>
+                <button class="demo-btn" onclick="clearAll()">Clear All</button>
+                <button class="demo-btn" onclick="randomAttendance()">Random Attendance</button>
+            </div>
+            
+            <div class="log" id="demo-log">
+Console Log (demo events will appear here)...
+            </div>
+        </div>
+    </div>
+
+    <!-- Load the Web Components -->
+    <script src="attendance-components.js"></script>
+    
+    <script>
+        // Demo logging
+        function log(message) {
+            const logEl = document.getElementById('demo-log');
+            const timestamp = new Date().toLocaleTimeString();
+            logEl.textContent += `\n[${timestamp}] ${message}`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            log('🚀 Demo page loaded');
+            
+            const attendanceForm = document.querySelector('attendance-form');
+            
+            if (attendanceForm) {
+                // Set up initial attendance
+                customElements.whenDefined('attendance-form').then(() => {
+                    log('✅ Web Components fully loaded');
+                    attendanceForm.setInitialAttendance({
+                        'student-2': 'present',
+                        'student-4': 'absent'
+                    });
+                    log('📊 Initial attendance set');
+                });
+                
+                // Listen for attendance changes
+                attendanceForm.addEventListener('attendance-changed', function(e) {
+                    log(`📝 ${e.detail.studentName} marked as ${e.detail.status}`);
+                });
+                
+                // Listen for save events (demo mode - intercept and log)
+                attendanceForm.addEventListener('attendance-saved', function(e) {
+                    log(`💾 Attendance saved for ${e.detail.totalMarked} students`);
+                });
+                
+                // Override fetch for demo mode
+                const originalFetch = window.fetch;
+                window.fetch = function(...args) {
+                    log(`🌐 DEMO: Would submit to ${args[0]}`);
+                    log(`📤 Data: ${args[1]?.body || 'No body'}`);
+                    
+                    // Simulate successful response
+                    return Promise.resolve({
+                        json: () => Promise.resolve({
+                            success: true,
+                            total_marked: Object.keys(JSON.parse(args[1]?.body || '{}')).length,
+                            message: 'Demo submission successful'
+                        })
+                    });
+                };
+            }
+        });
+        
+        // Demo functions
+        function markAllPresent() {
+            log('🟢 Demo: Marking all students present');
+            document.querySelectorAll('student-attendance-row').forEach(row => {
+                row.setAttendanceStatus('present');
+                row.dispatchEvent(new CustomEvent('attendance-changed', {
+                    detail: {
+                        studentId: row.getAttribute('student-id'),
+                        status: 'present',
+                        studentName: row.getAttribute('student-name')
+                    },
+                    bubbles: true
+                }));
+            });
+        }
+        
+        function markAllAbsent() {
+            log('🔴 Demo: Marking all students absent');
+            document.querySelectorAll('student-attendance-row').forEach(row => {
+                row.setAttendanceStatus('absent');
+                row.dispatchEvent(new CustomEvent('attendance-changed', {
+                    detail: {
+                        studentId: row.getAttribute('student-id'),
+                        status: 'absent',
+                        studentName: row.getAttribute('student-name')
+                    },
+                    bubbles: true
+                }));
+            });
+        }
+        
+        function clearAll() {
+            log('⚪ Demo: Clearing all attendance');
+            document.querySelectorAll('student-attendance-row').forEach(row => {
+                row.status = '';
+                const buttons = row.shadowRoot.querySelectorAll('.attendance-btn');
+                buttons.forEach(btn => btn.classList.remove('active'));
+            });
+            
+            const form = document.querySelector('attendance-form');
+            if (form) {
+                form.attendanceData = {};
+                form.updateCounts();
+            }
+        }
+        
+        function randomAttendance() {
+            log('🎲 Demo: Setting random attendance');
+            document.querySelectorAll('student-attendance-row').forEach(row => {
+                const status = Math.random() > 0.5 ? 'present' : 'absent';
+                row.setAttendanceStatus(status);
+                row.dispatchEvent(new CustomEvent('attendance-changed', {
+                    detail: {
+                        studentId: row.getAttribute('student-id'),
+                        status: status,
+                        studentName: row.getAttribute('student-name')
+                    },
+                    bubbles: true
+                }));
+            });
+        }
+    </script>
+</body>
+</html>
