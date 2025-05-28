@@ -8,6 +8,8 @@ class Registry::DAO::WorkflowSteps::GenerateEvents :isa(Registry::DAO::WorkflowS
 
 use Registry::DAO::Event;
 use Registry::DAO::Session;
+use Registry::DAO::Schedule;
+use Registry::DAO::User;
 use Mojo::JSON qw(encode_json);
 use DateTime;
 
@@ -29,11 +31,17 @@ method process ($db, $form_data) {
             };
         }
         
+        # Validate teacher assignments if provided
+        my $teacher_assignments = $form_data->{teacher_assignments} || {};
+        my $schedule = Registry::DAO::Schedule->new();
+        my @assignment_errors;
+        
         # Generate events for each configured location
         my @created_sessions;
         for my $location (@{$data->{configured_locations}}) {
+            my $location_teacher_id = $teacher_assignments->{$location->{id}};
             my $session_data = $self->create_session_for_location(
-                $db, $data, $location, $generation_params
+                $db, $data, $location, $generation_params, $location_teacher_id
             );
             
             if ($session_data->{error}) {
@@ -61,7 +69,7 @@ method process ($db, $form_data) {
     };
 }
 
-method create_session_for_location ($db, $project_data, $location, $params) {
+method create_session_for_location ($db, $project_data, $location, $params, $teacher_id = undef) {
     try {
         # Create session for this location
         my $session = Registry::DAO::Session->create($db, {
@@ -81,7 +89,7 @@ method create_session_for_location ($db, $project_data, $location, $params) {
         
         # Generate events based on pattern
         my @events = $self->generate_events_for_session(
-            $db, $session, $location, $params
+            $db, $session, $location, $params, $teacher_id
         );
         
         return {
@@ -96,7 +104,7 @@ method create_session_for_location ($db, $project_data, $location, $params) {
     }
 }
 
-method generate_events_for_session ($db, $session, $location, $params) {
+method generate_events_for_session ($db, $session, $location, $params, $teacher_id = undef) {
     my @events;
     my $start_date = DateTime->from_epoch(epoch => $params->{start_date});
     my $duration_weeks = $params->{duration_weeks};
@@ -117,18 +125,43 @@ method generate_events_for_session ($db, $session, $location, $params) {
             my ($hour, $minute) = split ':', $time_str;
             $event_date->set_hour($hour)->set_minute($minute);
             
-            my $event = Registry::DAO::Event->create($db, {
+            # Create event with teacher assignment if provided
+            my $event_data = {
                 session_id => $session->id,
-                date => $event_date->strftime('%Y-%m-%d'),
-                start_time => $event_date->strftime('%H:%M'),
-                end_time => $event_date->clone->add(hours => 1)->strftime('%H:%M'), # Default 1 hour duration
+                time => $event_date->epoch,
+                duration => 60, # Default 1 hour duration
+                location_id => $location->{id},
+                project_id => $session->project_id,
                 status => 'scheduled',
                 metadata => encode_json({
                     generated_from => 'location_assignment',
                     week_number => $week + 1,
                     day_name => $day_name
                 })
-            });
+            };
+            
+            # Add teacher assignment if provided
+            if ($teacher_id) {
+                $event_data->{teacher_id} = $teacher_id;
+                
+                # Check for conflicts if teacher assignment is specified
+                my $schedule_dao = Registry::DAO::Schedule->new();
+                my $conflicts = $schedule_dao->check_conflicts($db, $teacher_id, {
+                    time => $event_date->epoch,
+                    duration => 60,
+                    location_id => $location->{id}
+                });
+                
+                if (@$conflicts) {
+                    # For now, continue with assignment but add conflict info to metadata
+                    $event_data->{metadata} = encode_json({
+                        %{decode_json($event_data->{metadata})},
+                        teacher_conflicts => $conflicts
+                    });
+                }
+            }
+            
+            my $event = Registry::DAO::Event->create($db, $event_data);
             
             push @events, $event;
         }
@@ -156,10 +189,14 @@ method prepare_data ($db) {
     my $run = $workflow->latest_run($db);
     my $data = $run->data;
     
+    # Get available teachers for assignment
+    my $teachers = Registry::DAO::User->find($db, { user_type => 'staff' });
+    
     return {
         project_name => $data->{project_name},
         configured_locations => $data->{configured_locations},
-        total_locations => scalar(@{$data->{configured_locations} || []})
+        total_locations => scalar(@{$data->{configured_locations} || []}),
+        available_teachers => $teachers
     };
 }
 
