@@ -1,0 +1,66 @@
+% if (@$upcoming_events) {
+    <div class="space-y-3">
+        % for my $event (@$upcoming_events) {
+            <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                        <h4 class="text-sm font-medium text-gray-900"><%= $event->{event_name} || $event->{session_name} %></h4>
+                        % if ($event->{attendance_status}) {
+                            % if ($event->{attendance_status} eq 'present') {
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                    ✓ Attended
+                                </span>
+                            % } elsif ($event->{attendance_status} eq 'absent') {
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                    ✗ Absent
+                                </span>
+                            % }
+                        % }
+                    </div>
+                    
+                    <div class="text-xs text-gray-600">
+                        <div class="flex items-center gap-4">
+                            <span class="font-medium"><%= $event->{child_name} %></span>
+                            <span>📍 <%= $event->{location_name} || 'Location TBD' %></span>
+                        </div>
+                        % if ($event->{location_address}) {
+                            <div class="mt-1 text-gray-500">
+                                <%= $event->{location_address} %>
+                            </div>
+                        % }
+                    </div>
+                </div>
+                
+                <div class="text-right ml-4">
+                    <div class="text-sm font-medium text-gray-900">
+                        <%= DateTime->from_epoch(epoch => $event->{start_time})->strftime('%b %d') %>
+                    </div>
+                    <div class="text-xs text-gray-600">
+                        <%= DateTime->from_epoch(epoch => $event->{start_time})->strftime('%I:%M %p') %>
+                        % if ($event->{end_time}) {
+                            - <%= DateTime->from_epoch(epoch => $event->{end_time})->strftime('%I:%M %p') %>
+                        % }
+                    </div>
+                    
+                    % my $event_date = DateTime->from_epoch(epoch => $event->{start_time});
+                    % my $now = DateTime->now;
+                    % my $is_today = $event_date->ymd eq $now->ymd;
+                    % my $is_tomorrow = $event_date->ymd eq $now->add(days => 1)->ymd;
+                    
+                    % if ($is_today) {
+                        <div class="text-xs font-medium text-blue-600 mt-1">Today</div>
+                    % } elsif ($is_tomorrow) {
+                        <div class="text-xs font-medium text-green-600 mt-1">Tomorrow</div>
+                    % }
+                </div>
+            </div>
+        % }
+    </div>
+% } else {
+    <div class="text-center py-6">
+        <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">No upcoming events</p>
+    </div>
+% }

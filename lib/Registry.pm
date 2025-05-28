@@ -87,6 +87,13 @@ class Registry :isa(Mojolicious) {
         $r->post('/waitlist/:id/accept')->to('waitlist#accept')->name('waitlist_accept');
         $r->post('/waitlist/:id/decline')->to('waitlist#decline')->name('waitlist_decline');
         $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
+        
+        # Parent Dashboard routes
+        $r->get('/parent/dashboard')->to('parent_dashboard#index')->name('parent_dashboard');
+        $r->get('/parent/dashboard/upcoming_events')->to('parent_dashboard#upcoming_events')->name('parent_dashboard_upcoming_events');
+        $r->get('/parent/dashboard/recent_attendance')->to('parent_dashboard#recent_attendance')->name('parent_dashboard_recent_attendance');
+        $r->get('/parent/dashboard/unread_messages_count')->to('parent_dashboard#unread_messages_count')->name('parent_dashboard_unread_messages_count');
+        $r->post('/parent/dashboard/drop_enrollment')->to('parent_dashboard#drop_enrollment')->name('parent_dashboard_drop_enrollment');
     }
 
     method import_workflows () {
