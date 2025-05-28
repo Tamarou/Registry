@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::Payment;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::Payment :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::Payment :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Payment;
 use Registry::DAO::Event;  # Contains Session class
@@ -177,4 +175,4 @@ method handle_payment_callback ($db, $run, $form_data) {
 
 method template { 'summer-camp-registration/payment' }
 
-1;
+}

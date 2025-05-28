@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::RequirementsAndPatterns;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::RequirementsAndPatterns :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::RequirementsAndPatterns :isa(Registry::DAO::WorkflowStep) {
 
 use Mojo::JSON qw(encode_json decode_json);
 
@@ -120,4 +118,4 @@ method prepare_data ($db, $run, $form_data = {}) {
 
 method template { 'program-creation/requirements-and-patterns' }
 
-1;
+}

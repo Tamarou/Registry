@@ -159,6 +159,62 @@ DISTRIBUTIONS
       strict 0
       warnings 0
       warnings::register 0
+  DateTime-Format-Builder-0.83
+    pathname: D/DR/DROLSKY/DateTime-Format-Builder-0.83.tar.gz
+    provides:
+      DateTime::Format::Builder 0.83
+      DateTime::Format::Builder::Parser 0.83
+      DateTime::Format::Builder::Parser::Dispatch 0.83
+      DateTime::Format::Builder::Parser::Quick 0.83
+      DateTime::Format::Builder::Parser::Regex 0.83
+      DateTime::Format::Builder::Parser::Strptime 0.83
+      DateTime::Format::Builder::Parser::generic 0.83
+    requirements:
+      Carp 0
+      DateTime 1.00
+      DateTime::Format::Strptime 1.04
+      ExtUtils::MakeMaker 0
+      Params::Validate 0.72
+      Scalar::Util 0
+      parent 0
+      strict 0
+      warnings 0
+  DateTime-Format-Pg-0.16014
+    pathname: D/DM/DMAKI/DateTime-Format-Pg-0.16014.tar.gz
+    provides:
+      DateTime::Format::Pg 0.16014
+    requirements:
+      DateTime 0.10
+      DateTime::Format::Builder 0.72
+      DateTime::TimeZone 0.05
+      ExtUtils::MakeMaker 6.36
+      Module::Build::Tiny 0.035
+      Test::More 0
+  DateTime-Format-Strptime-1.79
+    pathname: D/DR/DROLSKY/DateTime-Format-Strptime-1.79.tar.gz
+    provides:
+      DateTime::Format::Strptime 1.79
+      DateTime::Format::Strptime::Types 1.79
+    requirements:
+      Carp 0
+      DateTime 1.00
+      DateTime::Locale 1.30
+      DateTime::Locale::Base 0
+      DateTime::Locale::FromData 0
+      DateTime::TimeZone 2.09
+      Exporter 0
+      ExtUtils::MakeMaker 0
+      Params::ValidationCompiler 0
+      Specio 0.33
+      Specio::Declare 0
+      Specio::Exporter 0
+      Specio::Library::Builtins 0
+      Specio::Library::String 0
+      Try::Tiny 0
+      constant 0
+      parent 0
+      strict 0
+      warnings 0
   Email-Abstract-3.010
     pathname: R/RJ/RJBS/Email-Abstract-3.010.tar.gz
     provides:
@@ -381,6 +437,25 @@ DISTRIBUTIONS
       Scalar::Util 1.18
       XSLoader 0.22
       parent 0
+  Params-Validate-1.31
+    pathname: D/DR/DROLSKY/Params-Validate-1.31.tar.gz
+    provides:
+      Params::Validate 1.31
+      Params::Validate::Constants 1.31
+      Params::Validate::PP 1.31
+      Params::Validate::XS 1.31
+    requirements:
+      Carp 0
+      Exporter 0
+      ExtUtils::CBuilder 0
+      Module::Build 0.4227
+      Module::Implementation 0
+      Scalar::Util 1.10
+      XSLoader 0
+      perl 5.008001
+      strict 0
+      vars 0
+      warnings 0
   Specio-0.50
     pathname: D/DR/DROLSKY/Specio-0.50.tar.gz
     provides:
@@ -458,6 +533,23 @@ DISTRIBUTIONS
     requirements:
       ExtUtils::MakeMaker 0
       Test::More 0
+  Test-MockObject-1.20200122
+    pathname: C/CH/CHROMATIC/Test-MockObject-1.20200122.tar.gz
+    provides:
+      Test::MockObject 1.20200122
+      Test::MockObject::Extends 1.20200122
+    requirements:
+      Carp 0
+      Devel::Peek 0
+      ExtUtils::MakeMaker 0
+      Scalar::Util 0
+      Test::Builder 0
+      UNIVERSAL::can 1.20110617
+      UNIVERSAL::isa 1.20110614
+      constant 0
+      perl 5.008
+      strict 0
+      warnings 0
   Text-Unidecode-1.30
     pathname: S/SB/SBURKE/Text-Unidecode-1.30.tar.gz
     provides:
@@ -465,6 +557,28 @@ DISTRIBUTIONS
     requirements:
       ExtUtils::MakeMaker 0
       perl 5.008
+  UNIVERSAL-can-1.20140328
+    pathname: C/CH/CHROMATIC/UNIVERSAL-can-1.20140328.tar.gz
+    provides:
+      UNIVERSAL::can 1.20140328
+    requirements:
+      ExtUtils::MakeMaker 6.30
+      Scalar::Util 0
+      strict 0
+      vars 0
+      warnings 0
+      warnings::register 0
+  UNIVERSAL-isa-1.20171012
+    pathname: E/ET/ETHER/UNIVERSAL-isa-1.20171012.tar.gz
+    provides:
+      UNIVERSAL::isa 1.20171012
+    requirements:
+      ExtUtils::MakeMaker 0
+      Scalar::Util 0
+      perl 5.006002
+      strict 0
+      warnings 0
+      warnings::register 0
   XS-Parse-Keyword-0.48
     pathname: P/PE/PEVANS/XS-Parse-Keyword-0.48.tar.gz
     provides:

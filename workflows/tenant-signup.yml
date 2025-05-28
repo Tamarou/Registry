@@ -23,7 +23,7 @@ steps:
   description: Payment and subscription setup
   slug: payment
   template: tenant-signup/payment
-- class: Registry::DAO::RegisterTenant
+- class: Registry::DAO::WorkflowSteps::RegisterTenant
   description: Tenant onboarding complete
   slug: complete
   template: tenant-signup-complete

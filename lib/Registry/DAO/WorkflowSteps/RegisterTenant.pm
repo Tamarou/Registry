@@ -1,10 +1,9 @@
-package Registry::DAO::WorkflowSteps::RegisterTenant;
 use 5.40.2;
 use utf8;
 use experimental qw(try);
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Workflow;
 use Registry::Utility::ErrorHandler;
@@ -384,4 +383,6 @@ method _format_trial_end_date($trial_ends_at) {
     
     # Format as human-readable date
     return $dt->strftime('%B %d, %Y');
+}
+
 }

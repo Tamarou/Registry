@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::ReviewAndCreate;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::ReviewAndCreate :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::ReviewAndCreate :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Project;
 use Registry::DAO::Event;
@@ -123,4 +121,4 @@ method prepare_data ($db, $run) {
 
 method template { 'program-creation/review-and-create' }
 
-1;
+}

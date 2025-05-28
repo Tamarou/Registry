@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::ChooseLocations;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::ChooseLocations :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::ChooseLocations :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Location;
 
@@ -64,4 +62,4 @@ method prepare_data ($db) {
 
 method template { 'program-location-assignment/choose-locations' }
 
-1;
+}

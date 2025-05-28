@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::CurriculumDetails;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::CurriculumDetails :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::CurriculumDetails :isa(Registry::DAO::WorkflowStep) {
 
 method process ($db, $form_data) {
     my $workflow = $self->workflow($db);
@@ -64,4 +62,4 @@ method prepare_data ($db, $run, $form_data = {}) {
 
 method template { 'program-creation/curriculum-details' }
 
-1;
+}

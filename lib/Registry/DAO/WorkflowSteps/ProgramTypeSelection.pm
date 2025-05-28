@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::ProgramTypeSelection;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::ProgramTypeSelection :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::ProgramTypeSelection :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::ProgramType;
 
@@ -54,4 +52,4 @@ method prepare_data ($db) {
 
 method template { 'program-creation/program-type-selection' }
 
-1;
+}

@@ -19,7 +19,7 @@ class Registry :isa(Mojolicious) {
 
         # Setup Minion for background jobs
         $self->plugin('Minion' => {
-            PostgreSQL => $ENV{DB_URL} || 'postgresql://localhost/registry'
+            Pg => $ENV{DB_URL} || 'postgresql://localhost/registry'
         });
         
         # Register background jobs
@@ -55,6 +55,10 @@ class Registry :isa(Mojolicious) {
         # Webhook routes (no auth required)
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
+          
+        # Marketing page (no auth required)
+        $self->routes->get('/marketing')->to('marketing#index')
+          ->name('marketing_index');
 
         # Route handling for root path - check for tenant context
         my $root = $self->routes->get('/');
@@ -68,10 +72,9 @@ class Registry :isa(Mojolicious) {
                 $c->app->helper( dao => sub { $dao->connect_schema($slug) } );
                 $c->render( template => 'index' );
             } else {
-                # No tenant context, show marketing page
-                $c->render( template => 'marketing/index', 
-                          title => 'Registry - After-School Program Management Made Simple',
-                          description => 'Streamline your after-school programs with Registry. Manage registrations, track attendance, handle payments, and communicate with families. 30-day free trial.' );
+                # No tenant context, dispatch to marketing controller
+                $c->stash(controller => 'marketing', action => 'index');
+                $c->continue;
             }
         })->name('root_handler');
 

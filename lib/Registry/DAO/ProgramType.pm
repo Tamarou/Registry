@@ -50,18 +50,6 @@ class Registry::DAO::ProgramType :isa(Registry::DAO::Object) {
         $self->SUPER::update($db, $data);
     }
     
-    method list ($class, $db) {
-        my $results = $db->select(
-            $class->table_name,
-            '*',
-            {},
-            { order_by => 'name' }
-        )->hashes;
-        
-        return [
-            map { $class->new(%$_) } @$results
-        ];
-    }
     
     # Helper methods to access config properties
     method enrollment_rules {
@@ -88,7 +76,13 @@ class Registry::DAO::ProgramType :isa(Registry::DAO::Object) {
     
     # List all program types
     sub list ($class, $db) {
-        my $results = $db->select($class->table)->hashes;
+        my $results = $db->select(
+            $class->table,
+            '*',
+            {},
+            { order_by => 'name' }
+        )->hashes;
+        
         return [
             map { $class->new(%$_) } @$results
         ];

@@ -1,14 +1,11 @@
-package Registry::DAO::WorkflowSteps::CreateWorkflow;
 use 5.40.2;
-use utf8;
-use experimental qw(try);
-
+use experimental 'signatures', 'try', 'builtin';
 use Object::Pad;
+
+class Registry::DAO::WorkflowSteps::CreateWorkflow :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Workflow;
 use Carp qw(croak);
-
-class Registry::DAO::WorkflowSteps::CreateWorkflow :isa(Registry::DAO::WorkflowStep);
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);
@@ -117,4 +114,4 @@ class Registry::DAO::WorkflowSteps::CreateWorkflow :isa(Registry::DAO::WorkflowS
         return $result ? $result->{id} : undef;
     }
 
-1;
+}

@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::ConfigureLocation;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::ConfigureLocation :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::ConfigureLocation :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::ProgramType;
 
@@ -78,4 +76,4 @@ method prepare_data ($db) {
 
 method template { 'program-location-assignment/configure-location' }
 
-1;
+}

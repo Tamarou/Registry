@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::SelectProgram;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::SelectProgram :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::SelectProgram :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Project;
 
@@ -55,4 +53,4 @@ method prepare_data ($db) {
 
 method template { 'program-location-assignment/select-program' }
 
-1;
+}

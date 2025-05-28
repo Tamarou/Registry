@@ -1,10 +1,8 @@
-package Registry::DAO::WorkflowSteps::GenerateEvents;
 use 5.40.2;
-use warnings;
 use experimental 'signatures', 'try', 'builtin';
-
 use Object::Pad;
-class Registry::DAO::WorkflowSteps::GenerateEvents :isa(Registry::DAO::WorkflowStep);
+
+class Registry::DAO::WorkflowSteps::GenerateEvents :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Event;
 use Registry::DAO::Session;
@@ -202,4 +200,4 @@ method prepare_data ($db) {
 
 method template { 'program-location-assignment/generate-events' }
 
-1;
+}
