@@ -172,6 +172,9 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         my $data_json = Mojo::JSON::encode_json($run->data || {});
         my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
         
+        # Get workflow progress data
+        my $workflow_progress = $self->_get_workflow_progress($run, $step);
+        
         return $self->render(
             template => $self->param('workflow') . '/' . $self->param('step'),
             workflow => $self->param('workflow'),
@@ -181,6 +184,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
             outcome_definition_id => $step->outcome_definition_id,
             data_json => $data_json,
             errors_json => $errors_json,
+            workflow_progress => $workflow_progress,
         );
     }
 
@@ -265,6 +269,94 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         my $validation = $step->validate($dao->db, $data);
         
         return $self->render(json => $validation);
+    }
+
+    method _get_workflow_progress($run, $current_step) {
+        my $dao = $self->app->dao;
+        my $workflow = $run->workflow($dao->db);
+        
+        # Get all workflow steps in order
+        my $steps = $dao->db->select(
+            'workflow_steps',
+            ['id', 'slug', 'description'],
+            { workflow_id => $workflow->id },
+            { -asc => 'sort_order' }
+        )->hashes->to_array;
+        
+        # If no explicit sort_order, fall back to creation order
+        if (!@$steps || !defined $steps->[0]{sort_order}) {
+            $steps = $dao->db->select(
+                'workflow_steps',
+                ['id', 'slug', 'description'],
+                { workflow_id => $workflow->id },
+                { -asc => 'created_at' }
+            )->hashes->to_array;
+        }
+        
+        return {} unless @$steps;
+        
+        # Find current step position
+        my $current_position = 1;
+        my $current_step_id = $current_step ? $current_step->id : undef;
+        
+        for my $i (0 .. $#$steps) {
+            if ($steps->[$i]{id} eq $current_step_id) {
+                $current_position = $i + 1;
+                last;
+            }
+        }
+        
+        # Generate step names and URLs
+        my @step_names;
+        my @step_urls;
+        my @completed_steps;
+        
+        for my $i (0 .. $#$steps) {
+            my $step = $steps->[$i];
+            my $step_number = $i + 1;
+            
+            # Use description if available, otherwise generate from slug
+            my $step_name = $step->{description};
+            if (!$step_name || $step_name eq 'Auto-created first step' || $step_name eq 'Emergency auto-created step') {
+                $step_name = $self->_generate_step_name($step->{slug});
+            }
+            push @step_names, $step_name;
+            
+            # Generate URL for navigation (only for completed steps)
+            my $step_url = '';
+            if ($step_number < $current_position) {
+                $step_url = $self->url_for(
+                    'workflow_step',
+                    workflow => $workflow->slug,
+                    run => $run->id,
+                    step => $step->{slug}
+                );
+                push @completed_steps, $step_number;
+            } elsif ($step_number == $current_position) {
+                # Current step - no URL needed but mark as accessible
+                $step_url = '';
+            } else {
+                # Future step - no URL
+                $step_url = '';
+            }
+            push @step_urls, $step_url;
+        }
+        
+        return {
+            current_step => $current_position,
+            total_steps => scalar(@$steps),
+            step_names => join(',', @step_names),
+            step_urls => join(',', @step_urls),
+            completed_steps => join(',', @completed_steps),
+        };
+    }
+    
+    method _generate_step_name($slug) {
+        # Convert slug to human-readable name
+        my $name = $slug;
+        $name =~ s/-/ /g;
+        $name =~ s/\b(\w)/\u$1/g;  # Title case
+        return $name;
     }
 
     method start_continuation {
