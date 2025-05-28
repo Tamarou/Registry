@@ -7,6 +7,7 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowStep);
 
 use Registry::DAO::Workflow;
+use Registry::Utility::ErrorHandler;
 use Carp qw(carp croak);
 use Text::Unidecode qw(unidecode);
 use DateTime;
@@ -160,11 +161,32 @@ method process ( $db, $ ) {
         $continuation->update_data( $db, { tenants => $tenants } );
     }
 
+    # Store success data for completion template
+    my $success_data = {
+        tenant => $tenant->id,
+        organization_name => $profile->{name},
+        subdomain => $tenant->slug,
+        admin_email => $admin_user_data->{email},
+        trial_end_date => $self->_format_trial_end_date($subscription_data->{trial_ends_at}),
+        success_timestamp => DateTime->now->iso8601()
+    };
+
     # return the data to be stored in the workflow run
-    return { tenant => $tenant->id };
+    return $success_data;
 }
 
 method _generate_subdomain_slug($db, $name) {
+    my $error_handler = Registry::Utility::ErrorHandler->new();
+    
+    # Validate name input
+    unless ($name && length($name) > 0) {
+        my $error = $error_handler->handle_validation_error(
+            'organization_name',
+            'Organization name is required to generate subdomain'
+        );
+        croak $error->{user_message};
+    }
+    
     # Generate slug: lowercase, replace spaces/special chars with hyphens, remove multiple hyphens
     my $slug = lc($name);
     $slug = unidecode($slug);  # Convert unicode to ASCII
@@ -175,14 +197,35 @@ method _generate_subdomain_slug($db, $name) {
     $slug = substr($slug, 0, 50);  # Limit length
     $slug = 'organization' if !$slug;  # Fallback if empty
     
-    # Ensure uniqueness by checking existing tenants
+    # Ensure uniqueness by checking existing tenants with better suggestions
     my $original_slug = $slug;
     my $counter = 1;
+    my @suggestions = ();
     
     while ($self->_slug_exists($db, $slug)) {
         $slug = "${original_slug}-${counter}";
+        push @suggestions, $slug if $counter <= 3;  # Suggest first 3 alternatives
         $counter++;
         last if $counter > 999;  # Prevent infinite loop
+    }
+    
+    # If we had to modify the slug, log the conflict for potential user notification
+    if ($counter > 1) {
+        my $conflict_error = $error_handler->handle_conflict_error(
+            'subdomain', 
+            'already_exists', 
+            {
+                attempted => $original_slug,
+                chosen => $slug,
+                suggested_alternatives => [@suggestions]
+            }
+        );
+        
+        # Log but don't throw - we resolved the conflict automatically
+        $error_handler->log_error($conflict_error, {
+            context => 'tenant_registration',
+            auto_resolved => 1
+        });
     }
     
     return $slug;
@@ -194,9 +237,12 @@ method _slug_exists($db, $slug) {
 }
 
 method _validate_billing_info($profile) {
+    my $error_handler = Registry::Utility::ErrorHandler->new();
     my @required_fields = qw(name billing_email billing_address billing_city billing_state billing_zip billing_country);
     my @missing = ();
+    my @validation_errors = ();
     
+    # Check for missing required fields
     for my $field (@required_fields) {
         if (!$profile->{$field} || !length(_trim($profile->{$field}))) {
             push @missing, $field;
@@ -205,15 +251,90 @@ method _validate_billing_info($profile) {
     
     if (@missing) {
         my $missing_str = join(', ', map { ucfirst($_) =~ s/_/ /gr } @missing);
-        croak "Missing required billing information: $missing_str";
+        my $error = $error_handler->handle_validation_error(
+            'billing_info',
+            "Missing required billing information: $missing_str",
+            \@missing
+        );
+        push @validation_errors, $error;
     }
     
-    # Validate email format
-    if ($profile->{billing_email} && $profile->{billing_email} !~ /\A[^@\s]+@[^@\s]+\z/) {
-        croak "Invalid billing email format";
+    # Validate email format with more specific error
+    if ($profile->{billing_email}) {
+        my $email = _trim($profile->{billing_email});
+        if ($email !~ /\A[^@\s]+@[^@\s]+\.[^@\s]+\z/) {
+            my $error = $error_handler->handle_validation_error(
+                'billing_email',
+                "Invalid email format: '$email'. Please enter a valid email address.",
+                $email
+            );
+            push @validation_errors, $error;
+        }
+    }
+    
+    # Validate billing address length and format
+    if ($profile->{billing_address} && length($profile->{billing_address}) < 5) {
+        my $error = $error_handler->handle_validation_error(
+            'billing_address',
+            "Billing address is too short. Please provide a complete address."
+        );
+        push @validation_errors, $error;
+    }
+    
+    # Validate ZIP code format (basic validation)
+    if ($profile->{billing_zip}) {
+        my $zip = _trim($profile->{billing_zip});
+        if ($zip !~ /^\d{5}(-\d{4})?$/ && $zip !~ /^[A-Z]\d[A-Z] \d[A-Z]\d$/) {  # US or Canadian postal code
+            my $error = $error_handler->handle_validation_error(
+                'billing_zip',
+                "Invalid ZIP/postal code format: '$zip'",
+                $zip
+            );
+            push @validation_errors, $error;
+        }
+    }
+    
+    # Check for duplicate organizations (by email)
+    if ($profile->{billing_email}) {
+        my $existing_count = $self->_check_duplicate_organization($profile->{billing_email});
+        if ($existing_count > 0) {
+            my $error = $error_handler->handle_conflict_error(
+                'organization',
+                'duplicate_email',
+                {
+                    email => $profile->{billing_email},
+                    existing_count => $existing_count
+                }
+            );
+            push @validation_errors, $error;
+        }
+    }
+    
+    # If there are validation errors, collect them and throw
+    if (@validation_errors) {
+        my $messages = join('; ', map { $_->{user_message} } @validation_errors);
+        
+        # Log validation errors for monitoring
+        $error_handler->log_error({
+            type => 'validation_failure',
+            errors => \@validation_errors,
+            profile_data => {
+                name => $profile->{name},
+                billing_email => $profile->{billing_email}
+            }
+        });
+        
+        croak $messages;
     }
     
     return 1;
+}
+
+method _check_duplicate_organization($email) {
+    # This would check for existing organizations with the same billing email
+    # For now, return 0 (no duplicates found)
+    # In production, this would query the database for existing tenants
+    return 0;
 }
 
 sub _trim {
@@ -245,4 +366,22 @@ method _send_invitation_email($db, $tenant, $user, $user_data) {
     # 2. Store the token in a database table
     # 3. Send an email with a link to set up their account
     # 4. Allow them to set their own password via the token
+}
+
+method _format_trial_end_date($trial_ends_at) {
+    return 'N/A' unless $trial_ends_at;
+    
+    # Parse the timestamp (could be Unix timestamp)
+    my $dt;
+    if ($trial_ends_at =~ /^\d+$/) {
+        # Unix timestamp
+        $dt = DateTime->from_epoch(epoch => $trial_ends_at);
+    } else {
+        # For now, just return the raw value if not a unix timestamp
+        # In a production system, we'd add proper ISO date parsing
+        return $trial_ends_at;
+    }
+    
+    # Format as human-readable date
+    return $dt->strftime('%B %d, %Y');
 }

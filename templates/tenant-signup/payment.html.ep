@@ -3,6 +3,9 @@
 % my $billing = $data->{billing_summary} || {};
 % my $config = $data->{subscription_config} || {};
 % my $errors = stash('errors') || [];
+% my $retry_count = $data->{retry_count} || 0;
+% my $retry_exceeded = stash('retry_exceeded') || 0;
+% my $retry_delay = $data->{retry_delay} || 0;
 
 <div class="payment-step">
     <div class="step-header">
@@ -15,8 +18,29 @@
 
     % if (@$errors) {
         <div class="alert alert-error" role="alert">
+            <div class="alert-header">
+                <h4>⚠️ Payment Setup Issue</h4>
+            </div>
             % for my $error (@$errors) {
                 <p><%= $error %></p>
+            % }
+            
+            % if ($retry_count > 0 && !$retry_exceeded) {
+                <div class="retry-info">
+                    <p><strong>Retry attempt <%= $retry_count %> of 3</strong></p>
+                    % if ($retry_delay > 0) {
+                        <p class="retry-delay">Please wait <%= $retry_delay %> seconds before trying again.</p>
+                    % }
+                </div>
+            % } elsif ($retry_exceeded) {
+                <div class="support-needed">
+                    <p><strong>Maximum attempts exceeded.</strong></p>
+                    <p>Please contact our support team for assistance:</p>
+                    <div class="support-contacts">
+                        <a href="mailto:support@registry.com" class="support-email">support@registry.com</a>
+                        <span class="support-phone">1-800-REGISTRY</span>
+                    </div>
+                </div>
             % }
         </div>
     % }
@@ -129,9 +153,12 @@
                         });
 
                         if (error) {
-                            // Show error to customer
+                            // Show error to customer with better UX
                             console.error('Setup failed:', error);
-                            alert('Payment setup failed: ' + error.message);
+                            
+                            // Display user-friendly error message
+                            const errorMessage = getStripeErrorMessage(error);
+                            showPaymentError(errorMessage);
                             
                             // Reset button state
                             submitButton.disabled = false;
@@ -151,6 +178,72 @@
                             });
                         }
                     });
+
+                    // Enhanced error handling functions
+                    function getStripeErrorMessage(error) {
+                        const errorMessages = {
+                            'card_declined': 'Your card was declined. Please try a different payment method.',
+                            'insufficient_funds': 'Insufficient funds. Please try a different card or contact your bank.',
+                            'invalid_cvc': 'Invalid security code. Please check your card details.',
+                            'expired_card': 'Your card has expired. Please use a different payment method.',
+                            'incorrect_number': 'Invalid card number. Please check your card details.',
+                            'processing_error': 'Payment processing error. Please try again in a few moments.',
+                            'rate_limit': 'Too many payment attempts. Please wait a few minutes before trying again.'
+                        };
+                        
+                        return errorMessages[error.code] || 
+                               error.message || 
+                               'Payment setup failed. Please try again or contact support.';
+                    }
+
+                    function showPaymentError(message) {
+                        // Create or update error display
+                        let errorDiv = document.getElementById('payment-error-display');
+                        if (!errorDiv) {
+                            errorDiv = document.createElement('div');
+                            errorDiv.id = 'payment-error-display';
+                            errorDiv.className = 'payment-error';
+                            
+                            const paymentForm = document.getElementById('payment-form');
+                            paymentForm.parentNode.insertBefore(errorDiv, paymentForm);
+                        }
+                        
+                        errorDiv.innerHTML = `
+                            <div class="error-content">
+                                <div class="error-icon">⚠️</div>
+                                <div class="error-message">${message}</div>
+                                <button class="error-dismiss" onclick="this.parentElement.parentElement.style.display='none'">×</button>
+                            </div>
+                        `;
+                        errorDiv.style.display = 'block';
+                        
+                        // Auto-hide after 10 seconds
+                        setTimeout(() => {
+                            if (errorDiv) {
+                                errorDiv.style.display = 'none';
+                            }
+                        }, 10000);
+                    }
+
+                    // Handle retry delays
+                    % if ($retry_delay > 0) {
+                        let retryCountdown = <%= $retry_delay %>;
+                        const submitButton = document.getElementById('submit-payment');
+                        const originalText = submitButton.textContent;
+                        
+                        submitButton.disabled = true;
+                        
+                        const countdownInterval = setInterval(() => {
+                            submitButton.textContent = `Please wait ${retryCountdown}s`;
+                            retryCountdown--;
+                            
+                            if (retryCountdown < 0) {
+                                clearInterval(countdownInterval);
+                                submitButton.disabled = false;
+                                submitButton.textContent = originalText;
+                            }
+                        }, 1000);
+                    % }
                 </script>
             % }
         </div>
@@ -406,6 +499,93 @@
     background: #fed7d7;
     border: 1px solid #feb2b2;
     color: #c53030;
+}
+
+.alert-header h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.retry-info {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #feb2b2;
+    font-size: 0.9rem;
+}
+
+.retry-delay {
+    font-style: italic;
+    color: #9c2e2e;
+}
+
+.support-needed {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #feb2b2;
+}
+
+.support-contacts {
+    margin-top: 0.5rem;
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.support-email {
+    color: #c53030;
+    text-decoration: underline;
+    font-weight: 600;
+}
+
+.support-phone {
+    font-weight: 600;
+}
+
+.payment-error {
+    background: #fed7d7;
+    border: 1px solid #feb2b2;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    display: none;
+}
+
+.error-content {
+    padding: 1rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.error-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+.error-message {
+    flex: 1;
+    color: #c53030;
+    font-size: 0.95rem;
+}
+
+.error-dismiss {
+    background: none;
+    border: none;
+    color: #c53030;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background-color 0.2s;
+}
+
+.error-dismiss:hover {
+    background: rgba(197, 48, 48, 0.1);
 }
 
 @media (max-width: 768px) {
