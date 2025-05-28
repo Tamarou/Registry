@@ -8,6 +8,7 @@ class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowS
 
 use Registry::DAO::Workflow;
 use Carp qw(carp croak);
+use Text::Unidecode qw(unidecode);
 
 method process ( $db, $ ) {
     my ($workflow) = $self->workflow($db);
@@ -16,6 +17,14 @@ method process ( $db, $ ) {
     my $profile = $run->data;
 
     my $user_data = delete $profile->{users};
+
+    # Generate subdomain slug from organization name
+    if ($profile->{name} && !$profile->{slug}) {
+        $profile->{slug} = $self->_generate_subdomain_slug($db, $profile->{name});
+    }
+
+    # Validate required billing fields
+    $self->_validate_billing_info($profile);
 
     # first we wanna create the Registry user account for our tenant
     my $primary_user =
@@ -106,4 +115,63 @@ method process ( $db, $ ) {
 
     # return the data to be stored in the workflow run
     return { tenant => $tenant->id };
+}
+
+method _generate_subdomain_slug($db, $name) {
+    # Generate slug: lowercase, replace spaces/special chars with hyphens, remove multiple hyphens
+    my $slug = lc($name);
+    $slug = unidecode($slug);  # Convert unicode to ASCII
+    $slug =~ s/[^a-z0-9\s-]//g;  # Remove special characters
+    $slug =~ s/\s+/-/g;  # Replace spaces with hyphens
+    $slug =~ s/-+/-/g;   # Remove multiple consecutive hyphens
+    $slug =~ s/^-|-$//g; # Remove leading/trailing hyphens
+    $slug = substr($slug, 0, 50);  # Limit length
+    $slug = 'organization' if !$slug;  # Fallback if empty
+    
+    # Ensure uniqueness by checking existing tenants
+    my $original_slug = $slug;
+    my $counter = 1;
+    
+    while ($self->_slug_exists($db, $slug)) {
+        $slug = "${original_slug}-${counter}";
+        $counter++;
+        last if $counter > 999;  # Prevent infinite loop
+    }
+    
+    return $slug;
+}
+
+method _slug_exists($db, $slug) {
+    my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
+    return $result->array->[0] > 0;
+}
+
+method _validate_billing_info($profile) {
+    my @required_fields = qw(name billing_email billing_address billing_city billing_state billing_zip billing_country);
+    my @missing = ();
+    
+    for my $field (@required_fields) {
+        if (!$profile->{$field} || !length(_trim($profile->{$field}))) {
+            push @missing, $field;
+        }
+    }
+    
+    if (@missing) {
+        my $missing_str = join(', ', map { ucfirst($_) =~ s/_/ /gr } @missing);
+        croak "Missing required billing information: $missing_str";
+    }
+    
+    # Validate email format
+    if ($profile->{billing_email} && $profile->{billing_email} !~ /\A[^@\s]+@[^@\s]+\z/) {
+        croak "Invalid billing email format";
+    }
+    
+    return 1;
+}
+
+sub _trim($) {
+    my $str = shift;
+    return '' unless defined $str;
+    $str =~ s/^\s+|\s+$//g;
+    return $str;
 }

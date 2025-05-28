@@ -198,7 +198,7 @@ Success Criteria:
 - All functionality works as expected
 ```
 
-### Step 5: Enhanced Profile Collection Step
+### Step 5: Enhanced Profile Collection Step ✅
 
 ```text
 Improve the organization profile collection step to gather minimum required billing information with excellent UX.

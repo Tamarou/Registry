@@ -92,6 +92,9 @@ class Registry :isa(Mojolicious) {
         $r->get('/outcome/definition/:id')->to('workflows#get_outcome_definition')->name('outcome.definition');
         $r->post('/outcome/validate')->to('workflows#validate_outcome')->name('outcome.validate');
         
+        # Tenant signup validation routes
+        $r->post('/tenant-signup/validate-subdomain')->to('workflows#validate_subdomain')->name('tenant_signup.validate_subdomain');
+        
         # Message routes
         $r->get('/messages')->to('messages#index')->name('messages_index');
         $r->post('/messages')->to('messages#create')->name('messages_create');

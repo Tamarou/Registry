@@ -270,6 +270,36 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         
         return $self->render(json => $validation);
     }
+    
+    method validate_subdomain {
+        my $dao = $self->app->dao;
+        my $name = $self->param('name');
+        
+        unless ($name) {
+            return $self->render(
+                inline => '<span class="subdomain-slug">organization</span>.registry.com',
+                format => 'html'
+            );
+        }
+        
+        # Generate slug using same logic as RegisterTenant
+        my $slug = $self->_generate_subdomain_slug($dao->db, $name);
+        my $is_available = !$self->_slug_exists($dao->db, $slug);
+        
+        my $status_class = $is_available ? 'available' : 'unavailable';
+        my $status_text = $is_available ? 'Available' : 'Already taken';
+        
+        return $self->render(
+            inline => qq{
+                <span class="subdomain-slug $status_class">$slug</span>.registry.com
+                <div class="subdomain-status $status_class">
+                    <span class="status-icon">} . ($is_available ? '✓' : '✗') . qq{</span>
+                    $status_text
+                </div>
+            },
+            format => 'html'
+        );
+    }
 
     method _get_workflow_progress($run, $current_step) {
         my $dao = $self->app->dao;
@@ -357,6 +387,35 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         $name =~ s/-/ /g;
         $name =~ s/\b(\w)/\u$1/g;  # Title case
         return $name;
+    }
+    
+    method _generate_subdomain_slug($db, $name) {
+        # Generate slug: lowercase, replace spaces/special chars with hyphens, remove multiple hyphens
+        my $slug = lc($name);
+        # For validation, use a simple approach without Text::Unidecode dependency
+        $slug =~ s/[^a-z0-9\s-]//g;  # Remove special characters
+        $slug =~ s/\s+/-/g;  # Replace spaces with hyphens
+        $slug =~ s/-+/-/g;   # Remove multiple consecutive hyphens
+        $slug =~ s/^-|-$//g; # Remove leading/trailing hyphens
+        $slug = substr($slug, 0, 50);  # Limit length
+        $slug = 'organization' if !$slug;  # Fallback if empty
+        
+        # Ensure uniqueness by checking existing tenants
+        my $original_slug = $slug;
+        my $counter = 1;
+        
+        while ($self->_slug_exists($db, $slug)) {
+            $slug = "${original_slug}-${counter}";
+            $counter++;
+            last if $counter > 999;  # Prevent infinite loop
+        }
+        
+        return $slug;
+    }
+    
+    method _slug_exists($db, $slug) {
+        my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
+        return $result->array->[0] > 0;
     }
 
     method start_continuation {

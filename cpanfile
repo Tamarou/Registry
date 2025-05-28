@@ -21,3 +21,4 @@ requires 'Minion';
 requires 'Email::Simple';
 requires 'Email::Sender::Simple';
 requires 'JSON';
+requires 'Text::Unidecode';
