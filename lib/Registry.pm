@@ -69,6 +69,14 @@ class Registry :isa(Mojolicious) {
         # Outcome definition routes
         $r->get('/outcome/definition/:id')->to('workflows#get_outcome_definition')->name('outcome.definition');
         $r->post('/outcome/validate')->to('workflows#validate_outcome')->name('outcome.validate');
+        
+        # Message routes
+        $r->get('/messages')->to('messages#index')->name('messages_index');
+        $r->post('/messages')->to('messages#create')->name('messages_create');
+        $r->get('/messages/:id')->to('messages#show')->name('messages_show');
+        $r->post('/messages/:id/mark_read')->to('messages#mark_read')->name('messages_mark_read');
+        $r->get('/messages/preview_recipients')->to('messages#preview_recipients')->name('messages_preview_recipients');
+        $r->get('/messages/unread_count')->to('messages#unread_count')->name('messages_unread_count');
     }
 
     method import_workflows () {

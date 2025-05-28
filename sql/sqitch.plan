@@ -20,3 +20,4 @@ multi-child-data-model [summer-camp-module add-user-fields-for-family] 2025-01-2
 payments [schema-based-multitennancy] 2025-01-27T19:00:00Z Claude <noreply@anthropic.com> # Add payments infrastructure for Stripe integration
 add-payment-to-enrollments [payments summer-camp-module] 2025-01-27T19:15:00Z Claude <noreply@anthropic.com> # Add payment_id reference to enrollments table
 notifications-and-preferences [attendance-tracking] 2025-01-28T10:00:00Z Claude <noreply@anthropic.com> # Add notifications and user preferences for attendance tracking
+parent-communication-system [notifications-and-preferences] 2025-01-28T11:00:00Z Claude <noreply@anthropic.com> # Add parent communication system with messages, recipients, and templates
