@@ -1,4 +1,4 @@
-FROM perl:5.40
+FROM perl:5.40.2
 
 # Install system dependencies
 RUN apt-get update \
@@ -7,24 +7,55 @@ RUN apt-get update \
     libpq-dev \
     build-essential \
     git \
+    curl \
+    libargon2-dev \
+    pkg-config \
   && rm -rf /var/lib/apt/lists/*
+
+# Install carton globally
+RUN cpanm --notest Carton
 
 # Set working directory
 WORKDIR /app
 
-# Copy cpanfile for dependencies
-COPY cpanfile cpanfile
-COPY cpanfile.snapshot cpanfile.snapshot
+# Copy cpanfile for dependencies (exclude test dependencies)
+COPY cpanfile cpanfile.snapshot ./
+
+# Create production cpanfile without test dependencies
+RUN grep -v "Test::" cpanfile > cpanfile.prod \
+  && mv cpanfile.prod cpanfile
 
 # Install dependencies
-RUN cpanm --installdeps --notest . \
-  && cpanm App::Sqitch
+RUN carton install --deployment
 
-# No need to create a script as we'll use the existing registry script from the repository
+# Copy application code
+COPY . .
+
+# Create production registry script without local::lib
+RUN sed 's/use local::lib/#use local::lib/' registry > registry.prod \
+  && mv registry.prod registry \
+  && chmod +x registry
 
 # Set environment variables
-ENV MOJO_MODE=development
+ENV MOJO_MODE=production
 ENV PERL5LIB=/app/lib
+ENV PORT=5000
 
-# Command to run the application in development mode
-CMD ["morbo", "-v", "/app/registry"]
+# Create storage directory and set permissions
+RUN mkdir -p /app/storage \
+  && chmod 755 /app/storage
+
+# Create non-root user
+RUN useradd -m -u 1001 registry \
+  && chown -R registry:registry /app
+USER registry
+
+# Expose port
+EXPOSE 5000
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:${PORT}/health || exit 1
+
+# Default command (can be overridden by render.yaml)
+CMD ["carton", "exec", "hypnotoad", "-f", "./registry"]
