@@ -52,8 +52,26 @@ class Registry :isa(Mojolicious) {
         $self->routes->get('/school/:slug')->to('schools#show')
           ->name('show_school');
 
+        # Route handling for root path - check for tenant context
+        my $root = $self->routes->get('/');
+        $root->to(cb => sub ($c) {
+            # Check if we have a tenant slug (cookie or header)
+            my $slug = $c->req->cookie('as-tenant') || $c->req->headers->header('X-As-Tenant');
+            
+            if ($slug) {
+                # We have a tenant, set up the tenant context and show tenant landing
+                my $dao = $c->app->dao;
+                $c->app->helper( dao => sub { $dao->connect_schema($slug) } );
+                $c->render( template => 'index' );
+            } else {
+                # No tenant context, show marketing page
+                $c->render( template => 'marketing/index', 
+                          title => 'Registry - After-School Program Management Made Simple',
+                          description => 'Streamline your after-school programs with Registry. Manage registrations, track attendance, handle payments, and communicate with families. 30-day free trial.' );
+            }
+        })->name('root_handler');
+
         my $r = $self->routes->under('/')->to('tenants#setup');
-        $r->get('')->to('#index')->name("tenants_landing");
 
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');

@@ -1,39 +1,315 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Customer Signup</title>
-    </head>
-    <body>
-        <header>
-            <h1>Join Regstry Today!</h1>
-            <p>Simplify Your Program Management</p>
-        </header>
-        <main>
-            <h2>Effortless Event Management</h2>
-            <p>Easily schedule and organize your sessions, assign locations and
-            teachers, all from one intuitive platform.</p>
+% layout 'workflow';
+% title 'Welcome to Registry - Let\'s Get Started!';
 
-            <h2>Comprehensive Student Tracking</h2>
-            <p>Track attendance, monitor progress, and gain real-time insights
-            to improve your programs.</p>
+<div class="welcome-section">
+    <div class="welcome-header">
+        <h2>Welcome to Registry!</h2>
+        <p class="lead">You're about to set up your organization's after-school program management system. This quick setup process will have you up and running in just a few minutes.</p>
+    </div>
 
-            <h2>Enhanced Parent-Teacher Communication</h2>
-            <p>Keep parents engaged with updates and notifications, fostering better
-            relationships and trust.</p>
+    <div class="process-overview">
+        <h3>What to Expect</h3>
+        <div class="timeline-steps">
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h4>Welcome & Overview</h4>
+                    <p>You are here - understanding the setup process</p>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h4>Organization Profile</h4>
+                    <p>Basic information about your organization and billing</p>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h4>Team Setup</h4>
+                    <p>Create your admin account and invite team members</p>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <h4>Complete Setup</h4>
+                    <p>Finalize your account and start your free trial</p>
+                </div>
+            </div>
+        </div>
+        <div class="time-estimate">
+            <strong>⏱️ Estimated time:</strong> 5-10 minutes
+        </div>
+    </div>
 
-            <h2>Why Choose Registry?</h2>
-            <ul>
-                <li>User-Friendly: Easy to navigate and use.</li>
-                <li>All-in-One: Manage events, track students, and communicate with parents.</li>
-                <li>Real-Time Insights: Make informed decisions with up-to-date information.</li>
-            </ul>
-            <h2>Ready to Transform Your Programs?</h2>
+    <div class="trial-info">
+        <h3>Your 30-Day Free Trial</h3>
+        <div class="trial-features">
+            <div class="feature-grid">
+                <div class="feature">
+                    <span class="icon">✅</span>
+                    <strong>Full access</strong> to all Registry features
+                </div>
+                <div class="feature">
+                    <span class="icon">💳</span>
+                    <strong>No credit card</strong> required to start
+                </div>
+                <div class="feature">
+                    <span class="icon">🔄</span>
+                    <strong>Cancel anytime</strong> during your trial
+                </div>
+                <div class="feature">
+                    <span class="icon">📞</span>
+                    <strong>Support included</strong> to help you get started
+                </div>
+            </div>
+        </div>
+        <p class="trial-terms">
+            <small>After your 30-day trial, your subscription will be $200/month. You can cancel at any time before the trial ends with no charges.</small>
+        </p>
+    </div>
 
-            <p>Join a community of forward-thinking educators revolutionizing their programs with [Your App Name]. Sign up now and see the difference!</p>
+    <div class="support-info">
+        <h3>Need Help?</h3>
+        <p>Our team is here to help you every step of the way.</p>
+        <ul class="support-options">
+            <li>📧 Email: <a href="mailto:support@registry.com">support@registry.com</a></li>
+            <li>📞 Phone: 1-800-REGISTRY</li>
+            <li>💬 Live chat available during business hours</li>
+        </ul>
+    </div>
 
-            <form method="POST" action="<%= $action %>">
-                <button>Sign Up Now!</button>
-            </form>
-        </main>
-    </body>
-</html>
+    <div class="getting-started">
+        <h3>Ready to Transform Your Program Management?</h3>
+        <p>Join hundreds of organizations already using Registry to streamline their after-school programs, improve family communication, and boost operational efficiency.</p>
+        
+        <form method="POST" action="<%= $action %>" class="start-form">
+            <button type="submit" class="btn btn-primary btn-lg">
+                Let's Get Started →
+            </button>
+        </form>
+    </div>
+</div>
+
+<style>
+.welcome-section {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0 1rem;
+}
+
+.welcome-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.welcome-header h2 {
+    color: #2c3e50;
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+}
+
+.lead {
+    font-size: 1.2rem;
+    color: #666;
+    line-height: 1.6;
+}
+
+.process-overview {
+    background: #f8f9fa;
+    padding: 2rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+}
+
+.process-overview h3 {
+    color: #333;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.timeline-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.step {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.step-number {
+    background: #007bff;
+    color: white;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.step-content h4 {
+    margin: 0 0 0.5rem 0;
+    color: #333;
+}
+
+.step-content p {
+    margin: 0;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.time-estimate {
+    text-align: center;
+    padding: 1rem;
+    background: white;
+    border-radius: 5px;
+    color: #333;
+}
+
+.trial-info {
+    background: #e8f5e8;
+    padding: 2rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+}
+
+.trial-info h3 {
+    color: #2d5a2d;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.feature {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: white;
+    padding: 1rem;
+    border-radius: 5px;
+}
+
+.feature .icon {
+    font-size: 1.2rem;
+}
+
+.trial-terms {
+    text-align: center;
+    color: #666;
+    font-style: italic;
+}
+
+.support-info {
+    background: #fff3cd;
+    padding: 2rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+}
+
+.support-info h3 {
+    color: #856404;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.support-options {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+}
+
+.support-options li {
+    margin-bottom: 0.5rem;
+    color: #333;
+}
+
+.support-options a {
+    color: #007bff;
+    text-decoration: none;
+}
+
+.support-options a:hover {
+    text-decoration: underline;
+}
+
+.getting-started {
+    text-align: center;
+    margin-top: 2rem;
+}
+
+.getting-started h3 {
+    color: #333;
+    margin-bottom: 1rem;
+}
+
+.start-form {
+    margin-top: 2rem;
+}
+
+.btn {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 5px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+    transform: translateY(-2px);
+}
+
+.btn-lg {
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .welcome-header h2 {
+        font-size: 2rem;
+    }
+    
+    .lead {
+        font-size: 1.1rem;
+    }
+    
+    .feature-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .timeline-steps {
+        gap: 1.5rem;
+    }
+    
+    .process-overview,
+    .trial-info,
+    .support-info {
+        padding: 1.5rem;
+    }
+}
+</style>

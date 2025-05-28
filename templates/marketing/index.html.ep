@@ -1,0 +1,415 @@
+% layout 'default';
+% title 'Registry - After-School Program Management Made Simple';
+
+<div class="marketing-page">
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-content">
+        <h1 class="hero-title">After-School Program Management Made Simple</h1>
+        <p class="hero-subtitle">
+          Streamline registrations, track attendance, manage payments, and communicate with families 
+          all in one powerful platform designed specifically for after-school programs.
+        </p>
+        <div class="hero-cta">
+          <a href="<%= url_for('workflow_index', workflow => 'tenant-signup') %>" 
+             class="btn btn-primary btn-lg">
+            Start Your Free Trial
+          </a>
+          <p class="trial-info">30 days free • No credit card required to start</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section class="features">
+    <div class="container">
+      <h2 class="section-title">Everything You Need to Run Successful Programs</h2>
+      <div class="features-grid">
+        <div class="feature">
+          <div class="feature-icon">📝</div>
+          <h3>Easy Registration</h3>
+          <p>Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">💳</div>
+          <h3>Payment Processing</h3>
+          <p>Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">📊</div>
+          <h3>Attendance Tracking</h3>
+          <p>Real-time attendance management with mobile-friendly interfaces for staff and automated parent notifications.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">💬</div>
+          <h3>Family Communication</h3>
+          <p>Built-in messaging system to keep families informed with program updates, announcements, and direct communication.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">📋</div>
+          <h3>Waitlist Management</h3>
+          <p>Automated waitlist processing with email notifications and seamless enrollment when spots become available.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">👥</div>
+          <h3>Staff Management</h3>
+          <p>Role-based access control for administrators, staff, and instructors with customizable permissions and workflows.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pricing Section -->
+  <section class="pricing">
+    <div class="container">
+      <div class="pricing-card">
+        <h2>Simple, Transparent Pricing</h2>
+        <div class="price">
+          <span class="currency">$</span>
+          <span class="amount">200</span>
+          <span class="period">per month</span>
+        </div>
+        <ul class="pricing-features">
+          <li>✓ Unlimited registrations</li>
+          <li>✓ Payment processing included</li>
+          <li>✓ Family communication tools</li>
+          <li>✓ Attendance tracking</li>
+          <li>✓ Waitlist management</li>
+          <li>✓ Staff management</li>
+          <li>✓ 24/7 support</li>
+          <li>✓ Regular updates & new features</li>
+        </ul>
+        <div class="pricing-cta">
+          <a href="<%= url_for('workflow_index', workflow => 'tenant-signup') %>" 
+             class="btn btn-primary btn-lg">
+            Start 30-Day Free Trial
+          </a>
+          <p class="trial-terms">No setup fees • Cancel anytime • Full access during trial</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="marketing-footer">
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-section">
+          <h4>Support</h4>
+          <p>Need help getting started?</p>
+          <p>Email: <a href="mailto:support@registry.com">support@registry.com</a></p>
+          <p>Phone: 1-800-REGISTRY</p>
+        </div>
+        <div class="footer-section">
+          <h4>Resources</h4>
+          <ul>
+            <li><a href="#documentation">Documentation</a></li>
+            <li><a href="#getting-started">Getting Started Guide</a></li>
+            <li><a href="#api">API Reference</a></li>
+            <li><a href="#status">System Status</a></li>
+          </ul>
+        </div>
+        <div class="footer-section">
+          <h4>Company</h4>
+          <ul>
+            <li><a href="#about">About Registry</a></li>
+            <li><a href="#privacy">Privacy Policy</a></li>
+            <li><a href="#terms">Terms of Service</a></li>
+            <li><a href="#security">Security</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>&copy; 2024 Registry. All rights reserved.</p>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<style>
+.marketing-page {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.6;
+  color: #333;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* Hero Section */
+.hero {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 80px 0;
+  text-align: center;
+}
+
+.hero-title {
+  font-size: 3.5rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+  line-height: 1.2;
+}
+
+.hero-subtitle {
+  font-size: 1.25rem;
+  margin-bottom: 40px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+  opacity: 0.95;
+}
+
+.btn {
+  display: inline-block;
+  padding: 15px 30px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background-color: #28a745;
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: #218838;
+  transform: translateY(-2px);
+}
+
+.btn-lg {
+  font-size: 1.1rem;
+  padding: 18px 36px;
+}
+
+.trial-info {
+  margin-top: 15px;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+/* Features Section */
+.features {
+  padding: 80px 0;
+  background-color: #f8f9fa;
+}
+
+.section-title {
+  text-align: center;
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 60px;
+  color: #333;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 40px;
+}
+
+.feature {
+  text-align: center;
+  padding: 30px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.3s ease;
+}
+
+.feature:hover {
+  transform: translateY(-5px);
+}
+
+.feature-icon {
+  font-size: 3rem;
+  margin-bottom: 20px;
+}
+
+.feature h3 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.feature p {
+  color: #666;
+  line-height: 1.6;
+}
+
+/* Pricing Section */
+.pricing {
+  padding: 80px 0;
+  background-color: white;
+}
+
+.pricing-card {
+  max-width: 500px;
+  margin: 0 auto;
+  text-align: center;
+  padding: 40px;
+  border: 2px solid #e9ecef;
+  border-radius: 12px;
+}
+
+.pricing-card h2 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 30px;
+  color: #333;
+}
+
+.price {
+  margin-bottom: 30px;
+}
+
+.currency {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #666;
+  vertical-align: top;
+}
+
+.amount {
+  font-size: 4rem;
+  font-weight: 700;
+  color: #333;
+}
+
+.period {
+  font-size: 1.2rem;
+  color: #666;
+  margin-left: 5px;
+}
+
+.pricing-features {
+  list-style: none;
+  padding: 0;
+  margin-bottom: 40px;
+}
+
+.pricing-features li {
+  padding: 10px 0;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.trial-terms {
+  margin-top: 15px;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+/* Footer */
+.marketing-footer {
+  background-color: #343a40;
+  color: white;
+  padding: 60px 0 20px;
+}
+
+.footer-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 40px;
+  margin-bottom: 40px;
+}
+
+.footer-section h4 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #fff;
+}
+
+.footer-section ul {
+  list-style: none;
+  padding: 0;
+}
+
+.footer-section li {
+  margin-bottom: 8px;
+}
+
+.footer-section a {
+  color: #adb5bd;
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+.footer-section a:hover {
+  color: #fff;
+}
+
+.footer-bottom {
+  text-align: center;
+  padding-top: 20px;
+  border-top: 1px solid #495057;
+  color: #adb5bd;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .hero-title {
+    font-size: 2.5rem;
+  }
+  
+  .hero-subtitle {
+    font-size: 1.1rem;
+  }
+  
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 30px;
+  }
+  
+  .feature {
+    padding: 20px;
+  }
+  
+  .section-title {
+    font-size: 2rem;
+  }
+  
+  .pricing-card {
+    padding: 30px 20px;
+  }
+  
+  .footer-content {
+    grid-template-columns: 1fr;
+    gap: 30px;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero {
+    padding: 60px 0;
+  }
+  
+  .hero-title {
+    font-size: 2rem;
+  }
+  
+  .btn-lg {
+    font-size: 1rem;
+    padding: 15px 25px;
+  }
+  
+  .features {
+    padding: 60px 0;
+  }
+  
+  .pricing {
+    padding: 60px 0;
+  }
+}
+</style>

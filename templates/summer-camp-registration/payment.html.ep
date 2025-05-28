@@ -6,6 +6,56 @@
 <% my $processing = $step_data->{processing}; %>
 
 <div class="max-w-4xl mx-auto p-6">
+    <!-- Loading overlay -->
+    <div id="payment-loading" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-lg text-center max-w-md">
+            <svg class="animate-spin h-12 w-12 mx-auto mb-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <h3 class="text-lg font-semibold mb-2">Processing Payment</h3>
+            <p class="text-gray-600">Please do not close or refresh this page.</p>
+            <p class="text-sm text-gray-500 mt-2">This may take a few moments...</p>
+        </div>
+    </div>
+    
+    <!-- Error notification -->
+    <div id="payment-error" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium">Payment Error</h3>
+                <div class="mt-2 text-sm" id="payment-error-message"></div>
+            </div>
+            <div class="ml-auto pl-3">
+                <button type="button" class="text-red-400 hover:text-red-600" onclick="this.parentElement.parentElement.classList.add('hidden')">
+                    <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Success notification -->
+    <div id="payment-success" class="hidden bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded mb-6">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium">Payment Successful!</h3>
+                <div class="mt-2 text-sm" id="payment-success-message">Your registration has been completed.</div>
+            </div>
+        </div>
+    </div>
+
     <h1 class="text-3xl font-bold mb-6">Payment Information</h1>
 
     <% if ($processing) { %>
@@ -88,10 +138,23 @@
                 });
                 
                 if (error) {
+                    // Show error in main notification area
+                    const errorNotification = document.getElementById('payment-error');
+                    const errorMessage = document.getElementById('payment-error-message');
+                    errorMessage.textContent = error.message;
+                    errorNotification.classList.remove('hidden');
+                    
+                    // Also show in inline message for backwards compatibility
                     const messageContainer = document.querySelector('#payment-message');
                     messageContainer.classList.remove('hidden');
                     messageContainer.textContent = error.message;
                     setLoading(false);
+                } else {
+                    // Show success notification
+                    const successNotification = document.getElementById('payment-success');
+                    const successMessage = document.getElementById('payment-success-message');
+                    successMessage.textContent = 'Payment processing... You will be redirected shortly.';
+                    successNotification.classList.remove('hidden');
                 }
             });
             
@@ -114,7 +177,10 @@
     <% } else { %>
         <!-- Initial Agreement Form -->
         <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>" 
-              class="bg-white shadow rounded-lg p-6">
+              class="bg-white shadow rounded-lg p-6"
+              hx-post="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>"
+              hx-target="body"
+              hx-indicator="#payment-loading">
             <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
             
             <% if ($ENV{STRIPE_SECRET_KEY}) { %>
@@ -136,14 +202,60 @@
                    class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
                     Back
                 </a>
-                <button type="submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600">
-                    <% if ($ENV{STRIPE_SECRET_KEY}) { %>
-                        Proceed to Payment
-                    <% } else { %>
-                        Complete Registration (Demo)
-                    <% } %>
+                <button type="submit" id="agreement-submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span class="htmx-indicator hidden">
+                        <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Processing...
+                    </span>
+                    <span class="submit-text">
+                        <% if ($ENV{STRIPE_SECRET_KEY}) { %>
+                            Proceed to Payment
+                        <% } else { %>
+                            Complete Registration (Demo)
+                        <% } %>
+                    </span>
                 </button>
             </div>
         </form>
+        
+        <script>
+        // Form validation for agreement checkbox
+        document.addEventListener('DOMContentLoaded', function() {
+            const agreementCheckbox = document.getElementById('agreeTerms');
+            const submitButton = document.getElementById('agreement-submit');
+            
+            function validateForm() {
+                submitButton.disabled = !agreementCheckbox.checked;
+            }
+            
+            agreementCheckbox.addEventListener('change', validateForm);
+            validateForm(); // Initial validation
+            
+            // Enhanced error handling for HTMX requests
+            document.addEventListener('htmx:responseError', function(evt) {
+                const errorNotification = document.getElementById('payment-error');
+                const errorMessage = document.getElementById('payment-error-message');
+                errorMessage.textContent = 'Unable to process your request. Please try again.';
+                errorNotification.classList.remove('hidden');
+            });
+            
+            // Show loading overlay on form submission
+            document.addEventListener('htmx:beforeRequest', function(evt) {
+                document.getElementById('payment-loading').classList.remove('hidden');
+            });
+            
+            document.addEventListener('htmx:afterRequest', function(evt) {
+                document.getElementById('payment-loading').classList.add('hidden');
+                
+                if (evt.detail.successful) {
+                    const successNotification = document.getElementById('payment-success');
+                    successNotification.classList.remove('hidden');
+                }
+            });
+        });
+        </script>
     <% } %>
 </div>
