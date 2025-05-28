@@ -271,7 +271,7 @@ Create new workflow:
 Ensure the workflow captures all needed program information.
 ```
 
-### Step 12: Location Assignment Workflow
+### Step 12: Location Assignment Workflow ✅
 
 ```text
 Create workflow for assigning programs to locations.
