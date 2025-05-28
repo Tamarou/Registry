@@ -2,16 +2,15 @@
 use 5.40.0;
 use Test::More;
 use Test::Mojo;
+use lib 't/lib';
+use Test::Registry::DB;
 use Registry;
 
-# Create test app with minimal setup
-my $t = Test::Mojo->new('Registry');
+# Set up test database
+Test::Registry::DB::new_test_db(__PACKAGE__);
 
-# Mock the DAO helper to avoid database issues
-$t->app->helper(dao => sub { 
-    # Return a mock DAO that won't be used for marketing page
-    return;
-});
+# Create test app
+my $t = Test::Mojo->new('Registry');
 
 # Test marketing page renders when no tenant context
 subtest 'Marketing page renders without tenant context' => sub {

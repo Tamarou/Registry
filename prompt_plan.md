@@ -107,7 +107,7 @@ Success Criteria:
 - No performance impact on workflow rendering
 ```
 
-### Step 3: Marketing Page for Default Tenant
+### Step 3: Marketing Page for Default Tenant ✅
 
 ```text
 Create a public marketing page for the default "Registry" tenant that serves as the entry point for new tenant onboarding.
