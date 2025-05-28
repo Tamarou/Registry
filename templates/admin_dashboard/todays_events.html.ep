@@ -1,0 +1,80 @@
+% if (@$events) {
+    <div class="space-y-3">
+        % for my $event (@$events) {
+            <div class="border border-gray-200 rounded-lg p-3">
+                <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                        <h4 class="text-sm font-medium text-gray-900">
+                            <%= $event->{event_name} || $event->{session_name} %>
+                        </h4>
+                        <p class="text-xs text-gray-600 mt-1">
+                            <%= $event->{program_name} %> • <%= $event->{location_name} || 'Location TBD' %>
+                        </p>
+                        
+                        <div class="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                            <span>
+                                <%= DateTime->from_epoch(epoch => $event->{start_time})->strftime('%I:%M %p') %>
+                                % if ($event->{end_time}) {
+                                    - <%= DateTime->from_epoch(epoch => $event->{end_time})->strftime('%I:%M %p') %>
+                                % }
+                            </span>
+                            <span>
+                                <%= $event->{enrolled_count} %>/<%= $event->{capacity} %> enrolled
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="ml-4 text-right">
+                        % if ($event->{attendance_status} eq 'completed') {
+                            <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                ✓ Completed
+                            </div>
+                            % if ($event->{attendance_taken} > 0) {
+                                <div class="text-xs text-gray-500 mt-1">
+                                    <%= $event->{present_count} %> present, <%= $event->{absent_count} %> absent
+                                </div>
+                            % }
+                        % } elsif ($event->{attendance_status} eq 'missing') {
+                            <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                ⚠️ Missing
+                            </div>
+                            <div class="text-xs text-red-600 mt-1">
+                                Attendance not taken
+                            </div>
+                        % } else {
+                            <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                ⏳ Pending
+                            </div>
+                            % my $event_time = DateTime->from_epoch(epoch => $event->{start_time});
+                            % my $now = DateTime->now;
+                            % if ($event_time > $now) {
+                                <div class="text-xs text-gray-500 mt-1">
+                                    % my $duration = $event_time->subtract_datetime($now);
+                                    % if ($duration->hours > 0) {
+                                        In <%= $duration->hours %>h <%= $duration->minutes %>m
+                                    % } else {
+                                        In <%= $duration->minutes %>m
+                                    % }
+                                </div>
+                            % }
+                        % }
+                        
+                        % if ($event->{attendance_status} eq 'missing' || $event->{attendance_status} eq 'pending') {
+                            <a href="/teacher/attendance/<%= $event->{event_id} %>" 
+                               class="text-xs text-blue-600 hover:text-blue-800 block mt-1">
+                                Take Attendance
+                            </a>
+                        % }
+                    </div>
+                </div>
+            </div>
+        % }
+    </div>
+% } else {
+    <div class="text-center py-6">
+        <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">No events for selected date</p>
+    </div>
+% }
