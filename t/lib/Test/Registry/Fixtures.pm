@@ -44,3 +44,5 @@ package Test::Registry::Fixtures {
     }
 
 }
+
+1;

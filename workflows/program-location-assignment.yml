@@ -1,0 +1,25 @@
+name: Program Location Assignment
+slug: program-location-assignment
+description: Workflow for assigning programs to locations and generating events
+first_step: select-program
+steps:
+  - slug: select-program
+    description: Select Existing Program
+    template: program-location-assignment/select-program
+    class: Registry::DAO::WorkflowSteps::SelectProgram
+  - slug: choose-locations
+    description: Choose Locations
+    template: program-location-assignment/choose-locations
+    class: Registry::DAO::WorkflowSteps::ChooseLocations
+  - slug: configure-location
+    description: Configure Per-Location Details
+    template: program-location-assignment/configure-location
+    class: Registry::DAO::WorkflowSteps::ConfigureLocation
+  - slug: generate-events
+    description: Generate Events
+    template: program-location-assignment/generate-events
+    class: Registry::DAO::WorkflowSteps::GenerateEvents
+  - slug: complete
+    description: Program Assignment Complete
+    template: program-location-assignment/complete
+    class: Registry::DAO::WorkflowStep
