@@ -51,6 +51,10 @@ class Registry :isa(Mojolicious) {
         # Public school pages (no auth required)
         $self->routes->get('/school/:slug')->to('schools#show')
           ->name('show_school');
+          
+        # Webhook routes (no auth required)
+        $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
+          ->name('webhook_stripe');
 
         # Route handling for root path - check for tenant context
         my $root = $self->routes->get('/');

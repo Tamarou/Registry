@@ -60,7 +60,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_sent_at ON registry.messages(sent_at);
 CREATE INDEX IF NOT EXISTS idx_messages_scheduled_for ON registry.messages(scheduled_for) WHERE scheduled_for IS NOT NULL;
 
 -- Payments table indexes
-CREATE INDEX IF NOT EXISTS idx_payments_enrollment_id ON registry.payments(enrollment_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON registry.payments(status);
 CREATE INDEX IF NOT EXISTS idx_payments_created_at ON registry.payments(created_at);
 CREATE INDEX IF NOT EXISTS idx_payments_amount ON registry.payments(amount);
@@ -83,8 +82,6 @@ CREATE INDEX IF NOT EXISTS idx_session_teachers_created_at ON registry.session_t
 
 -- Composite indexes for common dashboard queries
 CREATE INDEX IF NOT EXISTS idx_enrollments_dashboard ON registry.enrollments(status, created_at) WHERE status IN ('active', 'pending');
-CREATE INDEX IF NOT EXISTS idx_events_today ON registry.events(time, project_id) WHERE time >= CURRENT_DATE AND time < CURRENT_DATE + INTERVAL '1 day';
-CREATE INDEX IF NOT EXISTS idx_attendance_recent ON registry.attendance_records(marked_at, student_id) WHERE marked_at >= CURRENT_DATE - INTERVAL '30 days';
 
 -- Partial indexes for performance
 CREATE INDEX IF NOT EXISTS idx_waitlist_active ON registry.waitlist(session_id, position) WHERE status IN ('waiting', 'offered');

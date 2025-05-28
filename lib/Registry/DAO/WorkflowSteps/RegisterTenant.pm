@@ -16,7 +16,36 @@ method process ( $db, $ ) {
 
     my $profile = $run->data;
 
-    my $user_data = delete $profile->{users};
+    # Extract user data in new format
+    my $admin_user_data = {
+        name => delete $profile->{admin_name},
+        email => delete $profile->{admin_email},
+        username => delete $profile->{admin_username},
+        password => delete $profile->{admin_password},
+        user_type => delete $profile->{admin_user_type} || 'admin',
+    };
+    
+    my $team_members = delete $profile->{team_members} || [];
+    
+    # Convert to expected format for backward compatibility
+    my $user_data = [$admin_user_data];
+    for my $member (@$team_members) {
+        if ($member->{name} && $member->{email}) {
+            # Generate a username from the email
+            my $username = $member->{email};
+            $username =~ s/@.*$//;  # Remove domain
+            $username =~ s/[^a-zA-Z0-9]//g;  # Remove special characters
+            
+            push @$user_data, {
+                name => $member->{name},
+                email => $member->{email},
+                username => $username,
+                password => $self->_generate_temp_password(),
+                user_type => $member->{user_type} || 'staff',
+                invite_pending => 1,  # Mark for invitation email
+            };
+        }
+    }
 
     # Generate subdomain slug from organization name
     if ($profile->{name} && !$profile->{slug}) {
@@ -40,12 +69,17 @@ method process ( $db, $ ) {
 
     my $tx = $db->begin;
     for my $data ( $user_data->@* ) {
-        if ( my $user = Registry::DAO::User->find( $db, $data ) ) {
+        if ( my $user = Registry::DAO::User->find( $db, { username => $data->{username} } ) ) {
             $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
                 $tenant->slug, $user->id );
         }
         else {
-            Registry::DAO::User->create( $tenant->dao($db)->db, $data );
+            my $tenant_user = Registry::DAO::User->create( $tenant->dao($db)->db, $data );
+            
+            # Send invitation email for non-admin users
+            if ($data->{invite_pending} && $data->{email}) {
+                $self->_send_invitation_email($db, $tenant, $tenant_user, $data);
+            }
         }
     }
 
@@ -169,9 +203,33 @@ method _validate_billing_info($profile) {
     return 1;
 }
 
-sub _trim($) {
+sub _trim {
     my $str = shift;
     return '' unless defined $str;
     $str =~ s/^\s+|\s+$//g;
     return $str;
+}
+
+method _generate_temp_password() {
+    # Generate a secure temporary password
+    my @chars = ('A'..'Z', 'a'..'z', '0'..'9', '!', '@', '#', '$', '%');
+    my $password = '';
+    for (1..12) {
+        $password .= $chars[rand @chars];
+    }
+    return $password;
+}
+
+method _send_invitation_email($db, $tenant, $user, $user_data) {
+    # TODO: Implement email invitation system
+    # For now, just log the invitation details
+    warn "Would send invitation email to: " . $user_data->{email} . 
+         " for tenant: " . $tenant->slug . 
+         " with temporary password (this should be sent via secure email)";
+         
+    # In a production system, this would:
+    # 1. Generate a secure invitation token
+    # 2. Store the token in a database table
+    # 3. Send an email with a link to set up their account
+    # 4. Allow them to set their own password via the token
 }
