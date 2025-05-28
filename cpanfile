@@ -18,6 +18,7 @@ requires 'YAML::XS';
 requires 'Test::PostgreSQL';
 requires 'WebService::Stripe';
 requires 'Minion';
+requires 'Minion::Backend::PostgreSQL';
 requires 'Email::Simple';
 requires 'Email::Sender::Simple';
 requires 'JSON';

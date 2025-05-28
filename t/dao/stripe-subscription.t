@@ -4,7 +4,6 @@ use 5.40.2;
 use lib qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok isa_ok can_ok subtest )];
-defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
@@ -164,4 +163,4 @@ subtest 'Trial expiration check' => sub {
     ok(!$subscription_dao->is_trial_expired($active_tenant->{id}), 'Active trial not expired');
 };
 
-done_testing;
+done_testing();
