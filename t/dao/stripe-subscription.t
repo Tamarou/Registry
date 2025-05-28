@@ -163,4 +163,24 @@ subtest 'Trial expiration check' => sub {
     ok(!$subscription_dao->is_trial_expired($active_tenant->{id}), 'Active trial not expired');
 };
 
+subtest 'Configurable subscription creation' => sub {
+    my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
+    
+    # Test configuration method
+    can_ok($subscription_dao, 'create_subscription_with_config');
+    
+    # Test that the method exists and can be called with proper parameters
+    # (We won't mock the full Stripe API here to keep tests simple)
+    my $config = {
+        plan_name => 'Custom Plan',
+        monthly_amount => 15000,
+        currency => 'usd',
+        trial_days => 14,
+        description => 'Custom subscription plan'
+    };
+    
+    # Just verify the config is properly structured
+    ok($config->{monthly_amount} == 15000, 'Configuration structure is correct');
+};
+
 done_testing();

@@ -1,0 +1,421 @@
+% extends 'layouts/workflow';
+% my $data = stash('data') || {};
+% my $billing = $data->{billing_summary} || {};
+% my $config = $data->{subscription_config} || {};
+% my $errors = stash('errors') || [];
+
+<div class="payment-step">
+    <div class="step-header">
+        <h2>Complete Your Registry Setup</h2>
+        <p class="step-description">
+            Add a payment method to activate your 30-day free trial. 
+            You won't be charged until your trial ends.
+        </p>
+    </div>
+
+    % if (@$errors) {
+        <div class="alert alert-error" role="alert">
+            % for my $error (@$errors) {
+                <p><%= $error %></p>
+            % }
+        </div>
+    % }
+
+    <div class="payment-container">
+        <div class="billing-summary">
+            <h3>Organization Details</h3>
+            <div class="org-info">
+                <div class="org-name"><%= $billing->{organization_name} %></div>
+                <div class="org-subdomain">
+                    Access: <strong><%= $billing->{subdomain} %>.registry.com</strong>
+                </div>
+                <div class="billing-email">
+                    Billing: <%= $billing->{billing_email} %>
+                </div>
+            </div>
+
+            <div class="plan-details">
+                <h4><%= $config->{plan_name} %></h4>
+                <div class="price">
+                    <span class="amount"><%= $config->{formatted_price} %></span>
+                    <span class="trial">30-day free trial</span>
+                </div>
+                
+                <div class="features">
+                    <h5>What's included:</h5>
+                    <ul>
+                        % for my $feature (@{$config->{features} || []}) {
+                            <li><%= $feature %></li>
+                        % }
+                    </ul>
+                </div>
+            </div>
+
+            <div class="trial-info">
+                <div class="trial-notice">
+                    <strong>Free for 30 days</strong><br>
+                    Your trial starts immediately. Cancel anytime before 
+                    <%= DateTime->now->add(days => 30)->strftime('%B %d, %Y') %> 
+                    to avoid being charged.
+                </div>
+            </div>
+        </div>
+
+        <div class="payment-form-container">
+            % unless ($data->{show_payment_form}) {
+                <form method="post" hx-post="<%= url_for 'workflow_process_step' %>" 
+                      hx-target="#main-content" hx-swap="outerHTML">
+                    <input type="hidden" name="collect_payment_method" value="1">
+                    
+                    <div class="payment-method-setup">
+                        <h3>Add Payment Method</h3>
+                        <p>
+                            We'll securely store your payment information for when your trial ends.
+                            You can update or remove it anytime from your account settings.
+                        </p>
+                        
+                        <button type="submit" class="btn btn-primary btn-large">
+                            Add Payment Method & Start Trial
+                        </button>
+                    </div>
+                </form>
+            % } else {
+                <div class="stripe-payment-form">
+                    <h3>Payment Method</h3>
+                    
+                    <form id="payment-form">
+                        <div id="payment-element">
+                            <!-- Stripe Elements will create form elements here -->
+                        </div>
+                        
+                        <div class="payment-actions">
+                            <button id="submit-payment" class="btn btn-primary btn-large">
+                                <span id="button-text">Complete Setup</span>
+                                <span id="loading-spinner" class="spinner hidden">Processing...</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <script src="https://js.stripe.com/v3/"></script>
+                <script>
+                    const stripe = Stripe('<%= $data->{stripe_publishable_key} %>');
+                    const elements = stripe.elements({
+                        clientSecret: '<%= $data->{client_secret} %>'
+                    });
+
+                    const paymentElement = elements.create('payment');
+                    paymentElement.mount('#payment-element');
+
+                    const form = document.getElementById('payment-form');
+                    const submitButton = document.getElementById('submit-payment');
+                    const buttonText = document.getElementById('button-text');
+                    const spinner = document.getElementById('loading-spinner');
+
+                    form.addEventListener('submit', async (event) => {
+                        event.preventDefault();
+
+                        // Show loading state
+                        submitButton.disabled = true;
+                        buttonText.classList.add('hidden');
+                        spinner.classList.remove('hidden');
+
+                        const {error} = await stripe.confirmSetup({
+                            elements,
+                            confirmParams: {
+                                return_url: window.location.href,
+                            },
+                            redirect: 'if_required'
+                        });
+
+                        if (error) {
+                            // Show error to customer
+                            console.error('Setup failed:', error);
+                            alert('Payment setup failed: ' + error.message);
+                            
+                            // Reset button state
+                            submitButton.disabled = false;
+                            buttonText.classList.remove('hidden');
+                            spinner.classList.add('hidden');
+                        } else {
+                            // Setup succeeded, submit to server
+                            const setupIntentId = '<%= $data->{setup_intent_id} %>';
+                            
+                            // Use HTMX to submit the completion
+                            htmx.ajax('POST', '<%= url_for 'workflow_process_step' %>', {
+                                values: { 
+                                    setup_intent_id: setupIntentId 
+                                },
+                                target: '#main-content',
+                                swap: 'outerHTML'
+                            });
+                        }
+                    });
+                </script>
+            % }
+        </div>
+    </div>
+
+    <div class="security-info">
+        <div class="security-badges">
+            <div class="badge">
+                <strong>🔒 Secure</strong><br>
+                256-bit SSL encryption
+            </div>
+            <div class="badge">
+                <strong>💳 Trusted</strong><br>
+                Powered by Stripe
+            </div>
+            <div class="badge">
+                <strong>🛡️ Protected</strong><br>
+                PCI DSS compliant
+            </div>
+        </div>
+        
+        <div class="support-contact">
+            <p>
+                Questions? Contact us at 
+                <a href="mailto:support@registry.com">support@registry.com</a> 
+                or call 1-800-REGISTRY
+            </p>
+        </div>
+    </div>
+</div>
+
+<style>
+.payment-step {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.step-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.step-header h2 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    color: #1a365d;
+}
+
+.step-description {
+    font-size: 1.1rem;
+    color: #4a5568;
+}
+
+.payment-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin-bottom: 2rem;
+}
+
+.billing-summary {
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.billing-summary h3 {
+    margin-top: 0;
+    color: #2d3748;
+}
+
+.org-info {
+    margin-bottom: 1.5rem;
+}
+
+.org-name {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #1a365d;
+}
+
+.org-subdomain, .billing-email {
+    color: #4a5568;
+    margin-top: 0.25rem;
+}
+
+.plan-details {
+    border-top: 1px solid #e2e8f0;
+    padding-top: 1rem;
+    margin-bottom: 1rem;
+}
+
+.plan-details h4 {
+    margin: 0 0 0.5rem 0;
+    color: #2d3748;
+}
+
+.price {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.amount {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #1a365d;
+}
+
+.trial {
+    background: #48bb78;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+}
+
+.features ul {
+    margin: 0.5rem 0 0 0;
+    padding-left: 1.2rem;
+}
+
+.features li {
+    margin-bottom: 0.25rem;
+    color: #4a5568;
+}
+
+.trial-info {
+    border-top: 1px solid #e2e8f0;
+    padding-top: 1rem;
+}
+
+.trial-notice {
+    background: #ebf8ff;
+    border: 1px solid #bee3f8;
+    border-radius: 4px;
+    padding: 1rem;
+    font-size: 0.9rem;
+    color: #2c5282;
+}
+
+.payment-form-container {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.payment-method-setup {
+    text-align: center;
+}
+
+.payment-method-setup h3 {
+    margin-top: 0;
+    color: #2d3748;
+}
+
+.payment-method-setup p {
+    color: #4a5568;
+    margin-bottom: 2rem;
+}
+
+.stripe-payment-form h3 {
+    margin-top: 0;
+    color: #2d3748;
+}
+
+#payment-element {
+    margin-bottom: 1.5rem;
+}
+
+.payment-actions {
+    text-align: center;
+}
+
+.btn {
+    background: #4299e1;
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.btn:hover {
+    background: #3182ce;
+}
+
+.btn:disabled {
+    background: #a0aec0;
+    cursor: not-allowed;
+}
+
+.btn-large {
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+}
+
+.spinner {
+    display: inline-block;
+}
+
+.hidden {
+    display: none;
+}
+
+.security-info {
+    text-align: center;
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid #e2e8f0;
+}
+
+.security-badges {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-bottom: 1.5rem;
+}
+
+.badge {
+    text-align: center;
+    font-size: 0.875rem;
+    color: #4a5568;
+}
+
+.support-contact {
+    color: #718096;
+    font-size: 0.9rem;
+}
+
+.support-contact a {
+    color: #4299e1;
+    text-decoration: none;
+}
+
+.support-contact a:hover {
+    text-decoration: underline;
+}
+
+.alert {
+    padding: 1rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+}
+
+.alert-error {
+    background: #fed7d7;
+    border: 1px solid #feb2b2;
+    color: #c53030;
+}
+
+@media (max-width: 768px) {
+    .payment-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .security-badges {
+        flex-direction: column;
+        gap: 1rem;
+    }
+}
+</style>

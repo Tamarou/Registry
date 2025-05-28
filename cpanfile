@@ -16,6 +16,7 @@ requires 'Object::Pad';
 requires 'Sub::Identify';
 requires 'YAML::XS';
 requires 'Test::PostgreSQL';
+requires 'Test::MockObject';
 requires 'WebService::Stripe';
 requires 'Minion';
 requires 'Minion::Backend::PostgreSQL';

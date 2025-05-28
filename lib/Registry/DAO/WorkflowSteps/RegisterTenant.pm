@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowS
 use Registry::DAO::Workflow;
 use Carp qw(carp croak);
 use Text::Unidecode qw(unidecode);
+use DateTime;
 
 method process ( $db, $ ) {
     my ($workflow) = $self->workflow($db);
@@ -55,12 +56,24 @@ method process ( $db, $ ) {
     # Validate required billing fields
     $self->_validate_billing_info($profile);
 
+    # Validate that subscription was set up successfully
+    my $subscription_data = $run->data->{subscription};
+    unless ($subscription_data && $subscription_data->{stripe_subscription_id}) {
+        croak 'Payment setup must be completed before creating tenant';
+    }
+
     # first we wanna create the Registry user account for our tenant
     my $primary_user =
         Registry::DAO::User->find_or_create( $db, $user_data->[0] );
     unless ($primary_user) {
         croak 'Could not create primary user';
     }
+
+    # Include subscription data in tenant creation
+    $profile->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
+    $profile->{billing_status} = 'trial';
+    $profile->{trial_ends_at} = $subscription_data->{trial_ends_at};
+    $profile->{subscription_started_at} = DateTime->now->iso8601();
 
     my $tenant = Registry::DAO::Tenant->create( $db, $profile );
     $db->query( 'SELECT clone_schema(dest_schema => ?)', $tenant->slug );

@@ -15,6 +15,10 @@ steps:
   description: Tenant users page
   slug: users
   template: tenant-signup-users
+- class: Registry::DAO::WorkflowSteps::TenantPayment
+  description: Payment and subscription setup
+  slug: payment
+  template: tenant-signup/payment
 - class: Registry::DAO::RegisterTenant
   description: Tenant onboarding complete
   slug: complete

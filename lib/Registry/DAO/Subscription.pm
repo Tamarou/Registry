@@ -76,18 +76,34 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
     }
 
     method create_subscription($tenant_id, $customer_id, $payment_method_id = undef) {
-        # Registry pricing: $200/month with 30-day trial
+        # Use default configuration for backward compatibility
+        my $config = {
+            plan_name => 'Registry - After School Program Management',
+            monthly_amount => 20000, # $200.00 in cents
+            currency => 'usd',
+            trial_days => 30,
+            description => 'Complete program management solution for after-school organizations'
+        };
+        
+        return $self->create_subscription_with_config($customer_id, $payment_method_id, $config, $tenant_id);
+    }
+
+    method create_subscription_with_config($customer_id, $payment_method_id, $config, $tenant_id = undef) {
         my %form_data = (
             customer => $customer_id,
-            'items[0][price_data][currency]' => 'usd',
-            'items[0][price_data][product_data][name]' => 'Registry - After School Program Management',
-            'items[0][price_data][product_data][description]' => 'Complete program management solution for after-school organizations',
+            'items[0][price_data][currency]' => $config->{currency},
+            'items[0][price_data][product_data][name]' => $config->{plan_name},
+            'items[0][price_data][product_data][description]' => $config->{description},
             'items[0][price_data][recurring][interval]' => 'month',
-            'items[0][price_data][unit_amount]' => 20000,  # $200.00 in cents
-            trial_period_days => 30,
-            collection_method => 'charge_automatically',
-            'metadata[tenant_id]' => $tenant_id
+            'items[0][price_data][unit_amount]' => $config->{monthly_amount},
+            trial_period_days => $config->{trial_days},
+            collection_method => 'charge_automatically'
         );
+
+        # Add metadata
+        if ($tenant_id) {
+            $form_data{'metadata[tenant_id]'} = $tenant_id;
+        }
 
         # Add payment method if provided (for immediate setup)
         if ($payment_method_id) {
@@ -97,18 +113,19 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         my $subscription = $self->_stripe_request('POST', '/subscriptions', \%form_data);
         return undef unless $subscription;
         
-        # Calculate trial end date
-        my $trial_ends_at = DateTime->from_epoch(epoch => $subscription->{trial_end});
-        
-        # Update tenant with subscription information
-        $db->query(
-            'UPDATE registry.tenants SET stripe_subscription_id = ?, billing_status = ?, trial_ends_at = ?, subscription_started_at = ? WHERE id = ?',
-            $subscription->{id},
-            'trial', 
-            $trial_ends_at->iso8601(),
-            DateTime->now->iso8601(),
-            $tenant_id
-        );
+        # Update tenant with subscription information if tenant_id provided
+        if ($tenant_id) {
+            my $trial_ends_at = DateTime->from_epoch(epoch => $subscription->{trial_end});
+            
+            $db->query(
+                'UPDATE registry.tenants SET stripe_subscription_id = ?, billing_status = ?, trial_ends_at = ?, subscription_started_at = ? WHERE id = ?',
+                $subscription->{id},
+                'trial', 
+                $trial_ends_at->iso8601(),
+                DateTime->now->iso8601(),
+                $tenant_id
+            );
+        }
 
         return $subscription;
     }
@@ -119,6 +136,26 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
     method get_subscription($subscription_id) {
         return $self->_stripe_request('GET', "/subscriptions/$subscription_id");
+    }
+
+    method create_setup_intent($customer_id, $options = {}) {
+        my %form_data = (
+            customer => $customer_id,
+            usage => $options->{usage} || 'off_session'
+        );
+
+        # Add metadata if provided
+        if ($options->{metadata}) {
+            for my $key (keys %{$options->{metadata}}) {
+                $form_data{"metadata[$key]"} = $options->{metadata}->{$key};
+            }
+        }
+
+        return $self->_stripe_request('POST', '/setup_intents', \%form_data);
+    }
+
+    method get_setup_intent($setup_intent_id) {
+        return $self->_stripe_request('GET', "/setup_intents/$setup_intent_id");
     }
 
     method update_billing_status($tenant_id, $status, $subscription_data = undef) {
