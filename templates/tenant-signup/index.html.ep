@@ -44,8 +44,30 @@
         </div>
     </div>
 
+    <div class="deployment-options">
+        <h3>About Your Registry Setup</h3>
+        <div class="option-note">
+            <p><strong>You're setting up a hosted account</strong> with our managed service. This includes:</p>
+            <ul>
+                <li>✓ 30-day free trial with full features</li>
+                <li>✓ Automatic updates and maintenance</li>
+                <li>✓ 24/7 hosting and support</li>
+                <li>✓ SSL certificates and security</li>
+                <li>✓ Daily backups and disaster recovery</li>
+            </ul>
+        </div>
+        
+        <div class="self-hosting-note">
+            <p><strong>💡 Did you know?</strong> Registry is also available for self-hosting!</p>
+            <p>Download the open-source version for complete data control, unlimited customization, and no monthly fees.</p>
+            <a href="https://github.com/perigrin/Registry" target="_blank" rel="noopener" class="self-hosting-link">
+                Learn about self-hosting options →
+            </a>
+        </div>
+    </div>
+
     <div class="trial-info">
-        <h3>Your 30-Day Free Trial</h3>
+        <h3>What Happens Next</h3>
         <div class="trial-features">
             <div class="feature-grid">
                 <div class="feature">

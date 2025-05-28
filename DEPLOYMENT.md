@@ -1,8 +1,83 @@
 # Registry Deployment Guide
 
-## Render.com Deployment
+Registry offers multiple deployment options to meet your organization's specific needs, from quick cloud deployment to enterprise self-hosting.
 
-This guide walks you through deploying Registry to Render.com for a live demo.
+## Self-Hosting (Recommended)
+
+Self-hosting Registry gives you complete control over your data, unlimited customization capabilities, and cost-effective scaling.
+
+### Why Self-Host?
+
+**Data Ownership & Privacy**
+- Complete control over sensitive student and family data
+- Deploy in your own secure environment
+- Meet specific compliance requirements (FERPA, GDPR, etc.)
+- No third-party data sharing or storage concerns
+
+**Cost Effectiveness**
+- No monthly subscription fees
+- Pay only for your infrastructure costs
+- Scale economically with your organization's growth
+- Avoid vendor lock-in and pricing changes
+
+**Unlimited Customization**
+- Modify workflows to match your specific processes
+- Integrate with existing systems and databases
+- Custom reporting and analytics
+- White-label the interface with your branding
+
+### Self-Hosting Options
+
+#### Option 1: Docker Deployment (Easiest)
+
+```bash
+# Clone the repository
+git clone https://github.com/perigrin/Registry.git
+cd Registry
+
+# Start with Docker Compose
+docker-compose up -d
+
+# Registry available at http://localhost:3000
+```
+
+#### Option 2: Cloud Provider Deployment
+
+Deploy on any cloud provider:
+- **AWS**: Use ECS, EC2, or Elastic Beanstalk
+- **Google Cloud**: Deploy to Cloud Run or GKE
+- **Azure**: Use Container Instances or AKS
+- **DigitalOcean**: App Platform or Droplets
+- **Linode**: Kubernetes Engine or Compute Instances
+
+#### Option 3: On-Premises Deployment
+
+For maximum security and control:
+- Deploy on your own servers
+- Integrate with existing infrastructure
+- Use your existing database systems
+- Custom network and security configurations
+
+### Self-Hosting Support
+
+**Community Support (Free)**
+- GitHub Issues and Discussions
+- Community documentation and guides
+- Community-contributed plugins and extensions
+
+**Enterprise Support (Paid)**
+- Professional deployment assistance
+- Custom development and integrations
+- Priority support and training
+- SLA guarantees and dedicated support team
+
+Contact: enterprise@registry.com
+
+---
+
+## Render.com Deployment (Quick Demo)
+
+For quick demos and evaluations, deploy Registry to Render.com:
 
 ### Prerequisites
 

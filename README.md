@@ -3,26 +3,53 @@
 Registry is an educational platform for after-school programs, simplifying
 event management, student tracking, and parent-teacher communication.
 
-## Getting Started
+## Deployment Options
 
-### Using Registry
+Registry offers flexible deployment options to meet your organization's needs:
 
-The simplest way to get started is to use our hosted platform at
-[registry.tamarou.com](https://registry.tamarou.com).
+### 🏠 Self-Hosted (Recommended)
 
-Alternatively, you can run Registry locally using Docker:
+Deploy Registry on your own infrastructure for complete control:
+
+**Benefits:**
+- **Data Ownership**: Complete control over your organization's data
+- **Customization**: Unlimited ability to modify workflows and features
+- **Cost Effective**: No monthly fees, only infrastructure costs
+- **Security**: Deploy in your secure environment with custom security policies
+- **Integration**: Easy integration with existing systems and databases
+- **Compliance**: Meet enterprise security and compliance requirements
+
+**Quick Start:**
 
 ```bash
 # Clone the repository
-git clone https://github.com/Tamarou/Registry.git
+git clone https://github.com/perigrin/Registry.git
 cd Registry
 
-# Build and run the Registry container
+# Build and run with Docker
 docker build -t registry .
 docker run -p 3000:3000 registry
 
+# Or use Docker Compose for full stack
+docker-compose up
+
 # Registry will be available at http://localhost:3000
 ```
+
+### ☁️ Hosted Solution
+
+For organizations that prefer a managed solution:
+
+**Benefits:**
+- **Worry-Free**: Fully managed hosting, maintenance, and updates
+- **Quick Setup**: Get started in minutes with 30-day free trial
+- **24/7 Support**: Email support and 99.9% uptime SLA
+- **Automatic Backups**: Daily backups and disaster recovery
+- **SSL & Security**: Enterprise-grade security included
+
+**Pricing:** $200/month with 30-day free trial
+
+[Start Free Trial](https://registry-demo.onrender.com) • [View Documentation](DEPLOYMENT.md)
 
 ### Understanding Registry
 
