@@ -1,4 +1,4 @@
-use 5.40.0;
+use 5.40.2;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin declared_refs);
 
@@ -6,11 +6,19 @@ use Test::Mojo;
 use Test::More import => [qw( done_testing is note ok )];
 defer { done_testing };
 
+use Mojo::Home;
 use Registry::DAO;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(process_workflow);
+use YAML::XS                qw( Load );
 
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $workflow_dir = Mojo::Home->new->child('workflows');
+my @files        = $workflow_dir->list_tree->grep(qr/\.ya?ml$/)->each;
+for my $file (@files) {
+    next if Load( $file->slurp )->{draft};
+    Workflow->from_yaml( $dao, $file->slurp );
+}
 
 $ENV{DB_URL} = $dao->url;
 
@@ -27,13 +35,18 @@ my $t = Test::Mojo->new('Registry');
 
     ok my ($tenant) = $dao->find( Tenant => { name => 'Test Tenant' } ),
       'got tenant';
+    ok my $tenant_dao = $tenant->dao( $dao->db ), 'connected to tenant schema';
+
+    ok $dao->find( User => { username => 'Alice' } ),
+      'found Alice in main schema';
+    ok $tenant_dao->find( User => { username => 'Alice' } ),
+      'found Alice in tenant schema';
     is $tenant->primary_user( $dao->db )->username, 'Alice',
       'Primary user is correct';
 
-    ok my $tenant_dao = $dao->connect_schema( $tenant->slug ),
-      'connected to tenant schema';
-    ok $tenant_dao->find( User => { username => 'Alice' } ),
-      'found Alice in the tenant schema';
+    # check that the user-creation workflow exists in the tenant
+    ok $tenant_dao->find( Workflow => { slug => 'user-creation' } ),
+      'user-creation workflow exists in tenant schema';
 
     $t->get_ok( '/user-creation', { 'X-As-Tenant' => $tenant->slug } )
       ->status_is(200);

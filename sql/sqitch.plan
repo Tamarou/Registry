@@ -6,3 +6,20 @@ workflows [users] 2024-05-13T17:30:35Z Chris Prather <chris@prather.org> # add w
 tenant-on-boarding [workflows users] 2024-05-20T21:00:32Z Chris Prather <chris@prather.org> # create an onboarding workflow for tenants
 schema-based-multitennancy [tenant-on-boarding] 2024-05-21T01:43:52Z Chris Prather <chris@prather.org> # add the tools to do the schema-based multi-tenancy
 events-and-sessions [schema-based-multitennancy] 2024-05-31T03:36:11Z Chris Prather <chris.prather@tamarou.com> # Add events and sessions to the system
+edit-template-workflow 2025-02-11T23:59:19Z Chris Prather <chris.prather@tamarou.com> # default workflow for editing templates
+outcomes 2025-02-21T06:45:47Z Chris Prather <chris.prather@tamarou.com> # add outcome definitions
+summer-camp-module 2025-02-22T04:38:37Z Chris Prather <chris.prather@tamarou.com> # add summer-camp-module
+fix-tenant-workflows [schema-based-multitennancy] 2025-03-22T18:57:13Z Chris Prather <chris.prather@tamarou.com> # Fix tenant workflows to include first_step
+program-types [schema-based-multitennancy] 2025-01-27T12:00:00Z Claude <noreply@anthropic.com> # Add program types configuration system
+enhanced-pricing-model [summer-camp-module] 2025-01-27T12:30:00Z Claude <noreply@anthropic.com> # Transform pricing to flexible pricing_plans with multiple tiers per session
+attendance-tracking [summer-camp-module] 2025-01-27T13:00:00Z Claude <noreply@anthropic.com> # Add attendance tracking infrastructure
+waitlist-management [summer-camp-module] 2025-01-27T13:30:00Z Claude <noreply@anthropic.com> # Add waitlist functionality to enrollment system
+add-program-type-to-projects [program-types] 2025-01-27T14:00:00Z Claude <noreply@anthropic.com> # Add program type reference to projects
+add-user-fields-for-family [users] 2025-01-27T14:25:00Z Claude <noreply@anthropic.com> # Add birth_date, user_type, grade fields to users
+multi-child-data-model [summer-camp-module add-user-fields-for-family] 2025-01-27T14:30:00Z Claude <noreply@anthropic.com> # Add family_members table for multi-child support
+payments [schema-based-multitennancy] 2025-01-27T19:00:00Z Claude <noreply@anthropic.com> # Add payments infrastructure for Stripe integration
+add-payment-to-enrollments [payments summer-camp-module] 2025-01-27T19:15:00Z Claude <noreply@anthropic.com> # Add payment_id reference to enrollments table
+notifications-and-preferences [attendance-tracking] 2025-01-28T10:00:00Z Claude <noreply@anthropic.com> # Add notifications and user preferences for attendance tracking
+parent-communication-system [notifications-and-preferences] 2025-01-28T11:00:00Z Claude <noreply@anthropic.com> # Add parent communication system with messages, recipients, and templates
+performance-optimization [parent-communication-system] 2025-01-28T15:00:00Z Claude <noreply@anthropic.com> # Add database indexes and performance optimizations for production readiness
+stripe-subscription-integration [enhanced-pricing-model] 2025-01-28T16:00:00Z Claude <noreply@anthropic.com> # Add Stripe subscription integration for tenant billing

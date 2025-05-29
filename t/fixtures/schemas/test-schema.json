@@ -1,0 +1,1 @@
+{"description":"Updated description","fields":[{"id":"importedField","label":"Imported Field","required":true,"type":"text"},{"id":"secondField","label":"Second Field","required":false,"type":"number"}],"name":"Imported Outcome"}

@@ -1,0 +1,104 @@
+% if (@$waitlist_data) {
+    <div class="space-y-3">
+        % for my $entry (@$waitlist_data) {
+            <div class="border border-gray-200 rounded-lg p-3">
+                <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                        <h4 class="text-sm font-medium text-gray-900">
+                            <%= $entry->{session_name} %>
+                        </h4>
+                        <p class="text-xs text-gray-600 mt-1">
+                            <%= $entry->{program_name} %> • <%= $entry->{location_name} || 'Location TBD' %>
+                        </p>
+                        
+                        <div class="flex items-center gap-2 mt-2">
+                            <span class="text-xs text-gray-500">
+                                <strong><%= $entry->{child_name} %></strong> (Position #<%= $entry->{position} %>)
+                            </span>
+                        </div>
+                        
+                        <div class="text-xs text-gray-500 mt-1">
+                            Parent: <%= $entry->{parent_name} %> (<%= $entry->{parent_email} %>)
+                        </div>
+                    </div>
+                    
+                    <div class="ml-4 text-right">
+                        % if ($entry->{status} eq 'offered') {
+                            % if ($entry->{expires_at} && $entry->{expires_at} < time() + 86400) {
+                                <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                    ⏰ Urgent
+                                </div>
+                                <div class="text-xs text-red-600 mt-1">
+                                    Expires <%= DateTime->from_epoch(epoch => $entry->{expires_at})->strftime('%m/%d %I:%M %p') %>
+                                </div>
+                            % } else {
+                                <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                    🎉 Offered
+                                </div>
+                                % if ($entry->{expires_at}) {
+                                    <div class="text-xs text-gray-500 mt-1">
+                                        Expires <%= DateTime->from_epoch(epoch => $entry->{expires_at})->strftime('%m/%d %I:%M %p') %>
+                                    </div>
+                                % }
+                            % }
+                        % } else {
+                            <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                📋 Waiting
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                Since <%= DateTime->from_epoch(epoch => $entry->{created_at})->strftime('%m/%d/%y') %>
+                            </div>
+                        % }
+                        
+                        <!-- Quick actions -->
+                        <div class="mt-2 space-y-1">
+                            % if ($entry->{status} eq 'waiting') {
+                                <button onclick="processWaitlistEntry('<%= $entry->{id} %>')" 
+                                        class="text-xs text-blue-600 hover:text-blue-800 block">
+                                    Offer Spot
+                                </button>
+                            % }
+                            <a href="mailto:<%= $entry->{parent_email} %>" 
+                               class="text-xs text-gray-600 hover:text-gray-800 block">
+                                Contact Parent
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        % }
+    </div>
+% } else {
+    <div class="text-center py-6">
+        <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">No waitlist entries</p>
+    </div>
+% }
+
+<script>
+async function processWaitlistEntry(entryId) {
+    if (!confirm('Are you sure you want to offer a spot to this waitlist entry?')) return;
+    
+    try {
+        const response = await fetch(`/admin/dashboard/process_waitlist_entry`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ entry_id: entryId })
+        });
+        
+        if (response.ok) {
+            // Refresh the waitlist section
+            htmx.trigger('#waitlist-content', 'refresh');
+            alert('Waitlist entry processed successfully. Parent will be notified.');
+        } else {
+            alert('Failed to process waitlist entry. Please try again.');
+        }
+    } catch (error) {
+        alert('Error processing waitlist entry.');
+    }
+}
+</script>

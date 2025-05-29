@@ -1,4 +1,4 @@
-use 5.40.0;
+use 5.40.2;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok )];
@@ -14,6 +14,14 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
             slug        => 'test',
             name        => 'Test Workflow',
             description => 'A test workflow',
+        }
+    );
+
+    $workflow->add_step(
+        $dao,
+        {
+            slug        => 'landing',
+            description => 'Landing Page',
         }
     );
 
@@ -38,6 +46,14 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         Workflow => {
             slug => 'signup',
             name => "Customer Registration",
+        }
+    );
+
+    $workflow->add_step(
+        $dao,
+        {
+            slug        => 'landing',
+            description => 'Landing Page',
         }
     );
 

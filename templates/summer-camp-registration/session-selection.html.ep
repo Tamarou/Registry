@@ -1,0 +1,219 @@
+% layout 'workflow';
+% title 'Select Sessions';
+
+<div class="max-w-4xl mx-auto p-6">
+    <!-- Loading spinner -->
+    <div id="loading-spinner" class="htmx-indicator fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-lg shadow-lg text-center">
+            <svg class="animate-spin h-8 w-8 mx-auto mb-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-gray-700">Processing your selection...</p>
+        </div>
+    </div>
+    
+    <!-- Error notification (hidden by default) -->
+    <div id="error-notification" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium">There was a problem with your request</h3>
+                <div class="mt-2 text-sm" id="error-message"></div>
+            </div>
+            <div class="ml-auto pl-3">
+                <button type="button" class="text-red-400 hover:text-red-600" onclick="this.parentElement.parentElement.classList.add('hidden')">
+                    <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success notification (hidden by default) -->  
+    <div id="success-notification" class="hidden bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded mb-4">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium">Success!</h3>
+                <div class="mt-2 text-sm" id="success-message">Sessions selected successfully.</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="form-container">
+        <h1 class="text-3xl font-bold mb-6">Select Sessions for Your Children</h1>
+    
+    <form action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+          method="POST" class="space-y-6" 
+          hx-post="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>"
+          hx-target="#form-container"
+          hx-swap="outerHTML"
+          hx-indicator="#loading-spinner">
+        
+        <% my $children = $run->data->{children} || []; %>
+        <% my $program_type_id = $run->data->{program_type_id}; %>
+        <% my $program_type = $program_type_id ? Registry::DAO::ProgramType->new(id => $program_type_id)->load($db) : undef; %>
+        
+        <% if ($program_type && $program_type->same_session_for_siblings && @$children > 1) { %>
+            <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6">
+                <p class="text-blue-800">
+                    <strong>Note:</strong> All siblings must be enrolled in the same <%= $program_type->name %> session.
+                </p>
+            </div>
+            
+            <div class="bg-white shadow rounded-lg p-6">
+                <h2 class="text-xl font-semibold mb-4">Select Session for All Children</h2>
+                
+                <div class="space-y-2">
+                    <% for my $child (@$children) { %>
+                        <p class="text-gray-700">• <%= $child->{first_name} %> <%= $child->{last_name} %> (Age <%= $child->{age} %>)</p>
+                    <% } %>
+                </div>
+                
+                <div class="mt-4 space-y-3">
+                    <% for my $session (@$available_sessions) { %>
+                        <% my $spots_left = $session->capacity - $session->enrolled_count; %>
+                        <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer <%= $spots_left < @$children ? 'opacity-50 cursor-not-allowed' : '' %>">
+                            <input type="radio" 
+                                   name="session_all" 
+                                   value="<%= $session->id %>"
+                                   <%= $spots_left < @$children ? 'disabled' : '' %>
+                                   class="mr-2">
+                            <span class="font-medium"><%= $session->name %></span>
+                            <div class="text-sm text-gray-600 mt-1">
+                                <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
+                                <%= $spots_left >= @$children ? "$spots_left spots available" : "Not enough spots for all children" %>
+                            </div>
+                            <% if (my $pricing = $session->primary_pricing_plan) { %>
+                                <div class="text-sm font-medium text-green-600 mt-1">
+                                    $<%= $pricing->base_price %> per child
+                                </div>
+                            <% } %>
+                        </label>
+                    <% } %>
+                </div>
+            </div>
+        <% } else { %>
+            <% for my $child (@$children) { %>
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4">
+                        Select Session for <%= $child->{first_name} %> <%= $child->{last_name} %>
+                        <span class="text-gray-500 text-base">(Age <%= $child->{age} %>)</span>
+                    </h2>
+                    
+                    <div class="space-y-3">
+                        <% for my $session (@$available_sessions) { %>
+                            <% my $spots_left = $session->capacity - $session->enrolled_count; %>
+                            <% my $age_appropriate = ($child->{age} >= $session->min_age && $child->{age} <= $session->max_age); %>
+                            
+                            <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer <%= (!$age_appropriate || $spots_left <= 0) ? 'opacity-50 cursor-not-allowed' : '' %>">
+                                <input type="radio" 
+                                       name="session_<%= $child->{id} || $loop->index %>" 
+                                       value="<%= $session->id %>"
+                                       <%= (!$age_appropriate || $spots_left <= 0) ? 'disabled' : '' %>
+                                       class="mr-2">
+                                <span class="font-medium"><%= $session->name %></span>
+                                <div class="text-sm text-gray-600 mt-1">
+                                    <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
+                                    <% if (!$age_appropriate) { %>
+                                        <span class="text-red-600">Age range: <%= $session->min_age %>-<%= $session->max_age %> years</span>
+                                    <% } elsif ($spots_left <= 0) { %>
+                                        <span class="text-red-600">Full - Waitlist available</span>
+                                    <% } else { %>
+                                        <%= $spots_left %> spots available
+                                    <% } %>
+                                </div>
+                                <% if (my $pricing = $session->primary_pricing_plan) { %>
+                                    <div class="text-sm font-medium text-green-600 mt-1">
+                                        $<%= $pricing->base_price %>
+                                    </div>
+                                <% } %>
+                            </label>
+                        <% } %>
+                    </div>
+                </div>
+            <% } %>
+        <% } %>
+        
+        <div class="flex justify-between">
+            <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'select-children') %>" 
+               class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
+                Back
+            </a>
+            <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" id="submit-button">
+                <span class="htmx-indicator hidden">
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Processing...
+                </span>
+                <span class="submit-text">Continue to Payment</span>
+            </button>
+        </div>
+    </form>
+    </div>
+    
+    <script>
+    // Form validation and UX enhancements
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.querySelector('form');
+        const submitButton = document.getElementById('submit-button');
+        
+        // Disable submit button until valid selections are made
+        function validateForm() {
+            const radioInputs = form.querySelectorAll('input[type="radio"]');
+            const checkedInputs = form.querySelectorAll('input[type="radio"]:checked');
+            const requiredFields = new Set();
+            
+            radioInputs.forEach(input => {
+                const name = input.name;
+                requiredFields.add(name);
+            });
+            
+            const checkedFields = new Set();
+            checkedInputs.forEach(input => {
+                checkedFields.add(input.name);
+            });
+            
+            const isValid = requiredFields.size === checkedFields.size && requiredFields.size > 0;
+            submitButton.disabled = !isValid;
+        }
+        
+        // Add event listeners to radio buttons
+        form.addEventListener('change', validateForm);
+        
+        // Initial validation
+        validateForm();
+        
+        // Show error messages on HTMX error
+        document.addEventListener('htmx:responseError', function(evt) {
+            const errorNotification = document.getElementById('error-notification');
+            const errorMessage = document.getElementById('error-message');
+            errorMessage.textContent = 'Unable to process your selection. Please try again.';
+            errorNotification.classList.remove('hidden');
+        });
+        
+        // Show success messages on successful submission
+        document.addEventListener('htmx:afterRequest', function(evt) {
+            if (evt.detail.successful) {
+                const successNotification = document.getElementById('success-notification');
+                successNotification.classList.remove('hidden');
+                setTimeout(() => {
+                    successNotification.classList.add('hidden');
+                }, 5000);
+            }
+        });
+    });
+    </script>
+</div>

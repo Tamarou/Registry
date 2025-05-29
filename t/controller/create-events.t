@@ -1,23 +1,27 @@
-use 5.40.0;
+use 5.40.2;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
 use Test::Mojo;
+use Mojo::Home;
 use Test::More import => [qw( done_testing is )];
 defer { done_testing };
 
-use Registry::DAO ();
-use Test::Registry::DB ();
+use Registry::DAO           qw(Workflow);
+use Test::Registry::DB      ();
 use Test::Registry::Helpers qw(
-    workflow_url
-    workflow_start_url
-    workflow_run_step_url
-    workflow_process_step_url
+  workflow_url
+  workflow_start_url
+  workflow_run_step_url
+  workflow_process_step_url
 );
 
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 $ENV{DB_URL} = $dao->url;
+
+my $yaml = Mojo::Home->new->child( 'workflows', 'event-creation.yml' )->slurp;
+Workflow->from_yaml( $dao, $yaml );
 
 our $user = $dao->create(
     User => {

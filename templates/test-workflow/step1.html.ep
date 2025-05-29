@@ -1,0 +1,15 @@
+% layout 'workflow';
+% title 'Test Workflow - Step 1';
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Test Workflow - Step 1</h1>
+    
+    <p class="mb-6">This is a test step to verify the workflow progress component works correctly.</p>
+    
+    <div class="flex justify-between">
+        <span class="text-gray-500">No previous step</span>
+        <a href="/test-workflow/step2" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+            Next Step
+        </a>
+    </div>
+</div>

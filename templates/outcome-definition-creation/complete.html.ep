@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Form Creation Complete</title>
+    </head>
+    <body>
+        <header>
+            <h1>Form Created Successfully</h1>
+        </header>
+        <main>
+            <p>Your form has been created successfully.</p>
+            <p><strong>Name:</strong> <%= $run->data->{name} %></p>
+            <% if (my $outcome_id = $run->data->{outcome}) { %>
+                <p><strong>Form ID:</strong> <%= $outcome_id %></p>
+            <% } %>
+            <form action="<%= $action %>">
+                <button type="submit">Done</button>
+            </form>
+        </main>
+    </body>
+</html>

@@ -1,0 +1,27 @@
+name: Workflow Step Creation
+slug: workflow-step-creation
+draft: true
+description: |
+  A guided process for creating new workflows in the system.
+  Ensures all necessary components are defined and validated.
+
+steps:
+  - slug: step-definition
+    #template: workflow-basics-form
+    description: Define the basic workflow step properties
+
+  - slug: outcome-definition
+    #template: outcome-definition-form
+    description: Define the required outcome definition for this workflow step
+
+  - slug: template
+    #template: template-selection-form
+    description: Select or create template needed for the workflow step
+
+  - slug: review
+    #template: workflow-review-form
+    description: Review the complete workflow step configuration
+
+  - slug: test
+    #template: workflow-test-form
+    description: Test the workflow step with sample data

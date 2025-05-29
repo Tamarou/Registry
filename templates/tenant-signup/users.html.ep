@@ -1,4 +1,299 @@
-% my $users_url = url_for "workflow_callcc", target => 'user-creation';
-<form action="<%= $action %>">
-    <a rel="create-page user" href="<%= $users_url%>">Add User</a>
-</form>
+% extends 'layouts/workflow';
+
+<div class="team-setup-container">
+    <h2>Team Setup</h2>
+    <p class="setup-description">
+        Set up your organization's team members. You'll be created as the primary administrator, 
+        and you can invite additional team members with specific roles.
+    </p>
+
+    <div class="primary-admin-section">
+        <h3>Primary Administrator Account</h3>
+        <p>This will be your login account with full administrative access.</p>
+        
+        <form action="<%= $action %>" method="POST" class="admin-user-form">
+            <div class="form-row">
+                <div class="form-field">
+                    <label for="admin_name">Full Name *</label>
+                    <input type="text" id="admin_name" name="admin_name" 
+                           value="<%= $data->{admin_name} // '' %>" required
+                           placeholder="John Smith">
+                </div>
+                
+                <div class="form-field">
+                    <label for="admin_email">Email Address *</label>
+                    <input type="email" id="admin_email" name="admin_email" 
+                           value="<%= $data->{admin_email} // '' %>" required
+                           placeholder="john@example.com">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-field">
+                    <label for="admin_username">Username *</label>
+                    <input type="text" id="admin_username" name="admin_username" 
+                           value="<%= $data->{admin_username} // '' %>" required
+                           placeholder="jsmith">
+                </div>
+                
+                <div class="form-field">
+                    <label for="admin_password">Password *</label>
+                    <input type="password" id="admin_password" name="admin_password" 
+                           required minlength="8"
+                           placeholder="At least 8 characters">
+                </div>
+            </div>
+            
+            <input type="hidden" name="admin_user_type" value="admin">
+        </form>
+    </div>
+
+    <div class="team-members-section">
+        <h3>Additional Team Members <span class="optional">(Optional)</span></h3>
+        <p>Invite additional team members to your organization. They'll receive email invitations to set up their accounts.</p>
+        
+        <div id="team-members-list">
+            % my $team_members = $data->{team_members} // [];
+            % for my $i (0 .. $#$team_members) {
+                % my $member = $team_members->[$i];
+                <div class="team-member-card" data-member-index="<%= $i %>">
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="member_name_<%= $i %>">Full Name</label>
+                            <input type="text" id="member_name_<%= $i %>" 
+                                   name="team_members[<%= $i %>][name]"
+                                   value="<%= $member->{name} // '' %>"
+                                   placeholder="Team member name">
+                        </div>
+                        
+                        <div class="form-field">
+                            <label for="member_email_<%= $i %>">Email Address</label>
+                            <input type="email" id="member_email_<%= $i %>" 
+                                   name="team_members[<%= $i %>][email]"
+                                   value="<%= $member->{email} // '' %>"
+                                   placeholder="email@example.com">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="member_role_<%= $i %>">Role</label>
+                            <select id="member_role_<%= $i %>" name="team_members[<%= $i %>][user_type]">
+                                <option value="staff" <%= $member->{user_type} eq 'staff' ? 'selected' : '' %>>
+                                    Staff - Basic access to manage programs and students
+                                </option>
+                                <option value="admin" <%= $member->{user_type} eq 'admin' ? 'selected' : '' %>>
+                                    Administrator - Full access to all features
+                                </option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="button" class="remove-member-btn" 
+                                    onclick="removeMember(<%= $i %>)">Remove</button>
+                        </div>
+                    </div>
+                </div>
+            % }
+        </div>
+        
+        <button type="button" id="add-member-btn" class="secondary-btn">
+            + Add Team Member
+        </button>
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="primary-btn">Continue</button>
+    </div>
+</div>
+
+<script>
+let memberIndex = <%= scalar(@{$data->{team_members} // []}) %>;
+
+document.getElementById('add-member-btn').addEventListener('click', function() {
+    const container = document.getElementById('team-members-list');
+    const memberCard = document.createElement('div');
+    memberCard.className = 'team-member-card';
+    memberCard.setAttribute('data-member-index', memberIndex);
+    
+    memberCard.innerHTML = `
+        <div class="form-row">
+            <div class="form-field">
+                <label for="member_name_${memberIndex}">Full Name</label>
+                <input type="text" id="member_name_${memberIndex}" 
+                       name="team_members[${memberIndex}][name]"
+                       placeholder="Team member name">
+            </div>
+            
+            <div class="form-field">
+                <label for="member_email_${memberIndex}">Email Address</label>
+                <input type="email" id="member_email_${memberIndex}" 
+                       name="team_members[${memberIndex}][email]"
+                       placeholder="email@example.com">
+            </div>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-field">
+                <label for="member_role_${memberIndex}">Role</label>
+                <select id="member_role_${memberIndex}" name="team_members[${memberIndex}][user_type]">
+                    <option value="staff">Staff - Basic access to manage programs and students</option>
+                    <option value="admin">Administrator - Full access to all features</option>
+                </select>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" class="remove-member-btn" 
+                        onclick="removeMember(${memberIndex})">Remove</button>
+            </div>
+        </div>
+    `;
+    
+    container.appendChild(memberCard);
+    memberIndex++;
+});
+
+function removeMember(index) {
+    const memberCard = document.querySelector(`[data-member-index="${index}"]`);
+    if (memberCard) {
+        memberCard.remove();
+    }
+}
+
+// Form submission handling
+document.querySelector('.admin-user-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    // Collect all form data
+    const formData = new FormData();
+    
+    // Add admin user data
+    const adminFields = ['admin_name', 'admin_email', 'admin_username', 'admin_password', 'admin_user_type'];
+    adminFields.forEach(field => {
+        const input = document.getElementById(field);
+        if (input) {
+            formData.append(field, input.value);
+        }
+    });
+    
+    // Add team member data
+    const memberCards = document.querySelectorAll('.team-member-card');
+    memberCards.forEach((card, index) => {
+        const nameInput = card.querySelector(`input[name*="[name]"]`);
+        const emailInput = card.querySelector(`input[name*="[email]"]`);
+        const roleSelect = card.querySelector(`select[name*="[user_type]"]`);
+        
+        if (nameInput && nameInput.value.trim()) {
+            formData.append(`team_members[${index}][name]`, nameInput.value);
+            formData.append(`team_members[${index}][email]`, emailInput.value);
+            formData.append(`team_members[${index}][user_type]`, roleSelect.value);
+        }
+    });
+    
+    // Submit via HTMX
+    htmx.ajax('POST', '<%= $action %>', {
+        values: Object.fromEntries(formData.entries()),
+        target: 'body',
+        swap: 'outerHTML'
+    });
+});
+</script>
+
+<style>
+.team-setup-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.setup-description {
+    color: #666;
+    margin-bottom: 30px;
+}
+
+.primary-admin-section,
+.team-members-section {
+    background: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+}
+
+.form-row {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 15px;
+}
+
+.form-field {
+    flex: 1;
+}
+
+.form-field label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+.form-field input,
+.form-field select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+.team-member-card {
+    background: white;
+    padding: 15px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    border: 1px solid #e0e0e0;
+}
+
+.form-actions {
+    text-align: right;
+}
+
+.primary-btn,
+.secondary-btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.primary-btn {
+    background: #007bff;
+    color: white;
+}
+
+.secondary-btn {
+    background: #6c757d;
+    color: white;
+    margin-right: 10px;
+}
+
+.remove-member-btn {
+    background: #dc3545;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.optional {
+    color: #999;
+    font-weight: normal;
+}
+
+@media (max-width: 600px) {
+    .form-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+}
+</style>

@@ -1,7 +1,7 @@
-use 5.40.0;
+use 5.40.2;
 use Object::Pad;
 
-class Registry::Controller::Tenants : isa(Mojolicious::Controller) {
+class Registry::Controller::Tenants :isa(Registry::Controller) {
     use List::Util qw( first );
 
     method tenant_slug {
@@ -16,15 +16,11 @@ class Registry::Controller::Tenants : isa(Mojolicious::Controller) {
 
         # set up the DAO helper
         my $dao = $self->app->dao;
-        $self->app->helper(
-            dao => sub {
-                state $db = $dao->connect_schema($slug);
-            }
-        );
+        $self->app->helper( dao => sub { $dao->connect_schema($slug) } );
         return 1;
     }
 
     method index {
-        $self->render('index');
+        $self->render( template => 'index' );
     }
 }

@@ -1,0 +1,21 @@
+<%# This template renders an outcome-definition-based form when available %>
+<%# Usage: include 'outcome-form' %>
+
+<% my $has_outcome = defined $outcome_definition_id && $outcome_definition_id ne ''; %>
+
+<% if ($has_outcome) { %>
+    <%# Add JavaScript for the form builder Web Component %>
+    <% content_for head => begin %>
+        <script src="/js/form-builder.js"></script>
+    <% end %>
+    
+    <%# Use the Form Builder component %>
+    <form-builder 
+        outcome-definition-url="<%= url_for('outcome.definition', id => $outcome_definition_id) %>" 
+        form-data="<%= $data_json %>"
+        validation-errors="<%= $errors_json %>">
+    </form-builder>
+<% } else { %>
+    <%# Fall back to regular form if no outcome definition %>
+    <%= content %>
+<% } %>

@@ -1,0 +1,127 @@
+% layout 'default';
+% title $location->name;
+
+<div class="container mx-auto px-4 py-8">
+  <header class="mb-8">
+    <h1 class="text-3xl font-bold mb-4"><%= $location->name %></h1>
+    
+    % if ($location->address) {
+      <div class="text-gray-600 mb-4">
+        <p><%= $location->address->{street} || $location->address_street %></p>
+        <p>
+          <%= $location->address->{city} || $location->address_city %>, 
+          <%= $location->address->{state} || $location->address_state %> 
+          <%= $location->address->{zip} || $location->address_zip %>
+        </p>
+      </div>
+    % }
+    
+    % if ($location->description) {
+      <div class="prose max-w-none">
+        <%= $location->description %>
+      </div>
+    % }
+  </header>
+
+  <!-- Filters Section -->
+  <section class="filters-section mb-8 bg-gray-50 p-6 rounded-lg">
+    <h2 class="text-xl font-semibold mb-4">Find the Right Program</h2>
+    
+    <form id="filter-form" hx-get="<%= url_for('show_school', slug => $location->slug) %>" 
+          hx-target="#programs-container" 
+          hx-trigger="change"
+          class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      
+      <div>
+        <label for="min_age" class="block text-sm font-medium text-gray-700 mb-1">
+          Minimum Age
+        </label>
+        <input type="number" id="min_age" name="min_age" 
+               value="<%= $filters->{min_age} %>"
+               min="3" max="18" 
+               class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+      </div>
+      
+      <div>
+        <label for="max_age" class="block text-sm font-medium text-gray-700 mb-1">
+          Maximum Age
+        </label>
+        <input type="number" id="max_age" name="max_age" 
+               value="<%= $filters->{max_age} %>"
+               min="3" max="18"
+               class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+      </div>
+      
+      <div>
+        <label for="start_date" class="block text-sm font-medium text-gray-700 mb-1">
+          Starting After
+        </label>
+        <input type="date" id="start_date" name="start_date" 
+               value="<%= $filters->{start_date} %>"
+               class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+      </div>
+      
+      <div>
+        <label for="program_type" class="block text-sm font-medium text-gray-700 mb-1">
+          Program Type
+        </label>
+        <select id="program_type" name="program_type" 
+                class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+          <option value="">All Programs</option>
+          <option value="afterschool" <%= $filters->{program_type} eq 'afterschool' ? 'selected' : '' %>>
+            After School
+          </option>
+          <option value="summer-camp" <%= $filters->{program_type} eq 'summer-camp' ? 'selected' : '' %>>
+            Summer Camp
+          </option>
+        </select>
+      </div>
+      
+      <div class="md:col-span-2 lg:col-span-4">
+        <button type="button" onclick="clearFilters()" 
+                class="text-sm text-blue-600 hover:text-blue-800">
+          Clear all filters
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section class="programs-section" id="programs-container">
+    %= include 'schools/_programs', location => $location, programs => $programs, filters => $filters
+  </section>
+</div>
+
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<script>
+  function clearFilters() {
+    document.getElementById('filter-form').reset();
+    htmx.trigger('#filter-form', 'change');
+  }
+</script>
+
+<style>
+  /* Mobile-responsive styles */
+  @media (max-width: 640px) {
+    .program-card {
+      padding: 1rem;
+    }
+    
+    .container {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+  }
+  
+  /* Utility class for line clamping */
+  .line-clamp-3 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+  
+  /* Visual indicators */
+  .filling-up {
+    background: linear-gradient(to right, #fef3c7 0%, #fbbf24 var(--fill-percentage));
+  }
+</style>

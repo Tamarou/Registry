@@ -1,0 +1,10 @@
+# workflows/location-management.yaml
+name: Location Management
+description: Workflow for managing location information
+slug: location-management
+first_step: location-details
+steps:
+  - slug: location-details
+    template: location-management-location-details
+    outcome-definition: Location Details
+    class: Registry::DAO::CreateLocationWithAddress

@@ -1,0 +1,17 @@
+---
+description: A workflow to create new sessions
+name: Session Creation
+slug: session-creation
+steps:
+- class: Registry::DAO::WorkflowStep
+  description: New Session Landing page
+  slug: landing
+  template: session-creation-index
+- class: Registry::DAO::WorkflowStep
+  description: Session info
+  slug: info
+  template: session-creation-info
+- class: Registry::DAO::CreateSession
+  description: Session creation complete
+  slug: complete
+  template: session-creation-complete

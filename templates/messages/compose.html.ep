@@ -1,0 +1,290 @@
+% layout 'default';
+% title 'Compose Message';
+
+<div class="container mx-auto px-4 py-8">
+    <div class="max-w-4xl mx-auto">
+        <div class="flex items-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-900">Compose Message</h1>
+        </div>
+
+        <form id="compose-form" action="/messages" method="POST" class="space-y-6">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <!-- Message Type -->
+                <div class="mb-6">
+                    <label for="message_type" class="block text-sm font-medium text-gray-700 mb-2">
+                        Message Type *
+                    </label>
+                    <select id="message_type" name="message_type" required 
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select message type...</option>
+                        <option value="announcement">📢 Announcement</option>
+                        <option value="update">📝 Update</option>
+                        <option value="emergency">🚨 Emergency</option>
+                    </select>
+                </div>
+
+                <!-- Subject -->
+                <div class="mb-6">
+                    <label for="subject" class="block text-sm font-medium text-gray-700 mb-2">
+                        Subject *
+                    </label>
+                    <input type="text" id="subject" name="subject" required maxlength="200"
+                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                           placeholder="Enter message subject...">
+                </div>
+
+                <!-- Recipients Scope -->
+                <div class="mb-6">
+                    <label for="scope" class="block text-sm font-medium text-gray-700 mb-2">
+                        Send To *
+                    </label>
+                    <select id="scope" name="scope" required 
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select recipients...</option>
+                        <option value="tenant-wide">All Families</option>
+                        <option value="program">Specific Program</option>
+                        <option value="session">Specific Session</option>
+                        <option value="location">Specific Location</option>
+                        <option value="child-specific">Individual Child</option>
+                    </select>
+                </div>
+
+                <!-- Scope-specific selectors -->
+                <div id="program-selector" class="mb-6 hidden">
+                    <label for="program_id" class="block text-sm font-medium text-gray-700 mb-2">
+                        Select Program
+                    </label>
+                    <select id="program_id" name="scope_id" 
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select program...</option>
+                        % for my $program (@$programs) {
+                            <option value="<%= $program->{id} %>"><%= $program->{name} %></option>
+                        % }
+                    </select>
+                </div>
+
+                <div id="session-selector" class="mb-6 hidden">
+                    <label for="session_id" class="block text-sm font-medium text-gray-700 mb-2">
+                        Select Session
+                    </label>
+                    <select id="session_id" name="scope_id" 
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select session...</option>
+                        % for my $session (@$sessions) {
+                            <option value="<%= $session->{id} %>" data-program="<%= $session->{project_id} %>">
+                                <%= $session->{name} %>
+                            </option>
+                        % }
+                    </select>
+                </div>
+
+                <div id="location-selector" class="mb-6 hidden">
+                    <label for="location_id" class="block text-sm font-medium text-gray-700 mb-2">
+                        Select Location
+                    </label>
+                    <select id="location_id" name="scope_id" 
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select location...</option>
+                        % for my $location (@$locations) {
+                            <option value="<%= $location->{id} %>"><%= $location->{name} %></option>
+                        % }
+                    </select>
+                </div>
+
+                <div id="child-selector" class="mb-6 hidden">
+                    <label for="child_id" class="block text-sm font-medium text-gray-700 mb-2">
+                        Select Child
+                    </label>
+                    <input type="text" id="child_search" 
+                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                           placeholder="Search for child by name...">
+                    <input type="hidden" id="child_id" name="scope_id">
+                    <div id="child_results" class="mt-2 hidden"></div>
+                </div>
+
+                <!-- Recipients Preview -->
+                <div id="recipients-preview" class="mb-6 hidden">
+                    <div class="bg-gray-50 rounded-md p-4">
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">Recipients Preview</h4>
+                        <div id="recipients-count" class="text-sm text-gray-600"></div>
+                        <div id="recipients-list" class="mt-2 max-h-32 overflow-y-auto"></div>
+                    </div>
+                </div>
+
+                <!-- Message Body -->
+                <div class="mb-6">
+                    <label for="body" class="block text-sm font-medium text-gray-700 mb-2">
+                        Message *
+                    </label>
+                    <textarea id="body" name="body" required rows="8"
+                              class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                              placeholder="Enter your message..."></textarea>
+                </div>
+
+                <!-- Scheduling Options -->
+                <div class="mb-6">
+                    <div class="flex items-center mb-4">
+                        <input type="checkbox" id="schedule_later" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <label for="schedule_later" class="ml-2 text-sm font-medium text-gray-700">
+                            Schedule for later
+                        </label>
+                    </div>
+                    
+                    <div id="schedule-options" class="hidden">
+                        <label for="scheduled_for" class="block text-sm font-medium text-gray-700 mb-2">
+                            Send at
+                        </label>
+                        <input type="datetime-local" id="scheduled_for" name="scheduled_for"
+                               class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex justify-between items-center">
+                <a href="/messages" class="text-gray-600 hover:text-gray-800">
+                    ← Back to Messages
+                </a>
+                
+                <div class="space-x-3">
+                    <button type="button" id="save-draft" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        Save Draft
+                    </button>
+                    <button type="submit" name="send_now" value="1" id="send-now" 
+                            class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
+                        Send Now
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Scope selector logic
+document.getElementById('scope').addEventListener('change', function() {
+    const scope = this.value;
+    
+    // Hide all selectors
+    document.querySelectorAll('[id$="-selector"]').forEach(el => el.classList.add('hidden'));
+    
+    // Show relevant selector
+    if (scope === 'program') {
+        document.getElementById('program-selector').classList.remove('hidden');
+    } else if (scope === 'session') {
+        document.getElementById('session-selector').classList.remove('hidden');
+    } else if (scope === 'location') {
+        document.getElementById('location-selector').classList.remove('hidden');
+    } else if (scope === 'child-specific') {
+        document.getElementById('child-selector').classList.remove('hidden');
+    }
+    
+    // Clear scope_id when scope changes
+    document.querySelectorAll('[name="scope_id"]').forEach(el => el.value = '');
+    
+    // Update recipients preview
+    updateRecipientsPreview();
+});
+
+// Update recipients preview when scope_id changes
+document.querySelectorAll('[name="scope_id"]').forEach(element => {
+    element.addEventListener('change', updateRecipientsPreview);
+});
+
+// Schedule toggle
+document.getElementById('schedule_later').addEventListener('change', function() {
+    const scheduleOptions = document.getElementById('schedule-options');
+    const sendButton = document.getElementById('send-now');
+    
+    if (this.checked) {
+        scheduleOptions.classList.remove('hidden');
+        sendButton.textContent = 'Schedule Message';
+    } else {
+        scheduleOptions.classList.add('hidden');
+        sendButton.textContent = 'Send Now';
+        document.getElementById('scheduled_for').value = '';
+    }
+});
+
+// Recipients preview
+async function updateRecipientsPreview() {
+    const scope = document.getElementById('scope').value;
+    const scopeId = document.querySelector('[name="scope_id"]:not([style*="display: none"])');
+    
+    if (!scope) {
+        document.getElementById('recipients-preview').classList.add('hidden');
+        return;
+    }
+    
+    try {
+        const url = new URL('/messages/preview_recipients', window.location.origin);
+        url.searchParams.set('scope', scope);
+        if (scopeId && scopeId.value) {
+            url.searchParams.set('scope_id', scopeId.value);
+        }
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        const preview = document.getElementById('recipients-preview');
+        const count = document.getElementById('recipients-count');
+        const list = document.getElementById('recipients-list');
+        
+        count.textContent = `${data.count} recipients will receive this message`;
+        
+        if (data.recipients.length > 0) {
+            list.innerHTML = data.recipients.slice(0, 10).map(r => 
+                `<div class="text-sm text-gray-600">${r.name} (${r.email})</div>`
+            ).join('');
+            
+            if (data.recipients.length > 10) {
+                list.innerHTML += `<div class="text-sm text-gray-500 mt-1">... and ${data.recipients.length - 10} more</div>`;
+            }
+        } else {
+            list.innerHTML = '<div class="text-sm text-gray-500">No recipients found</div>';
+        }
+        
+        preview.classList.remove('hidden');
+    } catch (error) {
+        console.error('Failed to preview recipients:', error);
+    }
+}
+
+// Form validation
+document.getElementById('compose-form').addEventListener('submit', function(e) {
+    const scope = document.getElementById('scope').value;
+    const scopeId = document.querySelector('[name="scope_id"]:not(.hidden)');
+    
+    // Check if scope_id is required and provided
+    if (['program', 'session', 'location', 'child-specific'].includes(scope)) {
+        if (!scopeId || !scopeId.value) {
+            e.preventDefault();
+            alert('Please select a specific target for your message scope.');
+            return;
+        }
+    }
+    
+    // Check scheduling
+    const scheduleCheckbox = document.getElementById('schedule_later');
+    const scheduledFor = document.getElementById('scheduled_for');
+    
+    if (scheduleCheckbox.checked && !scheduledFor.value) {
+        e.preventDefault();
+        alert('Please select a date and time for scheduling.');
+        return;
+    }
+});
+
+// Child search functionality (placeholder - would need backend endpoint)
+document.getElementById('child_search').addEventListener('input', function() {
+    // This would typically make an AJAX call to search for children
+    // For now, just a placeholder
+    const results = document.getElementById('child_results');
+    if (this.value.length > 2) {
+        results.innerHTML = '<div class="text-sm text-gray-500">Child search functionality would go here</div>';
+        results.classList.remove('hidden');
+    } else {
+        results.classList.add('hidden');
+    }
+});
+</script>

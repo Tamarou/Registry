@@ -1,0 +1,98 @@
+{
+  "name": "Outcome Definition Builder",
+  "description": "Create a new outcome definition",
+  "fields": [
+    {
+      "id": "formName",
+      "type": "text",
+      "label": "Form Name",
+      "required": true,
+      "validation": {
+        "minLength": 1,
+        "maxLength": 100
+      }
+    },
+    {
+      "id": "formDescription",
+      "type": "textarea",
+      "label": "Form Description",
+      "required": false
+    },
+    {
+      "id": "fieldType",
+      "type": "select",
+      "label": "Add Field Type",
+      "required": true,
+      "options": [
+        { "value": "text", "label": "Text Input" },
+        { "value": "number", "label": "Number Input" },
+        { "value": "email", "label": "Email Input" },
+        { "value": "select", "label": "Dropdown Select" },
+        { "value": "textarea", "label": "Text Area" },
+        { "value": "checkbox", "label": "Checkbox" },
+        { "value": "radio", "label": "Radio Button" }
+      ]
+    },
+    {
+      "id": "fieldId",
+      "type": "text",
+      "label": "Field ID",
+      "required": true,
+      "validation": {
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$",
+        "minLength": 1,
+        "maxLength": 50
+      }
+    },
+    {
+      "id": "fieldLabel",
+      "type": "text",
+      "label": "Field Label",
+      "required": true,
+      "validation": {
+        "minLength": 1,
+        "maxLength": 100
+      }
+    },
+    {
+      "id": "fieldRequired",
+      "type": "checkbox",
+      "label": "Is this field required?",
+      "required": false
+    },
+    {
+      "id": "fieldPlaceholder",
+      "type": "text",
+      "label": "Placeholder Text",
+      "required": false
+    },
+    {
+      "id": "validationMinLength",
+      "type": "number",
+      "label": "Minimum Length",
+      "required": false
+    },
+    {
+      "id": "validationMaxLength",
+      "type": "number",
+      "label": "Maximum Length",
+      "required": false
+    },
+    {
+      "id": "validationPattern",
+      "type": "text",
+      "label": "Validation Pattern (regex)",
+      "required": false
+    },
+    {
+      "id": "selectOptions",
+      "type": "textarea",
+      "label": "Options (enter each option on a new line as 'value: label')",
+      "required": false,
+      "placeholder": "k: Kindergarten\n1: 1st Grade\n2: 2nd Grade",
+      "validation": {
+        "pattern": "^[^:\n]+:[^:\n]+$"
+      }
+    }
+  ]
+}

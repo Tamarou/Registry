@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Form Fields</title>
+        <style>
+            .field {
+                border: 1px solid #ccc;
+                padding: 1em;
+                margin-bottom: 1em;
+                background: #f9f9f9;
+            }
+            
+            .field-options, .validation-fields {
+                margin-top: 1em;
+                padding: 0.5em;
+                border-top: 1px dotted #ccc;
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>Form Fields</h1>
+            <p>Define the fields for your form.</p>
+        </header>
+        <main>
+            <form method="POST" action="<%= $action %>">
+                <div id="fields-container">
+                    <!-- Initial field will be added via JavaScript -->
+                </div>
+                
+                <button type="button" onclick="addField()">Add Another Field</button>
+                <button type="submit">Next</button>
+                
+                <script>
+                    // Define field types
+                    const fieldTypes = [
+                        { value: 'text', label: 'Text Input' },
+                        { value: 'number', label: 'Number Input' },
+                        { value: 'email', label: 'Email Input' },
+                        { value: 'select', label: 'Dropdown Select' },
+                        { value: 'textarea', label: 'Text Area' },
+                        { value: 'checkbox', label: 'Checkbox' },
+                        { value: 'radio', label: 'Radio Button' }
+                    ];
+                    
+                    let fieldCount = 0;
+                    
+                    // Add the first field when page loads
+                    document.addEventListener('DOMContentLoaded', function() {
+                        addField();
+                    });
+                    
+                    function addField() {
+                        const container = document.getElementById('fields-container');
+                        const newField = document.createElement('div');
+                        newField.className = 'field';
+                        
+                        // Create field header
+                        const header = document.createElement('h3');
+                        header.textContent = `Field ${fieldCount + 1}`;
+                        newField.appendChild(header);
+                        
+                        // Create type field
+                        const typeDiv = document.createElement('div');
+                        const typeLabel = document.createElement('label');
+                        typeLabel.setAttribute('for', `fields[${fieldCount}][type]`);
+                        typeLabel.textContent = 'Field Type:';
+                        typeDiv.appendChild(typeLabel);
+                        
+                        const typeSelect = document.createElement('select');
+                        typeSelect.name = `fields[${fieldCount}][type]`;
+                        typeSelect.id = `fields[${fieldCount}][type]`;
+                        typeSelect.onchange = function() { updateFieldOptions(this); };
+                        
+                        for (const option of fieldTypes) {
+                            const opt = document.createElement('option');
+                            opt.value = option.value;
+                            opt.textContent = option.label;
+                            typeSelect.appendChild(opt);
+                        }
+                        
+                        typeDiv.appendChild(typeSelect);
+                        newField.appendChild(typeDiv);
+                        
+                        // Create ID field
+                        const idDiv = document.createElement('div');
+                        const idLabel = document.createElement('label');
+                        idLabel.setAttribute('for', `fields[${fieldCount}][id]`);
+                        idLabel.textContent = 'Field ID:';
+                        idDiv.appendChild(idLabel);
+                        
+                        const idInput = document.createElement('input');
+                        idInput.type = 'text';
+                        idInput.name = `fields[${fieldCount}][id]`;
+                        idInput.id = `fields[${fieldCount}][id]`;
+                        idInput.required = true;
+                        idInput.pattern = '^[a-zA-Z][a-zA-Z0-9_]*$';
+                        
+                        idDiv.appendChild(idInput);
+                        newField.appendChild(idDiv);
+                        
+                        // Create label field
+                        const labelDiv = document.createElement('div');
+                        const labelLabel = document.createElement('label');
+                        labelLabel.setAttribute('for', `fields[${fieldCount}][label]`);
+                        labelLabel.textContent = 'Field Label:';
+                        labelDiv.appendChild(labelLabel);
+                        
+                        const labelInput = document.createElement('input');
+                        labelInput.type = 'text';
+                        labelInput.name = `fields[${fieldCount}][label]`;
+                        labelInput.id = `fields[${fieldCount}][label]`;
+                        labelInput.required = true;
+                        
+                        labelDiv.appendChild(labelInput);
+                        newField.appendChild(labelDiv);
+                        
+                        // Create required field
+                        const requiredDiv = document.createElement('div');
+                        const requiredLabel = document.createElement('label');
+                        requiredLabel.setAttribute('for', `fields[${fieldCount}][required]`);
+                        requiredLabel.textContent = 'Is this field required?';
+                        requiredDiv.appendChild(requiredLabel);
+                        
+                        const requiredInput = document.createElement('input');
+                        requiredInput.type = 'checkbox';
+                        requiredInput.name = `fields[${fieldCount}][required]`;
+                        requiredInput.id = `fields[${fieldCount}][required]`;
+                        requiredInput.value = "1";
+                        
+                        requiredDiv.appendChild(requiredInput);
+                        newField.appendChild(requiredDiv);
+                        
+                        // Create placeholder field
+                        const placeholderDiv = document.createElement('div');
+                        const placeholderLabel = document.createElement('label');
+                        placeholderLabel.setAttribute('for', `fields[${fieldCount}][placeholder]`);
+                        placeholderLabel.textContent = 'Placeholder Text:';
+                        placeholderDiv.appendChild(placeholderLabel);
+                        
+                        const placeholderInput = document.createElement('input');
+                        placeholderInput.type = 'text';
+                        placeholderInput.name = `fields[${fieldCount}][placeholder]`;
+                        placeholderInput.id = `fields[${fieldCount}][placeholder]`;
+                        
+                        placeholderDiv.appendChild(placeholderInput);
+                        newField.appendChild(placeholderDiv);
+                        
+                        // Create validation fields (initially hidden)
+                        const validationDiv = document.createElement('div');
+                        validationDiv.className = 'validation-fields';
+                        validationDiv.innerHTML = `
+                            <h4>Validation</h4>
+                            <div>
+                                <label for="fields[${fieldCount}][validation][minLength]">Minimum Length:</label>
+                                <input type="number" name="fields[${fieldCount}][validation][minLength]" id="fields[${fieldCount}][validation][minLength]">
+                            </div>
+                            <div>
+                                <label for="fields[${fieldCount}][validation][maxLength]">Maximum Length:</label>
+                                <input type="number" name="fields[${fieldCount}][validation][maxLength]" id="fields[${fieldCount}][validation][maxLength]">
+                            </div>
+                            <div>
+                                <label for="fields[${fieldCount}][validation][pattern]">Pattern (regex):</label>
+                                <input type="text" name="fields[${fieldCount}][validation][pattern]" id="fields[${fieldCount}][validation][pattern]">
+                            </div>
+                        `;
+                        newField.appendChild(validationDiv);
+                        
+                        // Create options field (initially hidden)
+                        const optionsDiv = document.createElement('div');
+                        optionsDiv.className = 'options-field';
+                        optionsDiv.style.display = 'none';
+                        
+                        const optionsLabel = document.createElement('label');
+                        optionsLabel.setAttribute('for', `fields[${fieldCount}][options]`);
+                        optionsLabel.textContent = 'Options (one per line as "value: label"):';
+                        optionsDiv.appendChild(optionsLabel);
+                        
+                        const optionsTextarea = document.createElement('textarea');
+                        optionsTextarea.name = `fields[${fieldCount}][options]`;
+                        optionsTextarea.id = `fields[${fieldCount}][options]`;
+                        optionsTextarea.placeholder = "k: Kindergarten\n1: 1st Grade\n2: 2nd Grade";
+                        optionsTextarea.rows = 5;
+                        optionsTextarea.cols = 40;
+                        
+                        optionsDiv.appendChild(optionsTextarea);
+                        newField.appendChild(optionsDiv);
+                        
+                        container.appendChild(newField);
+                        fieldCount++;
+                        
+                        // Initialize field options visibility
+                        updateFieldOptions(typeSelect);
+                    }
+                    
+                    function updateFieldOptions(select) {
+                        const fieldDiv = select.closest('.field');
+                        const optionsDiv = fieldDiv.querySelector('.options-field');
+                        const validationDiv = fieldDiv.querySelector('.validation-fields');
+                        
+                        if (select.value === 'select' || select.value === 'radio') {
+                            optionsDiv.style.display = 'block';
+                        } else {
+                            optionsDiv.style.display = 'none';
+                        }
+                        
+                        // Show/hide appropriate validation fields based on type
+                        if (select.value === 'text' || select.value === 'textarea' || select.value === 'email') {
+                            validationDiv.style.display = 'block';
+                        } else {
+                            validationDiv.style.display = 'none';
+                        }
+                    }
+                </script>
+            </form>
+        </main>
+    </body>
+</html>

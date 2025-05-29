@@ -1,0 +1,26 @@
+---
+name: Outcome Definition Creation
+slug: outcome-definition-creation
+description: A workflow to create new outcome definitions (forms)
+steps:
+  - class: Registry::DAO::WorkflowStep
+    description: New Outcome Definition Landing page
+    slug: landing
+    template: outcome-definition-creation-landing
+    
+  - class: Registry::DAO::WorkflowStep
+    description: Basic Outcome Information
+    slug: outcome-definition
+    template: outcome-definition-creation-info
+    outcome-definition: Outcome Definition Builder
+    
+  - class: Registry::DAO::WorkflowStep
+    description: Field Definition
+    slug: fields
+    template: outcome-definition-creation-fields
+    outcome-definition: Outcome Definition Builder
+    
+  - class: Registry::DAO::CreateOutcomeDefinition
+    description: Outcome Definition creation complete
+    slug: complete
+    template: outcome-definition-creation-complete

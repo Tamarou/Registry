@@ -1,0 +1,115 @@
+{
+  "name": "Summer Camp Registration",
+  "description": "Registration form for summer camp attendees",
+  "fields": [
+    {
+      "id": "childName",
+      "type": "text",
+      "label": "Child's Name",
+      "required": true
+    },
+    {
+      "id": "childAge",
+      "type": "number",
+      "label": "Child's Age",
+      "required": true,
+      "min": 5,
+      "max": 18
+    },
+    {
+      "id": "gradeLevel",
+      "type": "select",
+      "label": "Grade Level (Fall 2025)",
+      "required": true,
+      "options": [
+        "K",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12"
+      ]
+    },
+    {
+      "id": "sessionWeek",
+      "type": "select",
+      "label": "Session Week",
+      "required": true,
+      "options": [
+        { "value": "week1", "label": "Week 1: June 9-13" },
+        { "value": "week2", "label": "Week 2: June 16-20" },
+        { "value": "week3", "label": "Week 3: June 23-27" },
+        { "value": "week4", "label": "Week 4: July 7-11" },
+        { "value": "week5", "label": "Week 5: July 14-18" },
+        { "value": "week6", "label": "Week 6: July 21-25" }
+      ]
+    },
+    {
+      "id": "parentName",
+      "type": "text",
+      "label": "Parent/Guardian Name",
+      "required": true
+    },
+    {
+      "id": "parentEmail",
+      "type": "email",
+      "label": "Parent/Guardian Email",
+      "required": true
+    },
+    {
+      "id": "parentPhone",
+      "type": "tel",
+      "label": "Parent/Guardian Phone",
+      "required": true
+    },
+    {
+      "id": "emergencyContact",
+      "type": "text",
+      "label": "Emergency Contact Name",
+      "required": true
+    },
+    {
+      "id": "emergencyPhone",
+      "type": "tel",
+      "label": "Emergency Contact Phone",
+      "required": true
+    },
+    {
+      "id": "allergies",
+      "type": "textarea",
+      "label": "Allergies or Medical Conditions",
+      "required": false
+    },
+    {
+      "id": "photoRelease",
+      "type": "checkbox",
+      "label": "I give permission for my child's photo to be used in promotional materials",
+      "required": false
+    },
+    {
+      "id": "extendedCare",
+      "type": "radio",
+      "label": "Extended Care Options",
+      "required": true,
+      "options": [
+        { "value": "none", "label": "No extended care needed" },
+        { "value": "morning", "label": "Morning care (8:00-9:00 AM)" },
+        { "value": "afternoon", "label": "Afternoon care (3:00-5:00 PM)" },
+        { "value": "both", "label": "Both morning and afternoon care" }
+      ]
+    },
+    {
+      "id": "specialInstructions",
+      "type": "textarea",
+      "label": "Special Instructions",
+      "required": false
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+% layout 'default';
+% title 'Summer Camp Registration';
+
+<div class="landing-intro">
+    <h2>2025 Summer Camp Registration</h2>
+    
+    <p>Thank you for your interest in our summer camp program! We offer a variety of engaging and educational activities for children ages 5-18.</p>
+    
+    <h3>Program Highlights</h3>
+    <ul>
+        <li>Weekly themed activities</li>
+        <li>Qualified instructors with background checks</li>
+        <li>Indoor and outdoor activities</li>
+        <li>Small group sizes (10:1 student-to-instructor ratio)</li>
+        <li>Extended care options available</li>
+    </ul>
+    
+    <h3>Dates</h3>
+    <p>Our summer camp program runs for 6 weeks starting June 9, 2025.</p>
+    <ul>
+        <li>Week 1: June 9-13</li>
+        <li>Week 2: June 16-20</li>
+        <li>Week 3: June 23-27</li>
+        <li>Week 4: July 7-11</li>
+        <li>Week 5: July 14-18</li>
+        <li>Week 6: July 21-25</li>
+    </ul>
+    
+    <h3>Pricing</h3>
+    <p>$275 per week, with discounts available for multiple weeks and siblings.</p>
+    
+    <p>Ready to register? Click the button below to get started!</p>
+    
+    <form method="POST" action="<%= $action %>">
+        <button type="submit">Begin Registration</button>
+    </form>
+</div>

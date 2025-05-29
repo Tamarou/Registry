@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Create Workflow</title>
+    </head>
+    <body>
+        <header>
+            <h1>Create a New Workflow</h1>
+            <p>Use this tool to create a new workflow in the Registry system.</p>
+        </header>
+        <main>
+            <form method="POST" action="<%= $action %>">
+                <button>Start Here</button>
+            </form>
+        </main>
+    </body>
+</html>

@@ -1,0 +1,17 @@
+---
+description: A workflow to create new users
+name: User Creation
+slug: user-creation
+steps:
+- class: Registry::DAO::WorkflowStep
+  description: New User Landing page
+  slug: landing
+  template: user-creation-index
+- class: Registry::DAO::WorkflowStep
+  description: User Info
+  slug: info
+  template: user-creation-info
+- class: Registry::DAO::CreateUser
+  description: User creation complete
+  slug: complete
+  template: user-creation-complete

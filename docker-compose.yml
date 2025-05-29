@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: registry
+      POSTGRES_USER: registry
+      POSTGRES_PASSWORD: registry_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "registry"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DB_URL: postgres://registry:registry_dev@postgres/registry
+      MOJO_MODE: development
+      MOJO_LISTEN: http://0.0.0.0:3000
+      PERL5LIB: /app/lib
+    volumes:
+      - .:/app
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: morbo -v /app/registry
+
+volumes:
+  postgres_data:

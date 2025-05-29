@@ -1,0 +1,124 @@
+<form action="<%= $action %>">
+    <h2>Basic Workflow Information</h2>
+    <div class="form-group">
+        <label for="name">Workflow Name:</label>
+        <input type="text" id="name" name="name" placeholder="Example: User Registration" required />
+    </div>
+    
+    <div class="form-group">
+        <label for="slug">Workflow Slug:</label>
+        <input type="text" id="slug" name="slug" placeholder="example: user-registration" required />
+        <small>Used in URLs. Use lowercase letters, numbers, and hyphens only.</small>
+    </div>
+    
+    <div class="form-group">
+        <label for="description">Description:</label>
+        <textarea id="description" name="description" placeholder="Describe the purpose of this workflow" rows="3"></textarea>
+    </div>
+    
+    <h2>Workflow Steps</h2>
+    
+    <div id="steps-container">
+        <div class="step" data-step-index="0">
+            <h3>Step 1</h3>
+            
+            <div class="form-group">
+                <label for="step-0-slug">Step Slug:</label>
+                <input type="text" id="step-0-slug" name="steps[0][slug]" placeholder="landing" required />
+            </div>
+            
+            <div class="form-group">
+                <label for="step-0-description">Step Description:</label>
+                <input type="text" id="step-0-description" name="steps[0][description]" placeholder="Landing page" />
+            </div>
+            
+            <div class="form-group">
+                <label for="step-0-template">Template:</label>
+                <input type="text" id="step-0-template" name="steps[0][template]" placeholder="workflow-slug-step-slug" />
+            </div>
+            
+            <div class="form-group">
+                <label for="step-0-class">Step Class:</label>
+                <select id="step-0-class" name="steps[0][class]">
+                    <option value="Registry::DAO::WorkflowStep">Registry::DAO::WorkflowStep (Standard)</option>
+                    <option value="Registry::DAO::CreateUser">Registry::DAO::CreateUser</option>
+                    <option value="Registry::DAO::CreateProject">Registry::DAO::CreateProject</option>
+                    <option value="Registry::DAO::CreateEvent">Registry::DAO::CreateEvent</option>
+                    <option value="Registry::DAO::CreateSession">Registry::DAO::CreateSession</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    
+    <button type="button" id="add-step">Add Another Step</button>
+    
+    <div class="form-actions">
+        <input type="submit" value="Create Workflow" />
+    </div>
+</form>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        let stepIndex = 0;
+        
+        document.getElementById('add-step').addEventListener('click', function() {
+            stepIndex++;
+            
+            const stepsContainer = document.getElementById('steps-container');
+            const newStep = document.createElement('div');
+            newStep.className = 'step';
+            newStep.dataset.stepIndex = stepIndex;
+            
+            newStep.innerHTML = `
+                <h3>Step ${stepIndex + 1}</h3>
+                
+                <div class="form-group">
+                    <label for="step-${stepIndex}-slug">Step Slug:</label>
+                    <input type="text" id="step-${stepIndex}-slug" name="steps[${stepIndex}][slug]" placeholder="step-slug" required />
+                </div>
+                
+                <div class="form-group">
+                    <label for="step-${stepIndex}-description">Step Description:</label>
+                    <input type="text" id="step-${stepIndex}-description" name="steps[${stepIndex}][description]" placeholder="Step description" />
+                </div>
+                
+                <div class="form-group">
+                    <label for="step-${stepIndex}-template">Template:</label>
+                    <input type="text" id="step-${stepIndex}-template" name="steps[${stepIndex}][template]" placeholder="workflow-slug-step-slug" />
+                </div>
+                
+                <div class="form-group">
+                    <label for="step-${stepIndex}-class">Step Class:</label>
+                    <select id="step-${stepIndex}-class" name="steps[${stepIndex}][class]">
+                        <option value="Registry::DAO::WorkflowStep">Registry::DAO::WorkflowStep (Standard)</option>
+                        <option value="Registry::DAO::CreateUser">Registry::DAO::CreateUser</option>
+                        <option value="Registry::DAO::CreateProject">Registry::DAO::CreateProject</option>
+                        <option value="Registry::DAO::CreateEvent">Registry::DAO::CreateEvent</option>
+                        <option value="Registry::DAO::CreateSession">Registry::DAO::CreateSession</option>
+                    </select>
+                </div>
+                
+                <button type="button" class="remove-step" data-step="${stepIndex}">Remove Step</button>
+            `;
+            
+            stepsContainer.appendChild(newStep);
+            
+            // Add event listener to the new remove button
+            newStep.querySelector('.remove-step').addEventListener('click', function() {
+                const stepToRemove = this.closest('.step');
+                stepToRemove.remove();
+            });
+        });
+        
+        // Auto-generate slug from name
+        document.getElementById('name').addEventListener('input', function() {
+            const slugField = document.getElementById('slug');
+            if (!slugField.value) {
+                slugField.value = this.value
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-|-$/g, '');
+            }
+        });
+    });
+</script>

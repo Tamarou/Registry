@@ -1,0 +1,114 @@
+% layout 'teacher';
+% title 'Take Attendance';
+
+<style>
+    .event-info {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 6px;
+        margin-bottom: 20px;
+    }
+    
+    .event-info h3 {
+        margin: 0 0 10px 0;
+        color: #333;
+    }
+    
+    .event-details {
+        font-size: 14px;
+        color: #666;
+    }
+    
+    .student-list {
+        background: white;
+        border-radius: 6px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    
+    /* Hide custom elements before they're defined to prevent FOUC */
+    student-attendance-row:not(:defined),
+    attendance-form:not(:defined) {
+        display: none;
+    }
+</style>
+
+<div class="event-info">
+    <h3><%= $event->{metadata}{title} // 'Class Session' %></h3>
+    <div class="event-details">
+        <div><strong>Time:</strong> <%= $event->{metadata}{start_time} // 'TBD' %> - <%= $event->{metadata}{end_time} // 'TBD' %></div>
+        <div><strong>Location:</strong> <%= $event->{location_name} // 'TBD' %></div>
+        <div><strong>Program:</strong> <%= $event->{program_name} // 'TBD' %></div>
+        <div><strong>Students:</strong> <%= scalar @$students %></div>
+    </div>
+</div>
+
+% if (@$students == 0) {
+    <div class="alert alert-error">
+        <strong>No students enrolled</strong> for this event.
+    </div>
+% } else {
+
+<div class="student-list">
+    % for my $student (@$students) {
+        <student-attendance-row
+            student-id="<%= $student->{student_id} %>"
+            student-name="<%= $student->{child_name} %>"
+            student-grade="<%= $student->{grade} // 'N/A' %>"
+            family-name="<%= $student->{family_name} %>"
+            status="<%= $attendance->{$student->{student_id}} // '' %>">
+        </student-attendance-row>
+    % }
+</div>
+
+<attendance-form 
+    event-id="<%= $event->{id} %>" 
+    total-students="<%= scalar @$students %>">
+</attendance-form>
+
+% }
+
+<!-- Load Web Components -->
+<script src="/js/attendance-components.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize attendance form with existing data
+    const attendanceForm = document.querySelector('attendance-form');
+    
+    if (attendanceForm) {
+        // Set up initial attendance data
+        const initialAttendance = {
+            <% for my $student (@$students) { %>
+                <% if ($attendance->{$student->{student_id}}) { %>
+                    '<%= $student->{student_id} %>': '<%= $attendance->{$student->{student_id}} %>',
+                <% } %>
+            <% } %>
+        };
+        
+        // Wait for component to be fully loaded
+        customElements.whenDefined('attendance-form').then(() => {
+            attendanceForm.setInitialAttendance(initialAttendance);
+        });
+        
+        // Listen for attendance save events
+        attendanceForm.addEventListener('attendance-saved', function(e) {
+            console.log('Attendance saved successfully:', e.detail);
+            
+            // Optional: Show a toast notification
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('Attendance Saved', {
+                    body: `Successfully recorded attendance for ${e.detail.totalMarked} students`,
+                    icon: '/favicon.ico'
+                });
+            }
+        });
+    }
+    
+    // Enable notifications if supported
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+});
+</script>

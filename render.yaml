@@ -1,0 +1,96 @@
+databases:
+  - name: registry-postgres
+    databaseName: registry
+    user: registry_user
+    plan: starter
+
+services:
+  - type: web
+    name: registry-app
+    runtime: docker
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: registry-postgres
+          property: connectionString
+      - key: MOJO_MODE
+        value: production
+      - key: REGISTRY_SECRET
+        generateValue: true
+      - key: STRIPE_PUBLIC_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: EMAIL_FROM
+        value: noreply@registry-demo.onrender.com
+      - key: SUPPORT_EMAIL
+        value: support@registry-demo.onrender.com
+      - key: PORT
+        value: 5000
+    healthCheckPath: /health
+    buildCommand: |
+      # Database setup and initial data import
+      carton exec sqitch deploy
+      carton exec ./registry workflow import registry
+      carton exec ./registry template import registry
+    startCommand: |
+      carton exec hypnotoad -f ./registry
+    autoDeploy: true
+    disk:
+      name: registry-storage
+      mountPath: /app/storage
+      sizeGB: 1
+
+  - type: worker
+    name: registry-worker
+    runtime: docker
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: registry-postgres
+          property: connectionString
+      - key: MOJO_MODE
+        value: production
+      - key: REGISTRY_SECRET
+        fromService:
+          type: web
+          name: registry-app
+          envVarKey: REGISTRY_SECRET
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: noreply@registry-demo.onrender.com
+    buildCommand: |
+      carton install --deployment
+    startCommand: |
+      carton exec ./registry minion worker
+    autoDeploy: true
+
+  - type: cron
+    name: registry-scheduler
+    runtime: docker
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    schedule: "*/5 * * * *"
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: registry-postgres
+          property: connectionString
+      - key: MOJO_MODE
+        value: production
+    buildCommand: |
+      carton install --deployment
+    startCommand: |
+      carton exec ./registry job attendance_check
+      carton exec ./registry job waitlist_expiration
+    autoDeploy: true

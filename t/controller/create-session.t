@@ -1,4 +1,4 @@
-use 5.40.0;
+use 5.40.2;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
@@ -6,17 +6,25 @@ use Test::Mojo;
 use Test::More import => [qw( done_testing is like ok )];
 defer { done_testing };
 
-use Registry::DAO ();
-use Test::Registry::DB ();
+use Mojo::Home              ();
+use Registry::DAO           qw(Workflow);
+use Test::Registry::DB      ();
 use Test::Registry::Helpers qw(
-    workflow_url
-    workflow_run_step_url
-    workflow_process_step_url
+  workflow_url
+  workflow_run_step_url
+  workflow_process_step_url
 );
+use YAML::XS qw( Load );
 
 my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 $ENV{DB_URL} = $dao->url;
+my @files =
+  Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+for my $file (@files) {
+    next if Load( $file->slurp )->{draft};
+    Workflow->from_yaml( $dao, $file->slurp );
+}
 
 my $event = $dao->create(
     Event => {

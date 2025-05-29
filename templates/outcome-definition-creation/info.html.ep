@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Form Definition Information</title>
+    </head>
+    <body>
+        <header>
+            <h1>Basic Form Information</h1>
+        </header>
+        <main>
+            <form method="POST" action="<%= $action %>">
+                <div>
+                    <label for="name">Form Name:</label>
+                    <input type="text" id="name" name="name" required>
+                </div>
+                <div>
+                    <label for="description">Description:</label>
+                    <textarea id="description" name="description"></textarea>
+                </div>
+                <button type="submit">Next</button>
+            </form>
+        </main>
+    </body>
+</html>
