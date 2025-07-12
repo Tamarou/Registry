@@ -11,7 +11,7 @@ steps:
   description: Location Info
   slug: info
   template: location-creation-info
-- class: Registry::DAO::CreateLocation
+- class: Registry::DAO::WorkflowSteps::CreateLocation
   description: Location creation complete
   slug: complete
   template: location-creation-complete

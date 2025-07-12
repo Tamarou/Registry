@@ -5,7 +5,7 @@ use Object::Pad;
 use Registry::DAO::Workflow;
 use Mojo::JSON;
 
-class Registry::DAO::CreateLocationWithAddress :isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::WorkflowSteps::CreateLocationWithAddress :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $form_data ) {
         my ($workflow) = $self->workflow($db);

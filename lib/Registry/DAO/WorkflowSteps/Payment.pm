@@ -65,7 +65,7 @@ method create_payment ($db, $run, $form_data) {
         user_id => $user_id,
         amount => $payment_info->{total},
         metadata => {
-            workflow_id => $workflow->id,
+            workflow_id => $run->workflow_id,
             workflow_run_id => $run->id,
             enrollment_data => $enrollment_data,
         }
