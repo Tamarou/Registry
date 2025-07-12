@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
 
 use 5.40.2;
+use lib qw(lib t/lib);
 use experimental qw( try );
 
 use Test::More;
@@ -13,8 +14,8 @@ my $db_helper = Test::Registry::DB->new;
 my $dao = $db_helper->setup_test_database;
 my $db = $dao->db;
 
-# Deploy the notifications schema
-$db_helper->deploy_sqitch_changes(['notifications-and-preferences']);
+# Deploy the notifications schema - schema already deployed in Test::Registry::DB->new()
+# $db_helper->deploy_sqitch_changes(['notifications-and-preferences']);
 
 subtest 'UserPreference creation and basic operations' => sub {
     # Create a test user
