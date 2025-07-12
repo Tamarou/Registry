@@ -11,7 +11,7 @@ steps:
   description: Project Info
   slug: info
   template: project-creation-info
-- class: Registry::DAO::CreateProject
+- class: Registry::DAO::WorkflowSteps::CreateProject
   description: Project creation complete
   slug: complete
   template: project-creation-complete

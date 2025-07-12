@@ -20,7 +20,7 @@ steps:
     template: outcome-definition-creation-fields
     outcome-definition: Outcome Definition Builder
     
-  - class: Registry::DAO::CreateOutcomeDefinition
+  - class: Registry::DAO::WorkflowStep
     description: Outcome Definition creation complete
     slug: complete
     template: outcome-definition-creation-complete

@@ -4,7 +4,7 @@ use warnings;
 use experimental 'signatures', 'try', 'builtin';
 
 use Object::Pad;
-class Registry::DAO::Payment :isa(Registry::DAO::Object);
+class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 
 use WebService::Stripe;
 use Mojo::JSON qw(encode_json decode_json);

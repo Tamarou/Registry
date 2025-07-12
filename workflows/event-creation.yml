@@ -11,7 +11,7 @@ steps:
   description: Event info
   slug: info
   template: event-creation-info
-- class: Registry::DAO::CreateEvent
+- class: Registry::DAO::WorkflowSteps::CreateEvent
   description: Event creation complete
   slug: complete
   template: event-creation-complete

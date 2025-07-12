@@ -11,7 +11,7 @@ steps:
   description: Session info
   slug: info
   template: session-creation-info
-- class: Registry::DAO::CreateSession
+- class: Registry::DAO::WorkflowSteps::CreateSession
   description: Session creation complete
   slug: complete
   template: session-creation-complete

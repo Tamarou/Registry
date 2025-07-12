@@ -7,4 +7,4 @@ steps:
   - slug: location-details
     template: location-management-location-details
     outcome-definition: Location Details
-    class: Registry::DAO::CreateLocationWithAddress
+    class: Registry::DAO::WorkflowSteps::CreateLocationWithAddress

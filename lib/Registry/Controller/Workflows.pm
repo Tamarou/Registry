@@ -186,12 +186,15 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
             workflow => $self->param('workflow'),
             step     => $self->param('step'),
             status   => 200,
-            action   => $self->url_for('workflow_process_step'),
+            action   => $self->url_for('workflow_process_step', 
+                workflow => $self->param('workflow'),
+                run => $self->param('run'), 
+                step => $self->param('step')),
             outcome_definition_id => $step->outcome_definition_id,
             data_json => $data_json,
             errors_json => $errors_json,
             workflow_progress => $workflow_progress,
-            data => $template_data,
+            %$template_data,
         );
     }
 
@@ -342,18 +345,8 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
             'workflow_steps',
             ['id', 'slug', 'description'],
             { workflow_id => $workflow->id },
-            { -asc => 'sort_order' }
+            { -asc => 'created_at' }
         )->hashes->to_array;
-        
-        # If no explicit sort_order, fall back to creation order
-        if (!@$steps || !defined $steps->[0]{sort_order}) {
-            $steps = $dao->db->select(
-                'workflow_steps',
-                ['id', 'slug', 'description'],
-                { workflow_id => $workflow->id },
-                { -asc => 'created_at' }
-            )->hashes->to_array;
-        }
         
         return {} unless @$steps;
         
