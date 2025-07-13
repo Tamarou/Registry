@@ -3,6 +3,7 @@
 use 5.40.2;
 use experimental qw( try );
 
+use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::Job::AttendanceCheck;
@@ -231,11 +232,13 @@ subtest 'Job execution with notifications' => sub {
     });
 
     # Mock job object for testing
+    my $mock_logger = bless {}, 'MockLogger';
+    my $mock_app = bless {
+        log => $mock_logger,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app
     }, 'MockJob';
     
     # Mock logger methods
@@ -329,11 +332,13 @@ subtest 'Prevent duplicate reminder notifications' => sub {
     });
 
     # Mock job and run check
+    my $mock_logger2 = bless {}, 'MockLogger';
+    my $mock_app2 = bless {
+        log => $mock_logger2,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app2
     }, 'MockJob';
 
     my $job_instance = Registry::Job::AttendanceCheck->new;
