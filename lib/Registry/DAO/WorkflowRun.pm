@@ -15,7 +15,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     field $data :param //= {};
     field $created_at :param;
 
-    use constant table => 'workflow_runs';
+    sub table { 'workflow_runs' }
 
     method id()   { $id }
     method data() { $data }

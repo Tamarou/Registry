@@ -15,7 +15,7 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     field $notes :param :reader;
     field $created_at :param :reader;
 
-    use constant table => 'locations';
+    sub table { 'locations' }
 
     sub create ( $class, $db, $data ) {
         for my $field (qw(address_info contact_info facilities metadata)) {

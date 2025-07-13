@@ -20,6 +20,7 @@ class Registry::DAO::Family {
     
     # List all children in a family
     sub list_children ($class, $db, $family_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $results = $db->select(
             'family_members',
             undef,
@@ -58,12 +59,14 @@ class Registry::DAO::Family {
     
     # Check if family has multiple children
     sub has_multiple_children ($class, $db, $family_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $count = $db->select('family_members', 'COUNT(*)', { family_id => $family_id })->array->[0];
         return $count > 1;
     }
     
     # Get sibling discount eligibility
     sub sibling_discount_eligible ($class, $db, $family_id, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
         # Count active enrollments for this family in the session
         my $sql = q{
             SELECT COUNT(DISTINCT fm.id) 

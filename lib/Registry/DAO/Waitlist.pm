@@ -20,7 +20,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'waitlist';
+    sub table { 'waitlist' }
     
     BUILD {
         # Validate status
@@ -30,6 +30,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     }
     
     sub create ($class, $db, $data) {
+        $db = $db->db if $db isa Registry::DAO;
         # Validate required fields
         for my $field (qw(session_id location_id student_id parent_id)) {
             croak "Missing required field: $field" unless $data->{$field};
@@ -70,6 +71,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     # Process waitlist when a spot opens up
     sub process_waitlist ($class, $db, $session_id, $hours_to_respond = 48) {
+        $db = $db->db if $db isa Registry::DAO;
         # Find next waiting person
         my $next = $db->select(
             $class->table,
@@ -83,21 +85,23 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         # Create waitlist entry object
         my $entry = $class->new(%$next);
         
-        # Calculate expiration time
-        my $expires_at = time() + ($hours_to_respond * 3600);
+        # Calculate expiration time using SQL
+        my $expires_at = $db->query("SELECT NOW() + INTERVAL '$hours_to_respond hours'")->array->[0];
         
         # Update to offered status
         $entry->update($db, {
             status => 'offered',
-            offered_at => time(),
+            offered_at => 'now()',
             expires_at => $expires_at
         });
         
-        return $entry;
+        # Refresh the object to get updated values
+        return $class->find($db, { id => $entry->id });
     }
     
     # Check and expire old offers
     sub expire_old_offers ($class, $db) {
+        $db = $db->db if $db isa Registry::DAO;
         my $sql = q{
             UPDATE waitlist 
             SET status = 'expired'
@@ -106,12 +110,14 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             RETURNING *
         };
         
-        my $results = $db->query($sql, time())->hashes;
+        my $current_time = $db->query('SELECT NOW()')->array->[0];
+        my $results = $db->query($sql, $current_time)->hashes;
         return [ map { $class->new(%$_) } @$results ];
     }
     
     # Get waitlist for a session
     sub get_session_waitlist ($class, $db, $session_id, $status = 'waiting') {
+        $db = $db->db if $db isa Registry::DAO;
         my $where = { session_id => $session_id };
         $where->{status} = $status if $status;
         
@@ -138,6 +144,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     # Check if student is already enrolled
     sub is_student_enrolled ($class, $db, $session_id, $student_id) {
+        $db = $db->db if $db isa Registry::DAO;
         require Registry::DAO::Event;
         
         my $count = $db->select('enrollments', 'COUNT(*)', {
@@ -151,6 +158,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     # Check if student is already waitlisted
     sub is_student_waitlisted ($class, $db, $session_id, $student_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $count = $db->select($class->table, 'COUNT(*)', {
             session_id => $session_id,
             student_id => $student_id,
@@ -163,7 +171,9 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     # Accept waitlist offer
     method accept_offer ($db) {
         croak "Can only accept offers with status 'offered'" unless $status eq 'offered';
-        croak "Offer has expired" if $expires_at && time() > $expires_at;
+        # Check expiration via database query
+        my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
+        croak "Offer has expired" if $expires_at && $is_expired;
         
         # Start transaction
         my $tx = $db->begin;
@@ -234,9 +244,12 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method is_expired  { $status eq 'expired' }
     method is_declined { $status eq 'declined' }
     
-    method offer_is_active {
+    method offer_is_active ($db) {
         return 0 unless $status eq 'offered';
-        return 0 if $expires_at && time() > $expires_at;
+        if ($expires_at) {
+            my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
+            return 0 if $is_expired;
+        }
         return 1;
     }
 }

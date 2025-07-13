@@ -7,7 +7,7 @@ use experimental qw(signatures);
 use Test::More;
 use Test::Mojo;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -23,7 +23,7 @@ my $t = Test::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 
 # Create test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test Organization',
     slug => 'test-org',
 });

@@ -8,7 +8,7 @@ use Test::More;
 use Test::Exception;
 use Test::Deep;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -18,27 +18,34 @@ use Registry::DAO::Family;
 my $t  = Test::Registry::DB->new;
 my $db = $t->db;
 
-# Create a test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+# Create a test tenant (in registry schema)
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test Organization',
-    slug => 'test-org',
+    slug => 'test_org',
 });
 
-# Switch to tenant schema
-$db->schema($tenant->slug);
+# Create the tenant schema with all required tables
+$db->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
 
-# Create test parent users
-my $parent1 = Test::Registry::Fixtures->create_user($db, {
-    name => 'Parent One',
-    email => 'parent1@test.com',
+# Create test parent users (in registry schema)
+my $parent1 = Test::Registry::Fixtures::create_user($db, {
+    username => 'parent1',
+    password => 'password123',
     user_type => 'parent',
 });
 
-my $parent2 = Test::Registry::Fixtures->create_user($db, {
-    name => 'Parent Two',
-    email => 'parent2@test.com',
+my $parent2 = Test::Registry::Fixtures::create_user($db, {
+    username => 'parent2', 
+    password => 'password123',
     user_type => 'parent',
 });
+
+# Copy users to tenant schema
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent1->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent2->id);
+
+# Switch to tenant schema for family operations
+$db = $db->schema($tenant->slug);
 
 subtest 'Add child to family' => sub {
     my $child = Registry::DAO::Family->add_child($db, $parent1->id, {
@@ -144,7 +151,7 @@ subtest 'Grade eligibility check' => sub {
 
 subtest 'Find eligible children' => sub {
     # Clear existing children for parent2
-    $db->delete('family_members', { family_id => $parent2->id });
+    $db->db->delete('family_members', { family_id => $parent2->id });
     
     # Add children with different ages and grades
     Registry::DAO::Family->add_child($db, $parent2->id, {
@@ -190,11 +197,16 @@ subtest 'Multiple children check' => sub {
     ok(Registry::DAO::Family->has_multiple_children($db, $parent1->id), 
        'Parent 1 has multiple children');
     
-    # Create parent with single child
-    my $single_parent = Test::Registry::Fixtures->create_user($db, {
-        name => 'Single Child Parent',
-        email => 'single@test.com',
+    # Create parent with single child (switch back to registry schema for user creation)
+    my $registry_db = $db->schema('registry');
+    my $single_parent = Test::Registry::Fixtures::create_user($registry_db, {
+        username => 'single_parent',
+        password => 'password123',
+        user_type => 'parent',
     });
+    
+    # Copy user to tenant schema
+    $registry_db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', 'test_org', $single_parent->id);
     
     Registry::DAO::Family->add_child($db, $single_parent->id, {
         child_name => 'Only Child',
@@ -207,7 +219,7 @@ subtest 'Multiple children check' => sub {
 
 subtest 'Sibling discount eligibility' => sub {
     # Create test session
-    my $session = Test::Registry::Fixtures->create_session($db, {
+    my $session = Test::Registry::Fixtures::create_session($db, {
         name => 'Test Session',
     });
     
@@ -251,7 +263,7 @@ subtest 'Family member relations' => sub {
 
 subtest 'Backward compatibility' => sub {
     # Enrollments should work with either student_id or family_member_id
-    my $session = Test::Registry::Fixtures->create_session($db, {
+    my $session = Test::Registry::Fixtures::create_session($db, {
         name => 'Backward Compatible Session',
     });
     

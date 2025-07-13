@@ -17,7 +17,7 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
     field $notes :param :reader = '';
     field $created_at :param :reader;
 
-    use constant table => 'projects';
+    sub table { 'projects' }
 
     sub create ( $class, $db, $data ) {
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );

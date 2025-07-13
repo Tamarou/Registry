@@ -8,7 +8,7 @@ use Test::More;
 use Test::Exception;
 use Test::Deep;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -19,7 +19,7 @@ my $t  = Test::Registry::DB->new;
 my $db = $t->db;
 
 # Create a test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test Organization',
     slug => 'test-org',
 });

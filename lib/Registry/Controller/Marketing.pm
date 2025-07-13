@@ -43,7 +43,8 @@ class Registry::Controller::Marketing :isa(Registry::Controller) {
             ]
         );
         
-        $self->render( template => 'marketing/index' );
+        # Render directly without database template lookup to preserve layout
+        $self->Mojolicious::Controller::render( template => 'marketing/index' );
     }
 
     method _generate_schema_data {

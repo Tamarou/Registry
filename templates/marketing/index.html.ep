@@ -71,7 +71,7 @@
   
   <!-- Schema.org structured data -->
   <script type="application/ld+json">
-    <%= encode_json(stash('schema_data')) %>
+    <%== Mojo::JSON::encode_json(stash('schema_data')) %>
   </script>
 % end
 

@@ -22,7 +22,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'notifications';
+    sub table { 'notifications' }
     
     BUILD {
         # Validate type

@@ -8,7 +8,7 @@ use Test::More;
 use Test::Exception;
 use Test::Deep;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -20,7 +20,7 @@ my $t  = Test::Registry::DB->new;
 my $db = $t->db;
 
 # Create a test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test Organization',
     slug => 'test-org',
 });
@@ -29,15 +29,15 @@ my $tenant = Test::Registry::Fixtures->create_tenant($db, {
 $db->schema($tenant->slug);
 
 # Create test data
-my $location = Test::Registry::Fixtures->create_location($db, {
+my $location = Test::Registry::Fixtures::create_location($db, {
     name => 'Test School',
 });
 
-my $project = Test::Registry::Fixtures->create_project($db, {
+my $project = Test::Registry::Fixtures::create_project($db, {
     name => 'Test Program',
 });
 
-my $session = Test::Registry::Fixtures->create_session($db, {
+my $session = Test::Registry::Fixtures::create_session($db, {
     name => 'Summer 2024',
     start_date => '2024-06-01',
     end_date => '2024-08-31',

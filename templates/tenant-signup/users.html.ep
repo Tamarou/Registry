@@ -16,14 +16,14 @@
                 <div class="form-field">
                     <label for="admin_name">Full Name *</label>
                     <input type="text" id="admin_name" name="admin_name" 
-                           value="<%= $data->{admin_name} // '' %>" required
+                           value="<%= stash('admin_name') // '' %>" required
                            placeholder="John Smith">
                 </div>
                 
                 <div class="form-field">
                     <label for="admin_email">Email Address *</label>
                     <input type="email" id="admin_email" name="admin_email" 
-                           value="<%= $data->{admin_email} // '' %>" required
+                           value="<%= stash('admin_email') // '' %>" required
                            placeholder="john@example.com">
                 </div>
             </div>
@@ -32,7 +32,7 @@
                 <div class="form-field">
                     <label for="admin_username">Username *</label>
                     <input type="text" id="admin_username" name="admin_username" 
-                           value="<%= $data->{admin_username} // '' %>" required
+                           value="<%= stash('admin_username') // '' %>" required
                            placeholder="jsmith">
                 </div>
                 
@@ -53,7 +53,7 @@
         <p>Invite additional team members to your organization. They'll receive email invitations to set up their accounts.</p>
         
         <div id="team-members-list">
-            % my $team_members = $data->{team_members} // [];
+            % my $team_members = stash('team_members') // [];
             % for my $i (0 .. $#$team_members) {
                 % my $member = $team_members->[$i];
                 <div class="team-member-card" data-member-index="<%= $i %>">
@@ -108,7 +108,7 @@
 </div>
 
 <script>
-let memberIndex = <%= scalar(@{$data->{team_members} // []}) %>;
+let memberIndex = <%= scalar(@{stash('team_members') // []}) %>;
 
 document.getElementById('add-member-btn').addEventListener('click', function() {
     const container = document.getElementById('team-members-list');

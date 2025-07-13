@@ -4,37 +4,61 @@ use experimental qw(defer try);
 use Test::More import => [qw( done_testing is ok like is_deeply )];
 defer { done_testing };
 
-use Registry::DAO;
 use Test::Registry::DB;
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+use Test::Registry::Fixtures;
 
-# Create test users
-my $admin = $dao->create( User => {
-    email => 'admin@test.com',
-    name => 'Test Admin',
-    role => 'admin'
+# Setup test database
+my $t  = Test::Registry::DB->new;
+my $db = $t->db;
+
+# Create a test tenant (in registry schema)
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
+    name => 'Test Organization',
+    slug => 'test_org',
 });
 
-my $staff = $dao->create( User => {
-    email => 'staff@test.com', 
-    name => 'Test Staff',
-    role => 'staff'
+# Create the tenant schema with all required tables
+$db->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
+
+# Create test users (in registry schema)
+my $admin = Test::Registry::Fixtures::create_user($db, {
+    username => 'admin',
+    password => 'password123',
+    user_type => 'admin',
 });
 
-my $parent1 = $dao->create( User => {
-    email => 'parent1@test.com',
-    name => 'Test Parent 1', 
-    role => 'parent'
+my $staff = Test::Registry::Fixtures::create_user($db, {
+    username => 'staff',
+    password => 'password123',
+    user_type => 'staff',
 });
 
-my $parent2 = $dao->create( User => {
-    email => 'parent2@test.com',
-    name => 'Test Parent 2',
-    role => 'parent'
+my $parent1 = Test::Registry::Fixtures::create_user($db, {
+    username => 'parent1',
+    password => 'password123',
+    user_type => 'parent',
 });
+
+my $parent2 = Test::Registry::Fixtures::create_user($db, {
+    username => 'parent2',
+    password => 'password123',
+    user_type => 'parent',
+});
+
+# Copy users to tenant schema
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $admin->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $staff->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent1->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent2->id);
+
+# Switch to tenant schema for operations
+$db = $db->schema($tenant->slug);
+
+# Use DAO directly for operations
+use Registry::DAO::Message;
 
 {    # Basic message creation
-    my $message = $dao->create( Message => {
+    my $message = Registry::DAO::Message->create( $db, {
         sender_id => $admin->id,
         subject => 'Test Message',
         body => 'This is a test message',
@@ -51,7 +75,7 @@ my $parent2 = $dao->create( User => {
 {    # Message sending with recipients
     my $recipients = [$parent1->id, $parent2->id];
     
-    my $message = Registry::DAO::Message->send_message($dao->db, {
+    my $message = Registry::DAO::Message->send_message($db, {
         sender_id => $staff->id,
         subject => 'Immediate Message',
         body => 'This message is sent immediately',
@@ -63,7 +87,7 @@ my $parent2 = $dao->create( User => {
     ok $message->is_sent, 'Message marked as sent';
     
     # Check recipients were added
-    my $recipient_count = $dao->db->select('message_recipients', 
+    my $recipient_count = $db->db->select('message_recipients', 
         [\'count(*)'], 
         { message_id => $message->id }
     )->array->[0];
@@ -73,14 +97,14 @@ my $parent2 = $dao->create( User => {
 
 {    # Recipients by scope
     my $tenant_recipients = Registry::DAO::Message->get_recipients_for_scope(
-        $dao->db, 'tenant-wide'
+        $db, 'tenant-wide'
     );
     
     ok @$tenant_recipients >= 2, 'Found tenant-wide recipients';
     
     # Test invalid scope
     my $invalid_recipients = Registry::DAO::Message->get_recipients_for_scope(
-        $dao->db, 'invalid-scope'
+        $db, 'invalid-scope'
     );
     
     is_deeply $invalid_recipients, [], 'Empty array for invalid scope';
@@ -88,7 +112,7 @@ my $parent2 = $dao->create( User => {
 
 {    # Parent message retrieval
     # Create a message for testing
-    my $message = Registry::DAO::Message->send_message($dao->db, {
+    my $message = Registry::DAO::Message->send_message($db, {
         sender_id => $staff->id,
         subject => 'Parent Test Message',
         body => 'Message for parent retrieval test',
@@ -98,7 +122,7 @@ my $parent2 = $dao->create( User => {
     
     # Get messages for parent
     my $parent_messages = Registry::DAO::Message->get_messages_for_parent(
-        $dao->db, $parent1->id
+        $db, $parent1->id
     );
     
     ok @$parent_messages >= 1, 'Parent has messages';
@@ -109,7 +133,7 @@ my $parent2 = $dao->create( User => {
 }
 
 {    # Read tracking
-    my $message = Registry::DAO::Message->send_message($dao->db, {
+    my $message = Registry::DAO::Message->send_message($db, {
         sender_id => $staff->id,
         subject => 'Read Tracking Test',
         body => 'Testing read tracking functionality',
@@ -118,14 +142,14 @@ my $parent2 = $dao->create( User => {
     }, [$parent1->id], send_now => 1);
     
     # Check initial unread count
-    my $initial_unread = Registry::DAO::Message->get_unread_count($dao->db, $parent1->id);
+    my $initial_unread = Registry::DAO::Message->get_unread_count($db, $parent1->id);
     ok $initial_unread >= 1, 'Has unread messages';
     
     # Mark as read
-    $message->mark_as_read($dao->db, $parent1->id);
+    $message->mark_as_read($db, $parent1->id);
     
     # Check read status
-    my $recipient = $dao->db->select('message_recipients',
+    my $recipient = $db->select('message_recipients',
         ['read_at'],
         { message_id => $message->id, recipient_id => $parent1->id }
     )->hash;
@@ -134,7 +158,7 @@ my $parent2 = $dao->create( User => {
 }
 
 {    # Helper methods
-    my $emergency = $dao->create( Message => {
+    my $emergency = $db->create( Message => {
         sender_id => $admin->id,
         subject => 'Emergency Test',
         body => 'Emergency message',

@@ -21,7 +21,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     field $created_at :param :reader = time;
     field $updated_at :param :reader;
 
-    use constant table => 'sessions';
+    sub table { 'sessions' }
 
     sub create ( $class, $db, $data ) {
         $data->{slug} //= lc( $data->{name} =~ s/\s+/-/gr )
@@ -31,6 +31,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     }
 
     method events ($db) {
+        $db = $db->db if $db isa Registry::DAO;
 
         # TODO: this should be a join
         $db->select( 'session_events', '*', { session_id => $id } )
@@ -40,6 +41,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     }
 
     method add_events ( $db, @events ) {
+        $db = $db->db if $db isa Registry::DAO;
         my $data = [ map { { session_id => $id, event_id => $_ } } @events ];
         $db->insert( 'session_events', $_ ) for $data->@*;
         return $self;
@@ -47,6 +49,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
 
     # Get teachers for this session
     method teachers($db) {
+        $db = $db->db if $db isa Registry::DAO;
 
         # TODO: this should be a join
         $db->select( 'session_teachers', '*', { session_id => $id } )
@@ -57,6 +60,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
 
     # Add teachers to this session
     method add_teachers( $db, @teacher_ids ) {
+        $db = $db->db if $db isa Registry::DAO;
         my $data =
           [ map { { session_id => $id, teacher_id => $_ } } @teacher_ids ];
         $db->insert( 'session_teachers', $_ ) for $data->@*;
@@ -65,6 +69,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
 
     # Remove a teacher from this session
     method remove_teacher( $db, $teacher_id ) {
+        $db = $db->db if $db isa Registry::DAO;
         $db->delete(
             'session_teachers',
             {

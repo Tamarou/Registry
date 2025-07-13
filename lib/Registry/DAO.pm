@@ -73,6 +73,10 @@ class Registry::DAO {
         return blessed($self)->new( url => $url, schema => $schema );
     }
 
+    method schema ($new_schema = undef) {
+        return $new_schema ? $self->connect_schema($new_schema) : $schema;
+    }
+
     method registry_tenant() {
         return $self->find( 'Registry::DAO::Tenant', { slug => 'registry' } );
     }

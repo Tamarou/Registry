@@ -21,7 +21,7 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     field $metadata :param = {};
     field $class :param :reader;
 
-    use constant table => 'workflow_steps';
+    sub table { 'workflow_steps' }
     
     method outcome_definition($db) {
         return unless $outcome_definition_id;

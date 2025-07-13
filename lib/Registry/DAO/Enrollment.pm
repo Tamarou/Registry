@@ -16,7 +16,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
 
-    use constant table => 'enrollments';
+    sub table { 'enrollments' }
 
     sub create ( $class, $db, $data ) {
         $data->{status} //= 'pending';

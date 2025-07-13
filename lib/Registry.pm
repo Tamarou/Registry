@@ -87,9 +87,8 @@ class Registry :isa(Mojolicious) {
                 $c->app->helper( dao => sub { $dao->connect_schema($slug) } );
                 $c->render( template => 'index' );
             } else {
-                # No tenant context, dispatch to marketing controller
-                $c->stash(controller => 'marketing', action => 'index');
-                $c->continue;
+                # No tenant context, redirect to marketing page
+                $c->redirect_to($c->url_for('marketing_index'));
             }
         })->name('root_handler');
 

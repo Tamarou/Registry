@@ -2,6 +2,7 @@
 use v5.34.0;
 use warnings;
 use experimental 'signatures';
+use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Payment;
@@ -17,10 +18,10 @@ use Mojo::JSON qw(encode_json);
 my $test_db = Test::Registry::DB->new;
 my $db      = $test_db->db;
 
-# Create test tenant and set search path
+# Create test tenant and set search path  
 $db->query(q{
-    INSERT INTO registry.tenants (id, name, slug, config, status)
-    VALUES (1, 'Test Tenant', 'test-tenant', '{}', 'active')
+    INSERT INTO registry.tenants (id, name, slug)
+    VALUES ('00000000-0000-0000-0000-000000000001', 'Test Tenant', 'test-tenant')
 });
 $db->query("SET search_path TO tenant_1, registry, public");
 

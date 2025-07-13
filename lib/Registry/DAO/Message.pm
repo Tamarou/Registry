@@ -20,7 +20,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'messages';
+    sub table { 'messages' }
     
     BUILD {
         # Validate message type
@@ -45,6 +45,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Send a message to specified recipients
     sub send_message ($class, $db, $message_data, $recipient_ids, %opts) {
+        $db = $db->db if $db isa Registry::DAO;
         try {
             my $tx = $db->begin;
             
@@ -79,6 +80,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Send notifications via the notification system
     sub _send_notifications ($class, $db, $message, $recipient_ids, %opts) {
+        $db = $db->db if $db isa Registry::DAO;
         require Registry::DAO::Notification;
         require Registry::DAO::UserPreference;
         
@@ -129,6 +131,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Get messages for a parent (includes child-specific and relevant program/session messages)
     sub get_messages_for_parent ($class, $db, $parent_id, %opts) {
+        $db = $db->db if $db isa Registry::DAO;
         my $limit = $opts{limit} || 50;
         my $offset = $opts{offset} || 0;
         
@@ -176,6 +179,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Get recipients for a specific scope (program, session, etc.)
     sub get_recipients_for_scope ($class, $db, $scope, $scope_id = undef, %opts) {
+        $db = $db->db if $db isa Registry::DAO;
         my $sql;
         my @params;
         
@@ -185,7 +189,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
                 SELECT DISTINCT u.id, up.name, up.email
                 FROM users u
                 JOIN user_profiles up ON u.id = up.user_id
-                WHERE u.role = 'parent' OR u.user_type = 'parent'
+                WHERE u.user_type = 'parent'
             };
         }
         elsif ($scope eq 'program' && $scope_id) {
@@ -255,6 +259,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Get unread message count for a parent
     sub get_unread_count ($class, $db, $parent_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $sql = q{
             SELECT COUNT(*)
             FROM message_recipients mr
@@ -302,6 +307,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Get scheduled messages that are ready to send
     sub get_messages_to_send ($class, $db) {
+        $db = $db->db if $db isa Registry::DAO;
         my $sql = q{
             SELECT id, sender_id, subject, body, message_type, scope, scope_id, 
                    scheduled_for, sent_at, created_at, updated_at
