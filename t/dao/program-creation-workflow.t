@@ -2,6 +2,8 @@
 use v5.34.0;
 use warnings;
 use experimental 'signatures';
+
+use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Workflow;

@@ -106,7 +106,7 @@ Registry::DAO::PricingPlan->create($db, {
 for my $i (1..16) {
     my $student = Test::Registry::Fixtures::create_user($db, {
         name => "Student $i",
-        email => "student$i@test.com",
+        email => "student$i\@test.com",
     });
     Registry::DAO::Enrollment->create($db, {
         session_id => $current_session->id,
@@ -171,7 +171,7 @@ subtest 'Visual indicators - waitlist' => sub {
     for my $i (1..3) {
         my $student = Test::Registry::Fixtures::create_user($db, {
             name => "Waitlist Student $i",
-            email => "waitlist$i@test.com",
+            email => "waitlist$i\@test.com",
         });
         Registry::DAO::Waitlist->join_waitlist(
             $db,

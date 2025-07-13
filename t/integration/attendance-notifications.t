@@ -3,6 +3,7 @@
 use 5.40.2;
 use experimental qw( try );
 
+use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::Job::AttendanceCheck;
@@ -184,11 +185,13 @@ subtest 'End-to-end attendance notification workflow' => sub {
     );
 
     # Run the attendance check job
+    my $mock_logger = bless {}, 'MockLogger';
+    my $mock_app = bless {
+        log => $mock_logger,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app
     }, 'MockJob';
     
     # Mock logger and app classes
@@ -325,11 +328,13 @@ subtest 'Notification preferences respected' => sub {
     });
 
     # Run job
+    my $mock_logger2 = bless {}, 'MockLogger';
+    my $mock_app2 = bless {
+        log => $mock_logger2,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app2
     }, 'MockJob';
 
     my $job_instance = Registry::Job::AttendanceCheck->new;
@@ -415,11 +420,13 @@ subtest 'Duplicate prevention' => sub {
     });
 
     # Run job
+    my $mock_logger3 = bless {}, 'MockLogger';
+    my $mock_app3 = bless {
+        log => $mock_logger3,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app3
     }, 'MockJob';
 
     my $job_instance = Registry::Job::AttendanceCheck->new;
