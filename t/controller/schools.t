@@ -36,12 +36,13 @@ $db->schema($tenant->slug);
 my $school1 = Test::Registry::Fixtures::create_location($db, {
     name => 'Lincoln Elementary School',
     slug => 'lincoln-elementary',
-    description => 'A great school for learning',
-    address_street => '123 School St',
-    address_city => 'Test City',
-    address_state => 'TS',
-    address_zip => '12345',
-    capacity => 100,
+    notes => 'A great school for learning',
+    address_info => {
+        street_address => '123 School St',
+        city => 'Test City',
+        state => 'TS',
+        postal_code => '12345',
+    },
 });
 
 my $school2 = Test::Registry::Fixtures::create_location($db, {
@@ -51,12 +52,12 @@ my $school2 = Test::Registry::Fixtures::create_location($db, {
 
 my $program1 = Test::Registry::Fixtures::create_project($db, {
     name => 'After School Arts',
-    description => 'Creative arts program for students',
+    notes => 'Creative arts program for students',
 });
 
 my $program2 = Test::Registry::Fixtures::create_project($db, {
     name => 'STEM Club',
-    description => 'Science, Technology, Engineering, and Math activities',
+    notes => 'Science, Technology, Engineering, and Math activities',
 });
 
 # Create sessions
@@ -77,22 +78,39 @@ my $closed_session = Test::Registry::Fixtures::create_session($db, {
     status => 'closed',
 });
 
+# Create teacher for events
+my $teacher1 = Test::Registry::Fixtures::create_user($db, {
+    name => 'Teacher One',
+    username => 'teacher1',
+    email => 'teacher1@test.com',
+    user_type => 'staff',
+});
+
 # Create events
 my $event1 = Test::Registry::Fixtures::create_event($db, {
     location_id => $school1->id,
     project_id => $program1->id,
+    teacher_id => $teacher1->id,
+    time => '2024-03-15 15:00:00+00',
+    duration => 120,
     capacity => 20,
 });
 
 my $event2 = Test::Registry::Fixtures::create_event($db, {
     location_id => $school1->id,
     project_id => $program2->id,
+    teacher_id => $teacher1->id,
+    time => '2024-03-16 15:00:00+00',
+    duration => 120,
     capacity => 15,
 });
 
 my $event3 = Test::Registry::Fixtures::create_event($db, {
     location_id => $school2->id,  # Different school
     project_id => $program1->id,
+    teacher_id => $teacher1->id,
+    time => '2024-03-17 15:00:00+00',
+    duration => 120,
     capacity => 25,
 });
 
@@ -120,7 +138,9 @@ Registry::DAO::PricingPlan->create($db, {
 # Create some enrollments
 my $student1 = Test::Registry::Fixtures::create_user($db, {
     name => 'Student One',
-    email => 'student1\@test.com',
+    username => 'student1',
+    email => 'student1@test.com',
+    user_type => 'student',
 });
 
 Registry::DAO::Enrollment->create($db, {
@@ -136,7 +156,7 @@ subtest 'Show school page' => sub {
       ->text_is('h1', 'Lincoln Elementary School', 'Correct school name')
       ->content_like(qr/123 School St/, 'Shows address')
       ->content_like(qr/Test City, TS 12345/, 'Shows city, state, zip')
-      ->content_like(qr/A great school for learning/, 'Shows description');
+      ->content_like(qr/A great school for learning/, 'Shows notes');
 };
 
 subtest 'No authentication required' => sub {
@@ -161,7 +181,7 @@ subtest 'Groups by program' => sub {
       ->element_exists('.program-card', 'Has program cards')
       ->content_like(qr/After School Arts/, 'Shows program 1')
       ->content_like(qr/STEM Club/, 'Shows program 2')
-      ->content_like(qr/Creative arts program/, 'Shows program description');
+      ->content_like(qr/Creative arts program/, 'Shows program notes');
 };
 
 subtest 'Shows enrollment status' => sub {
@@ -189,7 +209,9 @@ subtest 'Full session handling' => sub {
     for my $i (2..15) {
         my $student = Test::Registry::Fixtures::create_user($db, {
             name => "Student $i",
+            username => "student$i",
             email => "student$i\@test.com",
+            user_type => 'student',
         });
         Registry::DAO::Enrollment->create($db, {
             session_id => $active_session->id,
