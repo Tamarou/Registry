@@ -2,7 +2,7 @@
 use 5.40.0;
 use Test::More;
 use Test::Mojo;
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Registry;
 
@@ -16,13 +16,8 @@ subtest 'Enhanced profile template renders correctly' => sub {
     # Start a tenant signup workflow
     my $tx = $t->post_ok('/tenant-signup')->status_is(302);
     
-    # Follow redirect to get the workflow run
+    # Follow redirect to get the workflow run (should be profile step)
     my $location = $tx->tx->res->headers->location;
-    $tx = $t->get_ok($location)->status_is(200);
-    
-    # Go to profile step
-    $tx = $t->post_ok($location)->status_is(302);
-    $location = $tx->tx->res->headers->location;
     $tx = $t->get_ok($location)->status_is(200);
     
     # Check that enhanced profile form is present
@@ -51,8 +46,8 @@ subtest 'Subdomain validation endpoint works' => sub {
 subtest 'Subdomain validation handles empty input' => sub {
     my $tx = $t->post_ok('/tenant-signup/validate-subdomain')->status_is(200);
     
-    # Should return default
-    $tx->content_like(qr/organization\.registry\.com/);
+    # Should return default with HTML content
+    $tx->content_like(qr/organization.*registry\.com/);
 };
 
 subtest 'Profile form validation' => sub {
@@ -60,10 +55,6 @@ subtest 'Profile form validation' => sub {
     my $tx = $t->post_ok('/tenant-signup')->status_is(302);
     my $location = $tx->tx->res->headers->location;
     $t->get_ok($location)->status_is(200);
-    
-    # Go to profile step
-    $tx = $t->post_ok($location)->status_is(302);
-    $location = $tx->tx->res->headers->location;
     
     # Try to submit incomplete profile data
     $tx = $t->post_ok($location => form => {
@@ -80,10 +71,6 @@ subtest 'Valid profile data processing' => sub {
     my $tx = $t->post_ok('/tenant-signup')->status_is(302);
     my $location = $tx->tx->res->headers->location;
     $t->get_ok($location)->status_is(200);
-    
-    # Go to profile step
-    $tx = $t->post_ok($location)->status_is(302);
-    $location = $tx->tx->res->headers->location;
     
     # Submit complete profile data
     $tx = $t->post_ok($location => form => {

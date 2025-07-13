@@ -16,7 +16,7 @@ class Registry::DAO::FamilyMember :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'family_members';
+    sub table { 'family_members' }
     
     BUILD {
         # Decode JSON fields if they're strings

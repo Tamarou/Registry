@@ -18,15 +18,10 @@ class Registry::DAO::Object {
 
     sub create ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
-        try {
-            my %data =
-              $db->insert( $class->table, $data, { returning => '*' } )
-              ->expand->hash->%*;
-            return $class->new(%data);
-        }
-        catch ($e) {
-            confess "Error creating $class: $e";
-        };
+        my %data =
+          $db->insert( $class->table, $data, { returning => '*' } )
+          ->expand->hash->%*;
+        return $class->new(%data);
     }
 
     sub find_or_create ( $class, $db, $filter, $data = $filter ) {

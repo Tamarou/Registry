@@ -8,7 +8,7 @@ use Test::More;
 use Test::Exception;
 use Test::Deep;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -19,60 +19,81 @@ use Registry::DAO::Event;
 my $t  = Test::Registry::DB->new;
 my $db = $t->db;
 
-# Create a test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+# Create a test tenant (in registry schema)
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test Organization',
-    slug => 'test-org',
+    slug => 'test_org',
 });
 
-# Switch to tenant schema
-$db->schema($tenant->slug);
+# Create the tenant schema with all required tables
+$db->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
 
-# Create test data
-my $parent1 = Test::Registry::Fixtures->create_user($db, {
-    name => 'Parent One',
-    email => 'parent1@test.com',
+# Create test data (in registry schema)
+my $parent1 = Test::Registry::Fixtures::create_user($db, {
+    username => 'parent1',
+    password => 'password123',
+    user_type => 'parent',
 });
 
-my $parent2 = Test::Registry::Fixtures->create_user($db, {
-    name => 'Parent Two',
-    email => 'parent2@test.com',
+my $parent2 = Test::Registry::Fixtures::create_user($db, {
+    username => 'parent2',
+    password => 'password123',
+    user_type => 'parent',
 });
 
-my $student1 = Test::Registry::Fixtures->create_user($db, {
-    name => 'Student One',
-    email => 'student1@test.com',
+my $student1 = Test::Registry::Fixtures::create_user($db, {
+    username => 'student1',
+    password => 'password123',
+    user_type => 'student',
 });
 
-my $student2 = Test::Registry::Fixtures->create_user($db, {
-    name => 'Student Two',
-    email => 'student2@test.com',
+my $student2 = Test::Registry::Fixtures::create_user($db, {
+    username => 'student2',
+    password => 'password123',
+    user_type => 'student',
 });
 
-my $student3 = Test::Registry::Fixtures->create_user($db, {
-    name => 'Student Three',
-    email => 'student3@test.com',
-});
+# Copy users to tenant schema
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent1->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent2->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $student1->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $student2->id);
 
-my $location = Test::Registry::Fixtures->create_location($db, {
+# Switch to tenant schema for operations
+$db = $db->schema($tenant->slug);
+
+# Create additional student (switch back to registry schema temporarily)
+my $registry_db = $db->schema('registry');
+my $student3 = Test::Registry::Fixtures::create_user($registry_db, {
+    username => 'student3',
+    password => 'password123',
+    user_type => 'student',
+});
+# Copy to tenant schema
+$registry_db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', 'test_org', $student3->id);
+
+my $location = Test::Registry::Fixtures::create_location($db, {
     name => 'Test School',
     capacity => 20,
 });
 
-my $project = Test::Registry::Fixtures->create_project($db, {
+my $project = Test::Registry::Fixtures::create_project($db, {
     name => 'Test Program',
 });
 
-my $session = Test::Registry::Fixtures->create_session($db, {
+my $session = Test::Registry::Fixtures::create_session($db, {
     name => 'Summer 2024',
     start_date => '2024-06-01',
     end_date => '2024-08-31',
 });
 
-my $event = Test::Registry::Fixtures->create_event($db, {
+my $event = Test::Registry::Fixtures::create_event($db, {
     location_id => $location->id,
     project_id => $project->id,
+    teacher_id => $student1->id, # Using student1 as teacher for simplicity
     capacity => 2, # Small capacity to test waitlist
+    time => '2024-03-15 14:00:00',
+    duration => 60,
 });
 
 # Add event to session
@@ -250,11 +271,11 @@ subtest 'Helper methods' => sub {
     
     ok($waiting->is_waiting, 'is_waiting returns true');
     ok(!$waiting->is_offered, 'is_offered returns false');
-    ok(!$waiting->offer_is_active, 'offer_is_active returns false for waiting');
+    ok(!$waiting->offer_is_active($db), 'offer_is_active returns false for waiting');
 };
 
 subtest 'Cannot enroll if already on waitlist' => sub {
-    my $new_session = Test::Registry::Fixtures->create_session($db, {
+    my $new_session = Test::Registry::Fixtures::create_session($db, {
         name => 'Fall 2024',
     });
     

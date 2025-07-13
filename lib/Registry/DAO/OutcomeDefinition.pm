@@ -14,7 +14,7 @@ class Registry::DAO::OutcomeDefinition :isa(Registry::DAO::Object) {
     field $created_at :param;
     field $updated_at :param;
 
-    use constant table => 'outcome_definitions';
+    sub table { 'outcome_definitions' }
 
     method id          { $id }
     method name        { $name }

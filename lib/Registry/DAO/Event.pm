@@ -22,7 +22,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
 
-    use constant table => 'events';
+    sub table { 'events' }
 
     sub create ( $class, $db, $data ) {
         $class->SUPER::create( $db, $data );

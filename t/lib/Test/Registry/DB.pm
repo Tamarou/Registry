@@ -22,7 +22,9 @@ package Test::Registry::DB {
 
     sub db {
         my $self = shift;
-        return $self->{pgsql};
+        require Registry::DAO;
+        my $dao = Registry::DAO->new(url => $self->{pgsql}->uri);
+        return $dao;
     }
 
     sub uri {
@@ -42,4 +44,15 @@ package Test::Registry::DB {
             App::Sqitch->new()->run('sqitch', 'deploy', '-t', $self->uri, $change);
         }
     }
+
+    sub cleanup_test_database {
+        my $self = shift;
+        # Test::PostgreSQL automatically cleans up when the object is destroyed
+        # Just make sure the connection is closed
+        if ($self->{pgsql}) {
+            undef $self->{pgsql};
+        }
+    }
 }
+
+1; # Return true value for module

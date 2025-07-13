@@ -14,7 +14,7 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'user_preferences';
+    sub table { 'user_preferences' }
     
     BUILD {
         # Ensure preference_value is a hash ref if it's a string

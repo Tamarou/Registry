@@ -3,7 +3,7 @@ use 5.34.0;
 use Test::More;
 use Test::Mojo;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 
 # Test WCAG 2.1 AA accessibility compliance
 subtest 'Marketing page accessibility compliance' => sub {

@@ -14,7 +14,7 @@ class Registry::DAO::ProgramType :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'program_types';
+    sub table { 'program_types' }
     
     BUILD {
         # Decode JSON config if it's a string

@@ -11,7 +11,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
     field $first_step :param;
 
-    use constant table => 'workflows';
+    sub table { 'workflows' }
 
     sub create ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;

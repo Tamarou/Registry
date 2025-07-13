@@ -4,60 +4,78 @@ use experimental qw(defer try);
 use Test::More import => [qw( done_testing is ok like is_deeply )];
 defer { done_testing };
 
-use Registry::DAO;
 use Test::Registry::DB;
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+use Test::Registry::Fixtures;
+use Registry::DAO::Family;
 
-# Create test data for admin dashboard
-my $admin = $dao->create( User => {
-    email => 'admin@test.com',
-    name => 'Test Admin',
-    role => 'admin'
+# Setup test database
+my $t  = Test::Registry::DB->new;
+my $db = $t->db;
+
+# Create a test tenant (in registry schema)
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
+    name => 'Test Organization',
+    slug => 'test_org',
 });
 
-my $staff = $dao->create( User => {
-    email => 'staff@test.com',
-    name => 'Test Staff',
-    role => 'staff'
+# Create the tenant schema with all required tables
+$db->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
+
+# Create test users (in registry schema)
+my $admin = Test::Registry::Fixtures::create_user($db, {
+    username => 'admin',
+    password => 'password123',
+    user_type => 'admin',
 });
 
-my $parent = $dao->create( User => {
-    email => 'parent@test.com',
-    name => 'Test Parent',
-    role => 'parent'
+my $staff = Test::Registry::Fixtures::create_user($db, {
+    username => 'staff',
+    password => 'password123',
+    user_type => 'staff',
 });
 
-my $child = $dao->create( FamilyMember => {
-    family_id => $parent->id,
+my $parent = Test::Registry::Fixtures::create_user($db, {
+    username => 'parent',
+    password => 'password123',
+    user_type => 'parent',
+});
+
+# Copy users to tenant schema
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $admin->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $staff->id);
+$db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent->id);
+
+# Switch to tenant schema for operations
+$db = $db->schema($tenant->slug);
+
+# Add child to family
+Registry::DAO::Family->add_child($db, $parent->id, {
     child_name => 'Test Child',
     birth_date => '2015-06-15',
     grade => '3rd'
 });
 
-my $location = $dao->create( Location => {
+my $children = Registry::DAO::Family->list_children($db, $parent->id);
+my $child = $children->[0];
+
+my $location = Test::Registry::Fixtures::create_location($db, {
     name => 'Test Location',
-    slug => 'test-location',
-    address => '123 Test St'
+    slug => 'test-location'
 });
 
-my $program = $dao->create( Project => {
-    name => 'Test Program',
-    description => 'Test program for admin dashboard',
-    status => 'active'
+my $program = Test::Registry::Fixtures::create_project($db, {
+    name => 'Test Program'
 });
 
-my $session = $dao->create( Session => {
+my $session = Test::Registry::Fixtures::create_session($db, {
     name => 'Test Session',
-    project_id => $program->id,
-    location_id => $location->id,
-    start_date => time() - 86400, # Started yesterday
-    end_date => time() + 86400 * 7, # Ends next week
-    capacity => 10
+    start_date => '2024-03-01',
+    end_date => '2024-03-08'
 });
 
 {    # Test admin dashboard overview stats
     # Create enrollments
-    my $enrollment = $dao->create( Enrollment => {
+    my $enrollment = Test::Registry::Fixtures::create_enrollment($db, {
         session_id => $session->id,
         family_member_id => $child->id,
         status => 'active'
@@ -66,25 +84,25 @@ my $session = $dao->create( Session => {
     ok $enrollment, 'Enrollment created for dashboard stats';
     
     # Create events
-    my $event = $dao->create( Event => {
+    my $event = Test::Registry::Fixtures::create_event($db, {
         name => 'Test Event',
         session_id => $session->id,
         location_id => $location->id,
-        start_time => time() + 3600, # 1 hour from now
-        end_time => time() + 7200, # 2 hours from now
-        capacity => 10
+        teacher_id => $staff->id,
+        time => '2024-03-15 14:00:00',
+        duration => 60
     });
     
     ok $event, 'Event created for dashboard stats';
     
     # Test overview stats queries
-    my $active_enrollments = $dao->db->select('enrollments', 'COUNT(*)', {
+    my $active_enrollments = $db->db->db->select('enrollments', 'COUNT(*)', {
         status => ['active', 'pending']
     })->array->[0] || 0;
     
     ok $active_enrollments >= 1, 'Admin dashboard shows active enrollments';
     
-    my $active_programs = $dao->db->select('projects', 'COUNT(*)', {
+    my $active_programs = $db->db->db->select('projects', 'COUNT(*)', {
         status => 'active'
     })->array->[0] || 0;
     
@@ -108,7 +126,7 @@ my $session = $dao->create( Session => {
         ORDER BY p.name
     };
     
-    my $programs = $dao->db->query($sql)->hashes->to_array;
+    my $programs = $db->db->db->query($sql)->hashes->to_array;
     
     ok @$programs >= 1, 'Admin dashboard shows program overview';
     
@@ -144,7 +162,7 @@ my $session = $dao->create( Session => {
         ORDER BY ev.start_time ASC
     };
     
-    my $events = $dao->db->query($sql, $today_start, $today_end)->hashes->to_array;
+    my $events = $db->db->db->query($sql, $today_start, $today_end)->hashes->to_array;
     
     # Events may not exist for today, but query should work
     ok defined $events, 'Today\'s events query works correctly';
@@ -168,7 +186,7 @@ my $session = $dao->create( Session => {
     # Create waitlist entry
     require Registry::DAO::Waitlist;
     my $waitlist_entry = Registry::DAO::Waitlist->join_waitlist(
-        $dao->db, $session->id, $location->id, $child->id, $parent->id
+        $db->db->db, $session->id, $location->id, $child->id, $parent->id
     );
     
     ok $waitlist_entry, 'Waitlist entry created for admin dashboard';
@@ -189,7 +207,7 @@ my $session = $dao->create( Session => {
         LIMIT 10
     };
     
-    my $waitlist_data = $dao->db->query($sql)->hashes->to_array;
+    my $waitlist_data = $db->db->db->query($sql)->hashes->to_array;
     
     ok @$waitlist_data >= 1, 'Admin dashboard shows waitlist data';
     
@@ -210,7 +228,7 @@ my $session = $dao->create( Session => {
         ORDER BY week
     };
     
-    my $trends = $dao->db->query($sql, $start_date)->hashes->to_array;
+    my $trends = $db->db->db->query($sql, $start_date)->hashes->to_array;
     
     # Trends may be empty if no enrollments in timeframe
     ok defined $trends, 'Enrollment trends query works correctly';
@@ -226,7 +244,7 @@ my $session = $dao->create( Session => {
 }
 
 {    # Test export data functionality
-    my $enrollments_data = $dao->db->query(q{
+    my $enrollments_data = $db->db->db->query(q{
         SELECT 
             e.id as enrollment_id,
             e.status,
@@ -267,7 +285,7 @@ my $session = $dao->create( Session => {
     require Registry::DAO::Notification;
     
     # Create test notification
-    Registry::DAO::Notification->create($dao->db, {
+    Registry::DAO::Notification->create($db->db->db, {
         user_id => $parent->id,
         type => 'attendance_reminder',
         channel => 'email',
@@ -288,7 +306,7 @@ my $session = $dao->create( Session => {
         LIMIT 10
     };
     
-    my $notifications = $dao->db->query($sql)->hashes->to_array;
+    my $notifications = $db->db->db->query($sql)->hashes->to_array;
     
     ok @$notifications >= 1, 'Admin dashboard shows recent notifications';
     

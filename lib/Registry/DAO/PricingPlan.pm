@@ -21,7 +21,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'pricing_plans';
+    sub table { 'pricing_plans' }
     
     BUILD {
         # Decode JSON fields if they're strings

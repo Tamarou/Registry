@@ -16,7 +16,7 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     field $notes :param :reader;
     field $created_at :param :reader;
 
-    use constant table => 'templates';
+    sub table { 'templates' }
 
     sub import_from_file( $class, $dao, $file ) {
         # Parse the template name from the file path

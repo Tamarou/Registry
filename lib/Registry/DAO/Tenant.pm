@@ -7,7 +7,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     field $slug :param :reader //= lc( $name =~ s/\s+/_/gr );
     field $created_at :param :reader;
 
-    use constant table => 'tenants';
+    sub table { 'tenants' }
 
     sub create ( $class, $db, $data ) {
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );

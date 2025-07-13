@@ -6,19 +6,19 @@ steps:
 - class: Registry::DAO::WorkflowStep
   description: New Tenant landing page
   slug: landing
-  template: tenant-signup-index
+  template: tenant-signup/index
 - class: Registry::DAO::WorkflowStep
   description: Tenant profile page
   slug: profile
-  template: tenant-signup-profile
+  template: tenant-signup/profile
 - class: Registry::DAO::WorkflowStep
   description: Tenant users page
   slug: users
-  template: tenant-signup-users
+  template: tenant-signup/users
 - class: Registry::DAO::WorkflowStep
   description: Review and confirm setup details
   slug: review
-  template: tenant-signup-review
+  template: tenant-signup/review
 - class: Registry::DAO::WorkflowSteps::TenantPayment
   description: Payment and subscription setup
   slug: payment
@@ -26,4 +26,4 @@ steps:
 - class: Registry::DAO::WorkflowSteps::RegisterTenant
   description: Tenant onboarding complete
   slug: complete
-  template: tenant-signup-complete
+  template: tenant-signup/complete

@@ -16,9 +16,10 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
     field $grade :param :reader;
     field $created_at :param;
 
-    use constant table => 'users';
+    sub table { 'users' }
 
     sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
+        $db = $db->db if $db isa Registry::DAO;
         delete $filter->{password};
         my $data =
           $db->select( $class->table, '*', $filter, $order )->expand->hash;
@@ -27,6 +28,7 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
     }
 
     sub create ( $class, $db, $data //= carp "must provide data" ) {
+        $db = $db->db if $db isa Registry::DAO;
         try {
             my $crypt = Crypt::Passphrase->new(
                 encoder    => 'Argon2',

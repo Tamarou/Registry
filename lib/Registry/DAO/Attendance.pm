@@ -17,7 +17,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'attendance_records';
+    sub table { 'attendance_records' }
     
     BUILD {
         # Validate status
@@ -33,7 +33,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
         }
         
         # Set marked_at if not provided
-        $data->{marked_at} //= time();
+        $data->{marked_at} //= 'now()';
         
         $class->SUPER::create($db, $data);
     }
@@ -50,7 +50,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
             # Update existing record
             return $existing->update($db, {
                 status => $status,
-                marked_at => time(),
+                marked_at => 'now()',
                 marked_by => $marked_by,
                 defined $notes ? (notes => $notes) : ()
             });
@@ -69,6 +69,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     
     # Get attendance records for an event
     sub get_event_attendance ($class, $db, $event_id, %opts) {
+        $db = $db->db if $db isa Registry::DAO;
         my $results = $db->select(
             $class->table, 
             undef, 
@@ -76,11 +77,12 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
             { -asc => 'student_id' }
         )->hashes;
         
-        return $results->to_array;
+        return [ map { $class->new(%$_) } @$results ];
     }
     
     # Get attendance records for a student
     sub get_student_attendance ($class, $db, $student_id, $options = {}) {
+        $db = $db->db if $db isa Registry::DAO;
         my $where = { student_id => $student_id };
         
         # Add date range filter if provided
@@ -102,6 +104,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     
     # Get attendance summary for an event
     sub get_event_summary ($class, $db, $event_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $sql = q{
             SELECT 
                 COUNT(*) as total,
@@ -124,6 +127,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     
     # Bulk mark attendance for multiple students
     sub mark_bulk_attendance ($class, $db, $event_id, $attendance_data, $marked_by) {
+        $db = $db->db if $db isa Registry::DAO;
         my @results;
         
         # Use a transaction for bulk operations
@@ -177,7 +181,13 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     method is_absent { $status eq 'absent' }
     
     # Check if attendance was marked recently (within last hour by default)
-    method is_recent ($threshold_seconds = 3600) {
-        return (time() - $marked_at) < $threshold_seconds;
+    method is_recent ($db, $threshold_seconds = 3600) {
+        $db = $db->db if $db isa Registry::DAO;
+        # Use database to check time difference
+        my $is_recent = $db->query(
+            'SELECT EXTRACT(EPOCH FROM (NOW() - ?)) < ?',
+            $marked_at, $threshold_seconds
+        )->array->[0];
+        return $is_recent;
     }
 }

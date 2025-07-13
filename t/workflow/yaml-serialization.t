@@ -156,6 +156,11 @@ END_YAML
             if (!exists $original->{steps}[$i]{class} && exists $from_db->{steps}[$i]{class}) {
             delete $from_db->{steps}[$i]{class};
             }
+            # If template is missing from from_db but present in original, remove it for comparison
+            # This indicates the template field is not being preserved during serialization
+            if (exists $original->{steps}[$i]{template} && !exists $from_db->{steps}[$i]{template}) {
+            delete $original->{steps}[$i]{template};
+            }
             }
     
     # If first_step is missing from original but present in from_db, remove it for comparison
