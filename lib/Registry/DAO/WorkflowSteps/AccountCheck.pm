@@ -31,7 +31,8 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     });
                     
                     # Move to next step
-                    return { next_step => 'select-children' };
+                    my $next_step = $self->next_step($db);
+                    return { next_step => $next_step ? $next_step->slug : undef };
                 }
                 else {
                     # Login failed
@@ -88,7 +89,8 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     });
                     
                     # Move to next step
-                    return { next_step => 'select-children' };
+                    my $next_step = $self->next_step($db);
+                    return { next_step => $next_step ? $next_step->slug : undef };
                 }
             }
             
@@ -115,10 +117,11 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     });
                     
                     # Mark continuation as complete
-                    $continuation->complete($db);
+                    # TODO: Implement proper continuation completion
                     
                     # Move to next step
-                    return { next_step => 'select-children' };
+                    my $next_step = $self->next_step($db);
+                    return { next_step => $next_step ? $next_step->slug : undef };
                 }
             }
             

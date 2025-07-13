@@ -35,6 +35,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
     method update_data ( $db, $new_data ||= {} ) {
         croak "new data must be a hashref" unless ref $new_data eq 'HASH';
+        $db = $db->db if $db isa Registry::DAO;
         $data = $db->update(
             $self->table,
             { data      => encode_json( { $data->%*, $new_data->%* } ) },
