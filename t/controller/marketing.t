@@ -4,10 +4,13 @@ use Test::More;
 use Test::Mojo;
 use lib qw(lib t/lib);
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Registry;
 
 # Set up test database
-Test::Registry::DB::new_test_db(__PACKAGE__);
+my $t_db = Test::Registry::DB->new;
+my $db = $t_db->db;
+$ENV{DB_URL} = $t_db->uri;
 
 # Create test app
 my $t = Test::Mojo->new('Registry');
