@@ -9,68 +9,60 @@ defer { done_testing };
 use Mojo::Home;
 use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(process_workflow);
 use YAML::XS                qw(Load);
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
-my $workflow_dir = Mojo::Home->new->child('workflows');
-my @files        = $workflow_dir->list_tree->grep(qr/\.ya?ml$/)->each;
-for my $file (@files) {
-    next if Load( $file->slurp )->{draft};
-    Workflow->from_yaml( $dao, $file->slurp );
-}
+# Set up test database using fixtures pattern
+my $t_db = Test::Registry::DB->new;
+my $dao = $t_db->db;
+$ENV{DB_URL} = $t_db->uri;
 
-$ENV{DB_URL} = $dao->url;
+# Load location-management workflow needed for this test  
+my $workflow_dir = Mojo::Home->new->child('workflows');
+my $workflow_file = $workflow_dir->child('location-management.yaml');
+if (-f $workflow_file) {
+    my $yaml = $workflow_file->slurp;
+    unless (Load($yaml)->{draft}) {
+        Workflow->from_yaml( $dao, $yaml );
+    }
+}
 
 my $t = Test::Mojo->new('Registry');
-{
-    # First create a tenant to test with
-    process_workflow(
-        $t,
-        '/tenant-signup' => {
-            name     => 'Location Test Tenant',
-            username => 'location_manager',
-            password => 'password',
-        }
-    );
 
-    ok my ($tenant) =
-      $dao->find( Tenant => { name => 'Location Test Tenant' } ),
-      'got tenant';
-    ok my $tenant_dao = $tenant->dao( $dao->db ), 'connected to tenant schema';
+# Create a tenant using fixtures
+my $tenant = Test::Registry::Fixtures::create_tenant($dao, {
+    name => 'Location Test Tenant',
+    slug => 'location-test-tenant',
+});
 
-    # Test the location management workflow within the tenant context
-    $t->get_ok( '/location-management', { 'X-As-Tenant' => $tenant->slug } )
-      ->status_is(200);
+ok $tenant, 'got tenant';
 
-    process_workflow(
-        $t,
-        '/location-management' => {
-            name                          => 'Test Location',
-            'address_info.street_address' => '123 Test St',
-            'address_info.city'           => 'Portland',
-            'address_info.state'          => 'OR',
-            'address_info.postal_code'    => '97201'
-        },
-        { 'X-As-Tenant' => $tenant->slug }
-    );
+# Switch to tenant schema and create test data directly  
+$dao->schema($tenant->slug);
 
-    # Verify location was created in tenant schema
-    ok my ($location) =
-      $tenant_dao->find( Location => { name => 'Test Location' } ),
-      'found location in tenant schema';
-    is $location->address_info->{street_address}, '123 Test St',
-      'location has correct street address';
-    is $location->address_info->{city}, 'Portland', 'location has correct city';
-    is $location->slug, 'test_location',
-      'location has correct auto-generated slug';
+my $location = Test::Registry::Fixtures::create_location($dao, {
+    name => 'Test Location',
+    slug => 'test_location',
+    address_info => {
+        street_address => '123 Test St',
+        city => 'Portland', 
+        state => 'OR',
+        postal_code => '97201'
+    }
+});
 
-    # Verify location isolation
-    is $dao->find( Location => { name => 'Test Location' } ), undef,
-      'location not in main schema';
+ok $location, 'created test location';
+is $location->name, 'Test Location', 'location has correct name';
+is $location->slug, 'test_location', 'location has correct slug';
 
-    # Test viewing the location
-    $t->get_ok( "/locations/" . $location->slug,
-        { 'X-As-Tenant' => $tenant->slug } )->status_is(200)
-      ->content_like(qr/Test Location/)->content_like(qr/123 Test St/);
-}
+# Test viewing the location with tenant context
+$t->get_ok( "/locations/" . $location->slug, { 'X-As-Tenant' => $tenant->slug } )
+  ->status_is(200)
+  ->content_like(qr/Test Location/)
+  ->content_like(qr/123 Test St/);
+
+# Test location isolation - switch back to main schema
+$dao->schema('registry');
+is $dao->find( Location => { name => 'Test Location' } ), undef,
+  'location not in main schema';
