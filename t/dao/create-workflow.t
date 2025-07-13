@@ -17,7 +17,7 @@ my $workflow;
 
 # If the file exists, load it; otherwise, create the workflow manually for testing
 if ( -e $workflow_file ) {
-    $workflow = Workflow->from_yaml( $dao, $workflow_file->slurp );
+    $workflow = Registry::DAO::Workflow->from_yaml( $dao, $workflow_file->slurp );
 }
 else {
     # Create the workflow creation workflow manually
@@ -52,7 +52,7 @@ else {
         {
             slug        => 'complete',
             description => 'Workflow creation complete',
-            class       => 'Registry::DAO::CreateWorkflow',
+            class       => 'Registry::DAO::WorkflowSteps::CreateWorkflow',
         }
     );
 }
@@ -115,8 +115,7 @@ else {
     }
 
     # Verify the workflow was created
-    my ($created_workflow) =
-      $dao->find( Workflow => { slug => 'test-workflow' } );
+    my ($created_workflow) = $dao->find( Workflow => { slug => 'test-workflow' } );
     ok defined $created_workflow, 'New workflow was created';
     is $created_workflow->name, 'Test Workflow',
       'New workflow has correct name';
