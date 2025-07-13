@@ -8,17 +8,15 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     field $name :param :reader;
     field $slug :param :reader;
     field $address_info :param :reader = {};
-    field $contact_info :param :reader = {};
-    field $facilities :param :reader   = {};
-    field $capacity :param :reader;
     field $metadata :param :reader = {};
     field $notes :param :reader;
     field $created_at :param :reader;
+    field $updated_at :param :reader;
 
     sub table { 'locations' }
 
     sub create ( $class, $db, $data ) {
-        for my $field (qw(address_info contact_info facilities metadata)) {
+        for my $field (qw(address_info metadata)) {
             next unless exists $data->{$field};
             $data->{$field} = { -json => $data->{$field} };
         }

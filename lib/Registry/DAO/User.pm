@@ -18,12 +18,45 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
     sub table { 'users' }
 
-    sub find ( $class, $db, $filter, $order = { -desc => 'created_at' } ) {
+    sub find ( $class, $db, $filter, $order = { -desc => 'u.created_at' } ) {
         $db = $db->db if $db isa Registry::DAO;
         delete $filter->{password};
-        my $data =
-          $db->select( $class->table, '*', $filter, $order )->expand->hash;
-
+        
+        # Join users and user_profiles tables to get complete user data
+        my $query = q{
+            SELECT u.id, u.username, u.passhash, u.birth_date, u.user_type, u.grade, u.created_at,
+                   up.email, up.name
+            FROM users u
+            LEFT JOIN user_profiles up ON u.id = up.user_id
+        };
+        
+        my @where_clauses = ();
+        my @bind_params = ();
+        
+        # Build WHERE clause from filter
+        for my $key (keys %$filter) {
+            if ($key eq 'email' || $key eq 'name') {
+                push @where_clauses, "up.$key = ?";
+            } else {
+                push @where_clauses, "u.$key = ?";
+            }
+            push @bind_params, $filter->{$key};
+        }
+        
+        if (@where_clauses) {
+            $query .= ' WHERE ' . join(' AND ', @where_clauses);
+        }
+        
+        # Add order by clause
+        if (ref $order eq 'HASH' && exists $order->{-desc}) {
+            my $col = $order->{-desc};
+            $col = "u.$col" unless $col =~ /\./;
+            $query .= " ORDER BY $col DESC";
+        }
+        
+        $query .= ' LIMIT 1';
+        
+        my $data = $db->query($query, @bind_params)->hash;
         return $data ? $class->new( $data->%* ) : ();
     }
 
@@ -35,12 +68,37 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
                 validators => [ 'Bcrypt', 'SHA1::Hex' ],
             );
 
-            $data->{passhash} =
-              $crypt->hash_password( delete $data->{password} );
-            my %data =
-              $db->insert( $class->table, $data, { returning => '*' } )
-              ->hash->%*;
-            return $class->new(%data);
+            # Separate data for users and user_profiles tables
+            my %user_data = map { $_ => $data->{$_} } 
+                           grep { exists $data->{$_} } 
+                           qw(username password birth_date user_type grade);
+            
+            my %profile_data = map { $_ => $data->{$_} } 
+                              grep { exists $data->{$_} } 
+                              qw(email name phone data);
+
+            $user_data{passhash} = $crypt->hash_password( delete $user_data{password} );
+            
+            # Start transaction for atomic insert
+            my $tx = $db->begin;
+            
+            # Insert into users table
+            my $user = $db->insert( 'users', \%user_data, { returning => '*' } )->hash;
+            
+            # Insert into user_profiles table if we have profile data
+            my $profile = {};
+            if (%profile_data) {
+                $profile_data{user_id} = $user->{id};
+                $profile = $db->insert( 'user_profiles', \%profile_data, { returning => '*' } )->hash;
+            }
+            
+            $tx->commit;
+            
+            # Combine the data for the object
+            my %combined_data = ( $user->%*, $profile->%* );
+            delete $combined_data{user_id}; # Remove the foreign key field
+            
+            return $class->new(%combined_data);
         }
         catch ($e) {
             carp "Error creating $class: $e";
