@@ -33,15 +33,19 @@ my $t = Test::Mojo->new('Registry');
 # Create a tenant using fixtures
 my $tenant = Test::Registry::Fixtures::create_tenant($dao, {
     name => 'Location Test Tenant',
-    slug => 'location-test-tenant',
+    slug => 'location_test_tenant',
 });
 
 ok $tenant, 'got tenant';
 
-# Switch to tenant schema and create test data directly  
-$dao->schema($tenant->slug);
+# Clone schema to set up tenant database structure  
+$dao->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
 
-my $location = Test::Registry::Fixtures::create_location($dao, {
+# Create a new DAO instance for the tenant schema instead of switching
+my $tenant_dao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $tenant->slug);
+
+# Verify we can create a location in the tenant schema
+my $location = Test::Registry::Fixtures::create_location($tenant_dao, {
     name => 'Test Location',
     slug => 'test_location',
     address_info => {
@@ -56,13 +60,13 @@ ok $location, 'created test location';
 is $location->name, 'Test Location', 'location has correct name';
 is $location->slug, 'test_location', 'location has correct slug';
 
+
 # Test viewing the location with tenant context
 $t->get_ok( "/locations/" . $location->slug, { 'X-As-Tenant' => $tenant->slug } )
   ->status_is(200)
   ->content_like(qr/Test Location/)
   ->content_like(qr/123 Test St/);
 
-# Test location isolation - switch back to main schema
-$dao->schema('registry');
+# Test location isolation - check that location doesn't exist in main schema
 is $dao->find( Location => { name => 'Test Location' } ), undef,
   'location not in main schema';

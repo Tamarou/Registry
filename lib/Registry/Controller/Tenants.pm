@@ -11,12 +11,7 @@ class Registry::Controller::Tenants :isa(Registry::Controller) {
     }
 
     method setup {
-        my $slug = $self->tenant_slug;
-        return 1 unless $slug;
-
-        # set up the DAO helper
-        my $dao = $self->app->dao;
-        $self->app->helper( dao => sub { $dao->connect_schema($slug) } );
+        # DAO helper automatically handles tenant detection and schema switching
         return 1;
     }
 
