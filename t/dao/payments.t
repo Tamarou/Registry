@@ -33,30 +33,15 @@ my $user = Registry::DAO::User->create($db, {
     name     => 'Test User'
 });
 
-# Create test session with pricing
-my $location = Registry::DAO::Location->create($db, {
-    name         => 'Test Location',
-    address_info => { street => '123 Main St', city => 'Test City', state => 'TS', zip => '12345' }
-});
-
-my $project = Registry::DAO::Project->create($db, {
-    name        => 'Test Project',
-    location_id => $location->id
-});
-
+# Create minimal test data for payments
 my $session = Registry::DAO::Session->create($db, {
-    name       => 'Test Session',
-    project_id => $project->id,
-    start_date => Time::Piece->new(time + 86400),
-    end_date   => Time::Piece->new(time + 86400 * 7),
-    capacity   => 20
+    name => 'Test Session'
 });
 
 my $pricing = Registry::DAO::PricingPlan->create($db, {
     session_id  => $session->id,
-    name        => 'Standard',
-    base_price  => 100.50,
-    tier_order  => 1
+    plan_name   => 'Standard',
+    amount      => 100.50
 });
 
 subtest 'Create payment' => sub {
