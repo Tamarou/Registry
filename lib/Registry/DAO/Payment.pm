@@ -21,7 +21,7 @@ field $error_message :param :reader = undef;
 
 field $_stripe_client = undef;
     
-    method table_name { 'registry.payments' }
+    sub table { 'registry.payments' }
     
     method stripe_client {
         return $_stripe_client if $_stripe_client;
