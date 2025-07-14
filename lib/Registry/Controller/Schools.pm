@@ -97,10 +97,9 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
             ORDER BY s.start_date
         };
         
-        my $query_result = $dao->query($sql, @params);
-        return [] unless $query_result;
-        my $results = $query_result->hashes;
-        return [ map { Registry::DAO::Session->new(%$_) } @$results ];
+        my @results = $dao->query($sql, @params);
+        return [] unless @results;
+        return [ map { Registry::DAO::Session->new(%$_) } @results ];
     }
     
     method _group_sessions_by_program ($dao, $sessions, $location_id) {
@@ -109,6 +108,9 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
         for my $session (@$sessions) {
             # Get events for this session
             my $events = $session->events($dao);
+            
+            # Ensure $events is an array reference
+            $events = [] unless ref($events) eq 'ARRAY';
             
             for my $event (@$events) {
                 my $project = $event->project($dao);

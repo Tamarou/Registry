@@ -68,10 +68,10 @@
         <select id="program_type" name="program_type" 
                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
           <option value="">All Programs</option>
-          <option value="afterschool" <%= $filters->{program_type} eq 'afterschool' ? 'selected' : '' %>>
+          <option value="afterschool" <%= ($filters->{program_type} // '') eq 'afterschool' ? 'selected' : '' %>>
             After School
           </option>
-          <option value="summer-camp" <%= $filters->{program_type} eq 'summer-camp' ? 'selected' : '' %>>
+          <option value="summer-camp" <%= ($filters->{program_type} // '') eq 'summer-camp' ? 'selected' : '' %>>
             Summer Camp
           </option>
         </select>
