@@ -6,6 +6,10 @@ use Registry::DAO;
 package Test::Registry::Fixtures {
     use experimental qw(signatures);
 
+    sub new ($class, %args) {
+        bless { %args }, $class;
+    }
+
     sub get_test_db () {
         state $pgsql = Test::PostgreSQL->new();
         App::Sqitch->new()->run( 'sqitch', 'deploy', '-t', $pgsql->uri );
