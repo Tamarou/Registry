@@ -17,6 +17,9 @@ my $t = Test::Mojo->new('Registry');
 
 # Test marketing page renders when no tenant context
 subtest 'Marketing page renders without tenant context' => sub {
+    # Clear any tenant context first
+    $t->ua->cookie_jar->empty;
+    
     # Root redirects to marketing page
     my $tx = $t->get_ok('/')->status_is(302);
     
