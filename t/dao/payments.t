@@ -26,54 +26,45 @@ $db->query(q{
 $db->query("SET search_path TO tenant_1, registry, public");
 
 # Create test user
-my $user = Registry::DAO::User->new(
+my $user = Registry::DAO::User->create($db, {
+    username => 'testuser',
     email    => 'test@example.com',
     password => 'password123',
-    profile  => { name => 'Test User' }
-)->save($db);
+    name     => 'Test User'
+});
 
 # Create test session with pricing
-my $location = Registry::DAO::Location->new(
-    name    => 'Test Location',
-    address => encode_json({ street => '123 Main St', city => 'Test City', state => 'TS', zip => '12345' }),
-    config  => {}
-)->save($db);
+my $location = Registry::DAO::Location->create($db, {
+    name         => 'Test Location',
+    address_info => { street => '123 Main St', city => 'Test City', state => 'TS', zip => '12345' }
+});
 
-my $event = Registry::DAO::Event->new(
-    name        => 'Test Event',
-    location_id => $location->id,
-    config      => {}
-)->save($db);
+my $project = Registry::DAO::Project->create($db, {
+    name        => 'Test Project',
+    location_id => $location->id
+});
 
-my $project = Registry::DAO::Project->new(
-    name      => 'Test Project',
-    event_id  => $event->id,
-    config    => {}
-)->save($db);
-
-my $session = Registry::DAO::Session->new(
+my $session = Registry::DAO::Session->create($db, {
     name       => 'Test Session',
     project_id => $project->id,
     start_date => Time::Piece->new(time + 86400),
     end_date   => Time::Piece->new(time + 86400 * 7),
-    capacity   => 20,
-    config     => {}
-)->save($db);
+    capacity   => 20
+});
 
-my $pricing = Registry::DAO::PricingPlan->new(
+my $pricing = Registry::DAO::PricingPlan->create($db, {
     session_id  => $session->id,
     name        => 'Standard',
     base_price  => 100.50,
-    tier_order  => 1,
-    config      => {}
-)->save($db);
+    tier_order  => 1
+});
 
 subtest 'Create payment' => sub {
-    my $payment = Registry::DAO::Payment->new(
+    my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $user->id,
         amount   => 100.50,
         metadata => { test => 'data' }
-    )->save($db);
+    });
     
     ok $payment->id, 'Payment created with ID';
     is $payment->user_id, $user->id, 'User ID matches';
@@ -83,10 +74,10 @@ subtest 'Create payment' => sub {
 };
 
 subtest 'Add line items' => sub {
-    my $payment = Registry::DAO::Payment->new(
+    my $payment = Registry::DAO::Payment->create($db, {
         user_id => $user->id,
         amount  => 200
-    )->save($db);
+    });
     
     $payment->add_line_item($db, {
         description => 'Child 1 - Session 1',
@@ -130,17 +121,17 @@ subtest 'Calculate enrollment total' => sub {
 
 subtest 'Payment for user' => sub {
     # Create a few payments for the user
-    Registry::DAO::Payment->new(
+    Registry::DAO::Payment->create($db, {
         user_id => $user->id,
         amount  => 50,
         status  => 'completed'
-    )->save($db);
+    });
     
-    Registry::DAO::Payment->new(
+    Registry::DAO::Payment->create($db, {
         user_id => $user->id,
         amount  => 75,
         status  => 'pending'
-    )->save($db);
+    });
     
     my $payments = Registry::DAO::Payment->for_user($db, $user->id);
     ok scalar(@$payments) >= 2, 'At least 2 payments found for user';
@@ -161,10 +152,10 @@ SKIP: {
     skip "STRIPE_SECRET_KEY not set", 2 unless $ENV{STRIPE_SECRET_KEY};
     
     subtest 'Create payment intent' => sub {
-        my $payment = Registry::DAO::Payment->new(
+        my $payment = Registry::DAO::Payment->create($db, {
             user_id => $user->id,
             amount  => 50
-        )->save($db);
+        });
         
         my $intent_data = eval {
             $payment->create_payment_intent($db, {
@@ -187,10 +178,10 @@ SKIP: {
     };
     
     subtest 'Process payment' => sub {
-        my $payment = Registry::DAO::Payment->new(
+        my $payment = Registry::DAO::Payment->create($db, {
             user_id => $user->id,
             amount  => 25
-        )->save($db);
+        });
         
         # Would need a real payment intent ID from Stripe to test this properly
         # For now, just test the error handling
