@@ -172,9 +172,16 @@ subtest 'Return from user creation continuation' => sub {
     
     my $run = $workflow->new_run($db);
     
-    # Simulate a continuation that created a user
+    # Create a user-creation workflow for the continuation
+    my $user_creation_workflow = Registry::DAO::Workflow->create($db, {
+        name => 'User Creation',
+        slug => 'user-creation',
+        description => 'User creation workflow'
+    });
+    
+    # Simulate a continuation that created a user (from user-creation workflow)
     my $continuation = Registry::DAO::WorkflowRun->create($db, {
-        workflow_id => $workflow->id,
+        workflow_id => $user_creation_workflow->id,
         data => encode_json({
             user_id => $test_user->id,
             user_name => 'Test Parent',

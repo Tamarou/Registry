@@ -2,7 +2,7 @@ use 5.40.2;
 use Object::Pad;
 
 class Registry::DAO::User :isa(Registry::DAO::Object) {
-    use Carp         qw( carp );
+    use Carp         qw( carp croak );
     use experimental qw(try);
     use Crypt::Passphrase;
 
@@ -79,6 +79,17 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
             $user_data{passhash} = $crypt->hash_password( delete $user_data{password} );
             
+            # Validate input lengths for security
+            if (exists $profile_data{email} && length($profile_data{email}) > 255) {
+                croak "Email address is too long (maximum 255 characters)";
+            }
+            if (exists $profile_data{name} && length($profile_data{name}) > 255) {
+                croak "Name is too long (maximum 255 characters)";
+            }
+            if (exists $user_data{username} && length($user_data{username}) > 255) {
+                croak "Username is too long (maximum 255 characters)";
+            }
+            
             # Start transaction for atomic insert
             my $tx = $db->begin;
             
@@ -102,6 +113,7 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         }
         catch ($e) {
             carp "Error creating $class: $e";
+            croak $e;
         };
     }
     

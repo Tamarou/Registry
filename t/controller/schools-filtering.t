@@ -15,6 +15,7 @@ use Registry;
 use Registry::DAO::Event;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::ProgramType;
+use Registry::DAO::Waitlist;
 
 # Setup test database
 my $t_db = Test::Registry::DB->new;
@@ -37,6 +38,15 @@ $db->schema($tenant->slug);
 my $school = Test::Registry::Fixtures::create_location($db, {
     name => 'Test Elementary School',
     slug => 'test-elementary',
+});
+
+# Create test teacher
+my $teacher = Test::Registry::Fixtures::create_user($db, {
+    username => 'testteacher',
+    password => 'test123',
+    name => 'Test Teacher',
+    email => 'teacher@test.com',
+    user_type => 'staff',
 });
 
 # Create programs with different types
@@ -69,17 +79,21 @@ my $future_session = Test::Registry::Fixtures::create_session($db, {
 my $young_event = Test::Registry::Fixtures::create_event($db, {
     location_id => $school->id,
     project_id => $afterschool->id,
+    teacher_id => $teacher->id,
     min_age => 5,
     max_age => 8,
     capacity => 20,
+    time => '2024-03-15 14:00:00',
 });
 
 my $older_event = Test::Registry::Fixtures::create_event($db, {
     location_id => $school->id,
     project_id => $summer->id,
+    teacher_id => $teacher->id,
     min_age => 9,
     max_age => 12,
     capacity => 15,
+    time => '2024-03-15 15:00:00',
 });
 
 # Add events to sessions
@@ -105,6 +119,8 @@ Registry::DAO::PricingPlan->create($db, {
 # Create enrollments to test fill indicators
 for my $i (1..16) {
     my $student = Test::Registry::Fixtures::create_user($db, {
+        username => "student$i",
+        password => 'test123',
         name => "Student $i",
         email => "student$i\@test.com",
     });
@@ -170,6 +186,8 @@ subtest 'Visual indicators - waitlist' => sub {
     # Add waitlist entries
     for my $i (1..3) {
         my $student = Test::Registry::Fixtures::create_user($db, {
+            username => "waitlist$i",
+            password => 'test123',
             name => "Waitlist Student $i",
             email => "waitlist$i\@test.com",
         });
@@ -207,8 +225,10 @@ subtest 'Combined filters' => sub {
     my $match_event = Test::Registry::Fixtures::create_event($db, {
         location_id => $school->id,
         project_id => $afterschool->id,
+        teacher_id => $teacher->id,
         min_age => 6,
         max_age => 10,
+        time => '2024-10-15 14:00:00',
     });
     
     $match_session->add_events($db, $match_event->id);

@@ -47,13 +47,14 @@ my $pricing = Registry::DAO::PricingPlan->create($db, {
 subtest 'Create payment' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $user->id,
-        amount   => 100.50,
-        metadata => { test => 'data' }
+        amount   => 100.50
     });
     
+    ok $payment, 'Payment object created';
+    isa_ok $payment, 'Registry::DAO::Payment', 'Payment is correct class';
     ok $payment->id, 'Payment created with ID';
     is $payment->user_id, $user->id, 'User ID matches';
-    is $payment->amount, 100.50, 'Amount matches';
+    is $payment->amount, '100.50', 'Amount matches';
     is $payment->status, 'pending', 'Default status is pending';
     is $payment->currency, 'USD', 'Default currency is USD';
 };
@@ -80,8 +81,8 @@ subtest 'Add line items' => sub {
     
     my $items = $payment->line_items($db);
     is scalar(@$items), 2, 'Two line items added';
-    is $items->[0]->{amount}, 100, 'First item amount correct';
-    is $items->[1]->{amount}, 100, 'Second item amount correct';
+    is $items->[0]->{amount}, '100.00', 'First item amount correct';
+    is $items->[1]->{amount}, '100.00', 'Second item amount correct';
 };
 
 subtest 'Calculate enrollment total' => sub {

@@ -33,7 +33,7 @@ package Test::Registry::Fixtures {
     }
     
     sub create_session ($db, $data) {
-        require Registry::DAO::Event;
+        require Registry::DAO::Session;
         Registry::DAO::Session->create($db, $data);
     }
     
@@ -44,16 +44,8 @@ package Test::Registry::Fixtures {
     
     sub create_user ($db, $data) {
         require Registry::DAO::User;
-        # Only pass fields that exist in the users table (username, passhash, birth_date, user_type, grade, created_at)
-        my $user_data = {
-            username => $data->{username},
-            password => $data->{password},
-        };
-        # Add optional user table fields
-        $user_data->{user_type} = $data->{user_type} if $data->{user_type};
-        $user_data->{birth_date} = $data->{birth_date} if $data->{birth_date};
-        $user_data->{grade} = $data->{grade} if $data->{grade};
-        Registry::DAO::User->create($db, $user_data);
+        # Pass all provided data - User.pm will properly separate fields for users and user_profiles tables
+        Registry::DAO::User->create($db, $data);
     }
     
     sub create_pricing ($db, $data) {

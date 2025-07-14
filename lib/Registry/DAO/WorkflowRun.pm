@@ -9,7 +9,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     field $user_id :param = 0;
     field $workflow_id :param;
     field $latest_step_id :param  = undef;
-    field $continuation_id :param = undef;
+    field $continuation_id :param :reader = undef;
 
     # This is our reference implementation for JSONB handling
     field $data :param //= {};
