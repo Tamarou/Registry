@@ -276,6 +276,12 @@ class Registry :isa(Mojolicious) {
     
     method _extract_tenant_from_subdomain ($c) {
         my $host = $c->req->headers->host || '';
+        # Remove port if present
+        $host =~ s/:\d+$//;
+        
+        # Don't extract tenant from IP addresses
+        return undef if $host =~ /^\d+\.\d+\.\d+\.\d+$/;
+        
         # Extract tenant from subdomain: tenant.example.com -> tenant
         if ($host =~ /^([^.]+)\./) {
             my $subdomain = $1;
