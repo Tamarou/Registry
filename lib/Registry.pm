@@ -28,8 +28,21 @@ class Registry :isa(Mojolicious) {
         Registry::Job::WaitlistExpiration->register($self);
 
         $self->helper(
-            dao => sub {
-                state $db = Registry::DAO->new( url => $ENV{DB_URL} );
+            dao => sub ($c, $tenant = undef) {
+                # Determine tenant: explicit param > header > subdomain > 'public'
+                unless ($tenant) {
+                    my $header_tenant = $c->req->headers->header('X-As-Tenant');
+                    my $cookie_tenant = $c->req->cookie('as-tenant');
+                    my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
+                    
+                    $tenant = $header_tenant || $cookie_tenant || $subdomain_tenant || 'registry';
+                }
+                
+                # Create new DAO for this tenant (no caching as per user preference)
+                return Registry::DAO->new( 
+                    url => $ENV{DB_URL}, 
+                    schema => $tenant 
+                );
             }
         );
 
@@ -75,16 +88,16 @@ class Registry :isa(Mojolicious) {
         $self->routes->get('/marketing')->to('marketing#index')
           ->name('marketing_index');
 
-        # Route handling for root path - check for tenant context
+        # Route handling for root path - show tenant landing or redirect to marketing
         my $root = $self->routes->get('/');
         $root->to(cb => sub ($c) {
-            # Check if we have a tenant slug (cookie or header)
-            my $slug = $c->req->cookie('as-tenant') || $c->req->headers->header('X-As-Tenant');
+            # DAO helper automatically detects tenant context
+            my $tenant = $c->req->headers->header('X-As-Tenant') ||
+                         $c->req->cookie('as-tenant') ||
+                         $self->_extract_tenant_from_subdomain($c);
             
-            if ($slug) {
-                # We have a tenant, set up the tenant context and show tenant landing
-                my $dao = $c->app->dao;
-                $c->app->helper( dao => sub { $dao->connect_schema($slug) } );
+            if ($tenant) {
+                # Show tenant landing page
                 $c->render( template => 'index' );
             } else {
                 # No tenant context, redirect to marketing page
@@ -149,7 +162,8 @@ class Registry :isa(Mojolicious) {
     }
 
     method import_workflows () {
-        my $dao = $self->dao;
+        # Import workflows to main registry schema
+        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
         my @workflows =
           $self->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 
@@ -169,7 +183,8 @@ class Registry :isa(Mojolicious) {
     }
 
     method import_templates () {
-        my $dao = $self->dao;
+        # Import templates to main registry schema
+        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
 
         my @templates =
           $self->app->home->child('templates')
@@ -184,7 +199,8 @@ class Registry :isa(Mojolicious) {
     }
 
     method import_schemas () {
-        my $dao = $self->dao;
+        # Import schemas to main registry schema
+        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
 
         my @schemas =
           $self->home->child('schemas')->list->grep(qr/\.json$/)->each;
@@ -256,6 +272,16 @@ class Registry :isa(Mojolicious) {
             
             $self->log->info("Scheduled recurring waitlist processing job");
         }
+    }
+    
+    method _extract_tenant_from_subdomain ($c) {
+        my $host = $c->req->headers->host || '';
+        # Extract tenant from subdomain: tenant.example.com -> tenant
+        if ($host =~ /^([^.]+)\./) {
+            my $subdomain = $1;
+            return $subdomain unless $subdomain eq 'www';
+        }
+        return undef;
     }
 }
 
