@@ -74,4 +74,29 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
         return unless $self->has_coordinates;
         return @{ $address_info->{coordinates} }{qw(lat lng)};
     }
+
+    method address() {
+        return $address_info;
+    }
+
+    # Legacy field access methods for backward compatibility
+    method address_street() {
+        return $address_info->{street_address};
+    }
+
+    method address_city() {
+        return $address_info->{city};
+    }
+
+    method address_state() {
+        return $address_info->{state};
+    }
+
+    method address_zip() {
+        return $address_info->{postal_code};
+    }
+
+    method description() {
+        return $notes;
+    }
 }
