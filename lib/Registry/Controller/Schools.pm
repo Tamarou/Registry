@@ -97,7 +97,9 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
             ORDER BY s.start_date
         };
         
-        my $results = $dao->query($sql, @params)->hashes;
+        my $query_result = $dao->query($sql, @params);
+        return [] unless $query_result;
+        my $results = $query_result->hashes;
         return [ map { Registry::DAO::Session->new(%$_) } @$results ];
     }
     

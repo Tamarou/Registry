@@ -88,6 +88,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     # Get all pricing plans for a session
     sub get_pricing_plans ($class, $db, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $results = $db->select($class->table, undef, { session_id => $session_id })->hashes;
         return [ map { $class->new(%$_) } @$results ];
     }

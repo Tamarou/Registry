@@ -9,6 +9,7 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 use WebService::Stripe;
 use Mojo::JSON qw(encode_json decode_json);
 
+field $id :param :reader = undef;
 field $user_id :param :reader = undef;
 field $amount :param :reader = 0;
 field $currency :param :reader = 'USD';
@@ -18,10 +19,32 @@ field $stripe_payment_method_id :param :reader = undef;
 field $metadata :param :reader = {};
 field $completed_at :param :reader = undef;
 field $error_message :param :reader = undef;
+field $created_at :param :reader = undef;
+field $updated_at :param :reader = undef;
 
 field $_stripe_client = undef;
     
+    BUILD {
+        # Decode JSON metadata if it's a string
+        if (defined $metadata && !ref $metadata) {
+            try {
+                $metadata = decode_json($metadata);
+            } catch ($e) {
+                $metadata = {};
+            }
+        }
+    }
+    
     sub table { 'registry.payments' }
+    
+    sub create ($class, $db, $data) {
+        # Handle JSON encoding for metadata
+        if (exists $data->{metadata} && ref $data->{metadata}) {
+            $data->{metadata} = encode_json($data->{metadata});
+        }
+        
+        return $class->SUPER::create($db, $data);
+    }
     
     method stripe_client {
         return $_stripe_client if $_stripe_client;
@@ -109,11 +132,16 @@ field $_stripe_client = undef;
     }
     
     method add_line_item ($db, $args) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        die "Description required" unless defined $args->{description};
+        die "Amount required" unless defined $args->{amount};
+        
         my $item = {
             payment_id => $self->id,
             enrollment_id => $args->{enrollment_id},
-            description => $args->{description} // die "Description required",
-            amount => $args->{amount} // die "Amount required",
+            description => $args->{description},
+            amount => $args->{amount},
             quantity => $args->{quantity} // 1,
             metadata => encode_json($args->{metadata} // {}),
         };
@@ -122,6 +150,7 @@ field $_stripe_client = undef;
     }
     
     method line_items ($db) {
+        $db = $db->db if $db isa Registry::DAO;
         my $items = $db->select('registry.payment_items', '*', { payment_id => $self->id })->hashes;
         
         # Decode metadata for each item
@@ -169,7 +198,8 @@ field $_stripe_client = undef;
         return $refund;
     }
     
-    method for_user ($class, $db, $user_id) {
+    sub for_user ($class, $db, $user_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $payments = $db->select(
             'registry.payments',
             '*',
@@ -182,12 +212,12 @@ field $_stripe_client = undef;
         ];
     }
     
-    method calculate_enrollment_total ($class, $db, $enrollment_data) {
+    sub calculate_enrollment_total ($class, $db, $enrollment_data) {
         my $total = 0;
         my $items = [];
         
         # Import Session class
-        require Registry::DAO::Event;
+        require Registry::DAO::Session;
         
         # Calculate cost for each child-session pair
         for my $child (@{$enrollment_data->{children} // []}) {
@@ -197,15 +227,25 @@ field $_stripe_client = undef;
             
             next unless $session_id;
             
-            my $session = Registry::DAO::Session->new(id => $session_id)->load($db);
-            my $pricing = $session->primary_pricing_plan($db);
+            my $session = Registry::DAO::Session->find($db, { id => $session_id });
+            next unless $session;
             
-            if ($pricing) {
-                my $price = $pricing->calculate_price($child, $session);
+            my $pricing_plans = $session->pricing_plans($db);
+            next unless $pricing_plans && @$pricing_plans;
+            
+            # Use the first pricing plan or find the best price
+            my $pricing = $pricing_plans->[0];
+            my $price = $pricing->calculate_price({
+                child_count => 1,
+                date => time(),
+                %$child
+            });
+            
+            if (defined $price) {
                 $total += $price;
                 
                 push @$items, {
-                    description => "$child->{first_name} $child->{last_name} - $session->{name}",
+                    description => "$child->{first_name} $child->{last_name} - " . $session->name,
                     amount => $price,
                     metadata => {
                         child_id => $child->{id},
