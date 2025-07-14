@@ -16,6 +16,7 @@ use Registry::DAO::Event;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::ProgramType;
 use Registry::DAO::Waitlist;
+use Registry::DAO::FamilyMember;
 
 # Setup test database
 my $t_db = Test::Registry::DB->new;
@@ -48,6 +49,34 @@ my $teacher = Test::Registry::Fixtures::create_user($db, {
     email => 'teacher@test.com',
     user_type => 'staff',
 });
+
+# Create test parent for family members
+my $parent = Test::Registry::Fixtures::create_user($db, {
+    username => 'testparent',
+    password => 'test123',
+    name => 'Test Parent',
+    email => 'parent@test.com',
+    user_type => 'parent',
+});
+
+# Create program types if they don't exist
+Registry::DAO::ProgramType->find_or_create($db, 
+    { slug => 'afterschool' },
+    {
+        name => 'After School',
+        slug => 'afterschool',
+        config => {},
+    }
+);
+
+Registry::DAO::ProgramType->find_or_create($db,
+    { slug => 'summer-camp' },
+    {
+        name => 'Summer Camp',
+        slug => 'summer-camp',
+        config => {},
+    }
+);
 
 # Create programs with different types
 my $afterschool = Test::Registry::Fixtures::create_project($db, {
@@ -118,15 +147,29 @@ Registry::DAO::PricingPlan->create($db, {
 
 # Create enrollments to test fill indicators
 for my $i (1..16) {
-    my $student = Test::Registry::Fixtures::create_user($db, {
-        username => "student$i",
+    # Create separate parent user for each child (for unique constraint)
+    my $parent_user = Test::Registry::Fixtures::create_user($db, {
+        username => "parent$i",
         password => 'test123',
-        name => "Student $i",
-        email => "student$i\@test.com",
+        name => "Parent $i",
+        email => "parent$i\@test.com",
+        user_type => 'parent',
     });
+    
+    # Create family member for each child
+    my $family_member = Registry::DAO::FamilyMember->create($db, {
+        family_id => $parent_user->id,
+        child_name => "Student $i",
+        birth_date => '2015-01-01',  # Child born in 2015, so age ~10
+        grade => '4th',
+        medical_info => {},
+    });
+    
+    # Create enrollment using family_member_id
     Registry::DAO::Enrollment->create($db, {
         session_id => $current_session->id,
-        student_id => $student->id,
+        student_id => $parent_user->id,  # Parent's user ID for backward compatibility
+        family_member_id => $family_member->id,  # Child's family_member ID
         status => 'active',
     });
 }
@@ -185,19 +228,39 @@ subtest 'Visual indicators - early bird' => sub {
 subtest 'Visual indicators - waitlist' => sub {
     # Add waitlist entries
     for my $i (1..3) {
-        my $student = Test::Registry::Fixtures::create_user($db, {
-            username => "waitlist$i",
+        # Create separate parent user for each waitlist child
+        my $waitlist_parent = Test::Registry::Fixtures::create_user($db, {
+            username => "waitlist_parent$i",
             password => 'test123',
-            name => "Waitlist Student $i",
-            email => "waitlist$i\@test.com",
+            name => "Waitlist Parent $i",
+            email => "waitlist_parent$i\@test.com",
+            user_type => 'parent',
         });
+        
+        # Create family member for each waitlist child
+        my $family_member = Registry::DAO::FamilyMember->create($db, {
+            family_id => $waitlist_parent->id,
+            child_name => "Waitlist Student $i",
+            birth_date => '2016-01-01',  # Child born in 2016, so age ~9
+            grade => '3rd',
+            medical_info => {},
+        });
+        
+        # Add to waitlist using family_member_id
         Registry::DAO::Waitlist->join_waitlist(
             $db,
             $current_session->id,
             $school->id,
-            $student->id,
-            $student->id  # Parent same as student for simplicity
+            $waitlist_parent->id,  # Parent's user ID for backward compatibility
+            $waitlist_parent->id   # Parent ID for parent field
         );
+        
+        # Update the waitlist entry to include family_member_id
+        my $waitlist_entry = Registry::DAO::Waitlist->find($db, {
+            session_id => $current_session->id,
+            student_id => $waitlist_parent->id,
+        });
+        $waitlist_entry->update($db, { family_member_id => $family_member->id });
     }
     
     $t->get_ok('/school/test-elementary')
