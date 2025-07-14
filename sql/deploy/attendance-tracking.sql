@@ -28,6 +28,15 @@ CREATE INDEX idx_attendance_student_id ON attendance_records(student_id);
 CREATE INDEX idx_attendance_marked_at ON attendance_records(marked_at);
 CREATE INDEX idx_attendance_status ON attendance_records(status);
 
+-- Create update function if it doesn't exist (defined in program-types.sql)
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Create update trigger for updated_at
 CREATE TRIGGER update_attendance_records_updated_at BEFORE UPDATE ON attendance_records
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
