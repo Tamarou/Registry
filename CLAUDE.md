@@ -78,6 +78,7 @@ class Foo :isa(Bar) {
 
 ### Important Notes
 
+- **Pre-Alpha System**: Registry is pre-alpha with no users yet. Do NOT worry about backwards compatibility unless explicitly told otherwise. Make the best technical decisions for the current codebase.
 - When modifying workflows, remember to re-import them with the workflow import command
 - The workflow processor (`lib/Registry/Utility/WorkflowProcessor.pm`) handles workflow execution
 - Custom workflow steps must inherit from base step classes and implement required methods

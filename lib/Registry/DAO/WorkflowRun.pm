@@ -17,8 +17,26 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
     sub table { 'workflow_runs' }
 
+    sub create ( $class, $db, $data ) {
+        # Handle JSON fields like data
+        for my $field (qw(data)) {
+            next unless exists $data->{$field};
+            $data->{$field} = { -json => $data->{$field} };
+        }
+        
+        $class->SUPER::create( $db, $data );
+    }
+
     method id()   { $id }
-    method data() { $data }
+    method data() { 
+        # Handle JSON parsing - data might be a JSON string from database
+        if (defined $data && !ref $data) {
+            # It's a JSON string, parse it
+            use Mojo::JSON qw(decode_json);
+            return decode_json($data);
+        }
+        return $data || {};
+    }
 
     method workflow ($db) {
         Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
@@ -36,12 +54,19 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     method update_data ( $db, $new_data ||= {} ) {
         croak "new data must be a hashref" unless ref $new_data eq 'HASH';
         $db = $db->db if $db isa Registry::DAO;
-        $data = $db->update(
+        
+        # Get current data, properly parsed
+        my $current_data = $self->data();
+        
+        my $updated_data = { $current_data->%*, $new_data->%* };
+        $db->update(
             $self->table,
-            { data      => encode_json( { $data->%*, $new_data->%* } ) },
-            { id        => $id },
-            { returning => ['data'] }
-        )->expand->hash->{data};
+            { data      => encode_json( $updated_data ) },
+            { id        => $id }
+        );
+        
+        # Update the field with the merged data
+        $data = $updated_data;
     }
 
     method process ( $db, $step, $new_data = {} ) {

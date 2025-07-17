@@ -54,6 +54,14 @@ class Registry::DAO {
         wantarray ? $res->to_array->@* : $res->first;
     }
 
+    method select ( $table, $fields = undef, $where = undef, $options = undef ) {
+        return $db->select( $table, $fields, $where, $options );
+    }
+
+    method delete ( $table, $where = undef ) {
+        return $db->delete( $table, $where );
+    }
+
     method find ( $class, $filter = {} ) {
         return unless defined wantarray;
 

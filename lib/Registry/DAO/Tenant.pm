@@ -37,6 +37,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             WHERE tu.tenant_id = ? AND tu.is_primary is true
             SQL
         my $user_data = $db->query( $sql, $id )->expand->hash;
+        return unless $user_data && $user_data->{id};
         return Registry::DAO::User->new( $user_data->%* );
     }
 

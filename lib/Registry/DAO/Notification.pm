@@ -42,8 +42,11 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
             croak "Missing required field: $field" unless $data->{$field};
         }
         
-        # Ensure metadata is a hash ref
+        # Ensure metadata is a hash ref and encode as JSON
         $data->{metadata} //= {};
+        if (exists $data->{metadata} && ref $data->{metadata}) {
+            $data->{metadata} = { -json => $data->{metadata} };
+        }
         
         $class->SUPER::create($db, $data);
     }

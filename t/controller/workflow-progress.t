@@ -17,8 +17,8 @@ subtest 'Workflow Progress Data Generation' => sub {
     # Create a test workflow with multiple steps
     my $workflow = $dao->create( Workflow => {
         slug => 'test-progress-workflow',
-        description => 'Test workflow for progress indicator',
-        metadata => { test => 1 }
+        name => 'Test Progress Workflow',
+        description => 'Test workflow for progress indicator'
     });
     
     # Create workflow steps in specific order
@@ -26,7 +26,6 @@ subtest 'Workflow Progress Data Generation' => sub {
         workflow_id => $workflow->id,
         slug => 'landing',
         description => 'Welcome Step',
-        sort_order => 1,
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -34,7 +33,6 @@ subtest 'Workflow Progress Data Generation' => sub {
         workflow_id => $workflow->id,
         slug => 'profile',
         description => 'Profile Information',
-        sort_order => 2,
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -42,7 +40,6 @@ subtest 'Workflow Progress Data Generation' => sub {
         workflow_id => $workflow->id,
         slug => 'review',
         description => 'Review Details',
-        sort_order => 3,
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -50,7 +47,6 @@ subtest 'Workflow Progress Data Generation' => sub {
         workflow_id => $workflow->id,
         slug => 'complete',
         description => 'Completion',
-        sort_order => 4,
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -78,7 +74,7 @@ subtest 'Workflow Progress Data Generation' => sub {
     is_deeply(\@completed_steps, ['1'], 'Completed steps are correct (only step 1)');
     
     # Test URLs are generated for completed steps only
-    my @step_urls = split(',', $progress->{step_urls});
+    my @step_urls = split(',', $progress->{step_urls}, -1);
     ok($step_urls[0], 'URL generated for completed step 1');
     is($step_urls[1], '', 'No URL for current step 2');
     is($step_urls[2], '', 'No URL for future step 3');
@@ -101,15 +97,15 @@ subtest 'Progress with Auto-generated Step Names' => sub {
     # Create workflow with steps that have auto-generated descriptions
     my $workflow = $dao->create( Workflow => {
         slug => 'auto-name-workflow',
+        name => 'Auto Name Workflow',
         description => 'Workflow with auto-generated step names',
-        metadata => {}
     });
     
     my $step1 = $dao->create( WorkflowStep => {
         workflow_id => $workflow->id,
         slug => 'user-registration',
         description => 'Auto-created first step',  # Should be replaced
-        sort_order => 1,
+        
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -117,7 +113,7 @@ subtest 'Progress with Auto-generated Step Names' => sub {
         workflow_id => $workflow->id,
         slug => 'payment-info',
         description => undef,  # No description
-        sort_order => 2,
+        
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -139,8 +135,8 @@ subtest 'Progress with No Steps' => sub {
     # Create workflow with no steps
     my $workflow = $dao->create( Workflow => {
         slug => 'empty-workflow',
+        name => 'Empty Workflow',
         description => 'Workflow with no steps',
-        metadata => {}
     });
     
     my $run = $dao->create( WorkflowRun => {
@@ -159,8 +155,8 @@ subtest 'Progress with Different Current Step Positions' => sub {
     # Create workflow for position testing
     my $workflow = $dao->create( Workflow => {
         slug => 'position-test-workflow',
+        name => 'Position Test Workflow',
         description => 'Test different step positions',
-        metadata => {}
     });
     
     my @steps;
@@ -169,7 +165,7 @@ subtest 'Progress with Different Current Step Positions' => sub {
             workflow_id => $workflow->id,
             slug => "step-$i",
             description => "Step $i",
-            sort_order => $i,
+            
             class => 'Registry::DAO::WorkflowStep'
         });
     }
@@ -214,15 +210,15 @@ subtest 'URL Generation for Navigation' => sub {
     # Test that URLs are generated correctly for backward navigation
     my $workflow = $dao->create( Workflow => {
         slug => 'url-test-workflow',
+        name => 'URL Test Workflow',
         description => 'Test URL generation',
-        metadata => {}
     });
     
     my $step1 = $dao->create( WorkflowStep => {
         workflow_id => $workflow->id,
         slug => 'start',
         description => 'Start Step',
-        sort_order => 1,
+        
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -230,7 +226,7 @@ subtest 'URL Generation for Navigation' => sub {
         workflow_id => $workflow->id,
         slug => 'middle',
         description => 'Middle Step',
-        sort_order => 2,
+        
         class => 'Registry::DAO::WorkflowStep'
     });
     
@@ -243,7 +239,7 @@ subtest 'URL Generation for Navigation' => sub {
     my $controller = MockWorkflowController->new(dao => $dao);
     my $progress = $controller->_get_workflow_progress($run, $step2);
     
-    my @urls = split(',', $progress->{step_urls});
+    my @urls = split(',', $progress->{step_urls}, -1);
     like($urls[0], qr/url-test-workflow.*start/, 'URL contains workflow slug and step slug');
     is($urls[1], '', 'Current step has no URL');
 };
@@ -261,11 +257,11 @@ package MockWorkflowController {
                 'workflow_steps',
                 ['id', 'slug', 'description'],
                 { workflow_id => $workflow->id },
-                { -asc => 'sort_order' }
+                { -asc => 'created_at' }
             )->hashes->to_array;
             
             # If no explicit sort_order, fall back to creation order
-            if (!@$steps || !defined $steps->[0]{sort_order}) {
+            if (!@$steps) {
                 $steps = $dao->db->select(
                     'workflow_steps',
                     ['id', 'slug', 'description'],

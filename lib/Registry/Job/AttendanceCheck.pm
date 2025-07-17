@@ -113,14 +113,9 @@ class Registry::Job::AttendanceCheck {
             next unless $teacher_id;
             
             # Check if we already sent a reminder for this event
-            my $existing_reminder = $db->select(
-                'notifications',
-                'id',
-                {
-                    user_id => $teacher_id,
-                    type => 'attendance_reminder',
-                    'metadata->event_id' => $event->{id}
-                }
+            my $existing_reminder = $db->query(
+                'SELECT id FROM notifications WHERE user_id = ? AND type = ? AND metadata->>? = ?',
+                $teacher_id, 'attendance_reminder', 'event_id', $event->{id}
             )->hash;
             
             next if $existing_reminder; # Already sent reminder
@@ -155,19 +150,20 @@ class Registry::Job::AttendanceCheck {
                 e.id,
                 e.teacher_id,
                 e.metadata->>'title' as title,
-                e.metadata->>'start_time' as start_time,
-                e.metadata->>'end_time' as end_time,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
                 l.name as location_name,
                 p.name as program_name,
                 COUNT(en.id) as enrolled_count
             FROM events e
             JOIN locations l ON e.location_id = l.id
             JOIN projects p ON e.project_id = p.id
-            LEFT JOIN sessions s ON s.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
             LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
             WHERE 
                 -- Event started in the last 15 minutes
-                CAST(e.metadata->>'start_time' AS timestamp) BETWEEN 
+                e.time BETWEEN 
                     now() - interval '15 minutes' AND now()
                 -- And has no attendance records
                 AND NOT EXISTS (
@@ -178,11 +174,13 @@ class Registry::Job::AttendanceCheck {
                 AND EXISTS (
                     SELECT 1 FROM enrollments en2 
                     JOIN sessions s2 ON en2.session_id = s2.id 
-                    WHERE s2.project_id = e.project_id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
                     AND en2.status = 'active'
                 )
             GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
-            ORDER BY CAST(e.metadata->>'start_time' AS timestamp) DESC
+            ORDER BY e.time DESC
         };
         
         return $db->query($sql)->hashes->to_array;
@@ -195,29 +193,32 @@ class Registry::Job::AttendanceCheck {
                 e.id,
                 e.teacher_id,
                 e.metadata->>'title' as title,
-                e.metadata->>'start_time' as start_time,
-                e.metadata->>'end_time' as end_time,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
                 l.name as location_name,
                 p.name as program_name,
                 COUNT(en.id) as enrolled_count
             FROM events e
             JOIN locations l ON e.location_id = l.id
             JOIN projects p ON e.project_id = p.id
-            LEFT JOIN sessions s ON s.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
             LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
             WHERE 
                 -- Event starts in the next 5 minutes
-                CAST(e.metadata->>'start_time' AS timestamp) BETWEEN 
+                e.time BETWEEN 
                     now() AND now() + interval '5 minutes'
                 -- And has enrolled students
                 AND EXISTS (
                     SELECT 1 FROM enrollments en2 
                     JOIN sessions s2 ON en2.session_id = s2.id 
-                    WHERE s2.project_id = e.project_id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
                     AND en2.status = 'active'
                 )
             GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
-            ORDER BY CAST(e.metadata->>'start_time' AS timestamp) ASC
+            ORDER BY e.time ASC
         };
         
         return $db->query($sql)->hashes->to_array;
@@ -230,19 +231,20 @@ class Registry::Job::AttendanceCheck {
                 e.id,
                 e.teacher_id,
                 e.metadata->>'title' as title,
-                e.metadata->>'start_time' as start_time,
-                e.metadata->>'end_time' as end_time,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
                 l.name as location_name,
                 p.name as program_name,
                 COUNT(en.id) as enrolled_count
             FROM events e
             JOIN locations l ON e.location_id = l.id
             JOIN projects p ON e.project_id = p.id
-            LEFT JOIN sessions s ON s.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
             LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
             WHERE 
                 -- Event started more than 30 minutes ago
-                CAST(e.metadata->>'start_time' AS timestamp) < now() - interval '30 minutes'
+                e.time < now() - interval '30 minutes'
                 -- And has no attendance records
                 AND NOT EXISTS (
                     SELECT 1 FROM attendance_records ar 
@@ -252,11 +254,13 @@ class Registry::Job::AttendanceCheck {
                 AND EXISTS (
                     SELECT 1 FROM enrollments en2 
                     JOIN sessions s2 ON en2.session_id = s2.id 
-                    WHERE s2.project_id = e.project_id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
                     AND en2.status = 'active'
                 )
             GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
-            ORDER BY CAST(e.metadata->>'start_time' AS timestamp) ASC
+            ORDER BY e.time ASC
         };
         
         return $db->query($sql)->hashes->to_array;

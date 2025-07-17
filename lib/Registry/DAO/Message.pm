@@ -251,6 +251,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Mark message as read for a specific recipient
     method mark_as_read ($db, $recipient_id) {
+        $db = $db->db if $db isa Registry::DAO;
         $db->update('message_recipients',
             { read_at => \'now()' },
             { message_id => $id, recipient_id => $recipient_id, read_at => undef }

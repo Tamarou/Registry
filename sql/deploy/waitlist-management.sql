@@ -44,12 +44,24 @@ BEGIN
     -- Only reorder if status changed away from 'waiting' or record is deleted
     IF (TG_OP = 'DELETE') OR 
        (TG_OP = 'UPDATE' AND OLD.status = 'waiting' AND NEW.status != 'waiting') THEN
-        -- Reorder remaining waiting entries
+        
+        -- First, move all waiting entries to temporary high positions to avoid conflicts
         UPDATE waitlist
-        SET position = position - 1
+        SET position = position + 10000
         WHERE session_id = COALESCE(OLD.session_id, NEW.session_id)
-        AND position > COALESCE(OLD.position, NEW.position)
         AND status = 'waiting';
+        
+        -- Now reorder all waiting positions sequentially starting from 1
+        UPDATE waitlist
+        SET position = subquery.new_position
+        FROM (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY position - 10000) as new_position
+            FROM waitlist
+            WHERE session_id = COALESCE(OLD.session_id, NEW.session_id)
+            AND status = 'waiting'
+        ) subquery
+        WHERE waitlist.id = subquery.id;
+        
     END IF;
     
     RETURN NEW;
@@ -114,15 +126,26 @@ BEGIN
         BEGIN
             IF (TG_OP = ''DELETE'') OR 
                (TG_OP = ''UPDATE'' AND OLD.status = ''waiting'' AND NEW.status != ''waiting'') THEN
+                
                 UPDATE %I.waitlist
-                SET position = position - 1
+                SET position = position + 10000
                 WHERE session_id = COALESCE(OLD.session_id, NEW.session_id)
-                AND position > COALESCE(OLD.position, NEW.position)
                 AND status = ''waiting'';
+                
+                UPDATE %I.waitlist
+                SET position = subquery.new_position
+                FROM (
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY position - 10000) as new_position
+                    FROM %I.waitlist
+                    WHERE session_id = COALESCE(OLD.session_id, NEW.session_id)
+                    AND status = ''waiting''
+                ) subquery
+                WHERE %I.waitlist.id = subquery.id;
+                
             END IF;
             RETURN NEW;
         END;
-        $func$ LANGUAGE plpgsql;', s, s);
+        $func$ LANGUAGE plpgsql;', s, s, s, s, s);
         
         -- Create reorder trigger
         EXECUTE format('CREATE TRIGGER reorder_waitlist_on_removal
