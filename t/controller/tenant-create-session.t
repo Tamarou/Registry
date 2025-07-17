@@ -27,16 +27,40 @@ my $t = Test::Mojo->new('Registry');
     process_workflow(
         $t,
         '/tenant-signup' => {
-            name     => 'Test Tenant',
-            username => 'Alice',
-            password => 'password',
+            name             => 'Test Tenant',
+            billing_email    => 'alice@example.com',
+            billing_address  => '123 Main St',
+            billing_city     => 'Anytown',
+            billing_state    => 'CA',
+            billing_zip      => '12345',
+            billing_country  => 'US',
+            admin_name       => 'Alice',
+            admin_email      => 'alice@example.com',
+            admin_username   => 'Alice',
+            admin_password   => 'password',
+            terms_accepted   => '1',
+            # Mock payment data to satisfy workflow
+            setup_intent_id  => 'seti_test_123',
+            payment_method_id => 'pm_test_123',
+            collect_payment_method => '1',
         }
     );
+    
+    # Debug: Print what's in the request logs
+    note "Debug: Check the application logs above for workflow processing details";
 
-    ok my ($tenant) = $dao->find( Tenant => { name => 'Test Tenant' } ),
+    # Debug: Check what tenants exist
+    my @tenants = $dao->find( Tenant => {} );
+    note "Found tenants: " . join(', ', map { $_->name // 'unnamed' } @tenants);
+    
+    ok my ($tenant) = $dao->find( Tenant => { name => 'Registry System' } ),
       'got tenant';
     ok my $tenant_dao = $tenant->dao( $dao->db ), 'connected to tenant schema';
 
+    # Debug: Check what users exist
+    my @users = $dao->find( User => {} );
+    note "Found users: " . join(', ', map { $_->username // 'no-username' } @users);
+    
     ok $dao->find( User => { username => 'Alice' } ),
       'found Alice in main schema';
     ok $tenant_dao->find( User => { username => 'Alice' } ),

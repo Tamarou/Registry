@@ -21,7 +21,7 @@ package Test::Registry::Helpers {
           ->tx->res->dom->at('form');
         return unless $form;
 
-        my $action = $form->attr('action');
+        my $action = $form->attr('action') || $form->attr('hx-post');
         return unless $action;
 
         my @fields =
@@ -30,7 +30,7 @@ package Test::Registry::Helpers {
           ->map( sub ( $f      = $_ ) { $f->attr('name') } )->to_array->@*;
         my @workflows =
           $form->find('a')
-          ->grep( sub ( $a = $_ ) { $a->attr('rel') =~ /\bcreate-page\b/ } )
+          ->grep( sub ( $a = $_ ) { ($a->attr('rel') // '') =~ /\bcreate-page\b/ } )
           ->map( sub ( $a  = $_ ) { $a->attr('href') } )->to_array->@*;
 
         return [ $action, \@fields, \@workflows ];

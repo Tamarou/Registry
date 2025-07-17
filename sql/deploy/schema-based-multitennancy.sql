@@ -229,7 +229,8 @@ COST 100;
 CREATE OR REPLACE FUNCTION clone_schema(
     dest_schema text,
     source_schema text DEFAULT 'registry',
-    show_details boolean DEFAULT false  -- be verbose
+    show_details boolean DEFAULT false,  -- be verbose
+    include_recs boolean DEFAULT false   -- include data
 ) RETURNS void AS
 $BODY$
 
