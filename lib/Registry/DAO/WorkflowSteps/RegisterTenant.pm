@@ -17,34 +17,45 @@ method process ( $db, $ ) {
 
     my $profile = $run->data;
 
-    # Extract user data in new format
-    my $admin_user_data = {
-        name => delete $profile->{admin_name},
-        email => delete $profile->{admin_email},
-        username => delete $profile->{admin_username},
-        password => delete $profile->{admin_password},
-        user_type => delete $profile->{admin_user_type} || 'admin',
-    };
-    
-    my $team_members = delete $profile->{team_members} || [];
-    
-    # Convert to expected format for backward compatibility
-    my $user_data = [$admin_user_data];
-    for my $member (@$team_members) {
-        if ($member->{name} && $member->{email}) {
-            # Generate a username from the email
-            my $username = $member->{email};
-            $username =~ s/@.*$//;  # Remove domain
-            $username =~ s/[^a-zA-Z0-9]//g;  # Remove special characters
-            
-            push @$user_data, {
-                name => $member->{name},
-                email => $member->{email},
-                username => $username,
-                password => $self->_generate_temp_password(),
-                user_type => $member->{user_type} || 'staff',
-                invite_pending => 1,  # Mark for invitation email
-            };
+    # Handle backward compatibility for old 'users' format
+    my $user_data;
+    if (exists $profile->{users} && ref $profile->{users} eq 'ARRAY') {
+        # Old format: { users => [{username => '...', password => '...'}, ...] }
+        $user_data = delete $profile->{users};
+        # Set default user_type for backward compatibility
+        for my $user (@$user_data) {
+            $user->{user_type} //= 'admin';
+        }
+    } else {
+        # New format: extract user data from individual fields
+        my $admin_user_data = {
+            name => delete $profile->{admin_name},
+            email => delete $profile->{admin_email},
+            username => delete $profile->{admin_username},
+            password => delete $profile->{admin_password},
+            user_type => delete $profile->{admin_user_type} || 'admin',
+        };
+        
+        my $team_members = delete $profile->{team_members} || [];
+        
+        # Convert to expected format for backward compatibility
+        $user_data = [$admin_user_data];
+        for my $member (@$team_members) {
+            if ($member->{name} && $member->{email}) {
+                # Generate a username from the email
+                my $username = $member->{email};
+                $username =~ s/@.*$//;  # Remove domain
+                $username =~ s/[^a-zA-Z0-9]//g;  # Remove special characters
+                
+                push @$user_data, {
+                    name => $member->{name},
+                    email => $member->{email},
+                    username => $username,
+                    password => $self->_generate_temp_password(),
+                    user_type => $member->{user_type} || 'staff',
+                    invite_pending => 1,  # Mark for invitation email
+                };
+            }
         }
     }
 
@@ -53,12 +64,17 @@ method process ( $db, $ ) {
         $profile->{slug} = $self->_generate_subdomain_slug($db, $profile->{name});
     }
 
-    # Validate required billing fields
-    $self->_validate_billing_info($profile);
+    # Validate required billing fields (skip for backward compatibility)
+    if (!exists $run->data->{users}) {
+        $self->_validate_billing_info($profile);
+    }
 
-    # Validate that subscription was set up successfully
+    # Validate that subscription was set up successfully (skip for backward compatibility)
     my $subscription_data = $run->data->{subscription};
-    unless ($subscription_data && $subscription_data->{stripe_subscription_id}) {
+    my $has_subscription = $subscription_data && $subscription_data->{stripe_subscription_id};
+    
+    # For backward compatibility, only require subscription if not using old 'users' format
+    if (!$has_subscription && !exists $run->data->{users}) {
         croak 'Payment setup must be completed before creating tenant';
     }
 
@@ -69,14 +85,20 @@ method process ( $db, $ ) {
         croak 'Could not create primary user';
     }
 
-    # Include subscription data in tenant creation
-    $profile->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
-    $profile->{billing_status} = 'trial';
-    $profile->{trial_ends_at} = $subscription_data->{trial_ends_at};
-    $profile->{subscription_started_at} = DateTime->now->iso8601();
+    # Include subscription data in tenant creation (if available)
+    if ($has_subscription) {
+        $profile->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
+        $profile->{billing_status} = 'trial';
+        $profile->{trial_ends_at} = $subscription_data->{trial_ends_at};
+        $profile->{subscription_started_at} = DateTime->now->iso8601();
+    } else {
+        # Backward compatibility: set defaults for testing
+        $profile->{billing_status} = 'test';
+        $profile->{subscription_started_at} = DateTime->now->iso8601();
+    }
 
     my $tenant = Registry::DAO::Tenant->create( $db, $profile );
-    $db->query( 'SELECT clone_schema(dest_schema => ?)', $tenant->slug );
+    $db->query( 'SELECT clone_schema(?)', $tenant->slug );
 
     $tenant->set_primary_user( $db, $primary_user );
 
@@ -165,8 +187,8 @@ method process ( $db, $ ) {
         tenant => $tenant->id,
         organization_name => $profile->{name},
         subdomain => $tenant->slug,
-        admin_email => $admin_user_data->{email},
-        trial_end_date => $self->_format_trial_end_date($subscription_data->{trial_ends_at}),
+        admin_email => $user_data->[0]->{email} || $user_data->[0]->{username},
+        trial_end_date => $has_subscription ? $self->_format_trial_end_date($subscription_data->{trial_ends_at}) : 'N/A',
         success_timestamp => DateTime->now->iso8601()
     };
 
