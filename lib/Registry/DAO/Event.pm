@@ -6,24 +6,52 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     use experimental qw(try);
 
     field $id :param :reader;
-    field $time :param :reader;
-    field $duration :param :reader;
-    field $location_id :param :reader;
-    field $project_id :param :reader;
-    field $teacher_id :param :reader;
+    field $time :param :reader = undef;
+    field $duration :param :reader = undef;
+    field $location_id :param :reader = undef;
+    field $project_id :param :reader = undef;
+    field $session_id :param :reader = undef;
+    field $teacher_id :param :reader = undef;
     field $metadata :param :reader = {};
     field $notes :param :reader = '';
-    field $created_at :param :reader;
-    field $updated_at :param :reader;
+    field $created_at :param :reader = undef;
+    field $updated_at :param :reader = undef;
+    field $min_age :param :reader = undef;
+    field $max_age :param :reader = undef;
+    field $capacity :param :reader = undef;
 
     sub table { 'events' }
 
     sub create ( $class, $db, $data ) {
+        # Convert start_time/end_time to time/duration if needed
+        if (exists $data->{start_time} && exists $data->{end_time}) {
+            $data->{time} = $data->{start_time};
+            # Calculate duration in minutes
+            my $duration_obj = $data->{end_time} - $data->{start_time};
+            $data->{duration} = int($duration_obj->in_units('minutes'));
+            delete $data->{start_time};
+            delete $data->{end_time};
+        }
+        
+        # Store session_id for later linking
+        my $session_id = delete $data->{session_id};
+        
         # Handle JSON field encoding
         if (exists $data->{metadata} && ref $data->{metadata}) {
             $data->{metadata} = { -json => $data->{metadata} };
         }
-        $class->SUPER::create( $db, $data );
+        
+        my $event = $class->SUPER::create( $db, $data );
+        
+        # Link to session via session_events junction table
+        if ($session_id) {
+            $db->insert('session_events', {
+                session_id => $session_id,
+                event_id => $event->id
+            });
+        }
+        
+        return $event;
     }
 
     method location ($db) {
@@ -34,8 +62,8 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         Registry::DAO::User->find( $db, { id => $teacher_id } );
     }
 
-    method project ($db) {
-        Registry::DAO::Project->find( $db, { id => $project_id } );
+    method session ($db) {
+        Registry::DAO::Session->find( $db, { id => $session_id } );
     }
 
     # Get sessions this event belongs to
@@ -62,6 +90,14 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     method attendance_summary($db) {
         require Registry::DAO::Attendance;
         Registry::DAO::Attendance->get_event_summary($db, $id);
+    }
+    
+    # Get the project (curriculum) associated with this event
+    method project($db) {
+        return undef unless $project_id;
+        
+        require Registry::DAO::Project;
+        Registry::DAO::Project->find($db, { id => $project_id });
     }
     
     # Get events for a teacher on a specific date

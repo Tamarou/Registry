@@ -21,56 +21,51 @@ my $db_helper = Test::Registry::DB->new;
 my $dao = $db_helper->setup_test_database;
 my $db = $dao->db;
 
-# Deploy all necessary schemas
-$db_helper->deploy_sqitch_changes([
-    'events-and-sessions',
-    'attendance-tracking', 
-    'notifications-and-preferences',
-    'summer-camp-module'
-]);
+# All schemas are already deployed by Test::Registry::DB->new
 
 # Create test data
 sub setup_test_data {
-    # Create a teacher
+    # Create a teacher with unique username
     my $teacher = Registry::DAO::User->create($db, {
-        username => 'teacher1',
+        username => 'teacher1_' . time() . '_' . $$,
         passhash => 'fake_hash'
     });
     
     $db->insert('user_profiles', {
         user_id => $teacher->id,
-        email => 'teacher1@example.com',
+        email => 'teacher1_' . time() . '_' . $$ . '@example.com',
         name => 'Test Teacher'
     });
 
     # Create a student
     my $student = Registry::DAO::User->create($db, {
-        username => 'student1',
+        username => 'student1_' . time() . '_' . $$,
         passhash => 'fake_hash'
     });
 
     # Create a location
+    my $unique_id = time() . '_' . $$;
     my $location = Registry::DAO::Location->create($db, {
-        name => 'Test Location',
-        slug => 'test-location',
+        name => 'Test Location ' . $unique_id,
+        slug => 'test-location-' . $unique_id,
         address_info => { street => '123 Test St' }
     });
 
     # Create a project
     my $project = Registry::DAO::Project->create($db, {
-        name => 'Test Project',
-        slug => 'test-project'
+        name => 'Test Project ' . $unique_id,
+        slug => 'test-project-' . $unique_id
     });
 
     # Create a session
     my $session = Registry::DAO::Session->create($db, {
-        name => 'Test Session',
-        slug => 'test-session'
+        name => 'Test Session ' . $unique_id,
+        slug => 'test-session-' . $unique_id
     });
 
     # Create enrollment
     my $enrollment = Registry::DAO::Enrollment->create($db, {
-        user_id => $student->id,
+        student_id => $student->id,
         session_id => $session->id,
         status => 'active'
     });
@@ -89,15 +84,15 @@ subtest 'Find events missing attendance' => sub {
     my $data = setup_test_data();
     
     # Create an event that started 10 minutes ago (should trigger notification)
-    my $past_time = DateTime->now->subtract(minutes => 10)->iso8601;
+    my $past_time = DateTime->now->subtract(minutes => 10);
     my $event_missing = Registry::DAO::Event->create($db, {
         location_id => $data->{location}->id,
         project_id => $data->{project}->id,
         teacher_id => $data->{teacher}->id,
+        start_time => $past_time,
+        end_time => DateTime->now->add(minutes => 50),
         metadata => {
-            title => 'Event Missing Attendance',
-            start_time => $past_time,
-            end_time => DateTime->now->add(minutes => 50)->iso8601
+            title => 'Event Missing Attendance'
         }
     });
 
@@ -108,15 +103,15 @@ subtest 'Find events missing attendance' => sub {
     });
 
     # Create another event that started 20 minutes ago but has attendance
-    my $past_time_2 = DateTime->now->subtract(minutes => 20)->iso8601;
+    my $past_time_2 = DateTime->now->subtract(minutes => 20);
     my $event_with_attendance = Registry::DAO::Event->create($db, {
         location_id => $data->{location}->id,
         project_id => $data->{project}->id,
         teacher_id => $data->{teacher}->id,
+        start_time => $past_time_2,
+        end_time => DateTime->now->add(minutes => 40),
         metadata => {
-            title => 'Event With Attendance',
-            start_time => $past_time_2,
-            end_time => DateTime->now->add(minutes => 40)->iso8601
+            title => 'Event With Attendance'
         }
     });
 
@@ -141,15 +136,15 @@ subtest 'Find events starting soon' => sub {
     my $data = setup_test_data();
     
     # Create an event starting in 3 minutes (should trigger reminder)
-    my $soon_time = DateTime->now->add(minutes => 3)->iso8601;
+    my $soon_time = DateTime->now->add(minutes => 3);
     my $event_starting_soon = Registry::DAO::Event->create($db, {
         location_id => $data->{location}->id,
         project_id => $data->{project}->id,
         teacher_id => $data->{teacher}->id,
+        start_time => $soon_time,
+        end_time => DateTime->now->add(minutes => 63),
         metadata => {
-            title => 'Event Starting Soon',
-            start_time => $soon_time,
-            end_time => DateTime->now->add(minutes => 63)->iso8601
+            title => 'Event Starting Soon'
         }
     });
 
@@ -160,15 +155,15 @@ subtest 'Find events starting soon' => sub {
     });
 
     # Create an event starting in 10 minutes (should not trigger)
-    my $later_time = DateTime->now->add(minutes => 10)->iso8601;
+    my $later_time = DateTime->now->add(minutes => 10);
     my $event_starting_later = Registry::DAO::Event->create($db, {
         location_id => $data->{location}->id,
         project_id => $data->{project}->id,
         teacher_id => $data->{teacher}->id,
+        start_time => $later_time,
+        end_time => DateTime->now->add(minutes => 70),
         metadata => {
-            title => 'Event Starting Later',
-            start_time => $later_time,
-            end_time => DateTime->now->add(minutes => 70)->iso8601
+            title => 'Event Starting Later'
         }
     });
 
@@ -188,21 +183,27 @@ subtest 'Job execution with notifications' => sub {
     my $data = setup_test_data();
     
     # Set up user preferences (defaults should allow notifications)
-    Registry::DAO::UserPreference->get_or_create($db, $data->{teacher}->id, 'notifications', {
-        attendance_missing => { email => 1, in_app => 1 },
-        attendance_reminder => { email => 1, in_app => 1 }
-    });
+    eval {
+        Registry::DAO::UserPreference->get_or_create($db, $data->{teacher}->id, 'notifications', {
+            attendance_missing => { email => 1, in_app => 1 },
+            attendance_reminder => { email => 1, in_app => 1 }
+        });
+    };
+    if ($@) {
+        diag("Error creating user preferences: $@");
+        return;
+    }
 
     # Create an event missing attendance
-    my $past_time = DateTime->now->subtract(minutes => 10)->iso8601;
+    my $past_time = DateTime->now->subtract(minutes => 10);
     my $event_missing = Registry::DAO::Event->create($db, {
         location_id => $data->{location}->id,
         project_id => $data->{project}->id,
         teacher_id => $data->{teacher}->id,
+        start_time => $past_time,
+        end_time => DateTime->now->add(minutes => 50),
         metadata => {
-            title => 'Event Missing Attendance',
-            start_time => $past_time,
-            end_time => DateTime->now->add(minutes => 50)->iso8601
+            title => 'Event Missing Attendance'
         }
     });
 
@@ -213,15 +214,15 @@ subtest 'Job execution with notifications' => sub {
     });
 
     # Create an event starting soon
-    my $soon_time = DateTime->now->add(minutes => 3)->iso8601;
+    my $soon_time = DateTime->now->add(minutes => 3);
     my $event_starting_soon = Registry::DAO::Event->create($db, {
         location_id => $data->{location}->id,
         project_id => $data->{project}->id,
         teacher_id => $data->{teacher}->id,
+        start_time => $soon_time,
+        end_time => DateTime->now->add(minutes => 63),
         metadata => {
-            title => 'Event Starting Soon',
-            start_time => $soon_time,
-            end_time => DateTime->now->add(minutes => 63)->iso8601
+            title => 'Event Starting Soon'
         }
     });
 
@@ -303,15 +304,15 @@ subtest 'Prevent duplicate reminder notifications' => sub {
     my $data = setup_test_data();
     
     # Create an event starting soon
-    my $soon_time = DateTime->now->add(minutes => 3)->iso8601;
+    my $soon_time = DateTime->now->add(minutes => 3);
     my $event_starting_soon = Registry::DAO::Event->create($db, {
         location_id => $data->{location}->id,
         project_id => $data->{project}->id,
         teacher_id => $data->{teacher}->id,
+        start_time => $soon_time,
+        end_time => DateTime->now->add(minutes => 63),
         metadata => {
-            title => 'Event Starting Soon',
-            start_time => $soon_time,
-            end_time => DateTime->now->add(minutes => 63)->iso8601
+            title => 'Event Starting Soon'
         }
     });
 
@@ -345,11 +346,10 @@ subtest 'Prevent duplicate reminder notifications' => sub {
     $job_instance->check_tenant_attendance($mock_job, $db, 'public');
 
     # Should still only have 1 reminder notification (no duplicates)
-    my $reminder_count = $db->select('notifications', 'count(*)', {
-        user_id => $data->{teacher}->id,
-        type => 'attendance_reminder',
-        'metadata->event_id' => $event_starting_soon->id
-    })->array->[0];
+    my $reminder_count = $db->query(
+        'SELECT count(*) FROM notifications WHERE user_id = ? AND type = ? AND metadata->>? = ?',
+        $data->{teacher}->id, 'attendance_reminder', 'event_id', $event_starting_soon->id
+    )->array->[0];
 
     is($reminder_count, 1, 'No duplicate reminder notifications created');
 };

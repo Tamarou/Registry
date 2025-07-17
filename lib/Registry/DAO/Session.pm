@@ -4,6 +4,7 @@ use Object::Pad;
 class Registry::DAO::Session :isa(Registry::DAO::Object) {
     use Carp         qw( carp );
     use experimental qw(try);
+    use Mojo::JSON   qw( decode_json );
 
     field $id :param :reader;
     field $name :param :reader;
@@ -12,12 +13,57 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     field $notes :param :reader = '';
     field $created_at :param :reader;
     field $updated_at :param :reader;
+    field $session_type :param :reader = 'regular';
+    field $start_date :param :reader;
+    field $end_date :param :reader;
+    field $status :param :reader = 'draft';
+    field $capacity :param :reader;
 
     sub table { 'sessions' }
+    
+    BUILD {
+        # Decode JSON metadata if it's a string
+        if (defined $metadata && !ref $metadata) {
+            try {
+                $metadata = decode_json($metadata);
+            }
+            catch ($e) {
+                carp "Failed to decode session metadata: $e";
+                $metadata = {};
+            }
+        }
+    }
 
     sub create ( $class, $db, $data ) {
         $data->{slug} //= lc( $data->{name} =~ s/\s+/-/gr )
           if defined $data->{name};
+        
+        # Store project_id in metadata if provided
+        if (exists $data->{project_id}) {
+            $data->{metadata} //= {};
+            $data->{metadata}{project_id} = delete $data->{project_id};
+        }
+        
+        # Handle pricing in metadata if provided
+        if (exists $data->{pricing}) {
+            $data->{metadata} //= {};
+            $data->{metadata}{pricing} = delete $data->{pricing};
+        }
+        
+        # Handle location_id in metadata if provided
+        if (exists $data->{location_id}) {
+            $data->{metadata} //= {};
+            $data->{metadata}{location_id} = delete $data->{location_id};
+        }
+        
+        # Convert timestamps to dates for start_date and end_date
+        for my $field (qw(start_date end_date)) {
+            if (exists $data->{$field} && $data->{$field} =~ /^\d+$/) {
+                # Convert unix timestamp to date string
+                my ($sec, $min, $hour, $mday, $mon, $year) = localtime($data->{$field});
+                $data->{$field} = sprintf('%04d-%02d-%02d', $year + 1900, $mon + 1, $mday);
+            }
+        }
         
         # Handle JSON field encoding
         if (exists $data->{metadata} && ref $data->{metadata}) {

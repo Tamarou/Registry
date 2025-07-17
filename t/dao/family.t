@@ -218,32 +218,36 @@ subtest 'Multiple children check' => sub {
 };
 
 subtest 'Sibling discount eligibility' => sub {
-    # Create test session
-    my $session = Test::Registry::Fixtures::create_session($db, {
-        name => 'Test Session',
+    # Get the family_members we created earlier
+    my $family_members = Registry::DAO::Family->list_children($db, $parent1->id);
+    
+    # Create a test session
+    my $test_session = Test::Registry::Fixtures::create_session($db, {
+        name => "Sibling Discount Test Session " . time(),
     });
     
-    # Enroll first child
-    my $children = Registry::DAO::Family->list_children($db, $parent1->id);
+    # Enroll first child using flexible architecture
     Registry::DAO::Enrollment->create($db, {
-        session_id => $session->id,
-        student_id => $parent1->id, # Using parent as student for simplicity
-        family_member_id => $children->[0]->id,
+        session_id => $test_session->id,
+        family_member_id => $family_members->[0]->id, # Links to family_members table
+        student_type => 'family_member',              # Type of student
+        # student_id and parent_id will be auto-populated
         status => 'active',
     });
     
-    ok(!Registry::DAO::Family->sibling_discount_eligible($db, $parent1->id, $session->id),
+    ok(!Registry::DAO::Family->sibling_discount_eligible($db, $parent1->id, $test_session->id),
        'Not eligible with one child enrolled');
     
-    # Enroll second child
+    # Enroll second child - different student_id (family_member), same parent
     Registry::DAO::Enrollment->create($db, {
-        session_id => $session->id,
-        student_id => $parent1->id,
-        family_member_id => $children->[1]->id,
+        session_id => $test_session->id,
+        family_member_id => $family_members->[1]->id, # Different child
+        student_type => 'family_member',              # Same type
+        # student_id and parent_id will be auto-populated
         status => 'active',
     });
     
-    ok(Registry::DAO::Family->sibling_discount_eligible($db, $parent1->id, $session->id),
+    ok(Registry::DAO::Family->sibling_discount_eligible($db, $parent1->id, $test_session->id),
        'Eligible with two children enrolled');
 };
 
@@ -261,36 +265,60 @@ subtest 'Family member relations' => sub {
     isa_ok($enrollments, 'ARRAY', 'Enrollments is array');
 };
 
-subtest 'Backward compatibility' => sub {
-    # Enrollments should work with either student_id or family_member_id
+subtest 'Flexible enrollment architecture' => sub {
+    # Test the flexible enrollment architecture supporting multiple student types
     my $session = Test::Registry::Fixtures::create_session($db, {
-        name => 'Backward Compatible Session',
+        name => 'Flexible Enrollment Session',
     });
     
-    # Create enrollment with just student_id (old style)
-    my $old_enrollment = Registry::DAO::Enrollment->create($db, {
+    my $family_members = Registry::DAO::Family->list_children($db, $parent1->id);
+    
+    # Test family member enrollment
+    my $family_enrollment = Registry::DAO::Enrollment->create($db, {
         session_id => $session->id,
-        student_id => $parent1->id,
+        family_member_id => $family_members->[0]->id,
+        student_type => 'family_member',
         status => 'active',
     });
     
-    ok($old_enrollment, 'Can create enrollment without family_member_id');
-    ok(!$old_enrollment->family_member_id, 'No family member ID set');
+    ok($family_enrollment, 'Can create family member enrollment');
+    ok($family_enrollment->family_member_id, 'Family member ID set');
+    ok($family_enrollment->parent_id, 'Parent ID auto-populated');
+    is($family_enrollment->student_id, $family_members->[0]->id, 'Student ID references family member');
+    ok($family_enrollment->is_family_member, 'Correctly identified as family member');
     
-    # Create enrollment with family_member_id (new style)
-    my $children = Registry::DAO::Family->list_children($db, $parent1->id);
-    my $new_enrollment = Registry::DAO::Enrollment->create($db, {
+    # Test relationships
+    my $family_member = $family_enrollment->family_member($db);
+    is($family_member->id, $family_members->[0]->id, 'Can retrieve family member');
+    
+    my $parent = $family_enrollment->parent($db);
+    is($parent->id, $parent1->id, 'Can retrieve parent');
+    
+    my $student = $family_enrollment->student($db);
+    is($student->id, $family_members->[0]->id, 'Student method returns family member');
+    
+    # Test individual student enrollment (future use case)
+    my $individual_user = Test::Registry::Fixtures::create_user($db, {
+        username => 'individual_' . time(),
+        password => 'password123',
+        user_type => 'student',
+    });
+    
+    my $individual_enrollment = Registry::DAO::Enrollment->create($db, {
         session_id => $session->id,
-        student_id => $parent1->id,
-        family_member_id => $children->[0]->id,
+        student_id => $individual_user->id,
+        student_type => 'individual',
+        parent_id => $individual_user->id, # Self-enrolled
         status => 'active',
     });
     
-    ok($new_enrollment, 'Can create enrollment with family_member_id');
-    ok($new_enrollment->family_member_id, 'Family member ID set');
+    ok($individual_enrollment, 'Can create individual enrollment');
+    ok($individual_enrollment->is_individual, 'Correctly identified as individual');
+    is($individual_enrollment->student_id, $individual_user->id, 'Student ID references user');
     
-    my $family_member = $new_enrollment->family_member($db);
-    is($family_member->id, $children->[0]->id, 'Can retrieve family member');
+    # Test that different student types can coexist in same session
+    ok($family_enrollment->session_id eq $individual_enrollment->session_id, 
+       'Both enrollment types can exist in same session');
 };
 
 done_testing;

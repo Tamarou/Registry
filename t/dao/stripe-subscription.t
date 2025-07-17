@@ -97,6 +97,7 @@ subtest 'Webhook event processing' => sub {
     my $error;
     eval {
         $subscription_dao->process_webhook_event(
+            $db->db,
             'evt_test123',
             'customer.subscription.updated',
             $event_data
@@ -141,7 +142,7 @@ subtest 'Billing status updates' => sub {
     );
     
     # Update billing status
-    $subscription_dao->update_billing_status($tenant_id, 'active');
+    $subscription_dao->update_billing_status($db->db, $tenant_id, 'active');
     
     my $tenant = $db->db->query(
         'SELECT billing_status FROM registry.tenants WHERE id = ?',
@@ -152,7 +153,7 @@ subtest 'Billing status updates' => sub {
     
     # Test status update with subscription data
     my $subscription_data = { trial_end => time() + 1296000 }; # 15 days from now
-    $subscription_dao->update_billing_status($tenant_id, 'trial', $subscription_data);
+    $subscription_dao->update_billing_status($db->db, $tenant_id, 'trial', $subscription_data);
     
     my $updated_tenant = $db->db->query(
         'SELECT billing_status, trial_ends_at FROM registry.tenants WHERE id = ?',

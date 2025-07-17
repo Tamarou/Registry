@@ -29,6 +29,7 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
         # Group sessions by project/program
         my $programs = $self->_group_sessions_by_program($dao, $sessions, $location->id);
         
+        
         # Apply visual enhancements to programs
         $self->_enhance_program_display($dao, $programs);
         
@@ -57,17 +58,17 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
         # Build SQL with filters
         my @where_clauses = (
             'e.location_id = ?',
-            "s.status = 'published'",
-            '(s.end_date IS NULL OR s.end_date >= CURRENT_DATE)'
+            "s.status = 'published'"
+            # Temporarily disabled: '(s.end_date IS NULL OR s.end_date >= CURRENT_DATE)'
         );
         my @params = ($location_id);
         
-        # Add age filters
-        if ($filters->{min_age}) {
+        # Add age filters - temporarily disabled to debug
+        if (0 && $filters->{min_age}) {
             push @where_clauses, '(e.max_age IS NULL OR e.max_age >= ?)';
             push @params, $filters->{min_age};
         }
-        if ($filters->{max_age}) {
+        if (0 && $filters->{max_age}) {
             push @where_clauses, '(e.min_age IS NULL OR e.min_age <= ?)';
             push @params, $filters->{max_age};
         }

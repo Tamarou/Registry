@@ -4,14 +4,14 @@ use Object::Pad;
 class Registry::DAO::Location :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(decode_json encode_json);
 
-    field $id :param :reader;
-    field $name :param :reader;
-    field $slug :param :reader;
+    field $id :param :reader = undef;
+    field $name :param :reader = undef;
+    field $slug :param :reader = undef;
     field $address_info :param :reader = {};
     field $metadata :param :reader = {};
-    field $notes :param :reader;
-    field $created_at :param :reader;
-    field $updated_at :param :reader;
+    field $notes :param :reader = undef;
+    field $created_at :param :reader = undef;
+    field $updated_at :param :reader = undef;
 
     sub table { 'locations' }
 

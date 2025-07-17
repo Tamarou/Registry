@@ -24,3 +24,10 @@ parent-communication-system [notifications-and-preferences] 2025-01-28T11:00:00Z
 performance-optimization [parent-communication-system] 2025-01-28T15:00:00Z Claude <noreply@anthropic.com> # Add database indexes and performance optimizations for production readiness
 stripe-subscription-integration [enhanced-pricing-model] 2025-01-28T16:00:00Z Claude <noreply@anthropic.com> # Add Stripe subscription integration for tenant billing
 # restructure-data-model [summer-camp-module] 2025-01-14T20:00:00Z Claude <noreply@anthropic.com> # Restructure data model: Programs -> Sessions -> Events -> Curriculum
+fix-multi-child-enrollments [multi-child-data-model] 2025-07-15T00:34:24Z Chris Prather <chris.prather@tamarou.com> # Fix multi-child enrollment constraints for cleaner architecture
+flexible-enrollment-architecture [fix-multi-child-enrollments] 2025-07-15T01:09:59Z Chris Prather <chris.prather@tamarou.com> # Create flexible enrollment architecture supporting family, individual, group, and corporate students
+remove-student-id-foreign-key [flexible-enrollment-architecture] 2025-07-15T01:28:59Z Chris Prather <chris.prather@tamarou.com> # Remove student_id foreign key constraint to support polymorphic student references
+fix-waitlist-family-member-refs [remove-student-id-foreign-key] 2025-07-16T14:30:00Z Claude <noreply@anthropic.com> # Fix waitlist student_id to reference family_members instead of users
+fix-waitlist-reorder [waitlist-management] 2025-07-16T12:30:00Z Claude <noreply@anthropic.com> # Fix waitlist position reordering to avoid unique constraint violations
+fix-waitlist-reorder-v2 [fix-waitlist-reorder] 2025-07-16T22:50:00Z Claude <noreply@anthropic.com> # Improved waitlist position reordering to fully avoid constraint violations
+fix-waitlist-reorder-v3 [fix-waitlist-reorder-v2] 2025-07-17T00:00:00Z Claude <noreply@anthropic.com> # Remove problematic database trigger and handle position reordering in application code

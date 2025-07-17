@@ -172,11 +172,11 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method accept_offer ($db) {
         croak "Can only accept offers with status 'offered'" unless $status eq 'offered';
         # Check expiration via database query
-        my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
+        my $is_expired = $db->db->query('SELECT ? < NOW()', $expires_at)->array->[0];
         croak "Offer has expired" if $expires_at && $is_expired;
         
         # Start transaction
-        my $tx = $db->begin;
+        my $tx = $db->db->begin;
         
         try {
             # Create enrollment
@@ -184,6 +184,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             Registry::DAO::Enrollment->create($db, {
                 session_id => $session_id,
                 student_id => $student_id,
+                student_type => 'family_member',
                 status => 'pending',
                 metadata => { from_waitlist => 1 }
             });
@@ -194,7 +195,6 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             $tx->commit;
         }
         catch ($e) {
-            $tx->rollback;
             croak "Failed to accept waitlist offer: $e";
         }
         
@@ -205,7 +205,22 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method decline_offer ($db) {
         croak "Can only decline offers with status 'offered'" unless $status eq 'offered';
         
-        $self->update($db, { status => 'declined' });
+        # Start transaction for consistency
+        my $tx = $db->db->begin;
+        
+        try {
+            # Update status to declined
+            $self->update($db, { status => 'declined' });
+            
+            # Only reorder if this entry had a position that would affect other entries
+            # For offered entries, we don't need to reorder since they maintain their original position
+            # and other entries haven't moved
+            
+            $tx->commit;
+        }
+        catch ($e) {
+            croak "Failed to decline waitlist offer: $e";
+        }
         
         # Process next person on waitlist
         return Registry::DAO::Waitlist->process_waitlist($db, $session_id);
@@ -251,5 +266,74 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             return 0 if $is_expired;
         }
         return 1;
+    }
+    
+    # Helper method to reorder positions after a waitlist entry is removed
+    method _reorder_positions_after_removal ($db, $session_id, $removed_position) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        # Use a safer approach: first move to negative values, then reorder
+        # This avoids unique constraint violations during the reordering process
+        my $sql1 = q{
+            UPDATE waitlist 
+            SET position = -position - 1000
+            WHERE session_id = ? 
+            AND position > ? 
+            AND status = 'waiting'
+        };
+        
+        # Apply negative positions first
+        $db->query($sql1, $session_id, $removed_position);
+        
+        # Now reorder the negative positions back to positive consecutive values
+        # The new positions should start from the removed position and increment
+        my $sql2 = q{
+            UPDATE waitlist 
+            SET position = subquery.new_position
+            FROM (
+                SELECT id, 
+                       ? + ROW_NUMBER() OVER (ORDER BY -position) - 1 as new_position
+                FROM waitlist
+                WHERE session_id = ? 
+                AND position < 0
+                AND status = 'waiting'
+            ) subquery
+            WHERE waitlist.id = subquery.id
+        };
+        
+        $db->query($sql2, $removed_position, $session_id);
+    }
+    
+    # Helper method to reorder all waiting positions to be consecutive starting from 1
+    sub _reorder_waiting_positions ($class, $db, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        # Use a two-step approach to avoid constraint violations
+        # Step 1: Move all waiting entries to negative positions temporarily
+        my $sql1 = q{
+            UPDATE waitlist 
+            SET position = -position - 1000
+            WHERE session_id = ? 
+            AND status = 'waiting'
+        };
+        
+        $db->query($sql1, $session_id);
+        
+        # Step 2: Reorder all waiting entries to have consecutive positions starting from 1
+        my $sql2 = q{
+            UPDATE waitlist 
+            SET position = subquery.new_position
+            FROM (
+                SELECT id, 
+                       ROW_NUMBER() OVER (ORDER BY -position) as new_position
+                FROM waitlist
+                WHERE session_id = ? 
+                AND status = 'waiting'
+                AND position < 0
+            ) subquery
+            WHERE waitlist.id = subquery.id
+        };
+        
+        $db->query($sql2, $session_id);
     }
 }

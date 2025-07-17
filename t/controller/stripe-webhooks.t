@@ -37,16 +37,20 @@ subtest 'Webhook processing logic' => sub {
     use Registry::DAO::Subscription;
     my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
     
+    # First create a test tenant to get a valid UUID
+    my $tenant_id = $db->query('INSERT INTO registry.tenants (name, slug) VALUES (?, ?) RETURNING id', 'Test Tenant', 'test-tenant')->hash->{id};
+    
     my $event_data = {
         object => {
             id => 'sub_test123',
             status => 'active',
-            metadata => { tenant_id => 'test-tenant-id' }
+            metadata => { tenant_id => $tenant_id }
         }
     };
     
     # Process webhook event
     my $result = $subscription_dao->process_webhook_event(
+        $dao->db,
         'evt_webhook_controller_test',
         'customer.subscription.updated',
         $event_data

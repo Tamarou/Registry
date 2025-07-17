@@ -40,7 +40,7 @@ field $_stripe_client = undef;
     sub create ($class, $db, $data) {
         # Handle JSON encoding for metadata
         if (exists $data->{metadata} && ref $data->{metadata}) {
-            $data->{metadata} = encode_json($data->{metadata});
+            $data->{metadata} = { -json => $data->{metadata} };
         }
         
         return $class->SUPER::create($db, $data);

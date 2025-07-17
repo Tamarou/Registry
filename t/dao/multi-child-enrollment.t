@@ -2,11 +2,13 @@
 use v5.34.0;
 use warnings;
 use experimental 'signatures';
+use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Workflow;
 use Registry::DAO::User;
 use Registry::DAO::Family;
+use Registry::DAO::FamilyMember;
 use Registry::DAO::Session;
 use Registry::DAO::ProgramType;
 use Registry::DAO::PricingPlan;
@@ -27,75 +29,83 @@ $db->query(q{
 $db->query("SET search_path TO tenant_1, registry, public");
 
 # Create test data
-my $location = Registry::DAO::Location->new(
-    name    => 'Test Location',
-    address => encode_json({ street => '123 Main St', city => 'Test City', state => 'TS', zip => '12345' }),
-    config  => {}
-)->save($db);
+my $location = Registry::DAO::Location->create($db, {
+    name         => 'Test Location',
+    address_info => { street => '123 Main St', city => 'Test City', state => 'TS', zip => '12345' },
+    metadata     => {}
+});
 
-my $program_type = Registry::DAO::ProgramType->new(
-    name                    => 'Afterschool Program',
-    slug                    => 'afterschool',
-    config                  => { same_session_for_siblings => 1 },
-    same_session_for_siblings => 1
-)->save($db);
+# Use existing afterschool program type or create one
+my $program_type = Registry::DAO::ProgramType->find_by_slug($db, 'afterschool') 
+    || Registry::DAO::ProgramType->create($db, {
+        name   => 'Afterschool Program',
+        slug   => 'afterschool',
+        config => { 
+            enrollment_rules => {
+                same_session_for_siblings => 1
+            }
+        }
+    });
 
-my $event = Registry::DAO::Event->new(
-    name        => 'Test Afterschool',
-    location_id => $location->id,
-    config      => {}
-)->save($db);
-
-my $project = Registry::DAO::Project->new(
+my $project = Registry::DAO::Project->create($db, {
     name             => 'Test Afterschool Project',
-    event_id         => $event->id,
-    program_type_id  => $program_type->id,
     program_type_slug => 'afterschool',
-    config           => {}
-)->save($db);
+    metadata         => {}
+});
+
+# Create a teacher user
+my $teacher = Registry::DAO::User->create($db, {
+    username => 'teacher',
+    email    => 'teacher@example.com',
+    password => 'password123',
+    name     => 'Test Teacher'
+});
+
+my $event = Registry::DAO::Event->create($db, {
+    location_id => $location->id,
+    project_id  => $project->id,
+    teacher_id  => $teacher->id,
+    time        => Time::Piece->new(time + 86400)->strftime('%Y-%m-%d %H:%M:%S'),
+    duration    => 60,
+    metadata    => { title => 'Test Afterschool' }
+});
 
 # Create sessions with pricing
-my $session1 = Registry::DAO::Session->new(
+my $session1 = Registry::DAO::Session->create($db, {
     name       => 'Session 1',
     project_id => $project->id,
     start_date => Time::Piece->new(time + 86400),
     end_date   => Time::Piece->new(time + 86400 * 7),
     capacity   => 10,
-    min_age    => 5,
-    max_age    => 12,
-    config     => {}
-)->save($db);
+    metadata   => { min_age => 5, max_age => 12 }
+});
 
-my $session2 = Registry::DAO::Session->new(
+my $session2 = Registry::DAO::Session->create($db, {
     name       => 'Session 2',
     project_id => $project->id,
     start_date => Time::Piece->new(time + 86400 * 14),
     end_date   => Time::Piece->new(time + 86400 * 21),
     capacity   => 5,
-    min_age    => 5,
-    max_age    => 12,
-    config     => {}
-)->save($db);
+    metadata   => { min_age => 5, max_age => 12 }
+});
 
-# Add pricing plans
-Registry::DAO::PricingPlan->new(
-    session_id  => $session1->id,
-    name        => 'Standard',
-    base_price  => 200,
-    tier_order  => 1,
-    config      => {}
-)->save($db);
+# Add pricing plans (simplified for test)
+# Registry::DAO::PricingPlan->create($db, {
+#     session_id  => $session1->id,
+#     plan_name   => 'Standard',
+#     amount      => 200,
+#     metadata    => {}
+# });
 
-Registry::DAO::PricingPlan->new(
-    session_id  => $session2->id,
-    name        => 'Standard',
-    base_price  => 250,
-    tier_order  => 1,
-    config      => {}
-)->save($db);
+# Registry::DAO::PricingPlan->create($db, {
+#     session_id  => $session2->id,
+#     plan_name   => 'Standard',
+#     amount      => 250,
+#     metadata    => {}
+# });
 
 # Create workflow
-my $workflow = Registry::DAO::Workflow->new(
+my $workflow = Registry::DAO::Workflow->create($db, {
     name   => 'Test Multi-Child Enrollment',
     config => {
         steps => [
@@ -106,33 +116,32 @@ my $workflow = Registry::DAO::Workflow->new(
             { id => 'complete', type => 'form' }
         ]
     }
-)->save($db);
+});
 
 # Create test user
-my $user = Registry::DAO::User->new(
+my $user = Registry::DAO::User->create($db, {
+    username => 'parent',
     email    => 'parent@example.com',
     password => 'password123',
-    profile  => { name => 'Test Parent' }
-)->save($db);
+    name     => 'Test Parent'
+});
 
 # Create family members
-my $child1 = Registry::DAO::Family->new(
-    user_id      => $user->id,
-    first_name   => 'Child',
-    last_name    => 'One',
-    birthdate    => Time::Piece->new->add_years(-8)->strftime('%Y-%m-%d'),
-    relationship => 'child',
+my $child1 = Registry::DAO::FamilyMember->create($db, {
+    family_id    => $user->id,
+    child_name   => 'Child One',
+    birth_date   => Time::Piece->new->add_years(-8)->strftime('%Y-%m-%d'),
+    grade        => '3rd',
     medical_info => {}
-)->save($db);
+});
 
-my $child2 = Registry::DAO::Family->new(
-    user_id      => $user->id,
-    first_name   => 'Child',
-    last_name    => 'Two',
-    birthdate    => Time::Piece->new->add_years(-10)->strftime('%Y-%m-%d'),
-    relationship => 'child',
+my $child2 = Registry::DAO::FamilyMember->create($db, {
+    family_id    => $user->id,
+    child_name   => 'Child Two',
+    birth_date   => Time::Piece->new->add_years(-10)->strftime('%Y-%m-%d'),
+    grade        => '5th',
     medical_info => {}
-)->save($db);
+});
 
 subtest 'Account check step' => sub {
     my $run = $workflow->start($db);

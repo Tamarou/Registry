@@ -4,6 +4,7 @@ use Object::Pad;
 class Registry::DAO::FamilyMember :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Mojo::JSON qw( decode_json encode_json );
+    use experimental qw(try);
     
     field $id :param :reader;
     field $family_id :param :reader;
@@ -105,12 +106,12 @@ class Registry::DAO::FamilyMember :isa(Registry::DAO::Object) {
     
     # Get enrollments for this child
     method enrollments ($db) {
-        Registry::DAO::Enrollment->find_all($db, { family_member_id => $id });
+        Registry::DAO::Enrollment->find($db, { family_member_id => $id });
     }
     
     # Get waitlist entries for this child
     method waitlist_entries ($db) {
         require Registry::DAO::Waitlist;
-        Registry::DAO::Waitlist->find_all($db, { family_member_id => $id });
+        Registry::DAO::Waitlist->find($db, { family_member_id => $id });
     }
 }

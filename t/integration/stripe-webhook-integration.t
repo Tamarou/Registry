@@ -72,6 +72,7 @@ subtest 'Integration with subscription DAO' => sub {
     
     # Process the webhook event
     my $result = $subscription_dao->process_webhook_event(
+        $db,
         'evt_integration789',
         'customer.subscription.updated',
         $event_data

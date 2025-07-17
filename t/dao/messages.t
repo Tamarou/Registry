@@ -149,7 +149,7 @@ use Registry::DAO::Message;
     $message->mark_as_read($db, $parent1->id);
     
     # Check read status
-    my $recipient = $db->select('message_recipients',
+    my $recipient = $db->db->select('message_recipients',
         ['read_at'],
         { message_id => $message->id, recipient_id => $parent1->id }
     )->hash;

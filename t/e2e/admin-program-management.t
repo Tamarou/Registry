@@ -12,34 +12,45 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 {    # Step 1: Admin Account Setup
     my $morgan = $dao->create( User => {
+        username => 'morgan',
+        password => 'password123',
         email => 'morgan@afterschoolprograms.org',
         name => 'Morgan Smith',
-        role => 'admin'
+        user_type => 'admin'
     });
     
     ok $morgan, 'Morgan admin account created';
-    is $morgan->role, 'admin', 'Morgan has admin role';
+    is $morgan->user_type, 'admin', 'Morgan has admin role';
     is $morgan->name, 'Morgan Smith', 'Morgan name correct';
 }
 
 {    # Step 2: Location Setup
     my $morgan = $dao->find( User => { email => 'morgan@afterschoolprograms.org' });
+    ok $morgan, 'Morgan found by email';
     
     # Create multiple locations
     my $elementary = $dao->create( Location => {
         name => 'Riverside Elementary',
         slug => 'riverside-elementary',
-        address => '456 River Road',
-        capacity => 100,
-        facilities => { gymnasium => 1, computer_lab => 1, art_room => 1 }
+        address_info => {
+            address => '456 River Road',
+            capacity => 100
+        },
+        metadata => {
+            facilities => { gymnasium => 1, computer_lab => 1, art_room => 1 }
+        }
     });
     
     my $middle_school = $dao->create( Location => {
         name => 'Valley Middle School',
         slug => 'valley-middle',
-        address => '789 Valley Avenue',
-        capacity => 150,
-        facilities => { gymnasium => 1, computer_lab => 2, science_lab => 1 }
+        address_info => {
+            address => '789 Valley Avenue',
+            capacity => 150
+        },
+        metadata => {
+            facilities => { gymnasium => 1, computer_lab => 2, science_lab => 1 }
+        }
     });
     
     ok $elementary, 'Elementary location created';
@@ -47,39 +58,18 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     is $elementary->name, 'Riverside Elementary', 'Elementary name correct';
 }
 
+
 {    # Step 3: Program Type Configuration
     require Registry::DAO::ProgramType;
     
-    my $afterschool_type = Registry::DAO::ProgramType->create($dao->db, {
-        slug => 'afterschool',
-        name => 'After School Program',
-        config => {
-            enrollment_rules => { same_session_for_siblings => 1 },
-            standard_times => { 
-                monday => '15:00', tuesday => '15:00', wednesday => '15:00',
-                thursday => '15:00', friday => '15:00'
-            },
-            session_pattern => 'weekly_for_x_weeks',
-            typical_duration => 12
-        }
-    });
+    # Use existing program types that are seeded in the database
+    my $afterschool_type = Registry::DAO::ProgramType->find_by_slug($dao->db, 'afterschool');
+    my $summer_type = Registry::DAO::ProgramType->find_by_slug($dao->db, 'summer-camp');
     
-    my $summer_type = Registry::DAO::ProgramType->create($dao->db, {
-        slug => 'summer-camp',
-        name => 'Summer Camp',
-        config => {
-            enrollment_rules => { same_session_for_siblings => 0 },
-            standard_times => { 
-                monday => '08:00', tuesday => '08:00', wednesday => '08:00',
-                thursday => '08:00', friday => '08:00'
-            },
-            session_pattern => 'daily_for_x_weeks',
-            typical_duration => 8
-        }
-    });
-    
-    ok $afterschool_type, 'After school program type created';
-    ok $summer_type, 'Summer camp program type created';
+    ok $afterschool_type, 'After school program type found';
+    ok $summer_type, 'Summer camp program type found';
+    is $afterschool_type->name, 'After School Program', 'After school program type name correct';
+    is $summer_type->name, 'Summer Camp', 'Summer camp program type name correct';
 }
 
 {    # Step 4: Program Creation
@@ -88,9 +78,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     # Create STEM program
     my $stem_program = $dao->create( Project => {
         name => 'STEM Explorers',
-        description => 'Hands-on science, technology, engineering, and math activities',
-        status => 'active',
-        program_type => 'afterschool',
+        notes => 'Hands-on science, technology, engineering, and math activities',
+        program_type_slug => 'afterschool',
         metadata => {
             age_range => '6-12',
             learning_objectives => [
@@ -109,9 +98,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     # Create Arts program
     my $arts_program = $dao->create( Project => {
         name => 'Creative Arts Workshop',
-        description => 'Explore various art mediums and creative expression',
-        status => 'active',
-        program_type => 'afterschool',
+        notes => 'Explore various art mediums and creative expression',
+        program_type_slug => 'afterschool',
         metadata => {
             age_range => '5-14',
             learning_objectives => [
@@ -206,23 +194,19 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     
     # Create instructor accounts
     my $stem_instructor = $dao->create( User => {
+        username => 'alex.teacher',
+        password => 'password123',
         email => 'alex.teacher@afterschool.org',
         name => 'Alex Thompson',
-        role => 'instructor',
-        metadata => { 
-            specialties => ['STEM', 'Programming', 'Engineering'],
-            certifications => ['Elementary Education', 'STEM Specialist']
-        }
+        user_type => 'staff'
     });
     
     my $arts_instructor = $dao->create( User => {
+        username => 'jamie.artist',
+        password => 'password123',
         email => 'jamie.artist@afterschool.org',
         name => 'Jamie Rodriguez',
-        role => 'instructor',
-        metadata => {
-            specialties => ['Visual Arts', 'Ceramics', 'Drawing'],
-            certifications => ['Art Education', 'Child Development']
-        }
+        user_type => 'staff'
     });
     
     ok $stem_instructor, 'STEM instructor created';
@@ -236,18 +220,12 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     
     my $stem_assignment = Registry::DAO::SessionTeacher->create($dao->db, {
         session_id => $stem_session->id,
-        teacher_id => $stem_instructor->id,
-        role => 'lead_instructor',
-        start_date => $stem_session->start_date,
-        end_date => $stem_session->end_date
+        teacher_id => $stem_instructor->id
     });
     
     my $arts_assignment = Registry::DAO::SessionTeacher->create($dao->db, {
         session_id => $arts_session->id,
-        teacher_id => $arts_instructor->id,
-        role => 'lead_instructor',
-        start_date => $arts_session->start_date,
-        end_date => $arts_session->end_date
+        teacher_id => $arts_instructor->id
     });
     
     ok $stem_assignment, 'STEM instructor assigned to session';
@@ -260,9 +238,11 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     
     for my $i (1..25) {
         my $parent = $dao->create( User => {
+            username => "parent$i",
+            password => 'password123',
             email => "parent$i\@families.com",
             name => "Parent $i",
-            role => 'parent'
+            user_type => 'parent'
         });
         
         my $child = $dao->create( FamilyMember => {
@@ -318,7 +298,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         
         Registry::DAO::Waitlist->join_waitlist(
             $dao->db, $stem_session->id, $elementary->id, 
-            $family->{child}->id, $family->{parent}->id
+            $family->{parent}->id, $family->{parent}->id
         );
     }
     
@@ -337,10 +317,15 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $alex = $dao->find( User => { email => 'alex.teacher@afterschool.org' });
     my $stem_session = $dao->find( Session => { name => 'STEM Explorers - Fall 2024' });
     
-    # Get first week's events
-    my $first_week_events = $dao->db->select('events', '*', {
-        session_id => $stem_session->id
-    }, { -asc => 'start_time', limit => 2 })->hashes->to_array;
+    # Get first week's events via session_events junction table
+    my $first_week_events = $dao->db->query(q{
+        SELECT e.*
+        FROM events e
+        JOIN session_events se ON e.id = se.event_id
+        WHERE se.session_id = ?
+        ORDER BY e.time ASC
+        LIMIT 2
+    }, $stem_session->id)->hashes->to_array;
     
     # Get enrolled students
     my $enrolled_students = $dao->db->query(q{
