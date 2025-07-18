@@ -26,6 +26,27 @@ carton exec ./registry workflow import registry
 carton exec ./registry template import registry
 ```
 
+## Test Requirements
+
+**CRITICAL: 100% Test Pass Rate Required**
+
+Registry maintains a 100% test pass rate across all test suites. This is a strict requirement:
+
+- **ALL tests must pass before any PR can be merged**
+- **NO failing tests are acceptable** - even cosmetic or "minor" failures block merges
+- **NO TODO/skip tests without explicit approval** from perigrin
+- If tests fail due to your changes, you MUST fix them before the work is considered complete
+- The CI system enforces this requirement automatically
+
+Current test coverage includes:
+- Unit tests: `t/dao/` (18/18 passing)
+- Controller tests: `t/controller/` (26/26 passing) 
+- Integration tests: `t/integration/` (20/20 passing)
+- Security tests: `t/security/` (comprehensive input validation)
+- End-to-end tests: `t/e2e/` (complete user journeys)
+
+**Test execution must be pristine** - no warnings, errors, or unexpected output.
+
 ### Docker Development
 ```bash
 docker-compose up  # Start all services
@@ -79,6 +100,7 @@ class Foo :isa(Bar) {
 ### Important Notes
 
 - **Pre-Alpha System**: Registry is pre-alpha with no users yet. Do NOT worry about backwards compatibility unless explicitly told otherwise. Make the best technical decisions for the current codebase.
+- **100% Test Pass Rate**: ALL tests must pass at 100% before any code changes are considered complete. This is non-negotiable.
 - When modifying workflows, remember to re-import them with the workflow import command
 - The workflow processor (`lib/Registry/Utility/WorkflowProcessor.pm`) handles workflow execution
 - Custom workflow steps must inherit from base step classes and implement required methods
