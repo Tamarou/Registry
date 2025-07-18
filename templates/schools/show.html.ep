@@ -8,11 +8,7 @@
     % if ($location->address_info) {
       <div class="text-gray-600 mb-4">
         <p><%= $location->address_info->{street_address} %></p>
-        <p>
-          <%= $location->address_info->{city} %>, 
-          <%= $location->address_info->{state} %> 
-          <%= $location->address_info->{postal_code} %>
-        </p>
+        <p><%= $location->address_info->{city} %>, <%= $location->address_info->{state} %> <%= $location->address_info->{postal_code} %></p>
       </div>
     % }
     

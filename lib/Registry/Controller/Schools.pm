@@ -125,11 +125,11 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
                 };
                 
                 # Calculate available spots for this session
-                my $enrollments = Registry::DAO::Enrollment->find_all($dao, {
+                my @enrollments = Registry::DAO::Enrollment->find($dao, {
                     session_id => $session->id,
                     status => ['active', 'pending']
                 });
-                my $enrolled_count = @$enrollments;
+                my $enrolled_count = @enrollments;
                 
                 my $capacity = $event->capacity || 0;
                 my $available_spots = $capacity > 0 ? $capacity - $enrolled_count : undef;

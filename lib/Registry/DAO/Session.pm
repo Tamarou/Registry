@@ -77,10 +77,11 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
 
         # TODO: this should be a join
-        $db->select( 'session_events', '*', { session_id => $id } )
+        my $events = $db->select( 'session_events', '*', { session_id => $id } )
           ->hashes->map(
             sub { Registry::DAO::Event->find( $db, { id => $_->{event_id} } ) }
-        )->to_array->@*;
+        )->to_array;
+        return $events;
     }
 
     method add_events ( $db, @events ) {
