@@ -9,7 +9,8 @@ use Registry::DAO;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 # Basic continuation functionality
 {

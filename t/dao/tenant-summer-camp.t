@@ -12,7 +12,8 @@ use Mojo::Home;
 use YAML::XS;
 
 # Create a test database
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my $db  = $dao->db;
 
 # TODO: move these to t/lib/Test/Registry.pm

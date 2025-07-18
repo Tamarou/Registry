@@ -12,7 +12,8 @@ use Test::Registry::DB;
 use Test::Registry::Helpers qw(process_workflow);
 use YAML::XS                qw( Load );
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my $workflow_dir = Mojo::Home->new->child('workflows');
 my @files        = $workflow_dir->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {

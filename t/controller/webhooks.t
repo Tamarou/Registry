@@ -9,8 +9,8 @@ use Registry;
 use Test::Registry::DB;
 use JSON;
 
-my $test_db_url = Test::Registry::DB->new_test_db();
-local $ENV{DB_URL} = $test_db_url;
+my $test_db = Test::Registry::DB->new();
+local $ENV{DB_URL} = $test_db->uri;
 
 # Skip Minion for testing
 my $app = Registry->new;

@@ -16,9 +16,10 @@ use Test::Registry::Helpers qw(
   workflow_process_step_url
 );
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
-$ENV{DB_URL} = $dao->url;
+$ENV{DB_URL} = $test_db->uri;
 
 my $yaml = Mojo::Home->new->child( 'workflows', 'event-creation.yml' )->slurp;
 Workflow->from_yaml( $dao, $yaml );

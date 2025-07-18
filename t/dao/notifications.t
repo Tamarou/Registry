@@ -10,7 +10,8 @@ use Registry::DAO::UserPreference;
 use Registry::Job::AttendanceCheck;
 use Test::Registry::DB;
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 subtest 'Notification DAO exists and has required methods' => sub {
     ok(Registry::DAO::Notification->can('create'), 'Notification DAO has create method');

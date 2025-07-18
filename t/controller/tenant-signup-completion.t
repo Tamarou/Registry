@@ -10,7 +10,8 @@ use Test::Registry::Fixtures;
 use DateTime;
 
 # Set up test data
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 subtest 'Enhanced completion step template exists' => sub {
     # Test that the completion template file exists and has the expected content
