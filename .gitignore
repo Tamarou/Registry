@@ -5,3 +5,9 @@ README
 migrations.sql
 Registry.code-workspace
 .prove
+
+# Cache directories
+$XDG_CACHE_HOME/
+.cache/
+**/cache/
+*.cache
