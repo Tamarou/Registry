@@ -38,6 +38,9 @@ BEGIN
   END IF;
 
   EXECUTE 'INSERT INTO '|| quote_ident(dest_schema) || '.users SELECT * FROM ' || quote_ident(source_schema) || '.users WHERE id = ' || quote_literal(user_id);
+  
+  -- Also copy user_profiles data
+  EXECUTE 'INSERT INTO '|| quote_ident(dest_schema) || '.user_profiles SELECT * FROM ' || quote_ident(source_schema) || '.user_profiles WHERE user_id = ' || quote_literal(user_id);
 END
 
 $BODY$

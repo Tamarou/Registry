@@ -25,24 +25,32 @@ my $admin = Test::Registry::Fixtures::create_user($db, {
     username => 'admin',
     password => 'password123',
     user_type => 'admin',
+    name => 'Admin User',
+    email => 'admin@example.com',
 });
 
 my $staff = Test::Registry::Fixtures::create_user($db, {
     username => 'staff',
     password => 'password123',
     user_type => 'staff',
+    name => 'Staff User',
+    email => 'staff@example.com',
 });
 
 my $parent1 = Test::Registry::Fixtures::create_user($db, {
     username => 'parent1',
     password => 'password123',
     user_type => 'parent',
+    name => 'Parent One',
+    email => 'parent1@example.com',
 });
 
 my $parent2 = Test::Registry::Fixtures::create_user($db, {
     username => 'parent2',
     password => 'password123',
     user_type => 'parent',
+    name => 'Parent Two',
+    email => 'parent2@example.com',
 });
 
 # Copy users to tenant schema
