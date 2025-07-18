@@ -61,7 +61,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         my $updated_data = { $current_data->%*, $new_data->%* };
         $db->update(
             $self->table,
-            { data      => encode_json( $updated_data ) },
+            { data      => { -json => $updated_data } },
             { id        => $id }
         );
         

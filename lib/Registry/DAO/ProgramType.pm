@@ -35,7 +35,7 @@ class Registry::DAO::ProgramType :isa(Registry::DAO::Object) {
         
         # Encode config as JSON if it's a hashref
         if (exists $data->{config} && ref $data->{config} eq 'HASH') {
-            $data->{config} = { -json => $data->{config} };
+            $data->{config} = encode_json($data->{config});
         }
         
         $class->SUPER::create($db, $data);
@@ -44,7 +44,7 @@ class Registry::DAO::ProgramType :isa(Registry::DAO::Object) {
     method update ($db, $data) {
         # Encode config as JSON if it's a hashref
         if (exists $data->{config} && ref $data->{config} eq 'HASH') {
-            $data->{config} = { -json => $data->{config} };
+            $data->{config} = encode_json($data->{config});
         }
         
         $self->SUPER::update($db, $data);
