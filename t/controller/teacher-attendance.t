@@ -10,8 +10,9 @@ use Registry::DAO qw(Workflow);
 use Test::Registry::DB;
 
 # Set up test database and workflows
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
-$ENV{DB_URL} = $dao->url;
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
+$ENV{DB_URL} = $test_db->uri;
 
 # Load user-creation workflow that the controller redirects to
 use Mojo::Home;

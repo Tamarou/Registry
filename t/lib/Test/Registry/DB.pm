@@ -21,10 +21,11 @@ package Test::Registry::DB {
         
         # Use pg_dump to create schema dump - try different pg_dump versions
         my @pg_dump_commands = (
-            "pg_dump --version > /dev/null 2>&1 && pg_dump '$template_uri' > '$dump_file'",
-            "/usr/lib/postgresql/17/bin/pg_dump '$template_uri' > '$dump_file'",
-            "/usr/lib/postgresql/16/bin/pg_dump '$template_uri' > '$dump_file'",
-            "/usr/lib/postgresql/15/bin/pg_dump '$template_uri' > '$dump_file'",
+            "/usr/lib/postgresql/17/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
+            "/usr/lib/postgresql/16/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
+            "/usr/lib/postgresql/15/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
+            "/usr/lib/postgresql/14/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
+            "pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
         );
         
         my $success = 0;
@@ -53,10 +54,11 @@ package Test::Registry::DB {
         
         # Load schema from dump file - try different psql versions
         my @psql_commands = (
-            "psql --version > /dev/null 2>&1 && psql '$uri' < '$dump_file'",
-            "/usr/lib/postgresql/17/bin/psql '$uri' < '$dump_file'",
-            "/usr/lib/postgresql/16/bin/psql '$uri' < '$dump_file'",
-            "/usr/lib/postgresql/15/bin/psql '$uri' < '$dump_file'",
+            "/usr/lib/postgresql/17/bin/psql '$uri' < '$dump_file' 2>/dev/null",
+            "/usr/lib/postgresql/16/bin/psql '$uri' < '$dump_file' 2>/dev/null",
+            "/usr/lib/postgresql/15/bin/psql '$uri' < '$dump_file' 2>/dev/null",
+            "/usr/lib/postgresql/14/bin/psql '$uri' < '$dump_file' 2>/dev/null",
+            "psql '$uri' < '$dump_file' 2>/dev/null",
         );
         
         my $success = 0;

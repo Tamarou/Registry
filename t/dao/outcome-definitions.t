@@ -11,7 +11,8 @@ use Mojo::File qw(path tempdir curfile);
 use Mojo::JSON qw(encode_json decode_json);
 
 # Create a test database
-my $dao = Registry::DAO->new(url => Test::Registry::DB->new_test_db());
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 # Test basic outcome definition creation
 subtest 'Create outcome definition' => sub {

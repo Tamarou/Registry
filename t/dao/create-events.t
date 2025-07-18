@@ -10,7 +10,8 @@ use Registry::DAO;
 use Test::Registry::DB;
 use YAML::XS qw( Load );
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my @files =
   Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {

@@ -11,7 +11,8 @@ use Test::Registry::DB;
 use Registry::Controller::Webhooks;
 use JSON;
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my $db = $dao->db;
 
 subtest 'Webhook controller creation' => sub {
