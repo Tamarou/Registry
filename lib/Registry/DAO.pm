@@ -1,8 +1,12 @@
+# ABOUTME: Data Access Object layer for Registry application database interactions
+# ABOUTME: Provides base functionality for all DAO classes and database operations
 use 5.40.2;
 use utf8;
 use experimental qw(builtin);
 use builtin      qw(export_lexically);
 use Object::Pad;
+
+package Registry::DAO;
 
 use Mojo::Pg;
 use Registry::DAO::Object;
@@ -91,3 +95,5 @@ class Registry::DAO {
 
     method current_tenant { $schema }
 }
+
+1;

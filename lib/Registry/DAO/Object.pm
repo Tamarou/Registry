@@ -1,6 +1,10 @@
+# ABOUTME: Base object class for all Registry DAO entities with common CRUD operations
+# ABOUTME: Provides find, create, update methods and database interaction patterns
 use 5.40.2;
 use utf8;
 use Object::Pad;
+
+package Registry::DAO::Object;
 
 class Registry::DAO::Object {
     use Carp         qw( carp confess );
@@ -46,3 +50,5 @@ class Registry::DAO::Object {
         };
     }
 }
+
+1;
