@@ -18,7 +18,9 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     sub create ( $class, $db, $data ) {
         for my $field (qw(address_info metadata)) {
             next unless exists $data->{$field};
-            $data->{$field} = { -json => $data->{$field} };
+            if (ref $data->{$field} eq 'HASH') {
+                $data->{$field} = { -json => $data->{$field} };
+            }
         }
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
         $class->SUPER::create( $db, $data );

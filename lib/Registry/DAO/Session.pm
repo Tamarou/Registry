@@ -66,7 +66,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         }
         
         # Handle JSON field encoding
-        if (exists $data->{metadata} && ref $data->{metadata}) {
+        if (exists $data->{metadata} && ref $data->{metadata} eq 'HASH') {
             $data->{metadata} = { -json => $data->{metadata} };
         }
         
