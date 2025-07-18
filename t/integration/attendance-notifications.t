@@ -3,6 +3,9 @@
 use 5.40.2;
 use experimental qw( try );
 
+# Set up test email transport BEFORE loading any modules that might use Email::Sender
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test'; }
+
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
@@ -216,6 +219,22 @@ subtest 'End-to-end attendance notification workflow' => sub {
     my $job_instance = Registry::Job::AttendanceCheck->new;
     $job_instance->check_tenant_attendance($mock_job, $db, 'public');
 
+    # Verify email notifications were created and sent successfully
+    my $email_notifications = $db->select('notifications', 'count(*)', {
+        channel => 'email',
+        'sent_at' => { '!=' => undef }
+    })->array->[0];
+    
+    is($email_notifications, 1, 'One email notification was created and marked as sent');
+    
+    # Verify no email notifications failed
+    my $failed_emails = $db->select('notifications', 'count(*)', {
+        channel => 'email',
+        'failed_at' => { '!=' => undef }
+    })->array->[0];
+    
+    is($failed_emails, 0, 'No email notifications failed');
+
     # Verify notifications were created correctly
     my $all_notifications = $db->select('notifications', '*', {}, { -asc => ['user_id', 'type', 'channel'] })->hashes->to_array;
 
@@ -257,6 +276,8 @@ subtest 'End-to-end attendance notification workflow' => sub {
     my $notification_obj = Registry::DAO::Notification->new(%$teacher1_in_app);
     ok($notification_obj->is_sent, 'Notification correctly identified as sent');
     ok($notification_obj->is_attendance_notification, 'Notification correctly identified as attendance notification');
+    
+    done_testing();
 };
 
 subtest 'Notification preferences respected' => sub {
@@ -346,6 +367,8 @@ subtest 'Notification preferences respected' => sub {
     })->array->[0];
 
     is($notification_count, 0, 'No notifications created when teacher has disabled them');
+    
+    done_testing();
 };
 
 subtest 'Duplicate prevention' => sub {
@@ -433,13 +456,14 @@ subtest 'Duplicate prevention' => sub {
     $job_instance->check_tenant_attendance($mock_job, $db, 'public');
 
     # Should only have 1 reminder notification (no duplicates)
-    my $reminder_count = $db->select('notifications', 'count(*)', {
-        user_id => $teacher->id,
-        type => 'attendance_reminder',
-        'metadata->event_id' => $event->id
-    })->array->[0];
+    my $reminder_count = $db->query(
+        'SELECT count(*) FROM notifications WHERE user_id = ? AND type = ? AND metadata->>? = ?',
+        $teacher->id, 'attendance_reminder', 'event_id', $event->id
+    )->array->[0];
 
     is($reminder_count, 1, 'Duplicate reminder notifications prevented');
+    
+    done_testing();
 };
 
 $db_helper->cleanup_test_database;
