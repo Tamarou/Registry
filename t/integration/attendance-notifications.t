@@ -117,27 +117,27 @@ subtest 'End-to-end attendance notification workflow' => sub {
 
     # Enroll students
     my $enrollment1 = Registry::DAO::Enrollment->create($db, {
-        user_id => $student1->id,
+        student_id => $student1->id,
         session_id => $session1->id,
         status => 'active'
     });
 
     my $enrollment2 = Registry::DAO::Enrollment->create($db, {
-        user_id => $student2->id,
+        student_id => $student2->id,
         session_id => $session2->id,
         status => 'active'
     });
 
     # Scenario 1: Event that started 10 minutes ago, no attendance taken
-    my $past_time = DateTime->now->subtract(minutes => 10)->iso8601;
+    my $past_time = DateTime->now->subtract(minutes => 10);
     my $event_missing_attendance = Registry::DAO::Event->create($db, {
         location_id => $location1->id,
         project_id => $project1->id,
         teacher_id => $teacher1->id,
+        start_time => $past_time,
+        end_time => DateTime->now->add(minutes => 50),
         metadata => {
-            title => 'Math Tutoring - Morning Session',
-            start_time => $past_time,
-            end_time => DateTime->now->add(minutes => 50)->iso8601
+            title => 'Math Tutoring - Morning Session'
         }
     });
 
@@ -148,15 +148,15 @@ subtest 'End-to-end attendance notification workflow' => sub {
     });
 
     # Scenario 2: Event starting in 3 minutes (should get reminder)
-    my $soon_time = DateTime->now->add(minutes => 3)->iso8601;
+    my $soon_time = DateTime->now->add(minutes => 3);
     my $event_starting_soon = Registry::DAO::Event->create($db, {
         location_id => $location2->id,
         project_id => $project2->id,
         teacher_id => $teacher2->id,
+        start_time => $soon_time,
+        end_time => DateTime->now->add(minutes => 63),
         metadata => {
-            title => 'Art Workshop - Afternoon Session',
-            start_time => $soon_time,
-            end_time => DateTime->now->add(minutes => 63)->iso8601
+            title => 'Art Workshop - Afternoon Session'
         }
     });
 
@@ -167,15 +167,15 @@ subtest 'End-to-end attendance notification workflow' => sub {
     });
 
     # Scenario 3: Event that started 5 minutes ago but already has attendance
-    my $past_time_with_attendance = DateTime->now->subtract(minutes => 5)->iso8601;
+    my $past_time_with_attendance = DateTime->now->subtract(minutes => 5);
     my $event_with_attendance = Registry::DAO::Event->create($db, {
         location_id => $location1->id,
         project_id => $project1->id,
         teacher_id => $teacher1->id,
+        start_time => $past_time_with_attendance,
+        end_time => DateTime->now->add(minutes => 55),
         metadata => {
-            title => 'Math Tutoring - Completed Session',
-            start_time => $past_time_with_attendance,
-            end_time => DateTime->now->add(minutes => 55)->iso8601
+            title => 'Math Tutoring - Completed Session'
         }
     });
 
@@ -304,21 +304,21 @@ subtest 'Notification preferences respected' => sub {
     });
 
     my $enrollment = Registry::DAO::Enrollment->create($db, {
-        user_id => $student->id,
+        student_id => $student->id,
         session_id => $session->id,
         status => 'active'
     });
 
     # Create event missing attendance
-    my $past_time = DateTime->now->subtract(minutes => 10)->iso8601;
+    my $past_time = DateTime->now->subtract(minutes => 10);
     my $event = Registry::DAO::Event->create($db, {
         location_id => $location->id,
         project_id => $project->id,
         teacher_id => $teacher_no_notif->id,
+        start_time => $past_time,
+        end_time => DateTime->now->add(minutes => 50),
         metadata => {
-            title => 'Silent Study Session',
-            start_time => $past_time,
-            end_time => DateTime->now->add(minutes => 50)->iso8601
+            title => 'Silent Study Session'
         }
     });
 
@@ -386,21 +386,21 @@ subtest 'Duplicate prevention' => sub {
     });
 
     my $enrollment = Registry::DAO::Enrollment->create($db, {
-        user_id => $student->id,
+        student_id => $student->id,
         session_id => $session->id,
         status => 'active'
     });
 
     # Create event starting soon (for reminder test)
-    my $soon_time = DateTime->now->add(minutes => 3)->iso8601;
+    my $soon_time = DateTime->now->add(minutes => 3);
     my $event = Registry::DAO::Event->create($db, {
         location_id => $location->id,
         project_id => $project->id,
         teacher_id => $teacher->id,
+        start_time => $soon_time,
+        end_time => DateTime->now->add(minutes => 63),
         metadata => {
-            title => 'Dup Test Event',
-            start_time => $soon_time,
-            end_time => DateTime->now->add(minutes => 63)->iso8601
+            title => 'Dup Test Event'
         }
     });
 
