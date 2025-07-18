@@ -114,6 +114,15 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         if ($plan_type eq 'early_bird' && $requirements->{early_bird_cutoff_date}) {
             my $cutoff = $requirements->{early_bird_cutoff_date};
             my $today = $context->{date} // time();
+            
+            # Convert dates to comparable format if they're strings
+            if ($cutoff && $cutoff =~ /^\d{4}-\d{2}-\d{2}$/) {
+                $cutoff =~ s/-//g;  # Convert 2024-05-01 to 20240501
+            }
+            if ($today && $today =~ /^\d{4}-\d{2}-\d{2}$/) {
+                $today =~ s/-//g;   # Convert 2024-04-15 to 20240415
+            }
+            
             return 0 if $today > $cutoff;
         }
         
