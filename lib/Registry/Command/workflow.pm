@@ -1,7 +1,11 @@
+# ABOUTME: Workflow management command for Registry CLI tool
+# ABOUTME: Handles workflow import, list and other workflow operations
 use 5.40.2;
 use utf8;
 use Object::Pad;
 use experimental qw(try);
+
+package Registry::Command::workflow;
 
 class Registry::Command::workflow :isa(Mojolicious::Command) {
     use Carp          qw(carp);
@@ -90,7 +94,7 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
         return;
     }
 
-    method import (@files) {
+    method import_workflows (@files) {
         unless ( scalar @files ) {
             @files = $self->app->home->child('workflows')
               ->list_tree->grep(qr/\.ya?ml$/)->each;
@@ -139,6 +143,9 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     method run( $cmd, $schema, @args ) {
         $dao = $dao->connect_schema($schema);
 
+        # Handle command aliases
+        $cmd = 'import_workflows' if $cmd eq 'import';
+
         if ( my $method = $self->can($cmd) ) {
             return $self->$method(@args);
         }
@@ -150,4 +157,6 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
         END
     }
 }
+
+1;
 
