@@ -142,7 +142,15 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return 0 unless $plan_type eq 'early_bird';
         return 0 unless $requirements->{early_bird_cutoff_date};
         
-        return $date <= $requirements->{early_bird_cutoff_date};
+        # Convert date string to timestamp if needed
+        my $cutoff = $requirements->{early_bird_cutoff_date};
+        if ($cutoff !~ /^\d+$/) {
+            # Parse date string to timestamp
+            require Time::Piece;
+            $cutoff = Time::Piece->strptime($cutoff, '%Y-%m-%d')->epoch;
+        }
+        
+        return $date <= $cutoff;
     }
     
     # Get installment amount
