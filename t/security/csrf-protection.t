@@ -9,9 +9,6 @@ use Test::Registry::Fixtures;
 
 # Test CSRF protection on form submissions
 subtest 'CSRF protection tests' => sub {
-    my $db = Test::Registry::DB->new->db;
-    my $fixtures = Test::Registry::Fixtures->new(db => $db);
-    
     my $t = Test::Mojo->new('Registry');
     
     subtest 'Marketing page loads without CSRF token requirement' => sub {
