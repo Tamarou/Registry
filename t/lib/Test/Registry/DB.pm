@@ -21,11 +21,12 @@ package Test::Registry::DB {
         
         # Use pg_dump to create schema dump - try different pg_dump versions
         my @pg_dump_commands = (
+            "pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
+            "/usr/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/17/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/16/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/15/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/14/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
-            "pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
         );
         
         my $success = 0;
@@ -54,11 +55,12 @@ package Test::Registry::DB {
         
         # Load schema from dump file - try different psql versions
         my @psql_commands = (
+            "psql '$uri' < '$dump_file' 2>/dev/null",
+            "/usr/bin/psql '$uri' < '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/17/bin/psql '$uri' < '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/16/bin/psql '$uri' < '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/15/bin/psql '$uri' < '$dump_file' 2>/dev/null",
             "/usr/lib/postgresql/14/bin/psql '$uri' < '$dump_file' 2>/dev/null",
-            "psql '$uri' < '$dump_file' 2>/dev/null",
         );
         
         my $success = 0;
@@ -121,9 +123,9 @@ package Test::Registry::DB {
 
     sub deploy_sqitch_changes {
         my ($self, $changes) = @_;
-        for my $change (@$changes) {
-            App::Sqitch->new()->run('sqitch', 'deploy', '-t', $self->uri, $change);
-        }
+        # Since we deploy the full schema in new(), individual changes are already deployed
+        # This method is now a no-op to avoid sqitch deployment conflicts
+        return;
     }
 
     sub cleanup_test_database {
