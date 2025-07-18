@@ -1,0 +1,156 @@
+name: Test Suite
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libpq-dev \
+          postgresql-client \
+          build-essential \
+          libssl-dev \
+          libz-dev
+
+    - name: Install cpanm and carton
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+
+    - name: Cache Perl dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/perl5
+        key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
+        restore-keys: |
+          ${{ runner.os }}-perl-
+
+    - name: Install Perl dependencies
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        carton install --deployment
+
+    - name: Setup test database
+      run: |
+        export PGPASSWORD=postgres
+        createdb -h localhost -U postgres registry_test || true
+        
+    - name: Deploy database schema
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_test
+
+    - name: Import workflows and templates
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        carton exec ./registry workflow import registry || true
+        carton exec ./registry template import registry || true
+
+    - name: Run test suite
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        export EMAIL_SENDER_TRANSPORT=Test
+        carton exec prove -lr t/ --formatter=TAP::Formatter::Console
+
+    - name: Run specific test suites
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        export EMAIL_SENDER_TRANSPORT=Test
+        
+        echo "Running DAO tests..."
+        carton exec prove -lr t/dao/ --jobs=2 || true
+        
+        echo "Running Controller tests..."
+        carton exec prove -lr t/controller/ --jobs=2 || true
+        
+        echo "Running Integration tests..."
+        carton exec prove -lr t/integration/ || true
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install Perl::Critic
+      run: |
+        cpanm --notest Perl::Critic
+
+    - name: Run Perl::Critic (non-blocking)
+      run: |
+        # Run perlcritic but don't fail the build on warnings
+        # since Object::Pad code doesn't follow traditional Perl conventions
+        find lib -name "*.pm" -exec perlcritic --severity=3 --quiet {} \; || true
+        echo "Perl::Critic completed (warnings are informational only)"
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run security checks
+      run: |
+        echo "Checking for common security issues..."
+        
+        # Check for hardcoded secrets (basic patterns)
+        if grep -r -i "password\s*=" --include="*.pm" --include="*.pl" lib/ | grep -v "EXAMPLE\|TODO\|FIXME" | head -5; then
+          echo "WARNING: Potential hardcoded passwords found"
+        fi
+        
+        # Check for SQL injection patterns
+        if grep -r "qq{.*\$" --include="*.pm" lib/ | head -5; then
+          echo "WARNING: Potential SQL injection patterns found"
+        fi
+        
+        echo "Security check completed"
