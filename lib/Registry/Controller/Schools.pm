@@ -59,16 +59,17 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
         my @where_clauses = (
             'e.location_id = ?',
             "s.status = 'published'"
-            # Temporarily disabled: '(s.end_date IS NULL OR s.end_date >= CURRENT_DATE)'
+            # Note: Temporarily re-disable end date filter to debug
+            # '(s.end_date IS NULL OR s.end_date >= CURRENT_DATE)'
         );
         my @params = ($location_id);
         
-        # Add age filters - temporarily disabled to debug
-        if (0 && $filters->{min_age}) {
+        # Add age filters
+        if ($filters->{min_age}) {
             push @where_clauses, '(e.max_age IS NULL OR e.max_age >= ?)';
             push @params, $filters->{min_age};
         }
-        if (0 && $filters->{max_age}) {
+        if ($filters->{max_age}) {
             push @where_clauses, '(e.min_age IS NULL OR e.min_age <= ?)';
             push @params, $filters->{max_age};
         }
