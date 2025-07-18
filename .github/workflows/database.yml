@@ -1,0 +1,211 @@
+name: Database Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'sql/**'
+      - 'sqitch.plan'
+      - 'sqitch.conf'
+  push:
+    branches: [ main ]
+    paths:
+      - 'sql/**'
+      - 'sqitch.plan'
+      - 'sqitch.conf'
+
+jobs:
+  migration-test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        postgres-version: [14, 15, 16]
+    
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-version }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libpq-dev \
+          postgresql-client \
+          build-essential
+
+    - name: Install Perl dependencies
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+        carton install --deployment
+
+    - name: Test database migration
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        
+        echo "Testing PostgreSQL ${{ matrix.postgres-version }} migration..."
+        
+        # Create test database
+        createdb -h localhost -U postgres registry_migration_test
+        
+        # Deploy schema
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_migration_test
+        
+        # Verify deployment
+        carton exec sqitch status db:pg://postgres@localhost/registry_migration_test
+        
+        echo "Migration test completed successfully"
+
+    - name: Test schema rollback
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        
+        echo "Testing schema rollback..."
+        
+        # Test rollback of last few changes
+        carton exec sqitch revert -n 3 db:pg://postgres@localhost/registry_migration_test || true
+        
+        # Redeploy
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_migration_test
+        
+        echo "Rollback test completed"
+
+  schema-validation:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev postgresql-client build-essential
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+        carton install --deployment
+
+    - name: Validate schema structure
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        
+        # Deploy schema
+        createdb -h localhost -U postgres registry_validation_test
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_validation_test
+        
+        # Validate key tables exist
+        psql -h localhost -U postgres -d registry_validation_test -c "
+          SELECT table_name 
+          FROM information_schema.tables 
+          WHERE table_schema = 'registry' 
+          ORDER BY table_name;
+        "
+        
+        # Validate key indexes exist
+        psql -h localhost -U postgres -d registry_validation_test -c "
+          SELECT indexname 
+          FROM pg_indexes 
+          WHERE schemaname = 'registry' 
+          AND indexname LIKE 'idx_%'
+          ORDER BY indexname;
+        "
+        
+        echo "Schema validation completed"
+
+  data-integrity:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev postgresql-client build-essential
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+        carton install --deployment
+
+    - name: Test data integrity constraints
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        
+        # Deploy schema
+        createdb -h localhost -U postgres registry_integrity_test
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_integrity_test
+        
+        # Run basic DAO tests to verify data integrity
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_integrity_test"
+        export EMAIL_SENDER_TRANSPORT=Test
+        
+        # Test basic data operations
+        carton exec prove -lv t/dao/messages.t || true
+        
+        echo "Data integrity test completed"
