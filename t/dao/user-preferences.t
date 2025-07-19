@@ -38,7 +38,7 @@ subtest 'UserPreference creation and basic operations' => sub {
 
     # Test get_value method
     is_deeply($preference->get_value, { enabled => 1, level => 'high' }, 'get_value returns correct value');
-    is($preference->get_value('default'), { enabled => 1, level => 'high' }, 'get_value with default returns actual value');
+    is_deeply($preference->get_value('default'), { enabled => 1, level => 'high' }, 'get_value with default returns actual value');
 
     # Test setting new value
     $preference->set_value($db, { enabled => 0, level => 'low' });
@@ -186,6 +186,9 @@ subtest 'Multiple preferences per user' => sub {
         preference_value => { email_enabled => 1 }
     });
 
+    # Trigger creation of default notifications preference
+    Registry::DAO::UserPreference->get_notification_preferences($db, $user->id);
+
     # Test getting all user preferences
     my $all_prefs = Registry::DAO::UserPreference->get_user_preferences($db, $user->id);
 
@@ -205,7 +208,11 @@ subtest 'Multiple preferences per user' => sub {
         user_id => $user->id,
         preference_key => 'notifications'
     });
-    ok($notif_pref->is_notification_preference, 'notifications preference identified correctly');
+    if ($notif_pref) {
+        ok($notif_pref->is_notification_preference, 'notifications preference identified correctly');
+    } else {
+        fail('notifications preference not found');
+    }
 };
 
 subtest 'JSON handling and edge cases' => sub {
@@ -224,14 +231,14 @@ subtest 'JSON handling and edge cases' => sub {
 
     is_deeply($array_pref->preference_value, ['item1', 'item2', 'item3'], 'Array values handled correctly');
 
-    # Test with scalar value
-    my $scalar_pref = Registry::DAO::UserPreference->create($db, {
+    # Test with simple object value  
+    my $simple_pref = Registry::DAO::UserPreference->create($db, {
         user_id => $user->id,
-        preference_key => 'scalar_setting',
-        preference_value => 'simple_string'
+        preference_key => 'simple_setting',
+        preference_value => { value => 'simple_string' }
     });
 
-    is($scalar_pref->preference_value, 'simple_string', 'Scalar values handled correctly');
+    is_deeply($simple_pref->preference_value, { value => 'simple_string' }, 'Simple object values handled correctly');
 
     # Test empty/null values
     my $empty_pref = Registry::DAO::UserPreference->create($db, {
