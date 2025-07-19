@@ -5,6 +5,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     use Carp         qw( carp );
     use experimental qw(try);
     use Mojo::JSON   qw( decode_json );
+    use Scalar::Util qw( blessed );
 
     field $id :param :reader;
     field $name :param :reader;
@@ -77,11 +78,15 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
 
         # TODO: this should be a join
-        my $events = $db->select( 'session_events', '*', { session_id => $id } )
+        my @events = $db->select( 'session_events', '*', { session_id => $id } )
           ->hashes->map(
-            sub { Registry::DAO::Event->find( $db, { id => $_->{event_id} } ) }
-        )->to_array;
-        return $events;
+            sub { 
+                my $event = Registry::DAO::Event->find( $db, { id => $_->{event_id} } );
+                return $event if blessed($event);
+                return; # Skip if event not found
+            }
+        )->grep(sub { defined $_ })->each;
+        return wantarray ? @events : \@events;
     }
 
     method add_events ( $db, @events ) {
