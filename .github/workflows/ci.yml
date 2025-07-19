@@ -68,6 +68,15 @@ jobs:
     - name: Setup test database
       run: |
         export PGPASSWORD=postgres
+        # Wait for PostgreSQL to be ready
+        for i in {1..30}; do
+          if pg_isready -h localhost -U postgres; then
+            echo "PostgreSQL is ready"
+            break
+          fi
+          echo "Waiting for PostgreSQL... ($i/30)"
+          sleep 2
+        done
         createdb -h localhost -U postgres registry_test || true
         
     - name: Deploy database schema
@@ -83,8 +92,11 @@ jobs:
         export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
         export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
-        carton exec ./registry workflow import registry || true
-        carton exec ./registry template import registry || true
+        echo "Importing workflows..."
+        carton exec ./registry workflow import registry || echo "Workflow import failed, continuing..."
+        echo "Importing templates..."
+        carton exec ./registry template import registry || echo "Template import failed, continuing..."
+        echo "Import phase completed"
 
     - name: Run test suite
       run: |
@@ -93,7 +105,8 @@ jobs:
         export PGPASSWORD=postgres
         export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         export EMAIL_SENDER_TRANSPORT=Test
-        carton exec prove -lr t/ --formatter=TAP::Formatter::Console
+        # Add timeout and parallel execution for better CI performance
+        timeout 15m carton exec prove -lr t/ --formatter=TAP::Formatter::Console --jobs 4
 
   lint:
     runs-on: ubuntu-latest
