@@ -46,5 +46,5 @@ subtest 'Review step basic functionality' => sub {
 };
 
 subtest 'Review template structure' => sub {
-    ok(-f '/home/perigrin/dev/Registry/templates/tenant-signup/review.html.ep', 'Review template exists');
+    ok(-f 'templates/tenant-signup/review.html.ep', 'Review template exists');
 };

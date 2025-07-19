@@ -7,7 +7,7 @@ defer { done_testing };
 # Test that the workflow layout includes the progress component
 subtest 'Workflow Layout Integration' => sub {
     # Read the workflow layout template
-    my $layout_file = '/home/perigrin/dev/Registry/templates/layouts/workflow.html.ep';
+    my $layout_file = 'templates/layouts/workflow.html.ep';
     
     ok(-f $layout_file, 'Workflow layout template exists');
     
@@ -34,7 +34,7 @@ subtest 'Workflow Layout Integration' => sub {
 };
 
 subtest 'Web Component File Exists' => sub {
-    my $component_file = '/home/perigrin/dev/Registry/public/js/components/workflow-progress.js';
+    my $component_file = 'public/js/components/workflow-progress.js';
     
     ok(-f $component_file, 'Workflow progress component file exists');
     
@@ -52,8 +52,8 @@ subtest 'Web Component File Exists' => sub {
 
 subtest 'Test Templates Exist' => sub {
     my @test_templates = (
-        '/home/perigrin/dev/Registry/templates/test-workflow/step1.html.ep',
-        '/home/perigrin/dev/Registry/templates/test-workflow/step2.html.ep'
+        'templates/test-workflow/step1.html.ep',
+        'templates/test-workflow/step2.html.ep'
     );
     
     for my $template (@test_templates) {
