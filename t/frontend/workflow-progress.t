@@ -8,7 +8,7 @@ use Mojolicious::Lite;
 use Test::Mojo;
 
 # Set up a minimal test application to serve our component
-app->static->paths(['/home/perigrin/dev/Registry/public']);
+app->static->paths(['public']);
 
 get '/test-component' => sub {
     my $c = shift;

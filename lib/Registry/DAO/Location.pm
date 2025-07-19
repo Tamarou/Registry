@@ -118,7 +118,7 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
             );
             # Remove undefined values
             my %clean_data = map { defined $instance_data{$_} ? ($_ => $instance_data{$_}) : () } keys %instance_data;
-            return $self->create($db, { %clean_data, %$data });
+            return Registry::DAO::Location->create($db, { %clean_data, %$data });
         }
     }
 }

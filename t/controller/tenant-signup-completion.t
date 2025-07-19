@@ -15,7 +15,7 @@ my $dao = $test_db->db;
 
 subtest 'Enhanced completion step template exists' => sub {
     # Test that the completion template file exists and has the expected content
-    my $template_path = '/home/perigrin/dev/Registry/templates/tenant-signup/complete.html.ep';
+    my $template_path = 'templates/tenant-signup/complete.html.ep';
     ok(-f $template_path, 'Completion template file exists');
     
     # Read template content and verify key elements
