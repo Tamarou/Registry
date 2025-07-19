@@ -55,5 +55,10 @@ for my $file (@files) {
     my ($session) = $dao->find( Session => { name => 'Session 1', } );
     die 'Session not created' unless $session;
     my @events = $session->events( $dao->db );
-    is $events[0]->id, $event->id, 'Event Venue correct';
+    ok scalar(@events) > 0, 'Session has events';
+    if (@events && ref($events[0])) {
+        is $events[0]->id, $event->id, 'Event Venue correct';
+    } else {
+        fail 'Event not properly created or not an object';
+    }
 }

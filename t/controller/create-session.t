@@ -113,8 +113,12 @@ my $event = $dao->create(
     die 'Session not created' unless $session;
     is $session->name, 'Session 1', 'Session name is correct';
     my @events = $session->events( $dao->db );
-    is scalar @events, 1,          'Session has one event';
-    is $events[0]->id, $event->id, 'Event Venue correct';
+    is scalar @events, 1, 'Session has one event';
+    if (@events && ref($events[0])) {
+        is $events[0]->id, $event->id, 'Event Venue correct';
+    } else {
+        fail 'Event not properly created or not an object';
+    }
 }
 
 {
@@ -209,6 +213,10 @@ my $event = $dao->create(
     die 'Session not created' unless $session;
     is $session->name, 'Session 2', 'Session name is correct';
     my @events = $session->events( $dao->db );
-    is scalar @events, 1,           'Session has one event';
-    is $events[0]->id, $event2->id, 'Event Venue correct';
+    is scalar @events, 1, 'Session has one event';
+    if (@events && ref($events[0])) {
+        is $events[0]->id, $event2->id, 'Event Venue correct';
+    } else {
+        fail 'Event not properly created or not an object';
+    }
 }
