@@ -3,6 +3,7 @@ use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
 use Test::More import => [qw( done_testing is ok fail )];
+use Scalar::Util qw(blessed);
 defer { done_testing };
 
 use Mojo::Home;
@@ -56,7 +57,7 @@ for my $file (@files) {
     die 'Session not created' unless $session;
     my @events = $session->events( $dao->db );
     ok scalar(@events) > 0, 'Session has events';
-    if (@events && ref($events[0])) {
+    if (@events && blessed($events[0])) {
         is $events[0]->id, $event->id, 'Event Venue correct';
     } else {
         fail 'Event not properly created or not an object';
