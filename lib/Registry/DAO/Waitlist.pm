@@ -172,11 +172,12 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method accept_offer ($db) {
         croak "Can only accept offers with status 'offered'" unless $status eq 'offered';
         # Check expiration via database query
-        my $is_expired = $db->db->query('SELECT ? < NOW()', $expires_at)->array->[0];
+        $db = $db->db if $db isa Registry::DAO;
+        my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
         croak "Offer has expired" if $expires_at && $is_expired;
         
         # Start transaction
-        my $tx = $db->db->begin;
+        my $tx = $db->begin;
         
         try {
             # Create enrollment

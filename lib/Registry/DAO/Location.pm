@@ -101,4 +101,24 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     method description() {
         return $notes;
     }
+
+    method save($db, $data = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+        # If this has an ID, update; otherwise create
+        if ($id) {
+            return $self->update($db, $data);
+        } else {
+            # For new objects, merge instance data with passed data
+            my %instance_data = (
+                name => $name,
+                slug => $slug,
+                address_info => $address_info,
+                metadata => $metadata,
+                notes => $notes,
+            );
+            # Remove undefined values
+            my %clean_data = map { defined $instance_data{$_} ? ($_ => $instance_data{$_}) : () } keys %instance_data;
+            return $self->create($db, { %clean_data, %$data });
+        }
+    }
 }

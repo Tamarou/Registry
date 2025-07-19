@@ -125,7 +125,8 @@ subtest 'Payment for user' => sub {
     # Should be ordered by created_at DESC
     my $is_ordered = 1;
     for (my $i = 1; $i < @$payments; $i++) {
-        if ($payments->[$i-1]->created_at < $payments->[$i]->created_at) {
+        # Use string comparison for timestamps to avoid numeric warnings
+        if ($payments->[$i-1]->created_at lt $payments->[$i]->created_at) {
             $is_ordered = 0;
             last;
         }
