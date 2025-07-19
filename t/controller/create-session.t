@@ -3,7 +3,7 @@ use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
 use Test::Mojo;
-use Test::More import => [qw( done_testing is like ok )];
+use Test::More import => [qw( done_testing is like ok fail )];
 defer { done_testing };
 
 use Mojo::Home              ();

@@ -2,7 +2,7 @@ use 5.40.2;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
-use Test::More import => [qw( done_testing is ok )];
+use Test::More import => [qw( done_testing is ok fail )];
 defer { done_testing };
 
 use Mojo::Home;
