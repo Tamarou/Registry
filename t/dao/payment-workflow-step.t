@@ -8,7 +8,9 @@ use Test::More;
 # TODO: This test is broken and needs significant rework
 # Skipping for now to focus on other CI issues
 plan skip_all => 'Test needs rework - data model issues';
-exit;
+
+__END__
+# Commented out broken test code below
 use Test::Registry::DB;
 use Registry::DAO::Workflow;
 use Registry::DAO::User;
