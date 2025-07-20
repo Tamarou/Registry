@@ -25,26 +25,26 @@ my $db = $dao->db;
 
 # Create test data
 sub setup_test_data {
-    # Create a teacher with unique username
+    # Create a teacher with unique username (using more unique identifier)
+    my $unique_id = time() . '_' . $$ . '_' . int(rand(999999));
     my $teacher = Registry::DAO::User->create($db, {
-        username => 'teacher1_' . time() . '_' . $$,
+        username => 'teacher1_' . $unique_id,
         passhash => 'fake_hash'
     });
     
     $db->insert('user_profiles', {
         user_id => $teacher->id,
-        email => 'teacher1_' . time() . '_' . $$ . '@example.com',
+        email => 'teacher1_' . $unique_id . '@example.com',
         name => 'Test Teacher'
     });
 
     # Create a student
     my $student = Registry::DAO::User->create($db, {
-        username => 'student1_' . time() . '_' . $$,
+        username => 'student1_' . $unique_id,
         passhash => 'fake_hash'
     });
 
     # Create a location
-    my $unique_id = time() . '_' . $$;
     my $location = Registry::DAO::Location->create($db, {
         name => 'Test Location ' . $unique_id,
         slug => 'test-location-' . $unique_id,

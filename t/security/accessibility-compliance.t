@@ -4,6 +4,11 @@ use Test::More;
 use Test::Mojo;
 
 use lib qw(lib t/lib);
+use Test::Registry::DB;
+
+# Setup test database
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 # Test WCAG 2.1 AA accessibility compliance
 subtest 'Marketing page accessibility compliance' => sub {

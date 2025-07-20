@@ -7,6 +7,10 @@ use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
+# Setup test database
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
+
 # Test CSRF protection on form submissions
 subtest 'CSRF protection tests' => sub {
     my $t = Test::Mojo->new('Registry');
