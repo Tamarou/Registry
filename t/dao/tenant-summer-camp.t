@@ -82,11 +82,11 @@ my $location = Test::Registry::Fixtures::create_location($tenant_dao, {
         address_zip    => '12345',
     },
     capacity     => 15,
-    contact_info =>
-      { phone => '555-987-6543', email => 'pottery@example.com' },
-    facilities => [ 'kiln', 'pottery wheels', 'glazing station' ],
-    latitude   => 40.7128,
-    longitude  => -74.0060
+    metadata => {
+        contact_info => { phone => '555-987-6543', email => 'pottery@example.com' },
+        facilities => [ 'kiln', 'pottery wheels', 'glazing station' ],
+        coordinates => { latitude => 40.7128, longitude => -74.0060 }
+    }
 });
 
 ok $location isa 'Registry::DAO::Location', 'Created location in tenant schema';
@@ -94,6 +94,8 @@ is $location->name, 'Pottery Studio', 'Location name set correctly';
 is $location->address_info->{address_city}, 'Ceramicville',
   'Location address_city set correctly';
 is $location->capacity, 15, 'Location capacity set correctly';
+ok $location->metadata->{contact_info}, 'Location contact info stored in metadata';
+ok $location->metadata->{facilities}, 'Location facilities stored in metadata';
 
 # Create a test project in tenant schema
 my $project = Test::Registry::Fixtures::create_project($tenant_dao, {
