@@ -3,6 +3,9 @@
 use 5.40.2;
 use experimental qw( try );
 
+# Set up test email transport BEFORE loading any modules that might use Email::Sender
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test'; }
+
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
