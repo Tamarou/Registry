@@ -221,6 +221,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         };
         
         if ($@) {
+            warn "DEBUG Subscription: Webhook processing failed: $@";
             # Mark event as failed
             $db->query(
                 'UPDATE registry.subscription_events SET processing_status = ? WHERE id = ?',
@@ -238,6 +239,13 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         
         return unless $tenant_id;
         
+        # Validate tenant_id is a valid UUID format
+        return unless $tenant_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        # Check if tenant exists before trying to update
+        my $tenant_exists = $db->query('SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id)->rows;
+        return unless $tenant_exists;
+        
         my $status = $subscription->{status};
         $self->update_billing_status($db, $tenant_id, $status, $subscription);
     }
@@ -248,6 +256,13 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         
         return unless $tenant_id;
         
+        # Validate tenant_id is a valid UUID format
+        return unless $tenant_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        # Check if tenant exists before trying to update
+        my $tenant_exists = $db->query('SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id)->rows;
+        return unless $tenant_exists;
+        
         $self->update_billing_status($db, $tenant_id, 'cancelled');
     }
 
@@ -256,6 +271,13 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         my $tenant_id = $subscription->{metadata}->{tenant_id};
         
         return unless $tenant_id;
+        
+        # Validate tenant_id is a valid UUID format
+        return unless $tenant_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        # Check if tenant exists before trying to update
+        my $tenant_exists = $db->query('SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id)->rows;
+        return unless $tenant_exists;
         
         # Could send notification email here
         # For now, just ensure billing status is correct
