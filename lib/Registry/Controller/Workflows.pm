@@ -3,6 +3,7 @@ use Object::Pad;
 
 class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     use Carp qw(confess);
+    use DateTime;
 
     method workflow ( $slug = $self->param('workflow') ) {
         my $dao = $self->app->dao;
@@ -175,10 +176,12 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         # Get workflow progress data
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
         
-        # For the review step, prepare structured data for template
+        # For specific steps, prepare structured data for template
         my $template_data = $run->data || {};
         if ($self->param('step') eq 'review') {
             $template_data = $self->_prepare_review_data($run);
+        } elsif ($self->param('step') eq 'complete') {
+            $template_data = $self->_prepare_completion_data($run);
         }
         
         return $self->render(
@@ -469,6 +472,28 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
                 },
                 team_members => $raw_data->{team_members} || [],
             },
+        };
+    }
+    
+    method _prepare_completion_data($run) {
+        my $raw_data = $run->data || {};
+        
+        # Generate trial end date (30 days from now)
+        my $trial_end = DateTime->now->add(days => 30);
+        my $trial_end_date = $trial_end->strftime('%B %d, %Y');
+        
+        # Generate subdomain from organization name
+        my $org_name = $raw_data->{name} || $raw_data->{organization_name} || 'organization';
+        my $subdomain = $self->_generate_subdomain_slug($self->app->dao->db, $org_name);
+        
+        # Structure the data for the completion template
+        return {
+            organization_name => $org_name,
+            subdomain => $subdomain,
+            admin_email => $raw_data->{admin_email},
+            admin_name => $raw_data->{admin_name},
+            trial_end_date => $trial_end_date,
+            billing_email => $raw_data->{billing_email},
         };
     }
 
