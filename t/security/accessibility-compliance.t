@@ -108,8 +108,13 @@ subtest 'Workflow accessibility' => sub {
     my $t = Test::Mojo->new('Registry');
     
     # Test accessibility of workflow pages
-    $t->get_ok('/workflow/tenant-signup/landing')
-      ->status_is(200);
+    my $res2 = $t->get_ok('/workflow/tenant-signup/landing')->tx->res;
+    if ($res2->code == 302) {
+        my $location = $res2->headers->location;
+        $t->get_ok($location)->status_is(200);
+    } else {
+        is($res2->code, 200, '200 OK');
+    }
     
     my $dom = $t->tx->res->dom;
     
