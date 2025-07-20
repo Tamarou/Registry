@@ -39,7 +39,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     }
     
     # Mark attendance for a student in an event
-    sub mark_attendance ($class, $db, $event_id, $student_id, $status, $marked_by, $notes = undef) {
+    sub mark_attendance ($class, $db, $event_id, $student_id, $status, $marked_by, $notes = undef, $family_member_id = undef) {
         # Check if attendance already exists
         my $existing = $class->find($db, { 
             event_id => $event_id, 
@@ -52,7 +52,8 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
                 status => $status,
                 marked_at => 'now()',
                 marked_by => $marked_by,
-                defined $notes ? (notes => $notes) : ()
+                defined $notes ? (notes => $notes) : (),
+                defined $family_member_id ? (family_member_id => $family_member_id) : ()
             });
         }
         else {
@@ -62,7 +63,8 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
                 student_id => $student_id,
                 status => $status,
                 marked_by => $marked_by,
-                defined $notes ? (notes => $notes) : ()
+                defined $notes ? (notes => $notes) : (),
+                defined $family_member_id ? (family_member_id => $family_member_id) : ()
             });
         }
     }

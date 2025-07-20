@@ -181,10 +181,12 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         
         try {
             # Create enrollment
-            require Registry::DAO::Event;
+            require Registry::DAO::Enrollment;
             Registry::DAO::Enrollment->create($db, {
                 session_id => $session_id,
-                student_id => $student_id,
+                student_id => $family_member_id || $student_id,  # Use family_member_id as primary student reference
+                family_member_id => $family_member_id,
+                parent_id => $parent_id,
                 student_type => 'family_member',
                 status => 'pending',
                 metadata => { from_waitlist => 1 }

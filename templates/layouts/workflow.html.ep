@@ -106,7 +106,12 @@
     <%= content 'head' %>
 </head>
 <body>
-    <div class="workflow-container">
+    <div class="workflow-container" 
+         data-current-step="<%= stash('current_step') || 1 %>"
+         data-total-steps="<%= stash('total_steps') || 1 %>"
+         data-step-names="<%= stash('step_names') || '[]' %>"
+         data-step-urls="<%= stash('step_urls') || '[]' %>"
+         data-completed-steps="<%= stash('completed_steps') || '[]' %>">
         <header class="workflow-header">
             <h1><%= title || 'Registry Workflow' %></h1>
             % if (my $description = stash 'description') {
@@ -118,6 +123,16 @@
             <div class="workflow-progress">
                 <%= $progress %>
             </div>
+        % }
+        
+        % if (stash('show_workflow_progress')) {
+            <workflow-progress 
+                data-current-step="<%= stash('current_step') || 1 %>"
+                data-total-steps="<%= stash('total_steps') || 1 %>"
+                data-step-names="<%= stash('step_names') || '[]' %>"
+                data-step-urls="<%= stash('step_urls') || '[]' %>"
+                data-completed-steps="<%= stash('completed_steps') || '[]' %>">
+            </workflow-progress>
         % }
         
         <main class="workflow-content">
@@ -132,6 +147,7 @@
     </div>
 
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="/static/js/workflow-progress.js"></script>
     <%= content 'javascript' %>
 </body>
 </html>
