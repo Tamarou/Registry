@@ -85,8 +85,14 @@ subtest 'Input validation and sanitization' => sub {
 subtest 'HTTP security headers' => sub {
     my $t = Test::Mojo->new('Registry');
     
-    $t->get_ok('/')
-      ->status_is(200);
+    # Follow redirect to actual page
+    my $res = $t->get_ok('/')->tx->res;
+    if ($res->code == 302) {
+        my $location = $res->headers->location;
+        $t->get_ok($location)->status_is(200);
+    } else {
+        is($res->code, 200, '200 OK');
+    }
       
     # Check for important security headers
     my $headers = $t->tx->res->headers;
