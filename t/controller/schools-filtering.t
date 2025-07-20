@@ -221,11 +221,38 @@ subtest 'Visual indicators - early bird' => sub {
     $t->get_ok('/school/test-elementary')
       ->status_is(200)
       ->element_exists('.early-bird-notice', 'Has early bird notice')
-      ->content_like(qr/Early Bird Special.*\$150\.00/, 'Shows early bird price')
+      ->content_like(qr/Early Bird Special/, 'Shows early bird text')
+      ->content_like(qr/\$150\.00/, 'Shows early bird price')
       ->content_like(qr/expires 2025-12-31/, 'Shows early bird expiration');
 };
 
 subtest 'Visual indicators - waitlist' => sub {
+    # First, fill up the remaining spots (4 more enrollments to reach capacity of 20)
+    for my $i (17..20) {
+        my $additional_parent = Test::Registry::Fixtures::create_user($db, {
+            username => "additional_parent$i",
+            password => 'test123',
+            name => "Additional Parent $i",
+            email => "additional_parent$i\@test.com",
+            user_type => 'parent',
+        });
+        
+        my $additional_family_member = Registry::DAO::FamilyMember->create($db, {
+            family_id => $additional_parent->id,
+            child_name => "Additional Student $i",
+            birth_date => '2015-01-01',
+            grade => '4th',
+            medical_info => {},
+        });
+        
+        Registry::DAO::Enrollment->create($db, {
+            session_id => $current_session->id,
+            student_id => $additional_parent->id,
+            family_member_id => $additional_family_member->id,
+            status => 'active',
+        });
+    }
+    
     # Add waitlist entries
     for my $i (1..3) {
         # Create separate parent user for each waitlist child

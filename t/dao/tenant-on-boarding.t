@@ -34,7 +34,7 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     is $workflow->last_step( $dao->db ) isa Registry::DAO::WorkflowStep,
       1, 'Next step isa WorkflowStep';
     is blessed $workflow->last_step( $dao->db ),
-      'Registry::DAO::RegisterTenant',
+      'Registry::DAO::WorkflowSteps::RegisterTenant',
       'Next step is a WorkflowStep';
 
     my $run = $workflow->new_run( $dao->db );
@@ -44,7 +44,16 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     $run->process(
         $dao->db,
         $run->next_step( $dao->db ),
-        { slug => 'big_cups', name => 'Big Cups Ltd.' }
+        { 
+            slug => 'big_cups', 
+            name => 'Big Cups Ltd.',
+            billing_email => 'billing@bigcups.com',
+            billing_address => '123 Main St',
+            billing_city => 'Anytown',
+            billing_state => 'CA',
+            billing_zip => '12345',
+            billing_country => 'US'
+        }
     );
     is $run->next_step( $dao->db )->slug, 'users', 'Next step is users';
     $run->process(
@@ -57,6 +66,10 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
             ]
         }
     );
+    is $run->next_step( $dao->db )->slug, 'review', 'Next step is review';
+    $run->process( $dao->db, $run->next_step( $dao->db ), {} );
+    is $run->next_step( $dao->db )->slug, 'payment', 'Next step is payment';
+    $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db ), undef, 'Next step is correct';
