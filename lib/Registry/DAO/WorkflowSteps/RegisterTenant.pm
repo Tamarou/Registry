@@ -12,10 +12,13 @@ use Text::Unidecode qw(unidecode);
 use DateTime;
 
 method process ( $db, $ ) {
+    warn "=============== DEBUG RegisterTenant: process method called ===============";
+    
     my ($workflow) = $self->workflow($db);
     my $run = $workflow->latest_run($db);
 
     my $profile = $run->data;
+    warn "DEBUG RegisterTenant: profile data keys = " . join(", ", keys %$profile);
 
     # Handle backward compatibility for old 'users' format
     my $user_data;
@@ -73,8 +76,14 @@ method process ( $db, $ ) {
     my $subscription_data = $run->data->{subscription};
     my $has_subscription = $subscription_data && $subscription_data->{stripe_subscription_id};
     
+    # Debug output for test troubleshooting
+    warn "DEBUG RegisterTenant: subscription_data = " . ($subscription_data ? "present" : "missing");
+    warn "DEBUG RegisterTenant: has_subscription = " . ($has_subscription ? "yes" : "no");
+    warn "DEBUG RegisterTenant: old users format = " . (exists $run->data->{users} ? "yes" : "no");
+    
     # For backward compatibility, only require subscription if not using old 'users' format
     if (!$has_subscription && !exists $run->data->{users}) {
+        warn "DEBUG RegisterTenant: FAILING - Payment setup must be completed before creating tenant";
         croak 'Payment setup must be completed before creating tenant';
     }
 
