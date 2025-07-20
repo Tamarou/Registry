@@ -54,7 +54,7 @@ my $t = Test::Mojo->new('Registry');
     my @tenants = $dao->find( Tenant => {} );
     note "Found tenants: " . join(', ', map { $_->name // 'unnamed' } @tenants);
     
-    ok my ($tenant) = $dao->find( Tenant => { name => 'Registry System' } ),
+    ok my ($tenant) = $dao->find( Tenant => { name => 'Test Tenant' } ),
       'got tenant';
     ok my $tenant_dao = $tenant->dao( $dao->db ), 'connected to tenant schema';
 
