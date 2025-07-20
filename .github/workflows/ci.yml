@@ -68,16 +68,22 @@ jobs:
     - name: Setup test database
       run: |
         export PGPASSWORD=postgres
-        # Wait for PostgreSQL to be ready
-        for i in {1..30}; do
-          if pg_isready -h localhost -U postgres; then
+        # Wait for PostgreSQL to be ready with better reliability
+        for i in {1..60}; do
+          if pg_isready -h localhost -U postgres -d postgres; then
             echo "PostgreSQL is ready"
             break
           fi
-          echo "Waiting for PostgreSQL... ($i/30)"
-          sleep 2
+          echo "Waiting for PostgreSQL... ($i/60)"
+          sleep 3
         done
+        
+        # Create test database with proper error handling
         createdb -h localhost -U postgres registry_test || true
+        
+        # Verify database was created
+        psql -h localhost -U postgres -lqt | cut -d \| -f 1 | grep -qw registry_test
+        echo "Test database registry_test is ready"
         
     - name: Deploy database schema
       run: |
@@ -98,6 +104,16 @@ jobs:
         carton exec ./registry template import registry || echo "Template import failed, continuing..."
         echo "Import phase completed"
 
+    - name: Clean test database
+      run: |
+        export PGPASSWORD=postgres
+        # Clean up any existing test artifacts
+        psql -h localhost -U postgres -d registry_test -c "
+          TRUNCATE users, family_members, enrollments, payments, attendance_records, 
+                   waitlist, sessions, events, session_events, projects, locations, 
+                   messages, message_recipients CASCADE;" || true
+        echo "Database cleaned for fresh test run"
+
     - name: Run test suite
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
@@ -105,8 +121,8 @@ jobs:
         export PGPASSWORD=postgres
         export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         export EMAIL_SENDER_TRANSPORT=Test
-        # Add timeout and parallel execution for better CI performance
-        timeout 15m carton exec prove -lr t/ --formatter=TAP::Formatter::Console --jobs 4
+        # Run tests sequentially to avoid database conflicts
+        timeout 20m carton exec prove -lr t/ --formatter=TAP::Formatter::Console
 
   lint:
     runs-on: ubuntu-latest
