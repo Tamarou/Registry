@@ -14,10 +14,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
 
     method process($db, $form_data) {
-        warn "DEBUG TenantPayment: process method called";
-        warn "DEBUG TenantPayment: form_data keys = " . join(", ", keys %{$form_data || {}});
-        warn "DEBUG TenantPayment: setup_intent_id = " . ($form_data->{setup_intent_id} // 'MISSING');
-        warn "DEBUG TenantPayment: collect_payment_method = " . ($form_data->{collect_payment_method} // 'MISSING');
         
         my $workflow = $self->workflow($db);
         my $run = $workflow->latest_run($db);
@@ -41,7 +37,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         if ($form_data->{collect_payment_method} && $form_data->{setup_intent_id}) {
             # Special case for testing: if we have both flags, go directly to completion
             if ($form_data->{setup_intent_id} =~ /^seti_test/) {
-                warn "DEBUG TenantPayment: Test mode - both collect_payment_method and setup_intent_id provided";
                 return $self->handle_setup_completion($db, $run, $form_data);
             }
         }
@@ -57,7 +52,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             # Another special case for testing: if we detect we're in test mode (no Stripe keys configured),
             # create a mock subscription directly
             if (!$ENV{STRIPE_PUBLISHABLE_KEY} && !$ENV{STRIPE_SECRET_KEY}) {
-                warn "DEBUG TenantPayment: No Stripe keys - using mock subscription path";
                 
                 # Mock successful subscription for testing
                 my $mock_subscription = {
@@ -75,10 +69,8 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                     }
                 });
                 
-                warn "DEBUG TenantPayment: Mock subscription created, subscription_id = " . $mock_subscription->{id};
                 
                 # For testing, create the tenant directly instead of delegating to RegisterTenant step
-                warn "DEBUG TenantPayment: Creating tenant directly for test mode";
                 my $tenant_result = $self->create_tenant_directly($db, $run);
                 
                 # Payment successful, move to completion
@@ -288,8 +280,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 }
             });
             
-            warn "DEBUG TenantPayment: Mock subscription created, moving to complete step";
-            warn "DEBUG TenantPayment: subscription_id = " . $mock_subscription->{id};
             
             # Payment successful, move to completion
             return { next_step => 'complete' };
@@ -359,7 +349,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     
     # For testing mode, create tenant directly (duplicates RegisterTenant logic)
     method create_tenant_directly($db, $run) {
-        warn "DEBUG TenantPayment: create_tenant_directly called";
         
         my $profile = $run->data;
         
@@ -385,7 +374,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             $user_data = [$admin_user_data];
         }
         
-        warn "DEBUG TenantPayment: Creating user " . ($user_data->[0]->{username} // 'unknown');
         
         # Create the Registry user account for our tenant
         my $primary_user = Registry::DAO::User->find_or_create($db, $user_data->[0]);
@@ -393,7 +381,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             croak 'Could not create primary user';
         }
         
-        warn "DEBUG TenantPayment: User created, creating tenant " . $profile->{name};
         
         # Generate subdomain slug from organization name (PostgreSQL schema compatible)
         my $slug = lc($profile->{name} || 'test_tenant');
@@ -425,19 +412,20 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             $tenant_data->{subscription_started_at} = DateTime->now->iso8601();
         }
         
-        warn "DEBUG TenantPayment: Tenant data keys = " . join(", ", keys %$tenant_data);
         
         my $tenant = Registry::DAO::Tenant->create($db, $tenant_data);
         $db->query('SELECT clone_schema(?)', $tenant->slug);
         
         $tenant->set_primary_user($db, $primary_user);
         
-        warn "DEBUG TenantPayment: Tenant created with slug " . $tenant->slug;
         
         # Copy all users to tenant schema and copy workflows
         my $tx = $db->begin;
         
         # Copy all users in the users array (like RegisterTenant does)
+        # Create tenant DAO once for reuse
+        my $tenant_dao = Registry::DAO->new( url => $ENV{DB_URL}, schema => $tenant->slug );
+        
         for my $data ( $user_data->@* ) {
             if ( my $user = Registry::DAO::User->find( $db, { username => $data->{username} } ) ) {
                 $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
@@ -445,7 +433,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             }
             else {
                 # User doesn't exist in main schema, create directly in tenant schema  
-                my $tenant_dao = Registry::DAO->new( url => $ENV{DB_URL}, schema => $tenant->slug );
                 Registry::DAO::User->create( $tenant_dao->db, $data );
             }
         }
@@ -455,13 +442,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             my $workflow = Registry::DAO::Workflow->find($db, { slug => $slug });
             if ($workflow) {
                 $db->query('SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $tenant->slug, $workflow->id);
-                warn "DEBUG TenantPayment: Copied workflow $slug to tenant schema";
             }
         }
         
         $tx->commit;
         
-        warn "DEBUG TenantPayment: Tenant creation complete";
         
         return {
             tenant => $tenant->id,
