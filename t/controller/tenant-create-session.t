@@ -24,6 +24,12 @@ for my $file (@files) {
 $ENV{DB_URL} = $dao->url;
 
 my $t = Test::Mojo->new('Registry');
+
+# Add cleanup END block to prevent database connection issues
+END {
+    # Force disconnection of database handles before destruction
+    eval { $dao->db->disconnect if $dao && $dao->can('db') && $dao->db->can('disconnect') };
+}
 {
     process_workflow(
         $t,

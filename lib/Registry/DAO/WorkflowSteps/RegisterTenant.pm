@@ -82,9 +82,23 @@ method process ( $db, $ ) {
     warn "DEBUG RegisterTenant: old users format = " . (exists $run->data->{users} ? "yes" : "no");
     
     # For backward compatibility, only require subscription if not using old 'users' format
-    if (!$has_subscription && !exists $run->data->{users}) {
+    # Also skip if tenant was already created by TenantPayment step (test mode)
+    my $tenant_already_created = exists $run->data->{tenant_created} && $run->data->{tenant_created};
+    if (!$has_subscription && !exists $run->data->{users} && !$tenant_already_created) {
         warn "DEBUG RegisterTenant: FAILING - Payment setup must be completed before creating tenant";
         croak 'Payment setup must be completed before creating tenant';
+    }
+    
+    # If tenant was already created by TenantPayment, just return success
+    if ($tenant_already_created) {
+        warn "DEBUG RegisterTenant: Tenant already created in previous step, skipping creation";
+        return {
+            tenant => $run->data->{tenant},
+            organization_name => $run->data->{organization_name},
+            subdomain => $run->data->{subdomain},
+            admin_email => $run->data->{admin_email},
+            success_timestamp => DateTime->now->iso8601()
+        };
     }
 
     # first we wanna create the Registry user account for our tenant

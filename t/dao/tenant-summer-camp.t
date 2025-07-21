@@ -206,6 +206,7 @@ ok $camp_session->is_published,
 my $enrollment = Test::Registry::Fixtures::create_enrollment($tenant_dao, {
     session_id => $camp_session->id,
     student_id => $student->id,
+    student_type => 'individual',
     status     => 'active'
 });
 

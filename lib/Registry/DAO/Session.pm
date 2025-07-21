@@ -164,4 +164,33 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         my $waitlist = Registry::DAO::Waitlist->get_session_waitlist($db, $id, 'waiting');
         return scalar @$waitlist;
     }
+    
+    # Status management methods
+    method publish($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $updated = $self->update($db, { status => 'published' });
+        # Update the local field to reflect the change
+        $status = 'published' if $updated;
+        return $updated;
+    }
+    
+    method is_published() {
+        return $status eq 'published';
+    }
+    
+    method is_draft() {
+        return $status eq 'draft';
+    }
+    
+    method close($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $updated = $self->update($db, { status => 'closed' });
+        # Update the local field to reflect the change
+        $status = 'closed' if $updated;
+        return $updated;
+    }
+    
+    method is_closed() {
+        return $status eq 'closed';
+    }
 }

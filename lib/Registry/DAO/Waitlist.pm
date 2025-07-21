@@ -133,13 +133,20 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     # Get waitlist position for a student
     sub get_student_position ($class, $db, $session_id, $student_id) {
-        my $entry = $class->find($db, {
-            session_id => $session_id,
-            student_id => $student_id,
-            status => 'waiting'
-        });
+        $db = $db->db if $db isa Registry::DAO;
         
-        return $entry ? $entry->position : undef;
+        # Calculate dynamic position based on waiting entries only
+        # This accounts for gaps caused by accepted/declined entries
+        my $sql = q{
+            SELECT ROW_NUMBER() OVER (ORDER BY created_at) as dynamic_position
+            FROM waitlist 
+            WHERE session_id = ? 
+            AND status = 'waiting'
+            AND student_id = ?
+        };
+        
+        my $result = $db->query($sql, $session_id, $student_id)->hash;
+        return $result ? $result->{dynamic_position} : undef;
     }
     
     # Check if student is already enrolled
@@ -192,8 +199,10 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
                 metadata => { from_waitlist => 1 }
             });
             
-            # Update waitlist status
+            # Update waitlist status  
             $self->update($db, { status => 'declined' }); # Use 'declined' to keep history
+            
+            # Note: No need to reorder positions since get_student_position calculates dynamically
             
             $tx->commit;
         }
@@ -275,36 +284,17 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method _reorder_positions_after_removal ($db, $session_id, $removed_position) {
         $db = $db->db if $db isa Registry::DAO;
         
-        # Use a safer approach: first move to negative values, then reorder
-        # This avoids unique constraint violations during the reordering process
-        my $sql1 = q{
+        # Simple approach: just subtract 1 from all positions greater than removed position
+        # This is safer and avoids constraint violations
+        my $sql = q{
             UPDATE waitlist 
-            SET position = -position - 1000
+            SET position = position - 1
             WHERE session_id = ? 
             AND position > ? 
             AND status = 'waiting'
         };
         
-        # Apply negative positions first
-        $db->query($sql1, $session_id, $removed_position);
-        
-        # Now reorder the negative positions back to positive consecutive values
-        # The new positions should start from the removed position and increment
-        my $sql2 = q{
-            UPDATE waitlist 
-            SET position = subquery.new_position
-            FROM (
-                SELECT id, 
-                       ? + ROW_NUMBER() OVER (ORDER BY -position) - 1 as new_position
-                FROM waitlist
-                WHERE session_id = ? 
-                AND position < 0
-                AND status = 'waiting'
-            ) subquery
-            WHERE waitlist.id = subquery.id
-        };
-        
-        $db->query($sql2, $removed_position, $session_id);
+        $db->query($sql, $session_id, $removed_position);
     }
     
     # Helper method to reorder all waiting positions to be consecutive starting from 1
