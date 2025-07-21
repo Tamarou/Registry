@@ -36,6 +36,7 @@ class Registry :isa(Mojolicious) {
                     my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
                     
                     $tenant = $header_tenant || $cookie_tenant || $subdomain_tenant || 'registry';
+                    
                 }
                 
                 # Create new DAO for this tenant (no caching as per user preference)
