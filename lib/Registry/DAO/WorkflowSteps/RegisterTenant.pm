@@ -12,13 +12,11 @@ use Text::Unidecode qw(unidecode);
 use DateTime;
 
 method process ( $db, $ ) {
-    warn "=============== DEBUG RegisterTenant: process method called ===============";
     
     my ($workflow) = $self->workflow($db);
     my $run = $workflow->latest_run($db);
 
     my $profile = $run->data;
-    warn "DEBUG RegisterTenant: profile data keys = " . join(", ", keys %$profile);
 
     # Handle backward compatibility for old 'users' format
     my $user_data;
@@ -77,21 +75,16 @@ method process ( $db, $ ) {
     my $has_subscription = $subscription_data && $subscription_data->{stripe_subscription_id};
     
     # Debug output for test troubleshooting
-    warn "DEBUG RegisterTenant: subscription_data = " . ($subscription_data ? "present" : "missing");
-    warn "DEBUG RegisterTenant: has_subscription = " . ($has_subscription ? "yes" : "no");
-    warn "DEBUG RegisterTenant: old users format = " . (exists $run->data->{users} ? "yes" : "no");
     
     # For backward compatibility, only require subscription if not using old 'users' format
     # Also skip if tenant was already created by TenantPayment step (test mode)
     my $tenant_already_created = exists $run->data->{tenant_created} && $run->data->{tenant_created};
     if (!$has_subscription && !exists $run->data->{users} && !$tenant_already_created) {
-        warn "DEBUG RegisterTenant: FAILING - Payment setup must be completed before creating tenant";
         croak 'Payment setup must be completed before creating tenant';
     }
     
     # If tenant was already created by TenantPayment, just return success
     if ($tenant_already_created) {
-        warn "DEBUG RegisterTenant: Tenant already created in previous step, skipping creation";
         return {
             tenant => $run->data->{tenant},
             organization_name => $run->data->{organization_name},
