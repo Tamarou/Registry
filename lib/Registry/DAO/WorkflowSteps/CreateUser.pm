@@ -12,6 +12,7 @@ class Registry::DAO::WorkflowSteps::CreateUser :isa(Registry::DAO::WorkflowStep)
 
         my $data = $run->data;
 
+        
         my $user = Registry::DAO::User->create( $db,
             { $data->%{ 'username', 'password' } } );
 
