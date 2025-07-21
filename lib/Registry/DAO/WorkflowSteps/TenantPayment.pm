@@ -7,6 +7,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Registry::DAO::User;
     use Registry::DAO::Tenant;
     use Registry::DAO::Workflow;
+    use Registry::DAO;
     use Registry::Utility::ErrorHandler;
     use JSON qw(encode_json decode_json);
     use Carp qw(croak);
@@ -362,18 +363,29 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         my $profile = $run->data;
         
-        # Extract user data from individual fields (same logic as RegisterTenant)
-        my $admin_user_data = {
-            name => delete $profile->{admin_name},
-            email => delete $profile->{admin_email},
-            username => delete $profile->{admin_username},
-            password => delete $profile->{admin_password},
-            user_type => delete $profile->{admin_user_type} || 'admin',
-        };
+        # Handle backward compatibility for old 'users' format (same logic as RegisterTenant)
+        my $user_data;
+        if (exists $profile->{users} && ref $profile->{users} eq 'ARRAY') {
+            # Old format: { users => [{username => '...', password => '...'}, ...] }
+            $user_data = $profile->{users};  # Don't delete, keep for RegisterTenant compatibility
+            # Set default user_type for backward compatibility
+            for my $user (@$user_data) {
+                $user->{user_type} //= 'admin';
+            }
+        } else {
+            # New format: extract user data from individual fields
+            my $admin_user_data = {
+                name => delete $profile->{admin_name},
+                email => delete $profile->{admin_email},
+                username => delete $profile->{admin_username},
+                password => delete $profile->{admin_password},
+                user_type => delete $profile->{admin_user_type} || 'admin',
+            };
+            
+            $user_data = [$admin_user_data];
+        }
         
-        my $user_data = [$admin_user_data];
-        
-        warn "DEBUG TenantPayment: Creating user " . $admin_user_data->{username};
+        warn "DEBUG TenantPayment: Creating user " . ($user_data->[0]->{username} // 'unknown');
         
         # Create the Registry user account for our tenant
         my $primary_user = Registry::DAO::User->find_or_create($db, $user_data->[0]);
@@ -422,9 +434,21 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         warn "DEBUG TenantPayment: Tenant created with slug " . $tenant->slug;
         
-        # Copy user to tenant schema and copy workflows
+        # Copy all users to tenant schema and copy workflows
         my $tx = $db->begin;
-        $db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $primary_user->id);
+        
+        # Copy all users in the users array (like RegisterTenant does)
+        for my $data ( $user_data->@* ) {
+            if ( my $user = Registry::DAO::User->find( $db, { username => $data->{username} } ) ) {
+                $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
+                    $tenant->slug, $user->id );
+            }
+            else {
+                # User doesn't exist in main schema, create directly in tenant schema  
+                my $tenant_dao = Registry::DAO->new( url => $ENV{DB_URL}, schema => $tenant->slug );
+                Registry::DAO::User->create( $tenant_dao->db, $data );
+            }
+        }
         
         # Copy essential workflows to tenant schema
         for my $slug (qw(user-creation session-creation)) {

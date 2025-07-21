@@ -139,20 +139,21 @@ SKIP: {    # Test offer acceptance
     is $enrollment->{status}, 'pending', 'Enrollment status is pending';
 }
 
+# Create parent3 and student3 outside SKIP block for later use
+my $parent3 = Test::Registry::Fixtures::create_user($t->db, {
+    username => 'parent3',
+    password => 'password123',
+    user_type => 'parent',
+});
+
+my $student3 = Test::Registry::Fixtures::create_user($t->db, {
+    username => 'student3',
+    password => 'password123',
+    user_type => 'student',
+});
+
 SKIP: {    # Test offer expiration
-    # Add another student to waitlist
-    # Create parent3 and student3 in registry schema first
-    my $parent3 = Test::Registry::Fixtures::create_user($t->db, {
-        username => 'parent3',
-        password => 'password123',
-        user_type => 'parent',
-    });
-    
-    my $student3 = Test::Registry::Fixtures::create_user($t->db, {
-        username => 'student3',
-        password => 'password123',
-        user_type => 'student',
-    });
+    # Add student3 to waitlist
     
     # Copy to tenant schema
     $t->db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent3->id);
@@ -201,10 +202,11 @@ SKIP: {    # Test helper methods
 }
 
 SKIP: {    # Test position tracking
+    # After student1 accepted and student2's offer expired, student3 should be at position 1
     my $position = Registry::DAO::Waitlist->get_student_position(
-        $db, $session->id, $student2->id
+        $db, $session->id, $student3->id
     );
     
-    # Should be position 1 since first student was promoted/accepted
+    # Should be position 1 since student3 is the only waiting student
     is $position, 1, 'Position correctly tracked after promotion';
 }
