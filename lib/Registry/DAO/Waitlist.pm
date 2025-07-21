@@ -138,11 +138,14 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         # Calculate dynamic position based on waiting entries only
         # This accounts for gaps caused by accepted/declined entries
         my $sql = q{
-            SELECT ROW_NUMBER() OVER (ORDER BY created_at) as dynamic_position
-            FROM waitlist 
-            WHERE session_id = ? 
-            AND status = 'waiting'
-            AND student_id = ?
+            SELECT dynamic_position 
+            FROM (
+                SELECT student_id, ROW_NUMBER() OVER (ORDER BY created_at) as dynamic_position
+                FROM waitlist 
+                WHERE session_id = ? 
+                AND status = 'waiting'
+            ) positions
+            WHERE student_id = ?
         };
         
         my $result = $db->query($sql, $session_id, $student_id)->hash;
