@@ -51,7 +51,7 @@ class Registry :isa(Mojolicious) {
             before_server_start => sub ( $server, @ ) {
                 $self->import_schemas;
                 $self->import_templates;
-                $self->import_workflows;
+                $self->import_workflows(); # Use defaults: schema='registry', files=undef, verbose=0
                 $self->setup_recurring_jobs;
             }
         );
@@ -148,10 +148,10 @@ class Registry :isa(Mojolicious) {
         $r->post('/admin/dashboard/send_bulk_message')->to('admin_dashboard#send_bulk_message')->name('admin_dashboard_send_bulk_message');
     }
 
-    method import_workflows () {
-        # Import workflows to main registry schema
-        my $dao = $self->dao('registry');
-        my @workflows =
+    method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {
+        # Import workflows to specified schema (default: registry)
+        my $dao = $self->dao($schema);
+        my @workflows = $files ? @$files : 
           $self->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 
         for my $file (@workflows) {
@@ -159,12 +159,24 @@ class Registry :isa(Mojolicious) {
             next if Load($yaml)->{draft};
             try {
                 my $workflow = Workflow->from_yaml( $dao, $yaml );
-                my $msg      = sprintf( "Imported workflow '%s' (%s)",
+                my $msg = sprintf( "Imported workflow '%s' (%s)",
                     $workflow->name, $workflow->slug );
-                $self->app->log->debug($msg);
+                
+                if ($verbose) {
+                    my $step_count = scalar @{ Load($yaml)->{steps} // [] };
+                    say sprintf "Imported workflow '%s' (%s) with %d steps",
+                        $workflow->name, $workflow->slug, $step_count;
+                } else {
+                    $self->app->log->debug($msg);
+                }
             }
             catch ($e) {
-                $self->app->log->error("Error importing workflow: $e");
+                my $error_msg = "Error importing workflow: $e";
+                if ($verbose) {
+                    warn $error_msg;
+                } else {
+                    $self->app->log->error($error_msg);
+                }
             }
         }
     }
