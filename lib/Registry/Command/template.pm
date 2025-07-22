@@ -50,16 +50,25 @@ class Registry::Command::template :isa(Mojolicious::Command) {
 
             return;
         }
-        if ( $cmd eq 'import' ) {
-            my @files = Mojo::Home->new->child('templates')
-              ->list_tree->grep(qr/\.html\.ep$/)->each;
 
-            for my $file (@files) {
-                Registry::DAO::Template->import_from_file( $dao, $file );
-                say sprintf "Imported template '%s'",
-                  $file->to_rel('templates');
-            }
-            return;
+    method load (@args) {
+        my $dao = $self->app->dao;
+        my @files = Mojo::Home->new->child('templates')
+          ->list_tree->grep(qr/\.html\.ep$/)->each;
+
+        for my $file (@files) {
+            Registry::DAO::Template->import_from_file( $dao, $file );
+            say sprintf "Imported template '%s'",
+              $file->to_rel('templates');
+        }
+        return;
+    }
+
+        # Handle command aliases
+        $cmd = 'load' if $cmd eq 'import';
+
+        if ( my $method = $self->can($cmd) ) {
+            return $self->$method(@args);
         }
 
         die <<~"END";

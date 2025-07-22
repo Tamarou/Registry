@@ -97,7 +97,7 @@ jobs:
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
         export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
-        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         echo "Importing workflows..."
         carton exec ./registry workflow import registry || echo "Workflow import failed, continuing..."
         echo "Importing templates..."
@@ -119,7 +119,7 @@ jobs:
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
         export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
-        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         export EMAIL_SENDER_TRANSPORT=Test
         # Run tests sequentially to avoid database conflicts
         timeout 20m carton exec prove -lr t/ --formatter=TAP::Formatter::Console
@@ -338,7 +338,7 @@ jobs:
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
         export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
-        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         export EMAIL_SENDER_TRANSPORT=Test
         
         # Run a sample of tests with coverage

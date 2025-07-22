@@ -94,7 +94,7 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
         return;
     }
 
-    method import_workflows (@files) {
+    method load (@files) {
         unless ( scalar @files ) {
             @files = $self->app->home->child('workflows')
               ->list_tree->grep(qr/\.ya?ml$/)->each;
@@ -143,8 +143,9 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     method run( $cmd, $schema, @args ) {
         $dao = $dao->connect_schema($schema);
 
+
         # Handle command aliases
-        $cmd = 'import_workflows' if $cmd eq 'import';
+        $cmd = 'load' if $cmd eq 'import';
 
         if ( my $method = $self->can($cmd) ) {
             return $self->$method(@args);

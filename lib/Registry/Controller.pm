@@ -15,6 +15,7 @@ class Registry::Controller :isa(Mojolicious::Controller) {
 
     method log { $self->app->log }
 
+
     method workflow ( $slug = $self->param('workflow') ) {
         return $slug if $slug isa Registry::DAO::Workflow;
         Carp::confess "Missing workflow parameter" unless $slug;

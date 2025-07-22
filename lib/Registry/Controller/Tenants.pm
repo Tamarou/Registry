@@ -10,10 +10,6 @@ class Registry::Controller::Tenants :isa(Registry::Controller) {
           $self->req->headers->header('X-As-Tenant');
     }
 
-    method setup {
-        # DAO helper automatically handles tenant detection and schema switching
-        return 1;
-    }
 
     method index {
         $self->render( template => 'index' );
