@@ -1,28 +1,22 @@
 use 5.40.2;
 use Object::Pad;
 
-class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
+class Registry::Controller::Workflows :isa(Registry::Controller) {
     use Carp qw(confess);
     use DateTime;
 
     method workflow ( $slug = $self->param('workflow') ) {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         return $dao->find( Workflow => { slug => $slug } );
     }
 
     method run ( $id = $self->param('run') ) {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         ( $dao->find( WorkflowRun => { id => $id } ) )[0];
     }
 
     method new_run ( $workflow, $config //= {} ) {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         confess "Missing workflow parameter" unless $workflow;
         
         # Make sure the workflow has all necessary steps before creating a run
@@ -59,9 +53,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
 
     method index() {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $workflow = $self->workflow();
 
         $self->render(
@@ -71,9 +63,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
 
     method start_workflow() {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $workflow = $self->workflow();
         
         # Now try to start the run with auto-repair in the new_run method
@@ -175,9 +165,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
 
     method get_workflow_run_step {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $run = $self->run();
         my $step = $run->latest_step($dao->db) || $run->next_step($dao->db);
         
@@ -214,9 +202,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
 
     method process_workflow_run_step {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
 
         my ($run) = $dao->find(
             WorkflowRun => {
@@ -299,9 +285,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
 
     method get_outcome_definition {
         my $id = $self->param('id');
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         
         my $definition = Registry::DAO::OutcomeDefinition->find($dao->db, { id => $id });
         
@@ -313,9 +297,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
     
     method validate_outcome {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $json = $self->req->json;
         
         my $outcome_id = $json->{outcome_definition_id};
@@ -328,9 +310,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
     
     method validate_subdomain {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $name = $self->param('name');
         
         unless ($name) {
@@ -360,9 +340,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
 
     method _get_workflow_progress($run, $current_step) {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $workflow = $run->workflow($dao->db);
         
         # Get all workflow steps in order
@@ -506,9 +484,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         
         # Generate subdomain from organization name
         my $org_name = $raw_data->{name} || $raw_data->{organization_name} || 'organization';
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $subdomain = $self->_generate_subdomain_slug($dao->db, $org_name);
         
         # Structure the data for the completion template
@@ -523,9 +499,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
 
     method start_continuation {
-        # Get tenant from headers and explicitly pass to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $tenant ? $self->app->dao($tenant) : $self->app->dao;
+        my $dao = $self->app->dao;
         my $workflow = $dao->find(
             Workflow => {
                 slug => $self->param('target')

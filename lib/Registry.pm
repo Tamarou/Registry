@@ -85,28 +85,14 @@ class Registry :isa(Mojolicious) {
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
           
-        # Marketing page (no auth required)
-        $self->routes->get('/marketing')->to('marketing#index')
-          ->name('marketing_index');
-
-        # Route handling for root path - show tenant landing or redirect to marketing
+        # Route handling for root path - always use default workflow landing page
         my $root = $self->routes->get('/');
         $root->to(cb => sub ($c) {
-            # DAO helper automatically detects tenant context
-            my $tenant = $c->req->headers->header('X-As-Tenant') ||
-                         $c->req->cookie('as-tenant') ||
-                         $self->_extract_tenant_from_subdomain($c);
-            
-            if ($tenant) {
-                # Show tenant landing page
-                $c->render( template => 'index' );
-            } else {
-                # No tenant context, redirect to marketing page
-                $c->redirect_to($c->url_for('marketing_index'));
-            }
+            # Use default workflow landing page for both tenant and non-tenant contexts
+            $c->render( workflow => '__default__', step => 'landing' );
         })->name('root_handler');
 
-        my $r = $self->routes->under('/')->to('tenants#setup');
+        my $r = $self->routes;
 
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
@@ -164,7 +150,7 @@ class Registry :isa(Mojolicious) {
 
     method import_workflows () {
         # Import workflows to main registry schema
-        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
+        my $dao = $self->dao('registry');
         my @workflows =
           $self->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 
@@ -185,7 +171,7 @@ class Registry :isa(Mojolicious) {
 
     method import_templates () {
         # Import templates to main registry schema
-        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
+        my $dao = $self->dao('registry');
 
         my @templates =
           $self->app->home->child('templates')
@@ -201,7 +187,7 @@ class Registry :isa(Mojolicious) {
 
     method import_schemas () {
         # Import schemas to main registry schema
-        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
+        my $dao = $self->dao('registry');
 
         my @schemas =
           $self->home->child('schemas')->list->grep(qr/\.json$/)->each;

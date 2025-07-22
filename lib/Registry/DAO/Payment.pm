@@ -64,7 +64,7 @@ field $_stripe_client = undef;
         
         # Create payment intent with Stripe
         my $intent;
-        eval {
+        try {
             $intent = $self->stripe_client->create_payment_intent({
                 amount => int($amount * 100), # Convert to cents
                 currency => $currency,
@@ -76,13 +76,12 @@ field $_stripe_client = undef;
                     %{$metadata},
                 },
             });
-        };
-        
-        if ($@) {
-            $error_message = $@;
+        }
+        catch ($e) {
+            $error_message = $e;
             $status = 'failed';
             $self->save($db);
-            die "Failed to create payment intent: $@";
+            die "Failed to create payment intent: $e";
         }
         
         # Update payment record with Stripe intent ID
@@ -98,15 +97,14 @@ field $_stripe_client = undef;
     method process_payment ($db, $payment_intent_id) {
         # Retrieve payment intent from Stripe
         my $intent;
-        eval {
+        try {
             $intent = $self->stripe_client->retrieve_payment_intent($payment_intent_id);
-        };
-        
-        if ($@) {
-            $error_message = $@;
+        }
+        catch ($e) {
+            $error_message = $e;
             $status = 'failed';
             $self->save($db);
-            return { success => 0, error => $@ };
+            return { success => 0, error => $e };
         }
         
         # Update payment status based on intent status
@@ -169,16 +167,15 @@ field $_stripe_client = undef;
         my $reason = $args->{reason} // 'requested_by_customer';
         
         my $refund;
-        eval {
+        try {
             $refund = $self->stripe_client->create_refund({
                 payment_intent => $stripe_payment_intent_id,
                 amount => int($refund_amount * 100),
                 reason => $reason,
             });
-        };
-        
-        if ($@) {
-            die "Refund failed: $@";
+        }
+        catch ($e) {
+            die "Refund failed: $e";
         }
         
         # Update payment status

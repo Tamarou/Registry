@@ -1,5 +1,5 @@
 use 5.34.0;
-use experimental 'signatures';
+use experimental qw(signatures try);
 use Object::Pad;
 
 class Registry::Controller::Webhooks :isa(Registry::Controller) {
@@ -19,11 +19,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         
         # Parse webhook event
         my $event;
-        eval {
+        try {
             $event = decode_json($payload);
-        };
-        
-        if ($@) {
+        }
+        catch ($e) {
             $self->render(status => 400, text => 'Invalid JSON');
             return;
         }
@@ -32,17 +31,16 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $dao = $self->app->dao;
         my $subscription_dao = Registry::DAO::Subscription->new(db => $dao);
         
-        eval {
+        try {
             $subscription_dao->process_webhook_event(
                 $self->app->dao->db,
                 $event->{id},
                 $event->{type},
                 $event->{data}
             );
-        };
-        
-        if ($@) {
-            $self->app->log->error("Webhook processing failed: $@");
+        }
+        catch ($e) {
+            $self->app->log->error("Webhook processing failed: $e");
             $self->render(status => 500, text => 'Webhook processing failed');
             return;
         }
