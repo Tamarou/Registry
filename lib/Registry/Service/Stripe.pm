@@ -7,7 +7,7 @@ use Object::Pad;
 class Registry::Service::Stripe {
     use Mojo::UserAgent;
     use Mojo::JSON qw(encode_json decode_json);
-    use Mojo::Util qw(hmac_sha256_hex);
+    use Digest::SHA qw(hmac_sha256_hex);
     use Carp qw(croak);
 
     field $ua = Mojo::UserAgent->new;

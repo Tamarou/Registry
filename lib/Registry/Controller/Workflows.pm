@@ -445,6 +445,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $slug;
     }
     
+    method _slug_exists($db, $slug) {
+        my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
+        return $result->array->[0] > 0;
+    }
+    
     method _prepare_review_data($run) {
         my $raw_data = $run->data || {};
         
