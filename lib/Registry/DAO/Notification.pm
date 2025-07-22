@@ -24,7 +24,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     
     sub table { 'notifications' }
     
-    BUILD {
+    ADJUST {
         # Validate type
         unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency)$/) {
             croak "Invalid notification type: must be 'attendance_missing', 'attendance_reminder', 'general', 'message_announcement', 'message_update', or 'message_emergency'";

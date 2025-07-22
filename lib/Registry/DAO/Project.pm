@@ -17,7 +17,7 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
 
     sub table { 'projects' }
 
-    BUILD {
+    ADJUST {
         # Decode JSON metadata if it's a string
         if (defined $metadata && !ref $metadata) {
             try {

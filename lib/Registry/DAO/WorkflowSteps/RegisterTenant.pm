@@ -423,4 +423,26 @@ method _format_trial_end_date($trial_ends_at) {
     return $dt->strftime('%B %d, %Y');
 }
 
+method prepare_completion_data($db, $run) {
+    my $raw_data = $run->data || {};
+    
+    # Generate trial end date (30 days from now)
+    my $trial_end = DateTime->now->add(days => 30);
+    my $trial_end_date = $trial_end->strftime('%B %d, %Y');
+    
+    # Generate subdomain from organization name
+    my $org_name = $raw_data->{name} || $raw_data->{organization_name} || 'organization';
+    my $subdomain = $self->_generate_subdomain_slug($db, $org_name);
+    
+    # Structure the data for the completion template
+    return {
+        organization_name => $org_name,
+        subdomain => $subdomain,
+        admin_email => $raw_data->{admin_email},
+        admin_name => $raw_data->{admin_name},
+        trial_end_date => $trial_end_date,
+        billing_email => $raw_data->{billing_email},
+    };
+}
+
 }

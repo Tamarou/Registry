@@ -181,7 +181,16 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         if ($self->param('step') eq 'review') {
             $template_data = $self->_prepare_review_data($run);
         } elsif ($self->param('step') eq 'complete') {
-            $template_data = $self->_prepare_completion_data($run);
+            # Find the RegisterTenant step to get completion data
+            my $register_step = Registry::DAO::WorkflowStep->find($dao->db, {
+                workflow_id => $run->workflow_id,
+                class => 'Registry::DAO::WorkflowSteps::RegisterTenant'
+            });
+            if ($register_step) {
+                $template_data = $register_step->prepare_completion_data($dao->db, $run);
+            } else {
+                $template_data = $run->data || {};
+            }
         }
         
         return $self->render(
@@ -344,12 +353,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $workflow = $run->workflow($dao->db);
         
         # Get all workflow steps in order
-        my $steps = $dao->db->select(
-            'workflow_steps',
-            ['id', 'slug', 'description'],
-            { workflow_id => $workflow->id },
-            { -asc => 'created_at' }
-        )->hashes->to_array;
+        my $steps = $workflow->get_ordered_steps($dao->db);
         
         return {} unless @$steps;
         
@@ -432,18 +436,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $original_slug = $slug;
         my $counter = 1;
         
-        while ($self->_slug_exists($db, $slug)) {
+        while (Registry::DAO::Tenant->slug_exists($db, $slug)) {
             $slug = "${original_slug}-${counter}";
             $counter++;
             last if $counter > 999;  # Prevent infinite loop
         }
         
         return $slug;
-    }
-    
-    method _slug_exists($db, $slug) {
-        my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
-        return $result->array->[0] > 0;
     }
     
     method _prepare_review_data($run) {
@@ -475,28 +474,6 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         };
     }
     
-    method _prepare_completion_data($run) {
-        my $raw_data = $run->data || {};
-        
-        # Generate trial end date (30 days from now)
-        my $trial_end = DateTime->now->add(days => 30);
-        my $trial_end_date = $trial_end->strftime('%B %d, %Y');
-        
-        # Generate subdomain from organization name
-        my $org_name = $raw_data->{name} || $raw_data->{organization_name} || 'organization';
-        my $dao = $self->app->dao;
-        my $subdomain = $self->_generate_subdomain_slug($dao->db, $org_name);
-        
-        # Structure the data for the completion template
-        return {
-            organization_name => $org_name,
-            subdomain => $subdomain,
-            admin_email => $raw_data->{admin_email},
-            admin_name => $raw_data->{admin_name},
-            trial_end_date => $trial_end_date,
-            billing_email => $raw_data->{billing_email},
-        };
-    }
 
     method start_continuation {
         my $dao = $self->app->dao;

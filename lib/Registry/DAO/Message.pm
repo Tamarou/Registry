@@ -22,7 +22,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     sub table { 'messages' }
     
-    BUILD {
+    ADJUST {
         # Validate message type
         unless ($message_type && $message_type =~ /^(announcement|update|emergency)$/) {
             croak "Invalid message type: must be 'announcement', 'update', or 'emergency'";

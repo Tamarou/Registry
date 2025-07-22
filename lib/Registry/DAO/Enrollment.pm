@@ -19,7 +19,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
 
     sub table { 'enrollments' }
 
-    BUILD {
+    ADJUST {
         # Decode JSON metadata if it's a string
         if (defined $metadata && !ref $metadata) {
             try {

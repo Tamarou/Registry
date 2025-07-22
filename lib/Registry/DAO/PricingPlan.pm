@@ -23,7 +23,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     sub table { 'pricing_plans' }
     
-    BUILD {
+    ADJUST {
         # Decode JSON fields if they're strings
         for my $field ($requirements, $metadata) {
             if (defined $field && !ref $field) {

@@ -22,7 +22,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     sub table { 'waitlist' }
     
-    BUILD {
+    ADJUST {
         # Validate status
         unless ($status && $status =~ /^(waiting|offered|expired|declined)$/) {
             croak "Invalid waitlist status: must be 'waiting', 'offered', 'expired', or 'declined'";

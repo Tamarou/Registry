@@ -15,7 +15,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     field $data :param //= {};
     field $created_at :param;
 
-    sub table { 'workflow_runs' }
+    use constant table => 'workflow_runs';
 
     sub create ( $class, $db, $data ) {
         # Handle JSON fields like data

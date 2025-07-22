@@ -19,7 +19,7 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
     
     sub table { 'attendance_records' }
     
-    BUILD {
+    ADJUST {
         # Validate status
         unless ($status && $status =~ /^(present|absent)$/) {
             croak "Invalid attendance status: must be 'present' or 'absent'";
