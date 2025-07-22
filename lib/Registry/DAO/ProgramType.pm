@@ -16,7 +16,7 @@ class Registry::DAO::ProgramType :isa(Registry::DAO::Object) {
     
     sub table { 'program_types' }
     
-    BUILD {
+    ADJUST {
         # Decode JSON config if it's a string
         if (defined $config && !ref $config) {
             try {

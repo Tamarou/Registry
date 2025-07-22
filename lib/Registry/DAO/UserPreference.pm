@@ -16,7 +16,7 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     
     sub table { 'user_preferences' }
     
-    BUILD {
+    ADJUST {
         # Ensure preference_value is a hash ref if it's a string
         if (defined $preference_value && !ref $preference_value) {
             try {

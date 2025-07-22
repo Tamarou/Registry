@@ -19,7 +19,7 @@ class Registry :isa(Mojolicious) {
 
         # Setup Minion for background jobs
         $self->plugin('Minion' => {
-            Pg => $ENV{DB_URL} || $ENV{DATABASE_URL} || 'postgresql://localhost/registry'
+            Pg => $ENV{DB_URL} || 'postgresql://localhost/registry'
         });
         
         # Register background jobs

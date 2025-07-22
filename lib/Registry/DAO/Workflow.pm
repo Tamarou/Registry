@@ -182,4 +182,13 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
         return $workflow;
     }
+
+    method get_ordered_steps($db) {
+        return $db->select(
+            'workflow_steps',
+            ['id', 'slug', 'description'],
+            { workflow_id => $id },
+            { -asc => 'created_at' }
+        )->hashes->to_array;
+    }
 }

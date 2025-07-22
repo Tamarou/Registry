@@ -19,7 +19,7 @@ class Registry::DAO::FamilyMember :isa(Registry::DAO::Object) {
     
     sub table { 'family_members' }
     
-    BUILD {
+    ADJUST {
         # Decode JSON fields if they're strings
         for my $field ($medical_info, $emergency_contact) {
             if (defined $field && !ref $field) {

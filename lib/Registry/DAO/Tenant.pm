@@ -79,4 +79,9 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             { returning => '*' }
         );
     }
+
+    method slug_exists :common ($db, $slug) {
+        my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
+        return $result->array->[0] > 0;
+    }
 }

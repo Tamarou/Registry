@@ -6,7 +6,7 @@ use experimental 'signatures', 'try', 'builtin';
 use Object::Pad;
 class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 
-use WebService::Stripe;
+use Registry::Service::Stripe;
 use Mojo::JSON qw(encode_json decode_json);
 
 field $id :param :reader = undef;
@@ -24,7 +24,7 @@ field $updated_at :param :reader = undef;
 
 field $_stripe_client = undef;
     
-    BUILD {
+    ADJUST {
         # Decode JSON metadata if it's a string
         if (defined $metadata && !ref $metadata) {
             try {
@@ -35,7 +35,7 @@ field $_stripe_client = undef;
         }
     }
     
-    sub table { 'registry.payments' }
+    use constant table => 'registry.payments';
     
     sub create ($class, $db, $data) {
         # Handle JSON encoding for metadata
@@ -50,9 +50,11 @@ field $_stripe_client = undef;
         return $_stripe_client if $_stripe_client;
         
         my $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
-        $_stripe_client = WebService::Stripe->new(
+        my $webhook_secret = $ENV{STRIPE_WEBHOOK_SECRET};
+        
+        $_stripe_client = Registry::Service::Stripe->new(
             api_key => $api_key,
-            version => '2023-10-16',
+            webhook_secret => $webhook_secret,
         );
         
         return $_stripe_client;
@@ -256,6 +258,98 @@ field $_stripe_client = undef;
             total => $total,
             items => $items,
         };
+    }
+    
+    # Async payment methods for better performance
+    method create_payment_intent_async ($db, $args = {}) {
+        my $description = $args->{description} // 'Registry Program Enrollment';
+        my $receipt_email = $args->{receipt_email};
+        
+        return $self->stripe_client->create_payment_intent_async({
+            amount => int($amount * 100), # Convert to cents
+            currency => $currency,
+            description => $description,
+            receipt_email => $receipt_email,
+            metadata => {
+                user_id => $user_id,
+                payment_id => $self->id,
+                %{$metadata},
+            },
+        })->then(sub ($intent) {
+            # Update payment record with Stripe intent ID
+            $stripe_payment_intent_id = $intent->{id};
+            $self->save($db);
+            return $intent;
+        })->catch(sub ($error) {
+            $error_message = $error;
+            $status = 'failed';
+            $self->save($db);
+            die "Failed to create payment intent: $error";
+        });
+    }
+    
+    method process_payment_async ($db, $payment_intent_id) {
+        return $self->stripe_client->retrieve_payment_intent_async($payment_intent_id)
+            ->then(sub ($intent) {
+                # Update payment status based on intent status
+                if ($intent->{status} eq 'succeeded') {
+                    $status = 'completed';
+                    $completed_at = \'NOW()';
+                } elsif ($intent->{status} eq 'processing') {
+                    $status = 'processing';
+                } elsif ($intent->{status} eq 'requires_payment_method') {
+                    $status = 'failed';
+                    $error_message = 'Payment method required';
+                } else {
+                    $status = 'failed';
+                    $error_message = 'Payment failed with status: ' . $intent->{status};
+                }
+                
+                $self->save($db);
+                
+                return { 
+                    success => $status eq 'completed' ? 1 : 0, 
+                    status => $status,
+                    intent => $intent 
+                };
+            })
+            ->catch(sub ($error) {
+                $error_message = $error;
+                $status = 'failed';
+                $self->save($db);
+                return { success => 0, error => $error };
+            });
+    }
+    
+    method refund_async ($db, $args = {}) {
+        die "Payment must be completed before refunding" unless $status eq 'completed';
+        die "No Stripe payment intent ID" unless $stripe_payment_intent_id;
+        
+        my $refund_amount = $args->{amount} // $amount;
+        my $reason = $args->{reason} // 'requested_by_customer';
+        
+        return $self->stripe_client->create_refund_async({
+            payment_intent => $stripe_payment_intent_id,
+            amount => int($refund_amount * 100),
+            reason => $reason,
+        })->then(sub ($refund) {
+            # Update payment status
+            if ($refund_amount >= $amount) {
+                $status = 'refunded';
+            } else {
+                $status = 'partially_refunded';
+            }
+            
+            # Update metadata to track refund
+            $metadata->{refund_id} = $refund->{id};
+            $metadata->{refund_amount} = $refund_amount;
+            $metadata->{refund_reason} = $reason;
+            
+            $self->save($db);
+            return $refund;
+        })->catch(sub ($error) {
+            die "Refund failed: $error";
+        });
     }
 }
 
