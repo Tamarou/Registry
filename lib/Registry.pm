@@ -28,16 +28,21 @@ class Registry :isa(Mojolicious) {
         Registry::Job::WaitlistExpiration->register($self);
 
         $self->helper(
+            tenant => sub ($c, $explicit_tenant = undef) {
+                # Determine tenant: explicit param > header > cookie > subdomain > default
+                return $explicit_tenant if $explicit_tenant;
+                
+                my $header_tenant = $c->req->headers->header('X-As-Tenant');
+                my $cookie_tenant = $c->req->cookie('as-tenant');
+                my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
+                
+                return $header_tenant || $cookie_tenant || $subdomain_tenant || 'registry';
+            }
+        );
+
+        $self->helper(
             dao => sub ($c, $tenant = undef) {
-                # Determine tenant: explicit param > header > subdomain > 'public'
-                unless ($tenant) {
-                    my $header_tenant = $c->req->headers->header('X-As-Tenant');
-                    my $cookie_tenant = $c->req->cookie('as-tenant');
-                    my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
-                    
-                    $tenant = $header_tenant || $cookie_tenant || $subdomain_tenant || 'registry';
-                    
-                }
+                $tenant = $c->tenant($tenant);
                 
                 # Create new DAO for this tenant (no caching as per user preference)
                 return Registry::DAO->new( 

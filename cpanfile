@@ -18,8 +18,6 @@ requires 'Sub::Identify';
 requires 'YAML::XS';
 requires 'Test::PostgreSQL';
 requires 'Test::MockObject';
-# Stripe integration now uses custom async wrapper with Mojo::UserAgent
-# requires 'WebService::Stripe'; # Replaced with Registry::Service::Stripe
 requires 'Minion';
 requires 'Minion::Backend::Pg';
 requires 'Email::Simple';

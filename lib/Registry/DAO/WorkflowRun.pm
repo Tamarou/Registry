@@ -7,7 +7,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
     field $id :param      = 0;
     field $user_id :param = 0;
-    field $workflow_id :param;
+    field $workflow_id :param :reader;
     field $latest_step_id :param  = undef;
     field $continuation_id :param :reader = undef;
 
