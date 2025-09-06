@@ -93,12 +93,24 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     }
 
     method load (@files) {
-        # Delegate to the unified import_workflows method in Registry.pm
+        # Import workflows to specified schema
         my $schema = $dao->current_tenant; # Use the schema set by command args
-        my $files_ref = @files ? \@files : undef;
-        
-        # Call the unified method with verbose output for CLI
-        $self->app->import_workflows($schema, $files_ref, 1);
+        my @workflows = @files ? @files : 
+          $self->app->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+
+        for my $file (@workflows) {
+            my $yaml = $file->slurp;
+            next if Load($yaml)->{draft};
+            try {
+                my $workflow = Workflow->from_yaml( $dao, $yaml );
+                my $step_count = scalar @{ Load($yaml)->{steps} // [] };
+                say sprintf "Imported workflow '%s' (%s) with %d steps",
+                    $workflow->name, $workflow->slug, $step_count;
+            }
+            catch ($e) {
+                warn "Error importing workflow: $e";
+            }
+        }
     }
 
     method export ( $slug = undef, $file = undef ) {

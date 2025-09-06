@@ -7,6 +7,7 @@ use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
 use Registry::Command::template;
+use Registry::Command::workflow;
 
 class Registry :isa(Mojolicious) {
     our $VERSION = v0.001;
@@ -152,34 +153,27 @@ class Registry :isa(Mojolicious) {
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {
-        # Import workflows to specified schema (default: registry)
-        my $dao = $self->dao($schema);
-        my @workflows = $files ? @$files : 
-          $self->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
-
-        for my $file (@workflows) {
-            my $yaml = $file->slurp;
-            next if Load($yaml)->{draft};
-            try {
-                my $workflow = Workflow->from_yaml( $dao, $yaml );
-                my $msg = sprintf( "Imported workflow '%s' (%s)",
-                    $workflow->name, $workflow->slug );
-                
-                if ($verbose) {
-                    my $step_count = scalar @{ Load($yaml)->{steps} // [] };
-                    say sprintf "Imported workflow '%s' (%s) with %d steps",
-                        $workflow->name, $workflow->slug, $step_count;
-                } else {
-                    $self->app->log->debug($msg);
-                }
+        # Delegate to Registry::Command::workflow for consistent logic
+        my $workflow_cmd = Registry::Command::workflow->new(app => $self);
+        
+        # Set up the command with the correct schema context
+        $workflow_cmd->{dao} = $self->dao($schema);
+        
+        if ($verbose) {
+            # Let command output directly for CLI usage
+            $workflow_cmd->load($files ? @$files : ());
+        } else {
+            # Capture output and log it instead of printing to stdout
+            my $output = '';
+            {
+                local *STDOUT;
+                open STDOUT, '>', \$output;
+                $workflow_cmd->load($files ? @$files : ());
             }
-            catch ($e) {
-                my $error_msg = "Error importing workflow: $e";
-                if ($verbose) {
-                    warn $error_msg;
-                } else {
-                    $self->app->log->error($error_msg);
-                }
+            
+            # Log each imported workflow
+            for my $line (split /\n/, $output) {
+                $self->log->debug($line) if $line;
             }
         }
     }
