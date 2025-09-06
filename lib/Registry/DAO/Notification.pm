@@ -254,4 +254,13 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     method is_attendance_notification {
         $type eq 'attendance_missing' || $type eq 'attendance_reminder';
     }
+    
+    # Check if a reminder already exists for a specific event and user
+    sub has_existing_reminder($class, $db, $user_id, $notification_type, $event_id) {
+        my $result = $db->query(
+            'SELECT id FROM notifications WHERE user_id = ? AND type = ? AND metadata->>? = ?',
+            $user_id, $notification_type, 'event_id', $event_id
+        );
+        return $result->hash ? 1 : 0;
+    }
 }

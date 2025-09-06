@@ -126,9 +126,8 @@ subtest 'Find events missing attendance' => sub {
         marked_by => $data->{teacher}->id
     });
 
-    # Test the job's query method
-    my $job_class = Registry::Job::AttendanceCheck->new;
-    my $missing_events = $job_class->find_events_missing_attendance($db);
+    # Test the DAO method that the job uses
+    my $missing_events = Registry::DAO::Event->find_events_missing_attendance($db);
 
     is(scalar @$missing_events, 1, 'Found one event missing attendance');
     is($missing_events->[0]{id}, $event_missing->id, 'Correct event identified as missing attendance');
@@ -171,8 +170,7 @@ subtest 'Find events starting soon' => sub {
     });
 
     # Test the job's query method
-    my $job_class = Registry::Job::AttendanceCheck->new;
-    my $soon_events = $job_class->find_events_starting_soon($db);
+    my $soon_events = Registry::DAO::Event->find_events_starting_soon($db);
 
     is(scalar @$soon_events, 1, 'Found one event starting soon');
     is($soon_events->[0]{id}, $event_starting_soon->id, 'Correct event identified as starting soon');

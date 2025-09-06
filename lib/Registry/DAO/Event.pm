@@ -157,6 +157,131 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         
         return $results->hashes->to_array;
     }
+    
+    # Attendance monitoring methods for background jobs
+    
+    # Find events that started in the last 15 minutes but don't have attendance records
+    sub find_events_missing_attendance($class, $db) {
+        my $sql = q{
+            SELECT 
+                e.id,
+                e.teacher_id,
+                e.metadata->>'title' as title,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
+                l.name as location_name,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
+            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
+            WHERE 
+                -- Event started in the last 15 minutes
+                e.time BETWEEN 
+                    now() - interval '15 minutes' AND now()
+                -- And has no attendance records
+                AND NOT EXISTS (
+                    SELECT 1 FROM attendance_records ar 
+                    WHERE ar.event_id = e.id
+                )
+                -- And has enrolled students
+                AND EXISTS (
+                    SELECT 1 FROM enrollments en2 
+                    JOIN sessions s2 ON en2.session_id = s2.id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
+                    AND en2.status = 'active'
+                )
+            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
+            ORDER BY e.time DESC
+        };
+        
+        return $db->query($sql)->hashes->to_array;
+    }
+    
+    # Find events starting in the next 5 minutes
+    sub find_events_starting_soon($class, $db) {
+        my $sql = q{
+            SELECT 
+                e.id,
+                e.teacher_id,
+                e.metadata->>'title' as title,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
+                l.name as location_name,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
+            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
+            WHERE 
+                -- Event starts in the next 5 minutes
+                e.time BETWEEN 
+                    now() AND now() + interval '5 minutes'
+                -- And has enrolled students
+                AND EXISTS (
+                    SELECT 1 FROM enrollments en2 
+                    JOIN sessions s2 ON en2.session_id = s2.id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
+                    AND en2.status = 'active'
+                )
+            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
+            ORDER BY e.time ASC
+        };
+        
+        return $db->query($sql)->hashes->to_array;
+    }
+    
+    # Find events that started more than 30 minutes ago with no attendance
+    sub find_events_severely_overdue($class, $db) {
+        my $sql = q{
+            SELECT 
+                e.id,
+                e.teacher_id,
+                e.metadata->>'title' as title,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
+                l.name as location_name,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
+            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
+            WHERE 
+                -- Event started more than 30 minutes ago
+                e.time < now() - interval '30 minutes'
+                -- And has no attendance records
+                AND NOT EXISTS (
+                    SELECT 1 FROM attendance_records ar 
+                    WHERE ar.event_id = e.id
+                )
+                -- And has enrolled students
+                AND EXISTS (
+                    SELECT 1 FROM enrollments en2 
+                    JOIN sessions s2 ON en2.session_id = s2.id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
+                    AND en2.status = 'active'
+                )
+            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
+            ORDER BY e.time ASC
+        };
+        
+        return $db->query($sql)->hashes->to_array;
+    }
 }
 
 # Note: Pricing class has been replaced by Registry::DAO::PricingPlan

@@ -31,7 +31,7 @@ class Registry::Job::AttendanceCheck {
             my $db = $dao->db;
             
             # Check all tenant schemas
-            my $tenants = $db->select('registry.tenants', ['slug'])->hashes->to_array;
+            my $tenants = Registry::DAO::Tenant->get_all_tenant_schemas($db);
             
             for my $tenant (@$tenants) {
                 my $schema = $tenant->{slug};
@@ -71,7 +71,7 @@ class Registry::Job::AttendanceCheck {
     # Check attendance for a specific tenant
     method check_tenant_attendance ($job, $db, $schema) {
         # Find events that started in the last 15 minutes and don't have attendance records
-        my $events_missing_attendance = $self->find_events_missing_attendance($db);
+        my $events_missing_attendance = Registry::DAO::Event->find_events_missing_attendance($db);
         
         for my $event (@$events_missing_attendance) {
             $job->app->log->debug("Found event missing attendance: $event->{id} ($event->{title})");
@@ -103,7 +103,7 @@ class Registry::Job::AttendanceCheck {
         }
         
         # Find events starting soon (next 5 minutes) to send reminders
-        my $events_starting_soon = $self->find_events_starting_soon($db);
+        my $events_starting_soon = Registry::DAO::Event->find_events_starting_soon($db);
         
         for my $event (@$events_starting_soon) {
             $job->app->log->debug("Found event starting soon: $event->{id} ($event->{title})");
@@ -113,12 +113,9 @@ class Registry::Job::AttendanceCheck {
             next unless $teacher_id;
             
             # Check if we already sent a reminder for this event
-            my $existing_reminder = $db->query(
-                'SELECT id FROM notifications WHERE user_id = ? AND type = ? AND metadata->>? = ?',
-                $teacher_id, 'attendance_reminder', 'event_id', $event->{id}
-            )->hash;
-            
-            next if $existing_reminder; # Already sent reminder
+            next if Registry::DAO::Notification->has_existing_reminder(
+                $db, $teacher_id, 'attendance_reminder', $event->{id}
+            );
             
             # Check if teacher wants reminder notifications
             if (Registry::DAO::UserPreference->wants_notification(
@@ -141,128 +138,5 @@ class Registry::Job::AttendanceCheck {
                 $job->app->log->info("Sent attendance reminder in-app notification to teacher $teacher_id for event $event->{id}");
             }
         }
-    }
-    
-    # Find events that started in the last 15 minutes but don't have attendance records
-    method find_events_missing_attendance ($db) {
-        my $sql = q{
-            SELECT 
-                e.id,
-                e.teacher_id,
-                e.metadata->>'title' as title,
-                e.time as start_time,
-                e.time + (e.duration || ' minutes')::interval as end_time,
-                l.name as location_name,
-                p.name as program_name,
-                COUNT(en.id) as enrolled_count
-            FROM events e
-            JOIN locations l ON e.location_id = l.id
-            JOIN projects p ON e.project_id = p.id
-            LEFT JOIN session_events se ON e.id = se.event_id
-            LEFT JOIN sessions s ON se.session_id = s.id
-            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
-            WHERE 
-                -- Event started in the last 15 minutes
-                e.time BETWEEN 
-                    now() - interval '15 minutes' AND now()
-                -- And has no attendance records
-                AND NOT EXISTS (
-                    SELECT 1 FROM attendance_records ar 
-                    WHERE ar.event_id = e.id
-                )
-                -- And has enrolled students
-                AND EXISTS (
-                    SELECT 1 FROM enrollments en2 
-                    JOIN sessions s2 ON en2.session_id = s2.id 
-                    JOIN session_events se2 ON s2.id = se2.session_id
-                    JOIN events e2 ON se2.event_id = e2.id
-                    WHERE e2.project_id = e.project_id 
-                    AND en2.status = 'active'
-                )
-            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
-            ORDER BY e.time DESC
-        };
-        
-        return $db->query($sql)->hashes->to_array;
-    }
-    
-    # Find events starting in the next 5 minutes
-    method find_events_starting_soon ($db) {
-        my $sql = q{
-            SELECT 
-                e.id,
-                e.teacher_id,
-                e.metadata->>'title' as title,
-                e.time as start_time,
-                e.time + (e.duration || ' minutes')::interval as end_time,
-                l.name as location_name,
-                p.name as program_name,
-                COUNT(en.id) as enrolled_count
-            FROM events e
-            JOIN locations l ON e.location_id = l.id
-            JOIN projects p ON e.project_id = p.id
-            LEFT JOIN session_events se ON e.id = se.event_id
-            LEFT JOIN sessions s ON se.session_id = s.id
-            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
-            WHERE 
-                -- Event starts in the next 5 minutes
-                e.time BETWEEN 
-                    now() AND now() + interval '5 minutes'
-                -- And has enrolled students
-                AND EXISTS (
-                    SELECT 1 FROM enrollments en2 
-                    JOIN sessions s2 ON en2.session_id = s2.id 
-                    JOIN session_events se2 ON s2.id = se2.session_id
-                    JOIN events e2 ON se2.event_id = e2.id
-                    WHERE e2.project_id = e.project_id 
-                    AND en2.status = 'active'
-                )
-            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
-            ORDER BY e.time ASC
-        };
-        
-        return $db->query($sql)->hashes->to_array;
-    }
-    
-    # Find events that started more than 30 minutes ago with no attendance
-    method find_events_severely_overdue ($db) {
-        my $sql = q{
-            SELECT 
-                e.id,
-                e.teacher_id,
-                e.metadata->>'title' as title,
-                e.time as start_time,
-                e.time + (e.duration || ' minutes')::interval as end_time,
-                l.name as location_name,
-                p.name as program_name,
-                COUNT(en.id) as enrolled_count
-            FROM events e
-            JOIN locations l ON e.location_id = l.id
-            JOIN projects p ON e.project_id = p.id
-            LEFT JOIN session_events se ON e.id = se.event_id
-            LEFT JOIN sessions s ON se.session_id = s.id
-            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
-            WHERE 
-                -- Event started more than 30 minutes ago
-                e.time < now() - interval '30 minutes'
-                -- And has no attendance records
-                AND NOT EXISTS (
-                    SELECT 1 FROM attendance_records ar 
-                    WHERE ar.event_id = e.id
-                )
-                -- And has enrolled students
-                AND EXISTS (
-                    SELECT 1 FROM enrollments en2 
-                    JOIN sessions s2 ON en2.session_id = s2.id 
-                    JOIN session_events se2 ON s2.id = se2.session_id
-                    JOIN events e2 ON se2.event_id = e2.id
-                    WHERE e2.project_id = e.project_id 
-                    AND en2.status = 'active'
-                )
-            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
-            ORDER BY e.time ASC
-        };
-        
-        return $db->query($sql)->hashes->to_array;
     }
 }
