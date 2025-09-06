@@ -10,6 +10,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::Job::AttendanceCheck;
+use Registry::Job::WorkflowExecutor;
 use Registry::DAO::User;
 use Registry::DAO::Location;
 use Registry::DAO::Project;
@@ -18,6 +19,7 @@ use Registry::DAO::Session;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Notification;
 use Registry::DAO::UserPreference;
+use Registry::DAO::Workflow;
 use DateTime;
 
 my $db_helper = Test::Registry::DB->new;
@@ -25,6 +27,10 @@ my $dao = $db_helper->setup_test_database;
 my $db = $dao->db;
 
 # All schemas are already deployed by Test::Registry::DB->new
+
+# Import workflows for testing
+system('carton exec ./registry workflow import registry') == 0 
+    or die "Failed to import workflows for testing";
 
 # Create test data
 sub setup_test_data {
@@ -233,11 +239,22 @@ subtest 'Job execution with notifications' => sub {
         event_id => $event_starting_soon->id
     });
 
+    # Mock minion for scheduling
+    my $scheduled_jobs = [];
+    my $mock_minion = bless {
+        enqueue => sub {
+            my ($self, $task, $args, $opts) = @_;
+            push @$scheduled_jobs, { task => $task, args => $args, opts => $opts };
+            return 'job_id_123';
+        }
+    }, 'MockMinion';
+    
     # Mock job object for testing
     my $mock_logger = bless {}, 'MockLogger';
     my $mock_app = bless {
         log => $mock_logger,
-        dao => sub { $dao }
+        dao => sub { $dao },
+        minion => $mock_minion
     }, 'MockApp';
     my $mock_job = bless {
         app => $mock_app
@@ -251,24 +268,34 @@ subtest 'Job execution with notifications' => sub {
         sub error { shift; say "ERROR: @_" if $ENV{TEST_VERBOSE} }
     }
     
-    # Mock app method
+    # Mock app methods
     {
         package MockApp;
         sub dao { $dao }
         sub log { shift->{log} }
+        sub minion { shift->{minion} }
     }
     
     # Mock job methods
     {
         package MockJob;
         sub app { shift->{app} }
+        sub id { 'test_job_123' }
+        sub fail { shift; warn "Job failed: @_" }
     }
 
-    # Create and run the job
+    # Test both the specific job and generic executor
     my $job_instance = Registry::Job::AttendanceCheck->new;
+    $job_instance->run($mock_job);
     
-    # Test just the tenant checking logic
-    $job_instance->check_tenant_attendance($mock_job, $db, 'public');
+    # Also test direct workflow executor
+    my $executor = Registry::Job::WorkflowExecutor->new;
+    my $workflow_opts = {
+        workflow_slug => 'attendance-check',
+        context => {},
+        reschedule => { enabled => 0 }
+    };
+    $executor->run($mock_job, $workflow_opts);
 
     # Check that notifications were created
     my $notifications = $db->select('notifications', '*', {
@@ -333,18 +360,29 @@ subtest 'Prevent duplicate reminder notifications' => sub {
         metadata => { event_id => $event_starting_soon->id }
     });
 
+    # Mock minion for scheduling
+    my $scheduled_jobs2 = [];
+    my $mock_minion2 = bless {
+        enqueue => sub {
+            my ($self, $task, $args, $opts) = @_;
+            push @$scheduled_jobs2, { task => $task, args => $args, opts => $opts };
+            return 'job_id_456';
+        }
+    }, 'MockMinion';
+    
     # Mock job and run check
     my $mock_logger2 = bless {}, 'MockLogger';
     my $mock_app2 = bless {
         log => $mock_logger2,
-        dao => sub { $dao }
+        dao => sub { $dao },
+        minion => $mock_minion2
     }, 'MockApp';
-    my $mock_job = bless {
+    my $mock_job2 = bless {
         app => $mock_app2
     }, 'MockJob';
 
     my $job_instance = Registry::Job::AttendanceCheck->new;
-    $job_instance->check_tenant_attendance($mock_job, $db, 'public');
+    $job_instance->run($mock_job2);
 
     # Should still only have 1 reminder notification (no duplicates)
     my $reminder_count = $db->query(

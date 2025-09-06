@@ -27,4 +27,10 @@ use Registry::DAO::WorkflowSteps::SelectProgram;
 use Registry::DAO::WorkflowSteps::TenantPayment;
 use Registry::DAO::WorkflowSteps::TenantSignupReview;
 
+# AttendanceCheck workflow steps
+use Registry::DAO::WorkflowSteps::AttendanceCheck::TenantProcessor;
+use Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor;
+use Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor;
+use Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext;
+
 1;
