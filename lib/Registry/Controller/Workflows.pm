@@ -50,8 +50,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $data = $self->req->params->to_hash;
         
         # Add tenant context to workflow run data if present
-        my $tenant_slug = $self->req->headers->header('X-As-Tenant');
-        if ($tenant_slug) {
+        my $tenant_slug = $self->tenant;
+        if ($tenant_slug && $tenant_slug ne 'registry') {
             $data->{__tenant_slug} = $tenant_slug;
         }
         

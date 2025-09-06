@@ -4,9 +4,9 @@ use Object::Pad;
 class Registry::Controller::Locations :isa(Mojolicious::Controller) {
     
     method show ($slug = $self->param('slug')) {
-        # Get tenant from header and pass it explicitly to DAO helper
-        my $tenant = $self->req->headers->header('X-As-Tenant');
-        my $dao = $self->app->dao($tenant);
+        # Get tenant using app helper which handles precedence properly
+        my $tenant = $self->tenant;
+        my $dao = $self->dao($tenant);
         
         my ($location) = $dao->find(Location => {slug => $slug});
         
