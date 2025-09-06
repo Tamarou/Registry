@@ -174,7 +174,17 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     method get_workflow_run_step {
         my $dao = $self->app->dao;
         my $run = $self->run();
-        my $step = $run->latest_step($dao->db) || $run->next_step($dao->db);
+        my $workflow = $self->workflow();
+        
+        # Find the step that matches the URL parameter, not just the latest step
+        my $requested_step_slug = $self->param('step');
+        my $step = Registry::DAO::WorkflowStep->find($dao->db, { 
+            workflow_id => $workflow->id, 
+            slug => $requested_step_slug 
+        });
+        
+        # Fallback to latest step if the requested step isn't found
+        $step ||= $run->latest_step($dao->db) || $run->next_step($dao->db);
         
         # Get data for rendering
         my $data_json = Mojo::JSON::encode_json($run->data || {});

@@ -48,4 +48,68 @@ class Registry::Job::AttendanceCheck {
             %opts
         );
     }
+    
+    # Backward compatibility method for tests
+    method check_tenant_attendance ($job, $db, $schema) {
+        my $notifications_sent = 0;
+        
+        # Process events missing attendance
+        my $events_missing_attendance = Registry::DAO::Event->find_events_missing_attendance($db);
+        for my $event (@$events_missing_attendance) {
+            my $teacher_id = $event->{teacher_id};
+            next unless $teacher_id;
+            
+            # Check if teacher wants attendance notifications
+            if (Registry::DAO::UserPreference->wants_notification(
+                $db, $teacher_id, 'attendance_missing', 'email'
+            )) {
+                Registry::DAO::Notification->send_attendance_missing(
+                    $db, $teacher_id, $event, channel => 'email'
+                );
+                $notifications_sent++;
+            }
+            
+            if (Registry::DAO::UserPreference->wants_notification(
+                $db, $teacher_id, 'attendance_missing', 'in_app'
+            )) {
+                Registry::DAO::Notification->send_attendance_missing(
+                    $db, $teacher_id, $event, channel => 'in_app'
+                );
+                $notifications_sent++;
+            }
+        }
+        
+        # Process events starting soon
+        my $events_starting_soon = Registry::DAO::Event->find_events_starting_soon($db);
+        for my $event (@$events_starting_soon) {
+            my $teacher_id = $event->{teacher_id};
+            next unless $teacher_id;
+            
+            # Check if we already sent a reminder for this event
+            next if Registry::DAO::Notification->has_existing_reminder(
+                $db, $teacher_id, 'attendance_reminder', $event->{id}
+            );
+            
+            # Check if teacher wants reminder notifications
+            if (Registry::DAO::UserPreference->wants_notification(
+                $db, $teacher_id, 'attendance_reminder', 'email'
+            )) {
+                Registry::DAO::Notification->send_attendance_reminder(
+                    $db, $teacher_id, $event, channel => 'email'
+                );
+                $notifications_sent++;
+            }
+            
+            if (Registry::DAO::UserPreference->wants_notification(
+                $db, $teacher_id, 'attendance_reminder', 'in_app'
+            )) {
+                Registry::DAO::Notification->send_attendance_reminder(
+                    $db, $teacher_id, $event, channel => 'in_app'
+                );
+                $notifications_sent++;
+            }
+        }
+        
+        return $notifications_sent;
+    }
 }

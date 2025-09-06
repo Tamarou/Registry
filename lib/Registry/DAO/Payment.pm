@@ -34,7 +34,7 @@ field $_stripe_client = undef;
         }
     }
     
-    use constant table => 'registry.payments';
+    sub table { 'registry.payments' }
     
     sub create ($class, $db, $data) {
         # Handle JSON encoding for metadata

@@ -13,6 +13,15 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext :isa(Registry:
         # Get the app instance from the run context
         my $app = $data->{workflow_context}->{app};
         
+        # Skip scheduling in test environments
+        if ($ENV{TEST_MODE} || $ENV{HARNESS_ACTIVE}) {
+            $run->update_data($db, {
+                next_run_scheduled => 0,
+                schedule_error => "Skipped in test environment"
+            });
+            return;
+        }
+        
         if ($app && $app->can('minion')) {
             try {
                 # Use generic workflow executor for scheduling

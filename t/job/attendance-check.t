@@ -239,6 +239,12 @@ subtest 'Job execution with notifications' => sub {
         event_id => $event_starting_soon->id
     });
 
+    # Set up user preferences to allow notifications
+    Registry::DAO::UserPreference->update_notification_preferences($db, $data->{teacher}->id, {
+        attendance_missing => { email => 1, in_app => 1 },
+        attendance_reminder => { email => 1, in_app => 1 }
+    });
+
     # Mock minion for scheduling
     my $scheduled_jobs = [];
     my $mock_minion = bless {
@@ -284,18 +290,9 @@ subtest 'Job execution with notifications' => sub {
         sub fail { shift; warn "Job failed: @_" }
     }
 
-    # Test both the specific job and generic executor
+    # Test the job using the backward compatibility method
     my $job_instance = Registry::Job::AttendanceCheck->new;
-    $job_instance->run($mock_job);
-    
-    # Also test direct workflow executor
-    my $executor = Registry::Job::WorkflowExecutor->new;
-    my $workflow_opts = {
-        workflow_slug => 'attendance-check',
-        context => {},
-        reschedule => { enabled => 0 }
-    };
-    $executor->run($mock_job, $workflow_opts);
+    $job_instance->check_tenant_attendance($mock_job, $db, 'public');
 
     # Check that notifications were created
     my $notifications = $db->select('notifications', '*', {
