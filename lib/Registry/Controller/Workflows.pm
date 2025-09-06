@@ -183,22 +183,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # Get workflow progress data
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
         
-        # For specific steps, prepare structured data for template
-        my $template_data = $run->data || {};
-        if ($self->param('step') eq 'review') {
-            $template_data = $self->_prepare_review_data($run);
-        } elsif ($self->param('step') eq 'complete') {
-            # Find the RegisterTenant step to get completion data
-            my $register_step = Registry::DAO::WorkflowStep->find($dao->db, {
-                workflow_id => $run->workflow_id,
-                class => 'Registry::DAO::WorkflowSteps::RegisterTenant'
-            });
-            if ($register_step) {
-                $template_data = $register_step->prepare_completion_data($dao->db, $run);
-            } else {
-                $template_data = $run->data || {};
-            }
-        }
+        # Let the step class handle its own template data preparation (polymorphic approach)
+        my $template_data = $step->prepare_template_data($dao->db, $run);
         
         return $self->render(
             template => $self->param('workflow') . '/' . $self->param('step'),
@@ -457,34 +443,6 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $result->array->[0] > 0;
     }
     
-    method _prepare_review_data($run) {
-        my $raw_data = $run->data || {};
-        
-        # Structure the data for the review template
-        return {
-            profile => {
-                name => $raw_data->{name} || $raw_data->{organization_name},
-                subdomain => $raw_data->{subdomain},
-                description => $raw_data->{description},
-                billing_email => $raw_data->{billing_email},
-                billing_phone => $raw_data->{billing_phone},
-                billing_address => $raw_data->{billing_address},
-                billing_address2 => $raw_data->{billing_address2},
-                billing_city => $raw_data->{billing_city},
-                billing_state => $raw_data->{billing_state},
-                billing_zip => $raw_data->{billing_zip},
-                billing_country => $raw_data->{billing_country},
-            },
-            team => {
-                admin => {
-                    name => $raw_data->{admin_name},
-                    email => $raw_data->{admin_email},
-                    username => $raw_data->{admin_username},
-                },
-                team_members => $raw_data->{team_members} || [],
-            },
-        };
-    }
     
 
     method start_continuation {

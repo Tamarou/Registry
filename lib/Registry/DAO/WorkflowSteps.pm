@@ -25,5 +25,6 @@ use Registry::DAO::WorkflowSteps::ReviewAndCreate;
 use Registry::DAO::WorkflowSteps::SelectChildren;
 use Registry::DAO::WorkflowSteps::SelectProgram;
 use Registry::DAO::WorkflowSteps::TenantPayment;
+use Registry::DAO::WorkflowSteps::TenantSignupReview;
 
 1;

@@ -423,6 +423,18 @@ method _format_trial_end_date($trial_ends_at) {
     return $dt->strftime('%B %d, %Y');
 }
 
+# Override template data preparation for RegisterTenant steps
+method prepare_template_data ($db, $run) {
+    # If this is a completion step, use our specialized completion data
+    my $step_slug = $self->slug || '';
+    if ($step_slug eq 'complete') {
+        return $self->prepare_completion_data($db, $run);
+    }
+    
+    # For other RegisterTenant steps, use default behavior
+    return $self->SUPER::prepare_template_data($db, $run);
+}
+
 method prepare_completion_data($db, $run) {
     my $raw_data = $run->data || {};
     
