@@ -133,7 +133,7 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             return @errors ? \@errors : undef;
         }
         
-        return undef;
+        return;
     }
     
     method get_available_sessions ($db, $location_id, $program_id, $child) {

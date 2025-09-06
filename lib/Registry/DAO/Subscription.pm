@@ -40,7 +40,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         }
 
         my $response = $self->_stripe_request('POST', '/customers', \%form_data);
-        return undef unless $response;
+        return unless $response;
         
         # Update tenant with Stripe customer ID
         $db->query(
@@ -69,7 +69,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         
         unless ($tx->success) {
             warn "Stripe API error: " . $tx->error->{message} if $tx->error;
-            return undef;
+            return;
         }
         
         return $tx->result->json;
@@ -111,7 +111,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         }
 
         my $subscription = $self->_stripe_request('POST', '/subscriptions', \%form_data);
-        return undef unless $subscription;
+        return unless $subscription;
         
         # Update tenant with subscription information if tenant_id provided
         if ($tenant_id) {

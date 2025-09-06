@@ -5,6 +5,8 @@ use Registry::DAO;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
+use Registry::Command::schema;
+use Registry::Command::template;
 
 class Registry :isa(Mojolicious) {
     our $VERSION = v0.001;
@@ -183,40 +185,38 @@ class Registry :isa(Mojolicious) {
     }
 
     method import_templates () {
-        # Import templates to main registry schema
-        my $dao = $self->dao('registry');
-
-        my @templates =
-          $self->app->home->child('templates')
-          ->list_tree->grep(qr/\.html\.ep$/)->each;
-
-        for my $file (@templates) {
-            Registry::DAO::Template->import_from_file( $dao, $file );
-            my $msg =
-              sprintf( "Imported template '%s'", $file->to_rel('templates') );
-            $self->app->log->debug($msg);
+        # Delegate to Registry::Command::template for consistent logic
+        my $template_cmd = Registry::Command::template->new(app => $self);
+        
+        # Capture output and log it instead of printing to stdout
+        my $output = '';
+        {
+            local *STDOUT;
+            open STDOUT, '>', \$output;
+            $template_cmd->load('registry');
+        }
+        
+        # Log each imported template
+        for my $line (split /\n/, $output) {
+            $self->log->debug($line) if $line;
         }
     }
 
     method import_schemas () {
-        # Import schemas to main registry schema
-        my $dao = $self->dao('registry');
-
-        my @schemas =
-          $self->home->child('schemas')->list->grep(qr/\.json$/)->each;
-
-        for my $file (@schemas) {
-            try {
-                my $outcome =
-                  Registry::DAO::OutcomeDefinition->import_from_file( $dao,
-                    $file );
-                my $msg =
-                  sprintf( "Imported outcome definition '%s'", $outcome->name );
-                $self->app->log->debug($msg);
-            }
-            catch ($e) {
-                $self->app->log->error("Error importing schema: $e");
-            }
+        # Delegate to Registry::Command::schema for consistent logic
+        my $schema_cmd = Registry::Command::schema->new(app => $self);
+        
+        # Capture output and log it instead of printing to stdout
+        my $output = '';
+        {
+            local *STDOUT;
+            open STDOUT, '>', \$output;
+            $schema_cmd->load('registry');
+        }
+        
+        # Log each imported schema
+        for my $line (split /\n/, $output) {
+            $self->log->debug($line) if $line;
         }
     }
 
@@ -280,14 +280,14 @@ class Registry :isa(Mojolicious) {
         $host =~ s/:\d+$//;
         
         # Don't extract tenant from IP addresses
-        return undef if $host =~ /^\d+\.\d+\.\d+\.\d+$/;
+        return if $host =~ /^\d+\.\d+\.\d+\.\d+$/;
         
         # Extract tenant from subdomain: tenant.example.com -> tenant
         if ($host =~ /^([^.]+)\./) {
             my $subdomain = $1;
             return $subdomain unless $subdomain eq 'www';
         }
-        return undef;
+        return;
     }
 }
 

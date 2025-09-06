@@ -497,7 +497,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         push @recent, { timestamp => $current_time, action => 'payment_attempt' };
         $run->update_data($db, { payment_attempts => \@recent });
         
-        return undef;  # No rate limit hit
+        return;  # No rate limit hit
     }
 
     # Session timeout and recovery
@@ -526,7 +526,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             }
         }
         
-        return undef;  # Session is valid
+        return;  # Session is valid
     }
 
     # Validate Stripe service availability
@@ -546,6 +546,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             });
         }
         
-        return undef;  # Service is available
+        return;  # Service is available
     }
 }

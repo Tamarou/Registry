@@ -96,7 +96,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     # Calculate price based on requirements and context
     method calculate_price ($context = {}) {
         # Check if this plan's requirements are met
-        return undef unless $self->requirements_met($context);
+        return unless $self->requirements_met($context);
         
         my $price = $amount;
         

@@ -94,7 +94,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     
     # Get the project (curriculum) associated with this event
     method project($db) {
-        return undef unless $project_id;
+        return unless $project_id;
         
         require Registry::DAO::Project;
         Registry::DAO::Project->find($db, { id => $project_id });

@@ -51,9 +51,23 @@ class Registry::Command::template :isa(Mojolicious::Command) {
             return;
         }
 
-    method load (@args) {
-        my $dao = $self->app->dao;
-        my @files = Mojo::Home->new->child('templates')
+        # Handle command aliases
+        $cmd = 'load' if $cmd eq 'import';
+
+        if ( my $method = $self->can($cmd) ) {
+            return $self->$method($schema // 'registry', @args);
+        }
+
+        die <<~"END";
+        Unknown command `template $cmd` ... did you mean `$0 template $schema $cmd @args`?
+
+        $usage
+        END
+    }
+
+    method load ($schema = 'registry', @args) {
+        my $dao = $self->app->dao($schema);
+        my @files = $self->app->home->child('templates')
           ->list_tree->grep(qr/\.html\.ep$/)->each;
 
         for my $file (@files) {
@@ -62,20 +76,6 @@ class Registry::Command::template :isa(Mojolicious::Command) {
               $file->to_rel('templates');
         }
         return;
-    }
-
-        # Handle command aliases
-        $cmd = 'load' if $cmd eq 'import';
-
-        if ( my $method = $self->can($cmd) ) {
-            return $self->$method(@args);
-        }
-
-        die <<~"END";
-        Unknown command `template $cmd` ... did you mean `$0 template $schema $cmd @args`?
-
-        $usage
-        END
     }
 }
 
