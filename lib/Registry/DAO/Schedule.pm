@@ -1,4 +1,3 @@
-package Registry::DAO::Schedule;
 use 5.40.2;
 use warnings;
 use experimental 'signatures', 'try', 'builtin';

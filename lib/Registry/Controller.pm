@@ -3,8 +3,6 @@
 use 5.40.2;
 use Object::Pad;
 
-package Registry::Controller;
-
 class Registry::Controller :isa(Mojolicious::Controller) {
     use Carp ();
 

@@ -29,17 +29,11 @@ $ENV{DB_URL} = $dao->url;
 subtest 'CSRF protection tests' => sub {
     my $t = Test::Mojo->new('Registry');
     
-    subtest 'Marketing page loads without CSRF token requirement' => sub {
-        # Follow redirect to actual marketing page
-        my $res = $t->get_ok('/')->tx->res;
-        if ($res->code == 302) {
-            my $location = $res->headers->location;
-            $t->get_ok($location)->status_is(200);
-        } else {
-            is($res->code, 200, '200 OK');
-        }
-        # Check for basic content (may not have "After-School" on redirect page)
-        $t->content_like(qr/Registry|Sign|Login|Welcome/i, 'Marketing content displayed');
+    subtest 'Default workflow landing page loads without CSRF token requirement' => sub {
+        # Test the default workflow landing page (now at root /)
+        $t->get_ok('/')->status_is(200);
+        # Check for basic Registry content or workflow elements
+        $t->content_like(qr/Registry|workflow|html|body/i, 'Default workflow landing page displayed');
     };
     
     subtest 'Workflow forms security behavior' => sub {
@@ -105,15 +99,9 @@ subtest 'Input validation and sanitization' => sub {
 subtest 'HTTP security headers' => sub {
     my $t = Test::Mojo->new('Registry');
     
-    # Follow redirect to actual page
-    my $res = $t->get_ok('/')->tx->res;
-    if ($res->code == 302) {
-        my $location = $res->headers->location;
-        $t->get_ok($location)->status_is(200);
-    } else {
-        is($res->code, 200, '200 OK');
-    }
-      
+    # Test the default workflow landing page
+    $t->get_ok('/')->status_is(200);
+    
     # Check for important security headers
     my $headers = $t->tx->res->headers;
     

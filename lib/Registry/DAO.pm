@@ -6,8 +6,6 @@ use experimental qw(builtin);
 use builtin      qw(export_lexically);
 use Object::Pad;
 
-package Registry::DAO;
-
 use Mojo::Pg;
 use Registry::DAO::Object;
 use Registry::DAO::User;

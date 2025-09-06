@@ -2,6 +2,7 @@ use 5.40.2;
 use utf8;
 use Object::Pad;
 
+use Registry::DAO;
 use Registry::DAO::Workflow;
 
 class Registry::DAO::WorkflowSteps::CreateUser :isa(Registry::DAO::WorkflowStep) {
@@ -12,9 +13,12 @@ class Registry::DAO::WorkflowSteps::CreateUser :isa(Registry::DAO::WorkflowStep)
 
         my $data = $run->data;
 
-        
-        my $user = Registry::DAO::User->create( $db,
-            { $data->%{ 'username', 'password' } } );
+        # Check for tenant context from workflow run data
+        my $user_db = $db;
+
+        # Pass both the database connection and tenant context to User::create
+        my $user = Registry::DAO::User->create( $user_db,
+            { $data->%{ 'username', 'password' }, __tenant_slug => $data->{__tenant_slug} } );
 
         $run->update_data(
             $db,

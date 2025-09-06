@@ -5,8 +5,6 @@ use utf8;
 use Object::Pad;
 use experimental qw(try);
 
-package Registry::Command::workflow;
-
 class Registry::Command::workflow :isa(Mojolicious::Command) {
     use Carp          qw(carp);
     use Mojo::File    qw(path);

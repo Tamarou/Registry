@@ -62,6 +62,17 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
     sub create ( $class, $db, $data //= carp "must provide data" ) {
         $db = $db->db if $db isa Registry::DAO;
+        
+        # Check for tenant context to use schema-qualified table names
+        my $tenant_slug = delete $data->{__tenant_slug};
+        my $users_table = 'users';
+        my $profiles_table = 'user_profiles';
+        
+        if ($tenant_slug) {
+            $users_table = "$tenant_slug.users";
+            $profiles_table = "$tenant_slug.user_profiles";
+        }
+        
         try {
             my $crypt = Crypt::Passphrase->new(
                 encoder    => 'Argon2',
@@ -93,14 +104,16 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
             # Start transaction for atomic insert
             my $tx = $db->begin;
             
-            # Insert into users table
-            my $user = $db->insert( 'users', \%user_data, { returning => '*' } )->hash;
+            # Insert into users table (potentially schema-qualified)
+            my $result = $db->insert( $users_table, \%user_data, { returning => '*' } );
+            
+            my $user = $result->hash;
             
             # Insert into user_profiles table if we have profile data
             my $profile = {};
             if (%profile_data) {
                 $profile_data{user_id} = $user->{id};
-                $profile = $db->insert( 'user_profiles', \%profile_data, { returning => '*' } )->hash;
+                $profile = $db->insert( $profiles_table, \%profile_data, { returning => '*' } )->hash;
             }
             
             $tx->commit;

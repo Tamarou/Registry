@@ -4,8 +4,6 @@ use 5.40.2;
 use utf8;
 use Object::Pad;
 
-package Registry::DAO::Object;
-
 class Registry::DAO::Object {
     use Carp         qw( carp confess );
     use experimental qw(builtin try);

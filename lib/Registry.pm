@@ -91,11 +91,7 @@ class Registry :isa(Mojolicious) {
           ->name('webhook_stripe');
           
         # Route handling for root path - always use default workflow landing page
-        my $root = $self->routes->get('/');
-        $root->to(cb => sub ($c) {
-            # Use default workflow landing page for both tenant and non-tenant contexts
-            $c->render( workflow => '__default__', step => 'landing' );
-        })->name('root_handler');
+        $self->routes->get('/')->to('landing#root')->name('root_handler');
 
         my $r = $self->routes;
 

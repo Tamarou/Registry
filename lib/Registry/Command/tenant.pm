@@ -4,11 +4,8 @@ use 5.40.2;
 use utf8;
 use Object::Pad;
 
-package Registry::Command::tenant;
-
-use Registry::Command::workflow;
-
 class Registry::Command::tenant :isa(Mojolicious::Command) {
+    use Registry::Command::workflow;
 
     field $description :reader = 'Tenant management commands';
     field $usage :reader       = <<~"END";

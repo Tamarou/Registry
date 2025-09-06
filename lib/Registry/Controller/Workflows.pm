@@ -48,6 +48,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         
         my $run = $workflow->new_run( $dao->db, $config );
         my $data = $self->req->params->to_hash;
+        
+        # Add tenant context to workflow run data if present
+        my $tenant_slug = $self->req->headers->header('X-As-Tenant');
+        if ($tenant_slug) {
+            $data->{__tenant_slug} = $tenant_slug;
+        }
+        
         $run->process( $dao->db, $first_step, $data );
         return $run;
     }
