@@ -147,5 +147,17 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method waitlist($db) { $self->$update_status( $db, 'waitlisted' ) }
     method cancel($db)   { $self->$update_status( $db, 'cancelled' ) }
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
+    
+    # Count enrollments for a session by status
+    sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        my $status_list = join(',', map { "'$_'" } @$statuses);
+        my $result = $db->query(
+            "SELECT COUNT(*) FROM enrollments WHERE session_id = ? AND status IN ($status_list)",
+            $session_id
+        );
+        return $result->array->[0] || 0;
+    }
 
 }

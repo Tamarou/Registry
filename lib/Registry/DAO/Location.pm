@@ -126,4 +126,57 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
             return Registry::DAO::Location->create($db, { %clean_data, %$data });
         }
     }
+    
+    # Find active sessions at this location with optional filters
+    method find_active_sessions($db, $filters = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        # Build SQL with filters
+        my @where_clauses = (
+            'e.location_id = ?',
+            "s.status = 'published'"
+            # Note: Temporarily re-disable end date filter to debug
+            # '(s.end_date IS NULL OR s.end_date >= CURRENT_DATE)'
+        );
+        my @params = ($id);
+        
+        # Add age filters
+        if ($filters->{min_age}) {
+            push @where_clauses, '(e.max_age IS NULL OR e.max_age >= ?)';
+            push @params, $filters->{min_age};
+        }
+        if ($filters->{max_age}) {
+            push @where_clauses, '(e.min_age IS NULL OR e.min_age <= ?)';
+            push @params, $filters->{max_age};
+        }
+        
+        # Add start date filter
+        if ($filters->{start_date}) {
+            push @where_clauses, 's.start_date >= ?';
+            push @params, $filters->{start_date};
+        }
+        
+        # Add program type filter
+        if ($filters->{program_type}) {
+            push @where_clauses, 'p.slug = ?';
+            push @params, $filters->{program_type};
+        }
+        
+        my $where = join(' AND ', @where_clauses);
+        
+        my $sql = qq{
+            SELECT DISTINCT s.*, p.slug as program_type_slug
+            FROM sessions s
+            JOIN session_events se ON se.session_id = s.id
+            JOIN events e ON e.id = se.event_id
+            JOIN projects proj ON proj.id = e.project_id
+            LEFT JOIN program_types p ON p.slug = proj.program_type_slug
+            WHERE $where
+            ORDER BY s.start_date
+        };
+        
+        my @results = $db->query($sql, @params)->hashes->each;
+        return [] unless @results;
+        return [ map { Registry::DAO::Session->new(%$_) } @results ];
+    }
 }
