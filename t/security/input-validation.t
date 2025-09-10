@@ -6,14 +6,17 @@ defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 # Security audit: Input validation and SQL injection prevention tests
 
 {    # Test SQL injection prevention in DAO layer
     try {
         # Attempt SQL injection in email field  
-        my $malicious_user = $dao->create( User => {
+        my $malicious_user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
             email => "'; DROP TABLE users; --",
             name => 'Malicious User'
         });
@@ -34,7 +37,9 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 {    # Test parameterized queries in complex searches
     # Create test data
-    my $user = $dao->create( User => {
+    my $user = Registry::DAO::User->create($dao->db, {
+        username => 'testuser',
+        password => 'password123',
         email => 'test@example.com',
         name => 'Test User'
     });
@@ -44,14 +49,16 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     
     # This query should return no results, not execute the injected SQL
     my $results = $dao->db->select('users', '*', {
-        name => $malicious_search
+        username => $malicious_search
     })->hashes->to_array;
     
     is scalar(@$results), 0, 'Malicious search input returns no results (safe)';
 }
 
 {    # Test XSS prevention in stored data
-    my $user = $dao->create( User => {
+    my $user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
         email => 'xss@test.com',
         name => '<script>alert("XSS")</script>'
     });
@@ -64,7 +71,9 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $very_long_string = 'x' x 10000; # 10,000 characters
     
     try {
-        my $user = $dao->create( User => {
+        my $user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
             email => $very_long_string . '@example.com',
             name => $very_long_string
         });
@@ -82,7 +91,9 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 {    # Test special character handling
     my $special_chars = "!#\$%^&*()_+-=[]{}|;':\",./<>?`~";
     
-    my $user = $dao->create( User => {
+    my $user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
         email => 'special@example.com',
         name => "User with $special_chars"
     });
@@ -92,7 +103,9 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 }
 
 {    # Test Unicode handling
-    my $unicode_user = $dao->create( User => {
+    my $unicode_user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
         email => 'unicode@example.com',
         name => 'José María 测试 العربية русский'
     });
@@ -103,7 +116,9 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 
 {    # Test null byte injection
     try {
-        my $null_byte_user = $dao->create( User => {
+        my $null_byte_user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
             email => "test\x00\@example.com",
             name => "Test\x00User"
         });
@@ -131,7 +146,9 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     
     for my $email (@$invalid_emails) {
         try {
-            my $user = $dao->create( User => {
+            my $user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
                 email => $email,
                 name => 'Test User'
             });
@@ -153,7 +170,9 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
 }
 
 {    # Test basic data integrity 
-    my $user = $dao->create( User => {
+    my $user = Registry::DAO::User->create($dao->db, {
+            username => 'testuser' . int(rand(10000)),
+            password => 'password123',
         email => 'integrity@test.com',
         name => 'Integrity Test'
     });

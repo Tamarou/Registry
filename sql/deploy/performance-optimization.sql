@@ -2,6 +2,9 @@
 
 BEGIN;
 
+-- Suppress notices for existing indexes
+SET client_min_messages TO WARNING;
+
 -- Add indexes for frequently queried columns to improve performance
 
 -- Enrollments table indexes
@@ -100,5 +103,8 @@ ANALYZE registry.messages;
 ANALYZE registry.message_recipients;
 ANALYZE registry.payments;
 ANALYZE registry.notifications;
+
+-- Reset client message level
+SET client_min_messages TO NOTICE;
 
 COMMIT;

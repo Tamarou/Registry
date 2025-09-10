@@ -6,26 +6,52 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     use experimental qw(try);
 
     field $id :param :reader;
-    field $location_id :param;
-    field $project_id :param;
-    field $teacher_id :param;
-    field $min_age :param :reader;
-    field $max_age :param :reader;
-    field $capacity :param :reader;
-    # TODO: Event class needs:
-    # - Remove //= {} default
-    # - Add BUILD for JSON decoding
-    # - Use { -json => $metadata } in create/update
-    # - Add explicit metadata() accessor
-    field $metadata :param :reader //= {};
-    field $notes :param :reader    //= '';
-    field $created_at :param :reader;
-    field $updated_at :param :reader;
+    field $time :param :reader = undef;
+    field $duration :param :reader = undef;
+    field $location_id :param :reader = undef;
+    field $project_id :param :reader = undef;
+    field $session_id :param :reader = undef;
+    field $teacher_id :param :reader = undef;
+    field $metadata :param :reader = {};
+    field $notes :param :reader = '';
+    field $created_at :param :reader = undef;
+    field $updated_at :param :reader = undef;
+    field $min_age :param :reader = undef;
+    field $max_age :param :reader = undef;
+    field $capacity :param :reader = undef;
 
-    use constant table => 'events';
+    sub table { 'events' }
 
     sub create ( $class, $db, $data ) {
-        $class->SUPER::create( $db, $data );
+        # Convert start_time/end_time to time/duration if needed
+        if (exists $data->{start_time} && exists $data->{end_time}) {
+            $data->{time} = $data->{start_time};
+            # Calculate duration in minutes
+            my $duration_obj = $data->{end_time} - $data->{start_time};
+            $data->{duration} = int($duration_obj->in_units('minutes'));
+            delete $data->{start_time};
+            delete $data->{end_time};
+        }
+        
+        # Store session_id for later linking
+        my $session_id = delete $data->{session_id};
+        
+        # Handle JSON field encoding
+        if (exists $data->{metadata} && ref $data->{metadata}) {
+            $data->{metadata} = { -json => $data->{metadata} };
+        }
+        
+        my $event = $class->SUPER::create( $db, $data );
+        
+        # Link to session via session_events junction table
+        if ($session_id) {
+            $db->insert('session_events', {
+                session_id => $session_id,
+                event_id => $event->id
+            });
+        }
+        
+        return $event;
     }
 
     method location ($db) {
@@ -36,8 +62,8 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         Registry::DAO::User->find( $db, { id => $teacher_id } );
     }
 
-    method project ($db) {
-        Registry::DAO::Project->find( $db, { id => $project_id } );
+    method session ($db) {
+        Registry::DAO::Session->find( $db, { id => $session_id } );
     }
 
     # Get sessions this event belongs to
@@ -51,33 +77,8 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         )->to_array->@*;
     }
 
-    # Helper method to check if event is age-appropriate for a student
-    method is_age_appropriate($age) {
-        return 1 unless defined $min_age || defined $max_age;
-        return 0 if defined $min_age && $age < $min_age;
-        return 0 if defined $max_age && $age > $max_age;
-        return 1;
-    }
-
-    # Helper method to check if event is at capacity
-    method is_at_capacity {
-        return 0 unless defined $capacity && $capacity > 0;
-
-        # In a real implementation, we'd count enrollments
-        # This is a stub for demonstration
-        my $current_enrollment = 0;    # Replace with actual count
-        return $current_enrollment >= $capacity;
-    }
-
-    # Helper method to get available capacity
-    method available_capacity {
-        return undef unless defined $capacity;
-
-        # In a real implementation, we'd count enrollments
-        # This is a stub for demonstration
-        my $current_enrollment = 0;    # Replace with actual count
-        return $capacity - $current_enrollment;
-    }
+    # Note: Age and capacity constraints are now stored in metadata if needed
+    # These constraints can be accessed via $self->metadata->{min_age}, etc.
     
     # Get attendance records for this event
     method attendance_records($db) {
@@ -91,6 +92,14 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         Registry::DAO::Attendance->get_event_summary($db, $id);
     }
     
+    # Get the project (curriculum) associated with this event
+    method project($db) {
+        return unless $project_id;
+        
+        require Registry::DAO::Project;
+        Registry::DAO::Project->find($db, { id => $project_id });
+    }
+    
     # Get events for a teacher on a specific date
     sub get_teacher_events_for_date($class, $db, $teacher_id, $date, %opts) {
         my $tenant = $opts{tenant} // 'public';
@@ -102,10 +111,9 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 e.metadata->>'start_time' as start_time,
                 e.metadata->>'end_time' as end_time,
                 l.name as location_name,
-                l.address,
                 p.name as program_name,
                 COUNT(en.id) as enrolled_count,
-                e.capacity
+                e.metadata->>'capacity' as capacity
             FROM registry.events e
             JOIN registry.locations l ON e.location_id = l.id
             JOIN registry.projects p ON e.project_id = p.id
@@ -113,10 +121,9 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
             LEFT JOIN registry.enrollments en ON en.session_id = s.id AND en.status = 'active'
             JOIN registry.session_teachers st ON st.teacher_id = ?
             WHERE DATE(CAST(e.metadata->>'start_time' AS timestamp)) = ?
-              AND l.tenant = ?
-            GROUP BY e.id, e.metadata, l.name, l.address, p.name, e.capacity
+            GROUP BY e.id, e.metadata, l.name, p.name
             ORDER BY CAST(e.metadata->>'start_time' AS timestamp)
-        }, $teacher_id, $date, $tenant);
+        }, $teacher_id, $date);
         
         return $results->hashes->to_array;
     }
@@ -133,10 +140,9 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 e.metadata->>'start_time' as start_time,
                 e.metadata->>'end_time' as end_time,
                 l.name as location_name,
-                l.address,
                 p.name as program_name,
                 COUNT(en.id) as enrolled_count,
-                e.capacity
+                e.metadata->>'capacity' as capacity
             FROM registry.events e
             JOIN registry.locations l ON e.location_id = l.id
             JOIN registry.projects p ON e.project_id = p.id
@@ -145,12 +151,136 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
             JOIN registry.session_teachers st ON st.teacher_id = ?
             WHERE DATE(CAST(e.metadata->>'start_time' AS timestamp)) > CURRENT_DATE
               AND DATE(CAST(e.metadata->>'start_time' AS timestamp)) <= ?
-              AND l.tenant = ?
-            GROUP BY e.id, e.metadata, l.name, l.address, p.name, e.capacity
+            GROUP BY e.id, e.metadata, l.name, p.name
             ORDER BY CAST(e.metadata->>'start_time' AS timestamp)
-        }, $teacher_id, $end_date, $tenant);
+        }, $teacher_id, $end_date);
         
         return $results->hashes->to_array;
+    }
+    
+    # Attendance monitoring methods for background jobs
+    
+    # Find events that started in the last 15 minutes but don't have attendance records
+    sub find_events_missing_attendance($class, $db) {
+        my $sql = q{
+            SELECT 
+                e.id,
+                e.teacher_id,
+                e.metadata->>'title' as title,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
+                l.name as location_name,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
+            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
+            WHERE 
+                -- Event started in the last 15 minutes
+                e.time BETWEEN 
+                    now() - interval '15 minutes' AND now()
+                -- And has no attendance records
+                AND NOT EXISTS (
+                    SELECT 1 FROM attendance_records ar 
+                    WHERE ar.event_id = e.id
+                )
+                -- And has enrolled students
+                AND EXISTS (
+                    SELECT 1 FROM enrollments en2 
+                    JOIN sessions s2 ON en2.session_id = s2.id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
+                    AND en2.status = 'active'
+                )
+            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
+            ORDER BY e.time DESC
+        };
+        
+        return $db->query($sql)->hashes->to_array;
+    }
+    
+    # Find events starting in the next 5 minutes
+    sub find_events_starting_soon($class, $db) {
+        my $sql = q{
+            SELECT 
+                e.id,
+                e.teacher_id,
+                e.metadata->>'title' as title,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
+                l.name as location_name,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
+            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
+            WHERE 
+                -- Event starts in the next 5 minutes
+                e.time BETWEEN 
+                    now() AND now() + interval '5 minutes'
+                -- And has enrolled students
+                AND EXISTS (
+                    SELECT 1 FROM enrollments en2 
+                    JOIN sessions s2 ON en2.session_id = s2.id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
+                    AND en2.status = 'active'
+                )
+            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
+            ORDER BY e.time ASC
+        };
+        
+        return $db->query($sql)->hashes->to_array;
+    }
+    
+    # Find events that started more than 30 minutes ago with no attendance
+    sub find_events_severely_overdue($class, $db) {
+        my $sql = q{
+            SELECT 
+                e.id,
+                e.teacher_id,
+                e.metadata->>'title' as title,
+                e.time as start_time,
+                e.time + (e.duration || ' minutes')::interval as end_time,
+                l.name as location_name,
+                p.name as program_name,
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON e.id = se.event_id
+            LEFT JOIN sessions s ON se.session_id = s.id
+            LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
+            WHERE 
+                -- Event started more than 30 minutes ago
+                e.time < now() - interval '30 minutes'
+                -- And has no attendance records
+                AND NOT EXISTS (
+                    SELECT 1 FROM attendance_records ar 
+                    WHERE ar.event_id = e.id
+                )
+                -- And has enrolled students
+                AND EXISTS (
+                    SELECT 1 FROM enrollments en2 
+                    JOIN sessions s2 ON en2.session_id = s2.id 
+                    JOIN session_events se2 ON s2.id = se2.session_id
+                    JOIN events e2 ON se2.event_id = e2.id
+                    WHERE e2.project_id = e.project_id 
+                    AND en2.status = 'active'
+                )
+            GROUP BY e.id, e.teacher_id, e.metadata, l.name, p.name
+            ORDER BY e.time ASC
+        };
+        
+        return $db->query($sql)->hashes->to_array;
     }
 }
 

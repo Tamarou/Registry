@@ -4,7 +4,7 @@ use Object::Pad;
 
 use Registry::DAO::Workflow;
 
-class Registry::DAO::CreateEvent :isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::WorkflowSteps::CreateEvent :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);

@@ -1,3 +1,5 @@
+# ABOUTME: Base object class for all Registry DAO entities with common CRUD operations
+# ABOUTME: Provides find, create, update methods and database interaction patterns
 use 5.40.2;
 use utf8;
 use Object::Pad;
@@ -18,15 +20,10 @@ class Registry::DAO::Object {
 
     sub create ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
-        try {
-            my %data =
-              $db->insert( $class->table, $data, { returning => '*' } )
-              ->expand->hash->%*;
-            return $class->new(%data);
-        }
-        catch ($e) {
-            confess "Error creating $class: $e";
-        };
+        my %data =
+          $db->insert( $class->table, $data, { returning => '*' } )
+          ->expand->hash->%*;
+        return $class->new(%data);
     }
 
     sub find_or_create ( $class, $db, $filter, $data = $filter ) {
@@ -51,3 +48,5 @@ class Registry::DAO::Object {
         };
     }
 }
+
+1;

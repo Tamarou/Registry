@@ -4,17 +4,25 @@ use 5.40.2;
 use lib qw(lib t/lib);
 use Test::More;
 
-use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Registry::DAO::WorkflowSteps::TenantPayment;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use JSON;
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new;
+my $dao = $test_db->db;
 my $db = $dao->db;
 
-# Create test workflow
+# Create test tenant with schema cloning  
+$db->query(q{
+    INSERT INTO registry.tenants (id, name, slug, billing_status)
+    VALUES ('00000000-0000-4000-8000-000000000001', 'Test Tenant', 'test-tenant', 'active')
+});
+$db->query("SET search_path TO tenant_00000000_0000_4000_8000_000000000001, registry, public");
+
+# Create test workflow using create method
 my $workflow = Registry::DAO::Workflow->create($db, {
     name => 'Test Tenant Payment',
     slug => 'test-tenant-payment',
@@ -52,7 +60,7 @@ subtest 'Subscription configuration' => sub {
 subtest 'Payment data preparation' => sub {
     plan tests => 4;
     
-    # Create test workflow run
+    # Create test workflow run using create method
     my $run = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
         data => encode_json({

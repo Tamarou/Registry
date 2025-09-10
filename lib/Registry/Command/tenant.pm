@@ -1,10 +1,11 @@
+# ABOUTME: Tenant management command for Registry CLI tool  
+# ABOUTME: Handles tenant list, create and other tenant operations
 use 5.40.2;
 use utf8;
 use Object::Pad;
 
-use Registry::Command::workflow;
-
 class Registry::Command::tenant :isa(Mojolicious::Command) {
+    use Registry::Command::workflow;
 
     field $description :reader = 'Tenant management commands';
     field $usage :reader       = <<~"END";
@@ -53,4 +54,6 @@ class Registry::Command::tenant :isa(Mojolicious::Command) {
 
     }
 }
+
+1;
 

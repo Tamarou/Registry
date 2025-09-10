@@ -156,6 +156,6 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
             }
         }
         
-        return undef;
+        return;
     }
 }

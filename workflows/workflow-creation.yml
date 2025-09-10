@@ -11,7 +11,7 @@ steps:
   description: Workflow Basic Information
   slug: info
   template: workflow-creation-info
-- class: Registry::DAO::CreateWorkflow
+- class: Registry::DAO::WorkflowSteps::CreateWorkflow
   description: Workflow creation complete
   slug: complete
   template: workflow-creation-complete

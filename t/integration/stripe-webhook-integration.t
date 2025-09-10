@@ -9,7 +9,8 @@ use Registry::Controller::Webhooks;
 use Test::Registry::DB;
 use JSON;
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my $db = $dao->db;
 
 subtest 'Webhook controller basic functionality' => sub {
@@ -72,6 +73,7 @@ subtest 'Integration with subscription DAO' => sub {
     
     # Process the webhook event
     my $result = $subscription_dao->process_webhook_event(
+        $db,
         'evt_integration789',
         'customer.subscription.updated',
         $event_data

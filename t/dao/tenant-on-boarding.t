@@ -10,7 +10,8 @@ use Registry::DAO      qw(WorkflowStep);
 use Test::Registry::DB ();
 use YAML::XS           qw( Load );
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my @files =
   Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {
@@ -33,7 +34,7 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     is $workflow->last_step( $dao->db ) isa Registry::DAO::WorkflowStep,
       1, 'Next step isa WorkflowStep';
     is blessed $workflow->last_step( $dao->db ),
-      'Registry::DAO::RegisterTenant',
+      'Registry::DAO::WorkflowSteps::RegisterTenant',
       'Next step is a WorkflowStep';
 
     my $run = $workflow->new_run( $dao->db );
@@ -43,7 +44,16 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     $run->process(
         $dao->db,
         $run->next_step( $dao->db ),
-        { slug => 'big_cups', name => 'Big Cups Ltd.' }
+        { 
+            slug => 'big_cups', 
+            name => 'Big Cups Ltd.',
+            billing_email => 'billing@bigcups.com',
+            billing_address => '123 Main St',
+            billing_city => 'Anytown',
+            billing_state => 'CA',
+            billing_zip => '12345',
+            billing_country => 'US'
+        }
     );
     is $run->next_step( $dao->db )->slug, 'users', 'Next step is users';
     $run->process(
@@ -56,6 +66,10 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
             ]
         }
     );
+    is $run->next_step( $dao->db )->slug, 'review', 'Next step is review';
+    $run->process( $dao->db, $run->next_step( $dao->db ), {} );
+    is $run->next_step( $dao->db )->slug, 'payment', 'Next step is payment';
+    $run->process( $dao->db, $run->next_step( $dao->db ), { collect_payment_method => 1 } );
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db ), undef, 'Next step is correct';

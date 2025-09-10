@@ -1,20 +1,36 @@
-use 5.40.2;
-use lib          qw(lib t/lib);
-use experimental qw(defer builtin);
+#!/usr/bin/env perl
+use v5.34.0;
+use warnings;
+use utf8;
+use experimental qw(signatures);
 
-use Test::More import => [qw( done_testing is ok like )];
-defer { done_testing };
+use Test::More;
+use Test::Exception;
+use Test::Deep;
 
-use Registry::DAO;
+use lib qw(lib t/lib);
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 
-# Create a test database with the summer camp schema
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
-my $db  = $dao->db;
+# Setup test database
+my $t  = Test::Registry::DB->new;
+my $db = $t->db;
+
+# Create a test tenant (in registry schema)
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
+    name => 'Test Organization',
+    slug => 'test_org',
+});
+
+# Create the tenant schema with all required tables
+$db->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
+
+# Switch to tenant schema for operations
+$db = $db->schema($tenant->slug);
 
 # 1. Test the locations table enhancements
 {
-    my $location_columns = $db->query(
+    my $location_columns = $db->db->query(
         q{
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -58,7 +74,7 @@ my $db  = $dao->db;
 
 # 2. Test the events table enhancements
 {
-    my $event_columns = $db->query(
+    my $event_columns = $db->db->query(
         q{
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -87,7 +103,7 @@ my $db  = $dao->db;
 
 # 3. Test the sessions table enhancements
 {
-    my $session_columns = $db->query(
+    my $session_columns = $db->db->query(
         q{
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -111,18 +127,18 @@ my $db  = $dao->db;
 
 # 4. Test the session_teachers table exists
 {
-    my $tables = $db->query(
+    my $tables = $db->db->query(
         q{
         SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema = 'registry' AND table_type = 'BASE TABLE'
-    }
+        WHERE table_schema = ? AND table_type = 'BASE TABLE'
+    }, $tenant->slug
     )->arrays->map( sub { $_->[0] } )->to_array;
 
     ok scalar( grep { $_ eq 'session_teachers' } @$tables ),
       'session_teachers table exists';
 
-    my $columns = $db->query(
+    my $columns = $db->db->query(
         q{
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -138,62 +154,62 @@ my $db  = $dao->db;
 
 # 5. Test the original session_events table still exists
 {
-    my $tables = $db->query(
+    my $tables = $db->db->query(
         q{
         SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema = 'registry' AND table_type = 'BASE TABLE'
-    }
+        WHERE table_schema = ? AND table_type = 'BASE TABLE'
+    }, $tenant->slug
     )->arrays->map( sub { $_->[0] } )->to_array;
 
     ok scalar( grep { $_ eq 'session_events' } @$tables ),
       'session_events table still exists';
 }
 
-# 6. Test the pricing table exists
+# 6. Test the pricing_plans table exists (enhanced pricing model)
 {
-    my $tables = $db->query(
+    my $tables = $db->db->query(
         q{
         SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema = 'registry' AND table_type = 'BASE TABLE'
-    }
+        WHERE table_schema = ? AND table_type = 'BASE TABLE'
+    }, $tenant->slug
     )->arrays->map( sub { $_->[0] } )->to_array;
 
-    ok scalar( grep { $_ eq 'pricing' } @$tables ), 'pricing table exists';
+    ok scalar( grep { $_ eq 'pricing_plans' } @$tables ), 'pricing_plans table exists';
 
-    my $columns = $db->query(
+    my $columns = $db->db->query(
         q{
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_name = 'pricing'
+        WHERE table_name = 'pricing_plans'
     }
     )->hashes;
 
     ok scalar( grep { $_->{column_name} eq 'session_id' } $columns->@* ),
-      'pricing table has session_id column';
+      'pricing_plans table has session_id column';
     ok scalar( grep { $_->{column_name} eq 'amount' } $columns->@* ),
-      'pricing table has amount column';
-    ok scalar( grep { $_->{column_name} eq 'early_bird_amount' } $columns->@* ),
-      'pricing table has early_bird_amount column';
-    ok scalar( grep { $_->{column_name} eq 'sibling_discount' } $columns->@* ),
-      'pricing table has sibling_discount column';
+      'pricing_plans table has amount column';
+    ok scalar( grep { $_->{column_name} eq 'plan_name' } $columns->@* ),
+      'pricing_plans table has plan_name column';
+    ok scalar( grep { $_->{column_name} eq 'plan_type' } $columns->@* ),
+      'pricing_plans table has plan_type column';
 }
 
 # 7. Test the enrollments table exists
 {
-    my $tables = $db->query(
+    my $tables = $db->db->query(
         q{
         SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema = 'registry' AND table_type = 'BASE TABLE'
-    }
+        WHERE table_schema = ? AND table_type = 'BASE TABLE'
+    }, $tenant->slug
     )->arrays->map( sub { $_->[0] } )->to_array;
 
     ok scalar( grep { $_ eq 'enrollments' } @$tables ),
       'enrollments table exists';
 
-    my $columns = $db->query(
+    my $columns = $db->db->query(
         q{
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -213,7 +229,7 @@ my $db  = $dao->db;
 {
     # Test status check constraint on sessions
     eval {
-        $db->query(
+        $db->db->query(
 "INSERT INTO sessions (name, slug, status) VALUES ('Invalid Status Test', 'invalid-status-test', 'invalid_status')"
         );
     };
@@ -221,35 +237,30 @@ my $db  = $dao->db;
 
     # Test status check constraint on enrollments
     eval {
-        $db->query(
+        $db->db->query(
 "INSERT INTO enrollments (session_id, student_id, status) VALUES ('12345678-1234-1234-1234-123456789012', '12345678-1234-1234-1234-123456789012', 'invalid_status')"
         );
     };
     ok $@, 'Check constraint prevents invalid status values for enrollments';
 
     # Test uniqueness constraint for session teachers
-    my $session = $dao->create(
-        'Registry::DAO::Session',
-        {
-            name => 'Constraint Test Session'
-        }
-    );
-    my $teacher = $dao->create(
-        'Registry::DAO::User',
-        {
-            username => 'constraint_test_teacher',
-            password => 'password123'
-        }
-    );
+    my $session = Test::Registry::Fixtures::create_session($db, {
+        name => 'Constraint Test Session'
+    });
+    my $teacher = Test::Registry::Fixtures::create_user($db, {
+        username => 'constraint_test_teacher',
+        password => 'password123',
+        user_type => 'staff',
+    });
 
     # Insert first teacher assignment
-    $db->query(
+    $db->db->query(
         "INSERT INTO session_teachers (session_id, teacher_id) VALUES (?, ?)",
         $session->id, $teacher->id );
 
     # Try to insert duplicate
     eval {
-        $db->query(
+        $db->db->query(
 "INSERT INTO session_teachers (session_id, teacher_id) VALUES (?, ?)",
             $session->id, $teacher->id
         );
@@ -257,3 +268,5 @@ my $db  = $dao->db;
     ok $@,
       'Uniqueness constraint prevents duplicate session teacher assignments';
 }
+
+done_testing;

@@ -9,7 +9,8 @@ use Registry::DAO;
 use Test::Registry::DB;
 use YAML::XS qw(Load);
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 # First, we need to load the workflow-creation workflow definition
 my $workflow_file = Mojo::Home->new->child('workflows/workflow-creation.yml');
@@ -17,7 +18,7 @@ my $workflow;
 
 # If the file exists, load it; otherwise, create the workflow manually for testing
 if ( -e $workflow_file ) {
-    $workflow = Workflow->from_yaml( $dao, $workflow_file->slurp );
+    $workflow = Registry::DAO::Workflow->from_yaml( $dao, $workflow_file->slurp );
 }
 else {
     # Create the workflow creation workflow manually
@@ -52,7 +53,7 @@ else {
         {
             slug        => 'complete',
             description => 'Workflow creation complete',
-            class       => 'Registry::DAO::CreateWorkflow',
+            class       => 'Registry::DAO::WorkflowSteps::CreateWorkflow',
         }
     );
 }
@@ -115,8 +116,7 @@ else {
     }
 
     # Verify the workflow was created
-    my ($created_workflow) =
-      $dao->find( Workflow => { slug => 'test-workflow' } );
+    my ($created_workflow) = $dao->find( Workflow => { slug => 'test-workflow' } );
     ok defined $created_workflow, 'New workflow was created';
     is $created_workflow->name, 'Test Workflow',
       'New workflow has correct name';

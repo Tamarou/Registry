@@ -40,7 +40,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         }
 
         my $response = $self->_stripe_request('POST', '/customers', \%form_data);
-        return undef unless $response;
+        return unless $response;
         
         # Update tenant with Stripe customer ID
         $db->query(
@@ -69,7 +69,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         
         unless ($tx->success) {
             warn "Stripe API error: " . $tx->error->{message} if $tx->error;
-            return undef;
+            return;
         }
         
         return $tx->result->json;
@@ -111,7 +111,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         }
 
         my $subscription = $self->_stripe_request('POST', '/subscriptions', \%form_data);
-        return undef unless $subscription;
+        return unless $subscription;
         
         # Update tenant with subscription information if tenant_id provided
         if ($tenant_id) {
@@ -158,7 +158,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         return $self->_stripe_request('GET', "/setup_intents/$setup_intent_id");
     }
 
-    method update_billing_status($tenant_id, $status, $subscription_data = undef) {
+    method update_billing_status($db, $tenant_id, $status, $subscription_data = undef) {
         my @params = ($status);
         my $sql = 'UPDATE registry.tenants SET billing_status = ?';
         
@@ -183,7 +183,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         return $self->_stripe_request('DELETE', "/subscriptions/$subscription_id", \%form_data);
     }
 
-    method process_webhook_event($event_id, $event_type, $event_data) {
+    method process_webhook_event($db, $event_id, $event_type, $event_data) {
         # Store webhook event for processing
         my $result = $db->query(
             'INSERT INTO registry.subscription_events (stripe_event_id, event_type, event_data) VALUES (?, ?, ?) ON CONFLICT (stripe_event_id) DO NOTHING RETURNING id',
@@ -198,19 +198,19 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         # Process different event types
         eval {
             if ($event_type eq 'customer.subscription.updated') {
-                $self->_handle_subscription_updated($event_data);
+                $self->_handle_subscription_updated($db, $event_data);
             }
             elsif ($event_type eq 'customer.subscription.deleted') {
-                $self->_handle_subscription_deleted($event_data);
+                $self->_handle_subscription_deleted($db, $event_data);
             }
             elsif ($event_type eq 'customer.subscription.trial_will_end') {
-                $self->_handle_trial_ending($event_data);
+                $self->_handle_trial_ending($db, $event_data);
             }
             elsif ($event_type eq 'invoice.payment_failed') {
-                $self->_handle_payment_failed($event_data);
+                $self->_handle_payment_failed($db, $event_data);
             }
             elsif ($event_type eq 'invoice.payment_succeeded') {
-                $self->_handle_payment_succeeded($event_data);
+                $self->_handle_payment_succeeded($db, $event_data);
             }
             
             # Mark event as processed
@@ -221,6 +221,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         };
         
         if ($@) {
+            warn "DEBUG Subscription: Webhook processing failed: $@";
             # Mark event as failed
             $db->query(
                 'UPDATE registry.subscription_events SET processing_status = ? WHERE id = ?',
@@ -232,37 +233,58 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         return 1;
     }
 
-    method _handle_subscription_updated($event_data) {
+    method _handle_subscription_updated($db, $event_data) {
         my $subscription = $event_data->{object};
         my $tenant_id = $subscription->{metadata}->{tenant_id};
         
         return unless $tenant_id;
+        
+        # Validate tenant_id is a valid UUID format
+        return unless $tenant_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        # Check if tenant exists before trying to update
+        my $tenant_exists = $db->query('SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id)->rows;
+        return unless $tenant_exists;
         
         my $status = $subscription->{status};
-        $self->update_billing_status($tenant_id, $status, $subscription);
+        $self->update_billing_status($db, $tenant_id, $status, $subscription);
     }
 
-    method _handle_subscription_deleted($event_data) {
+    method _handle_subscription_deleted($db, $event_data) {
         my $subscription = $event_data->{object};
         my $tenant_id = $subscription->{metadata}->{tenant_id};
         
         return unless $tenant_id;
         
-        $self->update_billing_status($tenant_id, 'cancelled');
+        # Validate tenant_id is a valid UUID format
+        return unless $tenant_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        # Check if tenant exists before trying to update
+        my $tenant_exists = $db->query('SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id)->rows;
+        return unless $tenant_exists;
+        
+        $self->update_billing_status($db, $tenant_id, 'cancelled');
     }
 
-    method _handle_trial_ending($event_data) {
+    method _handle_trial_ending($db, $event_data) {
         my $subscription = $event_data->{object};
         my $tenant_id = $subscription->{metadata}->{tenant_id};
         
         return unless $tenant_id;
+        
+        # Validate tenant_id is a valid UUID format
+        return unless $tenant_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        # Check if tenant exists before trying to update
+        my $tenant_exists = $db->query('SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id)->rows;
+        return unless $tenant_exists;
         
         # Could send notification email here
         # For now, just ensure billing status is correct
-        $self->update_billing_status($tenant_id, 'trial', $subscription);
+        $self->update_billing_status($db, $tenant_id, 'trial', $subscription);
     }
 
-    method _handle_payment_failed($event_data) {
+    method _handle_payment_failed($db, $event_data) {
         my $invoice = $event_data->{object};
         my $subscription_id = $invoice->{subscription};
         
@@ -272,10 +294,10 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         
         return unless $tenant_id;
         
-        $self->update_billing_status($tenant_id, 'past_due');
+        $self->update_billing_status($db, $tenant_id, 'past_due');
     }
 
-    method _handle_payment_succeeded($event_data) {
+    method _handle_payment_succeeded($db, $event_data) {
         my $invoice = $event_data->{object};
         my $subscription_id = $invoice->{subscription};
         
@@ -285,7 +307,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         
         return unless $tenant_id;
         
-        $self->update_billing_status($tenant_id, 'active');
+        $self->update_billing_status($db, $tenant_id, 'active');
     }
 
     method get_tenant_billing_info($tenant_id) {

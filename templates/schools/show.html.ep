@@ -5,20 +5,16 @@
   <header class="mb-8">
     <h1 class="text-3xl font-bold mb-4"><%= $location->name %></h1>
     
-    % if ($location->address) {
+    % if ($location->address_info) {
       <div class="text-gray-600 mb-4">
-        <p><%= $location->address->{street} || $location->address_street %></p>
-        <p>
-          <%= $location->address->{city} || $location->address_city %>, 
-          <%= $location->address->{state} || $location->address_state %> 
-          <%= $location->address->{zip} || $location->address_zip %>
-        </p>
+        <p><%= $location->address_info->{street_address} %></p>
+        <p><%= $location->address_info->{city} %>, <%= $location->address_info->{state} %> <%= $location->address_info->{postal_code} %></p>
       </div>
     % }
     
-    % if ($location->description) {
+    % if ($location->notes) {
       <div class="prose max-w-none">
-        <%= $location->description %>
+        <%= $location->notes %>
       </div>
     % }
   </header>
@@ -68,10 +64,10 @@
         <select id="program_type" name="program_type" 
                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
           <option value="">All Programs</option>
-          <option value="afterschool" <%= $filters->{program_type} eq 'afterschool' ? 'selected' : '' %>>
+          <option value="afterschool" <%= ($filters->{program_type} // '') eq 'afterschool' ? 'selected' : '' %>>
             After School
           </option>
-          <option value="summer-camp" <%= $filters->{program_type} eq 'summer-camp' ? 'selected' : '' %>>
+          <option value="summer-camp" <%= ($filters->{program_type} // '') eq 'summer-camp' ? 'selected' : '' %>>
             Summer Camp
           </option>
         </select>

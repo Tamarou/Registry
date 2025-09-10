@@ -5,6 +5,9 @@ use Registry::DAO;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
+use Registry::Command::schema;
+use Registry::Command::template;
+use Registry::Command::workflow;
 
 class Registry :isa(Mojolicious) {
     our $VERSION = v0.001;
@@ -28,8 +31,27 @@ class Registry :isa(Mojolicious) {
         Registry::Job::WaitlistExpiration->register($self);
 
         $self->helper(
-            dao => sub {
-                state $db = Registry::DAO->new( url => $ENV{DB_URL} );
+            tenant => sub ($c, $explicit_tenant = undef) {
+                # Determine tenant: explicit param > header > cookie > subdomain > default
+                return $explicit_tenant if $explicit_tenant;
+                
+                my $header_tenant = $c->req->headers->header('X-As-Tenant');
+                my $cookie_tenant = $c->req->cookie('as-tenant');
+                my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
+                
+                return $header_tenant || $cookie_tenant || $subdomain_tenant || 'registry';
+            }
+        );
+
+        $self->helper(
+            dao => sub ($c, $tenant = undef) {
+                $tenant = $c->tenant($tenant);
+                
+                # Create new DAO for this tenant (no caching as per user preference)
+                return Registry::DAO->new( 
+                    url => $ENV{DB_URL}, 
+                    schema => $tenant 
+                );
             }
         );
 
@@ -37,7 +59,7 @@ class Registry :isa(Mojolicious) {
             before_server_start => sub ( $server, @ ) {
                 $self->import_schemas;
                 $self->import_templates;
-                $self->import_workflows;
+                $self->import_workflows(); # Use defaults: schema='registry', files=undef, verbose=0
                 $self->setup_recurring_jobs;
             }
         );
@@ -71,29 +93,10 @@ class Registry :isa(Mojolicious) {
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
           
-        # Marketing page (no auth required)
-        $self->routes->get('/marketing')->to('marketing#index')
-          ->name('marketing_index');
+        # Route handling for root path - always use default workflow landing page
+        $self->routes->get('/')->to('landing#root')->name('root_handler');
 
-        # Route handling for root path - check for tenant context
-        my $root = $self->routes->get('/');
-        $root->to(cb => sub ($c) {
-            # Check if we have a tenant slug (cookie or header)
-            my $slug = $c->req->cookie('as-tenant') || $c->req->headers->header('X-As-Tenant');
-            
-            if ($slug) {
-                # We have a tenant, set up the tenant context and show tenant landing
-                my $dao = $c->app->dao;
-                $c->app->helper( dao => sub { $dao->connect_schema($slug) } );
-                $c->render( template => 'index' );
-            } else {
-                # No tenant context, dispatch to marketing controller
-                $c->stash(controller => 'marketing', action => 'index');
-                $c->continue;
-            }
-        })->name('root_handler');
-
-        my $r = $self->routes->under('/')->to('tenants#setup');
+        my $r = $self->routes;
 
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
@@ -149,59 +152,65 @@ class Registry :isa(Mojolicious) {
         $r->post('/admin/dashboard/send_bulk_message')->to('admin_dashboard#send_bulk_message')->name('admin_dashboard_send_bulk_message');
     }
 
-    method import_workflows () {
-        my $dao = $self->dao;
-        my @workflows =
-          $self->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
-
-        for my $file (@workflows) {
-            my $yaml = $file->slurp;
-            next if Load($yaml)->{draft};
-            try {
-                my $workflow = Workflow->from_yaml( $dao, $yaml );
-                my $msg      = sprintf( "Imported workflow '%s' (%s)",
-                    $workflow->name, $workflow->slug );
-                $self->app->log->debug($msg);
+    method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {
+        # Delegate to Registry::Command::workflow for consistent logic
+        my $workflow_cmd = Registry::Command::workflow->new(app => $self);
+        
+        # Set up the command with the correct schema context
+        $workflow_cmd->{dao} = $self->dao($schema);
+        
+        if ($verbose) {
+            # Let command output directly for CLI usage
+            $workflow_cmd->load($files ? @$files : ());
+        } else {
+            # Capture output and log it instead of printing to stdout
+            my $output = '';
+            {
+                local *STDOUT;
+                open STDOUT, '>', \$output;
+                $workflow_cmd->load($files ? @$files : ());
             }
-            catch ($e) {
-                $self->app->log->error("Error importing workflow: $e");
+            
+            # Log each imported workflow
+            for my $line (split /\n/, $output) {
+                $self->log->debug($line) if $line;
             }
         }
     }
 
     method import_templates () {
-        my $dao = $self->dao;
-
-        my @templates =
-          $self->app->home->child('templates')
-          ->list_tree->grep(qr/\.html\.ep$/)->each;
-
-        for my $file (@templates) {
-            Registry::DAO::Template->import_from_file( $dao, $file );
-            my $msg =
-              sprintf( "Imported template '%s'", $file->to_rel('templates') );
-            $self->app->log->debug($msg);
+        # Delegate to Registry::Command::template for consistent logic
+        my $template_cmd = Registry::Command::template->new(app => $self);
+        
+        # Capture output and log it instead of printing to stdout
+        my $output = '';
+        {
+            local *STDOUT;
+            open STDOUT, '>', \$output;
+            $template_cmd->load('registry');
+        }
+        
+        # Log each imported template
+        for my $line (split /\n/, $output) {
+            $self->log->debug($line) if $line;
         }
     }
 
     method import_schemas () {
-        my $dao = $self->dao;
-
-        my @schemas =
-          $self->home->child('schemas')->list->grep(qr/\.json$/)->each;
-
-        for my $file (@schemas) {
-            try {
-                my $outcome =
-                  Registry::DAO::OutcomeDefinition->import_from_file( $dao,
-                    $file );
-                my $msg =
-                  sprintf( "Imported outcome definition '%s'", $outcome->name );
-                $self->app->log->debug($msg);
-            }
-            catch ($e) {
-                $self->app->log->error("Error importing schema: $e");
-            }
+        # Delegate to Registry::Command::schema for consistent logic
+        my $schema_cmd = Registry::Command::schema->new(app => $self);
+        
+        # Capture output and log it instead of printing to stdout
+        my $output = '';
+        {
+            local *STDOUT;
+            open STDOUT, '>', \$output;
+            $schema_cmd->load('registry');
+        }
+        
+        # Log each imported schema
+        for my $line (split /\n/, $output) {
+            $self->log->debug($line) if $line;
         }
     }
 
@@ -257,6 +266,22 @@ class Registry :isa(Mojolicious) {
             
             $self->log->info("Scheduled recurring waitlist processing job");
         }
+    }
+    
+    method _extract_tenant_from_subdomain ($c) {
+        my $host = $c->req->headers->host || '';
+        # Remove port if present
+        $host =~ s/:\d+$//;
+        
+        # Don't extract tenant from IP addresses
+        return if $host =~ /^\d+\.\d+\.\d+\.\d+$/;
+        
+        # Extract tenant from subdomain: tenant.example.com -> tenant
+        if ($host =~ /^([^.]+)\./) {
+            my $subdomain = $1;
+            return $subdomain unless $subdomain eq 'www';
+        }
+        return;
     }
 }
 

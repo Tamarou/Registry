@@ -4,7 +4,7 @@ use Object::Pad;
 
 use Registry::DAO::Workflow;
 
-class Registry::DAO::CreateProject :isa(Registry::DAO::WorkflowStep) {
+class Registry::DAO::WorkflowSteps::CreateProject :isa(Registry::DAO::WorkflowStep) {
 
     method process ( $db, $ ) {
         my ($workflow) = $self->workflow($db);

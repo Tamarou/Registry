@@ -3,18 +3,22 @@ use Object::Pad;
 
 class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     use YAML::XS;
+    use Mojo::JSON qw(decode_json);
+    use Carp qw(croak);
+    use experimental qw(try);
 
     field $id :param :reader;
     field $slug :param :reader;
     field $name :param :reader;
     field $description :param :reader;
 
-    field $first_step :param;
+    field $first_step :param = undef;
 
-    use constant table => 'workflows';
+    sub table { 'workflows' }
 
     sub create ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
+        
         my %data =
           $db->insert( $class->table, $data, { returning => '*' } )->hash->%*;
 
@@ -177,5 +181,14 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         $txn->commit;
 
         return $workflow;
+    }
+
+    method get_ordered_steps($db) {
+        return $db->select(
+            'workflow_steps',
+            ['id', 'slug', 'description'],
+            { workflow_id => $id },
+            { -asc => 'created_at' }
+        )->hashes->to_array;
     }
 }

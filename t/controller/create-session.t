@@ -3,7 +3,8 @@ use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
 use Test::Mojo;
-use Test::More import => [qw( done_testing is like ok )];
+use Test::More import => [qw( done_testing is like ok fail )];
+use Scalar::Util qw(blessed);
 defer { done_testing };
 
 use Mojo::Home              ();
@@ -16,9 +17,10 @@ use Test::Registry::Helpers qw(
 );
 use YAML::XS qw( Load );
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
-$ENV{DB_URL} = $dao->url;
+$ENV{DB_URL} = $test_db->uri;
 my @files =
   Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {
@@ -112,8 +114,12 @@ my $event = $dao->create(
     die 'Session not created' unless $session;
     is $session->name, 'Session 1', 'Session name is correct';
     my @events = $session->events( $dao->db );
-    is scalar @events, 1,          'Session has one event';
-    is $events[0]->id, $event->id, 'Event Venue correct';
+    is scalar @events, 1, 'Session has one event';
+    if (@events && blessed($events[0])) {
+        is $events[0]->id, $event->id, 'Event Venue correct';
+    } else {
+        fail 'Event not properly created or not an object';
+    }
 }
 
 {
@@ -208,6 +214,10 @@ my $event = $dao->create(
     die 'Session not created' unless $session;
     is $session->name, 'Session 2', 'Session name is correct';
     my @events = $session->events( $dao->db );
-    is scalar @events, 1,           'Session has one event';
-    is $events[0]->id, $event2->id, 'Event Venue correct';
+    is scalar @events, 1, 'Session has one event';
+    if (@events && blessed($events[0])) {
+        is $events[0]->id, $event2->id, 'Event Venue correct';
+    } else {
+        fail 'Event not properly created or not an object';
+    }
 }

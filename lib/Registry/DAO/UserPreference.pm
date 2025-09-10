@@ -14,9 +14,9 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'user_preferences';
+    sub table { 'user_preferences' }
     
-    BUILD {
+    ADJUST {
         # Ensure preference_value is a hash ref if it's a string
         if (defined $preference_value && !ref $preference_value) {
             try {
@@ -77,7 +77,8 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
         my $current = $pref->preference_value;
         my $updated = { %$current, %$preferences };
         
-        $pref->update($db, { preference_value => $updated });
+        # Encode as JSON for database storage
+        $pref->update($db, { preference_value => encode_json($updated) });
         return $pref;
     }
     
@@ -86,6 +87,17 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
         my $prefs = $class->get_notification_preferences($db, $user_id);
         
         return $prefs->{$notification_type}{$channel} // 0;
+    }
+    
+    # Set a specific preference for a user
+    sub set_preference ($class, $db, $user_id, $notification_type, $channel, $value) {
+        my $prefs = $class->get_notification_preferences($db, $user_id);
+        
+        # Update the specific preference
+        $prefs->{$notification_type}{$channel} = $value;
+        
+        # Save back to database
+        $class->update_notification_preferences($db, $user_id, $prefs);
     }
     
     # Get all preferences for a user

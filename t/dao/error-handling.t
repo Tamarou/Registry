@@ -4,7 +4,7 @@ use Test::More;
 use Test::Exception;
 use Test::Deep;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 

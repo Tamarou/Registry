@@ -11,7 +11,7 @@ steps:
   description: User Info
   slug: info
   template: user-creation-info
-- class: Registry::DAO::CreateUser
+- class: Registry::DAO::WorkflowSteps::CreateUser
   description: User creation complete
   slug: complete
   template: user-creation-complete

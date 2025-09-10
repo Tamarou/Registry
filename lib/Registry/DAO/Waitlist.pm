@@ -20,9 +20,9 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'waitlist';
+    sub table { 'waitlist' }
     
-    BUILD {
+    ADJUST {
         # Validate status
         unless ($status && $status =~ /^(waiting|offered|expired|declined)$/) {
             croak "Invalid waitlist status: must be 'waiting', 'offered', 'expired', or 'declined'";
@@ -30,6 +30,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     }
     
     sub create ($class, $db, $data) {
+        $db = $db->db if $db isa Registry::DAO;
         # Validate required fields
         for my $field (qw(session_id location_id student_id parent_id)) {
             croak "Missing required field: $field" unless $data->{$field};
@@ -70,6 +71,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     # Process waitlist when a spot opens up
     sub process_waitlist ($class, $db, $session_id, $hours_to_respond = 48) {
+        $db = $db->db if $db isa Registry::DAO;
         # Find next waiting person
         my $next = $db->select(
             $class->table,
@@ -83,21 +85,23 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         # Create waitlist entry object
         my $entry = $class->new(%$next);
         
-        # Calculate expiration time
-        my $expires_at = time() + ($hours_to_respond * 3600);
+        # Calculate expiration time using SQL
+        my $expires_at = $db->query("SELECT NOW() + INTERVAL '$hours_to_respond hours'")->array->[0];
         
         # Update to offered status
         $entry->update($db, {
             status => 'offered',
-            offered_at => time(),
+            offered_at => 'now()',
             expires_at => $expires_at
         });
         
-        return $entry;
+        # Refresh the object to get updated values
+        return $class->find($db, { id => $entry->id });
     }
     
     # Check and expire old offers
     sub expire_old_offers ($class, $db) {
+        $db = $db->db if $db isa Registry::DAO;
         my $sql = q{
             UPDATE waitlist 
             SET status = 'expired'
@@ -106,12 +110,14 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             RETURNING *
         };
         
-        my $results = $db->query($sql, time())->hashes;
+        my $current_time = $db->query('SELECT NOW()')->array->[0];
+        my $results = $db->query($sql, $current_time)->hashes;
         return [ map { $class->new(%$_) } @$results ];
     }
     
     # Get waitlist for a session
     sub get_session_waitlist ($class, $db, $session_id, $status = 'waiting') {
+        $db = $db->db if $db isa Registry::DAO;
         my $where = { session_id => $session_id };
         $where->{status} = $status if $status;
         
@@ -127,17 +133,28 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     # Get waitlist position for a student
     sub get_student_position ($class, $db, $session_id, $student_id) {
-        my $entry = $class->find($db, {
-            session_id => $session_id,
-            student_id => $student_id,
-            status => 'waiting'
-        });
+        $db = $db->db if $db isa Registry::DAO;
         
-        return $entry ? $entry->position : undef;
+        # Calculate dynamic position based on waiting entries only
+        # This accounts for gaps caused by accepted/declined entries
+        my $sql = q{
+            SELECT dynamic_position 
+            FROM (
+                SELECT student_id, ROW_NUMBER() OVER (ORDER BY created_at) as dynamic_position
+                FROM waitlist 
+                WHERE session_id = ? 
+                AND status = 'waiting'
+            ) positions
+            WHERE student_id = ?
+        };
+        
+        my $result = $db->query($sql, $session_id, $student_id)->hash;
+        return $result ? $result->{dynamic_position} : undef;
     }
     
     # Check if student is already enrolled
     sub is_student_enrolled ($class, $db, $session_id, $student_id) {
+        $db = $db->db if $db isa Registry::DAO;
         require Registry::DAO::Event;
         
         my $count = $db->select('enrollments', 'COUNT(*)', {
@@ -151,6 +168,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     # Check if student is already waitlisted
     sub is_student_waitlisted ($class, $db, $session_id, $student_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $count = $db->select($class->table, 'COUNT(*)', {
             session_id => $session_id,
             student_id => $student_id,
@@ -163,28 +181,35 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     # Accept waitlist offer
     method accept_offer ($db) {
         croak "Can only accept offers with status 'offered'" unless $status eq 'offered';
-        croak "Offer has expired" if $expires_at && time() > $expires_at;
+        # Check expiration via database query
+        $db = $db->db if $db isa Registry::DAO;
+        my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
+        croak "Offer has expired" if $expires_at && $is_expired;
         
         # Start transaction
         my $tx = $db->begin;
         
         try {
             # Create enrollment
-            require Registry::DAO::Event;
+            require Registry::DAO::Enrollment;
             Registry::DAO::Enrollment->create($db, {
                 session_id => $session_id,
-                student_id => $student_id,
+                student_id => $family_member_id || $student_id,  # Use family_member_id as primary student reference
+                family_member_id => $family_member_id,
+                parent_id => $parent_id,
+                student_type => 'family_member',
                 status => 'pending',
                 metadata => { from_waitlist => 1 }
             });
             
-            # Update waitlist status
+            # Update waitlist status  
             $self->update($db, { status => 'declined' }); # Use 'declined' to keep history
+            
+            # Note: No need to reorder positions since get_student_position calculates dynamically
             
             $tx->commit;
         }
         catch ($e) {
-            $tx->rollback;
             croak "Failed to accept waitlist offer: $e";
         }
         
@@ -195,7 +220,22 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method decline_offer ($db) {
         croak "Can only decline offers with status 'offered'" unless $status eq 'offered';
         
-        $self->update($db, { status => 'declined' });
+        # Start transaction for consistency
+        my $tx = $db->db->begin;
+        
+        try {
+            # Update status to declined
+            $self->update($db, { status => 'declined' });
+            
+            # Only reorder if this entry had a position that would affect other entries
+            # For offered entries, we don't need to reorder since they maintain their original position
+            # and other entries haven't moved
+            
+            $tx->commit;
+        }
+        catch ($e) {
+            croak "Failed to decline waitlist offer: $e";
+        }
         
         # Process next person on waitlist
         return Registry::DAO::Waitlist->process_waitlist($db, $session_id);
@@ -234,9 +274,62 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     method is_expired  { $status eq 'expired' }
     method is_declined { $status eq 'declined' }
     
-    method offer_is_active {
+    method offer_is_active ($db) {
         return 0 unless $status eq 'offered';
-        return 0 if $expires_at && time() > $expires_at;
+        if ($expires_at) {
+            my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
+            return 0 if $is_expired;
+        }
         return 1;
+    }
+    
+    # Helper method to reorder positions after a waitlist entry is removed
+    method _reorder_positions_after_removal ($db, $session_id, $removed_position) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        # Simple approach: just subtract 1 from all positions greater than removed position
+        # This is safer and avoids constraint violations
+        my $sql = q{
+            UPDATE waitlist 
+            SET position = position - 1
+            WHERE session_id = ? 
+            AND position > ? 
+            AND status = 'waiting'
+        };
+        
+        $db->query($sql, $session_id, $removed_position);
+    }
+    
+    # Helper method to reorder all waiting positions to be consecutive starting from 1
+    sub _reorder_waiting_positions ($class, $db, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        # Use a two-step approach to avoid constraint violations
+        # Step 1: Move all waiting entries to negative positions temporarily
+        my $sql1 = q{
+            UPDATE waitlist 
+            SET position = -position - 1000
+            WHERE session_id = ? 
+            AND status = 'waiting'
+        };
+        
+        $db->query($sql1, $session_id);
+        
+        # Step 2: Reorder all waiting entries to have consecutive positions starting from 1
+        my $sql2 = q{
+            UPDATE waitlist 
+            SET position = subquery.new_position
+            FROM (
+                SELECT id, 
+                       ROW_NUMBER() OVER (ORDER BY -position) as new_position
+                FROM waitlist
+                WHERE session_id = ? 
+                AND status = 'waiting'
+                AND position < 0
+            ) subquery
+            WHERE waitlist.id = subquery.id
+        };
+        
+        $db->query($sql2, $session_id);
     }
 }

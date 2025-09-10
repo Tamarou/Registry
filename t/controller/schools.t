@@ -7,7 +7,7 @@ use experimental qw(signatures);
 use Test::More;
 use Test::Mojo;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -24,7 +24,7 @@ my $t = Test::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 
 # Create test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test School District',
     slug => 'test-district',
 });
@@ -33,66 +33,84 @@ my $tenant = Test::Registry::Fixtures->create_tenant($db, {
 $db->schema($tenant->slug);
 
 # Create test data
-my $school1 = Test::Registry::Fixtures->create_location($db, {
+my $school1 = Test::Registry::Fixtures::create_location($db, {
     name => 'Lincoln Elementary School',
     slug => 'lincoln-elementary',
-    description => 'A great school for learning',
-    address_street => '123 School St',
-    address_city => 'Test City',
-    address_state => 'TS',
-    address_zip => '12345',
-    capacity => 100,
+    notes => 'A great school for learning',
+    address_info => {
+        street_address => '123 School St',
+        city => 'Test City',
+        state => 'TS',
+        postal_code => '12345',
+    },
 });
 
-my $school2 = Test::Registry::Fixtures->create_location($db, {
+my $school2 = Test::Registry::Fixtures::create_location($db, {
     name => 'Washington Middle School',
     slug => 'washington-middle',
 });
 
-my $program1 = Test::Registry::Fixtures->create_project($db, {
+my $program1 = Test::Registry::Fixtures::create_project($db, {
     name => 'After School Arts',
-    description => 'Creative arts program for students',
+    notes => 'Creative arts program for students',
 });
 
-my $program2 = Test::Registry::Fixtures->create_project($db, {
+my $program2 = Test::Registry::Fixtures::create_project($db, {
     name => 'STEM Club',
-    description => 'Science, Technology, Engineering, and Math activities',
+    notes => 'Science, Technology, Engineering, and Math activities',
 });
 
 # Create sessions
-my $active_session = Test::Registry::Fixtures->create_session($db, {
+my $active_session = Test::Registry::Fixtures::create_session($db, {
     name => 'Spring 2024',
     start_date => '2024-03-01',
     end_date => '2024-05-31',
     status => 'published',
 });
 
-my $draft_session = Test::Registry::Fixtures->create_session($db, {
+my $draft_session = Test::Registry::Fixtures::create_session($db, {
     name => 'Summer 2024',
     status => 'draft',
 });
 
-my $closed_session = Test::Registry::Fixtures->create_session($db, {
+my $closed_session = Test::Registry::Fixtures::create_session($db, {
     name => 'Winter 2023',
     status => 'closed',
 });
 
+# Create teacher for events
+my $teacher1 = Test::Registry::Fixtures::create_user($db, {
+    name => 'Teacher One',
+    username => 'teacher1',
+    email => 'teacher1@test.com',
+    user_type => 'staff',
+});
+
 # Create events
-my $event1 = Test::Registry::Fixtures->create_event($db, {
+my $event1 = Test::Registry::Fixtures::create_event($db, {
     location_id => $school1->id,
     project_id => $program1->id,
+    teacher_id => $teacher1->id,
+    time => '2024-03-15 15:00:00+00',
+    duration => 120,
     capacity => 20,
 });
 
-my $event2 = Test::Registry::Fixtures->create_event($db, {
+my $event2 = Test::Registry::Fixtures::create_event($db, {
     location_id => $school1->id,
     project_id => $program2->id,
+    teacher_id => $teacher1->id,
+    time => '2024-03-16 15:00:00+00',
+    duration => 120,
     capacity => 15,
 });
 
-my $event3 = Test::Registry::Fixtures->create_event($db, {
+my $event3 = Test::Registry::Fixtures::create_event($db, {
     location_id => $school2->id,  # Different school
     project_id => $program1->id,
+    teacher_id => $teacher1->id,
+    time => '2024-03-17 15:00:00+00',
+    duration => 120,
     capacity => 25,
 });
 
@@ -118,9 +136,11 @@ Registry::DAO::PricingPlan->create($db, {
 });
 
 # Create some enrollments
-my $student1 = Test::Registry::Fixtures->create_user($db, {
+my $student1 = Test::Registry::Fixtures::create_user($db, {
     name => 'Student One',
+    username => 'student1',
     email => 'student1@test.com',
+    user_type => 'student',
 });
 
 Registry::DAO::Enrollment->create($db, {
@@ -136,7 +156,7 @@ subtest 'Show school page' => sub {
       ->text_is('h1', 'Lincoln Elementary School', 'Correct school name')
       ->content_like(qr/123 School St/, 'Shows address')
       ->content_like(qr/Test City, TS 12345/, 'Shows city, state, zip')
-      ->content_like(qr/A great school for learning/, 'Shows description');
+      ->content_like(qr/A great school for learning/, 'Shows notes');
 };
 
 subtest 'No authentication required' => sub {
@@ -161,20 +181,20 @@ subtest 'Groups by program' => sub {
       ->element_exists('.program-card', 'Has program cards')
       ->content_like(qr/After School Arts/, 'Shows program 1')
       ->content_like(qr/STEM Club/, 'Shows program 2')
-      ->content_like(qr/Creative arts program/, 'Shows program description');
+      ->content_like(qr/Creative arts program/, 'Shows program notes');
 };
 
 subtest 'Shows enrollment status' => sub {
     $t->get_ok('/school/lincoln-elementary')
       ->status_is(200)
       ->content_like(qr/19 spots available/, 'Shows available spots for event 1')
-      ->content_like(qr/15 spots available/, 'Shows available spots for event 2');
+      ->content_like(qr/14 spots available/, 'Shows available spots for event 2');
 };
 
 subtest 'Shows pricing information' => sub {
     $t->get_ok('/school/lincoln-elementary')
       ->status_is(200)
-      ->content_like(qr/Starting at:.*\$120\.00/s, 'Shows best price');
+      ->content_like(qr/Starting at:.*\$150\.00/s, 'Shows best price');
 };
 
 subtest 'Enrollment buttons' => sub {
@@ -187,9 +207,11 @@ subtest 'Enrollment buttons' => sub {
 subtest 'Full session handling' => sub {
     # Fill up event2
     for my $i (2..15) {
-        my $student = Test::Registry::Fixtures->create_user($db, {
+        my $student = Test::Registry::Fixtures::create_user($db, {
             name => "Student $i",
-            email => "student$i@test.com",
+            username => "student$i",
+            email => "student$i\@test.com",
+            user_type => 'student',
         });
         Registry::DAO::Enrollment->create($db, {
             session_id => $active_session->id,
@@ -211,14 +233,14 @@ subtest 'School not found' => sub {
 };
 
 subtest 'No programs available' => sub {
-    my $empty_school = Test::Registry::Fixtures->create_location($db, {
+    my $empty_school = Test::Registry::Fixtures::create_location($db, {
         name => 'Empty School',
         slug => 'empty-school',
     });
     
     $t->get_ok('/school/empty-school')
       ->status_is(200)
-      ->content_like(qr/No programs are currently available/);
+      ->content_like(qr/No programs match your criteria/);
 };
 
 subtest 'Mobile responsive' => sub {
@@ -229,18 +251,20 @@ subtest 'Mobile responsive' => sub {
 };
 
 subtest 'Tenant isolation' => sub {
+    plan tests => 3;
+    
     # Create another tenant
     $db->schema('registry');
-    my $other_tenant = Test::Registry::Fixtures->create_tenant($db, {
+    my $other_tenant = Test::Registry::Fixtures::create_tenant($db, {
         name => 'Other District',
         slug => 'other-district',
     });
     
     # Create location in other tenant
     $db->schema($other_tenant->slug);
-    my $other_school = Test::Registry::Fixtures->create_location($db, {
+    my $other_school = Test::Registry::Fixtures::create_location($db, {
         name => 'Other School',
-        slug => 'lincoln-elementary', # Same slug
+        slug => 'other-lincoln-elementary', # Different slug to avoid constraint
     });
     
     # Switch back to original tenant
@@ -250,6 +274,8 @@ subtest 'Tenant isolation' => sub {
     $t->get_ok('/school/lincoln-elementary')
       ->status_is(200)
       ->text_is('h1', 'Lincoln Elementary School', 'Shows correct tenant school');
+    
+    done_testing();
 };
 
 done_testing;

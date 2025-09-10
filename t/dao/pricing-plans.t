@@ -8,7 +8,7 @@ use Test::More;
 use Test::Exception;
 use Test::Deep;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -20,7 +20,7 @@ my $t  = Test::Registry::DB->new;
 my $db = $t->db;
 
 # Create a test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test Organization',
     slug => 'test-org',
 });
@@ -29,15 +29,15 @@ my $tenant = Test::Registry::Fixtures->create_tenant($db, {
 $db->schema($tenant->slug);
 
 # Create test data
-my $location = Test::Registry::Fixtures->create_location($db, {
+my $location = Test::Registry::Fixtures::create_location($db, {
     name => 'Test School',
 });
 
-my $project = Test::Registry::Fixtures->create_project($db, {
+my $project = Test::Registry::Fixtures::create_project($db, {
     name => 'Test Program',
 });
 
-my $session = Test::Registry::Fixtures->create_session($db, {
+my $session = Test::Registry::Fixtures::create_session($db, {
     name => 'Summer 2024',
     start_date => '2024-06-01',
     end_date => '2024-08-31',
@@ -55,7 +55,7 @@ subtest 'Create pricing plan' => sub {
     ok($plan, 'Pricing plan created');
     is($plan->plan_name, 'Standard Rate', 'Plan name set');
     is($plan->plan_type, 'standard', 'Plan type set');
-    is($plan->amount, 500.00, 'Amount set');
+    is($plan->amount, '500.00', 'Amount set');
     is($plan->currency, 'USD', 'Currency set');
     ok(!$plan->installments_allowed, 'Installments not allowed by default');
 };
@@ -73,7 +73,7 @@ subtest 'Create early bird plan' => sub {
     
     ok($plan, 'Early bird plan created');
     is($plan->plan_type, 'early_bird', 'Plan type is early_bird');
-    is($plan->amount, 450.00, 'Discounted amount set');
+    is($plan->amount, '450.00', 'Discounted amount set');
     is($plan->requirements->{early_bird_cutoff_date}, '2024-05-01', 'Cutoff date stored');
 };
 
@@ -106,7 +106,7 @@ subtest 'Installment plans' => sub {
     
     ok($plan->installments_allowed, 'Installments allowed');
     is($plan->installment_count, 3, 'Three installments');
-    is($plan->installment_amount, 200.00, 'Installment amount calculated correctly');
+    is($plan->installment_amount, '200', 'Installment amount calculated correctly');
     
     # Test invalid installment configuration
     dies_ok {
@@ -158,7 +158,7 @@ subtest 'Calculate price with requirements' => sub {
     
     # Test before cutoff
     my $price = $early_bird->calculate_price({ date => '2024-04-15' });
-    is($price, 400, 'Early bird price available before cutoff');
+    is($price, '400.00', 'Early bird price available before cutoff');
     
     # Test after cutoff
     $price = $early_bird->calculate_price({ date => '2024-05-15' });
@@ -177,7 +177,7 @@ subtest 'Calculate price with requirements' => sub {
     is($price, undef, 'Family price not available with 1 child');
     
     $price = $family->calculate_price({ child_count => 2 });
-    is($price, 450, 'Family price available with 2 children');
+    is($price, '450.00', 'Family price available with 2 children');
 };
 
 subtest 'Get best price' => sub {
@@ -212,19 +212,19 @@ subtest 'Get best price' => sub {
         date => '2024-01-01',
         child_count => 1
     });
-    is($best, 450, 'Early bird is best price for single child early');
+    is($best, '450.00', 'Early bird is best price for single child early');
     
     $best = Registry::DAO::PricingPlan->get_best_price($db, $session->id, {
         date => '2024-01-01',
         child_count => 2
     });
-    is($best, 425, 'Family plan is best price for multiple children');
+    is($best, '425.00', 'Family plan is best price for multiple children');
     
     $best = Registry::DAO::PricingPlan->get_best_price($db, $session->id, {
         date => '2025-01-01',
         child_count => 1
     });
-    is($best, 500, 'Standard price when no special plans apply');
+    is($best, '500.00', 'Standard price when no special plans apply');
 };
 
 subtest 'Session integration' => sub {

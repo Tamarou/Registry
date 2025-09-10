@@ -2,7 +2,8 @@ use 5.40.2;
 use lib          qw(lib t/lib);
 use experimental qw(defer builtin);
 
-use Test::More import => [qw( done_testing is ok )];
+use Test::More import => [qw( done_testing is ok fail )];
+use Scalar::Util qw(blessed);
 defer { done_testing };
 
 use Mojo::Home;
@@ -10,7 +11,8 @@ use Registry::DAO;
 use Test::Registry::DB;
 use YAML::XS qw( Load );
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my @files =
   Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {
@@ -54,5 +56,10 @@ for my $file (@files) {
     my ($session) = $dao->find( Session => { name => 'Session 1', } );
     die 'Session not created' unless $session;
     my @events = $session->events( $dao->db );
-    is $events[0]->id, $event->id, 'Event Venue correct';
+    ok scalar(@events) > 0, 'Session has events';
+    if (@events && blessed($events[0])) {
+        is $events[0]->id, $event->id, 'Event Venue correct';
+    } else {
+        fail 'Event not properly created or not an object';
+    }
 }

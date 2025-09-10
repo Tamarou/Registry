@@ -4,23 +4,28 @@ use Object::Pad;
 class Registry::DAO::Location :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(decode_json encode_json);
 
-    field $id :param :reader;
-    field $name :param :reader;
-    field $slug :param :reader;
+    field $id :param :reader = undef;
+    field $name :param :reader = undef;
+    field $slug :param :reader = undef;
     field $address_info :param :reader = {};
-    field $contact_info :param :reader = {};
-    field $facilities :param :reader   = {};
-    field $capacity :param :reader;
     field $metadata :param :reader = {};
-    field $notes :param :reader;
-    field $created_at :param :reader;
+    field $notes :param :reader = undef;
+    field $capacity :param :reader = undef;
+    field $contact_info :param :reader = {};
+    field $facilities :param :reader = {};
+    field $latitude :param :reader = undef;
+    field $longitude :param :reader = undef;
+    field $created_at :param :reader = undef;
+    field $updated_at :param :reader = undef;
 
-    use constant table => 'locations';
+    sub table { 'locations' }
 
     sub create ( $class, $db, $data ) {
-        for my $field (qw(address_info contact_info facilities metadata)) {
+        for my $field (qw(address_info metadata contact_info facilities)) {
             next unless exists $data->{$field};
-            $data->{$field} = { -json => $data->{$field} };
+            if (ref $data->{$field} eq 'HASH' || ref $data->{$field} eq 'ARRAY') {
+                $data->{$field} = { -json => $data->{$field} };
+            }
         }
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
         $class->SUPER::create( $db, $data );
@@ -75,5 +80,103 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     method get_coordinates() {
         return unless $self->has_coordinates;
         return @{ $address_info->{coordinates} }{qw(lat lng)};
+    }
+
+    method address() {
+        return $address_info;
+    }
+
+    # Legacy field access methods for backward compatibility
+    method address_street() {
+        return $address_info->{street_address};
+    }
+
+    method address_city() {
+        return $address_info->{city};
+    }
+
+    method address_state() {
+        return $address_info->{state};
+    }
+
+    method address_zip() {
+        return $address_info->{postal_code};
+    }
+
+    method description() {
+        return $notes;
+    }
+
+    method save($db, $data = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+        # If this has an ID, update; otherwise create
+        if ($id) {
+            return $self->update($db, $data);
+        } else {
+            # For new objects, merge instance data with passed data
+            my %instance_data = (
+                name => $name,
+                slug => $slug,
+                address_info => $address_info,
+                metadata => $metadata,
+                notes => $notes,
+            );
+            # Remove undefined values
+            my %clean_data = map { defined $instance_data{$_} ? ($_ => $instance_data{$_}) : () } keys %instance_data;
+            return Registry::DAO::Location->create($db, { %clean_data, %$data });
+        }
+    }
+    
+    # Find active sessions at this location with optional filters
+    method find_active_sessions($db, $filters = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+        
+        # Build SQL with filters
+        my @where_clauses = (
+            'e.location_id = ?',
+            "s.status = 'published'"
+            # Note: Temporarily re-disable end date filter to debug
+            # '(s.end_date IS NULL OR s.end_date >= CURRENT_DATE)'
+        );
+        my @params = ($id);
+        
+        # Add age filters
+        if ($filters->{min_age}) {
+            push @where_clauses, '(e.max_age IS NULL OR e.max_age >= ?)';
+            push @params, $filters->{min_age};
+        }
+        if ($filters->{max_age}) {
+            push @where_clauses, '(e.min_age IS NULL OR e.min_age <= ?)';
+            push @params, $filters->{max_age};
+        }
+        
+        # Add start date filter
+        if ($filters->{start_date}) {
+            push @where_clauses, 's.start_date >= ?';
+            push @params, $filters->{start_date};
+        }
+        
+        # Add program type filter
+        if ($filters->{program_type}) {
+            push @where_clauses, 'p.slug = ?';
+            push @params, $filters->{program_type};
+        }
+        
+        my $where = join(' AND ', @where_clauses);
+        
+        my $sql = qq{
+            SELECT DISTINCT s.*, p.slug as program_type_slug
+            FROM sessions s
+            JOIN session_events se ON se.session_id = s.id
+            JOIN events e ON e.id = se.event_id
+            JOIN projects proj ON proj.id = e.project_id
+            LEFT JOIN program_types p ON p.slug = proj.program_type_slug
+            WHERE $where
+            ORDER BY s.start_date
+        };
+        
+        my @results = $db->query($sql, @params)->hashes->each;
+        return [] unless @results;
+        return [ map { Registry::DAO::Session->new(%$_) } @results ];
     }
 }

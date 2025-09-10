@@ -12,7 +12,8 @@ use Test::Registry::DB;
 use Test::Registry::Helpers qw(process_workflow);
 use YAML::XS                qw( Load );
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 my $workflow_dir = Mojo::Home->new->child('workflows');
 my @files        = $workflow_dir->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {
@@ -23,20 +24,50 @@ for my $file (@files) {
 $ENV{DB_URL} = $dao->url;
 
 my $t = Test::Mojo->new('Registry');
+
+# Add cleanup END block to prevent database connection issues
+END {
+    # Force disconnection of database handles before destruction
+    eval { $dao->db->disconnect if $dao && $dao->can('db') && $dao->db->can('disconnect') };
+}
 {
     process_workflow(
         $t,
         '/tenant-signup' => {
-            name     => 'Test Tenant',
-            username => 'Alice',
-            password => 'password',
+            name             => 'Test Tenant',
+            billing_email    => 'alice@example.com',
+            billing_address  => '123 Main St',
+            billing_city     => 'Anytown',
+            billing_state    => 'CA',
+            billing_zip      => '12345',
+            billing_country  => 'US',
+            admin_name       => 'Alice',
+            admin_email      => 'alice@example.com',
+            admin_username   => 'Alice',
+            admin_password   => 'password',
+            terms_accepted   => '1',
+            # Mock payment data to satisfy workflow
+            setup_intent_id  => 'seti_test_123',
+            payment_method_id => 'pm_test_123',
+            collect_payment_method => '1',
         }
     );
+    
+    # Debug: Print what's in the request logs
+    note "Debug: Check the application logs above for workflow processing details";
 
+    # Debug: Check what tenants exist
+    my @tenants = $dao->find( Tenant => {} );
+    note "Found tenants: " . join(', ', map { $_->name // 'unnamed' } @tenants);
+    
     ok my ($tenant) = $dao->find( Tenant => { name => 'Test Tenant' } ),
       'got tenant';
     ok my $tenant_dao = $tenant->dao( $dao->db ), 'connected to tenant schema';
 
+    # Debug: Check what users exist
+    my @users = $dao->find( User => {} );
+    note "Found users: " . join(', ', map { $_->username // 'no-username' } @users);
+    
     ok $dao->find( User => { username => 'Alice' } ),
       'found Alice in main schema';
     ok $tenant_dao->find( User => { username => 'Alice' } ),

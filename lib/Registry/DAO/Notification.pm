@@ -22,12 +22,12 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'notifications';
+    sub table { 'notifications' }
     
-    BUILD {
+    ADJUST {
         # Validate type
-        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general)$/) {
-            croak "Invalid notification type: must be 'attendance_missing', 'attendance_reminder', or 'general'";
+        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency)$/) {
+            croak "Invalid notification type: must be 'attendance_missing', 'attendance_reminder', 'general', 'message_announcement', 'message_update', or 'message_emergency'";
         }
         
         # Validate channel
@@ -42,8 +42,11 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
             croak "Missing required field: $field" unless $data->{$field};
         }
         
-        # Ensure metadata is a hash ref
+        # Ensure metadata is a hash ref and encode as JSON
         $data->{metadata} //= {};
+        if (exists $data->{metadata} && ref $data->{metadata}) {
+            $data->{metadata} = { -json => $data->{metadata} };
+        }
         
         $class->SUPER::create($db, $data);
     }
@@ -250,5 +253,14 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     
     method is_attendance_notification {
         $type eq 'attendance_missing' || $type eq 'attendance_reminder';
+    }
+    
+    # Check if a reminder already exists for a specific event and user
+    sub has_existing_reminder($class, $db, $user_id, $notification_type, $event_id) {
+        my $result = $db->query(
+            'SELECT id FROM notifications WHERE user_id = ? AND type = ? AND metadata->>? = ?',
+            $user_id, $notification_type, 'event_id', $event_id
+        );
+        return $result->hash ? 1 : 0;
     }
 }

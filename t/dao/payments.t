@@ -2,6 +2,7 @@
 use v5.34.0;
 use warnings;
 use experimental 'signatures';
+use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Payment;
@@ -17,75 +18,52 @@ use Mojo::JSON qw(encode_json);
 my $test_db = Test::Registry::DB->new;
 my $db      = $test_db->db;
 
-# Create test tenant and set search path
+# Create test tenant and set search path  
 $db->query(q{
-    INSERT INTO registry.tenants (id, name, slug, config, status)
-    VALUES (1, 'Test Tenant', 'test-tenant', '{}', 'active')
+    INSERT INTO registry.tenants (id, name, slug)
+    VALUES ('00000000-0000-0000-0000-000000000001', 'Test Tenant', 'test-tenant')
 });
 $db->query("SET search_path TO tenant_1, registry, public");
 
 # Create test user
-my $user = Registry::DAO::User->new(
+my $user = Registry::DAO::User->create($db, {
+    username => 'testuser',
     email    => 'test@example.com',
     password => 'password123',
-    profile  => { name => 'Test User' }
-)->save($db);
+    name     => 'Test User'
+});
 
-# Create test session with pricing
-my $location = Registry::DAO::Location->new(
-    name    => 'Test Location',
-    address => encode_json({ street => '123 Main St', city => 'Test City', state => 'TS', zip => '12345' }),
-    config  => {}
-)->save($db);
+# Create minimal test data for payments
+my $session = Registry::DAO::Session->create($db, {
+    name => 'Test Session'
+});
 
-my $event = Registry::DAO::Event->new(
-    name        => 'Test Event',
-    location_id => $location->id,
-    config      => {}
-)->save($db);
-
-my $project = Registry::DAO::Project->new(
-    name      => 'Test Project',
-    event_id  => $event->id,
-    config    => {}
-)->save($db);
-
-my $session = Registry::DAO::Session->new(
-    name       => 'Test Session',
-    project_id => $project->id,
-    start_date => Time::Piece->new(time + 86400),
-    end_date   => Time::Piece->new(time + 86400 * 7),
-    capacity   => 20,
-    config     => {}
-)->save($db);
-
-my $pricing = Registry::DAO::PricingPlan->new(
+my $pricing = Registry::DAO::PricingPlan->create($db, {
     session_id  => $session->id,
-    name        => 'Standard',
-    base_price  => 100.50,
-    tier_order  => 1,
-    config      => {}
-)->save($db);
+    plan_name   => 'Standard',
+    amount      => 100.50
+});
 
 subtest 'Create payment' => sub {
-    my $payment = Registry::DAO::Payment->new(
+    my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $user->id,
-        amount   => 100.50,
-        metadata => { test => 'data' }
-    )->save($db);
+        amount   => 100.50
+    });
     
+    ok $payment, 'Payment object created';
+    isa_ok $payment, 'Registry::DAO::Payment', 'Payment is correct class';
     ok $payment->id, 'Payment created with ID';
     is $payment->user_id, $user->id, 'User ID matches';
-    is $payment->amount, 100.50, 'Amount matches';
+    is $payment->amount, '100.50', 'Amount matches';
     is $payment->status, 'pending', 'Default status is pending';
     is $payment->currency, 'USD', 'Default currency is USD';
 };
 
 subtest 'Add line items' => sub {
-    my $payment = Registry::DAO::Payment->new(
+    my $payment = Registry::DAO::Payment->create($db, {
         user_id => $user->id,
         amount  => 200
-    )->save($db);
+    });
     
     $payment->add_line_item($db, {
         description => 'Child 1 - Session 1',
@@ -103,8 +81,8 @@ subtest 'Add line items' => sub {
     
     my $items = $payment->line_items($db);
     is scalar(@$items), 2, 'Two line items added';
-    is $items->[0]->{amount}, 100, 'First item amount correct';
-    is $items->[1]->{amount}, 100, 'Second item amount correct';
+    is $items->[0]->{amount}, '100.00', 'First item amount correct';
+    is $items->[1]->{amount}, '100.00', 'Second item amount correct';
 };
 
 subtest 'Calculate enrollment total' => sub {
@@ -129,17 +107,17 @@ subtest 'Calculate enrollment total' => sub {
 
 subtest 'Payment for user' => sub {
     # Create a few payments for the user
-    Registry::DAO::Payment->new(
+    Registry::DAO::Payment->create($db, {
         user_id => $user->id,
         amount  => 50,
         status  => 'completed'
-    )->save($db);
+    });
     
-    Registry::DAO::Payment->new(
+    Registry::DAO::Payment->create($db, {
         user_id => $user->id,
         amount  => 75,
         status  => 'pending'
-    )->save($db);
+    });
     
     my $payments = Registry::DAO::Payment->for_user($db, $user->id);
     ok scalar(@$payments) >= 2, 'At least 2 payments found for user';
@@ -147,7 +125,8 @@ subtest 'Payment for user' => sub {
     # Should be ordered by created_at DESC
     my $is_ordered = 1;
     for (my $i = 1; $i < @$payments; $i++) {
-        if ($payments->[$i-1]->created_at < $payments->[$i]->created_at) {
+        # Use string comparison for timestamps to avoid numeric warnings
+        if ($payments->[$i-1]->created_at lt $payments->[$i]->created_at) {
             $is_ordered = 0;
             last;
         }
@@ -160,10 +139,10 @@ SKIP: {
     skip "STRIPE_SECRET_KEY not set", 2 unless $ENV{STRIPE_SECRET_KEY};
     
     subtest 'Create payment intent' => sub {
-        my $payment = Registry::DAO::Payment->new(
+        my $payment = Registry::DAO::Payment->create($db, {
             user_id => $user->id,
             amount  => 50
-        )->save($db);
+        });
         
         my $intent_data = eval {
             $payment->create_payment_intent($db, {
@@ -186,10 +165,10 @@ SKIP: {
     };
     
     subtest 'Process payment' => sub {
-        my $payment = Registry::DAO::Payment->new(
+        my $payment = Registry::DAO::Payment->create($db, {
             user_id => $user->id,
             amount  => 25
-        )->save($db);
+        });
         
         # Would need a real payment intent ID from Stripe to test this properly
         # For now, just test the error handling

@@ -22,7 +22,7 @@
         <input type="text" 
                id="name" 
                name="name" 
-               value="<%= $stash->{name} // '' %>" 
+               value="<%= stash('name') // '' %>" 
                placeholder="Sunrise After-School Programs" 
                required
                hx-trigger="keyup changed delay:500ms"
@@ -49,7 +49,7 @@
         <textarea id="description" 
                   name="description" 
                   placeholder="Tell us about your programs and mission..."
-                  rows="3"><%= $stash->{description} // '' %></textarea>
+                  rows="3"><%= stash('description') // '' %></textarea>
         <div class="field-help">This will be displayed on your public program pages</div>
       </div>
     </div>
@@ -62,7 +62,7 @@
         <input type="email" 
                id="billing_email" 
                name="billing_email" 
-               value="<%= $stash->{billing_email} // '' %>" 
+               value="<%= stash('billing_email') // '' %>" 
                placeholder="billing@yourorganization.com" 
                required />
         <div class="field-help">We'll send invoices and billing notifications to this email</div>
@@ -73,7 +73,7 @@
         <input type="tel" 
                id="billing_phone" 
                name="billing_phone" 
-               value="<%= $stash->{billing_phone} // '' %>" 
+               value="<%= stash('billing_phone') // '' %>" 
                placeholder="(555) 123-4567" />
       </div>
 
@@ -83,7 +83,7 @@
           <input type="text" 
                  id="billing_address" 
                  name="billing_address" 
-                 value="<%= $stash->{billing_address} // '' %>" 
+                 value="<%= stash('billing_address') // '' %>" 
                  placeholder="123 Main Street" 
                  required />
         </div>
@@ -93,7 +93,7 @@
           <input type="text" 
                  id="billing_address2" 
                  name="billing_address2" 
-                 value="<%= $stash->{billing_address2} // '' %>" 
+                 value="<%= stash('billing_address2') // '' %>" 
                  placeholder="Suite 100" />
         </div>
       </div>
@@ -104,7 +104,7 @@
           <input type="text" 
                  id="billing_city" 
                  name="billing_city" 
-                 value="<%= $stash->{billing_city} // '' %>" 
+                 value="<%= stash('billing_city') // '' %>" 
                  placeholder="San Francisco" 
                  required />
         </div>
@@ -114,7 +114,7 @@
           <input type="text" 
                  id="billing_state" 
                  name="billing_state" 
-                 value="<%= $stash->{billing_state} // '' %>" 
+                 value="<%= stash('billing_state') // '' %>" 
                  placeholder="CA" 
                  required />
         </div>
@@ -124,7 +124,7 @@
           <input type="text" 
                  id="billing_zip" 
                  name="billing_zip" 
-                 value="<%= $stash->{billing_zip} // '' %>" 
+                 value="<%= stash('billing_zip') // '' %>" 
                  placeholder="94102" 
                  required />
         </div>
@@ -134,10 +134,10 @@
         <label for="billing_country" class="required">Country</label>
         <select id="billing_country" name="billing_country" required>
           <option value="">Select Country</option>
-          <option value="US" <%= ($stash->{billing_country} // '') eq 'US' ? 'selected' : '' %>>United States</option>
-          <option value="CA" <%= ($stash->{billing_country} // '') eq 'CA' ? 'selected' : '' %>>Canada</option>
-          <option value="GB" <%= ($stash->{billing_country} // '') eq 'GB' ? 'selected' : '' %>>United Kingdom</option>
-          <option value="AU" <%= ($stash->{billing_country} // '') eq 'AU' ? 'selected' : '' %>>Australia</option>
+          <option value="US" <%= (stash('billing_country') // '') eq 'US' ? 'selected' : '' %>>United States</option>
+          <option value="CA" <%= (stash('billing_country') // '') eq 'CA' ? 'selected' : '' %>>Canada</option>
+          <option value="GB" <%= (stash('billing_country') // '') eq 'GB' ? 'selected' : '' %>>United Kingdom</option>
+          <option value="AU" <%= (stash('billing_country') // '') eq 'AU' ? 'selected' : '' %>>Australia</option>
         </select>
       </div>
     </div>

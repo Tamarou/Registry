@@ -1,3 +1,5 @@
+# ABOUTME: Base controller class for Registry application using Object::Pad
+# ABOUTME: Provides common functionality like workflow handling and template rendering
 use 5.40.2;
 use Object::Pad;
 
@@ -10,6 +12,7 @@ class Registry::Controller :isa(Mojolicious::Controller) {
     };
 
     method log { $self->app->log }
+
 
     method workflow ( $slug = $self->param('workflow') ) {
         return $slug if $slug isa Registry::DAO::Workflow;
@@ -57,3 +60,5 @@ class Registry::Controller :isa(Mojolicious::Controller) {
         $self->SUPER::render(%args);
     }
 }
+
+1;

@@ -3,6 +3,10 @@
 use 5.40.2;
 use experimental qw( try );
 
+# Set up test email transport BEFORE loading any modules that might use Email::Sender
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test'; }
+
+use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::Job::AttendanceCheck;
@@ -116,27 +120,27 @@ subtest 'End-to-end attendance notification workflow' => sub {
 
     # Enroll students
     my $enrollment1 = Registry::DAO::Enrollment->create($db, {
-        user_id => $student1->id,
+        student_id => $student1->id,
         session_id => $session1->id,
         status => 'active'
     });
 
     my $enrollment2 = Registry::DAO::Enrollment->create($db, {
-        user_id => $student2->id,
+        student_id => $student2->id,
         session_id => $session2->id,
         status => 'active'
     });
 
     # Scenario 1: Event that started 10 minutes ago, no attendance taken
-    my $past_time = DateTime->now->subtract(minutes => 10)->iso8601;
+    my $past_time = DateTime->now->subtract(minutes => 10);
     my $event_missing_attendance = Registry::DAO::Event->create($db, {
         location_id => $location1->id,
         project_id => $project1->id,
         teacher_id => $teacher1->id,
+        start_time => $past_time,
+        end_time => DateTime->now->add(minutes => 50),
         metadata => {
-            title => 'Math Tutoring - Morning Session',
-            start_time => $past_time,
-            end_time => DateTime->now->add(minutes => 50)->iso8601
+            title => 'Math Tutoring - Morning Session'
         }
     });
 
@@ -147,15 +151,15 @@ subtest 'End-to-end attendance notification workflow' => sub {
     });
 
     # Scenario 2: Event starting in 3 minutes (should get reminder)
-    my $soon_time = DateTime->now->add(minutes => 3)->iso8601;
+    my $soon_time = DateTime->now->add(minutes => 3);
     my $event_starting_soon = Registry::DAO::Event->create($db, {
         location_id => $location2->id,
         project_id => $project2->id,
         teacher_id => $teacher2->id,
+        start_time => $soon_time,
+        end_time => DateTime->now->add(minutes => 63),
         metadata => {
-            title => 'Art Workshop - Afternoon Session',
-            start_time => $soon_time,
-            end_time => DateTime->now->add(minutes => 63)->iso8601
+            title => 'Art Workshop - Afternoon Session'
         }
     });
 
@@ -166,15 +170,15 @@ subtest 'End-to-end attendance notification workflow' => sub {
     });
 
     # Scenario 3: Event that started 5 minutes ago but already has attendance
-    my $past_time_with_attendance = DateTime->now->subtract(minutes => 5)->iso8601;
+    my $past_time_with_attendance = DateTime->now->subtract(minutes => 5);
     my $event_with_attendance = Registry::DAO::Event->create($db, {
         location_id => $location1->id,
         project_id => $project1->id,
         teacher_id => $teacher1->id,
+        start_time => $past_time_with_attendance,
+        end_time => DateTime->now->add(minutes => 55),
         metadata => {
-            title => 'Math Tutoring - Completed Session',
-            start_time => $past_time_with_attendance,
-            end_time => DateTime->now->add(minutes => 55)->iso8601
+            title => 'Math Tutoring - Completed Session'
         }
     });
 
@@ -184,11 +188,13 @@ subtest 'End-to-end attendance notification workflow' => sub {
     );
 
     # Run the attendance check job
+    my $mock_logger = bless {}, 'MockLogger';
+    my $mock_app = bless {
+        log => $mock_logger,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app
     }, 'MockJob';
     
     # Mock logger and app classes
@@ -212,6 +218,22 @@ subtest 'End-to-end attendance notification workflow' => sub {
 
     my $job_instance = Registry::Job::AttendanceCheck->new;
     $job_instance->check_tenant_attendance($mock_job, $db, 'public');
+
+    # Verify email notifications were created and sent successfully
+    my $email_notifications = $db->select('notifications', 'count(*)', {
+        channel => 'email',
+        'sent_at' => { '!=' => undef }
+    })->array->[0];
+    
+    is($email_notifications, 1, 'One email notification was created and marked as sent');
+    
+    # Verify no email notifications failed
+    my $failed_emails = $db->select('notifications', 'count(*)', {
+        channel => 'email',
+        'failed_at' => { '!=' => undef }
+    })->array->[0];
+    
+    is($failed_emails, 0, 'No email notifications failed');
 
     # Verify notifications were created correctly
     my $all_notifications = $db->select('notifications', '*', {}, { -asc => ['user_id', 'type', 'channel'] })->hashes->to_array;
@@ -254,6 +276,8 @@ subtest 'End-to-end attendance notification workflow' => sub {
     my $notification_obj = Registry::DAO::Notification->new(%$teacher1_in_app);
     ok($notification_obj->is_sent, 'Notification correctly identified as sent');
     ok($notification_obj->is_attendance_notification, 'Notification correctly identified as attendance notification');
+    
+    done_testing();
 };
 
 subtest 'Notification preferences respected' => sub {
@@ -301,21 +325,21 @@ subtest 'Notification preferences respected' => sub {
     });
 
     my $enrollment = Registry::DAO::Enrollment->create($db, {
-        user_id => $student->id,
+        student_id => $student->id,
         session_id => $session->id,
         status => 'active'
     });
 
     # Create event missing attendance
-    my $past_time = DateTime->now->subtract(minutes => 10)->iso8601;
+    my $past_time = DateTime->now->subtract(minutes => 10);
     my $event = Registry::DAO::Event->create($db, {
         location_id => $location->id,
         project_id => $project->id,
         teacher_id => $teacher_no_notif->id,
+        start_time => $past_time,
+        end_time => DateTime->now->add(minutes => 50),
         metadata => {
-            title => 'Silent Study Session',
-            start_time => $past_time,
-            end_time => DateTime->now->add(minutes => 50)->iso8601
+            title => 'Silent Study Session'
         }
     });
 
@@ -325,11 +349,13 @@ subtest 'Notification preferences respected' => sub {
     });
 
     # Run job
+    my $mock_logger2 = bless {}, 'MockLogger';
+    my $mock_app2 = bless {
+        log => $mock_logger2,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app2
     }, 'MockJob';
 
     my $job_instance = Registry::Job::AttendanceCheck->new;
@@ -341,6 +367,8 @@ subtest 'Notification preferences respected' => sub {
     })->array->[0];
 
     is($notification_count, 0, 'No notifications created when teacher has disabled them');
+    
+    done_testing();
 };
 
 subtest 'Duplicate prevention' => sub {
@@ -381,21 +409,21 @@ subtest 'Duplicate prevention' => sub {
     });
 
     my $enrollment = Registry::DAO::Enrollment->create($db, {
-        user_id => $student->id,
+        student_id => $student->id,
         session_id => $session->id,
         status => 'active'
     });
 
     # Create event starting soon (for reminder test)
-    my $soon_time = DateTime->now->add(minutes => 3)->iso8601;
+    my $soon_time = DateTime->now->add(minutes => 3);
     my $event = Registry::DAO::Event->create($db, {
         location_id => $location->id,
         project_id => $project->id,
         teacher_id => $teacher->id,
+        start_time => $soon_time,
+        end_time => DateTime->now->add(minutes => 63),
         metadata => {
-            title => 'Dup Test Event',
-            start_time => $soon_time,
-            end_time => DateTime->now->add(minutes => 63)->iso8601
+            title => 'Dup Test Event'
         }
     });
 
@@ -415,24 +443,27 @@ subtest 'Duplicate prevention' => sub {
     });
 
     # Run job
+    my $mock_logger3 = bless {}, 'MockLogger';
+    my $mock_app3 = bless {
+        log => $mock_logger3,
+        dao => sub { $dao }
+    }, 'MockApp';
     my $mock_job = bless {
-        app => bless {
-            log => bless {}, 'MockLogger',
-            dao => sub { $dao }
-        }, 'MockApp'
+        app => $mock_app3
     }, 'MockJob';
 
     my $job_instance = Registry::Job::AttendanceCheck->new;
     $job_instance->check_tenant_attendance($mock_job, $db, 'public');
 
     # Should only have 1 reminder notification (no duplicates)
-    my $reminder_count = $db->select('notifications', 'count(*)', {
-        user_id => $teacher->id,
-        type => 'attendance_reminder',
-        'metadata->event_id' => $event->id
-    })->array->[0];
+    my $reminder_count = $db->query(
+        'SELECT count(*) FROM notifications WHERE user_id = ? AND type = ? AND metadata->>? = ?',
+        $teacher->id, 'attendance_reminder', 'event_id', $event->id
+    )->array->[0];
 
     is($reminder_count, 1, 'Duplicate reminder notifications prevented');
+    
+    done_testing();
 };
 
 $db_helper->cleanup_test_database;

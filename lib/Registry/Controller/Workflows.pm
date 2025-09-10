@@ -1,8 +1,9 @@
 use 5.40.2;
 use Object::Pad;
 
-class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
+class Registry::Controller::Workflows :isa(Registry::Controller) {
     use Carp qw(confess);
+    use DateTime;
 
     method workflow ( $slug = $self->param('workflow') ) {
         my $dao = $self->app->dao;
@@ -47,12 +48,19 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         
         my $run = $workflow->new_run( $dao->db, $config );
         my $data = $self->req->params->to_hash;
+        
+        # Add tenant context to workflow run data if present
+        my $tenant_slug = $self->tenant;
+        if ($tenant_slug && $tenant_slug ne 'registry') {
+            $data->{__tenant_slug} = $tenant_slug;
+        }
+        
         $run->process( $dao->db, $first_step, $data );
         return $run;
     }
 
     method index() {
-        my $dao      = $self->app->dao;
+        my $dao = $self->app->dao;
         my $workflow = $self->workflow();
 
         $self->render(
@@ -62,7 +70,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     }
 
     method start_workflow() {
-        my $dao       = $self->app->dao;
+        my $dao = $self->app->dao;
         my $workflow = $self->workflow();
         
         # Now try to start the run with auto-repair in the new_run method
@@ -166,7 +174,17 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
     method get_workflow_run_step {
         my $dao = $self->app->dao;
         my $run = $self->run();
-        my $step = $run->latest_step($dao->db) || $run->next_step($dao->db);
+        my $workflow = $self->workflow();
+        
+        # Find the step that matches the URL parameter, not just the latest step
+        my $requested_step_slug = $self->param('step');
+        my $step = Registry::DAO::WorkflowStep->find($dao->db, { 
+            workflow_id => $workflow->id, 
+            slug => $requested_step_slug 
+        });
+        
+        # Fallback to latest step if the requested step isn't found
+        $step ||= $run->latest_step($dao->db) || $run->next_step($dao->db);
         
         # Get data for rendering
         my $data_json = Mojo::JSON::encode_json($run->data || {});
@@ -175,23 +193,23 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         # Get workflow progress data
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
         
-        # For the review step, prepare structured data for template
-        my $template_data = $run->data || {};
-        if ($self->param('step') eq 'review') {
-            $template_data = $self->_prepare_review_data($run);
-        }
+        # Let the step class handle its own template data preparation (polymorphic approach)
+        my $template_data = $step->prepare_template_data($dao->db, $run);
         
         return $self->render(
             template => $self->param('workflow') . '/' . $self->param('step'),
             workflow => $self->param('workflow'),
             step     => $self->param('step'),
             status   => 200,
-            action   => $self->url_for('workflow_process_step'),
+            action   => $self->url_for('workflow_process_step', 
+                workflow => $self->param('workflow'),
+                run => $self->param('run'), 
+                step => $self->param('step')),
             outcome_definition_id => $step->outcome_definition_id,
             data_json => $data_json,
             errors_json => $errors_json,
             workflow_progress => $workflow_progress,
-            data => $template_data,
+            %$template_data,
         );
     }
 
@@ -338,22 +356,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         my $workflow = $run->workflow($dao->db);
         
         # Get all workflow steps in order
-        my $steps = $dao->db->select(
-            'workflow_steps',
-            ['id', 'slug', 'description'],
-            { workflow_id => $workflow->id },
-            { -asc => 'sort_order' }
-        )->hashes->to_array;
-        
-        # If no explicit sort_order, fall back to creation order
-        if (!@$steps || !defined $steps->[0]{sort_order}) {
-            $steps = $dao->db->select(
-                'workflow_steps',
-                ['id', 'slug', 'description'],
-                { workflow_id => $workflow->id },
-                { -asc => 'created_at' }
-            )->hashes->to_array;
-        }
+        my $steps = $workflow->get_ordered_steps($dao->db);
         
         return {} unless @$steps;
         
@@ -436,7 +439,7 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         my $original_slug = $slug;
         my $counter = 1;
         
-        while ($self->_slug_exists($db, $slug)) {
+        while (Registry::DAO::Tenant->slug_exists($db, $slug)) {
             $slug = "${original_slug}-${counter}";
             $counter++;
             last if $counter > 999;  # Prevent infinite loop
@@ -450,37 +453,10 @@ class Registry::Controller::Workflows :isa(Mojolicious::Controller) {
         return $result->array->[0] > 0;
     }
     
-    method _prepare_review_data($run) {
-        my $raw_data = $run->data || {};
-        
-        # Structure the data for the review template
-        return {
-            profile => {
-                name => $raw_data->{name} || $raw_data->{organization_name},
-                subdomain => $raw_data->{subdomain},
-                description => $raw_data->{description},
-                billing_email => $raw_data->{billing_email},
-                billing_phone => $raw_data->{billing_phone},
-                billing_address => $raw_data->{billing_address},
-                billing_address2 => $raw_data->{billing_address2},
-                billing_city => $raw_data->{billing_city},
-                billing_state => $raw_data->{billing_state},
-                billing_zip => $raw_data->{billing_zip},
-                billing_country => $raw_data->{billing_country},
-            },
-            team => {
-                admin => {
-                    name => $raw_data->{admin_name},
-                    email => $raw_data->{admin_email},
-                    username => $raw_data->{admin_username},
-                },
-                team_members => $raw_data->{team_members} || [],
-            },
-        };
-    }
+    
 
     method start_continuation {
-        my $dao      = $self->app->dao;
+        my $dao = $self->app->dao;
         my $workflow = $dao->find(
             Workflow => {
                 slug => $self->param('target')

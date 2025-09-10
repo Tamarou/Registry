@@ -1,55 +1,56 @@
 use 5.34.0;
-use experimental 'signatures';
+use experimental qw(signatures try);
 use Object::Pad;
 
 class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use JSON;
     use Digest::SHA qw(hmac_sha256_hex);
 
-    method stripe($c) {
+    method stripe() {
         # Verify webhook signature
-        my $payload = $c->req->body;
-        my $sig_header = $c->req->headers->header('stripe-signature');
+        my $payload = $self->req->body;
+        my $sig_header = $self->req->headers->header('stripe-signature');
         my $endpoint_secret = $ENV{STRIPE_WEBHOOK_SECRET};
         
         if ($endpoint_secret && !$self->_verify_stripe_signature($payload, $sig_header, $endpoint_secret)) {
-            $c->render(status => 400, text => 'Invalid signature');
+            $self->render(status => 400, text => 'Invalid signature');
             return;
         }
         
         # Parse webhook event
         my $event;
-        eval {
+        try {
             $event = decode_json($payload);
-        };
-        
-        if ($@) {
-            $c->render(status => 400, text => 'Invalid JSON');
+        }
+        catch ($e) {
+            $self->render(status => 400, text => 'Invalid JSON');
             return;
         }
         
         # Process the event
-        my $subscription_dao = Registry::DAO::Subscription->new(db => $c->pg);
+        my $dao = $self->app->dao;
+        my $subscription_dao = Registry::DAO::Subscription->new(db => $dao);
         
-        eval {
+        try {
             $subscription_dao->process_webhook_event(
+                $self->app->dao->db,
                 $event->{id},
                 $event->{type},
                 $event->{data}
             );
-        };
-        
-        if ($@) {
-            $c->app->log->error("Webhook processing failed: $@");
-            $c->render(status => 500, text => 'Webhook processing failed');
+        }
+        catch ($e) {
+            $self->app->log->error("Webhook processing failed: $e");
+            $self->render(status => 500, text => 'Webhook processing failed');
             return;
         }
         
-        $c->render(status => 200, text => 'OK');
+        $self->render(status => 200, text => 'OK');
     }
 
     method _verify_stripe_signature($payload, $sig_header, $endpoint_secret) {
         return 1 unless $endpoint_secret; # Skip verification if no secret configured
+        return 0 unless $sig_header; # No signature header provided
         
         my @sig_elements = split /,/, $sig_header;
         my %sigs;

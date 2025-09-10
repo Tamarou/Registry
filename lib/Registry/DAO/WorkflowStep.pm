@@ -21,7 +21,7 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     field $metadata :param = {};
     field $class :param :reader;
 
-    use constant table => 'workflow_steps';
+    sub table { 'workflow_steps' }
     
     method outcome_definition($db) {
         return unless $outcome_definition_id;
@@ -90,6 +90,12 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     method template ($db) {
         die "no template set for step $slug ($id)" unless $template_id;
         return Registry::DAO::Template->find( $db, { id => $template_id } );
+    }
+    
+    # Default template data preparation - can be overridden by specific step classes
+    method prepare_template_data ($db, $run) {
+        # Most steps just need the raw run data
+        return $run->data || {};
     }
 
     method as_hash ($db) {

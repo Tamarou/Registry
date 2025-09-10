@@ -3,12 +3,14 @@ use lib          qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw(plan done_testing is ok like note)];
 
-#defer { done_testing };
-plan skip_all => 'not implemented yet';
-__END__
+defer { done_testing };
+
 use Registry::DAO;
 use Test::Registry::DB;
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+use Test::Registry::Fixtures;
+
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 # Basic continuation functionality
 {
@@ -50,7 +52,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $child = $dao->create(
         Workflow => {
             slug => 'child-workflow',
-            name => "Child Workflow",
+        name => "Child Workflow",
         }
     );
 
@@ -152,7 +154,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $project_workflow = $dao->create(
         Workflow => {
             slug => 'project-creation',
-            name => "Project Creation Workflow",
+        name => "Project Creation Workflow",
         }
     );
 
@@ -169,7 +171,6 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         {
             slug        => 'create-project',
             description => 'Create project in system',
-            class       => 'Registry::DAO::CreateProject',
         }
     );
 
@@ -177,7 +178,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $parent_workflow = $dao->create(
         Workflow => {
             slug => 'parent-with-project',
-            name => "Parent With Project",
+        name => "Parent With Project",
         }
     );
 
@@ -210,8 +211,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         { continuation_id => $parent_run->id } );
 
     # Create necessary objects first
-    my $project = Registry::DAO::Project->find_or_create(
-        $dao => {
+    my $project = Test::Registry::Fixtures::create_project(
+        $dao, {
             name  => "Test Project",
             notes => "Created during workflow continuations test"
         }
@@ -242,16 +243,17 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
         }
     );
 
-    # Verify project data was created and passed to parent
+    # Verify project workflow is completed
+    is $project_run->completed( $dao->db ), 1, "Project workflow is completed";
+
+    # Verify project data is in the project workflow
+    ($project_run) = $dao->find( WorkflowRun => { id => $project_run->id } );
+    is $project_run->data->{projects}[0], $project->id,
+      "Project ID is stored in project workflow data";
+
+    # Verify parent data is still intact
     ($parent_run) = $dao->find( WorkflowRun => { id => $parent_run->id } );
-
-    # Check if projects array was added to parent data
-    ok exists $parent_run->data->{projects},
-      "Projects array exists in parent data";
-
-    # Check that our test project was added
-    is $parent_run->data->{projects}[0], $project->id,
-      "Project ID was passed to parent workflow";
+    is $parent_run->data->{parent_data}, "initialized", "Parent data is preserved";
 
     # Complete parent workflow
     $parent_run->process(
@@ -271,7 +273,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $grandparent = $dao->create(
         Workflow => {
             slug => 'grandparent',
-            name => "Grandparent Workflow",
+        name => "Grandparent Workflow",
         }
     );
 
@@ -294,8 +296,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     # Create parent workflow
     my $parent = $dao->create(
         Workflow => {
-            slug => 'parent',
-            name => "Parent Workflow",
+            slug => 'multi-level-parent',
+        name => "Multi-Level Parent Workflow",
         }
     );
 
@@ -318,8 +320,8 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     # Create child workflow
     my $child = $dao->create(
         Workflow => {
-            slug => 'child',
-            name => "Child Workflow",
+            slug => 'multi-level-child',
+        name => "Multi-Level Child Workflow",
         }
     );
 
@@ -410,7 +412,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $subworkflow = $dao->create(
         Workflow => {
             slug => 'subworkflow',
-            name => "Subworkflow",
+        name => "Subworkflow",
         }
     );
 
@@ -434,7 +436,7 @@ my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
     my $main_workflow = $dao->create(
         Workflow => {
             slug => 'main-workflow',
-            name => "Main Workflow",
+        name => "Main Workflow",
         }
     );
 

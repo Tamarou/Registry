@@ -7,12 +7,13 @@ use experimental qw(signatures);
 use Test::More;
 use Test::Mojo;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
 use Registry;
 use Registry::DAO::WorkflowSteps::AccountCheck;
+use Mojo::JSON qw(encode_json);
 
 # Setup test database
 my $t_db = Test::Registry::DB->new;
@@ -23,7 +24,7 @@ my $t = Test::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 
 # Create test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test Organization',
     slug => 'test-org',
 });
@@ -79,6 +80,7 @@ subtest 'Account check step - first visit' => sub {
         workflow_id => $workflow->id,
         slug => 'account-check',
         description => 'Account Check',
+        class => 'Registry::DAO::WorkflowSteps::AccountCheck',
     );
     
     # Process with no action - should stay on step
@@ -93,6 +95,7 @@ subtest 'Login with valid credentials' => sub {
         workflow_id => $workflow->id,
         slug => 'account-check',
         description => 'Account Check',
+        class => 'Registry::DAO::WorkflowSteps::AccountCheck',
     );
     
     # Process login
@@ -118,6 +121,7 @@ subtest 'Login with invalid credentials' => sub {
         workflow_id => $workflow->id,
         slug => 'account-check',
         description => 'Account Check',
+        class => 'Registry::DAO::WorkflowSteps::AccountCheck',
     );
     
     # Process login with wrong password
@@ -146,6 +150,7 @@ subtest 'Create account continuation' => sub {
         workflow_id => $workflow->id,
         slug => 'account-check',
         description => 'Account Check',
+        class => 'Registry::DAO::WorkflowSteps::AccountCheck',
     );
     
     # Process create account action
@@ -162,23 +167,33 @@ subtest 'Create account continuation' => sub {
 };
 
 subtest 'Return from user creation continuation' => sub {
+    # Clean up any previous runs to ensure latest_run returns our run
+    $db->db->delete('workflow_runs', { workflow_id => $workflow->id });
+    
     my $run = $workflow->new_run($db);
     
-    # Simulate a continuation that created a user
+    # Create a user-creation workflow for the continuation
+    my $user_creation_workflow = Registry::DAO::Workflow->create($db, {
+        name => 'User Creation',
+        slug => 'user-creation',
+        description => 'User creation workflow'
+    });
+    
+    # Simulate a continuation that created a user (from user-creation workflow)
     my $continuation = Registry::DAO::WorkflowRun->create($db, {
-        workflow_id => $workflow->id,
-        data => {
+        workflow_id => $user_creation_workflow->id,
+        data => encode_json({
             user_id => $test_user->id,
             user_name => 'Test Parent',
             user_email => 'parent@test.com',
             enrollment_data => {
                 session_id => 'preserved-session-123',
             }
-        }
+        })
     });
     
     # Update run to have continuation
-    $db->update('workflow_runs', 
+    $db->db->update('workflow_runs', 
         { continuation_id => $continuation->id },
         { id => $run->id }
     );
@@ -191,6 +206,7 @@ subtest 'Return from user creation continuation' => sub {
         workflow_id => $workflow->id,
         slug => 'account-check',
         description => 'Account Check',
+        class => 'Registry::DAO::WorkflowSteps::AccountCheck',
     );
     
     # Process without action (returning from continuation)
@@ -219,6 +235,7 @@ subtest 'Continue when already logged in' => sub {
         workflow_id => $workflow->id,
         slug => 'account-check',
         description => 'Account Check',
+        class => 'Registry::DAO::WorkflowSteps::AccountCheck',
     );
     
     # Process continue action
@@ -236,6 +253,7 @@ subtest 'Validation' => sub {
         workflow_id => $workflow->id,
         slug => 'account-check',
         description => 'Account Check',
+        class => 'Registry::DAO::WorkflowSteps::AccountCheck',
     );
     
     # Test login validation

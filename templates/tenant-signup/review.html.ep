@@ -258,27 +258,30 @@
     </div>
 
     <!-- Action Buttons -->
-    <div class="form-actions">
-        <div class="support-info">
-            <p>Questions? <a href="mailto:support@registry.com">Contact Support</a></p>
+    <form action="<%= url_for 'workflow_process_step' %>" method="post">
+        <input type="hidden" name="terms_accepted" value="1">
+        <div class="form-actions">
+            <div class="support-info">
+                <p>Questions? <a href="mailto:support@registry.com">Contact Support</a></p>
+            </div>
+            
+            <button type="submit" 
+                    class="btn btn-primary btn-large" 
+                    id="proceed-to-payment"
+                    hx-post="<%= url_for 'workflow_process_step' %>"
+                    hx-target="body"
+                    hx-swap="outerHTML"
+                    hx-indicator="#payment-spinner"
+                    disabled>
+                <span class="btn-text">Complete Setup & Start Trial</span>
+                <span class="btn-arrow">→</span>
+            </button>
+            
+            <div id="payment-spinner" class="htmx-indicator">
+                <span class="spinner"></span> Processing...
+            </div>
         </div>
-        
-        <button type="submit" 
-                class="btn btn-primary btn-large" 
-                id="proceed-to-payment"
-                hx-post="<%= url_for 'workflow_process_step' %>"
-                hx-target="body"
-                hx-swap="outerHTML"
-                hx-indicator="#payment-spinner"
-                disabled>
-            <span class="btn-text">Complete Setup & Start Trial</span>
-            <span class="btn-arrow">→</span>
-        </button>
-        
-        <div id="payment-spinner" class="htmx-indicator">
-            <span class="spinner"></span> Processing...
-        </div>
-    </div>
+    </form>
 </div>
 
 <style>

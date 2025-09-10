@@ -1,41 +1,339 @@
-<html>
-<head>
-    <title>Registry</title>
-</head>
-<body>
+% layout 'default';
+% title 'Registry - After-School Program Management Made Simple';
 
-<header>
-    <h1>Welcome to Registry</h1>
-    <p class="subtitle">Transform Your Educational Programs with Ease</p>
-</header>
-<main>
-<p>Are you passionate about creating impactful after-school enrichment programs? Our all-in-one registry application is designed for advanced users and program developers like you who want to optimize, streamline, and elevate their educational offerings.</p>
+% content_for 'head' => begin
+  <!-- SEO Meta Tags -->
+  <meta name="description" content="Streamline your after-school programs with Registry. Manage registrations, track attendance, handle payments, and communicate with families. 30-day free trial.">
+  <meta name="keywords" content="after-school programs, registration software, program management, student tracking, attendance, payments, school administration, enrollment system">
+  <meta name="robots" content="index, follow">
+  <meta name="language" content="en-US">
+  <link rel="canonical" href="<%= url_for('/')->to_abs %>">
+  
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="<%= url_for('/')->to_abs %>">
+  <meta property="og:title" content="Registry - After-School Program Management Software">
+  <meta property="og:description" content="Complete solution for managing after-school programs. Registration, attendance, payments, and parent communication in one platform.">
+  <meta property="og:image" content="<%= url_for('/images/registry-social-preview.png')->to_abs %>">
+  
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image">
+  <meta property="twitter:url" content="<%= url_for('/')->to_abs %>">
+  <meta property="twitter:title" content="Registry - After-School Program Management">
+  <meta property="twitter:description" content="Streamline your after-school programs with comprehensive management tools.">
+  <meta property="twitter:image" content="<%= url_for('/images/registry-twitter-card.png')->to_abs %>">
+  
+  <!-- Performance optimizations -->
+  <link rel="preconnect" href="https://js.stripe.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  
+  <!-- Critical CSS for above-the-fold content -->
+  <style>
+    .hero {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 80px 0;
+      text-align: center;
+      min-height: 500px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .hero-title {
+      font-size: 3.5rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      line-height: 1.2;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 18px 36px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600;
+      background-color: #28a745;
+      color: white;
+      font-size: 1.1rem;
+      transition: all 0.3s ease;
+    }
+    @media (max-width: 768px) {
+      .hero-title { font-size: 2.5rem; }
+      .btn { padding: 15px 25px; font-size: 1rem; }
+    }
+  </style>
+  
+  <!-- Schema.org structured data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Registry",
+    "description": "Complete after-school program management software solution",
+    "url": "<%= url_for('/')->to_abs %>",
+    "applicationCategory": "BusinessApplication",
+    "operatingSystem": "Web Browser",
+    "offers": {
+      "@type": "Offer",
+      "price": "200.00",
+      "priceCurrency": "USD",
+      "priceValidUntil": "2025-12-31",
+      "availability": "https://schema.org/InStock",
+      "description": "Monthly subscription with 30-day free trial"
+    },
+    "provider": {
+      "@type": "Organization",
+      "name": "Registry",
+      "url": "<%= url_for('/')->to_abs %>",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "telephone": "1-800-REGISTRY",
+        "email": "support@registry.com",
+        "contactType": "Customer Support"
+      }
+    },
+    "featureList": [
+      "Student Registration Management",
+      "Attendance Tracking", 
+      "Payment Processing",
+      "Parent Communication",
+      "Waitlist Management",
+      "Staff Scheduling",
+      "Reporting and Analytics"
+    ],
+    "screenshot": "<%= url_for('/images/registry-screenshot.png')->to_abs %>"
+  }
+  </script>
+% end
 
-<h2>Why You'll Love Registry</h2>
+<div class="marketing-page">
+  <!-- Hero Section -->
+  <section class="hero" role="banner" aria-labelledby="hero-title">
+    <div class="container">
+      <div class="hero-content">
+        <h1 id="hero-title" class="hero-title">After-School Program Management Made Simple</h1>
+        <p class="hero-subtitle">
+          Streamline registrations, track attendance, manage payments, and communicate with families 
+          all in one powerful platform designed specifically for after-school programs.
+        </p>
+        <div class="hero-cta">
+          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" 
+             class="btn btn-primary btn-lg"
+             role="button"
+             aria-describedby="trial-info">
+            Start Your Free Trial
+          </a>
+          <p id="trial-info" class="trial-info">30 days free • No credit card required to start</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<ul>
-    <li><strong>Make a Meaningful Impact</strong>: Design and manage programs that truly make a difference. Whether you’re crafting unique sessions or tailoring classes to meet specific needs, we have the tools to help you inspire and engage your students.</li>
+  <!-- Features Section -->
+  <section class="features" role="main" aria-labelledby="features-title">
+    <div class="container">
+      <h2 id="features-title" class="section-title">Everything You Need to Run Successful Programs</h2>
+      <div class="features-grid" role="list">
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">📝</div>
+          <h3>Easy Registration</h3>
+          <p>Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.</p>
+        </div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">💳</div>
+          <h3>Payment Processing</h3>
+          <p>Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.</p>
+        </div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">📊</div>
+          <h3>Attendance Tracking</h3>
+          <p>Real-time attendance management with mobile-friendly interfaces for staff and automated parent notifications.</p>
+        </div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">💬</div>
+          <h3>Family Communication</h3>
+          <p>Built-in messaging system to keep families informed with program updates, announcements, and direct communication.</p>
+        </div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">📋</div>
+          <h3>Waitlist Management</h3>
+          <p>Automated waitlist processing with email notifications and seamless enrollment when spots become available.</p>
+        </div>
+        <div class="feature" role="listitem">
+          <div class="feature-icon" aria-hidden="true">👥</div>
+          <h3>Staff Management</h3>
+          <p>Role-based access control for administrators, staff, and instructors with customizable permissions and workflows.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
 
-    <li><strong>Streamline Your Processes</strong>: Say goodbye to juggling multiple spreadsheets and calendars. With our intuitive interface, you can plan, schedule, and track everything in one place. Create sessions, assign teachers, manage locations, and handle enrollments effortlessly.</li>
+<style>
+.marketing-page {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.6;
+  color: #333;
+}
 
-    <li><strong>Stay Informed</strong>: Keep your finger on the pulse with real-time updates and notifications. From tracking attendance to monitoring progress, our app ensures you’re always in the loop. Plus, our detailed reports give you insights to continuously improve your programs.</li>
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
 
-    <li><strong>Easy Curriculum Management</strong>: Organize and access all your lesson plans, materials, and printouts in a few clicks. No more scrambling for resources at the last minute – everything you need is right at your fingertips.</li>
+/* Hero Section */
+.hero {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 80px 0;
+  text-align: center;
+}
 
-    <li><strong>Collaborate and Communicate</strong>: Connect with your team seamlessly. Assign tasks, share updates, and ensure everyone is on the same page, making coordination a breeze.</li>
-</ul>
+.hero-title {
+  font-size: 3.5rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+  line-height: 1.2;
+}
 
-<h2>Ready to Elevate Your Programs?</h2>
+.hero-subtitle {
+  font-size: 1.25rem;
+  margin-bottom: 40px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+  opacity: 0.95;
+}
 
-<p>Join a community of forward-thinking educators who are transforming their
-programs with Registry. It’s time to make your life easier and your programs
-more impactful.</p>
+.btn {
+  display: inline-block;
+  padding: 15px 30px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  border: none;
+  cursor: pointer;
+}
 
-<p>Let’s create something amazing together!</p>
+.btn-primary {
+  background-color: #28a745;
+  color: white;
+}
 
-% my $signup_url = url_for "workflow_start", workflow => 'tenant-signup';
-<a class="button" rel="create-page customer" href="<%= $signup_url %>">Sign Up</a>
-</main>
+.btn-primary:hover, .btn-primary:focus {
+  background-color: #218838;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
 
-</body>
-</html>
+.btn-lg {
+  font-size: 1.1rem;
+  padding: 18px 36px;
+}
+
+.trial-info {
+  margin-top: 15px;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+/* Features Section */
+.features {
+  padding: 80px 0;
+  background-color: #f8f9fa;
+}
+
+.section-title {
+  text-align: center;
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 60px;
+  color: #333;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 40px;
+}
+
+.feature {
+  text-align: center;
+  padding: 30px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.3s ease;
+}
+
+.feature:hover {
+  transform: translateY(-5px);
+}
+
+.feature-icon {
+  font-size: 3rem;
+  margin-bottom: 20px;
+}
+
+.feature h3 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.feature p {
+  color: #666;
+  line-height: 1.6;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .hero-title {
+    font-size: 2.5rem;
+  }
+  
+  .hero-subtitle {
+    font-size: 1.1rem;
+  }
+  
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 30px;
+  }
+  
+  .feature {
+    padding: 20px;
+  }
+  
+  .section-title {
+    font-size: 2rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero {
+    padding: 60px 0;
+  }
+  
+  .hero-title {
+    font-size: 2rem;
+  }
+  
+  .btn-lg {
+    font-size: 1rem;
+    padding: 15px 25px;
+  }
+  
+  .features {
+    padding: 60px 0;
+  }
+}
+</style>

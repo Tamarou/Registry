@@ -1,3 +1,5 @@
+# ABOUTME: Data Access Object layer for Registry application database interactions
+# ABOUTME: Provides base functionality for all DAO classes and database operations
 use 5.40.2;
 use utf8;
 use experimental qw(builtin);
@@ -54,6 +56,14 @@ class Registry::DAO {
         wantarray ? $res->to_array->@* : $res->first;
     }
 
+    method select ( $table, $fields = undef, $where = undef, $options = undef ) {
+        return $db->select( $table, $fields, $where, $options );
+    }
+
+    method delete ( $table, $where = undef ) {
+        return $db->delete( $table, $where );
+    }
+
     method find ( $class, $filter = {} ) {
         return unless defined wantarray;
 
@@ -73,9 +83,15 @@ class Registry::DAO {
         return blessed($self)->new( url => $url, schema => $schema );
     }
 
+    method schema ($new_schema = undef) {
+        return $new_schema ? $self->connect_schema($new_schema) : $schema;
+    }
+
     method registry_tenant() {
         return $self->find( 'Registry::DAO::Tenant', { slug => 'registry' } );
     }
 
     method current_tenant { $schema }
 }
+
+1;

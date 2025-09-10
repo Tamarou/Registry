@@ -1,0 +1,17 @@
+---
+description: Background job workflow for checking attendance and sending notifications
+name: Attendance Check
+slug: attendance-check
+steps:
+- class: Registry::DAO::WorkflowSteps::AttendanceCheck::TenantProcessor
+  description: Process all tenant schemas for attendance monitoring
+  slug: process-tenants
+- class: Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor
+  description: Check for events missing attendance and send notifications
+  slug: check-missing-attendance
+- class: Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor
+  description: Check for upcoming events and send reminder notifications
+  slug: check-upcoming-events
+- class: Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext
+  description: Schedule the next attendance check job
+  slug: schedule-next

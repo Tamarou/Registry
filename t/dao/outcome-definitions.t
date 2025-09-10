@@ -1,7 +1,7 @@
 use 5.40.2;
 use lib qw(lib t/lib);
 use experimental qw(defer);
-use Test2::V0;
+use Test::More import => [qw(done_testing is ok subtest)];
 defer { done_testing };
 
 use Test::Mojo;
@@ -11,8 +11,8 @@ use Mojo::File qw(path tempdir curfile);
 use Mojo::JSON qw(encode_json decode_json);
 
 # Create a test database
-my $dao = Registry::DAO->new(url => Test::Registry::DB->new_test_db());
-$ENV{DB_URL} = $dao->url;
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 # Test basic outcome definition creation
 subtest 'Create outcome definition' => sub {
@@ -33,7 +33,7 @@ subtest 'Create outcome definition' => sub {
         }
     };
     
-    my $outcome = Registry::DAO::OutcomeDefinition->create($dao->db, $data);
+    my $outcome = $dao->create('OutcomeDefinition', $data);
     ok($outcome, 'Created outcome definition');
     is($outcome->name, 'Test Outcome', 'Name set correctly');
     is($outcome->description, 'A test outcome definition', 'Description set correctly');
@@ -123,7 +123,7 @@ subtest 'Registry import_schemas' => sub {
     $app->import_schemas();
     
     # Verify the schema was imported
-    my ($outcome) = Registry::DAO::OutcomeDefinition->find($app->dao->db, { name => 'App Schema' });
+    my ($outcome) = $app->dao->find('OutcomeDefinition', { name => 'App Schema' });
     ok($outcome, 'Schema was imported');
     is($outcome->description, 'A schema imported by the app', 'Description matches');
     is(scalar @{$outcome->schema->{fields}}, 1, 'One field defined');

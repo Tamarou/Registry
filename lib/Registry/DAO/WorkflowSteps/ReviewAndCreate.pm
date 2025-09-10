@@ -69,7 +69,7 @@ method create_program ($db, $run) {
             curriculum => $curriculum,
             requirements => $requirements,
             schedule_pattern => $schedule_pattern,
-            created_by_workflow => $workflow->id,
+            created_by_workflow => $run->workflow_id,
             created_at => time,
         })
     )->save($db);

@@ -7,7 +7,7 @@ use experimental qw(signatures);
 use Test::More;
 use Test::Mojo;
 
-use lib 't/lib';
+use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -15,6 +15,8 @@ use Registry;
 use Registry::DAO::Event;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::ProgramType;
+use Registry::DAO::Waitlist;
+use Registry::DAO::FamilyMember;
 
 # Setup test database
 my $t_db = Test::Registry::DB->new;
@@ -25,7 +27,7 @@ my $t = Test::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 
 # Create test tenant
-my $tenant = Test::Registry::Fixtures->create_tenant($db, {
+my $tenant = Test::Registry::Fixtures::create_tenant($db, {
     name => 'Test School District',
     slug => 'test-district',
 });
@@ -34,31 +36,68 @@ my $tenant = Test::Registry::Fixtures->create_tenant($db, {
 $db->schema($tenant->slug);
 
 # Create test location
-my $school = Test::Registry::Fixtures->create_location($db, {
+my $school = Test::Registry::Fixtures::create_location($db, {
     name => 'Test Elementary School',
     slug => 'test-elementary',
 });
 
+# Create test teacher
+my $teacher = Test::Registry::Fixtures::create_user($db, {
+    username => 'testteacher',
+    password => 'test123',
+    name => 'Test Teacher',
+    email => 'teacher@test.com',
+    user_type => 'staff',
+});
+
+# Create test parent for family members
+my $parent = Test::Registry::Fixtures::create_user($db, {
+    username => 'testparent',
+    password => 'test123',
+    name => 'Test Parent',
+    email => 'parent@test.com',
+    user_type => 'parent',
+});
+
+# Create program types if they don't exist
+Registry::DAO::ProgramType->find_or_create($db, 
+    { slug => 'afterschool' },
+    {
+        name => 'After School',
+        slug => 'afterschool',
+        config => {},
+    }
+);
+
+Registry::DAO::ProgramType->find_or_create($db,
+    { slug => 'summer-camp' },
+    {
+        name => 'Summer Camp',
+        slug => 'summer-camp',
+        config => {},
+    }
+);
+
 # Create programs with different types
-my $afterschool = Test::Registry::Fixtures->create_project($db, {
+my $afterschool = Test::Registry::Fixtures::create_project($db, {
     name => 'After School Arts',
     program_type_slug => 'afterschool',
 });
 
-my $summer = Test::Registry::Fixtures->create_project($db, {
+my $summer = Test::Registry::Fixtures::create_project($db, {
     name => 'Summer Science Camp',
     program_type_slug => 'summer-camp',
 });
 
 # Create sessions with different dates
-my $current_session = Test::Registry::Fixtures->create_session($db, {
+my $current_session = Test::Registry::Fixtures::create_session($db, {
     name => 'Current Session',
     start_date => '2024-03-01',
     end_date => '2024-05-31',
     status => 'published',
 });
 
-my $future_session = Test::Registry::Fixtures->create_session($db, {
+my $future_session = Test::Registry::Fixtures::create_session($db, {
     name => 'Future Session',
     start_date => '2024-09-01',
     end_date => '2024-12-31',
@@ -66,20 +105,24 @@ my $future_session = Test::Registry::Fixtures->create_session($db, {
 });
 
 # Create events with age ranges
-my $young_event = Test::Registry::Fixtures->create_event($db, {
+my $young_event = Test::Registry::Fixtures::create_event($db, {
     location_id => $school->id,
     project_id => $afterschool->id,
+    teacher_id => $teacher->id,
     min_age => 5,
     max_age => 8,
     capacity => 20,
+    time => '2024-03-15 14:00:00',
 });
 
-my $older_event = Test::Registry::Fixtures->create_event($db, {
+my $older_event = Test::Registry::Fixtures::create_event($db, {
     location_id => $school->id,
     project_id => $summer->id,
+    teacher_id => $teacher->id,
     min_age => 9,
     max_age => 12,
     capacity => 15,
+    time => '2024-03-15 15:00:00',
 });
 
 # Add events to sessions
@@ -104,13 +147,29 @@ Registry::DAO::PricingPlan->create($db, {
 
 # Create enrollments to test fill indicators
 for my $i (1..16) {
-    my $student = Test::Registry::Fixtures->create_user($db, {
-        name => "Student $i",
-        email => "student$i@test.com",
+    # Create separate parent user for each child (for unique constraint)
+    my $parent_user = Test::Registry::Fixtures::create_user($db, {
+        username => "parent$i",
+        password => 'test123',
+        name => "Parent $i",
+        email => "parent$i\@test.com",
+        user_type => 'parent',
     });
+    
+    # Create family member for each child
+    my $family_member = Registry::DAO::FamilyMember->create($db, {
+        family_id => $parent_user->id,
+        child_name => "Student $i",
+        birth_date => '2015-01-01',  # Child born in 2015, so age ~10
+        grade => '4th',
+        medical_info => {},
+    });
+    
+    # Create enrollment using family_member_id
     Registry::DAO::Enrollment->create($db, {
         session_id => $current_session->id,
-        student_id => $student->id,
+        student_id => $parent_user->id,  # Parent's user ID for backward compatibility
+        family_member_id => $family_member->id,  # Child's family_member ID
         status => 'active',
     });
 }
@@ -162,24 +221,73 @@ subtest 'Visual indicators - early bird' => sub {
     $t->get_ok('/school/test-elementary')
       ->status_is(200)
       ->element_exists('.early-bird-notice', 'Has early bird notice')
-      ->content_like(qr/Early Bird Special.*\$150\.00/, 'Shows early bird price')
+      ->content_like(qr/Early Bird Special/, 'Shows early bird text')
+      ->content_like(qr/\$150\.00/, 'Shows early bird price')
       ->content_like(qr/expires 2025-12-31/, 'Shows early bird expiration');
 };
 
 subtest 'Visual indicators - waitlist' => sub {
+    # First, fill up the remaining spots (4 more enrollments to reach capacity of 20)
+    for my $i (17..20) {
+        my $additional_parent = Test::Registry::Fixtures::create_user($db, {
+            username => "additional_parent$i",
+            password => 'test123',
+            name => "Additional Parent $i",
+            email => "additional_parent$i\@test.com",
+            user_type => 'parent',
+        });
+        
+        my $additional_family_member = Registry::DAO::FamilyMember->create($db, {
+            family_id => $additional_parent->id,
+            child_name => "Additional Student $i",
+            birth_date => '2015-01-01',
+            grade => '4th',
+            medical_info => {},
+        });
+        
+        Registry::DAO::Enrollment->create($db, {
+            session_id => $current_session->id,
+            student_id => $additional_parent->id,
+            family_member_id => $additional_family_member->id,
+            status => 'active',
+        });
+    }
+    
     # Add waitlist entries
     for my $i (1..3) {
-        my $student = Test::Registry::Fixtures->create_user($db, {
-            name => "Waitlist Student $i",
-            email => "waitlist$i@test.com",
+        # Create separate parent user for each waitlist child
+        my $waitlist_parent = Test::Registry::Fixtures::create_user($db, {
+            username => "waitlist_parent$i",
+            password => 'test123',
+            name => "Waitlist Parent $i",
+            email => "waitlist_parent$i\@test.com",
+            user_type => 'parent',
         });
+        
+        # Create family member for each waitlist child
+        my $family_member = Registry::DAO::FamilyMember->create($db, {
+            family_id => $waitlist_parent->id,
+            child_name => "Waitlist Student $i",
+            birth_date => '2016-01-01',  # Child born in 2016, so age ~9
+            grade => '3rd',
+            medical_info => {},
+        });
+        
+        # Add to waitlist using family_member_id
         Registry::DAO::Waitlist->join_waitlist(
             $db,
             $current_session->id,
             $school->id,
-            $student->id,
-            $student->id  # Parent same as student for simplicity
+            $waitlist_parent->id,  # Parent's user ID for backward compatibility
+            $waitlist_parent->id   # Parent ID for parent field
         );
+        
+        # Update the waitlist entry to include family_member_id
+        my $waitlist_entry = Registry::DAO::Waitlist->find($db, {
+            session_id => $current_session->id,
+            student_id => $waitlist_parent->id,
+        });
+        $waitlist_entry->update($db, { family_member_id => $family_member->id });
     }
     
     $t->get_ok('/school/test-elementary')
@@ -198,17 +306,19 @@ subtest 'HTMX filtering' => sub {
 
 subtest 'Combined filters' => sub {
     # Create a new session that matches all filters
-    my $match_session = Test::Registry::Fixtures->create_session($db, {
+    my $match_session = Test::Registry::Fixtures::create_session($db, {
         name => 'Perfect Match',
         start_date => '2024-10-01',
         status => 'published',
     });
     
-    my $match_event = Test::Registry::Fixtures->create_event($db, {
+    my $match_event = Test::Registry::Fixtures::create_event($db, {
         location_id => $school->id,
         project_id => $afterschool->id,
+        teacher_id => $teacher->id,
         min_age => 6,
         max_age => 10,
+        time => '2024-10-15 14:00:00',
     });
     
     $match_session->add_events($db, $match_event->id);

@@ -7,7 +7,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     field $slug :param :reader //= lc( $name =~ s/\s+/_/gr );
     field $created_at :param :reader;
 
-    use constant table => 'tenants';
+    sub table { 'tenants' }
 
     sub create ( $class, $db, $data ) {
         $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
@@ -37,6 +37,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             WHERE tu.tenant_id = ? AND tu.is_primary is true
             SQL
         my $user_data = $db->query( $sql, $id )->expand->hash;
+        return unless $user_data && $user_data->{id};
         return Registry::DAO::User->new( $user_data->%* );
     }
 
@@ -77,5 +78,15 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             },
             { returning => '*' }
         );
+    }
+
+    method slug_exists :common ($db, $slug) {
+        my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
+        return $result->array->[0] > 0;
+    }
+    
+    # Get all tenant schemas for background jobs
+    sub get_all_tenant_schemas($class, $db) {
+        return $db->select('registry.tenants', ['slug'])->hashes->to_array;
     }
 }

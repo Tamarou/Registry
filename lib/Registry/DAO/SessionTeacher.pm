@@ -8,7 +8,7 @@ class Registry::DAO::SessionTeacher :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
 
-    use constant table => 'session_teachers';
+    sub table { 'session_teachers' }
 
     # Get the session this teacher assignment belongs to
     method session($db) {

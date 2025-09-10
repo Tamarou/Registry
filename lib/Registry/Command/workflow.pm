@@ -1,3 +1,5 @@
+# ABOUTME: Workflow management command for Registry CLI tool
+# ABOUTME: Handles workflow import, list and other workflow operations
 use 5.40.2;
 use utf8;
 use Object::Pad;
@@ -90,24 +92,23 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
         return;
     }
 
-    method import (@files) {
-        unless ( scalar @files ) {
-            @files = $self->app->home->child('workflows')
-              ->list_tree->grep(qr/\.ya?ml$/)->each;
-        }
-        for my $file (@files) {
-            my $yaml = $file->slurp;
+    method load (@files) {
+        # Import workflows to specified schema
+        my $schema = $dao->current_tenant; # Use the schema set by command args
+        my @workflows = @files ? @files : 
+          $self->app->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 
+        for my $file (@workflows) {
+            my $yaml = $file->slurp;
             next if Load($yaml)->{draft};
             try {
                 my $workflow = Workflow->from_yaml( $dao, $yaml );
+                my $step_count = scalar @{ Load($yaml)->{steps} // [] };
                 say sprintf "Imported workflow '%s' (%s) with %d steps",
-                  $workflow->name,
-                  $workflow->slug,
-                  scalar @{ Load($yaml)->{steps} };
+                    $workflow->name, $workflow->slug, $step_count;
             }
             catch ($e) {
-                carp "Error importing workflow: $e";
+                warn "Error importing workflow: $e";
             }
         }
     }
@@ -139,6 +140,10 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     method run( $cmd, $schema, @args ) {
         $dao = $dao->connect_schema($schema);
 
+
+        # Handle command aliases
+        $cmd = 'load' if $cmd eq 'import';
+
         if ( my $method = $self->can($cmd) ) {
             return $self->$method(@args);
         }
@@ -150,4 +155,6 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
         END
     }
 }
+
+1;
 

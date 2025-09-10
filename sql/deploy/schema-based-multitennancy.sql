@@ -38,6 +38,9 @@ BEGIN
   END IF;
 
   EXECUTE 'INSERT INTO '|| quote_ident(dest_schema) || '.users SELECT * FROM ' || quote_ident(source_schema) || '.users WHERE id = ' || quote_literal(user_id);
+  
+  -- Also copy user_profiles data
+  EXECUTE 'INSERT INTO '|| quote_ident(dest_schema) || '.user_profiles SELECT * FROM ' || quote_ident(source_schema) || '.user_profiles WHERE user_id = ' || quote_literal(user_id);
 END
 
 $BODY$
@@ -229,7 +232,8 @@ COST 100;
 CREATE OR REPLACE FUNCTION clone_schema(
     dest_schema text,
     source_schema text DEFAULT 'registry',
-    show_details boolean DEFAULT false  -- be verbose
+    show_details boolean DEFAULT false,  -- be verbose
+    include_recs boolean DEFAULT false   -- include data
 ) RETURNS void AS
 $BODY$
 

@@ -9,7 +9,7 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
         # Basic auth check - in production this would verify teacher role
         my $user_id = $self->session('user_id');
         unless ($user_id) {
-            return $self->redirect_to('/teacher-signup');
+            return $self->redirect_to('/user-creation');
         }
         $self->stash(user_id => $user_id);
         $self->stash(tenant => 'test-tenant'); # For testing

@@ -10,7 +10,8 @@ use Registry::DAO::UserPreference;
 use Registry::Job::AttendanceCheck;
 use Test::Registry::DB;
 
-my $dao = Registry::DAO->new( url => Test::Registry::DB->new_test_db() );
+my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 
 subtest 'Notification DAO exists and has required methods' => sub {
     ok(Registry::DAO::Notification->can('create'), 'Notification DAO has create method');
@@ -29,9 +30,13 @@ subtest 'UserPreference DAO exists and has required methods' => sub {
 
 subtest 'AttendanceCheck Job exists' => sub {
     ok(Registry::Job::AttendanceCheck->can('run'), 'AttendanceCheck job has run method');
-    ok(Registry::Job::AttendanceCheck->can('find_events_missing_attendance'), 'Has find_events_missing_attendance method');
-    ok(Registry::Job::AttendanceCheck->can('find_events_starting_soon'), 'Has find_events_starting_soon method');
-    ok(Registry::Job::AttendanceCheck->can('check_tenant_attendance'), 'Has check_tenant_attendance method');
+    
+    # Check that the methods moved to DAO classes exist
+    ok(Registry::DAO::Event->can('find_events_missing_attendance'), 'Event DAO has find_events_missing_attendance method');
+    ok(Registry::DAO::Event->can('find_events_starting_soon'), 'Event DAO has find_events_starting_soon method');
+    
+    # Check the WorkflowExecutor exists for the new architecture
+    ok(Registry::Job::WorkflowExecutor->can('run'), 'WorkflowExecutor has run method');
 };
 
 subtest 'Database migration files exist' => sub {

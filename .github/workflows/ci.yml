@@ -1,0 +1,365 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC for quality checks
+    - cron: '0 2 * * 0'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libpq-dev \
+          postgresql-client \
+          build-essential \
+          libssl-dev \
+          libz-dev
+
+    - name: Install cpanm and carton
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+
+    - name: Cache Perl dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/perl5
+        key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
+        restore-keys: |
+          ${{ runner.os }}-perl-
+
+    - name: Install Perl dependencies
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        carton install --deployment
+
+    - name: Setup test database
+      run: |
+        export PGPASSWORD=postgres
+        # Wait for PostgreSQL to be ready with better reliability
+        for i in {1..60}; do
+          if pg_isready -h localhost -U postgres -d postgres; then
+            echo "PostgreSQL is ready"
+            break
+          fi
+          echo "Waiting for PostgreSQL... ($i/60)"
+          sleep 3
+        done
+        
+        # Create test database with proper error handling
+        createdb -h localhost -U postgres registry_test || true
+        
+        # Verify database was created
+        psql -h localhost -U postgres -lqt | cut -d \| -f 1 | grep -qw registry_test
+        echo "Test database registry_test is ready"
+        
+    - name: Deploy database schema
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_test
+
+    - name: Import workflows and templates
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        echo "Importing workflows..."
+        carton exec ./registry workflow import registry || echo "Workflow import failed, continuing..."
+        echo "Importing templates..."
+        carton exec ./registry template import registry || echo "Template import failed, continuing..."
+        echo "Import phase completed"
+
+    - name: Clean test database
+      run: |
+        export PGPASSWORD=postgres
+        # Clean up any existing test artifacts
+        psql -h localhost -U postgres -d registry_test -c "
+          TRUNCATE users, family_members, enrollments, payments, attendance_records, 
+                   waitlist, sessions, events, session_events, projects, locations, 
+                   messages, message_recipients CASCADE;" || true
+        echo "Database cleaned for fresh test run"
+
+    - name: Run test suite
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        export EMAIL_SENDER_TRANSPORT=Test
+        # Run tests sequentially to avoid database conflicts
+        timeout 20m carton exec prove -lr t/ --formatter=TAP::Formatter::Console
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install Perl::Critic
+      run: |
+        cpanm --notest Perl::Critic
+
+    - name: Run Perl::Critic (non-blocking)
+      run: |
+        # Run perlcritic but don't fail the build on warnings
+        # since Object::Pad code doesn't follow traditional Perl conventions
+        find lib -name "*.pm" -exec perlcritic --severity=3 --quiet {} \; || true
+        echo "Perl::Critic completed (warnings are informational only)"
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run security checks
+      run: |
+        echo "Checking for common security issues..."
+        
+        # Check for hardcoded secrets (basic patterns)
+        if grep -r -i "password\s*=" --include="*.pm" --include="*.pl" lib/ | grep -v "EXAMPLE\|TODO\|FIXME" | head -5; then
+          echo "WARNING: Potential hardcoded passwords found"
+        fi
+        
+        # Check for SQL injection patterns
+        if grep -r "qq{.*\$" --include="*.pm" lib/ | head -5; then
+          echo "WARNING: Potential SQL injection patterns found"
+        fi
+        
+        echo "Security check completed"
+
+  database-compatibility:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.modified, 'sql/') || contains(github.event.head_commit.modified, 'sqitch')
+    
+    strategy:
+      matrix:
+        postgres-version: [14, 15, 16]
+    
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-version }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libpq-dev \
+          postgresql-client \
+          build-essential
+
+    - name: Install Perl dependencies
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+        carton install --deployment
+
+    - name: Test database migration
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        
+        echo "Testing PostgreSQL ${{ matrix.postgres-version }} migration..."
+        
+        # Create test database
+        createdb -h localhost -U postgres registry_migration_test
+        
+        # Deploy schema
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_migration_test
+        
+        # Verify deployment
+        carton exec sqitch status db:pg://postgres@localhost/registry_migration_test
+        
+        echo "Migration test completed successfully"
+
+    - name: Test schema rollback
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        
+        echo "Testing schema rollback..."
+        
+        # Test rollback of last few changes
+        carton exec sqitch revert -n 3 db:pg://postgres@localhost/registry_migration_test || true
+        
+        # Redeploy
+        carton exec sqitch deploy db:pg://postgres@localhost/registry_migration_test
+        
+        echo "Rollback test completed"
+
+  quality:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'push'
+    
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev postgresql-client build-essential
+
+    - name: Install dependencies and tools
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton Devel::Cover
+        carton install --deployment
+
+    - name: Check dependencies
+      run: |
+        carton check
+        echo "Dependencies check completed"
+
+    - name: Check documentation
+      run: |
+        echo "Checking documentation completeness..."
+        
+        # Check for README
+        if [[ -f README.md ]]; then
+          echo "✅ README.md exists"
+        else
+          echo "❌ README.md missing"
+        fi
+        
+        # Check for CLAUDE.md
+        if [[ -f CLAUDE.md ]]; then
+          echo "✅ CLAUDE.md exists"
+        else
+          echo "❌ CLAUDE.md missing"
+        fi
+        
+        # Check for basic documentation in lib/
+        undocumented_modules=$(find lib -name "*.pm" -exec grep -L "^=head1\|^# ABOUTME:" {} \; | wc -l)
+        echo "Modules without documentation: $undocumented_modules"
+        
+        echo "Documentation check completed"
+
+    - name: Setup test database for performance testing
+      run: |
+        export PGPASSWORD=postgres
+        createdb -h localhost -U postgres registry_test || true
+
+    - name: Performance test - Database schema deployment
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        
+        echo "Testing schema deployment performance..."
+        time carton exec sqitch deploy db:pg://postgres@localhost/registry_test
+        
+        echo "Schema deployment completed"
+
+    - name: Generate coverage report
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        export PGPASSWORD=postgres
+        export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
+        export EMAIL_SENDER_TRANSPORT=Test
+        
+        # Run a sample of tests with coverage
+        carton exec cover -test -report html_basic -ignore_re '^t/' || true
+        
+        echo "Coverage report generated"
+
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: cover_db/
+      if: always()
+
+    - name: List installed modules
+      run: |
+        carton list > dependency-report.txt
+        echo "Dependency report generated"
+
+    - name: Upload dependency report
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-report
+        path: dependency-report.txt

@@ -9,16 +9,17 @@ use Registry;
 use Test::Registry::DB;
 use JSON;
 
-my $test_db_url = Test::Registry::DB->new_test_db();
-local $ENV{DB_URL} = $test_db_url;
+my $test_db = Test::Registry::DB->new();
+local $ENV{DB_URL} = $test_db->uri;
 
 # Skip Minion for testing
 my $app = Registry->new;
-$app->plugin('Test::Minion');
+# Mock Minion functionality for testing - Test::Minion doesn't exist
+# $app->plugin('Test::Minion');
 my $t = Test::Mojo->new($app);
 
 subtest 'Stripe webhook endpoint' => sub {
-    plan tests => 5;
+    plan tests => 6;
     
     # Test basic webhook endpoint exists
     my $payload = encode_json({

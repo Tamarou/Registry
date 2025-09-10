@@ -21,9 +21,9 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
-    use constant table => 'pricing_plans';
+    sub table { 'pricing_plans' }
     
-    BUILD {
+    ADJUST {
         # Decode JSON fields if they're strings
         for my $field ($requirements, $metadata) {
             if (defined $field && !ref $field) {
@@ -88,6 +88,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     # Get all pricing plans for a session
     sub get_pricing_plans ($class, $db, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
         my $results = $db->select($class->table, undef, { session_id => $session_id })->hashes;
         return [ map { $class->new(%$_) } @$results ];
     }
@@ -95,7 +96,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     # Calculate price based on requirements and context
     method calculate_price ($context = {}) {
         # Check if this plan's requirements are met
-        return undef unless $self->requirements_met($context);
+        return unless $self->requirements_met($context);
         
         my $price = $amount;
         
@@ -113,6 +114,15 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         if ($plan_type eq 'early_bird' && $requirements->{early_bird_cutoff_date}) {
             my $cutoff = $requirements->{early_bird_cutoff_date};
             my $today = $context->{date} // time();
+            
+            # Convert dates to comparable format if they're strings
+            if ($cutoff && $cutoff =~ /^\d{4}-\d{2}-\d{2}$/) {
+                $cutoff =~ s/-//g;  # Convert 2024-05-01 to 20240501
+            }
+            if ($today && $today =~ /^\d{4}-\d{2}-\d{2}$/) {
+                $today =~ s/-//g;   # Convert 2024-04-15 to 20240415
+            }
+            
             return 0 if $today > $cutoff;
         }
         
@@ -132,7 +142,15 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return 0 unless $plan_type eq 'early_bird';
         return 0 unless $requirements->{early_bird_cutoff_date};
         
-        return $date <= $requirements->{early_bird_cutoff_date};
+        # Convert date string to timestamp if needed
+        my $cutoff = $requirements->{early_bird_cutoff_date};
+        if ($cutoff !~ /^\d+$/) {
+            # Parse date string to timestamp
+            require Time::Piece;
+            $cutoff = Time::Piece->strptime($cutoff, '%Y-%m-%d')->epoch;
+        }
+        
+        return $date <= $cutoff;
     }
     
     # Get installment amount
