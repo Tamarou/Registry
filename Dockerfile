@@ -31,6 +31,10 @@ RUN carton install --deployment
 # Copy application code
 COPY . .
 
+# Copy and set up entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Create production registry script without local::lib
 RUN sed 's/use local::lib/#use local::lib/' registry > registry.prod \
   && mv registry.prod registry \
@@ -57,5 +61,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Default command (can be overridden by render.yaml)
-CMD ["carton", "exec", "hypnotoad", "-f", "./registry"]
+# Use entrypoint script to determine service type
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -32,14 +32,14 @@ services:
         value: support@registry-demo.onrender.com
       - key: PORT
         value: 5000
+      - key: SERVICE_TYPE
+        value: web
     healthCheckPath: /health
     buildCommand: |
       # Database setup and initial data import
       carton exec sqitch deploy
       carton exec ./registry workflow import registry
       carton exec ./registry template import registry
-    startCommand: |
-      carton exec hypnotoad -f ./registry
     autoDeploy: true
     disk:
       name: registry-storage
@@ -68,10 +68,10 @@ services:
         sync: false
       - key: EMAIL_FROM
         value: noreply@registry-demo.onrender.com
+      - key: SERVICE_TYPE
+        value: worker
     buildCommand: |
       carton install --deployment
-    startCommand: |
-      carton exec ./registry minion worker
     autoDeploy: true
 
   - type: cron
@@ -88,9 +88,8 @@ services:
           property: connectionString
       - key: MOJO_MODE
         value: production
+      - key: SERVICE_TYPE
+        value: scheduler
     buildCommand: |
       carton install --deployment
-    startCommand: |
-      carton exec ./registry job attendance_check
-      carton exec ./registry job waitlist_expiration
     autoDeploy: true
