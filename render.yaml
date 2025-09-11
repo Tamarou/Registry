@@ -46,34 +46,33 @@ services:
       mountPath: /app/storage
       sizeGB: 1
 
-# Worker service commented out for free-tier UAT deployment
-  # - type: worker
-  #   name: registry-worker
-  #   runtime: docker
-  #   plan: starter
-  #   branch: main
-  #   dockerfilePath: ./Dockerfile
-  #   envVars:
-  #     - key: DB_URL
-  #       fromDatabase:
-  #         name: registry-postgres
-  #         property: connectionString
-  #     - key: MOJO_MODE
-  #       value: production
-  #     - key: REGISTRY_SECRET
-  #       fromService:
-  #         type: web
-  #         name: registry-app
-  #         envVarKey: REGISTRY_SECRET
-  #     - key: STRIPE_SECRET_KEY
-  #       sync: false
-  #     - key: EMAIL_FROM
-  #       value: noreply@registry-demo.onrender.com
-  #     - key: SERVICE_TYPE
-  #       value: worker
-  #   buildCommand: |
-  #     carton install --deployment
-  #   autoDeploy: true
+  - type: worker
+    name: registry-worker
+    runtime: docker
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: registry-postgres
+          property: connectionString
+      - key: MOJO_MODE
+        value: production
+      - key: REGISTRY_SECRET
+        fromService:
+          type: web
+          name: registry-app
+          envVarKey: REGISTRY_SECRET
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: noreply@registry-demo.onrender.com
+      - key: SERVICE_TYPE
+        value: worker
+    buildCommand: |
+      carton install --deployment
+    autoDeploy: true
 
   - type: cron
     name: registry-scheduler
