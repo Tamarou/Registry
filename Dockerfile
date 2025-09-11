@@ -22,6 +22,7 @@ COPY cpanfile cpanfile.snapshot ./
 # Create production cpanfile without test dependencies and install directly to system
 RUN grep -v "Test::" cpanfile > cpanfile.prod \
   && cpanm --notest --installdeps . --cpanfile cpanfile.prod \
+  && cpanm --notest local::lib \
   && find /usr/local -name "perl5" -type d
 
 # Production stage - minimal runtime image
@@ -38,6 +39,9 @@ RUN apt-get update \
 
 # Copy installed Perl modules from builder stage (only if they exist)
 COPY --from=builder /usr/local/lib/perl5 /usr/local/lib/perl5
+
+# Copy sqitch binary from builder stage
+COPY --from=builder /usr/local/bin/sqitch /usr/local/bin/sqitch
 
 # Set working directory
 WORKDIR /app
