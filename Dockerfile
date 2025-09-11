@@ -21,7 +21,8 @@ COPY cpanfile cpanfile.snapshot ./
 
 # Create production cpanfile without test dependencies and install directly to system
 RUN grep -v "Test::" cpanfile > cpanfile.prod \
-  && cpanm --notest --installdeps . --cpanfile cpanfile.prod
+  && cpanm --notest --installdeps . --cpanfile cpanfile.prod \
+  && find /usr/local -name "perl5" -type d
 
 # Production stage - minimal runtime image
 FROM perl:5.40.2
@@ -35,9 +36,8 @@ RUN apt-get update \
     libargon2-1 \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy installed Perl modules from builder stage
+# Copy installed Perl modules from builder stage (only if they exist)
 COPY --from=builder /usr/local/lib/perl5 /usr/local/lib/perl5
-COPY --from=builder /usr/local/share/perl5 /usr/local/share/perl5
 
 # Set working directory
 WORKDIR /app
