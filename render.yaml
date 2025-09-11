@@ -39,6 +39,7 @@ services:
           name: registry-postgres
           property: connectionString
     healthCheckPath: /health
+    port: 5000
     buildCommand: |
       # Install dependencies only during build
       carton install --deployment
