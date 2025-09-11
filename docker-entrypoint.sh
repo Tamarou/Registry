@@ -38,8 +38,7 @@ case "${SERVICE_TYPE:-web}" in
     "web")
         echo "Starting web service..."
         deploy_schema
-        export MOJO_LISTEN="http://*:${PORT:-5000}"
-        exec carton exec hypnotoad -f ./registry
+        exec carton exec ./registry daemon -l "http://*:${PORT:-5000}"
         ;;
     "worker")
         echo "Starting worker service..."
