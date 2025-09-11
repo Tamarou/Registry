@@ -76,17 +76,8 @@ class Registry :isa(Mojolicious) {
           
         # Health check endpoint (no auth required)
         $self->routes->get('/health')->to(cb => sub ($c) {
-            # Basic health check - verify database connectivity
-            eval {
-                my $dao = $c->app->dao;
-                $dao->pg->db->query('SELECT 1');
-            };
-            
-            if ($@) {
-                $c->render(json => { status => 'error', message => 'Database connection failed' }, status => 503);
-            } else {
-                $c->render(json => { status => 'ok', timestamp => time() });
-            }
+            # Simple health check - just verify app is responding
+            $c->render(json => { status => 'ok', timestamp => time() });
         })->name('health_check');
 
         # Webhook routes (no auth required)
