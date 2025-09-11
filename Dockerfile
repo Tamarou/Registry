@@ -55,11 +55,11 @@ RUN useradd -m -u 1001 registry \
 USER registry
 
 # Expose port
-EXPOSE 5000
+EXPOSE 10000
 
 # Health check endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
+  CMD curl -f http://localhost:${PORT:-10000}/health || exit 1
 
 # Use entrypoint script to determine service type
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
