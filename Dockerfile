@@ -1,4 +1,5 @@
-FROM perl:5.40.2
+# Build stage - install dependencies and build tools
+FROM perl:5.40.2 AS builder
 
 # Install system dependencies
 RUN apt-get update \
@@ -25,8 +26,27 @@ COPY cpanfile cpanfile.snapshot ./
 RUN grep -v "Test::" cpanfile > cpanfile.prod \
   && mv cpanfile.prod cpanfile
 
-# Install dependencies
+# Install dependencies (this is the expensive step that gets cached)
 RUN carton install --deployment
+
+# Production stage - minimal runtime image
+FROM perl:5.40.2
+
+# Install only runtime dependencies (no build tools)
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    libpq-dev \
+    curl \
+    libargon2-1 \
+  && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy installed dependencies from builder stage
+COPY --from=builder /app/local ./local
+COPY --from=builder /app/cpanfile* ./
 
 # Copy application code
 COPY . .
@@ -43,7 +63,7 @@ RUN sed 's/use local::lib/#use local::lib/' registry > registry.prod \
 # Set environment variables
 ENV MOJO_MODE=production
 ENV PERL5LIB=/app/lib
-ENV PORT=5000
+ENV PORT=10000
 
 # Create storage directory and set permissions
 RUN mkdir -p /app/storage \
