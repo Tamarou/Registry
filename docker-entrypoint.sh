@@ -10,7 +10,8 @@ deploy_schema() {
     echo "Deploying database schema..."
     if [ -n "$DB_URL" ]; then
         echo "Using database URL: ${DB_URL%:*}:****"
-        if carton exec sqitch deploy --target "$DB_URL"; then
+        export SQITCH_TARGET="$DB_URL"
+        if carton exec sqitch deploy; then
             echo "Database schema deployed successfully"
         else
             echo "Warning: Database schema deployment failed"
