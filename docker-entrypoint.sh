@@ -8,16 +8,15 @@ set -e
 # Function to deploy database schema (only for web service)
 deploy_schema() {
     echo "Deploying database schema..."
-    if [ -n "$DB_URL" ]; then
-        echo "Using database URL: ${DB_URL%:*}:****"
-        export SQITCH_TARGET="$DB_URL"
+    if [ -n "$SQITCH_TARGET" ]; then
+        echo "Using sqitch target: ${SQITCH_TARGET%:*}:****"
         if carton exec sqitch deploy; then
             echo "Database schema deployed successfully"
         else
             echo "Warning: Database schema deployment failed"
         fi
     else
-        echo "Error: DB_URL environment variable not set"
+        echo "Error: SQITCH_TARGET environment variable not set"
         return 1
     fi
     

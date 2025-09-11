@@ -34,6 +34,10 @@ services:
         value: 5000
       - key: SERVICE_TYPE
         value: web
+      - key: SQITCH_TARGET
+        fromDatabase:
+          name: registry-postgres
+          property: connectionString
     healthCheckPath: /health
     buildCommand: |
       # Install dependencies only during build
