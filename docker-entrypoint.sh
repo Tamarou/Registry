@@ -8,10 +8,16 @@ set -e
 # Function to deploy database schema (only for web service)
 deploy_schema() {
     echo "Deploying database schema..."
-    if carton exec sqitch deploy; then
-        echo "Database schema deployed successfully"
+    if [ -n "$DB_URL" ]; then
+        echo "Using database URL: ${DB_URL%:*}:****"
+        if carton exec sqitch deploy "$DB_URL"; then
+            echo "Database schema deployed successfully"
+        else
+            echo "Warning: Database schema deployment failed"
+        fi
     else
-        echo "Warning: Database schema deployment failed"
+        echo "Error: DB_URL environment variable not set"
+        return 1
     fi
     
     echo "Importing workflows and templates..."
