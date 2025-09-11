@@ -10,7 +10,7 @@ deploy_schema() {
     echo "Deploying database schema..."
     if [ -n "$SQITCH_TARGET" ]; then
         echo "Using sqitch target: ${SQITCH_TARGET%:*}:****"
-        if carton exec sqitch deploy; then
+        if sqitch deploy; then
             echo "Database schema deployed successfully"
         else
             echo "Warning: Database schema deployment failed"
@@ -21,13 +21,13 @@ deploy_schema() {
     fi
     
     echo "Importing workflows and templates..."
-    if carton exec ./registry workflow import registry; then
+    if ./registry workflow import registry; then
         echo "Workflows imported successfully"
     else
         echo "Warning: Workflow import failed"
     fi
     
-    if carton exec ./registry template import registry; then
+    if ./registry template import registry; then
         echo "Templates imported successfully"
     else
         echo "Warning: Template import failed"
@@ -38,16 +38,16 @@ case "${SERVICE_TYPE:-web}" in
     "web")
         echo "Starting web service..."
         deploy_schema
-        exec carton exec ./registry daemon -l "http://*:${PORT:-5000}"
+        exec ./registry daemon -l "http://*:${PORT:-10000}"
         ;;
     "worker")
         echo "Starting worker service..."
-        exec carton exec ./registry minion worker
+        exec ./registry minion worker
         ;;
     "scheduler")
         echo "Starting scheduler tasks..."
-        carton exec ./registry job attendance_check
-        carton exec ./registry job waitlist_expiration
+        ./registry job attendance_check
+        ./registry job waitlist_expiration
         ;;
     *)
         echo "Unknown SERVICE_TYPE: ${SERVICE_TYPE}"

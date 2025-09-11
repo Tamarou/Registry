@@ -13,21 +13,15 @@ RUN apt-get update \
     pkg-config \
   && rm -rf /var/lib/apt/lists/*
 
-# Install carton globally
-RUN cpanm --notest Carton
-
 # Set working directory
 WORKDIR /app
 
 # Copy cpanfile for dependencies (exclude test dependencies)
 COPY cpanfile cpanfile.snapshot ./
 
-# Create production cpanfile without test dependencies
+# Create production cpanfile without test dependencies and install directly to system
 RUN grep -v "Test::" cpanfile > cpanfile.prod \
-  && mv cpanfile.prod cpanfile
-
-# Install dependencies (this is the expensive step that gets cached)
-RUN carton install --deployment
+  && cpanm --notest --installdeps . --cpanfile cpanfile.prod
 
 # Production stage - minimal runtime image
 FROM perl:5.40.2
@@ -41,15 +35,8 @@ RUN apt-get update \
     libargon2-1 \
   && rm -rf /var/lib/apt/lists/*
 
-# Install carton in production stage
-RUN cpanm --notest Carton
-
 # Set working directory
 WORKDIR /app
-
-# Copy installed dependencies from builder stage
-COPY --from=builder /app/local ./local
-COPY --from=builder /app/cpanfile* ./
 
 # Copy application code
 COPY . .
@@ -58,10 +45,8 @@ COPY . .
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Create production registry script without local::lib
-RUN sed 's/use local::lib/#use local::lib/' registry > registry.prod \
-  && mv registry.prod registry \
-  && chmod +x registry
+# Make registry script executable (dependencies already in system Perl)
+RUN chmod +x registry
 
 # Set environment variables
 ENV MOJO_MODE=production
