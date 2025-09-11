@@ -36,10 +36,8 @@ services:
         value: web
     healthCheckPath: /health
     buildCommand: |
-      # Database setup and initial data import
-      carton exec sqitch deploy
-      carton exec ./registry workflow import registry
-      carton exec ./registry template import registry
+      # Install dependencies only during build
+      carton install --deployment
     autoDeploy: true
     disk:
       name: registry-storage
