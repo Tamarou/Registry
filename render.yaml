@@ -31,7 +31,7 @@ services:
       - key: SUPPORT_EMAIL
         value: support@registry-demo.onrender.com
       - key: PORT
-        value: 5000
+        value: 10000
       - key: SERVICE_TYPE
         value: web
       - key: SQITCH_TARGET
@@ -39,7 +39,6 @@ services:
           name: registry-postgres
           property: connectionString
     healthCheckPath: /health
-    port: 5000
     buildCommand: |
       # Install dependencies only during build
       carton install --deployment
