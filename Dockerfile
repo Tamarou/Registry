@@ -41,6 +41,9 @@ RUN apt-get update \
     libargon2-1 \
   && rm -rf /var/lib/apt/lists/*
 
+# Install carton in production stage
+RUN cpanm --notest Carton
+
 # Set working directory
 WORKDIR /app
 
