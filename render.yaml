@@ -2,7 +2,7 @@ databases:
   - name: registry-postgres
     databaseName: registry
     user: registry_user
-    plan: starter
+    plan: free
 
 services:
   - type: web
