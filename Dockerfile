@@ -35,6 +35,10 @@ RUN apt-get update \
     libargon2-1 \
   && rm -rf /var/lib/apt/lists/*
 
+# Copy installed Perl modules from builder stage
+COPY --from=builder /usr/local/lib/perl5 /usr/local/lib/perl5
+COPY --from=builder /usr/local/share/perl5 /usr/local/share/perl5
+
 # Set working directory
 WORKDIR /app
 
