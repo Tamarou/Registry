@@ -1,0 +1,7 @@
+% layout 'workflow';
+% title 'Location Creation';
+
+<div class="workflow-step">
+    <h2>Create New Location</h2>
+    <p>Location creation workflow step placeholder.</p>
+</div>

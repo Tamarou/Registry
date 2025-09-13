@@ -1,0 +1,13 @@
+% layout 'default';
+% title 'Error';
+
+<div class="error-page">
+    <h1>An Error Occurred</h1>
+    <p>We encountered an unexpected error. Please try again or contact support if the problem persists.</p>
+    <% if ($exception) { %>
+        <details>
+            <summary>Technical Details</summary>
+            <pre><%= $exception %></pre>
+        </details>
+    <% } %>
+</div>

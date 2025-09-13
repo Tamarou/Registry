@@ -1,0 +1,7 @@
+% layout 'workflow';
+% title 'Project Creation';
+
+<div class="workflow-step">
+    <h2>Create New Project</h2>
+    <p>Project creation workflow step placeholder.</p>
+</div>
