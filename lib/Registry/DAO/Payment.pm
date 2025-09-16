@@ -81,13 +81,18 @@ field $_stripe_client = undef;
         catch ($e) {
             $error_message = $e;
             $status = 'failed';
-            $self->save($db);
+            $self->update($db, {
+                error_message => $error_message,
+                status => $status
+            });
             die "Failed to create payment intent: $e";
         }
         
         # Update payment record with Stripe intent ID
         $stripe_payment_intent_id = $intent->{id};
-        $self->save($db);
+        $self->update($db, {
+            stripe_payment_intent_id => $stripe_payment_intent_id
+        });
         
         return {
             client_secret => $intent->{client_secret},
