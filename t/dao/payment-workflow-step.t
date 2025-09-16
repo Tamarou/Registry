@@ -153,13 +153,15 @@ subtest 'Payment step data preparation' => sub {
         children => [
             {
                 id => $child1->id,
-                child_name => 'Alice Smith',
+                first_name => 'Alice',
+                last_name => 'Smith',
                 birth_date => '2016-03-15',
                 grade => '3'
             },
             {
                 id => $child2->id,
-                child_name => 'Bob Smith',
+                first_name => 'Bob',
+                last_name => 'Smith',
                 birth_date => '2014-06-20',
                 grade => '5'
             }
@@ -191,7 +193,8 @@ subtest 'Payment creation without Stripe' => sub {
         children => [
             {
                 id => $child1->id,
-                child_name => 'Alice Smith',
+                first_name => 'Alice',
+                last_name => 'Smith',
                 birth_date => '2016-03-15',
                 grade => '3'
             }
@@ -256,12 +259,50 @@ subtest 'Calculate enrollment totals' => sub {
 };
 
 subtest 'Enrollment creation on successful payment' => sub {
-    plan skip_all => "Cannot test enrollment creation without Stripe integration or mocking";
+    # Skip if Stripe test keys not configured
+    plan skip_all => "STRIPE_SECRET_KEY not set - configure test keys in .envrc"
+        unless $ENV{STRIPE_SECRET_KEY};
 
-    # This would require either:
-    # 1. Mocking the Stripe API response with Test::MockModule
-    # 2. Using a test Stripe account with test API keys
-    # 3. Creating a separate test mode that bypasses Stripe
+    my $run = $workflow->new_run($db);
+
+    # Set up run data
+    $run->update_data($db, {
+        user_id => $parent->id,
+        children => [
+            {
+                id => $child1->id,
+                first_name => 'Alice',
+                last_name => 'Smith',
+                birth_date => '2016-03-15',
+                grade => '3'
+            }
+        ],
+        session_selections => {
+            $child1->id => $session->id
+        }
+    });
+
+    # Process payment with agreement using the workflow run
+    my $result = $run->process($db, 'payment', {
+        agreeTerms => 1,
+        stripeToken => 'tok_visa'  # Stripe test token
+    });
+
+    # Should successfully process payment and move to next step
+    ok $result, 'Payment processing returned result';
+    isnt $result->{next_step}, 'payment', 'Moved past payment step';
+    ok !$result->{errors}, 'No errors in payment processing' or diag explain $result->{errors};
+
+    # Check that payment was created
+    my $payment_id = $run->data->{payment_id};
+    ok $payment_id, 'Payment ID stored in workflow data';
+
+    if ($payment_id) {
+        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
+        ok $payment, 'Payment record created';
+        is $payment->amount, 150, 'Payment amount correct';
+        is $payment->user_id, $parent->id, 'Payment linked to correct user';
+    }
 };
 
 done_testing;
