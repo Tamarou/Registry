@@ -47,15 +47,23 @@ field $_stripe_client = undef;
     
     method stripe_client {
         return $_stripe_client if $_stripe_client;
-        
+
         my $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
         my $webhook_secret = $ENV{STRIPE_WEBHOOK_SECRET};
-        
-        $_stripe_client = Registry::Service::Stripe->new(
-            api_key => $api_key,
-            webhook_secret => $webhook_secret,
-        );
-        
+
+        # Handle SSL requirement gracefully in test environments
+        eval {
+            $_stripe_client = Registry::Service::Stripe->new(
+                api_key => $api_key,
+                webhook_secret => $webhook_secret,
+            );
+        };
+
+        if ($@) {
+            # If SSL or other requirements fail, re-throw with a clear message
+            die "Stripe client initialization failed: $@";
+        }
+
         return $_stripe_client;
     }
     
