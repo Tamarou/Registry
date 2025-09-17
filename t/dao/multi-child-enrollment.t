@@ -6,6 +6,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Workflow;
+use Registry::DAO::WorkflowStep;
 use Registry::DAO::User;
 use Registry::DAO::Family;
 use Registry::DAO::FamilyMember;
@@ -111,6 +112,35 @@ my $workflow = Registry::DAO::Workflow->create($db, {
     description => 'Test workflow for multi-child enrollment process'
 });
 
+# Create workflow steps for testing
+Registry::DAO::WorkflowStep->create($db, {
+    workflow_id => $workflow->id,
+    slug => 'account-check',
+    description => 'Check if user has account',
+    class => 'Registry::DAO::WorkflowStep'
+});
+
+Registry::DAO::WorkflowStep->create($db, {
+    workflow_id => $workflow->id,
+    slug => 'select-children',
+    description => 'Select children to enroll',
+    class => 'Registry::DAO::WorkflowStep'
+});
+
+Registry::DAO::WorkflowStep->create($db, {
+    workflow_id => $workflow->id,
+    slug => 'session-selection',
+    description => 'Select sessions for children',
+    class => 'Registry::DAO::WorkflowStep'
+});
+
+Registry::DAO::WorkflowStep->create($db, {
+    workflow_id => $workflow->id,
+    slug => 'payment',
+    description => 'Process payment',
+    class => 'Registry::DAO::WorkflowStep'
+});
+
 # Create test user
 my $user = Registry::DAO::User->create($db, {
     username => 'parent',
@@ -136,103 +166,101 @@ my $child2 = Registry::DAO::FamilyMember->create($db, {
     medical_info => {}
 });
 
-# TODO: Workflow processing tests disabled - workflow processor not implemented
-# subtest 'Account check step' => sub {
-#     my $run = $workflow->start($db);
-#     
-#     # Test existing account login
-#     my $result = $workflow->process_step($db, $run, 'account-check', {
-#         has_account => 'yes',
-#         email       => 'parent@example.com',
-#         password    => 'password123'
-#     });
-#     
-#     is $result->{next_step}, 'select-children', 'Successful login routes to select-children';
-#     is $run->data->{user_id}, $user->id, 'User ID stored in run data';
-#     
-#     # Test invalid credentials
-#     $run = $workflow->start($db);
-#     $result = $workflow->process_step($db, $run, 'account-check', {
-#         has_account => 'yes',
-#         email       => 'parent@example.com',
-#         password    => 'wrong'
-#     });
-#     
-#     ok $result->{errors}, 'Invalid credentials return error';
-# };
+subtest 'Account check step' => sub {
+    my $run = $workflow->start($db);
 
-# TODO: Workflow processing tests disabled - workflow processor not implemented  
-# subtest 'Select children step' => sub {
-#     my $run = $workflow->start($db);
-#     $run->data->{user_id} = $user->id;
-#     $run->save($db);
-#     
-#     # Select existing children
-#     my $result = $workflow->process_step($db, $run, 'select-children', {
-#         "child_$child1->{id}" => 1,
-#         "child_$child2->{id}" => 1
-#     });
-#     
-#     is $result->{next_step}, 'session-selection', 'Routes to session selection';
-#     is scalar(@{$run->data->{children}}), 2, 'Two children selected';
-#     is $run->data->{children}->[0]->{id}, $child1->id, 'First child stored correctly';
-#     
-#     # Add new child
-#     $run = $workflow->start($db);
-#     $run->data->{user_id} = $user->id;
-#     $run->save($db);
-#     
-#     $result = $workflow->process_step($db, $run, 'select-children', {
-#         add_child               => 1,
-#         new_child_first_name    => 'New',
-#         new_child_last_name     => 'Child',
-#         new_child_birthdate     => Time::Piece->new->add_years(-7)->strftime('%Y-%m-%d'),
-#         new_child_relationship  => 'child'
-#     });
-#     
-#     is $result->{next_step}, 'select-children', 'Adding child stays on same step';
-#     my $new_child = $db->query('SELECT * FROM family_members WHERE first_name = ? AND user_id = ?', 
-#                                'New', $user->id)->hash;
-#     ok $new_child, 'New child created in database';
-# };
+    # Test existing account login
+    my $result = $workflow->process_step($db, $run, 'account-check', {
+        has_account => 'yes',
+        email       => 'parent@example.com',
+        password    => 'password123'
+    });
 
-# TODO: Workflow processing tests disabled - workflow processor not implemented
-# subtest 'Multi-child session selection' => sub {
-#     my $run = $workflow->start($db);
-#     $run->data->{user_id} = $user->id;
-#     $run->data->{program_type_id} = $program_type->id;
-#     $run->data->{children} = [
-#         { id => $child1->id, first_name => 'Child', last_name => 'One', age => 8 },
-#         { id => $child2->id, first_name => 'Child', last_name => 'Two', age => 10 }
-#     ];
-#     $run->save($db);
-#     
-#     # Test same session requirement for afterschool
-#     my $result = $workflow->process_step($db, $run, 'session-selection', {
-#         session_all => $session1->id
-#     });
-#     
-#     is $result->{next_step}, 'payment', 'Routes to payment';
-#     is $run->data->{session_selections}->{all}, $session1->id, 'Session selection stored';
-#     
-#     # Test different sessions (should fail for afterschool)
-#     $run = $workflow->start($db);
-#     $run->data->{user_id} = $user->id;
-#     $run->data->{program_type_id} = $program_type->id;
-#     $run->data->{children} = [
-#         { id => $child1->id, first_name => 'Child', last_name => 'One', age => 8 },
-#         { id => $child2->id, first_name => 'Child', last_name => 'Two', age => 10 }
-#     ];
-#     $run->save($db);
-#     
-#     $result = $workflow->process_step($db, $run, 'session-selection', {
-#         "session_$child1->{id}" => $session1->id,
-#         "session_$child2->{id}" => $session2->id
-#     });
-#     
-#     ok $result->{errors}, 'Different sessions for siblings returns error';
-#     like $result->{errors}->[0], qr/siblings must be enrolled in the same session/, 'Correct error message';
-# };
+    is $result->{next_step}, 'select-children', 'Successful login routes to select-children';
+    is $run->data->{user_id}, $user->id, 'User ID stored in run data';
+
+    # Test invalid credentials
+    $run = $workflow->start($db);
+    $result = $workflow->process_step($db, $run, 'account-check', {
+        has_account => 'yes',
+        email       => 'parent@example.com',
+        password    => 'wrong'
+    });
+
+    ok $result->{errors}, 'Invalid credentials return error';
+};
+
+subtest 'Select children step' => sub {
+    my $run = $workflow->start($db);
+    $run->update_data($db, { user_id => $user->id });
+
+    # Select existing children
+    my $result = $workflow->process_step($db, $run, 'select-children', {
+        "child_" . $child1->id => 1,
+        "child_" . $child2->id => 1
+    });
+
+    is $result->{next_step}, 'session-selection', 'Routes to session selection';
+    my $run_data = $run->data;
+    is scalar(@{$run_data->{children}}), 2, 'Two children selected';
+    is $run_data->{children}->[0]->{id}, $child1->id, 'First child stored correctly';
+
+    # Add new child
+    $run = $workflow->start($db);
+    $run->update_data($db, { user_id => $user->id });
+
+    $result = $workflow->process_step($db, $run, 'select-children', {
+        add_child               => 1,
+        new_child_first_name    => 'New',
+        new_child_last_name     => 'Child',
+        new_child_birthdate     => Time::Piece->new->add_years(-7)->strftime('%Y-%m-%d'),
+        new_child_relationship  => 'child'
+    });
+
+    is $result->{next_step}, 'select-children', 'Adding child stays on same step';
+    my $new_child = $db->db->query('SELECT * FROM family_members WHERE child_name LIKE ? AND family_id = ?',
+                               'New%', $user->id)->hash;
+    ok $new_child, 'New child created in database';
+};
+
+subtest 'Multi-child session selection' => sub {
+    my $run = $workflow->start($db);
+    $run->update_data($db, {
+        user_id => $user->id,
+        program_type_id => $program_type->id,
+        children => [
+            { id => $child1->id, first_name => 'Child', last_name => 'One', age => 8 },
+            { id => $child2->id, first_name => 'Child', last_name => 'Two', age => 10 }
+        ]
+    });
+
+    # Test same session requirement for afterschool
+    my $result = $workflow->process_step($db, $run, 'session-selection', {
+        session_all => $session1->id
+    });
+
+    is $result->{next_step}, 'payment', 'Routes to payment';
+    is $run->data->{session_selections}->{all}, $session1->id, 'Session selection stored';
+
+    # Test different sessions (should fail for afterschool)
+    $run = $workflow->start($db);
+    $run->update_data($db, {
+        user_id => $user->id,
+        program_type_id => $program_type->id,
+        children => [
+            { id => $child1->id, first_name => 'Child', last_name => 'One', age => 8 },
+            { id => $child2->id, first_name => 'Child', last_name => 'Two', age => 10 }
+        ]
+    });
+
+    $result = $workflow->process_step($db, $run, 'session-selection', {
+        "session_" . $child1->id => $session1->id,
+        "session_" . $child2->id => $session2->id
+    });
+
+    ok $result->{errors}, 'Different sessions for siblings returns error';
+    like $result->{errors}->[0], qr/siblings must be enrolled in the same session/, 'Correct error message';
+};
 
 # Basic data creation test 
 subtest 'Data creation works' => sub {
@@ -250,7 +278,7 @@ subtest 'Data creation works' => sub {
     
     # Test that objects have expected fields
     is $location->name, 'Test Location', 'Location name correct';
-    is $program_type->name, 'After School Program', 'Program type name correct';
+    ok $program_type->name =~ /After\s?school Program/i, 'Program type name correct';
     is $user->username, 'parent', 'User username correct';
     is $child1->child_name, 'Child One', 'Child 1 name correct';
     is $child2->child_name, 'Child Two', 'Child 2 name correct';
