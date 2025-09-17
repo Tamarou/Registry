@@ -39,9 +39,8 @@ class Registry::Service::Stripe {
             $promise = $ua->get_p($url_with_params => $headers);
         } else {
             # For POST/PUT/DELETE, send as form data
-            $promise = $ua->build_tx($method => $url => $headers => form => $data)->then(
-                sub ($tx) { $ua->start_p($tx) }
-            );
+            my $tx = $ua->build_tx($method => $url => $headers => form => $data);
+            $promise = $ua->start_p($tx);
         }
         
         return $promise->then(sub ($tx) {
