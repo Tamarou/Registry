@@ -1,62 +1,21 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title><%= title || 'Registry' %></title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            line-height: 1.5;
-            color: #333;
-            margin: 0;
-            padding: 20px;
-        }
-        header {
-            margin-bottom: 2rem;
-        }
-        h1 {
-            font-weight: 600;
-        }
-        main {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        form {
-            margin: 2rem 0;
-        }
-        input, select, textarea {
-            width: 100%;
-            padding: 0.5rem;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 1rem;
-            margin-bottom: 1rem;
-        }
-        button, .button {
-            background-color: #1976d2;
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            font-size: 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-        }
-        button:hover, .button:hover {
-            background-color: #1565c0;
-        }
-    </style>
-    
+    <link rel="stylesheet" href="/css/registry.css">
+
     <%= content 'head' %>
 </head>
 <body>
-    <header>
-        <h1><%= title || 'Registry' %></h1>
-    </header>
-    <main>
-        <%= content %>
-    </main>
+    <div class="container">
+        <header class="mb-8">
+            <h1><%= title || 'Registry' %></h1>
+        </header>
+        <main>
+            <%= content %>
+        </main>
+    </div>
 </body>
 </html>

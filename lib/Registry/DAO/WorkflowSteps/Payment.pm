@@ -50,7 +50,7 @@ method create_payment ($db, $run, $form_data) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
     
     # Get user for email
-    my $user = Registry::DAO::User->new(id => $user_id)->load($db);
+    my $user = Registry::DAO::User->find($db, { id => $user_id });
     
     # Calculate total
     my $enrollment_data = {
@@ -61,7 +61,7 @@ method create_payment ($db, $run, $form_data) {
     my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
     
     # Create payment record
-    my $payment = Registry::DAO::Payment->new(
+    my $payment = Registry::DAO::Payment->create($db, {
         user_id => $user_id,
         amount => $payment_info->{total},
         metadata => {
@@ -69,7 +69,7 @@ method create_payment ($db, $run, $form_data) {
             workflow_run_id => $run->id,
             enrollment_data => $enrollment_data,
         }
-    )->save($db);
+    });
     
     # Add line items
     for my $item (@{$payment_info->{items}}) {
@@ -92,8 +92,7 @@ method create_payment ($db, $run, $form_data) {
     };
     
     # Store payment ID in workflow data
-    $run->data->{payment_id} = $payment->id;
-    $run->save($db);
+    $run->update_data($db, { payment_id => $payment->id });
     
     return {
         next_step => $self->id,

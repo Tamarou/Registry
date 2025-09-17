@@ -11,3 +11,6 @@ $XDG_CACHE_HOME/
 .cache/
 **/cache/
 *.cache
+
+# Environment files
+.envrc

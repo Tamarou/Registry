@@ -87,9 +87,12 @@
 
         <div class="payment-form-container">
             % unless ($data->{show_payment_form}) {
-                <form method="post" hx-post="<%= url_for 'workflow_process_step' %>" 
+                <form method="post" hx-post="<%= url_for 'workflow_process_step' %>"
                       hx-target="#main-content" hx-swap="outerHTML">
                     <input type="hidden" name="collect_payment_method" value="1">
+                    <!-- Test mode fields for automated testing -->
+                    <input type="hidden" name="setup_intent_id" value="">
+                    <input type="hidden" name="payment_method_id" value="">
                     
                     <div class="payment-method-setup">
                         <h3>Add Payment Method</h3>

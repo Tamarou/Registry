@@ -71,7 +71,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
     method process ( $db, $step, $new_data = {} ) {
         unless ( $step isa Registry::DAO::WorkflowStep ) {
-            $step = Registry::DAO::WorkflowStep->find( $db, $step );
+            $step = Registry::DAO::WorkflowStep->find( $db, { slug => $step } );
         }
 
         # TODO we really should inline these two calls into a single query

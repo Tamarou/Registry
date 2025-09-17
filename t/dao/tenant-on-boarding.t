@@ -69,7 +69,13 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     is $run->next_step( $dao->db )->slug, 'review', 'Next step is review';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db )->slug, 'payment', 'Next step is payment';
-    $run->process( $dao->db, $run->next_step( $dao->db ), { collect_payment_method => 1 } );
+    # Disable Stripe keys to force test mode in TenantPayment
+    local $ENV{STRIPE_PUBLISHABLE_KEY} = undef;
+    local $ENV{STRIPE_SECRET_KEY} = undef;
+
+    $run->process( $dao->db, $run->next_step( $dao->db ), {
+        collect_payment_method => 1
+    } );
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db ), undef, 'Next step is correct';

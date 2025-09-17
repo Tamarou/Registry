@@ -32,8 +32,8 @@
   <style>
     .hero {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 80px 0;
+      color: var(--color-white);
+      padding: var(--space-20) 0;
       text-align: center;
       min-height: 500px;
       display: flex;
@@ -41,30 +41,16 @@
       justify-content: center;
     }
     .hero-title {
-      font-size: 3.5rem;
-      font-weight: 700;
-      margin-bottom: 20px;
-      line-height: 1.2;
-    }
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 20px;
-    }
-    .btn {
-      display: inline-block;
-      padding: 18px 36px;
-      border-radius: 6px;
-      text-decoration: none;
-      font-weight: 600;
-      background-color: #28a745;
-      color: white;
-      font-size: 1.1rem;
-      transition: all 0.3s ease;
+      font-size: var(--font-size-5xl);
+      font-weight: var(--font-weight-bold);
+      margin-bottom: var(--space-5);
+      line-height: var(--line-height-tight);
     }
     @media (max-width: 768px) {
-      .hero-title { font-size: 2.5rem; }
-      .btn { padding: 15px 25px; font-size: 1rem; }
+      .hero-title { font-size: var(--font-size-4xl); }
+    }
+    @media (max-width: 480px) {
+      .hero-title { font-size: var(--font-size-3xl); }
     }
   </style>
   
@@ -122,8 +108,8 @@
           all in one powerful platform designed specifically for after-school programs.
         </p>
         <div class="hero-cta">
-          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" 
-             class="btn btn-primary btn-lg"
+          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>"
+             class="btn btn-success btn-xl"
              role="button"
              aria-describedby="trial-info">
             Start Your Free Trial
@@ -176,101 +162,60 @@
 
 <style>
 .marketing-page {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.6;
-  color: #333;
+  line-height: var(--line-height-normal);
+  color: var(--color-text-primary);
 }
 
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 20px;
-}
-
-/* Hero Section */
+/* Hero Section - keeping the gradient for brand consistency */
 .hero {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 80px 0;
+  color: var(--color-white);
+  padding: var(--space-20) 0;
   text-align: center;
 }
 
-.hero-title {
-  font-size: 3.5rem;
-  font-weight: 700;
-  margin-bottom: 20px;
-  line-height: 1.2;
-}
-
 .hero-subtitle {
-  font-size: 1.25rem;
-  margin-bottom: 40px;
+  font-size: var(--font-size-xl);
+  margin-bottom: var(--space-10);
   max-width: 600px;
   margin-left: auto;
   margin-right: auto;
   opacity: 0.95;
 }
 
-.btn {
-  display: inline-block;
-  padding: 15px 30px;
-  border-radius: 6px;
-  text-decoration: none;
-  font-weight: 600;
-  transition: all 0.3s ease;
-  border: none;
-  cursor: pointer;
-}
-
-.btn-primary {
-  background-color: #28a745;
-  color: white;
-}
-
-.btn-primary:hover, .btn-primary:focus {
-  background-color: #218838;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-}
-
-.btn-lg {
-  font-size: 1.1rem;
-  padding: 18px 36px;
-}
-
 .trial-info {
-  margin-top: 15px;
-  font-size: 0.9rem;
+  margin-top: var(--space-4);
+  font-size: var(--font-size-sm);
   opacity: 0.9;
 }
 
 /* Features Section */
 .features {
-  padding: 80px 0;
-  background-color: #f8f9fa;
+  padding: var(--space-20) 0;
+  background-color: var(--color-bg-secondary);
 }
 
 .section-title {
   text-align: center;
-  font-size: 2.5rem;
-  font-weight: 700;
-  margin-bottom: 60px;
-  color: #333;
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
+  margin-bottom: var(--space-16);
+  color: var(--color-text-primary);
 }
 
 .features-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 40px;
+  gap: var(--space-10);
 }
 
 .feature {
   text-align: center;
-  padding: 30px;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  transition: transform 0.3s ease;
+  padding: var(--space-8);
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  transition: transform var(--transition-base);
 }
 
 .feature:hover {
@@ -278,62 +223,49 @@
 }
 
 .feature-icon {
-  font-size: 3rem;
-  margin-bottom: 20px;
+  font-size: var(--font-size-5xl);
+  margin-bottom: var(--space-5);
 }
 
 .feature h3 {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin-bottom: 15px;
-  color: #333;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-4);
+  color: var(--color-text-primary);
 }
 
 .feature p {
-  color: #666;
-  line-height: 1.6;
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
 }
 
 /* Responsive Design */
 @media (max-width: 768px) {
-  .hero-title {
-    font-size: 2.5rem;
-  }
-  
   .hero-subtitle {
-    font-size: 1.1rem;
+    font-size: var(--font-size-lg);
   }
-  
+
   .features-grid {
     grid-template-columns: 1fr;
-    gap: 30px;
+    gap: var(--space-8);
   }
-  
+
   .feature {
-    padding: 20px;
+    padding: var(--space-5);
   }
-  
+
   .section-title {
-    font-size: 2rem;
+    font-size: var(--font-size-3xl);
   }
 }
 
 @media (max-width: 480px) {
   .hero {
-    padding: 60px 0;
+    padding: var(--space-16) 0;
   }
-  
-  .hero-title {
-    font-size: 2rem;
-  }
-  
-  .btn-lg {
-    font-size: 1rem;
-    padding: 15px 25px;
-  }
-  
+
   .features {
-    padding: 60px 0;
+    padding: var(--space-16) 0;
   }
 }
 </style>

@@ -134,9 +134,16 @@ subtest 'Payment for user' => sub {
     ok $is_ordered, 'Payments ordered by created_at DESC';
 };
 
-# Skip Stripe-specific tests if API key not set
+# Skip Stripe-specific tests if API key not set or SSL not available
 SKIP: {
     skip "STRIPE_SECRET_KEY not set", 2 unless $ENV{STRIPE_SECRET_KEY};
+
+    # Test if SSL is available for HTTPS requests
+    my $ssl_available = eval {
+        require IO::Socket::SSL;
+        IO::Socket::SSL->VERSION >= 2.009;
+    };
+    skip "IO::Socket::SSL 2.009+ required for Stripe API calls", 2 unless $ssl_available;
     
     subtest 'Create payment intent' => sub {
         my $payment = Registry::DAO::Payment->create($db, {
