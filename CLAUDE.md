@@ -95,12 +95,14 @@ class Foo :isa(Bar) {
   - Unit tests for DAOs in `t/dao/`
   - Controller tests in `t/controller/`
   - User journey tests in `t/user-journeys/`
+  - **Test-only infrastructure belongs in `t/lib/` files** - NEVER add test-specific methods or infrastructure to core production classes. Test helpers, mocks, and specialized test infrastructure should be isolated in the test directory structure.
 - **Template Extension**: Templates can specify a different workflow layout via `extends 'layouts/workflow'`
 
 ### Important Notes
 
 - **Pre-Alpha System**: Registry is pre-alpha with no users yet. Do NOT worry about backwards compatibility unless explicitly told otherwise. Make the best technical decisions for the current codebase.
 - **100% Test Pass Rate**: ALL tests must pass at 100% before any code changes are considered complete. This is non-negotiable.
+- **Test Infrastructure Isolation**: Methods like `process_step()` in `Registry::DAO::Workflow` are examples of test-only infrastructure that should have been in `t/lib/` files instead of core classes. When tests need specialized infrastructure, create it in the test directory structure, not in production code.
 - When modifying workflows, remember to re-import them with the workflow import command
 - The workflow processor (`lib/Registry/Utility/WorkflowProcessor.pm`) handles workflow execution
 - Custom workflow steps must inherit from base step classes and implement required methods

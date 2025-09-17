@@ -8,6 +8,7 @@ use Test::Registry::DB;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::User;
+use Test::DAO::WorkflowProcessor;
 use Registry::DAO::Family;
 use Registry::DAO::FamilyMember;
 use Registry::DAO::Session;
@@ -166,11 +167,14 @@ my $child2 = Registry::DAO::FamilyMember->create($db, {
     medical_info => {}
 });
 
+# Create test workflow processor
+my $test_processor = Test::DAO::WorkflowProcessor->new;
+
 subtest 'Account check step' => sub {
     my $run = $workflow->start($db);
 
     # Test existing account login
-    my $result = $workflow->process_step($db, $run, 'account-check', {
+    my $result = $test_processor->process_step($db, $workflow, $run, 'account-check', {
         has_account => 'yes',
         email       => 'parent@example.com',
         password    => 'password123'
@@ -181,7 +185,7 @@ subtest 'Account check step' => sub {
 
     # Test invalid credentials
     $run = $workflow->start($db);
-    $result = $workflow->process_step($db, $run, 'account-check', {
+    $result = $test_processor->process_step($db, $workflow, $run, 'account-check', {
         has_account => 'yes',
         email       => 'parent@example.com',
         password    => 'wrong'
@@ -195,7 +199,7 @@ subtest 'Select children step' => sub {
     $run->update_data($db, { user_id => $user->id });
 
     # Select existing children
-    my $result = $workflow->process_step($db, $run, 'select-children', {
+    my $result = $test_processor->process_step($db, $workflow, $run, 'select-children', {
         "child_" . $child1->id => 1,
         "child_" . $child2->id => 1
     });
@@ -209,7 +213,7 @@ subtest 'Select children step' => sub {
     $run = $workflow->start($db);
     $run->update_data($db, { user_id => $user->id });
 
-    $result = $workflow->process_step($db, $run, 'select-children', {
+    $result = $test_processor->process_step($db, $workflow, $run, 'select-children', {
         add_child               => 1,
         new_child_first_name    => 'New',
         new_child_last_name     => 'Child',
@@ -235,7 +239,7 @@ subtest 'Multi-child session selection' => sub {
     });
 
     # Test same session requirement for afterschool
-    my $result = $workflow->process_step($db, $run, 'session-selection', {
+    my $result = $test_processor->process_step($db, $workflow, $run, 'session-selection', {
         session_all => $session1->id
     });
 
@@ -253,7 +257,7 @@ subtest 'Multi-child session selection' => sub {
         ]
     });
 
-    $result = $workflow->process_step($db, $run, 'session-selection', {
+    $result = $test_processor->process_step($db, $workflow, $run, 'session-selection', {
         "session_" . $child1->id => $session1->id,
         "session_" . $child2->id => $session2->id
     });
