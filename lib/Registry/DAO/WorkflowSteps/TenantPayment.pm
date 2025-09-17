@@ -281,8 +281,15 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             });
             
             
+            # For testing, create the tenant directly instead of delegating to RegisterTenant step
+            my $tenant_result = $self->create_tenant_directly($db, $run);
+
             # Payment successful, move to completion
-            return { next_step => 'complete' };
+            return {
+                next_step => 'complete',
+                tenant_created => 1,
+                %$tenant_result
+            };
         }
         
         # For non-test modes, validate the setup_intent_id matches what was stored
