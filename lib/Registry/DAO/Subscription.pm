@@ -28,9 +28,26 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
             'metadata[organization_type]' => $profile_data->{organization_type} // 'education'
         );
 
-        # Add address if provided
+        # Add address if provided - handle both JSON string and flat field formats
         if ($profile_data->{billing_address}) {
-            my $address = decode_json($profile_data->{billing_address});
+            my $address;
+
+            # Try to decode as JSON first (new workflow format)
+            eval {
+                $address = decode_json($profile_data->{billing_address});
+            };
+
+            # If that fails, treat it as a simple string and use flat fields (test format)
+            if ($@) {
+                $address = {
+                    line1 => $profile_data->{billing_address},
+                    city => $profile_data->{billing_city},
+                    state => $profile_data->{billing_state},
+                    postal_code => $profile_data->{billing_zip},
+                    country => $profile_data->{billing_country} // 'US'
+                };
+            }
+
             $form_data{'address[line1]'} = $address->{line1} if $address->{line1};
             $form_data{'address[line2]'} = $address->{line2} if $address->{line2};
             $form_data{'address[city]'} = $address->{city} if $address->{city};

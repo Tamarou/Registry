@@ -108,7 +108,7 @@
         <p>Join hundreds of organizations already using Registry to streamline their after-school programs, improve family communication, and boost operational efficiency.</p>
         
         <form method="POST" action="<%= $action %>" class="start-form">
-            <button type="submit" class="btn btn-primary btn-lg">
+            <button type="submit" class="btn btn-primary btn-xl">
                 Let's Get Started →
             </button>
         </form>

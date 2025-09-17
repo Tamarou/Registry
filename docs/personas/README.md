@@ -1,3 +1,8 @@
+## Reese
+
+* Role: Registry Platform Owner and Founder
+* [profile](reese.md)
+
 ## Jordan
 
 <img width="226" alt="image" src="https://github.com/Tamarou/Registry/assets/39840/94a54c32-4659-4b0d-b224-e07253717e95">
