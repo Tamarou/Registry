@@ -191,4 +191,9 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
             { -asc => 'created_at' }
         )->hashes->to_array;
     }
+
+    method start($db) {
+        return $self->new_run($db);
+    }
+
 }

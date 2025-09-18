@@ -95,16 +95,22 @@ class Foo :isa(Bar) {
   - Unit tests for DAOs in `t/dao/`
   - Controller tests in `t/controller/`
   - User journey tests in `t/user-journeys/`
+  - **Test-only infrastructure belongs in `t/lib/` files** - NEVER add test-specific methods or infrastructure to core production classes. Test helpers, mocks, and specialized test infrastructure should be isolated in the test directory structure.
 - **Template Extension**: Templates can specify a different workflow layout via `extends 'layouts/workflow'`
 
 ### Important Notes
 
 - **Pre-Alpha System**: Registry is pre-alpha with no users yet. Do NOT worry about backwards compatibility unless explicitly told otherwise. Make the best technical decisions for the current codebase.
 - **100% Test Pass Rate**: ALL tests must pass at 100% before any code changes are considered complete. This is non-negotiable.
+- **Test Infrastructure Isolation**: Test-only infrastructure must be isolated in `t/lib/` files, never in core production classes. For example, workflow testing should use the real `Registry::WorkflowProcessor` or individual workflow step classes, not fake compatibility layers in production code.
 - When modifying workflows, remember to re-import them with the workflow import command
 - The workflow processor (`lib/Registry/Utility/WorkflowProcessor.pm`) handles workflow execution
 - Custom workflow steps must inherit from base step classes and implement required methods
 - HTMX attributes are used extensively for dynamic behavior without full page reloads
+- **Workflow Testing**: Use the real production interfaces for testing workflows:
+  - **Integration tests**: `Registry::WorkflowProcessor->new_run($workflow, $data)`
+  - **Unit tests**: Individual workflow step classes like `Registry::DAO::WorkflowSteps::AccountCheck->process($db, $form_data)`
+  - **Reference pattern**: See `t/dao/payment-workflow-step.t` for proper workflow testing approach
 
 ## Production Features
 

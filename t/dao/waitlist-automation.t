@@ -92,49 +92,34 @@ my $session = Test::Registry::Fixtures::create_session($db, {
     is $waitlist2->position, 2, 'Second student in position 2';
 }
 
-SKIP: {    # Test waitlist processing
+{    # Test waitlist processing
     # Process waitlist (simulate spot opening)
-    my $offered_entry;
-    eval {
-        $offered_entry = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
-    };
-    
-    if ($@) {
-        # Skip this test due to database constraint issues
-        skip "Database constraint issue with position reordering: $@", 4;
-    }
-    
+    my $offered_entry = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
+
     ok $offered_entry, 'Waitlist processing returned entry';
     is $offered_entry->status, 'offered', 'Entry status changed to offered';
     ok $offered_entry->offered_at, 'Offered timestamp set';
     ok $offered_entry->expires_at, 'Expiration timestamp set';
 }
 
-SKIP: {    # Test offer acceptance
+{    # Test offer acceptance
     # Get the offered entry
-    my $offered = Registry::DAO::Waitlist->find($db, { 
-        session_id => $session->id, 
-        status => 'offered' 
+    my $offered = Registry::DAO::Waitlist->find($db, {
+        session_id => $session->id,
+        status => 'offered'
     });
-    
-    if (!$offered) {
-        skip "No offered entry found (previous test may have failed)", 3;
-    }
-    
+
     ok $offered, 'Found offered entry';
-    
+
     # Accept the offer
-    eval { $offered->accept_offer($db); };
-    if ($@) {
-        skip "Failed to accept offer: $@", 2;
-    }
-    
+    $offered->accept_offer($db);
+
     # Verify enrollment was created
     my $enrollment = $db->db->select('enrollments', '*', {
         session_id => $session->id,
         student_id => $offered->student_id
     })->hash;
-    
+
     ok $enrollment, 'Enrollment created after accepting offer';
     is $enrollment->{status}, 'pending', 'Enrollment status is pending';
 }
@@ -152,48 +137,41 @@ my $student3 = Test::Registry::Fixtures::create_user($t->db, {
     user_type => 'student',
 });
 
-SKIP: {    # Test offer expiration
+{    # Test offer expiration
     # Add student3 to waitlist
-    
+
     # Copy to tenant schema
     $t->db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $parent3->id);
     $t->db->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $tenant->slug, $student3->id);
-    
+
     my $waitlist3 = Registry::DAO::Waitlist->join_waitlist(
         $db, $session->id, $location->id, $student3->id, $parent3->id
     );
-    
+
     # Process waitlist to create an offer
-    my $offered_entry;
-    eval {
-        $offered_entry = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
-    };
-    
-    if ($@) {
-        skip "Failed to process waitlist: $@", 6;
-    }
-    
+    my $offered_entry = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
+
     ok $offered_entry, 'New offer created';
-    
+
     # Manually expire the offer by setting expires_at to past
     $offered_entry->update($db, { expires_at => \"NOW() - INTERVAL '1 hour'" }); # 1 hour ago
-    
+
     # Test expiration check
     my $expired_entries = Registry::DAO::Waitlist->expire_old_offers($db);
-    
+
     ok @$expired_entries >= 1, 'Found expired entries';
-    
+
     # Refresh the entry and check status
     $offered_entry = Registry::DAO::Waitlist->find($db, { id => $offered_entry->id });
     is $offered_entry->status, 'expired', 'Entry marked as expired';
 }
 
-SKIP: {    # Test helper methods
-    my $waitlist_entry = Registry::DAO::Waitlist->find($db, { 
+{    # Test helper methods
+    my $waitlist_entry = Registry::DAO::Waitlist->find($db, {
         session_id => $session->id,
         status => 'waiting'
     });
-    
+
     if ($waitlist_entry) {
         ok $waitlist_entry->is_waiting, 'is_waiting method works';
         ok !$waitlist_entry->is_offered, 'is_offered method works for waiting entry';
@@ -201,12 +179,12 @@ SKIP: {    # Test helper methods
     }
 }
 
-SKIP: {    # Test position tracking
+{    # Test position tracking
     # After student1 accepted and student2's offer expired, student3 should be at position 1
     my $position = Registry::DAO::Waitlist->get_student_position(
         $db, $session->id, $student3->id
     );
-    
+
     # Should be position 1 since student3 is the only waiting student
     is $position, 1, 'Position correctly tracked after promotion';
 }
