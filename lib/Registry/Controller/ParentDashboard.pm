@@ -65,56 +65,73 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         $c->render(json => { unread_count => $unread_count });
     }
     
-    # Drop enrollment (quick action)
+    # Drop enrollment (with business rules)
     method drop_enrollment ($c) {
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
-        
+
         my $enrollment_id = $c->param('enrollment_id');
+        my $reason = $c->param('reason') || 'Parent requested drop';
+        my $refund_requested = $c->param('refund_requested') ? 1 : 0;
         my $db = $c->app->db($c->stash('tenant'));
-        
+
         try {
-            # Verify parent owns this enrollment
-            my $enrollment = $db->select('enrollments', '*', { 
-                id => $enrollment_id 
-            })->hash;
-            
+            # Find enrollment using DAO
+            my $enrollment = Registry::DAO::Enrollment->find($db, { id => $enrollment_id });
             return $c->render(status => 404, text => 'Enrollment not found') unless $enrollment;
-            
-            # Check if parent has access to this enrollment via family member
-            my $family_member = $db->select('family_members', '*', { 
-                id => $enrollment->{family_member_id},
+
+            # Verify parent owns this enrollment via family member
+            my $family_member = $db->select('family_members', '*', {
+                id => $enrollment->family_member_id,
                 family_id => $user->{id}
             })->hash;
-            
+
             return $c->render(status => 403, text => 'Forbidden') unless $family_member;
-            
-            # Update enrollment status to cancelled
-            $db->update('enrollments', 
-                { status => 'cancelled', updated_at => \'now()' },
-                { id => $enrollment_id }
-            );
-            
-            # Trigger waitlist processing for this session
-            require Registry::Job::ProcessWaitlist;
-            $c->app->minion->enqueue('process_waitlist', [$enrollment->{session_id}], {
-                attempts => 3,
-                priority => 8
-            });
-            
-            if ($c->accepts('', 'html')) {
-                $c->flash(success => 'Enrollment cancelled successfully. Waitlist will be processed automatically.');
-                return $c->redirect_to('parent_dashboard');
+
+            # Check if drop is allowed and process accordingly
+            if ($enrollment->can_drop($db, $user)) {
+                # Immediate drop allowed (session hasn't started)
+                $enrollment->request_drop($db, $user, $reason, $refund_requested);
+
+                if ($c->accepts('', 'html')) {
+                    $c->flash(success => 'Enrollment cancelled successfully. Waitlist will be processed automatically.');
+                    return $c->redirect_to('parent_dashboard');
+                } else {
+                    return $c->render(json => {
+                        success => 1,
+                        message => 'Enrollment cancelled successfully',
+                        immediate => 1
+                    });
+                }
             } else {
-                return $c->render(json => { success => 1, message => 'Enrollment cancelled successfully' });
+                # Drop request requires admin approval (session has started)
+                my $drop_request = $enrollment->request_drop($db, $user, $reason, $refund_requested);
+
+                # Notify admin via Minion job
+                $c->app->minion->enqueue('notify_admin_drop_request', [$drop_request->id], {
+                    attempts => 3,
+                    priority => 7
+                });
+
+                if ($c->accepts('', 'html')) {
+                    $c->flash(info => 'Drop request submitted for admin approval. You will be notified when processed.');
+                    return $c->redirect_to('parent_dashboard');
+                } else {
+                    return $c->render(json => {
+                        success => 1,
+                        message => 'Drop request submitted for admin approval',
+                        requires_approval => 1,
+                        request_id => $drop_request->id
+                    });
+                }
             }
         }
         catch ($e) {
             if ($c->accepts('', 'html')) {
-                $c->flash(error => "Failed to cancel enrollment: $e");
+                $c->flash(error => "Failed to process drop request: $e");
                 return $c->redirect_to('parent_dashboard');
             } else {
-                return $c->render(json => { error => "Failed to cancel enrollment: $e" }, status => 500);
+                return $c->render(json => { error => "Failed to process drop request: $e" }, status => 500);
             }
         }
     }
