@@ -80,7 +80,7 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
             
             # Collect selected child IDs from checkboxes
             for my $key (keys %$form_data) {
-                if ($key =~ /^child_(\w+)$/ && $form_data->{$key}) {
+                if ($key =~ /^child_(.+)$/ && $form_data->{$key}) {
                     push @selected_child_ids, $1;
                 }
             }
@@ -145,7 +145,7 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
             # Check if at least one child is selected
             my $has_selection = 0;
             for my $key (keys %$form_data) {
-                if ($key =~ /^child_\w+$/ && $form_data->{$key}) {
+                if ($key =~ /^child_.+$/ && $form_data->{$key}) {
                     $has_selection = 1;
                     last;
                 }

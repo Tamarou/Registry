@@ -55,7 +55,7 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             
             # Collect selections from form
             for my $key (keys %$form_data) {
-                if ($key =~ /^session_for_(\w+)$/) {
+                if ($key =~ /^session_for_(.+)$/) {
                     my $child_id = $1;
                     my $session_id = $form_data->{$key};
                     
@@ -120,8 +120,8 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             my $has_selection = 0;
             
             for my $key (keys %$form_data) {
-                if ($key =~ /^session_for_\w+$/ && 
-                    $form_data->{$key} && 
+                if ($key =~ /^session_for_.+$/ &&
+                    $form_data->{$key} &&
                     $form_data->{$key} ne 'none') {
                     $has_selection = 1;
                     last;
@@ -165,7 +165,7 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             my $session = Registry::DAO::Session->new(%$row);
             
             # Check capacity
-            my $capacity = $session->total_capacity($db) || 0;
+            my $capacity = $session->capacity || 0;
             my $enrolled = $db->select('enrollments', 'COUNT(*)', {
                 session_id => $session->id,
                 status => ['active', 'pending']
