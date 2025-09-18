@@ -102,11 +102,15 @@ class Foo :isa(Bar) {
 
 - **Pre-Alpha System**: Registry is pre-alpha with no users yet. Do NOT worry about backwards compatibility unless explicitly told otherwise. Make the best technical decisions for the current codebase.
 - **100% Test Pass Rate**: ALL tests must pass at 100% before any code changes are considered complete. This is non-negotiable.
-- **Test Infrastructure Isolation**: Methods like `process_step()` in `Registry::DAO::Workflow` are examples of test-only infrastructure that should have been in `t/lib/` files instead of core classes. When tests need specialized infrastructure, create it in the test directory structure, not in production code.
+- **Test Infrastructure Isolation**: Test-only infrastructure must be isolated in `t/lib/` files, never in core production classes. For example, workflow testing should use the real `Registry::WorkflowProcessor` or individual workflow step classes, not fake compatibility layers in production code.
 - When modifying workflows, remember to re-import them with the workflow import command
 - The workflow processor (`lib/Registry/Utility/WorkflowProcessor.pm`) handles workflow execution
 - Custom workflow steps must inherit from base step classes and implement required methods
 - HTMX attributes are used extensively for dynamic behavior without full page reloads
+- **Workflow Testing**: Use the real production interfaces for testing workflows:
+  - **Integration tests**: `Registry::WorkflowProcessor->new_run($workflow, $data)`
+  - **Unit tests**: Individual workflow step classes like `Registry::DAO::WorkflowSteps::AccountCheck->process($db, $form_data)`
+  - **Reference pattern**: See `t/dao/payment-workflow-step.t` for proper workflow testing approach
 
 ## Production Features
 
