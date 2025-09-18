@@ -28,7 +28,6 @@ my $tenant = Test::Registry::Fixtures::create_tenant($dao->db, {
     name => 'Test MultiChild Session Tenant',
     slug => 'test_multi_session',
 });
-$dao->db->query('SELECT clone_schema(?)', 'test_multi_session');
 
 # Switch to tenant schema
 $dao = Registry::DAO->new(url => $test_db->uri, schema => 'test_multi_session');

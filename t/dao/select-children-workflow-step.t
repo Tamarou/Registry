@@ -23,7 +23,6 @@ my $tenant = Test::Registry::Fixtures::create_tenant($dao->db, {
     name => 'Test SelectChildren Tenant',
     slug => 'test_select_children',
 });
-$dao->db->query('SELECT clone_schema(?)', 'test_select_children');
 
 # Switch to tenant schema
 $dao = Registry::DAO->new(url => $test_db->uri, schema => 'test_select_children');

@@ -19,7 +19,12 @@ package Test::Registry::Fixtures {
     
     sub create_tenant ($db, $data) {
         require Registry::DAO::Tenant;
-        Registry::DAO::Tenant->create($db, $data);
+        my $tenant = Registry::DAO::Tenant->create($db, $data);
+
+        # Automatically create the tenant schema by cloning from registry schema
+        $db->query('SELECT clone_schema(?)', $tenant->slug);
+
+        return $tenant;
     }
     
     sub create_location ($db, $data) {
