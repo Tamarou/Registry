@@ -1,0 +1,70 @@
+% layout 'workflow';
+% title 'Choose Locations';
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Assign Program to Locations</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Choose Locations for <%= stash('step_data')->{project_name} %></h2>
+        <p class="text-gray-600 mb-6">Select one or more locations where this program will be offered. You'll configure specific details for each location in the next step.</p>
+
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'choose-locations') %>">
+            <div class="space-y-4">
+                <% my $locations = stash('step_data')->{locations} || []; %>
+                <% for my $location (@$locations) { %>
+                    <label class="flex items-start p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                        <input type="checkbox" name="location_ids" value="<%= $location->id %>" class="mt-1 mr-3">
+                        <div class="flex-1">
+                            <span class="font-semibold text-lg"><%= $location->name %></span>
+                            <% if ($location->address) { %>
+                                <p class="text-gray-600 mt-1"><%= $location->address %></p>
+                            <% } %>
+                            <div class="text-sm text-gray-500 mt-2">
+                                <% if ($location->capacity) { %>
+                                    • Capacity: <%= $location->capacity %> participants<br>
+                                <% } %>
+                                <% if ($location->metadata && $location->metadata->{facilities}) { %>
+                                    • Facilities: <%= join(', ', @{$location->metadata->{facilities}}) %><br>
+                                <% } %>
+                            </div>
+                        </div>
+                    </label>
+                <% } %>
+
+                <% unless (@$locations) { %>
+                    <div class="bg-yellow-50 border border-yellow-200 p-4 rounded">
+                        <p class="text-yellow-800">No locations have been configured. Please create locations first using the Location Creation workflow.</p>
+                    </div>
+                <% } %>
+            </div>
+
+            <div class="mt-6 flex justify-between">
+                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'select-program') %>"
+                   class="bg-gray-300 text-gray-700 px-6 py-2 rounded hover:bg-gray-400">
+                    Back
+                </a>
+                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
+                        <%= @$locations ? '' : 'disabled' %>>
+                    Continue
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Ensure at least one location is selected
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    const checkboxes = document.querySelectorAll('input[name="location_ids"]');
+    const submitBtn = document.querySelector('button[type="submit"]');
+
+    function validateSelection() {
+        const checked = Array.from(checkboxes).some(cb => cb.checked);
+        submitBtn.disabled = !checked || checkboxes.length === 0;
+    }
+
+    checkboxes.forEach(cb => cb.addEventListener('change', validateSelection));
+    validateSelection(); // Initial check
+});
+</script>

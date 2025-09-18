@@ -1,0 +1,79 @@
+% layout 'workflow';
+% title 'Program Assignment Complete';
+
+<div class="max-w-4xl mx-auto p-6">
+    <div class="text-center">
+        <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
+            <svg class="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+        </div>
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">Program Assignment Complete!</h1>
+        <p class="text-lg text-gray-600 mb-8">Your program has been successfully assigned to all selected locations.</p>
+    </div>
+
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 class="text-xl font-semibold mb-4">Assignment Summary</h2>
+
+        <% my $data = stash('step_data') || {}; %>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div>
+                <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide">Program</h3>
+                <p class="text-lg font-semibold"><%= $data->{project_name} || 'Unknown Program' %></p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide">Locations Assigned</h3>
+                <p class="text-lg font-semibold"><%= scalar(@{$data->{created_sessions} || []}) %> locations</p>
+            </div>
+        </div>
+
+        <% my $created_sessions = $data->{created_sessions} || []; %>
+        <% if (@$created_sessions) { %>
+            <div class="border-t pt-4">
+                <h3 class="text-lg font-medium mb-3">Generated Sessions</h3>
+                <div class="space-y-3">
+                    <% for my $session (@$created_sessions) { %>
+                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded">
+                            <div>
+                                <span class="font-medium"><%= $session->{location_name} %></span>
+                                <div class="text-sm text-gray-500">
+                                    Capacity: <%= $session->{capacity} %> participants
+                                    <% if ($session->{teacher_name}) { %>
+                                        • Teacher: <%= $session->{teacher_name} %>
+                                    <% } %>
+                                </div>
+                            </div>
+                            <div class="text-sm text-gray-500">
+                                <% if ($session->{events_count}) { %>
+                                    <%= $session->{events_count} %> events created
+                                <% } %>
+                            </div>
+                        </div>
+                    <% } %>
+                </div>
+            </div>
+        <% } %>
+    </div>
+
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <h3 class="text-lg font-semibold mb-2 text-blue-800">Next Steps</h3>
+        <ul class="text-blue-700 space-y-1">
+            <li>• Sessions are now available for registration</li>
+            <li>• Parents can enroll their children through the registration portal</li>
+            <li>• Manage enrollments through the admin dashboard</li>
+            <li>• Teachers can view their assigned sessions and mark attendance</li>
+            <li>• Monitor program capacity and manage waitlists as needed</li>
+        </ul>
+    </div>
+
+    <div class="flex justify-center space-x-4">
+        <a href="<%= url_for('admin_dashboard') %>"
+           class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600">
+            Go to Admin Dashboard
+        </a>
+        <a href="<%= url_for('workflow_start', workflow_slug => 'program-location-assignment') %>"
+           class="bg-gray-300 text-gray-700 px-6 py-2 rounded hover:bg-gray-400">
+            Assign Another Program
+        </a>
+    </div>
+</div>

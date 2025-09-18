@@ -1,0 +1,52 @@
+% layout 'workflow';
+% title 'Select Program';
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Assign Program to Locations</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Select Program</h2>
+        <p class="text-gray-600 mb-6">Choose an existing program to assign to one or more locations.</p>
+
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'select-program') %>">
+            <div class="space-y-4">
+                <% my $projects = stash('step_data')->{projects} || []; %>
+                <% for my $project (@$projects) { %>
+                    <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
+                        <input type="radio" name="project_id" value="<%= $project->id %>" class="mr-3" required>
+                        <span class="font-semibold text-lg"><%= $project->name %></span>
+                        <% if ($project->description) { %>
+                            <p class="text-gray-600 mt-1 ml-6"><%= $project->description %></p>
+                        <% } %>
+                        <% if ($project->metadata) { %>
+                            <div class="text-sm text-gray-500 mt-2 ml-6">
+                                <% if ($project->metadata->{age_min} || $project->metadata->{age_max}) { %>
+                                    • Ages: <%= $project->metadata->{age_min} // 'Any' %> - <%= $project->metadata->{age_max} // 'Any' %><br>
+                                <% } %>
+                                <% if ($project->metadata->{program_type}) { %>
+                                    • Type: <%= $project->metadata->{program_type} %><br>
+                                <% } %>
+                                <% if ($project->metadata->{duration_weeks}) { %>
+                                    • Duration: <%= $project->metadata->{duration_weeks} %> weeks<br>
+                                <% } %>
+                            </div>
+                        <% } %>
+                    </label>
+                <% } %>
+
+                <% unless (@$projects) { %>
+                    <div class="bg-yellow-50 border border-yellow-200 p-4 rounded">
+                        <p class="text-yellow-800">No programs have been created yet. Please create a program first using the Program Creation workflow.</p>
+                    </div>
+                <% } %>
+            </div>
+
+            <div class="mt-6 flex justify-end">
+                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
+                        <%= @$projects ? '' : 'disabled' %>>
+                    Continue
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

@@ -1,0 +1,149 @@
+% layout 'workflow';
+% title 'Generate Events';
+
+<div class="max-w-6xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Assign Program to Locations</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Generate Events for <%= stash('step_data')->{project_name} %></h2>
+        <p class="text-gray-600 mb-6">Review your configuration and set the schedule parameters to generate events across all selected locations.</p>
+
+        <!-- Configuration Summary -->
+        <div class="bg-gray-50 rounded-lg p-4 mb-6">
+            <h3 class="text-lg font-semibold mb-3">Configuration Summary</h3>
+            <% my $configured_locations = stash('step_data')->{configured_locations} || []; %>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <% for my $location (@$configured_locations) { %>
+                    <div class="bg-white border rounded p-3">
+                        <h4 class="font-medium text-sm"><%= $location->{name} %></h4>
+                        <div class="text-xs text-gray-500 mt-1">
+                            Capacity: <%= $location->{capacity} %><br>
+                            <% if ($location->{pricing_override}) { %>
+                                Price: $<%= $location->{pricing_override} %><br>
+                            <% } %>
+                            <% if ($location->{schedule}) { %>
+                                Schedule: <%= $location->{schedule} %><br>
+                            <% } %>
+                        </div>
+                    </div>
+                <% } %>
+            </div>
+        </div>
+
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'generate-events') %>">
+            <!-- Generation Parameters -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Program Start Date *
+                    </label>
+                    <input type="date"
+                           name="generation_params[start_date]"
+                           class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           required>
+                    <p class="text-sm text-gray-500 mt-1">When the program sessions should begin</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Duration (weeks) *
+                    </label>
+                    <input type="number"
+                           name="generation_params[duration_weeks]"
+                           value="<%= stash('step_data')->{program_metadata}->{duration_weeks} || 8 %>"
+                           min="1" max="52"
+                           class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           required>
+                    <p class="text-sm text-gray-500 mt-1">Number of weeks the program will run</p>
+                </div>
+            </div>
+
+            <!-- Teacher Assignments -->
+            <% my $available_teachers = stash('step_data')->{available_teachers} || []; %>
+            <% if (@$available_teachers) { %>
+                <div class="mb-6">
+                    <h3 class="text-lg font-semibold mb-3">Teacher Assignments (Optional)</h3>
+                    <p class="text-gray-600 mb-4">Assign teachers to each location. This can be done later if needed.</p>
+
+                    <div class="space-y-4">
+                        <% for my $location (@$configured_locations) { %>
+                            <div class="flex items-center space-x-4">
+                                <label class="w-48 text-sm font-medium text-gray-700">
+                                    <%= $location->{name} %>:
+                                </label>
+                                <select name="teacher_assignments[<%= $location->{id} %>]"
+                                        class="flex-1 border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="">-- Select Teacher (Optional) --</option>
+                                    <% for my $teacher (@$available_teachers) { %>
+                                        <option value="<%= $teacher->id %>">
+                                            <%= $teacher->first_name %> <%= $teacher->last_name %>
+                                        </option>
+                                    <% } %>
+                                </select>
+                            </div>
+                        <% } %>
+                    </div>
+                </div>
+            <% } %>
+
+            <!-- Event Generation Options -->
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <h3 class="text-lg font-semibold mb-3 text-blue-800">What will be generated:</h3>
+                <ul class="text-blue-700 space-y-1">
+                    <li>• Session records for each location</li>
+                    <li>• Individual events for each session occurrence</li>
+                    <li>• Pricing plans linked to each session</li>
+                    <li>• Teacher assignments (if specified)</li>
+                    <li>• Registration workflows for each session</li>
+                </ul>
+            </div>
+
+            <!-- Confirmation -->
+            <div class="border border-gray-200 rounded-lg p-4 mb-6">
+                <label class="flex items-center">
+                    <input type="checkbox" name="confirm_generation" value="1" class="mr-2" required>
+                    <span class="text-sm">
+                        I confirm that I want to generate events for <strong><%= scalar(@$configured_locations) %> location(s)</strong>
+                        with the settings above. This action cannot be easily undone.
+                    </span>
+                </label>
+            </div>
+
+            <div class="flex justify-between">
+                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'configure-location') %>"
+                   class="bg-gray-300 text-gray-700 px-6 py-2 rounded hover:bg-gray-400">
+                    Back
+                </a>
+                <button type="submit" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 disabled:opacity-50">
+                    Generate Events
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Form validation and date constraints
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    const startDateInput = document.querySelector('input[name="generation_params[start_date]"]');
+    const confirmCheckbox = document.querySelector('input[name="confirm_generation"]');
+    const submitBtn = document.querySelector('button[type="submit"]');
+
+    // Set minimum date to tomorrow
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    startDateInput.min = tomorrow.toISOString().split('T')[0];
+
+    function validateForm() {
+        const hasDate = startDateInput.value;
+        const isConfirmed = confirmCheckbox.checked;
+        submitBtn.disabled = !hasDate || !isConfirmed;
+    }
+
+    startDateInput.addEventListener('change', validateForm);
+    confirmCheckbox.addEventListener('change', validateForm);
+
+    validateForm(); // Initial validation
+});
+</script>

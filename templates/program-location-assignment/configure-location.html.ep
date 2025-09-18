@@ -1,0 +1,141 @@
+% layout 'workflow';
+% title 'Configure Locations';
+
+<div class="max-w-6xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Assign Program to Locations</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Configure Location Details for <%= stash('step_data')->{project_name} %></h2>
+        <p class="text-gray-600 mb-6">Set specific capacity, schedule, and pricing for each selected location.</p>
+
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'configure-location') %>">
+            <% my $selected_locations = stash('step_data')->{selected_locations} || []; %>
+            <% my $standard_times = stash('step_data')->{standard_times} || {}; %>
+            <% my $program_type_config = stash('step_data')->{program_type_config} || {}; %>
+
+            <div class="space-y-8">
+                <% for my $location (@$selected_locations) { %>
+                    <div class="border border-gray-200 rounded-lg p-6">
+                        <h3 class="text-xl font-semibold mb-4"><%= $location->{name} %></h3>
+                        <% if ($location->{address}) { %>
+                            <p class="text-gray-600 mb-4"><%= $location->{address} %></p>
+                        <% } %>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <!-- Capacity Configuration -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">
+                                    Capacity *
+                                </label>
+                                <input type="number"
+                                       name="location_configs[<%= $location->{id} %>][capacity]"
+                                       value="<%= $location->{capacity} || $program_type_config->{default_capacity} || '' %>"
+                                       min="1" max="100"
+                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       required>
+                                <p class="text-sm text-gray-500 mt-1">Maximum number of participants</p>
+                            </div>
+
+                            <!-- Pricing Override -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">
+                                    Pricing Override (optional)
+                                </label>
+                                <input type="number"
+                                       name="location_configs[<%= $location->{id} %>][pricing_override]"
+                                       step="0.01" min="0"
+                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="Leave blank to use default pricing">
+                                <p class="text-sm text-gray-500 mt-1">Override default program pricing</p>
+                            </div>
+                        </div>
+
+                        <!-- Schedule Configuration -->
+                        <% if ($standard_times && keys %$standard_times) { %>
+                            <div class="mt-6">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">
+                                    Schedule Template
+                                </label>
+                                <div class="space-y-2">
+                                    <% for my $template_name (sort keys %$standard_times) { %>
+                                        <% my $template = $standard_times->{$template_name}; %>
+                                        <label class="flex items-center">
+                                            <input type="radio"
+                                                   name="location_configs[<%= $location->{id} %>][schedule]"
+                                                   value="<%= $template_name %>"
+                                                   class="mr-2">
+                                            <span class="font-medium"><%= $template_name %></span>
+                                            <% if ($template->{description}) { %>
+                                                <span class="text-gray-500 ml-2">(<%= $template->{description} %>)</span>
+                                            <% } %>
+                                        </label>
+                                    <% } %>
+                                    <label class="flex items-center">
+                                        <input type="radio"
+                                               name="location_configs[<%= $location->{id} %>][schedule]"
+                                               value="custom"
+                                               class="mr-2">
+                                        <span class="font-medium">Custom Schedule</span>
+                                    </label>
+                                </div>
+                            </div>
+                        <% } %>
+
+                        <!-- Notes -->
+                        <div class="mt-6">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Notes (optional)
+                            </label>
+                            <textarea name="location_configs[<%= $location->{id} %>][notes]"
+                                      rows="3"
+                                      class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                      placeholder="Any special notes or requirements for this location..."></textarea>
+                        </div>
+                    </div>
+                <% } %>
+
+                <% unless (@$selected_locations) { %>
+                    <div class="bg-red-50 border border-red-200 p-4 rounded">
+                        <p class="text-red-800">No locations selected. Please go back and select locations.</p>
+                    </div>
+                <% } %>
+            </div>
+
+            <div class="mt-8 flex justify-between">
+                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'choose-locations') %>"
+                   class="bg-gray-300 text-gray-700 px-6 py-2 rounded hover:bg-gray-400">
+                    Back
+                </a>
+                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
+                        <%= @$selected_locations ? '' : 'disabled' %>>
+                    Generate Events
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Form validation
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    const capacityInputs = document.querySelectorAll('input[type="number"][name*="[capacity]"]');
+    const submitBtn = document.querySelector('button[type="submit"]');
+
+    function validateForm() {
+        let isValid = true;
+        capacityInputs.forEach(input => {
+            if (!input.value || parseInt(input.value) <= 0) {
+                isValid = false;
+            }
+        });
+        submitBtn.disabled = !isValid;
+    }
+
+    capacityInputs.forEach(input => {
+        input.addEventListener('input', validateForm);
+    });
+
+    validateForm(); // Initial validation
+});
+</script>
