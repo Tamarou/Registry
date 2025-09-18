@@ -193,4 +193,17 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     method is_closed() {
         return $status eq 'closed';
     }
+
+    method has_started() {
+        return 0 unless defined $start_date;
+
+        # Get current date in YYYY-MM-DD format
+        my ($year, $month, $day) = (localtime)[5, 4, 3];
+        $year += 1900;
+        $month += 1;
+        my $today = sprintf('%04d-%02d-%02d', $year, $month, $day);
+
+        # Compare date strings (YYYY-MM-DD format allows lexical comparison)
+        return $start_date le $today;
+    }
 }

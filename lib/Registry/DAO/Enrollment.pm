@@ -4,6 +4,7 @@ use Object::Pad;
 class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(decode_json);
     use Carp qw(croak);
+    use Scalar::Util qw(blessed);
     use experimental qw(try);
     
     field $id :param :reader;
@@ -151,13 +152,75 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # Count enrollments for a session by status
     sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {
         $db = $db->db if $db isa Registry::DAO;
-        
+
         my $status_list = join(',', map { "'$_'" } @$statuses);
         my $result = $db->query(
             "SELECT COUNT(*) FROM enrollments WHERE session_id = ? AND status IN ($status_list)",
             $session_id
         );
         return $result->array->[0] || 0;
+    }
+
+    # Check if enrollment can be dropped by the specified user
+    method can_drop($db, $user) {
+        my $session = $self->session($db);
+
+        # Admin can always drop
+        my $user_role = blessed($user) ? $user->user_type : $user->{role};
+        return 1 if $user_role eq 'admin';
+
+        # Parents can only drop before session starts
+        return !$session->has_started();
+    }
+
+    # Request to drop enrollment (creates admin approval request if needed)
+    method request_drop($db, $user, $reason, $refund_requested = 0) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $session = $self->session($db);
+
+        # If session has started and user is not admin, create drop request
+        my $user_role = blessed($user) ? $user->user_type : $user->{role};
+        my $user_id = blessed($user) ? $user->id : $user->{id};
+
+        if ($session->has_started && $user_role ne 'admin') {
+            require Registry::DAO::DropRequest;
+            return Registry::DAO::DropRequest->create($db, {
+                enrollment_id => $id,
+                requested_by => $user_id,
+                reason => $reason,
+                refund_requested => $refund_requested ? 1 : 0,
+                status => 'pending'
+            });
+        }
+
+        # Process immediate drop (before session starts or admin)
+        return $self->_process_immediate_drop($db, $user, $reason);
+    }
+
+    # Process immediate drop (private method)
+    method _process_immediate_drop($db, $user, $reason) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $user_id = blessed($user) ? $user->id : $user->{id};
+
+        # Update enrollment status and drop information
+        $self->update($db, {
+            status => 'cancelled',
+            drop_reason => $reason,
+            dropped_at => \'now()',
+            dropped_by => $user_id,
+            refund_status => 'none'
+        });
+
+        # Trigger waitlist processing if session is full
+        my $session = $self->session($db);
+        if ($session) {
+            require Registry::DAO::Waitlist;
+            Registry::DAO::Waitlist->process_session_waitlist($db, $session_id);
+        }
+
+        return $self;
     }
 
 }
