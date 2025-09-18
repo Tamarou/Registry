@@ -192,7 +192,6 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         )->hashes->to_array;
     }
 
-    # Convenience method for tests - creates a new workflow run
     method start($db) {
         return $self->new_run($db);
     }

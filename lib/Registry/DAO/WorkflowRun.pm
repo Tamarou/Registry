@@ -115,7 +115,6 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         Registry::DAO::WorkflowRun->find( $db, { id => $continuation_id } );
     }
 
-    # Convenience method for tests - saves current state to database
     method save($db) {
         return $self->update($db, {
             data => $data,
