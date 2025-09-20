@@ -147,7 +147,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $db = $c->app->db($c->stash('tenant'));
         my $status_filter = $c->param('status') || 'pending'; # pending, approved, denied, all
 
-        my $drop_requests = $self->_get_drop_requests($db, $status_filter);
+        my $drop_requests = Registry::DAO::DropRequest->get_detailed_requests($db, $status_filter);
 
         $c->stash(drop_requests => $drop_requests, status_filter => $status_filter);
         $c->render(template => 'admin_dashboard/pending_drop_requests', layout => undef);
@@ -163,7 +163,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $db = $c->app->db($c->stash('tenant'));
         my $status_filter = $c->param('status') || 'pending';
 
-        my $transfer_requests = $self->_get_transfer_requests($db, $status_filter);
+        my $transfer_requests = Registry::DAO::TransferRequest->get_detailed_requests($db, $status_filter);
 
         $c->stash(transfer_requests => $transfer_requests, status_filter => $status_filter);
         $c->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
@@ -366,8 +366,8 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             recent_notifications => $self->_get_recent_notifications($db, 5, 'all'),
             waitlist_summary => $self->_get_waitlist_summary($db),
             enrollment_alerts => $self->_get_enrollment_alerts($db),
-            pending_drop_requests => $self->_get_drop_requests($db, 'pending', 10),
-            pending_transfer_requests => $self->_get_transfer_requests($db, 'pending', 10)
+            pending_drop_requests => Registry::DAO::DropRequest->get_detailed_requests($db, 'pending', 10),
+            pending_transfer_requests => Registry::DAO::TransferRequest->get_detailed_requests($db, 'pending')
         };
     }
     
@@ -795,116 +795,5 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         return ('tenant-wide', undef); # Default fallback
     }
 
-    # Get drop requests with enrollment and family details
-    method _get_drop_requests ($db, $status_filter = 'pending', $limit = 50) {
-        my $sql = q{
-            SELECT
-                dr.id,
-                dr.enrollment_id,
-                dr.requested_by,
-                dr.reason,
-                dr.refund_requested,
-                dr.refund_amount_requested,
-                dr.status,
-                dr.admin_notes,
-                dr.processed_by,
-                dr.processed_at,
-                dr.created_at,
-                dr.updated_at,
-                e.status as enrollment_status,
-                s.name as session_name,
-                s.start_date,
-                s.end_date,
-                p.name as program_name,
-                l.name as location_name,
-                fm.child_name,
-                up_parent.name as parent_name,
-                up_parent.email as parent_email,
-                up_admin.name as admin_name
-            FROM drop_requests dr
-            JOIN enrollments e ON dr.enrollment_id = e.id
-            JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
-            LEFT JOIN locations l ON s.location_id = l.id
-            LEFT JOIN family_members fm ON e.family_member_id = fm.id
-            LEFT JOIN user_profiles up_parent ON dr.requested_by = up_parent.user_id
-            LEFT JOIN user_profiles up_admin ON dr.processed_by = up_admin.user_id
-        };
 
-        my @where_conditions;
-        my @params;
-
-        if ($status_filter eq 'pending') {
-            push @where_conditions, "dr.status = 'pending'";
-        } elsif ($status_filter eq 'approved') {
-            push @where_conditions, "dr.status = 'approved'";
-        } elsif ($status_filter eq 'denied') {
-            push @where_conditions, "dr.status = 'denied'";
-        } elsif ($status_filter ne 'all') {
-            push @where_conditions, "dr.status = 'pending'"; # Default to pending
-        }
-
-        if (@where_conditions) {
-            $sql .= ' WHERE ' . join(' AND ', @where_conditions);
-        }
-
-        $sql .= ' ORDER BY dr.created_at DESC';
-
-        if ($limit) {
-            $sql .= ' LIMIT ?';
-            push @params, $limit;
-        }
-
-        my $results = $db->query($sql, @params)->hashes->to_array;
-
-        # Add additional computed fields
-        for my $request (@$results) {
-            # Days since request
-            my $created_time = $request->{created_at};
-            if ($created_time) {
-                my $days_ago = int((time() - $created_time) / 86400);
-                $request->{days_since_request} = $days_ago;
-
-                if ($days_ago == 0) {
-                    $request->{urgency} = 'today';
-                } elsif ($days_ago <= 2) {
-                    $request->{urgency} = 'recent';
-                } elsif ($days_ago <= 7) {
-                    $request->{urgency} = 'normal';
-                } else {
-                    $request->{urgency} = 'old';
-                }
-            }
-
-            # Session status relative to drop request
-            if ($request->{start_date}) {
-                my $session_start = $request->{start_date};
-                if ($session_start =~ /^(\d{4})-(\d{2})-(\d{2})/) {
-                    my $session_date = DateTime->new(year => $1, month => $2, day => $3);
-                    my $now = DateTime->now;
-
-                    if ($session_date > $now) {
-                        $request->{session_status} = 'upcoming';
-                    } elsif ($session_date->ymd eq $now->ymd) {
-                        $request->{session_status} = 'today';
-                    } else {
-                        $request->{session_status} = 'ongoing';
-                    }
-                }
-            }
-
-            # Format refund amount for display
-            if ($request->{refund_amount_requested}) {
-                $request->{refund_amount_display} = sprintf('$%.2f', $request->{refund_amount_requested} / 100);
-            }
-        }
-
-        return $results;
-    }
-
-    # Get transfer requests with enrollment and family details
-    method _get_transfer_requests ($db, $status_filter = 'pending', $limit = 50) {
-        require Registry::DAO::TransferRequest;
-        return Registry::DAO::TransferRequest->get_detailed_requests($db, $status_filter);
-    }
 }
