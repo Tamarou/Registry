@@ -13,8 +13,13 @@ defer { done_testing };
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 
-# Note: This test focuses on TRANSFER workflows only.
-# Drop workflows are not yet implemented and will be added in a future iteration.
+# Import workflows and templates for testing
+system('carton exec ./registry workflow import registry') == 0
+    or die "Failed to import workflows for testing";
+system('carton exec ./registry template import registry') == 0
+    or die "Failed to import templates for testing";
+
+# Note: This test now includes both DROP and TRANSFER workflows implemented as proper workflows.
 
 # Test data setup
 sub setup_test_data {

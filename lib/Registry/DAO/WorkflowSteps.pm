@@ -33,4 +33,20 @@ use Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor;
 use Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor;
 use Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext;
 
+# Drop request processing workflow steps
+use Registry::DAO::WorkflowSteps::ValidateDropRequest;
+use Registry::DAO::WorkflowSteps::ProcessEnrollmentDrop;
+use Registry::DAO::WorkflowSteps::ProcessDropRefund;
+use Registry::DAO::WorkflowSteps::ProcessWaitlistAfterDrop;
+use Registry::DAO::WorkflowSteps::NotifyDropProcessed;
+use Registry::DAO::WorkflowSteps::CompleteDropRequest;
+
+# Transfer request processing workflow steps
+use Registry::DAO::WorkflowSteps::ValidateTransferRequest;
+use Registry::DAO::WorkflowSteps::ValidateTargetCapacity;
+use Registry::DAO::WorkflowSteps::ProcessEnrollmentTransfer;
+use Registry::DAO::WorkflowSteps::ProcessWaitlistsAfterTransfer;
+use Registry::DAO::WorkflowSteps::NotifyTransferProcessed;
+use Registry::DAO::WorkflowSteps::CompleteTransferRequest;
+
 1;

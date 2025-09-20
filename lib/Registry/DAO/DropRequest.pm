@@ -43,36 +43,33 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
         Registry::DAO::User->find( $db, { id => $processed_by } );
     }
 
-    # Approve the drop request
+    # Approve the drop request using workflow
     method approve($db, $admin_user, $notes = '', $refund_amount = undef) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $admin_id = blessed($admin_user) ? $admin_user->id : $admin_user->{id};
+        # Find the drop request processing workflow
+        require Registry::DAO;
+        my $dao = Registry::DAO->new(db => $db);
+        my ($workflow) = $dao->find(Workflow => { slug => 'drop-request-processing' });
 
-        # Update request status
-        $self->update($db, {
-            status => 'approved',
-            admin_notes => $notes,
-            processed_by => $admin_id,
-            processed_at => \'now()'
-        });
-
-        # Process the actual drop
-        my $enrollment = $self->enrollment($db);
-        if ($enrollment) {
-            $enrollment->update($db, {
-                status => 'cancelled',
-                drop_reason => $reason,
-                dropped_at => \'now()',
-                dropped_by => $admin_id,
-                refund_status => $refund_requested ? 'pending' : 'none',
-                refund_amount => $refund_amount
-            });
-
-            # Trigger waitlist processing
-            require Registry::DAO::Waitlist;
-            Registry::DAO::Waitlist->process_waitlist($db, $enrollment->session_id);
+        unless ($workflow) {
+            die "Drop request processing workflow not found. Please ensure workflows are imported.";
         }
+
+        # Prepare workflow data
+        my $workflow_data = {
+            drop_request_id => $id,
+            admin_user => $admin_user,
+            admin_notes => $notes,
+            reason => $reason,
+            refund_requested => $refund_requested,
+            refund_amount => $refund_amount
+        };
+
+        # Execute workflow
+        my $run = $workflow->new_run($db);
+        $run->update_data($db, $workflow_data);
+        $run->process($db, $workflow->first_step($db), $workflow_data);
 
         return $self;
     }

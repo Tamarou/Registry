@@ -46,25 +46,30 @@ class Registry::DAO::TransferRequest :isa(Registry::DAO::Object) {
         Registry::DAO::User->find( $db, { id => $processed_by } );
     }
 
-    # Approve the transfer request
+    # Approve the transfer request using workflow
     method approve($db, $admin_user, $notes = '') {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $admin_id = blessed($admin_user) ? $admin_user->id : $admin_user->{id};
+        # Find the transfer request processing workflow
+        require Registry::DAO;
+        my $dao = Registry::DAO->new(db => $db);
+        my ($workflow) = $dao->find(Workflow => { slug => 'transfer-request-processing' });
 
-        # Update request status
-        $self->update($db, {
-            status => 'approved',
-            admin_notes => $notes,
-            processed_by => $admin_id,
-            processed_at => \'now()'
-        });
-
-        # Process the actual transfer
-        my $enrollment = $self->enrollment($db);
-        if ($enrollment) {
-            $enrollment->process_transfer($db, $target_session_id, $admin_user);
+        unless ($workflow) {
+            die "Transfer request processing workflow not found. Please ensure workflows are imported.";
         }
+
+        # Prepare workflow data
+        my $workflow_data = {
+            transfer_request_id => $id,
+            admin_user => $admin_user,
+            admin_notes => $notes
+        };
+
+        # Execute workflow
+        my $run = $workflow->new_run($db);
+        $run->update_data($db, $workflow_data);
+        $run->process($db, $workflow->first_step($db), $workflow_data);
 
         return $self;
     }
