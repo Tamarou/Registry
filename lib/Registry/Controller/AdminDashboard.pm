@@ -7,6 +7,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     use DateTime;
     use List::Util qw(sum max);
     use JSON qw(encode_json);
+    use Registry::Controller::Workflows;
     
     # Main admin dashboard
     method index ($c) {
@@ -174,7 +175,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         $c->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
     }
 
-    # Process transfer request (approve/deny)
+    # Process transfer request via workflow
     method process_transfer_request ($c) {
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
@@ -185,53 +186,58 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $action = $c->param('action'); # 'approve' or 'deny'
         my $admin_notes = $c->param('admin_notes') || '';
 
-        my $dao = $c->dao($c->stash('tenant'));
-
-        try {
-            my $transfer_request = Registry::DAO::TransferRequest->find($dao->db, { id => $transfer_request_id });
-            return $c->render(status => 404, text => 'Transfer request not found') unless $transfer_request;
-
-            if ($action eq 'approve') {
-                $transfer_request->approve($dao->db, $user, $admin_notes);
-
-                if ($c->accepts('', 'html')) {
-                    $c->flash(success => 'Transfer request approved and processed successfully.');
-                    return $c->redirect_to('admin_dashboard');
-                } else {
-                    return $c->render(json => {
-                        success => 1,
-                        message => 'Transfer request approved and processed',
-                        action => 'approved'
-                    });
-                }
-            } elsif ($action eq 'deny') {
-                $transfer_request->deny($dao->db, $user, $admin_notes);
-
-                if ($c->accepts('', 'html')) {
-                    $c->flash(info => 'Transfer request denied.');
-                    return $c->redirect_to('admin_dashboard');
-                } else {
-                    return $c->render(json => {
-                        success => 1,
-                        message => 'Transfer request denied',
-                        action => 'denied'
-                    });
-                }
-            } else {
-                return $c->render(status => 400, text => 'Invalid action specified');
-            }
-        }
-        catch ($e) {
+        unless ($transfer_request_id && $action && ($action eq 'approve' || $action eq 'deny')) {
             if ($c->accepts('', 'html')) {
-                $c->flash(error => "Failed to process transfer request: $e");
+                $c->flash(error => 'Transfer request ID and valid action required');
                 return $c->redirect_to('admin_dashboard');
             } else {
-                return $c->render(json => { error => "Failed to process transfer request: $e" }, status => 500);
+                return $c->render(json => { error => 'Transfer request ID and valid action required' }, status => 400);
+            }
+        }
+
+        # Prepare workflow data
+        my $workflow_data = {
+            transfer_request_id => $transfer_request_id,
+            action => $action,
+            admin_notes => $admin_notes,
+            admin_user_id => $user->{id},
+            return_url => $c->url_for('admin_dashboard')->to_abs
+        };
+
+        # Start the transfer request processing workflow
+        if ($c->accepts('', 'html')) {
+            # For HTML requests, redirect to workflow
+            return $c->redirect_to('workflow_start', { workflow => 'transfer-request-processing' }, $workflow_data);
+        } else {
+            # For AJAX/JSON requests, start workflow and return status
+            try {
+                # Create a temporary form object for workflow processing
+                my $form = Mojo::Parameters->new();
+                for my $key (keys %$workflow_data) {
+                    $form->append($key => $workflow_data->{$key});
+                }
+
+                # Start workflow run directly
+                my $workflow_controller = Registry::Controller::Workflows->new(app => $c->app);
+                $workflow_controller->req($c->req);
+                $workflow_controller->stash(workflow => 'transfer-request-processing');
+                $workflow_controller->req->body_params($form);
+
+                my $run = $workflow_controller->new_run($workflow_controller->workflow());
+
+                return $c->render(json => {
+                    success => 1,
+                    message => 'Transfer request processing started',
+                    workflow_run => $run->id
+                });
+            }
+            catch ($e) {
+                return $c->render(json => { error => "Failed to start transfer request processing: $e" }, status => 500);
             }
         }
     }
 
-    # Process drop request (approve/deny)
+    # Process drop request via workflow
     method process_drop_request ($c) {
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
@@ -242,67 +248,55 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $action = $c->param('action'); # approve, deny
         my $admin_notes = $c->param('admin_notes') || '';
         my $refund_amount = $c->param('refund_amount');
-        my $dao = $c->dao($c->stash('tenant'));
 
         unless ($request_id && $action && ($action eq 'approve' || $action eq 'deny')) {
-            return $c->render(json => { error => 'Request ID and valid action required' }, status => 400);
-        }
-
-        try {
-            # Find the drop request
-            my $drop_request = Registry::DAO::DropRequest->find($dao->db, { id => $request_id });
-            return $c->render(json => { error => 'Drop request not found' }, status => 404) unless $drop_request;
-
-            if ($drop_request->status ne 'pending') {
-                return $c->render(json => { error => 'Drop request has already been processed' }, status => 400);
-            }
-
-            if ($action eq 'approve') {
-                $drop_request->approve($dao->db, $user, $admin_notes, $refund_amount);
-
-                # Notify parent of approval
-                $c->app->minion->enqueue('notify_drop_request_approved', [$drop_request->id], {
-                    attempts => 3,
-                    priority => 6
-                });
-
-                if ($c->accepts('', 'html')) {
-                    $c->flash(success => 'Drop request approved successfully. Parent will be notified.');
-                    return $c->redirect_to('admin_dashboard');
-                } else {
-                    return $c->render(json => {
-                        success => 1,
-                        message => 'Drop request approved',
-                        status => 'approved'
-                    });
-                }
-            } else { # deny
-                $drop_request->deny($dao->db, $user, $admin_notes);
-
-                # Notify parent of denial
-                $c->app->minion->enqueue('notify_drop_request_denied', [$drop_request->id], {
-                    attempts => 3,
-                    priority => 6
-                });
-
-                if ($c->accepts('', 'html')) {
-                    $c->flash(success => 'Drop request denied. Parent will be notified.');
-                    return $c->redirect_to('admin_dashboard');
-                } else {
-                    return $c->render(json => {
-                        success => 1,
-                        message => 'Drop request denied',
-                        status => 'denied'
-                    });
-                }
-            }
-        }
-        catch ($e) {
             if ($c->accepts('', 'html')) {
-                $c->flash(error => "Failed to process drop request: $e");
+                $c->flash(error => 'Request ID and valid action required');
                 return $c->redirect_to('admin_dashboard');
             } else {
-                return $c->render(json => { error => "Failed to process drop request: $e" }, status => 500);
+                return $c->render(json => { error => 'Request ID and valid action required' }, status => 400);
+            }
+        }
+
+        # Prepare workflow data
+        my $workflow_data = {
+            drop_request_id => $request_id,  # Use the correct field name for workflow
+            action => $action,
+            admin_notes => $admin_notes,
+            refund_amount => $refund_amount,
+            admin_user_id => $user->{id},
+            return_url => $c->url_for('admin_dashboard')->to_abs
+        };
+
+        # Start the drop request processing workflow
+        if ($c->accepts('', 'html')) {
+            # For HTML requests, redirect to workflow
+            return $c->redirect_to('workflow_start', { workflow => 'drop-request-processing' }, $workflow_data);
+        } else {
+            # For AJAX/JSON requests, start workflow and return status
+            try {
+                # Create a temporary form object for workflow processing
+                my $form = Mojo::Parameters->new();
+                for my $key (keys %$workflow_data) {
+                    $form->append($key => $workflow_data->{$key});
+                }
+
+                # Start workflow run directly
+                my $workflow_controller = Registry::Controller::Workflows->new(app => $c->app);
+                $workflow_controller->req($c->req);
+                $workflow_controller->stash(workflow => 'drop-request-processing');
+                $workflow_controller->req->body_params($form);
+
+                my $run = $workflow_controller->new_run($workflow_controller->workflow());
+
+                return $c->render(json => {
+                    success => 1,
+                    message => 'Drop request processing started',
+                    workflow_run => $run->id
+                });
+            }
+            catch ($e) {
+                return $c->render(json => { error => "Failed to start drop request processing: $e" }, status => 500);
             }
         }
     }
