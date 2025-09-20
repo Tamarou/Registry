@@ -6,6 +6,7 @@ use Object::Pad;
 require Registry::DAO::WorkflowStep;
 
 class Registry::DAO::WorkflowSteps::LoadTransferRequest :isa(Registry::DAO::WorkflowStep) {
+    use Carp qw(confess);
 
     method process ($db, $data) {
         my $transfer_request_id = $data->{transfer_request_id}

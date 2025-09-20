@@ -71,7 +71,12 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
             my $data =
               $db->select( $class->table, '*', $filter, $order )->expand->hash;
             return unless $data;
-            return $data->{class}->new( $data->%* );
+
+            # Load the workflow step class module before calling new() on it
+            my $step_class = $data->{class};
+            eval "require $step_class" or confess "Failed to load workflow step class $step_class: $@";
+
+            return $step_class->new( $data->%* );
         }
         catch ($e) {
             confess $e;

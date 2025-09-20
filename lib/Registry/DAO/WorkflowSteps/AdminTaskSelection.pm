@@ -6,6 +6,7 @@ use Object::Pad;
 require Registry::DAO::WorkflowStep;
 
 class Registry::DAO::WorkflowSteps::AdminTaskSelection :isa(Registry::DAO::WorkflowStep) {
+    use Carp qw(confess);
 
     method process ($db, $data) {
         my $task_type = $data->{task_type};

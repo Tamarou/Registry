@@ -6,6 +6,7 @@ use Object::Pad;
 require Registry::DAO::WorkflowStep;
 
 class Registry::DAO::WorkflowSteps::LoadDropRequest :isa(Registry::DAO::WorkflowStep) {
+    use Carp qw(confess);
 
     method process ($db, $data) {
         my $drop_request_id = $data->{drop_request_id}
