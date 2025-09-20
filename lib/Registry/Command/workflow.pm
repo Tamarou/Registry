@@ -93,24 +93,12 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     }
 
     method load (@files) {
-        # Import workflows to specified schema
-        my $schema = $dao->current_tenant; # Use the schema set by command args
-        my @workflows = @files ? @files : 
-          $self->app->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+        # If no files specified, find all workflow YAML files
+        @files = $self->app->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each
+            unless @files;
 
-        for my $file (@workflows) {
-            my $yaml = $file->slurp;
-            next if Load($yaml)->{draft};
-            try {
-                my $workflow = Workflow->from_yaml( $dao, $yaml );
-                my $step_count = scalar @{ Load($yaml)->{steps} // [] };
-                say sprintf "Imported workflow '%s' (%s) with %d steps",
-                    $workflow->name, $workflow->slug, $step_count;
-            }
-            catch ($e) {
-                warn "Error importing workflow: $e";
-            }
-        }
+        # Use DAO helper method for workflow import
+        $dao->import_workflows(\@files, 1); # verbose=1 for CLI output
     }
 
     method export ( $slug = undef, $file = undef ) {

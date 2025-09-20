@@ -5,6 +5,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(decode_json);
     use Carp qw(croak);
     use Scalar::Util qw(blessed);
+    use DateTime;
     use experimental qw(try);
     
     field $id :param :reader;
@@ -311,5 +312,87 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method is_transfer_pending { $transfer_status eq 'requested' }
     method is_transfer_completed { $transfer_status eq 'completed' }
     method has_transfer_request { $transfer_status ne 'none' }
+
+    # Get dashboard statistics for a parent (moved from ParentDashboard controller)
+    sub get_dashboard_stats_for_parent($class, $db, $parent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Active enrollments count
+        my $active_enrollments = $db->select('enrollments e', 'COUNT(*)', {
+            'e.family_member_id' => [
+                -in => $db->select('family_members', 'id', { family_id => $parent_id })
+            ],
+            'e.status' => ['active', 'pending']
+        })->array->[0] || 0;
+
+        # Waitlist entries count
+        my $waitlist_count = $db->select('waitlist', 'COUNT(*)', {
+            parent_id => $parent_id,
+            status => ['waiting', 'offered']
+        })->array->[0] || 0;
+
+        # This month's attendance rate
+        my $month_start = DateTime->now->truncate(to => 'month')->epoch;
+        my $attendance_sql = q{
+            SELECT
+                COUNT(CASE WHEN ar.status = 'present' THEN 1 END) as present_count,
+                COUNT(ar.id) as total_count
+            FROM attendance_records ar
+            JOIN events ev ON ar.event_id = ev.id
+            JOIN family_members fm ON ar.student_id = fm.id
+            WHERE fm.family_id = ?
+            AND ar.marked_at >= ?
+        };
+
+        my $attendance_data = $db->query($attendance_sql, $parent_id, $month_start)->hash;
+        my $attendance_rate = 0;
+        if ($attendance_data && $attendance_data->{total_count} > 0) {
+            $attendance_rate = sprintf("%.0f",
+                ($attendance_data->{present_count} / $attendance_data->{total_count}) * 100
+            );
+        }
+
+        return {
+            active_enrollments => $active_enrollments,
+            waitlist_count => $waitlist_count,
+            attendance_rate => $attendance_rate
+        };
+    }
+
+    # Get active enrollments with program details for a parent (moved from ParentDashboard controller)
+    sub get_active_for_parent($class, $db, $parent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $sql = q{
+            SELECT
+                e.id as enrollment_id,
+                e.status as enrollment_status,
+                e.created_at as enrolled_at,
+                s.id as session_id,
+                s.name as session_name,
+                s.start_date,
+                s.end_date,
+                p.name as program_name,
+                l.name as location_name,
+                fm.child_name,
+                COUNT(ev.id) as total_events,
+                COUNT(ar.id) as attended_events
+            FROM enrollments e
+            JOIN sessions s ON e.session_id = s.id
+            JOIN projects p ON s.project_id = p.id
+            LEFT JOIN locations l ON s.location_id = l.id
+            JOIN family_members fm ON e.family_member_id = fm.id
+            LEFT JOIN events ev ON ev.session_id = s.id
+            LEFT JOIN attendance_records ar ON ar.event_id = ev.id
+                AND ar.student_id = e.family_member_id
+                AND ar.status = 'present'
+            WHERE fm.family_id = ?
+            AND e.status IN ('active', 'pending')
+            GROUP BY e.id, s.id, p.id, l.id, fm.id
+            ORDER BY s.start_date ASC
+        };
+
+        return $db->query($sql, $parent_id)->hashes->to_array;
+    }
 
 }

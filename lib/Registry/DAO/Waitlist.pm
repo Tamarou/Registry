@@ -300,6 +300,33 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         $db->query($sql, $session_id, $removed_position);
     }
     
+    # Get waitlist entries for a parent (moved from ParentDashboard controller)
+    sub get_entries_for_parent($class, $db, $parent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $sql = q{
+            SELECT
+                w.id,
+                w.position,
+                w.status,
+                w.offered_at,
+                w.expires_at,
+                w.created_at,
+                s.name as session_name,
+                l.name as location_name,
+                fm.child_name
+            FROM waitlist w
+            JOIN sessions s ON w.session_id = s.id
+            LEFT JOIN locations l ON w.location_id = l.id
+            JOIN family_members fm ON w.student_id = fm.id
+            WHERE w.parent_id = ?
+            AND w.status IN ('waiting', 'offered')
+            ORDER BY w.created_at DESC
+        };
+
+        return $db->query($sql, $parent_id)->hashes->to_array;
+    }
+
     # Helper method to reorder all waiting positions to be consecutive starting from 1
     sub _reorder_waiting_positions ($class, $db, $session_id) {
         $db = $db->db if $db isa Registry::DAO;

@@ -43,33 +43,33 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
         Registry::DAO::User->find( $db, { id => $processed_by } );
     }
 
-    # Approve the drop request using workflow
+    # Approve the drop request
     method approve($db, $admin_user, $notes = '', $refund_amount = undef) {
-        $db = $db->db if $db isa Registry::DAO;
+        my $admin_id = blessed($admin_user) ? $admin_user->id : $admin_user->{id};
 
-        # Find the drop request processing workflow
-        require Registry::DAO;
-        my $dao = Registry::DAO->new(db => $db);
-        my ($workflow) = $dao->find(Workflow => { slug => 'drop-request-processing' });
+        # Start transaction to ensure atomicity
+        my $tx = $db->begin;
 
-        unless ($workflow) {
-            die "Drop request processing workflow not found. Please ensure workflows are imported.";
-        }
-
-        # Prepare workflow data
-        my $workflow_data = {
-            drop_request_id => $id,
-            admin_user => $admin_user,
+        # Update drop request status
+        $self->update($db, {
+            status => 'approved',
             admin_notes => $notes,
-            reason => $reason,
-            refund_requested => $refund_requested,
-            refund_amount => $refund_amount
-        };
+            processed_by => $admin_id,
+            processed_at => \'now()'
+        });
 
-        # Execute workflow
-        my $run = $workflow->new_run($db);
-        $run->update_data($db, $workflow_data);
-        $run->process($db, $workflow->first_step($db), $workflow_data);
+        # Update enrollment to cancelled
+        my $enrollment = $self->enrollment($db);
+        $enrollment->update($db, {
+            status => 'cancelled',
+            drop_reason => $reason,
+            dropped_at => \'now()',
+            dropped_by => $admin_id,
+            refund_status => $refund_amount ? 'pending' : 'not_applicable',
+            refund_amount => $refund_amount ? sprintf('%.2f', $refund_amount) : undef
+        });
+
+        $tx->commit;
 
         return $self;
     }

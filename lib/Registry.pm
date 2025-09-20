@@ -153,25 +153,20 @@ class Registry :isa(Mojolicious) {
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {
-        # Delegate to Registry::Command::workflow for consistent logic
-        my $workflow_cmd = Registry::Command::workflow->new(app => $self);
-        
-        # Set up the command with the correct schema context
-        $workflow_cmd->{dao} = $self->dao($schema);
-        
-        if ($verbose) {
-            # Let command output directly for CLI usage
-            $workflow_cmd->load($files ? @$files : ());
+        # If no files specified, find all workflow YAML files
+        my @workflow_files;
+        if ($files && @$files) {
+            @workflow_files = @$files;
         } else {
-            # Capture output and log it instead of printing to stdout
-            my $output = '';
-            {
-                local *STDOUT;
-                open STDOUT, '>', \$output;
-                $workflow_cmd->load($files ? @$files : ());
-            }
-            
-            # Log each imported workflow
+            @workflow_files = $self->home->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+        }
+
+        # Delegate to DAO helper method for consistent logic
+        my $dao = $self->dao($schema);
+        my $output = $dao->import_workflows(\@workflow_files, $verbose);
+
+        # Log output if not verbose (verbose mode outputs directly)
+        if (!$verbose && $output) {
             for my $line (split /\n/, $output) {
                 $self->log->debug($line) if $line;
             }

@@ -3,6 +3,7 @@ use Object::Pad;
 
 class Registry::DAO::Event :isa(Registry::DAO::Object) {
     use Carp         qw( carp );
+    use DateTime;
     use experimental qw(try);
 
     field $id :param :reader;
@@ -281,6 +282,40 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         };
         
         return $db->query($sql)->hashes->to_array;
+    }
+
+    # Get upcoming events for enrolled children of a parent (moved from ParentDashboard controller)
+    sub get_upcoming_for_parent($class, $db, $parent_id, $days = 7) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $end_date = DateTime->now->add(days => $days)->epoch;
+
+        my $sql = q{
+            SELECT
+                ev.id as event_id,
+                ev.name as event_name,
+                ev.start_time,
+                ev.end_time,
+                s.name as session_name,
+                l.name as location_name,
+                l.address as location_address,
+                fm.child_name,
+                ar.status as attendance_status
+            FROM events ev
+            JOIN sessions s ON ev.session_id = s.id
+            JOIN enrollments e ON e.session_id = s.id
+            JOIN family_members fm ON e.family_member_id = fm.id
+            LEFT JOIN locations l ON ev.location_id = l.id
+            LEFT JOIN attendance_records ar ON ar.event_id = ev.id
+                AND ar.student_id = e.family_member_id
+            WHERE fm.family_id = ?
+            AND e.status IN ('active', 'pending')
+            AND ev.start_time >= ?
+            AND ev.start_time <= ?
+            ORDER BY ev.start_time ASC
+        };
+
+        return $db->query($sql, $parent_id, time(), $end_date)->hashes->to_array;
     }
 }
 

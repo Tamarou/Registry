@@ -11,6 +11,11 @@ use Test::Registry::DB;
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 
+# Import the workflows that TransferRequest DAO depends on
+use Mojo::File qw(path);
+my @workflow_files = path('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+$dao->import_workflows(\@workflow_files); # Uses the new DAO helper method
+
 # Set up test data
 my $parent_user = $dao->create(User => {
     username => 'test_parent_enroll_transfer',
