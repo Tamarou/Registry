@@ -30,26 +30,88 @@ class Registry :isa(Mojolicious) {
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
-        # Register CSV renderer for data exports
+        # Register CSV renderer for data exports with Text::CSV_XS for proper escaping and streaming
         $self->renderer->add_handler(csv => sub ($renderer, $c, $output, $options) {
+            use Text::CSV_XS;
+
             my $data = $options->{csv} // [];
-            return unless @$data;
+            my $chunk_size = $options->{chunk_size} // 1000; # Process in chunks for memory efficiency
+            my $stream = $options->{stream} // 0; # Enable true streaming mode
 
-            # Generate CSV headers from first row keys
-            my @headers = keys %{$data->[0]};
-            my $csv_content = join(',', map { qq("$_") } @headers) . "\n";
-
-            # Generate CSV rows
-            for my $row (@$data) {
-                my @values = map {
-                    my $val = $row->{$_} // '';
-                    $val =~ s/"/""/g; # Escape quotes
-                    qq("$val");
-                } @headers;
-                $csv_content .= join(',', @values) . "\n";
+            # Handle empty data gracefully
+            unless (@$data && ref $data->[0] eq 'HASH') {
+                $$output = "No data available for export\n";
+                return;
             }
 
-            $$output = $csv_content;
+            # Create CSV object with proper configuration
+            my $csv = Text::CSV_XS->new({
+                binary => 1,
+                auto_diag => 1,
+                eol => "\n",
+                sep_char => ',',
+                quote_char => '"',
+                escape_char => '"',
+                always_quote => 1,
+            });
+
+            # Determine headers from first row (maintain consistent order)
+            my @headers = sort keys %{$data->[0]};
+
+            eval {
+                if ($stream && @$data > $chunk_size) {
+                    # For large datasets, use chunked streaming to prevent memory exhaustion
+                    $c->write_chunk($csv->string(\@headers));
+
+                    # Process data in chunks
+                    for (my $i = 0; $i < @$data; $i += $chunk_size) {
+                        my $end = $i + $chunk_size - 1;
+                        $end = $#$data if $end > $#$data;
+
+                        my $chunk_content = '';
+                        for my $j ($i..$end) {
+                            my $row = $data->[$j];
+                            my @values = map {
+                                my $val = $row->{$_};
+                                defined $val ? $val : '';
+                            } @headers;
+
+                            $chunk_content .= $csv->string(\@values);
+                        }
+
+                        $c->write_chunk($chunk_content);
+                    }
+
+                    # Finish streaming
+                    $c->write_chunk('');
+                    $$output = '';
+                } else {
+                    # For smaller datasets, use in-memory generation
+                    my $csv_content = $csv->string(\@headers);
+
+                    for my $row (@$data) {
+                        my @values = map {
+                            my $val = $row->{$_};
+                            defined $val ? $val : '';
+                        } @headers;
+
+                        $csv_content .= $csv->string(\@values);
+                    }
+
+                    $$output = $csv_content;
+                }
+            };
+
+            if ($@) {
+                # Log error and provide user-friendly message
+                $c->log->error("CSV export failed: $@");
+                if ($stream) {
+                    $c->write_chunk("Error generating CSV export: $@\n");
+                    $c->write_chunk('');
+                } else {
+                    $$output = "Error generating CSV export: $@\n";
+                }
+            }
         });
 
         $self->helper(

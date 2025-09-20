@@ -126,14 +126,32 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             require Registry::DAO::AdminDashboard;
             my $data = Registry::DAO::AdminDashboard->get_export_data($dao->db, $export_type);
 
+            # Determine if we should use streaming based on data size
+            my $record_count = @$data;
+            my $use_streaming = $record_count > 1000; # Stream for datasets > 1000 records
+
             # Set content disposition header for downloads
             $c->res->headers->content_disposition("attachment; filename=\"${export_type}.${format}\"");
 
-            # Use format-based rendering
+            # For streaming large datasets, set appropriate headers
+            if ($use_streaming && $format eq 'csv') {
+                $c->res->headers->content_type('text/csv; charset=utf-8');
+                $c->res->headers->transfer_encoding('chunked');
+            }
+
+            # Use format-based rendering with streaming support
             $c->respond_to(
                 json => { json => $data },
-                csv  => { csv => $data },
-                any  => { csv => $data } # Default to CSV for unknown formats
+                csv  => {
+                    csv => $data,
+                    stream => $use_streaming,
+                    chunk_size => 500  # Process 500 records per chunk
+                },
+                any  => {
+                    csv => $data,
+                    stream => $use_streaming,
+                    chunk_size => 500
+                }
             );
         }
         catch ($e) {

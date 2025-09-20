@@ -6,6 +6,7 @@ use Object::Pad;
 require Registry::DAO::WorkflowStep;
 
 class Registry::DAO::WorkflowSteps::AdminDashboardOverview :isa(Registry::DAO::WorkflowStep) {
+    use Carp qw(confess);
 
     method process ($db, $data) {
         # Get current user from data
