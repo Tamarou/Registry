@@ -14,10 +14,10 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         return $c->render(status => 403, text => 'Forbidden') 
             unless $user->{role} eq 'parent' || $user->{user_type} eq 'parent';
         
-        my $db = $c->app->db($c->stash('tenant'));
-        
+        my $dao = $c->dao($c->stash('tenant'));
+
         # Get all dashboard data
-        my $dashboard_data = $self->_get_dashboard_data($db, $user->{id});
+        my $dashboard_data = $self->_get_dashboard_data($dao->db, $user->{id});
         
         # Pass data to template
         $c->stash(%$dashboard_data);
@@ -29,10 +29,10 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
         
-        my $db = $c->app->db($c->stash('tenant'));
+        my $dao = $c->dao($c->stash('tenant'));
         my $days = $c->param('days') || 7; # Default to next 7 days
-        
-        my $upcoming_events = $self->_get_upcoming_events($db, $user->{id}, $days);
+
+        my $upcoming_events = $self->_get_upcoming_events($dao->db, $user->{id}, $days);
         
         $c->stash(upcoming_events => $upcoming_events);
         $c->render(template => 'parent_dashboard/upcoming_events', layout => undef);
@@ -43,10 +43,10 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
         
-        my $db = $c->app->db($c->stash('tenant'));
+        my $dao = $c->dao($c->stash('tenant'));
         my $limit = $c->param('limit') || 10;
-        
-        my $recent_attendance = $self->_get_recent_attendance($db, $user->{id}, $limit);
+
+        my $recent_attendance = $self->_get_recent_attendance($dao->db, $user->{id}, $limit);
         
         $c->stash(recent_attendance => $recent_attendance);
         $c->render(template => 'parent_dashboard/recent_attendance', layout => undef);
@@ -57,10 +57,10 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
 
-        my $db = $c->app->db($c->stash('tenant'));
+        my $dao = $c->dao($c->stash('tenant'));
 
         require Registry::DAO::Message;
-        my $unread_count = Registry::DAO::Message->get_unread_count($db, $user->{id});
+        my $unread_count = Registry::DAO::Message->get_unread_count($dao->db, $user->{id});
 
         $c->render(json => { unread_count => $unread_count });
     }
@@ -72,15 +72,15 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         return $c->render(status => 403, text => 'Forbidden')
             unless $user->{role} eq 'parent' || $user->{user_type} eq 'parent';
 
-        my $db = $c->app->db($c->stash('tenant'));
+        my $dao = $c->dao($c->stash('tenant'));
         my $exclude_enrollment = $c->param('exclude_enrollment');
 
         # Get current enrollment to exclude its session and find similar sessions
-        my $current_enrollment = Registry::DAO::Enrollment->find($db, { id => $exclude_enrollment });
+        my $current_enrollment = Registry::DAO::Enrollment->find($dao->db, { id => $exclude_enrollment });
         return $c->render(json => { sessions => [] }) unless $current_enrollment;
 
         # Find available sessions that aren't full and aren't the current session
-        my $available_sessions = Registry::DAO::Session->get_available_for_transfer($db, $current_enrollment->session_id);
+        my $available_sessions = Registry::DAO::Session->get_available_for_transfer($dao->db, $current_enrollment->session_id);
 
         $c->render(json => { sessions => $available_sessions });
     }
@@ -96,12 +96,12 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         my $enrollment_id = $c->param('enrollment_id');
         my $target_session_id = $c->param('target_session_id');
         my $reason = $c->param('reason') || 'Parent requested transfer';
-        my $db = $c->app->db($c->stash('tenant'));
+        my $dao = $c->dao($c->stash('tenant'));
 
         try {
             # Use DAO method for business logic
             my $result = Registry::DAO::TransferRequest->request_for_enrollment(
-                $db, $enrollment_id, $target_session_id, $user, $reason
+                $dao->db, $enrollment_id, $target_session_id, $user, $reason
             );
 
             if ($result->{error}) {
@@ -150,12 +150,12 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         my $enrollment_id = $c->param('enrollment_id');
         my $reason = $c->param('reason') || 'Parent requested drop';
         my $refund_requested = $c->param('refund_requested') ? 1 : 0;
-        my $db = $c->app->db($c->stash('tenant'));
+        my $dao = $c->dao($c->stash('tenant'));
 
         try {
             # Use DAO method for business logic
             my $result = Registry::DAO::DropRequest->request_for_enrollment(
-                $db, $enrollment_id, $user, $reason, $refund_requested
+                $dao->db, $enrollment_id, $user, $reason, $refund_requested
             );
 
             if ($result->{error}) {
