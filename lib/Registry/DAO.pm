@@ -25,6 +25,7 @@ use Registry::DAO::Family;
 use Registry::DAO::FamilyMember;
 use Registry::DAO::OutcomeDefinition;
 use Registry::DAO::CreateOutcomeDefinition;
+use Registry::DAO::TransferRequest;
 
 class Registry::DAO {
     use Carp         qw(croak);

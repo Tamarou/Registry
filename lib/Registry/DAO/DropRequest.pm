@@ -71,7 +71,7 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
 
             # Trigger waitlist processing
             require Registry::DAO::Waitlist;
-            Registry::DAO::Waitlist->process_session_waitlist($db, $enrollment->session_id);
+            Registry::DAO::Waitlist->process_waitlist($db, $enrollment->session_id);
         }
 
         return $self;
@@ -98,6 +98,7 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
 
     # Get all pending drop requests
     sub get_pending($class, $db) {
-        $class->find( $db, { status => 'pending' } );
+        my @requests = $class->find( $db, { status => 'pending' } );
+        return \@requests;
     }
 }

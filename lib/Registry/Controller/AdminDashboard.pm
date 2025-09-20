@@ -137,6 +137,171 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         }
     }
     
+    # Drop request management (HTMX endpoint)
+    method pending_drop_requests ($c) {
+        my $user = $c->stash('current_user');
+        return $c->render(status => 401, text => 'Unauthorized') unless $user;
+        return $c->render(status => 403, text => 'Forbidden')
+            unless $user->{role} =~ /^(admin|staff)$/;
+
+        my $db = $c->app->db($c->stash('tenant'));
+        my $status_filter = $c->param('status') || 'pending'; # pending, approved, denied, all
+
+        my $drop_requests = $self->_get_drop_requests($db, $status_filter);
+
+        $c->stash(drop_requests => $drop_requests, status_filter => $status_filter);
+        $c->render(template => 'admin_dashboard/pending_drop_requests', layout => undef);
+    }
+
+    # Get pending transfer requests (HTMX endpoint)
+    method pending_transfer_requests ($c) {
+        my $user = $c->stash('current_user');
+        return $c->render(status => 401, text => 'Unauthorized') unless $user;
+        return $c->render(status => 403, text => 'Forbidden')
+            unless $user->{role} =~ /^(admin|staff)$/;
+
+        my $db = $c->app->db($c->stash('tenant'));
+        my $status_filter = $c->param('status') || 'pending';
+
+        my $transfer_requests = $self->_get_transfer_requests($db, $status_filter);
+
+        $c->stash(transfer_requests => $transfer_requests, status_filter => $status_filter);
+        $c->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
+    }
+
+    # Process transfer request (approve/deny)
+    method process_transfer_request ($c) {
+        my $user = $c->stash('current_user');
+        return $c->render(status => 401, text => 'Unauthorized') unless $user;
+        return $c->render(status => 403, text => 'Forbidden')
+            unless $user->{role} =~ /^(admin|staff)$/;
+
+        my $transfer_request_id = $c->param('transfer_request_id');
+        my $action = $c->param('action'); # 'approve' or 'deny'
+        my $admin_notes = $c->param('admin_notes') || '';
+
+        my $db = $c->app->db($c->stash('tenant'));
+
+        try {
+            my $transfer_request = Registry::DAO::TransferRequest->find($db, { id => $transfer_request_id });
+            return $c->render(status => 404, text => 'Transfer request not found') unless $transfer_request;
+
+            if ($action eq 'approve') {
+                $transfer_request->approve($db, $user, $admin_notes);
+
+                if ($c->accepts('', 'html')) {
+                    $c->flash(success => 'Transfer request approved and processed successfully.');
+                    return $c->redirect_to('admin_dashboard');
+                } else {
+                    return $c->render(json => {
+                        success => 1,
+                        message => 'Transfer request approved and processed',
+                        action => 'approved'
+                    });
+                }
+            } elsif ($action eq 'deny') {
+                $transfer_request->deny($db, $user, $admin_notes);
+
+                if ($c->accepts('', 'html')) {
+                    $c->flash(info => 'Transfer request denied.');
+                    return $c->redirect_to('admin_dashboard');
+                } else {
+                    return $c->render(json => {
+                        success => 1,
+                        message => 'Transfer request denied',
+                        action => 'denied'
+                    });
+                }
+            } else {
+                return $c->render(status => 400, text => 'Invalid action specified');
+            }
+        }
+        catch ($e) {
+            if ($c->accepts('', 'html')) {
+                $c->flash(error => "Failed to process transfer request: $e");
+                return $c->redirect_to('admin_dashboard');
+            } else {
+                return $c->render(json => { error => "Failed to process transfer request: $e" }, status => 500);
+            }
+        }
+    }
+
+    # Process drop request (approve/deny)
+    method process_drop_request ($c) {
+        my $user = $c->stash('current_user');
+        return $c->render(status => 401, text => 'Unauthorized') unless $user;
+        return $c->render(status => 403, text => 'Forbidden')
+            unless $user->{role} =~ /^(admin|staff)$/;
+
+        my $request_id = $c->param('request_id');
+        my $action = $c->param('action'); # approve, deny
+        my $admin_notes = $c->param('admin_notes') || '';
+        my $refund_amount = $c->param('refund_amount');
+        my $db = $c->app->db($c->stash('tenant'));
+
+        unless ($request_id && $action && ($action eq 'approve' || $action eq 'deny')) {
+            return $c->render(json => { error => 'Request ID and valid action required' }, status => 400);
+        }
+
+        try {
+            # Find the drop request
+            my $drop_request = Registry::DAO::DropRequest->find($db, { id => $request_id });
+            return $c->render(json => { error => 'Drop request not found' }, status => 404) unless $drop_request;
+
+            if ($drop_request->status ne 'pending') {
+                return $c->render(json => { error => 'Drop request has already been processed' }, status => 400);
+            }
+
+            if ($action eq 'approve') {
+                $drop_request->approve($db, $user, $admin_notes, $refund_amount);
+
+                # Notify parent of approval
+                $c->app->minion->enqueue('notify_drop_request_approved', [$drop_request->id], {
+                    attempts => 3,
+                    priority => 6
+                });
+
+                if ($c->accepts('', 'html')) {
+                    $c->flash(success => 'Drop request approved successfully. Parent will be notified.');
+                    return $c->redirect_to('admin_dashboard');
+                } else {
+                    return $c->render(json => {
+                        success => 1,
+                        message => 'Drop request approved',
+                        status => 'approved'
+                    });
+                }
+            } else { # deny
+                $drop_request->deny($db, $user, $admin_notes);
+
+                # Notify parent of denial
+                $c->app->minion->enqueue('notify_drop_request_denied', [$drop_request->id], {
+                    attempts => 3,
+                    priority => 6
+                });
+
+                if ($c->accepts('', 'html')) {
+                    $c->flash(success => 'Drop request denied. Parent will be notified.');
+                    return $c->redirect_to('admin_dashboard');
+                } else {
+                    return $c->render(json => {
+                        success => 1,
+                        message => 'Drop request denied',
+                        status => 'denied'
+                    });
+                }
+            }
+        }
+        catch ($e) {
+            if ($c->accepts('', 'html')) {
+                $c->flash(error => "Failed to process drop request: $e");
+                return $c->redirect_to('admin_dashboard');
+            } else {
+                return $c->render(json => { error => "Failed to process drop request: $e" }, status => 500);
+            }
+        }
+    }
+
     # Quick action: Send bulk message
     method send_bulk_message ($c) {
         my $user = $c->stash('current_user');
@@ -200,7 +365,9 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             todays_events => $self->_get_events_for_date($db, DateTime->now->ymd),
             recent_notifications => $self->_get_recent_notifications($db, 5, 'all'),
             waitlist_summary => $self->_get_waitlist_summary($db),
-            enrollment_alerts => $self->_get_enrollment_alerts($db)
+            enrollment_alerts => $self->_get_enrollment_alerts($db),
+            pending_drop_requests => $self->_get_drop_requests($db, 'pending', 10),
+            pending_transfer_requests => $self->_get_transfer_requests($db, 'pending', 10)
         };
     }
     
@@ -235,13 +402,25 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             status => 'completed',
             created_at => { '>=' => $month_start }
         })->array->[0] || 0;
-        
+
+        # Pending drop requests
+        my $pending_drop_requests = $db->select('drop_requests', 'COUNT(*)', {
+            status => 'pending'
+        })->array->[0] || 0;
+
+        # Pending transfer requests
+        my $pending_transfer_requests = $db->select('transfer_requests', 'COUNT(*)', {
+            status => 'pending'
+        })->array->[0] || 0;
+
         return {
             active_enrollments => $active_enrollments,
             active_programs => $active_programs,
             waitlist_entries => $waitlist_entries,
             todays_events => $todays_events,
-            monthly_revenue => sprintf("%.2f", $monthly_revenue / 100) # Convert cents to dollars
+            monthly_revenue => sprintf("%.2f", $monthly_revenue / 100), # Convert cents to dollars
+            pending_drop_requests => $pending_drop_requests,
+            pending_transfer_requests => $pending_transfer_requests
         };
     }
     
@@ -612,7 +791,120 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         } elsif ($scope_param =~ /^location_(\d+)$/) {
             return ('location', $1);
         }
-        
+
         return ('tenant-wide', undef); # Default fallback
+    }
+
+    # Get drop requests with enrollment and family details
+    method _get_drop_requests ($db, $status_filter = 'pending', $limit = 50) {
+        my $sql = q{
+            SELECT
+                dr.id,
+                dr.enrollment_id,
+                dr.requested_by,
+                dr.reason,
+                dr.refund_requested,
+                dr.refund_amount_requested,
+                dr.status,
+                dr.admin_notes,
+                dr.processed_by,
+                dr.processed_at,
+                dr.created_at,
+                dr.updated_at,
+                e.status as enrollment_status,
+                s.name as session_name,
+                s.start_date,
+                s.end_date,
+                p.name as program_name,
+                l.name as location_name,
+                fm.child_name,
+                up_parent.name as parent_name,
+                up_parent.email as parent_email,
+                up_admin.name as admin_name
+            FROM drop_requests dr
+            JOIN enrollments e ON dr.enrollment_id = e.id
+            JOIN sessions s ON e.session_id = s.id
+            JOIN projects p ON s.project_id = p.id
+            LEFT JOIN locations l ON s.location_id = l.id
+            LEFT JOIN family_members fm ON e.family_member_id = fm.id
+            LEFT JOIN user_profiles up_parent ON dr.requested_by = up_parent.user_id
+            LEFT JOIN user_profiles up_admin ON dr.processed_by = up_admin.user_id
+        };
+
+        my @where_conditions;
+        my @params;
+
+        if ($status_filter eq 'pending') {
+            push @where_conditions, "dr.status = 'pending'";
+        } elsif ($status_filter eq 'approved') {
+            push @where_conditions, "dr.status = 'approved'";
+        } elsif ($status_filter eq 'denied') {
+            push @where_conditions, "dr.status = 'denied'";
+        } elsif ($status_filter ne 'all') {
+            push @where_conditions, "dr.status = 'pending'"; # Default to pending
+        }
+
+        if (@where_conditions) {
+            $sql .= ' WHERE ' . join(' AND ', @where_conditions);
+        }
+
+        $sql .= ' ORDER BY dr.created_at DESC';
+
+        if ($limit) {
+            $sql .= ' LIMIT ?';
+            push @params, $limit;
+        }
+
+        my $results = $db->query($sql, @params)->hashes->to_array;
+
+        # Add additional computed fields
+        for my $request (@$results) {
+            # Days since request
+            my $created_time = $request->{created_at};
+            if ($created_time) {
+                my $days_ago = int((time() - $created_time) / 86400);
+                $request->{days_since_request} = $days_ago;
+
+                if ($days_ago == 0) {
+                    $request->{urgency} = 'today';
+                } elsif ($days_ago <= 2) {
+                    $request->{urgency} = 'recent';
+                } elsif ($days_ago <= 7) {
+                    $request->{urgency} = 'normal';
+                } else {
+                    $request->{urgency} = 'old';
+                }
+            }
+
+            # Session status relative to drop request
+            if ($request->{start_date}) {
+                my $session_start = $request->{start_date};
+                if ($session_start =~ /^(\d{4})-(\d{2})-(\d{2})/) {
+                    my $session_date = DateTime->new(year => $1, month => $2, day => $3);
+                    my $now = DateTime->now;
+
+                    if ($session_date > $now) {
+                        $request->{session_status} = 'upcoming';
+                    } elsif ($session_date->ymd eq $now->ymd) {
+                        $request->{session_status} = 'today';
+                    } else {
+                        $request->{session_status} = 'ongoing';
+                    }
+                }
+            }
+
+            # Format refund amount for display
+            if ($request->{refund_amount_requested}) {
+                $request->{refund_amount_display} = sprintf('$%.2f', $request->{refund_amount_requested} / 100);
+            }
+        }
+
+        return $results;
+    }
+
+    # Get transfer requests with enrollment and family details
+    method _get_transfer_requests ($db, $status_filter = 'pending', $limit = 50) {
+        require Registry::DAO::TransferRequest;
+        return Registry::DAO::TransferRequest->get_detailed_requests($db, $status_filter);
     }
 }

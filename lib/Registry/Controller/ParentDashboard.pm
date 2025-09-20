@@ -56,24 +56,144 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
     method unread_messages_count ($c) {
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
-        
+
         my $db = $c->app->db($c->stash('tenant'));
-        
+
         require Registry::DAO::Message;
         my $unread_count = Registry::DAO::Message->get_unread_count($db, $user->{id});
-        
+
         $c->render(json => { unread_count => $unread_count });
     }
+
+    # Get available sessions for transfer (API endpoint)
+    method available_sessions ($c) {
+        my $user = $c->stash('current_user');
+        return $c->render(status => 401, text => 'Unauthorized') unless $user;
+        return $c->render(status => 403, text => 'Forbidden')
+            unless $user->{role} eq 'parent' || $user->{user_type} eq 'parent';
+
+        my $db = $c->app->db($c->stash('tenant'));
+        my $exclude_enrollment = $c->param('exclude_enrollment');
+
+        # Get current enrollment to exclude its session and find similar sessions
+        my $current_enrollment = Registry::DAO::Enrollment->find($db, { id => $exclude_enrollment });
+        return $c->render(json => { sessions => [] }) unless $current_enrollment;
+
+        # Find available sessions that aren't full and aren't the current session
+        my $sql = q{
+            SELECT DISTINCT
+                s.id,
+                s.name,
+                s.start_date,
+                s.end_date,
+                s.capacity,
+                p.name as program_name,
+                l.name as location_name,
+                COALESCE(COUNT(e.id), 0) as current_enrollments
+            FROM sessions s
+            JOIN projects p ON s.project_id = p.id
+            LEFT JOIN locations l ON s.location_id = l.id
+            LEFT JOIN enrollments e ON s.id = e.session_id AND e.status IN ('active', 'pending')
+            WHERE s.id != ?
+              AND (s.capacity IS NULL OR COALESCE(COUNT(e.id), 0) < s.capacity)
+              AND s.start_date > NOW()
+            GROUP BY s.id, s.name, s.start_date, s.end_date, s.capacity, p.name, l.name
+            ORDER BY p.name, s.start_date
+        };
+
+        my $available_sessions = $db->query($sql, $current_enrollment->session_id)->hashes->to_array;
+
+        $c->render(json => { sessions => $available_sessions });
+    }
     
+    # Request transfer enrollment to another session
+    # NOTE: Using traditional sub syntax due to unexplained Object::Pad method dispatch issue
+    # TODO: Investigate why Object::Pad methods fail here when they work elsewhere
+    sub request_transfer {
+        my $c = shift;
+        my $user = $c->stash('current_user');
+        return $c->render(status => 401, text => 'Unauthorized') unless $user;
+
+        my $enrollment_id = $c->param('enrollment_id');
+        my $target_session_id = $c->param('target_session_id');
+        my $reason = $c->param('reason') || 'Parent requested transfer';
+        my $dao = $c->dao($c->stash('tenant'));
+        my $db = $dao->db;
+
+        try {
+            # Find enrollment using DAO
+            my $enrollment = Registry::DAO::Enrollment->find($db, { id => $enrollment_id });
+            return $c->render(status => 404, text => 'Enrollment not found') unless $enrollment;
+
+            # Verify parent owns this enrollment via family member
+            my $family_member = $db->select('family_members', '*', {
+                id => $enrollment->family_member_id,
+                family_id => $user->{id}
+            })->hash;
+
+            return $c->render(status => 403, text => 'Forbidden') unless $family_member;
+
+            # Check if transfer is allowed
+            if ($enrollment->can_transfer($db, $user)) {
+                # Request transfer (always requires admin approval)
+                my $result = $enrollment->request_transfer($db, $user, $target_session_id, $reason);
+
+                if ($result->{error}) {
+                    if ($c->accepts('', 'html')) {
+                        $c->flash(error => "Transfer request failed: " . $result->{error});
+                        return $c->redirect_to('parent_dashboard');
+                    } else {
+                        return $c->render(json => { error => $result->{error} }, status => 400);
+                    }
+                }
+
+                # Notify admin via Minion job
+                $c->app->minion->enqueue('notify_admin_transfer_request', [$result->{transfer_request}->id], {
+                    attempts => 3,
+                    priority => 7
+                });
+
+                if ($c->accepts('', 'html')) {
+                    $c->flash(info => 'Transfer request submitted for admin approval. You will be notified when processed.');
+                    return $c->redirect_to('parent_dashboard');
+                } else {
+                    return $c->render(json => {
+                        success => 1,
+                        message => 'Transfer request submitted for admin approval'
+                    });
+                }
+            } else {
+                if ($c->accepts('', 'html')) {
+                    $c->flash(error => 'Transfer requests are not allowed for this enrollment.');
+                    return $c->redirect_to('parent_dashboard');
+                } else {
+                    return $c->render(json => { error => 'Transfer not allowed' }, status => 403);
+                }
+            }
+        }
+        catch ($e) {
+            if ($c->accepts('', 'html')) {
+                $c->flash(error => "Failed to process transfer request: $e");
+                return $c->redirect_to('parent_dashboard');
+            } else {
+                return $c->render(json => { error => "Failed to process transfer request: $e" }, status => 500);
+            }
+        }
+    }
+
     # Drop enrollment (with business rules)
-    method drop_enrollment ($c) {
+    # NOTE: Using traditional sub syntax due to unexplained Object::Pad method dispatch issue
+    # TODO: Investigate why Object::Bit methods fail here when they work elsewhere
+    sub drop_enrollment {
+        my $c = shift;
         my $user = $c->stash('current_user');
         return $c->render(status => 401, text => 'Unauthorized') unless $user;
 
         my $enrollment_id = $c->param('enrollment_id');
         my $reason = $c->param('reason') || 'Parent requested drop';
         my $refund_requested = $c->param('refund_requested') ? 1 : 0;
-        my $db = $c->app->db($c->stash('tenant'));
+        my $dao = $c->dao($c->stash('tenant'));
+        my $db = $dao->db;
 
         try {
             # Find enrollment using DAO
@@ -120,8 +240,7 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
                     return $c->render(json => {
                         success => 1,
                         message => 'Drop request submitted for admin approval',
-                        requires_approval => 1,
-                        request_id => $drop_request->id
+                        immediate => 0
                     });
                 }
             }
@@ -135,6 +254,7 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
             }
         }
     }
+
     
     # Private helper methods
     

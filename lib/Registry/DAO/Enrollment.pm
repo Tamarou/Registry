@@ -18,6 +18,15 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
 
+    # Drop and transfer fields
+    field $drop_reason :param :reader = undef;
+    field $dropped_at :param :reader = undef;
+    field $dropped_by :param :reader = undef;
+    field $refund_status :param :reader = 'none';
+    field $refund_amount :param :reader = undef;
+    field $transfer_to_session_id :param :reader = undef;
+    field $transfer_status :param :reader = 'none';
+
     sub table { 'enrollments' }
 
     ADJUST {
@@ -217,10 +226,90 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         my $session = $self->session($db);
         if ($session) {
             require Registry::DAO::Waitlist;
-            Registry::DAO::Waitlist->process_session_waitlist($db, $session_id);
+            Registry::DAO::Waitlist->process_waitlist($db, $session_id);
         }
 
         return $self;
     }
+
+    # Transfer enrollment to another session (requires admin approval)
+    method request_transfer($db, $user, $target_session_id, $reason) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Check if enrollment already has a pending transfer request
+        if ($transfer_status eq 'requested') {
+            return { error => 'Enrollment already has a pending transfer request' };
+        }
+
+        # Verify target session exists and is valid for transfer
+        my $target_session = Registry::DAO::Session->find($db, { id => $target_session_id });
+        return { error => 'Target session not found' } unless $target_session;
+
+        # Check if target session is full
+        my $target_enrollment_count = Registry::DAO::Enrollment->count_for_session($db, $target_session_id, ['active', 'pending']);
+        if ($target_session->capacity && $target_enrollment_count >= $target_session->capacity) {
+            return { error => 'Target session is full' };
+        }
+
+        # Transfers always require admin approval per MVP requirements
+        require Registry::DAO::TransferRequest;
+        my $transfer_request = Registry::DAO::TransferRequest->create($db, {
+            enrollment_id => $id,
+            target_session_id => $target_session_id,
+            requested_by => (blessed($user) ? $user->id : $user->{id}),
+            reason => $reason,
+            status => 'pending'
+        });
+
+        # Update enrollment to show transfer is requested
+        $self->update($db, { transfer_status => 'requested' });
+
+        # Update the field in the object instance
+        $transfer_status = 'requested';
+
+        return { success => 1, transfer_request => $transfer_request };
+    }
+
+    # Check if enrollment can be transferred
+    method can_transfer($db, $user) {
+        # Admin can always transfer
+        my $user_role = blessed($user) ? $user->user_type : $user->{role};
+        return 1 if $user_role eq 'admin';
+
+        # Parents can request transfers only for their own children
+        if ($user_role eq 'parent') {
+            my $user_id = blessed($user) ? $user->id : $user->{id};
+            return $parent_id eq $user_id;
+        }
+
+        # Default: no permission
+        return 0;
+    }
+
+    # Process approved transfer (admin action)
+    method process_transfer($db, $target_session_id, $admin_user) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $admin_id = blessed($admin_user) ? $admin_user->id : $admin_user->{id};
+        my $original_session_id = $session_id;
+
+        # Update enrollment to new session
+        $self->update($db, {
+            session_id => $target_session_id,
+            transfer_to_session_id => $target_session_id,
+            transfer_status => 'completed'
+        });
+
+        # Process waitlist for the original session (spot opened up)
+        require Registry::DAO::Waitlist;
+        Registry::DAO::Waitlist->process_waitlist($db, $original_session_id);
+
+        return $self;
+    }
+
+    # Helper methods for transfer status
+    method is_transfer_pending { $transfer_status eq 'requested' }
+    method is_transfer_completed { $transfer_status eq 'completed' }
+    method has_transfer_request { $transfer_status ne 'none' }
 
 }

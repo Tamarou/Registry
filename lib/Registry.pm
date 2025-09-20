@@ -89,6 +89,31 @@ class Registry :isa(Mojolicious) {
 
         my $r = $self->routes;
 
+        # Parent Dashboard routes (must be before workflow routes to avoid conflicts)
+        $r->get('/parent/dashboard')->to('parent_dashboard#index')->name('parent_dashboard');
+        $r->get('/parent/dashboard/upcoming_events')->to('parent_dashboard#upcoming_events')->name('parent_dashboard_upcoming_events');
+        $r->get('/parent/dashboard/recent_attendance')->to('parent_dashboard#recent_attendance')->name('parent_dashboard_recent_attendance');
+        $r->get('/parent/dashboard/unread_messages_count')->to('parent_dashboard#unread_messages_count')->name('parent_dashboard_unread_messages_count');
+        $r->post('/parent/dashboard/drop_enrollment')->to('parent_dashboard#drop_enrollment')->name('parent_dashboard_drop_enrollment');
+        $r->post('/parent/dashboard/request_transfer')->to('parent_dashboard#request_transfer')->name('parent_dashboard_request_transfer');
+
+        # API routes for parent dashboard
+        $r->get('/api/sessions/available')->to('parent_dashboard#available_sessions')->name('api_sessions_available');
+
+        # Admin Dashboard routes (must be before workflow routes to avoid conflicts)
+        $r->get('/admin/dashboard')->to('admin_dashboard#index')->name('admin_dashboard');
+        $r->get('/admin/dashboard/program_overview')->to('admin_dashboard#program_overview')->name('admin_dashboard_program_overview');
+        $r->get('/admin/dashboard/todays_events')->to('admin_dashboard#todays_events')->name('admin_dashboard_todays_events');
+        $r->get('/admin/dashboard/waitlist_management')->to('admin_dashboard#waitlist_management')->name('admin_dashboard_waitlist_management');
+        $r->get('/admin/dashboard/recent_notifications')->to('admin_dashboard#recent_notifications')->name('admin_dashboard_recent_notifications');
+        $r->get('/admin/dashboard/enrollment_trends')->to('admin_dashboard#enrollment_trends')->name('admin_dashboard_enrollment_trends');
+        $r->get('/admin/dashboard/export')->to('admin_dashboard#export_data')->name('admin_dashboard_export');
+        $r->post('/admin/dashboard/send_bulk_message')->to('admin_dashboard#send_bulk_message')->name('admin_dashboard_send_bulk_message');
+        $r->get('/admin/dashboard/pending_drop_requests')->to('admin_dashboard#pending_drop_requests')->name('admin_dashboard_pending_drop_requests');
+        $r->post('/admin/dashboard/process_drop_request')->to('admin_dashboard#process_drop_request')->name('admin_dashboard_process_drop_request');
+        $r->get('/admin/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
+        $r->post('/admin/dashboard/process_transfer_request')->to('admin_dashboard#process_transfer_request')->name('admin_dashboard_process_transfer_request');
+
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
         $w->get('')->to('#index')->name("workflow_index");
@@ -125,22 +150,6 @@ class Registry :isa(Mojolicious) {
         $r->post('/waitlist/:id/decline')->to('waitlist#decline')->name('waitlist_decline');
         $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
         
-        # Parent Dashboard routes
-        $r->get('/parent/dashboard')->to('parent_dashboard#index')->name('parent_dashboard');
-        $r->get('/parent/dashboard/upcoming_events')->to('parent_dashboard#upcoming_events')->name('parent_dashboard_upcoming_events');
-        $r->get('/parent/dashboard/recent_attendance')->to('parent_dashboard#recent_attendance')->name('parent_dashboard_recent_attendance');
-        $r->get('/parent/dashboard/unread_messages_count')->to('parent_dashboard#unread_messages_count')->name('parent_dashboard_unread_messages_count');
-        $r->post('/parent/dashboard/drop_enrollment')->to('parent_dashboard#drop_enrollment')->name('parent_dashboard_drop_enrollment');
-        
-        # Admin Dashboard routes
-        $r->get('/admin/dashboard')->to('admin_dashboard#index')->name('admin_dashboard');
-        $r->get('/admin/dashboard/program_overview')->to('admin_dashboard#program_overview')->name('admin_dashboard_program_overview');
-        $r->get('/admin/dashboard/todays_events')->to('admin_dashboard#todays_events')->name('admin_dashboard_todays_events');
-        $r->get('/admin/dashboard/waitlist_management')->to('admin_dashboard#waitlist_management')->name('admin_dashboard_waitlist_management');
-        $r->get('/admin/dashboard/recent_notifications')->to('admin_dashboard#recent_notifications')->name('admin_dashboard_recent_notifications');
-        $r->get('/admin/dashboard/enrollment_trends')->to('admin_dashboard#enrollment_trends')->name('admin_dashboard_enrollment_trends');
-        $r->get('/admin/dashboard/export')->to('admin_dashboard#export_data')->name('admin_dashboard_export');
-        $r->post('/admin/dashboard/send_bulk_message')->to('admin_dashboard#send_bulk_message')->name('admin_dashboard_send_bulk_message');
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {

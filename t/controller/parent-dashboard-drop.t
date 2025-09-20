@@ -53,7 +53,7 @@ subtest 'Parent can drop enrollment before session starts' => sub {
             user_type => 'parent',
             role => 'parent'
         });
-        $c->stash(tenant => 'test');
+        $c->stash(tenant => 'registry');
     });
 
     # Test immediate drop via POST
@@ -71,7 +71,7 @@ subtest 'Parent can drop enrollment before session starts' => sub {
     $response->status_is(200);
 
     # Verify enrollment was cancelled
-    my $updated_enrollment = Registry::DAO::Enrollment->find($dao, { id => $enrollment->id });
+    my $updated_enrollment = Registry::DAO::Enrollment->find($dao->db, { id => $enrollment->id });
     is $updated_enrollment->status, 'cancelled', 'Enrollment status updated to cancelled';
     ok defined $updated_enrollment->drop_reason, 'Drop reason was recorded';
 };
@@ -101,15 +101,15 @@ subtest 'Parent creates drop request for started session' => sub {
     })->status_is(200);
 
     # Verify enrollment is still active (not immediately cancelled)
-    my $updated_enrollment = Registry::DAO::Enrollment->find($dao, { id => $enrollment->id });
+    my $updated_enrollment = Registry::DAO::Enrollment->find($dao->db, { id => $enrollment->id });
     is $updated_enrollment->status, 'active', 'Enrollment remains active pending admin approval';
 
     # Verify drop request was created
-    my $drop_requests = Registry::DAO::DropRequest->find($dao, {
+    my @drop_requests = Registry::DAO::DropRequest->find($dao->db, {
         enrollment_id => $enrollment->id
     });
-    ok @$drop_requests > 0, 'Drop request was created';
-    is $drop_requests->[0]->status, 'pending', 'Drop request has pending status';
-    is $drop_requests->[0]->reason, 'Family emergency', 'Drop reason recorded correctly';
-    is $drop_requests->[0]->refund_requested, 1, 'Refund request recorded correctly';
+    ok @drop_requests > 0, 'Drop request was created';
+    is $drop_requests[0]->status, 'pending', 'Drop request has pending status';
+    is $drop_requests[0]->reason, 'Family emergency', 'Drop reason recorded correctly';
+    is $drop_requests[0]->refund_requested, 1, 'Refund request recorded correctly';
 };
