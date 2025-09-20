@@ -104,6 +104,33 @@ class Registry::DAO::TransferRequest :isa(Registry::DAO::Object) {
     method is_approved() { $status eq 'approved' }
     method is_denied() { $status eq 'denied' }
 
+    # Request transfer for an enrollment (with parent permission validation)
+    sub request_for_enrollment($class, $db, $enrollment_id, $target_session_id, $user, $reason = 'Parent requested transfer') {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Find enrollment using DAO
+        my $enrollment = Registry::DAO::Enrollment->find($db, { id => $enrollment_id });
+        return { error => 'Enrollment not found' } unless $enrollment;
+
+        # Verify parent owns this enrollment via family member
+        my $family_member = $db->select('family_members', '*', {
+            id => $enrollment->family_member_id,
+            family_id => $user->{id}
+        })->hash;
+
+        return { error => 'Forbidden - you do not own this enrollment' } unless $family_member;
+
+        # Check if transfer is allowed
+        unless ($enrollment->can_transfer($db, $user)) {
+            return { error => 'Transfer requests are not allowed for this enrollment' };
+        }
+
+        # Request transfer (always requires admin approval)
+        my $result = $enrollment->request_transfer($db, $user, $target_session_id, $reason);
+
+        return $result;
+    }
+
     # Get all pending transfer requests
     sub get_pending($class, $db) {
         my @requests = $class->find( $db, { status => 'pending' } );

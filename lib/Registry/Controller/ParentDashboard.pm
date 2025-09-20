@@ -80,28 +80,7 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         return $c->render(json => { sessions => [] }) unless $current_enrollment;
 
         # Find available sessions that aren't full and aren't the current session
-        my $sql = q{
-            SELECT DISTINCT
-                s.id,
-                s.name,
-                s.start_date,
-                s.end_date,
-                s.capacity,
-                p.name as program_name,
-                l.name as location_name,
-                COALESCE(COUNT(e.id), 0) as current_enrollments
-            FROM sessions s
-            JOIN projects p ON s.project_id = p.id
-            LEFT JOIN locations l ON s.location_id = l.id
-            LEFT JOIN enrollments e ON s.id = e.session_id AND e.status IN ('active', 'pending')
-            WHERE s.id != ?
-              AND (s.capacity IS NULL OR COALESCE(COUNT(e.id), 0) < s.capacity)
-              AND s.start_date > NOW()
-            GROUP BY s.id, s.name, s.start_date, s.end_date, s.capacity, p.name, l.name
-            ORDER BY p.name, s.start_date
-        };
-
-        my $available_sessions = $db->query($sql, $current_enrollment->session_id)->hashes->to_array;
+        my $available_sessions = Registry::DAO::Session->get_available_for_transfer($db, $current_enrollment->session_id);
 
         $c->render(json => { sessions => $available_sessions });
     }
@@ -117,58 +96,37 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         my $enrollment_id = $c->param('enrollment_id');
         my $target_session_id = $c->param('target_session_id');
         my $reason = $c->param('reason') || 'Parent requested transfer';
-        my $dao = $c->dao($c->stash('tenant'));
-        my $db = $dao->db;
+        my $db = $c->app->db($c->stash('tenant'));
 
         try {
-            # Find enrollment using DAO
-            my $enrollment = Registry::DAO::Enrollment->find($db, { id => $enrollment_id });
-            return $c->render(status => 404, text => 'Enrollment not found') unless $enrollment;
+            # Use DAO method for business logic
+            my $result = Registry::DAO::TransferRequest->request_for_enrollment(
+                $db, $enrollment_id, $target_session_id, $user, $reason
+            );
 
-            # Verify parent owns this enrollment via family member
-            my $family_member = $db->select('family_members', '*', {
-                id => $enrollment->family_member_id,
-                family_id => $user->{id}
-            })->hash;
-
-            return $c->render(status => 403, text => 'Forbidden') unless $family_member;
-
-            # Check if transfer is allowed
-            if ($enrollment->can_transfer($db, $user)) {
-                # Request transfer (always requires admin approval)
-                my $result = $enrollment->request_transfer($db, $user, $target_session_id, $reason);
-
-                if ($result->{error}) {
-                    if ($c->accepts('', 'html')) {
-                        $c->flash(error => "Transfer request failed: " . $result->{error});
-                        return $c->redirect_to('parent_dashboard');
-                    } else {
-                        return $c->render(json => { error => $result->{error} }, status => 400);
-                    }
-                }
-
-                # Notify admin via Minion job
-                $c->app->minion->enqueue('notify_admin_transfer_request', [$result->{transfer_request}->id], {
-                    attempts => 3,
-                    priority => 7
-                });
-
+            if ($result->{error}) {
                 if ($c->accepts('', 'html')) {
-                    $c->flash(info => 'Transfer request submitted for admin approval. You will be notified when processed.');
+                    $c->flash(error => "Transfer request failed: " . $result->{error});
                     return $c->redirect_to('parent_dashboard');
                 } else {
-                    return $c->render(json => {
-                        success => 1,
-                        message => 'Transfer request submitted for admin approval'
-                    });
+                    return $c->render(json => { error => $result->{error} }, status => 400);
                 }
+            }
+
+            # Notify admin via Minion job
+            $c->app->minion->enqueue('notify_admin_transfer_request', [$result->{transfer_request}->id], {
+                attempts => 3,
+                priority => 7
+            });
+
+            if ($c->accepts('', 'html')) {
+                $c->flash(info => 'Transfer request submitted for admin approval. You will be notified when processed.');
+                return $c->redirect_to('parent_dashboard');
             } else {
-                if ($c->accepts('', 'html')) {
-                    $c->flash(error => 'Transfer requests are not allowed for this enrollment.');
-                    return $c->redirect_to('parent_dashboard');
-                } else {
-                    return $c->render(json => { error => 'Transfer not allowed' }, status => 403);
-                }
+                return $c->render(json => {
+                    success => 1,
+                    message => 'Transfer request submitted for admin approval'
+                });
             }
         }
         catch ($e) {
@@ -192,57 +150,40 @@ class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
         my $enrollment_id = $c->param('enrollment_id');
         my $reason = $c->param('reason') || 'Parent requested drop';
         my $refund_requested = $c->param('refund_requested') ? 1 : 0;
-        my $dao = $c->dao($c->stash('tenant'));
-        my $db = $dao->db;
+        my $db = $c->app->db($c->stash('tenant'));
 
         try {
-            # Find enrollment using DAO
-            my $enrollment = Registry::DAO::Enrollment->find($db, { id => $enrollment_id });
-            return $c->render(status => 404, text => 'Enrollment not found') unless $enrollment;
+            # Use DAO method for business logic
+            my $result = Registry::DAO::DropRequest->request_for_enrollment(
+                $db, $enrollment_id, $user, $reason, $refund_requested
+            );
 
-            # Verify parent owns this enrollment via family member
-            my $family_member = $db->select('family_members', '*', {
-                id => $enrollment->family_member_id,
-                family_id => $user->{id}
-            })->hash;
-
-            return $c->render(status => 403, text => 'Forbidden') unless $family_member;
-
-            # Check if drop is allowed and process accordingly
-            if ($enrollment->can_drop($db, $user)) {
-                # Immediate drop allowed (session hasn't started)
-                $enrollment->request_drop($db, $user, $reason, $refund_requested);
-
+            if ($result->{error}) {
                 if ($c->accepts('', 'html')) {
-                    $c->flash(success => 'Enrollment cancelled successfully. Waitlist will be processed automatically.');
+                    $c->flash(error => "Drop request failed: " . $result->{error});
                     return $c->redirect_to('parent_dashboard');
                 } else {
-                    return $c->render(json => {
-                        success => 1,
-                        message => 'Enrollment cancelled successfully',
-                        immediate => 1
-                    });
+                    return $c->render(json => { error => $result->{error} }, status => 400);
                 }
-            } else {
-                # Drop request requires admin approval (session has started)
-                my $drop_request = $enrollment->request_drop($db, $user, $reason, $refund_requested);
+            }
 
-                # Notify admin via Minion job
-                $c->app->minion->enqueue('notify_admin_drop_request', [$drop_request->id], {
+            # If not immediate drop, notify admin via Minion job
+            if (!$result->{immediate} && $result->{drop_request}) {
+                $c->app->minion->enqueue('notify_admin_drop_request', [$result->{drop_request}->id], {
                     attempts => 3,
                     priority => 7
                 });
+            }
 
-                if ($c->accepts('', 'html')) {
-                    $c->flash(info => 'Drop request submitted for admin approval. You will be notified when processed.');
-                    return $c->redirect_to('parent_dashboard');
+            if ($c->accepts('', 'html')) {
+                if ($result->{immediate}) {
+                    $c->flash(success => $result->{message});
                 } else {
-                    return $c->render(json => {
-                        success => 1,
-                        message => 'Drop request submitted for admin approval',
-                        immediate => 0
-                    });
+                    $c->flash(info => $result->{message});
                 }
+                return $c->redirect_to('parent_dashboard');
+            } else {
+                return $c->render(json => $result);
             }
         }
         catch ($e) {

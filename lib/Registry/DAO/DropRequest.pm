@@ -93,6 +93,43 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
     method is_approved() { $status eq 'approved' }
     method is_denied() { $status eq 'denied' }
 
+    # Request drop for an enrollment (with parent permission validation)
+    sub request_for_enrollment($class, $db, $enrollment_id, $user, $reason = 'Parent requested drop', $refund_requested = 0) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Find enrollment using DAO
+        my $enrollment = Registry::DAO::Enrollment->find($db, { id => $enrollment_id });
+        return { error => 'Enrollment not found' } unless $enrollment;
+
+        # Verify parent owns this enrollment via family member
+        my $family_member = $db->select('family_members', '*', {
+            id => $enrollment->family_member_id,
+            family_id => $user->{id}
+        })->hash;
+
+        return { error => 'Forbidden - you do not own this enrollment' } unless $family_member;
+
+        # Check if drop is allowed and process accordingly
+        if ($enrollment->can_drop($db, $user)) {
+            # Immediate drop allowed (session hasn't started)
+            $enrollment->request_drop($db, $user, $reason, $refund_requested);
+            return {
+                success => 1,
+                message => 'Enrollment cancelled successfully. Waitlist will be processed automatically.',
+                immediate => 1
+            };
+        } else {
+            # Drop request requires admin approval (session has started)
+            my $drop_request = $enrollment->request_drop($db, $user, $reason, $refund_requested);
+            return {
+                success => 1,
+                message => 'Drop request submitted for admin approval',
+                immediate => 0,
+                drop_request => $drop_request
+            };
+        }
+    }
+
     # Get all pending drop requests
     sub get_pending($class, $db) {
         my @requests = $class->find( $db, { status => 'pending' } );
