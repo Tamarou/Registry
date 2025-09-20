@@ -123,7 +123,7 @@ class Registry :isa(Mojolicious) {
         $r->get('/api/sessions/available')->to('parent_dashboard#available_sessions')->name('api_sessions_available');
 
         # Admin Dashboard routes (must be before workflow routes to avoid conflicts)
-        $r->get('/admin/dashboard')->to('admin_dashboard#index')->name('admin_dashboard');
+        $r->get('/admin/dashboard')->to('workflows#index' => { workflow => 'admin-dashboard' })->name('admin_dashboard');
         $r->get('/admin/dashboard/program_overview')->to('admin_dashboard#program_overview')->name('admin_dashboard_program_overview');
         $r->get('/admin/dashboard/todays_events')->to('admin_dashboard#todays_events')->name('admin_dashboard_todays_events');
         $r->get('/admin/dashboard/waitlist_management')->to('admin_dashboard#waitlist_management')->name('admin_dashboard_waitlist_management');
@@ -132,9 +132,9 @@ class Registry :isa(Mojolicious) {
         $r->get('/admin/dashboard/export')->to('admin_dashboard#export_data')->name('admin_dashboard_export');
         $r->post('/admin/dashboard/send_bulk_message')->to('admin_dashboard#send_bulk_message')->name('admin_dashboard_send_bulk_message');
         $r->get('/admin/dashboard/pending_drop_requests')->to('admin_dashboard#pending_drop_requests')->name('admin_dashboard_pending_drop_requests');
-        $r->post('/admin/dashboard/process_drop_request')->to('admin_dashboard#process_drop_request')->name('admin_dashboard_process_drop_request');
+        $r->post('/admin/dashboard/process_drop_request')->to('workflows#start_workflow' => { workflow => 'admin-drop-approval' })->name('admin_dashboard_process_drop_request');
         $r->get('/admin/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
-        $r->post('/admin/dashboard/process_transfer_request')->to('admin_dashboard#process_transfer_request')->name('admin_dashboard_process_transfer_request');
+        $r->post('/admin/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
 
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');

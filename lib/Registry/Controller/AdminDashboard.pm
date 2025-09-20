@@ -7,7 +7,6 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     use DateTime;
     use List::Util qw(sum max);
     use JSON qw(encode_json);
-    use Registry::Controller::Workflows;
     
     # Main admin dashboard
     method index ($c) {
@@ -175,131 +174,6 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         $c->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
     }
 
-    # Process transfer request via workflow
-    method process_transfer_request ($c) {
-        my $user = $c->stash('current_user');
-        return $c->render(status => 401, text => 'Unauthorized') unless $user;
-        return $c->render(status => 403, text => 'Forbidden')
-            unless $user->{role} =~ /^(admin|staff)$/;
-
-        my $transfer_request_id = $c->param('transfer_request_id');
-        my $action = $c->param('action'); # 'approve' or 'deny'
-        my $admin_notes = $c->param('admin_notes') || '';
-
-        unless ($transfer_request_id && $action && ($action eq 'approve' || $action eq 'deny')) {
-            if ($c->accepts('', 'html')) {
-                $c->flash(error => 'Transfer request ID and valid action required');
-                return $c->redirect_to('admin_dashboard');
-            } else {
-                return $c->render(json => { error => 'Transfer request ID and valid action required' }, status => 400);
-            }
-        }
-
-        # Prepare workflow data
-        my $workflow_data = {
-            transfer_request_id => $transfer_request_id,
-            action => $action,
-            admin_notes => $admin_notes,
-            admin_user_id => $user->{id},
-            return_url => $c->url_for('admin_dashboard')->to_abs
-        };
-
-        # Start the transfer request processing workflow
-        if ($c->accepts('', 'html')) {
-            # For HTML requests, redirect to workflow
-            return $c->redirect_to('workflow_start', { workflow => 'transfer-request-processing' }, $workflow_data);
-        } else {
-            # For AJAX/JSON requests, start workflow and return status
-            try {
-                # Create a temporary form object for workflow processing
-                my $form = Mojo::Parameters->new();
-                for my $key (keys %$workflow_data) {
-                    $form->append($key => $workflow_data->{$key});
-                }
-
-                # Start workflow run directly
-                my $workflow_controller = Registry::Controller::Workflows->new(app => $c->app);
-                $workflow_controller->req($c->req);
-                $workflow_controller->stash(workflow => 'transfer-request-processing');
-                $workflow_controller->req->body_params($form);
-
-                my $run = $workflow_controller->new_run($workflow_controller->workflow());
-
-                return $c->render(json => {
-                    success => 1,
-                    message => 'Transfer request processing started',
-                    workflow_run => $run->id
-                });
-            }
-            catch ($e) {
-                return $c->render(json => { error => "Failed to start transfer request processing: $e" }, status => 500);
-            }
-        }
-    }
-
-    # Process drop request via workflow
-    method process_drop_request ($c) {
-        my $user = $c->stash('current_user');
-        return $c->render(status => 401, text => 'Unauthorized') unless $user;
-        return $c->render(status => 403, text => 'Forbidden')
-            unless $user->{role} =~ /^(admin|staff)$/;
-
-        my $request_id = $c->param('request_id');
-        my $action = $c->param('action'); # approve, deny
-        my $admin_notes = $c->param('admin_notes') || '';
-        my $refund_amount = $c->param('refund_amount');
-
-        unless ($request_id && $action && ($action eq 'approve' || $action eq 'deny')) {
-            if ($c->accepts('', 'html')) {
-                $c->flash(error => 'Request ID and valid action required');
-                return $c->redirect_to('admin_dashboard');
-            } else {
-                return $c->render(json => { error => 'Request ID and valid action required' }, status => 400);
-            }
-        }
-
-        # Prepare workflow data
-        my $workflow_data = {
-            drop_request_id => $request_id,  # Use the correct field name for workflow
-            action => $action,
-            admin_notes => $admin_notes,
-            refund_amount => $refund_amount,
-            admin_user_id => $user->{id},
-            return_url => $c->url_for('admin_dashboard')->to_abs
-        };
-
-        # Start the drop request processing workflow
-        if ($c->accepts('', 'html')) {
-            # For HTML requests, redirect to workflow
-            return $c->redirect_to('workflow_start', { workflow => 'drop-request-processing' }, $workflow_data);
-        } else {
-            # For AJAX/JSON requests, start workflow and return status
-            try {
-                # Create a temporary form object for workflow processing
-                my $form = Mojo::Parameters->new();
-                for my $key (keys %$workflow_data) {
-                    $form->append($key => $workflow_data->{$key});
-                }
-
-                # Start workflow run directly
-                my $workflow_controller = Registry::Controller::Workflows->new(app => $c->app);
-                $workflow_controller->req($c->req);
-                $workflow_controller->stash(workflow => 'drop-request-processing');
-                $workflow_controller->req->body_params($form);
-
-                my $run = $workflow_controller->new_run($workflow_controller->workflow());
-
-                return $c->render(json => {
-                    success => 1,
-                    message => 'Drop request processing started',
-                    workflow_run => $run->id
-                });
-            }
-            catch ($e) {
-                return $c->render(json => { error => "Failed to start drop request processing: $e" }, status => 500);
-            }
-        }
-    }
 
     # Quick action: Send bulk message
     method send_bulk_message ($c) {

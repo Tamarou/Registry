@@ -1,0 +1,25 @@
+---
+description: Admin workflow for reviewing and approving/denying drop requests
+name: Admin Drop Request Approval
+slug: admin-drop-approval
+first_step: load-request
+steps:
+- class: Registry::DAO::WorkflowSteps::LoadDropRequest
+  description: Load and validate the drop request for review
+  slug: load-request
+  template: admin-drop-approval/load-request
+- class: Registry::DAO::WorkflowSteps::ReviewDropRequest
+  description: Display drop request details for admin review
+  slug: review-request
+  template: admin-drop-approval/review-request
+- class: Registry::DAO::WorkflowSteps::AdminDropDecision
+  description: Collect admin decision (approve/deny) and notes
+  slug: admin-decision
+  template: admin-drop-approval/admin-decision
+- class: Registry::DAO::WorkflowSteps::ProcessAdminDropDecision
+  description: Process the admin decision and trigger appropriate workflow
+  slug: process-decision
+- class: Registry::DAO::WorkflowStep
+  description: Drop request processing complete
+  slug: complete
+  template: admin-drop-approval/complete

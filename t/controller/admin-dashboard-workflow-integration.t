@@ -1,5 +1,5 @@
-# ABOUTME: Tests AdminDashboard workflow integration for drop and transfer request processing
-# ABOUTME: Verifies that admin actions properly delegate to workflow processing
+# ABOUTME: Tests AdminDashboard workflow architecture with admin-specific workflows
+# ABOUTME: Verifies that admin dashboard routes properly redirect to admin workflows
 
 use 5.40.2;
 use lib qw(lib t/lib);
@@ -18,50 +18,44 @@ $ENV{DB_URL} = $test_db->uri;
 
 my $t = Test::Mojo->new('Registry');
 
-subtest "AdminDashboard controller has workflow methods" => sub {
-    plan tests => 2;
+subtest "AdminDashboard controller has only data retrieval methods" => sub {
+    plan tests => 4;
 
-    # Verify the refactored methods exist
-    ok(Registry::Controller::AdminDashboard->can('process_drop_request'), 'AdminDashboard has process_drop_request method');
-    ok(Registry::Controller::AdminDashboard->can('process_transfer_request'), 'AdminDashboard has process_transfer_request method');
+    # Verify data retrieval methods exist
+    ok(Registry::Controller::AdminDashboard->can('index'), 'AdminDashboard has index method');
+    ok(Registry::Controller::AdminDashboard->can('pending_drop_requests'), 'AdminDashboard has pending_drop_requests method');
+    ok(Registry::Controller::AdminDashboard->can('pending_transfer_requests'), 'AdminDashboard has pending_transfer_requests method');
+
+    # Verify action methods were removed (delegated to workflows)
+    ok(!Registry::Controller::AdminDashboard->can('process_drop_request'), 'AdminDashboard process_drop_request method removed (delegated to workflow)');
 };
 
-subtest "Drop request workflow integration" => sub {
-    plan tests => 2;
+subtest "Admin dashboard routes redirect to workflows" => sub {
+    plan tests => 3;
 
-    # Test that the route exists and accepts parameters (will fail auth, but that's expected)
+    # Test that admin dashboard route redirects to admin-dashboard workflow
+    $t->get_ok('/admin/dashboard');
+
+    # Test that admin action routes redirect to admin approval workflows
     $t->post_ok('/admin/dashboard/process_drop_request', form => {
-        request_id => 'test-123',
+        drop_request_id => 'test-123',
         action => 'approve',
         admin_notes => 'Test approval'
     });
 
-    # Verify it at least attempts to process (not testing full workflow execution here)
-    ok(1, 'Drop request workflow route accessible');
-};
-
-subtest "Transfer request workflow integration" => sub {
-    plan tests => 2;
-
-    # Test that the route exists and accepts parameters (will fail auth, but that's expected)
     $t->post_ok('/admin/dashboard/process_transfer_request', form => {
         transfer_request_id => 'test-456',
         action => 'deny',
         admin_notes => 'Test denial'
     });
-
-    # Verify it at least attempts to process (not testing full workflow execution here)
-    ok(1, 'Transfer request workflow route accessible');
 };
 
-subtest "Workflow data structure validation" => sub {
+
+subtest "Admin workflow architecture validation" => sub {
     plan tests => 3;
 
-    # Verify workflow slug constants match our implementation
-    ok(1, 'Drop workflow slug: drop-request-processing');
-    ok(1, 'Transfer workflow slug: transfer-request-processing');
-
-    # Test that the controller passes correct field names
-    # (Based on our examination of the workflow step classes)
-    ok(1, 'Workflow expects drop_request_id and transfer_request_id fields');
+    # Verify admin workflow files exist
+    ok(-f 'workflows/admin-dashboard.yml', 'Admin dashboard workflow exists');
+    ok(-f 'workflows/admin-drop-approval.yml', 'Admin drop approval workflow exists');
+    ok(-f 'workflows/admin-transfer-approval.yml', 'Admin transfer approval workflow exists');
 };
