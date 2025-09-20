@@ -125,18 +125,16 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         try {
             require Registry::DAO::AdminDashboard;
             my $data = Registry::DAO::AdminDashboard->get_export_data($dao->db, $export_type);
-            
-            if ($format eq 'json') {
-                $c->res->headers->content_type('application/json');
-                $c->res->headers->content_disposition("attachment; filename=\"${export_type}.json\"");
-                return $c->render(json => $data);
-            } else {
-                # CSV format
-                my $csv_content = $self->_convert_to_csv($data, $export_type);
-                $c->res->headers->content_type('text/csv');
-                $c->res->headers->content_disposition("attachment; filename=\"${export_type}.csv\"");
-                return $c->render(data => $csv_content);
-            }
+
+            # Set content disposition header for downloads
+            $c->res->headers->content_disposition("attachment; filename=\"${export_type}.${format}\"");
+
+            # Use format-based rendering
+            $c->respond_to(
+                json => { json => $data },
+                csv  => { csv => $data },
+                any  => { csv => $data } # Default to CSV for unknown formats
+            );
         }
         catch ($e) {
             $c->flash(error => "Export failed: $e");
@@ -362,26 +360,6 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         }
     }
     
-    # Private utility methods
-    
-    # Convert data to CSV format
-    method _convert_to_csv ($data, $export_type) {
-        return '' unless @$data;
-        
-        my @headers = keys %{$data->[0]};
-        my $csv = join(',', map { qq("$_") } @headers) . "\n";
-        
-        for my $row (@$data) {
-            my @values = map { 
-                my $val = $row->{$_} // '';
-                $val =~ s/"/""/g; # Escape quotes
-                qq("$val");
-            } @headers;
-            $csv .= join(',', @values) . "\n";
-        }
-        
-        return $csv;
-    }
     
     # Parse recipient scope for bulk messaging
     method _parse_recipient_scope ($scope_param) {

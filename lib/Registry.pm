@@ -30,6 +30,28 @@ class Registry :isa(Mojolicious) {
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
+        # Register CSV renderer for data exports
+        $self->renderer->add_handler(csv => sub ($renderer, $c, $output, $options) {
+            my $data = $options->{csv} // [];
+            return unless @$data;
+
+            # Generate CSV headers from first row keys
+            my @headers = keys %{$data->[0]};
+            my $csv_content = join(',', map { qq("$_") } @headers) . "\n";
+
+            # Generate CSV rows
+            for my $row (@$data) {
+                my @values = map {
+                    my $val = $row->{$_} // '';
+                    $val =~ s/"/""/g; # Escape quotes
+                    qq("$val");
+                } @headers;
+                $csv_content .= join(',', @values) . "\n";
+            }
+
+            $$output = $csv_content;
+        });
+
         $self->helper(
             tenant => sub ($c, $explicit_tenant = undef) {
                 # Determine tenant: explicit param > header > cookie > subdomain > default
