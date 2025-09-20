@@ -114,4 +114,18 @@ class Registry::DAO::FamilyMember :isa(Registry::DAO::Object) {
         require Registry::DAO::Waitlist;
         Registry::DAO::Waitlist->find($db, { family_member_id => $id });
     }
+
+    # Get all children for a parent (moved from ParentDashboard controller)
+    sub get_children_for_parent($class, $db, $parent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $sql = q{
+            SELECT fm.id, fm.child_name, fm.birth_date, fm.grade, fm.medical_info
+            FROM family_members fm
+            WHERE fm.family_id = ?
+            ORDER BY fm.child_name
+        };
+
+        return $db->query($sql, $parent_id)->hashes->to_array;
+    }
 }

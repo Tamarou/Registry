@@ -4,6 +4,8 @@ use Object::Pad;
 class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(decode_json);
     use Carp qw(croak);
+    use Scalar::Util qw(blessed);
+    use DateTime;
     use experimental qw(try);
     
     field $id :param :reader;
@@ -16,6 +18,15 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     field $metadata :param :reader = {};
     field $created_at :param :reader;
     field $updated_at :param :reader;
+
+    # Drop and transfer fields
+    field $drop_reason :param :reader = undef;
+    field $dropped_at :param :reader = undef;
+    field $dropped_by :param :reader = undef;
+    field $refund_status :param :reader = 'none';
+    field $refund_amount :param :reader = undef;
+    field $transfer_to_session_id :param :reader = undef;
+    field $transfer_status :param :reader = 'none';
 
     sub table { 'enrollments' }
 
@@ -151,13 +162,237 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # Count enrollments for a session by status
     sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {
         $db = $db->db if $db isa Registry::DAO;
-        
+
         my $status_list = join(',', map { "'$_'" } @$statuses);
         my $result = $db->query(
             "SELECT COUNT(*) FROM enrollments WHERE session_id = ? AND status IN ($status_list)",
             $session_id
         );
         return $result->array->[0] || 0;
+    }
+
+    # Check if enrollment can be dropped by the specified user
+    method can_drop($db, $user) {
+        my $session = $self->session($db);
+
+        # Admin can always drop
+        my $user_role = blessed($user) ? $user->user_type : $user->{role};
+        return 1 if $user_role eq 'admin';
+
+        # Parents can only drop before session starts
+        return !$session->has_started();
+    }
+
+    # Request to drop enrollment (creates admin approval request if needed)
+    method request_drop($db, $user, $reason, $refund_requested = 0) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $session = $self->session($db);
+
+        # If session has started and user is not admin, create drop request
+        my $user_role = blessed($user) ? $user->user_type : $user->{role};
+        my $user_id = blessed($user) ? $user->id : $user->{id};
+
+        if ($session->has_started && $user_role ne 'admin') {
+            require Registry::DAO::DropRequest;
+            return Registry::DAO::DropRequest->create($db, {
+                enrollment_id => $id,
+                requested_by => $user_id,
+                reason => $reason,
+                refund_requested => $refund_requested ? 1 : 0,
+                status => 'pending'
+            });
+        }
+
+        # Process immediate drop (before session starts or admin)
+        return $self->_process_immediate_drop($db, $user, $reason);
+    }
+
+    # Process immediate drop (private method)
+    method _process_immediate_drop($db, $user, $reason) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $user_id = blessed($user) ? $user->id : $user->{id};
+
+        # Update enrollment status and drop information
+        $self->update($db, {
+            status => 'cancelled',
+            drop_reason => $reason,
+            dropped_at => \'now()',
+            dropped_by => $user_id,
+            refund_status => 'none'
+        });
+
+        # Trigger waitlist processing if session is full
+        my $session = $self->session($db);
+        if ($session) {
+            require Registry::DAO::Waitlist;
+            Registry::DAO::Waitlist->process_waitlist($db, $session_id);
+        }
+
+        return $self;
+    }
+
+    # Transfer enrollment to another session (requires admin approval)
+    method request_transfer($db, $user, $target_session_id, $reason) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Check if enrollment already has a pending transfer request
+        if ($transfer_status eq 'requested') {
+            return { error => 'Enrollment already has a pending transfer request' };
+        }
+
+        # Verify target session exists and is valid for transfer
+        my $target_session = Registry::DAO::Session->find($db, { id => $target_session_id });
+        return { error => 'Target session not found' } unless $target_session;
+
+        # Check if target session is full
+        my $target_enrollment_count = Registry::DAO::Enrollment->count_for_session($db, $target_session_id, ['active', 'pending']);
+        if ($target_session->capacity && $target_enrollment_count >= $target_session->capacity) {
+            return { error => 'Target session is full' };
+        }
+
+        # Transfers always require admin approval per MVP requirements
+        require Registry::DAO::TransferRequest;
+        my $transfer_request = Registry::DAO::TransferRequest->create($db, {
+            enrollment_id => $id,
+            target_session_id => $target_session_id,
+            requested_by => (blessed($user) ? $user->id : $user->{id}),
+            reason => $reason,
+            status => 'pending'
+        });
+
+        # Update enrollment to show transfer is requested
+        $self->update($db, { transfer_status => 'requested' });
+
+        # Update the field in the object instance
+        $transfer_status = 'requested';
+
+        return { success => 1, transfer_request => $transfer_request };
+    }
+
+    # Check if enrollment can be transferred
+    method can_transfer($db, $user) {
+        # Admin can always transfer
+        my $user_role = blessed($user) ? $user->user_type : $user->{role};
+        return 1 if $user_role eq 'admin';
+
+        # Parents can request transfers only for their own children
+        if ($user_role eq 'parent') {
+            my $user_id = blessed($user) ? $user->id : $user->{id};
+            return $parent_id eq $user_id;
+        }
+
+        # Default: no permission
+        return 0;
+    }
+
+    # Process approved transfer (admin action)
+    method process_transfer($db, $target_session_id, $admin_user) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $admin_id = blessed($admin_user) ? $admin_user->id : $admin_user->{id};
+        my $original_session_id = $session_id;
+
+        # Update enrollment to new session
+        $self->update($db, {
+            session_id => $target_session_id,
+            transfer_to_session_id => $target_session_id,
+            transfer_status => 'completed'
+        });
+
+        # Process waitlist for the original session (spot opened up)
+        require Registry::DAO::Waitlist;
+        Registry::DAO::Waitlist->process_waitlist($db, $original_session_id);
+
+        return $self;
+    }
+
+    # Helper methods for transfer status
+    method is_transfer_pending { $transfer_status eq 'requested' }
+    method is_transfer_completed { $transfer_status eq 'completed' }
+    method has_transfer_request { $transfer_status ne 'none' }
+
+    # Get dashboard statistics for a parent (moved from ParentDashboard controller)
+    sub get_dashboard_stats_for_parent($class, $db, $parent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Active enrollments count
+        my $active_enrollments = $db->select('enrollments e', 'COUNT(*)', {
+            'e.family_member_id' => [
+                -in => $db->select('family_members', 'id', { family_id => $parent_id })
+            ],
+            'e.status' => ['active', 'pending']
+        })->array->[0] || 0;
+
+        # Waitlist entries count
+        my $waitlist_count = $db->select('waitlist', 'COUNT(*)', {
+            parent_id => $parent_id,
+            status => ['waiting', 'offered']
+        })->array->[0] || 0;
+
+        # This month's attendance rate
+        my $month_start = DateTime->now->truncate(to => 'month')->epoch;
+        my $attendance_sql = q{
+            SELECT
+                COUNT(CASE WHEN ar.status = 'present' THEN 1 END) as present_count,
+                COUNT(ar.id) as total_count
+            FROM attendance_records ar
+            JOIN events ev ON ar.event_id = ev.id
+            JOIN family_members fm ON ar.student_id = fm.id
+            WHERE fm.family_id = ?
+            AND ar.marked_at >= ?
+        };
+
+        my $attendance_data = $db->query($attendance_sql, $parent_id, $month_start)->hash;
+        my $attendance_rate = 0;
+        if ($attendance_data && $attendance_data->{total_count} > 0) {
+            $attendance_rate = sprintf("%.0f",
+                ($attendance_data->{present_count} / $attendance_data->{total_count}) * 100
+            );
+        }
+
+        return {
+            active_enrollments => $active_enrollments,
+            waitlist_count => $waitlist_count,
+            attendance_rate => $attendance_rate
+        };
+    }
+
+    # Get active enrollments with program details for a parent (moved from ParentDashboard controller)
+    sub get_active_for_parent($class, $db, $parent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $sql = q{
+            SELECT
+                e.id as enrollment_id,
+                e.status as enrollment_status,
+                e.created_at as enrolled_at,
+                s.id as session_id,
+                s.name as session_name,
+                s.start_date,
+                s.end_date,
+                p.name as program_name,
+                l.name as location_name,
+                fm.child_name,
+                COUNT(ev.id) as total_events,
+                COUNT(ar.id) as attended_events
+            FROM enrollments e
+            JOIN sessions s ON e.session_id = s.id
+            JOIN projects p ON s.project_id = p.id
+            LEFT JOIN locations l ON s.location_id = l.id
+            JOIN family_members fm ON e.family_member_id = fm.id
+            LEFT JOIN events ev ON ev.session_id = s.id
+            LEFT JOIN attendance_records ar ON ar.event_id = ev.id
+                AND ar.student_id = e.family_member_id
+                AND ar.status = 'present'
+            WHERE fm.family_id = ?
+            AND e.status IN ('active', 'pending')
+            GROUP BY e.id, s.id, p.id, l.id, fm.id
+            ORDER BY s.start_date ASC
+        };
+
+        return $db->query($sql, $parent_id)->hashes->to_array;
     }
 
 }

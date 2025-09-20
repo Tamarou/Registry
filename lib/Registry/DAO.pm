@@ -2,7 +2,7 @@
 # ABOUTME: Provides base functionality for all DAO classes and database operations
 use 5.40.2;
 use utf8;
-use experimental qw(builtin);
+use experimental qw(builtin try);
 use builtin      qw(export_lexically);
 use Object::Pad;
 
@@ -25,6 +25,7 @@ use Registry::DAO::Family;
 use Registry::DAO::FamilyMember;
 use Registry::DAO::OutcomeDefinition;
 use Registry::DAO::CreateOutcomeDefinition;
+use Registry::DAO::TransferRequest;
 
 class Registry::DAO {
     use Carp         qw(croak);
@@ -92,6 +93,44 @@ class Registry::DAO {
     }
 
     method current_tenant { $schema }
+
+    # Import workflows from YAML files into the database
+    method import_workflows ($files, $verbose = 0) {
+        use Mojo::File qw(path);
+        use YAML::XS qw(Load);
+        use Registry::DAO::Workflow;
+
+        my $output = '';
+
+        # Import each workflow file
+        for my $file (@$files) {
+            my $yaml = (ref $file ? $file : path($file))->slurp;
+            next if Load($yaml)->{draft};
+
+            try {
+                my $workflow = Registry::DAO::Workflow->from_yaml($self, $yaml);
+                my $step_count = scalar @{ Load($yaml)->{steps} // [] };
+                my $message = sprintf "Imported workflow '%s' (%s) with %d steps",
+                    $workflow->name, $workflow->slug, $step_count;
+
+                if ($verbose) {
+                    say $message;
+                } else {
+                    $output .= "$message\n";
+                }
+            }
+            catch ($e) {
+                my $error = "Error importing workflow: $e";
+                if ($verbose) {
+                    warn $error;
+                } else {
+                    $output .= "$error\n";
+                }
+            }
+        }
+
+        return $output unless $verbose;
+    }
 }
 
 1;
