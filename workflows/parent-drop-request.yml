@@ -1,0 +1,26 @@
+---
+description: Parent workflow for requesting enrollment drop with optional refund
+name: Parent Drop Request
+slug: parent-drop-request
+first_step: select-enrollment
+steps:
+- class: Registry::DAO::WorkflowSteps::SelectEnrollmentForDrop
+  description: Select enrollment to drop
+  slug: select-enrollment
+  template: parent-drop-request/select-enrollment
+- class: Registry::DAO::WorkflowSteps::CollectDropReason
+  description: Provide reason for drop request
+  slug: collect-reason
+  template: parent-drop-request/collect-reason
+- class: Registry::DAO::WorkflowSteps::ReviewDropRequest
+  description: Review drop request details and refund options
+  slug: review-request
+  template: parent-drop-request/review-request
+- class: Registry::DAO::WorkflowSteps::SubmitDropRequest
+  description: Submit drop request for processing
+  slug: submit-request
+  template: parent-drop-request/submit-request
+- class: Registry::DAO::WorkflowStep
+  description: Drop request processed successfully
+  slug: complete
+  template: parent-drop-request/complete

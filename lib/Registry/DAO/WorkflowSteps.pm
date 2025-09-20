@@ -49,4 +49,17 @@ use Registry::DAO::WorkflowSteps::ProcessWaitlistsAfterTransfer;
 use Registry::DAO::WorkflowSteps::NotifyTransferProcessed;
 use Registry::DAO::WorkflowSteps::CompleteTransferRequest;
 
+# Parent transfer request workflow steps
+use Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer;
+use Registry::DAO::WorkflowSteps::SelectTargetSession;
+use Registry::DAO::WorkflowSteps::CollectTransferReason;
+use Registry::DAO::WorkflowSteps::ReviewTransferRequest;
+use Registry::DAO::WorkflowSteps::SubmitTransferRequest;
+
+# Parent drop request workflow steps
+use Registry::DAO::WorkflowSteps::SelectEnrollmentForDrop;
+use Registry::DAO::WorkflowSteps::CollectDropReason;
+use Registry::DAO::WorkflowSteps::ReviewDropRequest;
+use Registry::DAO::WorkflowSteps::SubmitDropRequest;
+
 1;
