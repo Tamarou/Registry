@@ -359,4 +359,52 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         
         $db->query($sql2, $session_id);
     }
+
+    # Get waitlist management data for admin dashboard
+    sub get_waitlist_management_data($class, $db, $status_filter) {
+        my $sql = q{
+            SELECT
+                w.id,
+                w.position,
+                w.status,
+                w.offered_at,
+                w.expires_at,
+                w.created_at,
+                s.name as session_name,
+                p.name as program_name,
+                l.name as location_name,
+                fm.child_name,
+                up.name as parent_name,
+                up.email as parent_email
+            FROM waitlist w
+            JOIN sessions s ON w.session_id = s.id
+            JOIN projects p ON s.project_id = p.id
+            LEFT JOIN locations l ON w.location_id = l.id
+            LEFT JOIN family_members fm ON w.student_id = fm.id
+            LEFT JOIN user_profiles up ON w.parent_id = up.user_id
+        };
+
+        my @where_conditions;
+        my @params;
+
+        if ($status_filter eq 'waiting') {
+            push @where_conditions, "w.status = 'waiting'";
+        } elsif ($status_filter eq 'offered') {
+            push @where_conditions, "w.status = 'offered'";
+        } elsif ($status_filter eq 'urgent') {
+            push @where_conditions, "w.status = 'offered' AND w.expires_at < ?";
+            push @params, time() + 86400; # Expiring within 24 hours
+        } elsif ($status_filter ne 'all') {
+            push @where_conditions, "w.status IN ('waiting', 'offered')";
+        }
+
+        if (@where_conditions) {
+            $sql .= ' WHERE ' . join(' AND ', @where_conditions);
+        }
+
+        $sql .= ' ORDER BY w.created_at DESC LIMIT 50';
+
+        return $db->query($sql, @params)->hashes->to_array;
+    }
+
 }
