@@ -32,3 +32,4 @@ fix-waitlist-reorder [waitlist-management] 2025-07-16T12:30:00Z Claude <noreply@
 fix-waitlist-reorder-v2 [fix-waitlist-reorder] 2025-07-16T22:50:00Z Claude <noreply@anthropic.com> # Improved waitlist position reordering to fully avoid constraint violations
 fix-waitlist-reorder-v3 [fix-waitlist-reorder-v2] 2025-07-17T00:00:00Z Claude <noreply@anthropic.com> # Remove problematic database trigger and handle position reordering in application code
 drop-transfer-business-rules [fix-multi-child-enrollments] 2025-09-18T00:00:00Z Claude <noreply@anthropic.com> # Add drop and transfer business rules with admin approval workflow
+remove-waitlist-position-constraint [fix-waitlist-reorder-v3] 2025-09-21T00:00:00Z Claude <noreply@anthropic.com> # Remove unique constraint on waitlist position to allow status-based visibility

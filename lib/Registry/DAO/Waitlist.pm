@@ -88,15 +88,11 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         # Calculate expiration time using SQL
         my $expires_at = $db->query("SELECT NOW() + INTERVAL '$hours_to_respond hours'")->array->[0];
         
-        # Update to offered status and move position to avoid conflicts with waiting entries
-        # Use a special range for offered entries with uniqueness
-        # We use timestamp component to ensure uniqueness
-        my $unique_offered_position = 500000 + $entry->position * 1000 + int(rand(999));
+        # Update to offered status - position irrelevant for non-waiting entries
         $entry->update($db, {
             status => 'offered',
             offered_at => 'now()',
-            expires_at => $expires_at,
-            position => $unique_offered_position
+            expires_at => $expires_at
         });
         
         # Reorder remaining waiting entries to fill the gap
@@ -109,30 +105,16 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     # Check and expire old offers
     sub expire_old_offers ($class, $db) {
         $db = $db->db if $db isa Registry::DAO;
-        # When expiring offers, move position to negative range to avoid conflicts
-        # Generate unique negative positions, accounting for already expired entries
+        # Change status to expired and move to non-waiting position range
         my $sql = q{
-            WITH existing_expired AS (
-                SELECT MAX(ABS(position)) as max_pos
-                FROM waitlist
-                WHERE status IN ('expired', 'declined')
-                AND position < -2000000
-            ),
-            expired AS (
-                SELECT id,
-                       ROW_NUMBER() OVER (ORDER BY created_at, id) as rn
-                FROM waitlist
-                WHERE status = 'offered'  -- Only expire offered entries
-                AND expires_at < ?
-            )
-            UPDATE waitlist w
+            UPDATE waitlist
             SET status = 'expired',
-                position = -2000000 - COALESCE((SELECT max_pos FROM existing_expired), 2000000) - (e.rn * 1000)
-            FROM expired e
-            WHERE w.id = e.id
-            RETURNING w.*
+                position = 0  -- Position irrelevant for expired entries
+            WHERE status = 'offered'
+            AND expires_at < ?
+            RETURNING *
         };
-        
+
         my $current_time = $db->query('SELECT NOW()')->array->[0];
         my $results = $db->query($sql, $current_time)->hashes;
         return [ map { $class->new(%$_) } @$results ];
@@ -225,14 +207,11 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
                 metadata => { from_waitlist => 1 }
             });
             
-            # Update waitlist status and move position out of the way to avoid constraint violations
-            # Use large negative position to indicate non-waiting status and avoid collisions
-            # We use -1 million minus a random component to ensure uniqueness
-            my $non_waiting_position = -1000000 - int(rand(900000));
+            # Update waitlist status and move to non-waiting position range
             $self->update($db, {
                 status => 'declined',
-                position => $non_waiting_position
-            }); # Use 'declined' to keep history
+                position => 0  # Position irrelevant for accepted entries
+            });
 
             # Reorder remaining waitlist positions to be consecutive
             Registry::DAO::Waitlist->_reorder_waiting_positions($db, $session_id);
@@ -254,16 +233,14 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         my $tx = $db->db->begin;
         
         try {
-            # Update status to declined and move position out of the way to avoid constraint violations
-            # Use large negative position to indicate non-waiting status and avoid collisions
-            my $non_waiting_position = -1000000 - int(rand(900000));
+            # Update status to declined and move to non-waiting position range
             $self->update($db, {
                 status => 'declined',
-                position => $non_waiting_position
+                position => 0  # Position irrelevant for declined entries
             });
 
             # Process next person on waitlist (before committing, to ensure atomicity)
-            # process_waitlist will handle reordering internally
+            # Process next person on waitlist (reordering handled in process_waitlist)
             my $next_offer = Registry::DAO::Waitlist->process_waitlist($db, $session_id);
 
             $tx->commit;
@@ -430,6 +407,10 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             push @where_conditions, "w.status = 'waiting'";
         } elsif ($status_filter eq 'offered') {
             push @where_conditions, "w.status = 'offered'";
+        } elsif ($status_filter eq 'expired') {
+            push @where_conditions, "w.status = 'expired'";
+        } elsif ($status_filter eq 'declined') {
+            push @where_conditions, "w.status = 'declined'";
         } elsif ($status_filter eq 'urgent') {
             push @where_conditions, "w.status = 'offered' AND w.expires_at < ?";
             push @params, time() + 86400; # Expiring within 24 hours
