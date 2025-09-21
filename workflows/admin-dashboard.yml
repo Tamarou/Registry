@@ -1,0 +1,14 @@
+---
+description: Admin dashboard workflow for managing administrative tasks and approvals
+name: Admin Dashboard
+slug: admin-dashboard
+first_step: dashboard-overview
+steps:
+- class: Registry::DAO::WorkflowSteps::AdminDashboardOverview
+  description: Display admin dashboard with pending tasks and continuations
+  slug: dashboard-overview
+  template: admin-dashboard/overview
+- class: Registry::DAO::WorkflowSteps::AdminTaskSelection
+  description: Allow admin to select and continue with pending tasks
+  slug: task-selection
+  template: admin-dashboard/task-selection

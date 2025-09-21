@@ -258,6 +258,11 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
         );
     }
     
+    # Get recent messages for parent (moved from ParentDashboard controller)
+    sub get_recent_for_parent($class, $db, $parent_id, $limit = 5) {
+        return $class->get_messages_for_parent($db, $parent_id, limit => $limit);
+    }
+
     # Get unread message count for a parent
     sub get_unread_count ($class, $db, $parent_id) {
         $db = $db->db if $db isa Registry::DAO;

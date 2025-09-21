@@ -1,0 +1,25 @@
+---
+description: Admin workflow for reviewing and approving/denying transfer requests
+name: Admin Transfer Request Approval
+slug: admin-transfer-approval
+first_step: load-request
+steps:
+- class: Registry::DAO::WorkflowSteps::LoadTransferRequest
+  description: Load and validate the transfer request for review
+  slug: load-request
+  template: admin-transfer-approval/load-request
+- class: Registry::DAO::WorkflowSteps::ReviewTransferRequest
+  description: Display transfer request details for admin review
+  slug: review-request
+  template: admin-transfer-approval/review-request
+- class: Registry::DAO::WorkflowSteps::AdminTransferDecision
+  description: Collect admin decision (approve/deny) and notes
+  slug: admin-decision
+  template: admin-transfer-approval/admin-decision
+- class: Registry::DAO::WorkflowSteps::ProcessAdminTransferDecision
+  description: Process the admin decision and trigger appropriate workflow
+  slug: process-decision
+- class: Registry::DAO::WorkflowStep
+  description: Transfer request processing complete
+  slug: complete
+  template: admin-transfer-approval/complete

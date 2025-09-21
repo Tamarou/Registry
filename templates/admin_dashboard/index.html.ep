@@ -118,6 +118,58 @@
             </div>
         </div>
 
+        <!-- Pending Requests Section -->
+        % if (($overview_stats->{pending_drop_requests} && $overview_stats->{pending_drop_requests} > 0) || ($overview_stats->{pending_transfer_requests} && $overview_stats->{pending_transfer_requests} > 0)) {
+            <div class="mb-8">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">⚠️ Pending Requests Requiring Admin Attention</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    % if ($overview_stats->{pending_drop_requests} && $overview_stats->{pending_drop_requests} > 0) {
+                        <div class="dashboard-card">
+                            <div class="dashboard-card-header">
+                                <h3>Drop Requests</h3>
+                                <span class="badge badge-red"><%= $overview_stats->{pending_drop_requests} %> pending</span>
+                            </div>
+                            <div class="dashboard-card-content">
+                                <div hx-get="/admin/dashboard/pending_drop_requests?status=pending"
+                                     hx-target="this"
+                                     hx-trigger="load"
+                                     class="h-64 overflow-y-auto">
+                                    <p class="text-gray-500">Loading drop requests...</p>
+                                </div>
+                            </div>
+                            <div class="dashboard-card-footer">
+                                <a href="/admin/dashboard/pending_drop_requests" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                    View All Drop Requests →
+                                </a>
+                            </div>
+                        </div>
+                    % }
+
+                    % if ($overview_stats->{pending_transfer_requests} && $overview_stats->{pending_transfer_requests} > 0) {
+                        <div class="dashboard-card">
+                            <div class="dashboard-card-header">
+                                <h3>Transfer Requests</h3>
+                                <span class="badge badge-blue"><%= $overview_stats->{pending_transfer_requests} %> pending</span>
+                            </div>
+                            <div class="dashboard-card-content">
+                                <div hx-get="/admin/dashboard/pending_transfer_requests?status=pending"
+                                     hx-target="this"
+                                     hx-trigger="load"
+                                     class="h-64 overflow-y-auto">
+                                    <p class="text-gray-500">Loading transfer requests...</p>
+                                </div>
+                            </div>
+                            <div class="dashboard-card-footer">
+                                <a href="/admin/dashboard/pending_transfer_requests" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                    View All Transfer Requests →
+                                </a>
+                            </div>
+                        </div>
+                    % }
+                </div>
+            </div>
+        % }
+
         <!-- Main Content Grid -->
         <div class="dashboard-grid">
             <!-- Program Overview -->

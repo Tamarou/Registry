@@ -1,0 +1,30 @@
+---
+description: Parent workflow for requesting enrollment transfer to a different session
+name: Parent Transfer Request
+slug: parent-transfer-request
+first_step: select-enrollment
+steps:
+- class: Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer
+  description: Select enrollment to transfer
+  slug: select-enrollment
+  template: parent-transfer-request/select-enrollment
+- class: Registry::DAO::WorkflowSteps::SelectTargetSession
+  description: Choose target session for transfer
+  slug: select-target-session
+  template: parent-transfer-request/select-target-session
+- class: Registry::DAO::WorkflowSteps::CollectTransferReason
+  description: Provide reason for transfer request
+  slug: collect-reason
+  template: parent-transfer-request/collect-reason
+- class: Registry::DAO::WorkflowSteps::ReviewTransferRequest
+  description: Review transfer request details
+  slug: review-request
+  template: parent-transfer-request/review-request
+- class: Registry::DAO::WorkflowSteps::SubmitTransferRequest
+  description: Submit transfer request for admin approval
+  slug: submit-request
+  template: parent-transfer-request/submit-request
+- class: Registry::DAO::WorkflowStep
+  description: Transfer request submitted successfully
+  slug: complete
+  template: parent-transfer-request/complete

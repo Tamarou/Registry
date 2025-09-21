@@ -1,0 +1,23 @@
+name: Drop Request Processing
+slug: drop-request-processing
+description: Admin workflow for processing enrollment drop requests
+first_step: validate-request
+steps:
+  - slug: validate-request
+    description: Validate drop request and enrollment status
+    class: Registry::DAO::WorkflowSteps::ValidateDropRequest
+  - slug: update-enrollment
+    description: Update enrollment status to cancelled
+    class: Registry::DAO::WorkflowSteps::ProcessEnrollmentDrop
+  - slug: process-refund
+    description: Process refund if requested
+    class: Registry::DAO::WorkflowSteps::ProcessDropRefund
+  - slug: process-waitlist
+    description: Process waitlist for opened session spot
+    class: Registry::DAO::WorkflowSteps::ProcessWaitlistAfterDrop
+  - slug: notify-parties
+    description: Send notifications to parent and admin
+    class: Registry::DAO::WorkflowSteps::NotifyDropProcessed
+  - slug: complete
+    description: Mark drop request as processed
+    class: Registry::DAO::WorkflowSteps::CompleteDropRequest

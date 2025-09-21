@@ -263,4 +263,44 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         );
         return $result->hash ? 1 : 0;
     }
+
+    # Get recent notifications for admin dashboard
+    sub get_recent_for_admin($class, $db, $limit, $type_filter) {
+        my $sql = q{
+            SELECT
+                n.id,
+                n.type,
+                n.channel,
+                n.subject,
+                n.message,
+                n.sent_at,
+                n.delivered_at,
+                n.metadata,
+                up.name as recipient_name,
+                up.email as recipient_email
+            FROM notifications n
+            LEFT JOIN user_profiles up ON n.user_id = up.user_id
+        };
+
+        my @where_conditions;
+        my @params;
+
+        if ($type_filter eq 'attendance') {
+            push @where_conditions, "n.type LIKE 'attendance%'";
+        } elsif ($type_filter eq 'waitlist') {
+            push @where_conditions, "n.type LIKE 'waitlist%'";
+        } elsif ($type_filter eq 'message') {
+            push @where_conditions, "n.type LIKE 'message%'";
+        }
+
+        if (@where_conditions) {
+            $sql .= ' WHERE ' . join(' AND ', @where_conditions);
+        }
+
+        $sql .= ' ORDER BY n.created_at DESC LIMIT ?';
+        push @params, $limit;
+
+        return $db->query($sql, @params)->hashes->to_array;
+    }
+
 }

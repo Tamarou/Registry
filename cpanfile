@@ -24,3 +24,4 @@ requires 'Email::Simple';
 requires 'Email::Sender::Simple';
 requires 'JSON';
 requires 'Text::Unidecode';
+requires 'Text::CSV_XS';

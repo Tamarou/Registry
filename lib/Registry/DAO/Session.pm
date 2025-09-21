@@ -193,4 +193,45 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     method is_closed() {
         return $status eq 'closed';
     }
+
+    method has_started() {
+        return 0 unless defined $start_date;
+
+        # Get current date in YYYY-MM-DD format
+        my ($year, $month, $day) = (localtime)[5, 4, 3];
+        $year += 1900;
+        $month += 1;
+        my $today = sprintf('%04d-%02d-%02d', $year, $month, $day);
+
+        # Compare date strings (YYYY-MM-DD format allows lexical comparison)
+        return $start_date le $today;
+    }
+
+    # Get sessions available for enrollment transfers
+    sub get_available_for_transfer($class, $db, $exclude_session_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $sql = q{
+            SELECT DISTINCT
+                s.id,
+                s.name,
+                s.start_date,
+                s.end_date,
+                s.capacity,
+                p.name as program_name,
+                l.name as location_name,
+                COALESCE(COUNT(e.id), 0) as current_enrollments
+            FROM sessions s
+            JOIN projects p ON s.project_id = p.id
+            LEFT JOIN locations l ON s.location_id = l.id
+            LEFT JOIN enrollments e ON s.id = e.session_id AND e.status IN ('active', 'pending')
+            WHERE s.id != ?
+              AND (s.capacity IS NULL OR COALESCE(COUNT(e.id), 0) < s.capacity)
+              AND s.start_date > NOW()
+            GROUP BY s.id, s.name, s.start_date, s.end_date, s.capacity, p.name, l.name
+            ORDER BY p.name, s.start_date
+        };
+
+        return $db->query($sql, $exclude_session_id)->hashes->to_array;
+    }
 }

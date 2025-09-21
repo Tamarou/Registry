@@ -1,0 +1,23 @@
+name: Transfer Request Processing
+slug: transfer-request-processing
+description: Admin workflow for processing enrollment transfer requests
+first_step: validate-request
+steps:
+  - slug: validate-request
+    description: Validate transfer request and enrollment status
+    class: Registry::DAO::WorkflowSteps::ValidateTransferRequest
+  - slug: check-capacity
+    description: Verify target session has available capacity
+    class: Registry::DAO::WorkflowSteps::ValidateTargetCapacity
+  - slug: process-transfer
+    description: Transfer enrollment to target session
+    class: Registry::DAO::WorkflowSteps::ProcessEnrollmentTransfer
+  - slug: process-waitlists
+    description: Process waitlists for both sessions
+    class: Registry::DAO::WorkflowSteps::ProcessWaitlistsAfterTransfer
+  - slug: notify-parties
+    description: Send notifications to parent and admin
+    class: Registry::DAO::WorkflowSteps::NotifyTransferProcessed
+  - slug: complete
+    description: Mark transfer request as processed
+    class: Registry::DAO::WorkflowSteps::CompleteTransferRequest

@@ -192,4 +192,29 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
         )->array->[0];
         return $is_recent;
     }
+
+    # Get recent attendance records for a parent (moved from ParentDashboard controller)
+    sub get_recent_for_parent($class, $db, $parent_id, $limit = 10) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $sql = q{
+            SELECT
+                ar.id,
+                ar.status,
+                ar.marked_at,
+                ev.name as event_name,
+                ev.start_time as event_time,
+                s.name as session_name,
+                fm.child_name
+            FROM attendance_records ar
+            JOIN events ev ON ar.event_id = ev.id
+            JOIN sessions s ON ev.session_id = s.id
+            JOIN family_members fm ON ar.student_id = fm.id
+            WHERE fm.family_id = ?
+            ORDER BY ar.marked_at DESC
+            LIMIT ?
+        };
+
+        return $db->query($sql, $parent_id, $limit)->hashes->to_array;
+    }
 }

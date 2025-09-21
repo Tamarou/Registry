@@ -2805,6 +2805,16 @@ DISTRIBUTIONS
       Test::Builder 0.13
       Test::Builder::Tester 1.02
       perl 5.006
+  Text-CSV_XS-1.61
+    pathname: H/HM/HMBRAND/Text-CSV_XS-1.61.tgz
+    provides:
+      Text::CSV_XS 1.61
+    requirements:
+      Config 0
+      ExtUtils::MakeMaker 0
+      IO::Handle 0
+      Test::More 0
+      XSLoader 0
   Text-Unidecode-1.30
     pathname: S/SB/SBURKE/Text-Unidecode-1.30.tar.gz
     provides:
