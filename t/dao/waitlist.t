@@ -189,7 +189,7 @@ subtest 'Position reordering on status change' => sub {
     my $waitlist = Registry::DAO::Waitlist->get_session_waitlist($db, $session->id, 'waiting');
     is(@$waitlist, 2, 'Two students still waiting');
     is($waitlist->[0]->student_id, $student2->id, 'Student 2 still in waiting list');
-    is($waitlist->[0]->position, 2, 'Student 2 still has position 2');
+    is($waitlist->[0]->position, 1, 'Student 2 reordered to position 1 after offer');
     
     # Decline the offer (which should trigger reordering)
     my $offered = Registry::DAO::Waitlist->find($db, {
@@ -202,7 +202,7 @@ subtest 'Position reordering on status change' => sub {
     $waitlist = Registry::DAO::Waitlist->get_session_waitlist($db, $session->id, 'waiting');
     is(@$waitlist, 1, 'One student waiting after decline and new offer');
     is($waitlist->[0]->student_id, $student3->id, 'Student 3 is now waiting');
-    is($waitlist->[0]->position, 3, 'Student 3 still at position 3');
+    is($waitlist->[0]->position, 1, 'Student 3 reordered to position 1 after decline');
     
     # Check student 2 was offered
     ok($next, 'Next student was offered');
