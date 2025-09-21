@@ -61,7 +61,8 @@ class Registry :isa(Mojolicious) {
             eval {
                 if ($stream && @$data > $chunk_size) {
                     # For large datasets, use chunked streaming to prevent memory exhaustion
-                    $c->write_chunk($csv->string(\@headers));
+                    $csv->combine(@headers) or die "CSV error: " . $csv->error_diag;
+                    $c->write_chunk($csv->string . "\n");
 
                     # Process data in chunks
                     for (my $i = 0; $i < @$data; $i += $chunk_size) {
@@ -76,7 +77,8 @@ class Registry :isa(Mojolicious) {
                                 defined $val ? $val : '';
                             } @headers;
 
-                            $chunk_content .= $csv->string(\@values);
+                            $csv->combine(@values) or die "CSV error: " . $csv->error_diag;
+                            $chunk_content .= $csv->string . "\n";
                         }
 
                         $c->write_chunk($chunk_content);
@@ -87,15 +89,21 @@ class Registry :isa(Mojolicious) {
                     $$output = '';
                 } else {
                     # For smaller datasets, use in-memory generation
-                    my $csv_content = $csv->string(\@headers);
+                    my $csv_content = '';
 
+                    # Generate header line
+                    $csv->combine(@headers) or die "CSV error: " . $csv->error_diag;
+                    $csv_content .= $csv->string . "\n";
+
+                    # Generate data rows
                     for my $row (@$data) {
                         my @values = map {
                             my $val = $row->{$_};
                             defined $val ? $val : '';
                         } @headers;
 
-                        $csv_content .= $csv->string(\@values);
+                        $csv->combine(@values) or die "CSV error: " . $csv->error_diag;
+                        $csv_content .= $csv->string . "\n";
                     }
 
                     $$output = $csv_content;
