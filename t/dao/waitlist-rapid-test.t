@@ -133,13 +133,14 @@ diag "Second batch expired " . scalar(@$expired_batch2) . " entries";
 is scalar(@$expired_batch), 3, "First expiration expired 3 entries";
 is scalar(@$expired_batch2), 0, "Second expiration expired 0 entries (no duplicates)";
 
-# Check for duplicate positions
+# Check for duplicate positions among waiting entries only
+# (Non-waiting entries can share position 0 since position is irrelevant for them)
 my $dup_check = $db->db->query(q{
     SELECT position, COUNT(*) as count
     FROM waitlist
-    WHERE session_id = ?
+    WHERE session_id = ? AND status = 'waiting'
     GROUP BY position
     HAVING COUNT(*) > 1
 }, $session->id)->hashes;
 
-is scalar(@$dup_check), 0, "No duplicate positions in database";
+is scalar(@$dup_check), 0, "No duplicate positions among waiting entries";
