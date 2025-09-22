@@ -26,6 +26,16 @@
 * Role: Parent
 * [profile](nancy.md)
 
+## Alice
+
+* Role: Registry Administrator/Developer/Business Owner
+* [profile](alice.md)
+
+## Cameron
+
+* Role: Aspiring business owner (artist seeking stable revenue)
+* [profile](cameron.md)
+
 ## Kylie and Rob
 
 <img width="226" alt="image" src="https://github.com/Tamarou/Registry/assets/39840/68fac19d-56de-4b61-94ba-b4637a943034">

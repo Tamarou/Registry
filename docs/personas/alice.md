@@ -1,12 +1,15 @@
-# Alice - Registry Administrator/Developer
+# Alice - Registry Administrator/Developer/Business Owner
 
 ## Role
-Registry System Administrator and Developer
+Registry System Administrator, Developer, and Business Owner
 
 ## Background
-Alice is an experienced technical professional responsible for maintaining and
-extending the Registry system. She has a background in software development and
-system administration, with expertise in data management and workflow systems.
+Alice is an experienced technical professional who owns and operates the Registry
+business while also serving as the primary system administrator and developer.
+She has a background in software development and system administration, with
+expertise in data management and workflow systems. As both the business owner
+and technical lead, she understands the platform from both strategic and
+implementation perspectives.
 
 ## Primary Responsibilities
 - Implementing and maintaining Registry workflows
@@ -27,14 +30,13 @@ system administration, with expertise in data management and workflow systems.
 - Experience with data migration and ETL processes
 
 ## Key Concerns and Needs
-- System reliability and performance
-- Data integrity and backup procedures
-- Ease of implementing new workflows and features
-- Clear documentation for Registry::Commands
-- Efficient troubleshooting tools
-- Ability to quickly respond to system issues
-- Maintaining system security
-- Managing system scalability
+- Minimizing the operational burden of running the Registry business
+- Building self-healing and self-maintaining systems
+- Reducing the need for manual intervention and support
+- Creating predictable, low-maintenance revenue streams
+- Automating customer onboarding and support processes
+- Designing systems that require minimal ongoing technical expertise
+- Ensuring business sustainability with minimal staffing overhead
 
 ## Daily Activities
 - Reviews system logs and monitoring alerts
@@ -56,13 +58,13 @@ system administration, with expertise in data management and workflow systems.
 - Coordinating system updates with minimal disruption
 
 ## Goals
-- Maintain high system availability and performance
+- Make the Registry business as simple as possible to maintain
+- Minimize operational overhead and manual intervention
+- Automate routine maintenance and monitoring tasks
 - Streamline workflow implementation process
-- Improve system monitoring and alerting
-- Enhance backup and recovery procedures
-- Develop better testing procedures for new features
-- Create comprehensive system documentation
-- Optimize system resource usage
+- Reduce support burden through self-service features
+- Create systems that scale without increasing complexity
+- Build reliable, low-maintenance technical infrastructure
 
 ## Interaction Patterns
 - Works closely with business analysts to implement workflows
