@@ -1,6 +1,7 @@
 # ABOUTME: Base controller class for Registry application using Object::Pad
 # ABOUTME: Provides common functionality like workflow handling and template rendering
 use 5.40.2;
+use utf8;
 use Object::Pad;
 
 class Registry::Controller :isa(Mojolicious::Controller) {

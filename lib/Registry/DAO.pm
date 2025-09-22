@@ -34,7 +34,16 @@ class Registry::DAO {
 
     field $url :param :reader //= $ENV{DB_URL};
     field $schema :param = 'registry';
-    field $pg = Mojo::Pg->new($url)->search_path( [ $schema, 'public' ] );
+    field $pg = do {
+        my $pg_obj = Mojo::Pg->new($url);
+        $pg_obj->search_path( [ $schema, 'public' ] );
+        # Mojo::Pg handles UTF-8 by default, but ensure proper client encoding
+        $pg_obj->on(connection => sub {
+            my ($pg, $dbh) = @_;
+            $dbh->do("SET client_encoding = 'UTF8'");
+        });
+        $pg_obj;
+    };
     field $db :reader = $pg->db;
 
     sub import(@) {

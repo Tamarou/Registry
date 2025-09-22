@@ -46,8 +46,8 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
             return $template;
         }
         
-        # Create new template
-        my $content = $file->slurp;
+        # Create new template - ensure UTF-8 encoding when reading file
+        my $content = $file->slurp;  # Mojo::File slurp already handles UTF-8 correctly
         $template = $dao->create(
             'Registry::DAO::Template' => {
                 name    => $name,

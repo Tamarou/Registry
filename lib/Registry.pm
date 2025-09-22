@@ -17,6 +17,10 @@ class Registry :isa(Mojolicious) {
     method startup {
         $self->secrets( [hostname] );
 
+        # Configure proper UTF-8 handling
+        $self->renderer->default_format('html');
+        $self->renderer->encoding('UTF-8');
+
         # Add another namespace to load commands from
         push $self->commands->namespaces->@*, 'Registry::Command';
 
