@@ -88,13 +88,16 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         # Calculate expiration time using SQL
         my $expires_at = $db->query("SELECT NOW() + INTERVAL '$hours_to_respond hours'")->array->[0];
         
-        # Update to offered status
+        # Update to offered status - position irrelevant for non-waiting entries
         $entry->update($db, {
             status => 'offered',
             offered_at => 'now()',
             expires_at => $expires_at
         });
         
+        # Reorder remaining waiting entries to fill the gap
+        $class->_reorder_waiting_positions($db, $session_id);
+
         # Refresh the object to get updated values
         return $class->find($db, { id => $entry->id });
     }
@@ -102,14 +105,16 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     # Check and expire old offers
     sub expire_old_offers ($class, $db) {
         $db = $db->db if $db isa Registry::DAO;
+        # Change status to expired and move to non-waiting position range
         my $sql = q{
-            UPDATE waitlist 
-            SET status = 'expired'
-            WHERE status = 'offered' 
+            UPDATE waitlist
+            SET status = 'expired',
+                position = 0  -- Position irrelevant for expired entries
+            WHERE status = 'offered'
             AND expires_at < ?
             RETURNING *
         };
-        
+
         my $current_time = $db->query('SELECT NOW()')->array->[0];
         my $results = $db->query($sql, $current_time)->hashes;
         return [ map { $class->new(%$_) } @$results ];
@@ -202,10 +207,14 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
                 metadata => { from_waitlist => 1 }
             });
             
-            # Update waitlist status  
-            $self->update($db, { status => 'declined' }); # Use 'declined' to keep history
-            
-            # Note: No need to reorder positions since get_student_position calculates dynamically
+            # Update waitlist status and move to non-waiting position range
+            $self->update($db, {
+                status => 'declined',
+                position => 0  # Position irrelevant for accepted entries
+            });
+
+            # Reorder remaining waitlist positions to be consecutive
+            Registry::DAO::Waitlist->_reorder_waiting_positions($db, $session_id);
             
             $tx->commit;
         }
@@ -224,21 +233,23 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         my $tx = $db->db->begin;
         
         try {
-            # Update status to declined
-            $self->update($db, { status => 'declined' });
-            
-            # Only reorder if this entry had a position that would affect other entries
-            # For offered entries, we don't need to reorder since they maintain their original position
-            # and other entries haven't moved
-            
+            # Update status to declined and move to non-waiting position range
+            $self->update($db, {
+                status => 'declined',
+                position => 0  # Position irrelevant for declined entries
+            });
+
+            # Process next person on waitlist (before committing, to ensure atomicity)
+            # Process next person on waitlist (reordering handled in process_waitlist)
+            my $next_offer = Registry::DAO::Waitlist->process_waitlist($db, $session_id);
+
             $tx->commit;
+
+            return $next_offer;
         }
         catch ($e) {
             croak "Failed to decline waitlist offer: $e";
         }
-        
-        # Process next person on waitlist
-        return Registry::DAO::Waitlist->process_waitlist($db, $session_id);
     }
     
     # Get related objects
@@ -331,33 +342,38 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     sub _reorder_waiting_positions ($class, $db, $session_id) {
         $db = $db->db if $db isa Registry::DAO;
         
-        # Use a two-step approach to avoid constraint violations
-        # Step 1: Move all waiting entries to negative positions temporarily
-        my $sql1 = q{
-            UPDATE waitlist 
-            SET position = -position - 1000
-            WHERE session_id = ? 
+        # Use a three-step approach to avoid constraint violations
+        # Step 1: Get all waiting entries in order
+        my $waiting_entries = $db->query(q{
+            SELECT id, position
+            FROM waitlist
+            WHERE session_id = ?
             AND status = 'waiting'
-        };
-        
-        $db->query($sql1, $session_id);
-        
-        # Step 2: Reorder all waiting entries to have consecutive positions starting from 1
-        my $sql2 = q{
-            UPDATE waitlist 
-            SET position = subquery.new_position
-            FROM (
-                SELECT id, 
-                       ROW_NUMBER() OVER (ORDER BY -position) as new_position
-                FROM waitlist
-                WHERE session_id = ? 
-                AND status = 'waiting'
-                AND position < 0
-            ) subquery
-            WHERE waitlist.id = subquery.id
-        };
-        
-        $db->query($sql2, $session_id);
+            ORDER BY position
+        }, $session_id)->hashes;
+
+        return unless @$waiting_entries; # Nothing to reorder
+
+        # Step 2: Move all waiting entries to very high positions temporarily
+        # to avoid any constraint violations
+        my $offset = 100000;
+        for my $entry (@$waiting_entries) {
+            $db->query(q{
+                UPDATE waitlist
+                SET position = ?
+                WHERE id = ?
+            }, $offset++, $entry->{id});
+        }
+
+        # Step 3: Now renumber them sequentially starting from 1
+        my $new_position = 1;
+        for my $entry (@$waiting_entries) {
+            $db->query(q{
+                UPDATE waitlist
+                SET position = ?
+                WHERE id = ?
+            }, $new_position++, $entry->{id});
+        }
     }
 
     # Get waitlist management data for admin dashboard
@@ -391,6 +407,10 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             push @where_conditions, "w.status = 'waiting'";
         } elsif ($status_filter eq 'offered') {
             push @where_conditions, "w.status = 'offered'";
+        } elsif ($status_filter eq 'expired') {
+            push @where_conditions, "w.status = 'expired'";
+        } elsif ($status_filter eq 'declined') {
+            push @where_conditions, "w.status = 'declined'";
         } elsif ($status_filter eq 'urgent') {
             push @where_conditions, "w.status = 'offered' AND w.expires_at < ?";
             push @params, time() + 86400; # Expiring within 24 hours
