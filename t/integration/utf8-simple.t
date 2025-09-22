@@ -7,30 +7,14 @@ use utf8;
 use Test::More;
 use Test::Mojo;
 use Mojo::File qw(path);
+use Mojolicious::Lite;
 
-# Initialize test application
-my $t = Test::Mojo->new('Registry');
+# Create a minimal test application that doesn't require database
+app->renderer->encoding('UTF-8');
 
-# Test UTF-8 characters from various languages
-my @test_strings = (
-    'Café français',           # French
-    'Größe über älteren',      # German
-    'Niño español',            # Spanish
-    '日本語テスト',             # Japanese
-    '中文测试',                # Chinese
-    'Тест кириллица',          # Russian
-    'مرحبا بالعالم',           # Arabic
-    'שלום עולם',              # Hebrew
-    'Emoji test 😀🎉🌟',       # Emojis
-);
-
-subtest 'Simple template rendering with UTF-8' => sub {
-    # Create a simple test template file
-    my $template_dir = path('templates/test-utf8');
-    $template_dir->make_path;
-
-    my $template_file = $template_dir->child('simple.html.ep');
-    my $content = <<'TEMPLATE';
+get '/test-utf8-simple' => sub {
+    my $c = shift;
+    $c->render(inline => <<'TEMPLATE');
 <!DOCTYPE html>
 <html>
 <head>
@@ -51,39 +35,25 @@ subtest 'Simple template rendering with UTF-8' => sub {
 </body>
 </html>
 TEMPLATE
-
-    # Write template with UTF-8 encoding
-    $template_file->spew($content);
-
-    # Add a test route
-    $t->app->routes->get('/test-utf8-simple' => sub {
-        my $c = shift;
-        $c->render(template => 'test-utf8/simple');
-    });
-
-    # Test rendering the template
-    $t->get_ok('/test-utf8-simple')
-      ->status_is(200)
-      ->content_type_like(qr/text\/html/);
-
-    # Check that UTF-8 characters are properly displayed
-    for my $test_string (@test_strings) {
-        $t->content_like(qr/\Q$test_string\E/, "Template contains: $test_string");
-    }
-
-    # Cleanup
-    $template_file->remove if -e $template_file;
-    $template_dir->remove_tree if -d $template_dir;
 };
 
-subtest 'Dynamic UTF-8 content via stash' => sub {
-    # Test passing UTF-8 data through stash
-
-    my $template_dir = path('templates/test-utf8');
-    $template_dir->make_path;
-
-    my $template_file = $template_dir->child('dynamic.html.ep');
-    my $content = <<'TEMPLATE';
+get '/test-utf8-dynamic' => sub {
+    my $c = shift;
+    $c->stash(
+        title   => 'Página de Prueba UTF-8',
+        heading => 'Größe Überschrift',
+        message => 'これは日本語のメッセージです。',
+        items   => [
+            'Café français',
+            'Größe über älteren',
+            'Niño español',
+            '日本語テスト',
+            '中文测试',
+            'Тест кириллица',
+            'Emoji 😀🎉',
+        ]
+    );
+    $c->render(inline => <<'TEMPLATE');
 <!DOCTYPE html>
 <html>
 <head>
@@ -101,51 +71,11 @@ subtest 'Dynamic UTF-8 content via stash' => sub {
 </body>
 </html>
 TEMPLATE
-
-    $template_file->spew($content);
-
-    # Add test route with UTF-8 data
-    $t->app->routes->get('/test-utf8-dynamic' => sub {
-        my $c = shift;
-        $c->stash(
-            title   => 'Página de Prueba UTF-8',
-            heading => 'Größe Überschrift',
-            message => 'これは日本語のメッセージです。',
-            items   => [
-                'Café français',
-                'Größe über älteren',
-                'Niño español',
-                '日本語テスト',
-                '中文测试',
-                'Тест кириллица',
-                'Emoji 😀🎉',
-            ]
-        );
-        $c->render(template => 'test-utf8/dynamic');
-    });
-
-    # Test rendering
-    $t->get_ok('/test-utf8-dynamic')
-      ->status_is(200)
-      ->content_type_like(qr/text\/html/)
-      ->content_like(qr/Página de Prueba UTF-8/, 'UTF-8 title')
-      ->content_like(qr/Größe Überschrift/, 'UTF-8 heading')
-      ->content_like(qr/これは日本語のメッセージです。/, 'Japanese message')
-      ->content_like(qr/Café français/, 'French in list')
-      ->content_like(qr/中文测试/, 'Chinese in list')
-      ->content_like(qr/Emoji 😀🎉/, 'Emoji in list');
-
-    # Cleanup
-    $template_file->remove if -e $template_file;
-    $template_dir->remove_tree if -d $template_dir;
 };
 
-subtest 'Form submission with UTF-8' => sub {
-    my $template_dir = path('templates/test-utf8');
-    $template_dir->make_path;
-
-    my $form_template = $template_dir->child('form.html.ep');
-    my $content = <<'TEMPLATE';
+get '/test-utf8-form' => sub {
+    my $c = shift;
+    $c->render(inline => <<'TEMPLATE');
 <!DOCTYPE html>
 <html>
 <head>
@@ -169,28 +99,99 @@ subtest 'Form submission with UTF-8' => sub {
 </body>
 </html>
 TEMPLATE
+};
 
-    $form_template->spew($content);
+post '/test-utf8-submit' => sub {
+    my $c = shift;
+    my $name = $c->param('name');
+    my $description = $c->param('description');
 
-    # Add form routes
-    $t->app->routes->get('/test-utf8-form' => sub {
-        my $c = shift;
-        $c->render(template => 'test-utf8/form');
-    });
+    $c->stash(
+        submitted => 1,
+        submitted_name => $name,
+        submitted_description => $description,
+    );
+    $c->render(inline => <<'TEMPLATE');
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>UTF-8 Form</title>
+</head>
+<body>
+    <h1>UTF-8 Form Test</h1>
+    <form method="POST" action="/test-utf8-submit">
+        <input type="text" name="name" value="<%= param('name') || '' %>">
+        <textarea name="description"><%= param('description') || '' %></textarea>
+        <button type="submit">Submit</button>
+    </form>
+    % if (stash('submitted')) {
+        <div>
+            <h2>Submitted Data:</h2>
+            <p>Name: <%= stash('submitted_name') %></p>
+            <p>Description: <%= stash('submitted_description') %></p>
+        </div>
+    % }
+</body>
+</html>
+TEMPLATE
+};
 
-    $t->app->routes->post('/test-utf8-submit' => sub {
-        my $c = shift;
-        my $name = $c->param('name');
-        my $description = $c->param('description');
+post '/test-utf8-json' => sub {
+    my $c = shift;
+    my $json = $c->req->json;
 
-        $c->stash(
-            submitted => 1,
-            submitted_name => $name,
-            submitted_description => $description,
-        );
-        $c->render(template => 'test-utf8/form');
-    });
+    # Echo back the JSON with some additions
+    $json->{processed} = 1;
+    $json->{server_message} = 'Сообщение от сервера';
 
+    $c->render(json => $json);
+};
+
+# Initialize test object
+my $t = Test::Mojo->new;
+
+# Test UTF-8 characters from various languages
+my @test_strings = (
+    'Café français',           # French
+    'Größe über älteren',      # German
+    'Niño español',            # Spanish
+    '日本語テスト',             # Japanese
+    '中文测试',                # Chinese
+    'Тест кириллица',          # Russian
+    'مرحبا بالعالم',           # Arabic
+    'שלום עולם',              # Hebrew
+    '😀🎉🌟',                  # Emojis
+);
+
+subtest 'Simple template rendering with UTF-8' => sub {
+    # Test rendering the template
+    $t->get_ok('/test-utf8-simple')
+      ->status_is(200)
+      ->content_type_like(qr/text\/html/);
+
+    # Check that UTF-8 characters are properly displayed
+    for my $test_string (@test_strings) {
+        $t->content_like(qr/\Q$test_string\E/, "Template contains: $test_string");
+    }
+};
+
+subtest 'Dynamic UTF-8 content via stash' => sub {
+    # Test passing UTF-8 data through stash
+
+    # Test rendering
+    $t->get_ok('/test-utf8-dynamic')
+      ->status_is(200)
+      ->content_type_like(qr/text\/html/)
+      ->content_like(qr/Página de Prueba UTF-8/, 'UTF-8 title')
+      ->content_like(qr/Größe Überschrift/, 'UTF-8 heading')
+      ->content_like(qr/これは日本語のメッセージです。/, 'Japanese message')
+      ->content_like(qr/Café français/, 'French in list')
+      ->content_like(qr/中文测试/, 'Chinese in list')
+      ->content_like(qr/Emoji 😀🎉/, 'Emoji in list');
+};
+
+subtest 'Form submission with UTF-8' => sub {
     # Test form submission with UTF-8 data
     my $utf8_name = 'José María García-López';
     my $utf8_description = "Descripción con acentos: niño, señora, café.\n日本語\nEmoji: 🎉";
@@ -204,25 +205,10 @@ TEMPLATE
       ->content_like(qr/niño, señora, café/, 'Spanish characters in response')
       ->content_like(qr/日本語/, 'Japanese in response')
       ->content_like(qr/🎉/, 'Emoji in response');
-
-    # Cleanup
-    $form_template->remove if -e $form_template;
-    $template_dir->remove_tree if -d $template_dir;
 };
 
 subtest 'JSON API with UTF-8' => sub {
     # Test JSON endpoints handle UTF-8 properly
-
-    $t->app->routes->post('/test-utf8-json' => sub {
-        my $c = shift;
-        my $json = $c->req->json;
-
-        # Echo back the JSON with some additions
-        $json->{processed} = 1;
-        $json->{server_message} = 'Сообщение от сервера';
-
-        $c->render(json => $json);
-    });
 
     # Test JSON with UTF-8
     my $test_json = {
