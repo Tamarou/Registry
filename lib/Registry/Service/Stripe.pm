@@ -156,6 +156,15 @@ class Registry::Service::Stripe {
     method cancel_subscription_async($subscription_id, $params = {}) {
         return $self->_request_async('DELETE', "subscriptions/$subscription_id", $params);
     }
+
+    # Invoices API (for subscription payment tracking)
+    method list_invoices_async($params = {}) {
+        return $self->_request_async('GET', 'invoices', $params);
+    }
+
+    method retrieve_invoice_async($invoice_id) {
+        return $self->_request_async('GET', "invoices/$invoice_id");
+    }
     
     # Refunds API
     method create_refund_async($params) {
@@ -243,6 +252,22 @@ class Registry::Service::Stripe {
     
     method create_subscription($params) {
         return $self->create_subscription_async($params)->wait;
+    }
+
+    method retrieve_subscription($subscription_id) {
+        return $self->retrieve_subscription_async($subscription_id)->wait;
+    }
+
+    method update_subscription($subscription_id, $params) {
+        return $self->update_subscription_async($subscription_id, $params)->wait;
+    }
+
+    method cancel_subscription($subscription_id, $params = {}) {
+        return $self->cancel_subscription_async($subscription_id, $params)->wait;
+    }
+
+    method list_invoices($params = {}) {
+        return $self->list_invoices_async($params)->wait;
     }
     
     # Helper method for secure string comparison
