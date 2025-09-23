@@ -1,4 +1,5 @@
 use 5.40.2;
+use utf8;
 use Object::Pad;
 
 class Registry::Controller::Workflows :isa(Registry::Controller) {
