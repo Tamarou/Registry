@@ -15,7 +15,12 @@ use Registry::DAO::PricingPlan;
 use Registry::DAO::Project;
 use Registry::DAO::Event;
 use Registry::DAO::Location;
+use Registry::PriceOps::PaymentSchedule;
+use Registry::PriceOps::ScheduledPayment;
 use DateTime;
+
+# Mock Stripe environment for testing
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_mock_key_for_testing';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -104,7 +109,8 @@ my $enrollment_id = $db->insert('enrollments', {
 }, { returning => 'id' })->hash->{id};
 
 # Create payment schedule for testing
-my $schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+my $schedule = $schedule_ops->create_for_enrollment($db, {
     enrollment_id => $enrollment_id,
     pricing_plan_id => $pricing_plan->id,
     total_amount => 300.00,
@@ -133,8 +139,9 @@ subtest 'ScheduledPayment status management' => sub {
     my @payments = $schedule->scheduled_payments($db);
     my $payment = $payments[0];
 
-    # Test marking as completed
-    my $result = $payment->_mark_completed($db, {
+    # Test marking as completed using PriceOps
+    my $payment_ops = Registry::PriceOps::ScheduledPayment->new;
+    my $result = $payment_ops->mark_payment_completed($db, $payment, {
         stripe_payment_intent_id => 'pi_test123'
     });
 
@@ -145,7 +152,7 @@ subtest 'ScheduledPayment status management' => sub {
 
     # Test marking as failed
     my $second_payment = $payments[1];
-    my $failure_result = $second_payment->_mark_failed($db, 'Test failure reason');
+    my $failure_result = $payment_ops->mark_payment_failed($db, $second_payment, 'Test failure reason');
 
     ok !$failure_result->{success}, 'Payment marked as failed';
     is $failure_result->{error}, 'Test failure reason', 'Failure reason recorded';
@@ -157,7 +164,8 @@ subtest 'ScheduledPayment status management' => sub {
 
 subtest 'ScheduledPayment retry logic' => sub {
     # Create a new payment schedule for retry testing
-    my $retry_schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $retry_schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $retry_schedule = $retry_schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 150.00,
@@ -169,7 +177,8 @@ subtest 'ScheduledPayment retry logic' => sub {
 
     # Simulate failed payment with attempt count increment
     $payment->update($db, { attempt_count => 1 });
-    $payment->_mark_failed($db, 'Card declined');
+    my $retry_payment_ops = Registry::PriceOps::ScheduledPayment->new;
+    $retry_payment_ops->mark_payment_failed($db, $payment, 'Card declined');
     my $updated = Registry::DAO::ScheduledPayment->find($db, { id => $payment->id });
     is $updated->attempt_count, 1, 'Attempt count incremented on failure';
 
@@ -190,13 +199,14 @@ subtest 'ScheduledPayment retry logic' => sub {
     # Test that too many attempts prevent retry
     $reset_payment->update($db, { attempt_count => 3 });
     my $max_attempts_payment = Registry::DAO::ScheduledPayment->find($db, { id => $payment->id });
-    eval { $max_attempts_payment->retry($db) };
+    eval { $retry_payment_ops->retry_payment($db, $max_attempts_payment) };
     like $@, qr/Too many retry attempts/, 'Prevents retry after 3 attempts';
 };
 
 subtest 'ScheduledPayment due date logic' => sub {
     # Create a fresh payment schedule to ensure clean state
-    my $test_schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $test_schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $test_schedule = $test_schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 150.00,
@@ -212,21 +222,23 @@ subtest 'ScheduledPayment due date logic' => sub {
     # Test overdue detection
     $payment->update($db, { due_date => '2024-01-01' });  # Past date
     my $overdue_payment = Registry::DAO::ScheduledPayment->find($db, { id => $payment->id });
-    ok $overdue_payment->is_overdue, 'Detects overdue payment';
+    my $payment_ops = Registry::PriceOps::ScheduledPayment->new;
+    ok $payment_ops->is_payment_overdue($overdue_payment), 'Detects overdue payment';
 
-    my $days_overdue = $overdue_payment->days_overdue;
+    my $days_overdue = $payment_ops->calculate_days_overdue($overdue_payment);
     ok $days_overdue > 0, 'Calculates days overdue correctly';
 
     # Test not overdue
     $payment->update($db, { due_date => DateTime->now->add(days => 5)->ymd });
     my $updated = Registry::DAO::ScheduledPayment->find($db, { id => $payment->id });
-    ok !$updated->is_overdue, 'Detects non-overdue payment';
-    is $updated->days_overdue, 0, 'Zero days overdue for future payment';
+    ok !$payment_ops->is_payment_overdue($updated), 'Detects non-overdue payment';
+    is $payment_ops->calculate_days_overdue($updated), 0, 'Zero days overdue for future payment';
 };
 
 subtest 'ScheduledPayment class methods' => sub {
     # Set up test data with various due dates and statuses
-    my $test_schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $test_schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $test_schedule = $test_schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 600.00,
@@ -260,7 +272,8 @@ subtest 'ScheduledPayment class methods' => sub {
 
 subtest 'Payment processing simulation' => sub {
     # Create a simple payment schedule for processing tests
-    my $proc_schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $proc_schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $proc_schedule = $proc_schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 200.00,

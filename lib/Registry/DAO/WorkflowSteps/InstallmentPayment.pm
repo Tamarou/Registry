@@ -5,10 +5,11 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::InstallmentPayment :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Payment;
-use Registry::DAO::PaymentSchedule;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::Event;  # Contains Session class
 use Registry::DAO::User;
+use Registry::PriceOps::PaymentSchedule;
+use Registry::PriceOps::PricingPlan;
 use Mojo::JSON qw(encode_json);
 use DateTime;
 
@@ -61,8 +62,6 @@ method prepare_payment_options ($db, $run) {
 }
 
 method get_installment_plans ($db, $enrollment_data) {
-    my @plans;
-
     # Get pricing plans from selected sessions
     my $session_selections = $enrollment_data->{session_selections} || {};
     my %unique_sessions;
@@ -73,34 +72,12 @@ method get_installment_plans ($db, $enrollment_data) {
         $unique_sessions{$session_id} = 1 if $session_id;
     }
 
-    for my $session_id (keys %unique_sessions) {
-        my $session = Registry::DAO::Session->find($db, { id => $session_id });
-        next unless $session;
+    my @session_ids = keys %unique_sessions;
+    my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
 
-        my $pricing_plans = $session->pricing_plans($db);
-        for my $plan (@$pricing_plans) {
-            next unless $plan->installments_allowed;
-
-            my $installment_count = $plan->installment_count;
-            next unless $installment_count > 1;
-
-            # Calculate installment amount based on total
-            my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
-            my $installment_amount = sprintf("%.2f", $payment_info->{total} / $installment_count);
-
-            push @plans, {
-                id => $plan->id,
-                name => $plan->plan_name,
-                installment_count => $installment_count,
-                installment_amount => $installment_amount,
-                total_amount => $payment_info->{total},
-                frequency => 'monthly', # Default frequency
-                description => "Pay in $installment_count installments of \$$installment_amount",
-            };
-        }
-    }
-
-    return \@plans;
+    # Use PriceOps business logic to get installment plans
+    my $pricing_ops = Registry::PriceOps::PricingPlan->new;
+    return $pricing_ops->get_installment_plans_for_sessions($db, \@session_ids, $payment_info->{total});
 }
 
 method process_plan_selection ($db, $run, $form_data) {
@@ -112,12 +89,15 @@ method process_plan_selection ($db, $run, $form_data) {
         return $self->process_full_payment($db, $run, $form_data);
     }
 
-    # Handle installment payment
-    my $pricing_plan = Registry::DAO::PricingPlan->find($db, { id => $selected_plan_id });
-    die "Pricing plan not found" unless $pricing_plan;
-    die "Selected plan does not allow installments" unless $pricing_plan->installments_allowed;
+    # Handle installment payment - validate plan through PriceOps
+    my $pricing_plan_dao = Registry::DAO::PricingPlan->find($db, { id => $selected_plan_id });
+    die "Pricing plan not found" unless $pricing_plan_dao;
 
-    return $self->create_installment_payment($db, $run, $form_data, $pricing_plan);
+    my $pricing_ops = Registry::PriceOps::PricingPlan->new;
+    my $validation = $pricing_ops->validate_installment_configuration($pricing_plan_dao);
+    die $validation->{reason} unless $validation->{valid};
+
+    return $self->create_installment_payment($db, $run, $form_data, $pricing_plan_dao);
 }
 
 method process_full_payment ($db, $run, $form_data) {
@@ -184,7 +164,7 @@ method process_full_payment ($db, $run, $form_data) {
     };
 }
 
-method create_installment_payment ($db, $run, $form_data, $pricing_plan) {
+method create_installment_payment ($db, $run, $form_data, $pricing_plan_dao) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
     my $user = Registry::DAO::User->find($db, { id => $user_id });
 
@@ -195,19 +175,21 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan) {
 
     my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
 
-    # Create first payment for immediate processing
-    my $installment_amount = sprintf("%.2f", $payment_info->{total} / $pricing_plan->installment_count);
+    # Use PriceOps to calculate installment breakdown
+    my $pricing_ops = Registry::PriceOps::PricingPlan->new;
+    my $breakdown = $pricing_ops->calculate_installment_breakdown($pricing_plan_dao, $payment_info->{total});
 
+    # Create first payment for immediate processing
     my $first_payment = Registry::DAO::Payment->create($db, {
         user_id => $user_id,
-        amount => $installment_amount,
+        amount => $breakdown->{base_installment_amount},
         metadata => {
             workflow_id => $run->workflow_id,
             workflow_run_id => $run->id,
             enrollment_data => $enrollment_data,
             payment_type => 'installment_first',
             total_amount => $payment_info->{total},
-            installment_count => $pricing_plan->installment_count,
+            installment_count => $breakdown->{installment_count},
             installment_number => 1,
         }
     });
@@ -216,11 +198,11 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan) {
     for my $item (@{$payment_info->{items}}) {
         $first_payment->add_line_item($db, {
             %$item,
-            amount => sprintf("%.2f", $item->{amount} / $pricing_plan->installment_count),
+            amount => sprintf("%.2f", $item->{amount} / $breakdown->{installment_count}),
             metadata => {
                 %{$item->{metadata} || {}},
                 installment_portion => 1,
-                total_installments => $pricing_plan->installment_count,
+                total_installments => $breakdown->{installment_count},
             }
         });
     }
@@ -229,7 +211,7 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan) {
     my $intent_data;
     try {
         $intent_data = $first_payment->create_payment_intent($db, {
-            description => "Program Enrollment - Installment 1 of " . $pricing_plan->installment_count,
+            description => "Program Enrollment - Installment 1 of " . $breakdown->{installment_count},
             receipt_email => $user->email,
         });
     } catch ($error) {
@@ -244,10 +226,10 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan) {
     $run->update_data($db, {
         first_payment_id => $first_payment->id,
         payment_type => 'installment',
-        pricing_plan_id => $pricing_plan->id,
+        pricing_plan_id => $pricing_plan_dao->id,
         total_amount => $payment_info->{total},
-        installment_count => $pricing_plan->installment_count,
-        installment_amount => $installment_amount,
+        installment_count => $breakdown->{installment_count},
+        installment_amount => $breakdown->{base_installment_amount},
     });
 
     return {
@@ -259,8 +241,8 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan) {
             show_stripe_form => 1,
             installment_info => {
                 current_payment => 1,
-                total_installments => $pricing_plan->installment_count,
-                installment_amount => $installment_amount,
+                total_installments => $breakdown->{installment_count},
+                installment_amount => $breakdown->{base_installment_amount},
                 total_amount => $payment_info->{total},
             },
         }
@@ -311,8 +293,9 @@ method handle_installment_payment_callback ($db, $run, $form_data) {
         # Create enrollments first
         my @enrollments = $self->create_enrollments($db, $run, $first_payment);
 
-        # Create payment schedule for remaining installments
-        my $schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+        # Create payment schedule for remaining installments using PriceOps
+        my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+        my $schedule = $schedule_ops->create_for_enrollment($db, {
             enrollment_id => $enrollments[0]->{id}, # Use first enrollment as reference
             pricing_plan_id => $run->data->{pricing_plan_id},
             total_amount => $run->data->{total_amount},

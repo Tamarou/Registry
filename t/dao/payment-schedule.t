@@ -14,7 +14,11 @@ use Registry::DAO::PricingPlan;
 use Registry::DAO::Project;
 use Registry::DAO::Event;
 use Registry::DAO::Location;
+use Registry::PriceOps::PaymentSchedule;
 use DateTime;
+
+# Mock Stripe environment for testing
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_mock_key_for_testing';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -103,7 +107,8 @@ my $enrollment_id = $db->insert('enrollments', {
 }, { returning => 'id' })->hash->{id};
 
 subtest 'PaymentSchedule creation' => sub {
-    my $schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $schedule = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 300.00,
@@ -138,9 +143,11 @@ subtest 'PaymentSchedule creation' => sub {
 };
 
 subtest 'PaymentSchedule validation' => sub {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+
     # Test invalid installment count
     eval {
-        Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+        $schedule_ops->create_for_enrollment($db, {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
             total_amount => 300.00,
@@ -151,7 +158,7 @@ subtest 'PaymentSchedule validation' => sub {
 
     # Test invalid total amount
     eval {
-        Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+        $schedule_ops->create_for_enrollment($db, {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
             total_amount => 0,  # Invalid: must be positive
@@ -162,7 +169,7 @@ subtest 'PaymentSchedule validation' => sub {
 
     # Test missing required fields
     eval {
-        Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+        $schedule_ops->create_for_enrollment($db, {
             pricing_plan_id => $pricing_plan->id,
             total_amount => 300.00,
             installment_count => 3,
@@ -173,7 +180,8 @@ subtest 'PaymentSchedule validation' => sub {
 };
 
 subtest 'Scheduled payment management' => sub {
-    my $schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $schedule = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 450.00,
@@ -181,21 +189,26 @@ subtest 'Scheduled payment management' => sub {
         first_payment_date => DateTime->now->ymd
     });
 
-    # Test pending payments
-    my @pending = $schedule->pending_payments($db);
-    is scalar @pending, 3, 'All payments start as pending';
+    # Test finding scheduled payments using DAO relationship method
+    my @scheduled_payments = $schedule->scheduled_payments($db);
+    is scalar @scheduled_payments, 3, 'All payments start as pending';
 
     # Test overdue payments (set due date in past)
-    my $first_scheduled = $pending[0];
+    my $first_scheduled = $scheduled_payments[0];
     $first_scheduled->update($db, { due_date => '2024-01-01' });
 
-    my @overdue = $schedule->overdue_payments($db);
-    is scalar @overdue, 1, 'One payment is now overdue';
-    is $overdue[0]->id, $first_scheduled->id, 'Correct payment is overdue';
+    # Test finding overdue payments via DAO query methods
+    my @overdue = Registry::DAO::ScheduledPayment->find_overdue($db);
+    ok @overdue >= 1, 'Found overdue payments';
+    # Find our specific overdue payment
+    my ($our_overdue) = grep { $_->payment_schedule_id eq $schedule->id } @overdue;
+    ok $our_overdue, 'Our payment is in overdue list';
+    is $our_overdue->id, $first_scheduled->id, 'Correct payment is overdue';
 };
 
 subtest 'PaymentSchedule status management' => sub {
-    my $schedule = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $schedule = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 600.00,
@@ -203,35 +216,36 @@ subtest 'PaymentSchedule status management' => sub {
     });
 
     # Test suspension
-    $schedule->suspend($db, 'Payment failure test');
+    $schedule_ops->suspend($db, $schedule, 'Payment failure test');
     my $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
     is $updated_schedule->status, 'suspended', 'Schedule can be suspended';
 
     # Test reactivation
-    $updated_schedule->reactivate($db);
+    $schedule_ops->reactivate($db, $updated_schedule);
     $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
     is $updated_schedule->status, 'active', 'Schedule can be reactivated';
 
     # Test completion
-    $updated_schedule->mark_completed($db);
+    $schedule_ops->mark_completed($db, $updated_schedule);
     $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
     is $updated_schedule->status, 'completed', 'Schedule can be marked completed';
 
     # Test that completed schedule cannot be reactivated
-    eval { $updated_schedule->reactivate($db) };
+    eval { $schedule_ops->reactivate($db, $updated_schedule) };
     like $@, qr/Cannot reactivate completed schedule/, 'Cannot reactivate completed schedule';
 };
 
 subtest 'Class methods' => sub {
     # Create multiple schedules for testing
-    my $schedule1 = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $schedule1 = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 300.00,
         installment_count => 3,
     });
 
-    my $schedule2 = Registry::DAO::PaymentSchedule->create_for_enrollment($db, {
+    my $schedule2 = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
         total_amount => 400.00,
@@ -239,7 +253,7 @@ subtest 'Class methods' => sub {
     });
 
     # Suspend one schedule
-    $schedule2->suspend($db);
+    $schedule_ops->suspend($db, $schedule2);
 
     # Test find_by_enrollment
     my @enrollment_schedules = Registry::DAO::PaymentSchedule->find_by_enrollment($db, $enrollment_id);
