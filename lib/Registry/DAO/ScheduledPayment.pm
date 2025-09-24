@@ -11,11 +11,8 @@ field $id :param :reader = undef;
 field $payment_schedule_id :param :reader = undef;
 field $payment_id :param :reader = undef;
 field $installment_number :param :reader = 0;
-field $due_date :param :reader = undef;
 field $amount :param :reader = 0;
 field $status :param :reader = 'pending';
-field $attempt_count :param :reader = 0;
-field $last_attempt_at :param :reader = undef;
 field $paid_at :param :reader = undef;
 field $failed_at :param :reader = undef;
 field $failure_reason :param :reader = undef;
@@ -35,25 +32,7 @@ method payment ($db) {
 }
 
 # Class methods for common queries
-sub find_due ($class, $db, $date = undef) {
-    require DateTime;
-    $date ||= DateTime->now->ymd;
-
-    return $class->find($db, {
-        status => 'pending',
-        due_date => { '<=' => $date }
-    }, { order_by => 'due_date' });
-}
-
-sub find_overdue ($class, $db) {
-    require DateTime;
-    my $today = DateTime->now->ymd;
-
-    return $class->find($db, {
-        status => 'pending',
-        due_date => { '<' => $today }
-    }, { order_by => 'due_date' });
-}
+# Note: due_date and overdue concepts removed - Stripe handles scheduling
 
 sub find_failed ($class, $db) {
     return $class->find($db, {

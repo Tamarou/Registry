@@ -293,14 +293,26 @@ method handle_installment_payment_callback ($db, $run, $form_data) {
         # Create enrollments first
         my @enrollments = $self->create_enrollments($db, $run, $first_payment);
 
-        # Create payment schedule for remaining installments using PriceOps
+        # Get Stripe customer and payment method from the first payment
+        my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
+        my $user = Registry::DAO::User->find($db, { id => $user_id });
+
+        # Assume user has stripe_customer_id and we can get payment method from the payment intent
+        my $customer_id = $user->stripe_customer_id or die "User must have Stripe customer ID for installments";
+
+        # Get payment method from the successful payment intent
+        my $payment_intent = $first_payment->retrieve_payment_intent($db);
+        my $payment_method_id = $payment_intent->{payment_method} or die "Cannot find payment method from payment intent";
+
+        # Create payment schedule with Stripe subscription (new approach)
         my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
         my $schedule = $schedule_ops->create_for_enrollment($db, {
             enrollment_id => $enrollments[0]->{id}, # Use first enrollment as reference
             pricing_plan_id => $run->data->{pricing_plan_id},
+            customer_id => $customer_id,
+            payment_method_id => $payment_method_id,
             total_amount => $run->data->{total_amount},
             installment_count => $run->data->{installment_count},
-            first_payment_date => DateTime->now->add(months => 1)->ymd, # Next payment in 1 month
         });
 
         # Store schedule ID for future reference

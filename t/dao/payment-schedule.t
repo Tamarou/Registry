@@ -89,13 +89,14 @@ my $pricing_plan = Registry::DAO::PricingPlan->create($db, {
     installment_count => 3
 });
 
-# Create test parent user for enrollment
+# Create test parent user for enrollment with Stripe customer ID
 my $parent = Registry::DAO::User->create($db, {
     email    => 'parent@example.com',
     username => 'testparent',
     password => 'password123',
     name => 'Test Parent',
-    user_type => 'parent'
+    user_type => 'parent',
+    stripe_customer_id => 'cus_test_mock_customer' # Mock Stripe customer ID
 });
 
 # Create a mock enrollment ID (in real scenario this would be created by enrollment workflow)
@@ -106,14 +107,24 @@ my $enrollment_id = $db->insert('enrollments', {
     metadata => '{"test": "enrollment"}'
 }, { returning => 'id' })->hash->{id};
 
+# Mock Stripe client for testing
+use Test::MockObject;
+my $mock_stripe = Test::MockObject->new;
+$mock_stripe->set_always('create_installment_subscription', {
+    id => 'sub_test_mock_subscription',
+    status => 'active'
+});
+
 subtest 'PaymentSchedule creation' => sub {
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
     my $schedule = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
+        customer_id => 'cus_test_mock_customer',
+        payment_method_id => 'pm_test_mock_payment_method',
         total_amount => 300.00,
         installment_count => 3,
-        first_payment_date => '2024-07-01'
+        frequency => 'monthly'
     });
 
     ok $schedule, 'Payment schedule created successfully';
@@ -124,32 +135,59 @@ subtest 'PaymentSchedule creation' => sub {
     is $schedule->installment_count, 3, 'Installment count is correct';
     is $schedule->installment_amount, '100.00', 'Installment amount calculated correctly';
     is $schedule->status, 'active', 'Schedule starts as active';
-    is $schedule->frequency, 'monthly', 'Default frequency is monthly';
+    is $schedule->stripe_subscription_id, 'sub_test_mock_subscription', 'Stripe subscription ID stored';
 
-    # Verify scheduled payments were created
+    # Verify scheduled payment trackers were created (for status tracking only)
     my @scheduled_payments = $schedule->scheduled_payments($db);
-    is scalar @scheduled_payments, 3, 'Three scheduled payments created';
+    is scalar @scheduled_payments, 3, 'Three scheduled payment trackers created';
 
-    # Check the scheduled payment details
+    # Check the scheduled payment tracker details
     my $first_payment = $scheduled_payments[0];
     is $first_payment->installment_number, 1, 'First payment has correct installment number';
     is $first_payment->amount, '100.00', 'First payment has correct amount';
     is $first_payment->status, 'pending', 'First payment starts as pending';
 
-    # Check dates are properly spaced
     my $second_payment = $scheduled_payments[1];
     is $second_payment->installment_number, 2, 'Second payment has correct installment number';
-    # Note: In real test we'd check date calculations more thoroughly
+    is $second_payment->amount, '100.00', 'Second payment has correct amount';
 };
 
 subtest 'PaymentSchedule validation' => sub {
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
+
+    # Test missing customer_id (new requirement)
+    eval {
+        $schedule_ops->create_for_enrollment($db, {
+            enrollment_id => $enrollment_id,
+            pricing_plan_id => $pricing_plan->id,
+            payment_method_id => 'pm_test_mock_payment_method',
+            total_amount => 300.00,
+            installment_count => 3,
+            # Missing customer_id
+        });
+    };
+    like $@, qr/customer_id required/, 'Validates required customer_id';
+
+    # Test missing payment_method_id (new requirement)
+    eval {
+        $schedule_ops->create_for_enrollment($db, {
+            enrollment_id => $enrollment_id,
+            pricing_plan_id => $pricing_plan->id,
+            customer_id => 'cus_test_mock_customer',
+            total_amount => 300.00,
+            installment_count => 3,
+            # Missing payment_method_id
+        });
+    };
+    like $@, qr/payment_method_id required/, 'Validates required payment_method_id';
 
     # Test invalid installment count
     eval {
         $schedule_ops->create_for_enrollment($db, {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
+            customer_id => 'cus_test_mock_customer',
+            payment_method_id => 'pm_test_mock_payment_method',
             total_amount => 300.00,
             installment_count => 1,  # Invalid: must be > 1
         });
@@ -161,6 +199,8 @@ subtest 'PaymentSchedule validation' => sub {
         $schedule_ops->create_for_enrollment($db, {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
+            customer_id => 'cus_test_mock_customer',
+            payment_method_id => 'pm_test_mock_payment_method',
             total_amount => 0,  # Invalid: must be positive
             installment_count => 3,
         });
@@ -171,6 +211,8 @@ subtest 'PaymentSchedule validation' => sub {
     eval {
         $schedule_ops->create_for_enrollment($db, {
             pricing_plan_id => $pricing_plan->id,
+            customer_id => 'cus_test_mock_customer',
+            payment_method_id => 'pm_test_mock_payment_method',
             total_amount => 300.00,
             installment_count => 3,
             # Missing enrollment_id
@@ -179,97 +221,97 @@ subtest 'PaymentSchedule validation' => sub {
     like $@, qr/enrollment_id required/, 'Validates required enrollment_id';
 };
 
-subtest 'Scheduled payment management' => sub {
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+subtest 'Webhook-based status management' => sub {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
     my $schedule = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
+        customer_id => 'cus_test_mock_customer',
+        payment_method_id => 'pm_test_mock_payment_method',
         total_amount => 450.00,
         installment_count => 3,
-        first_payment_date => DateTime->now->ymd
     });
 
-    # Test finding scheduled payments using DAO relationship method
+    # Test finding scheduled payment trackers using DAO relationship method
     my @scheduled_payments = $schedule->scheduled_payments($db);
     is scalar @scheduled_payments, 3, 'All payments start as pending';
 
-    # Test overdue payments (set due date in past)
-    my $first_scheduled = $scheduled_payments[0];
-    $first_scheduled->update($db, { due_date => '2024-01-01' });
+    # Test webhook-based payment completion (via PriceOps)
+    use Registry::PriceOps::ScheduledPayment;
+    my $payment_ops = Registry::PriceOps::ScheduledPayment->new;
+    my $first_payment = $scheduled_payments[0];
 
-    # Test finding overdue payments via DAO query methods
-    my @overdue = Registry::DAO::ScheduledPayment->find_overdue($db);
-    ok @overdue >= 1, 'Found overdue payments';
-    # Find our specific overdue payment
-    my ($our_overdue) = grep { $_->payment_schedule_id eq $schedule->id } @overdue;
-    ok $our_overdue, 'Our payment is in overdue list';
-    is $our_overdue->id, $first_scheduled->id, 'Correct payment is overdue';
+    # Mock Stripe invoice data
+    my $mock_invoice = {
+        id => 'in_test_mock_invoice',
+        subscription => 'sub_test_mock_subscription',
+        payment_intent => 'pi_test_mock_payment_intent',
+        status => 'paid'
+    };
+
+    my $result = $payment_ops->handle_invoice_paid($db, $mock_invoice);
+    ok $result->{success}, 'Invoice paid handled successfully';
+
+    # Verify payment status updated
+    $first_payment = Registry::DAO::ScheduledPayment->find($db, { id => $first_payment->id });
+    is $first_payment->status, 'completed', 'Payment marked as completed via webhook';
+    ok $first_payment->paid_at, 'Paid timestamp set';
 };
 
-subtest 'PaymentSchedule status management' => sub {
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+subtest 'PaymentSchedule Stripe integration' => sub {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
     my $schedule = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
+        customer_id => 'cus_test_mock_customer',
+        payment_method_id => 'pm_test_mock_payment_method',
         total_amount => 600.00,
         installment_count => 4,
     });
 
-    # Test suspension
-    $schedule_ops->suspend($db, $schedule, 'Payment failure test');
+    # Mock Stripe subscription status check
+    $mock_stripe->set_always('retrieve_subscription', {
+        id => 'sub_test_mock_subscription',
+        status => 'past_due'
+    });
+
+    # Test subscription status sync
+    my $subscription = $schedule_ops->check_subscription_status($db, $schedule);
+    ok $subscription, 'Subscription status retrieved';
+
+    # Verify schedule status updated
     my $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
-    is $updated_schedule->status, 'suspended', 'Schedule can be suspended';
-
-    # Test reactivation
-    $schedule_ops->reactivate($db, $updated_schedule);
-    $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
-    is $updated_schedule->status, 'active', 'Schedule can be reactivated';
-
-    # Test completion
-    $schedule_ops->mark_completed($db, $updated_schedule);
-    $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
-    is $updated_schedule->status, 'completed', 'Schedule can be marked completed';
-
-    # Test that completed schedule cannot be reactivated
-    eval { $schedule_ops->reactivate($db, $updated_schedule) };
-    like $@, qr/Cannot reactivate completed schedule/, 'Cannot reactivate completed schedule';
+    is $updated_schedule->status, 'past_due', 'Schedule status synced with Stripe';
 };
 
-subtest 'Class methods' => sub {
-    # Create multiple schedules for testing
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new;
+subtest 'Class methods and queries' => sub {
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
+
     my $schedule1 = $schedule_ops->create_for_enrollment($db, {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
+        customer_id => 'cus_test_mock_customer',
+        payment_method_id => 'pm_test_mock_payment_method',
         total_amount => 300.00,
         installment_count => 3,
     });
 
-    my $schedule2 = $schedule_ops->create_for_enrollment($db, {
-        enrollment_id => $enrollment_id,
-        pricing_plan_id => $pricing_plan->id,
-        total_amount => 400.00,
-        installment_count => 2,
-    });
-
-    # Suspend one schedule
-    $schedule_ops->suspend($db, $schedule2);
-
     # Test find_by_enrollment
     my @enrollment_schedules = Registry::DAO::PaymentSchedule->find_by_enrollment($db, $enrollment_id);
-    ok @enrollment_schedules >= 2, 'Found schedules for enrollment';
+    ok @enrollment_schedules >= 1, 'Found schedules for enrollment';
 
     # Test find_active
     my @active_schedules = Registry::DAO::PaymentSchedule->find_active($db);
     ok @active_schedules >= 1, 'Found active schedules';
 
-    # Verify suspended schedule is not in active list
-    my @active_ids = map { $_->id } @active_schedules;
-    ok !(grep { $_ eq $schedule2->id } @active_ids), 'Suspended schedule not in active list';
+    # Test find_schedules_with_payment_issues (replaces find_overdue)
+    my @problem_schedules = $schedule_ops->find_schedules_with_payment_issues($db);
+    # Should find the past_due schedule from previous subtest
+    is scalar @problem_schedules, 1, 'Found payment issues for past_due schedule';
 };
 
-subtest 'Database constraints' => sub {
-    # Test that database constraints are working
+subtest 'Database constraints for simplified schema' => sub {
+    # Test that database constraints work with simplified schema
     eval {
         $db->insert('registry.payment_schedules', {
             enrollment_id => $enrollment_id,
@@ -277,7 +319,7 @@ subtest 'Database constraints' => sub {
             total_amount => -100.00,  # Negative amount should fail
             installment_amount => 50.00,
             installment_count => 2,
-            first_payment_date => '2024-07-01',
+            stripe_subscription_id => 'sub_test'
         });
     };
     ok $@, 'Database rejects negative total amount';
@@ -289,10 +331,23 @@ subtest 'Database constraints' => sub {
             total_amount => 100.00,
             installment_amount => 50.00,
             installment_count => 1,  # Should fail constraint
-            first_payment_date => '2024-07-01',
+            stripe_subscription_id => 'sub_test'
         });
     };
     ok $@, 'Database rejects installment count <= 1';
+
+    # Test new past_due status is allowed
+    my $test_schedule_id = $db->insert('registry.payment_schedules', {
+        enrollment_id => $enrollment_id,
+        pricing_plan_id => $pricing_plan->id,
+        total_amount => 200.00,
+        installment_amount => 100.00,
+        installment_count => 2,
+        stripe_subscription_id => 'sub_test_past_due',
+        status => 'past_due'
+    }, { returning => 'id' })->hash->{id};
+
+    ok $test_schedule_id, 'Database accepts past_due status';
 };
 
 done_testing;
