@@ -168,28 +168,81 @@ method process_manual_payment ($db, $scheduled_payment_dao, $schedule_dao, $args
 
 # Business Logic: Mark payment as completed and check schedule completion
 method mark_payment_completed ($db, $scheduled_payment_dao, $metadata = {}) {
-    $scheduled_payment_dao->update($db, {
-        status => 'completed',
-        paid_at => \'NOW()',
-    });
+    # Prevent marking already completed payment
+    die "Payment already processed" if $scheduled_payment_dao->status eq 'completed';
 
-    # Business rule: Check if this completes the entire schedule
-    my @remaining = Registry::DAO::ScheduledPayment->find($db, {
-        payment_schedule_id => $scheduled_payment_dao->payment_schedule_id,
-        status => 'pending',
-    });
+    # Start transaction for atomic operation
+    my $tx = $db->begin;
+    my $schedule_completed = 0;
 
-    my $schedule_completed = @remaining == 0;
-    if ($schedule_completed) {
-        # Mark the entire schedule as completed
-        my $schedule_dao = Registry::DAO::PaymentSchedule->find($db, {
-            id => $scheduled_payment_dao->payment_schedule_id
+    try {
+        # Mark this payment as completed
+        $scheduled_payment_dao->update($db, {
+            status => 'completed',
+            paid_at => \'NOW()',
         });
 
-        my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(
-            stripe_client => $stripe_client
-        );
-        $schedule_ops->mark_completed($db, $schedule_dao);
+        # Lock the payment schedule row to prevent concurrent completion
+        my $schedule_result = $db->query(
+            'SELECT * FROM registry.payment_schedules WHERE id = ? FOR UPDATE',
+            $scheduled_payment_dao->payment_schedule_id
+        )->hash;
+
+        # Verify schedule exists and is not already completed
+        if (!$schedule_result) {
+            die "Payment schedule not found: " . $scheduled_payment_dao->payment_schedule_id;
+        }
+
+        if ($schedule_result->{status} eq 'completed') {
+            # Schedule already completed by another process, just return success
+            $tx->commit;
+            return {
+                success => 1,
+                scheduled_payment => $scheduled_payment_dao,
+                schedule_completed => 0,  # Already was completed
+            };
+        }
+
+        # Count remaining pending payments (within the same transaction)
+        my $remaining_count = $db->query(
+            'SELECT COUNT(*) FROM registry.scheduled_payments WHERE payment_schedule_id = ? AND status = ?',
+            $scheduled_payment_dao->payment_schedule_id,
+            'pending'
+        )->hash->{count};
+
+        # If no remaining payments, mark schedule as completed
+        if ($remaining_count == 0) {
+            # Update schedule status atomically
+            $db->query(
+                'UPDATE registry.payment_schedules SET status = ?, updated_at = NOW() WHERE id = ? AND status != ?',
+                'completed',
+                $scheduled_payment_dao->payment_schedule_id,
+                'completed'
+            );
+
+            # Cancel Stripe subscription if exists
+            if ($schedule_result->{stripe_subscription_id}) {
+                try {
+                    $stripe_client->cancel_subscription_with_reason(
+                        $schedule_result->{stripe_subscription_id},
+                        'Payment schedule completed'
+                    );
+                }
+                catch ($e) {
+                    # Log but don't fail if subscription cancellation fails
+                    warn "Failed to cancel completed subscription: $e";
+                }
+            }
+
+            $schedule_completed = 1;
+        }
+
+        # Commit the transaction
+        $tx->commit;
+    }
+    catch ($e) {
+        # Transaction will automatically rollback on error
+        die "Failed to mark payment completed: $e";
     }
 
     return {
