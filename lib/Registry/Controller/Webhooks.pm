@@ -5,6 +5,7 @@ use Object::Pad;
 class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use JSON;
     use Digest::SHA qw(hmac_sha256_hex);
+    use Registry::DAO::PaymentSchedule;
 
     method stripe() {
         # Verify webhook signature
@@ -102,12 +103,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # Look for payment schedule with this subscription ID
         my $dao = $self->app->dao;
-        my $schedule = $dao->db->query(
-            'SELECT id FROM registry.payment_schedules WHERE stripe_subscription_id = ?',
-            $subscription_id
-        )->hash;
+        my $schedules = Registry::DAO::PaymentSchedule->find_by_stripe_subscription_id(
+            $dao->db, $subscription_id
+        );
 
-        return defined $schedule;
+        return @$schedules > 0;
     }
 
     method _process_installment_payment_event($db, $event) {
@@ -140,45 +140,35 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
     method _handle_installment_subscription_updated($db, $subscription) {
         # Find payment schedule by subscription ID
-        my $schedule = $db->query(
-            'SELECT * FROM registry.payment_schedules WHERE stripe_subscription_id = ?',
-            $subscription->{id}
-        )->hash;
+        my $schedules = Registry::DAO::PaymentSchedule->find_by_stripe_subscription_id(
+            $db, $subscription->{id}
+        );
 
-        return unless $schedule;
+        return unless @$schedules;
+
+        my $schedule = $schedules->[0]; # Should only be one per subscription
 
         # Update schedule status based on subscription status
         my $new_status = $subscription->{status} eq 'active' ? 'active'
                        : $subscription->{status} eq 'past_due' ? 'past_due'
                        : $subscription->{status} eq 'canceled' ? 'cancelled'
-                       : $schedule->{status}; # Keep existing status
+                       : $schedule->status; # Keep existing status
 
-        if ($new_status ne $schedule->{status}) {
-            $db->query(
-                'UPDATE registry.payment_schedules SET status = ?, updated_at = NOW() WHERE id = ?',
-                $new_status, $schedule->{id}
-            );
-        }
+        # Use DAO method to update status
+        $schedule->update_status($db, $new_status);
     }
 
     method _handle_installment_subscription_cancelled($db, $subscription) {
         # Find payment schedule and mark as cancelled
-        my $schedule = $db->query(
-            'SELECT * FROM registry.payment_schedules WHERE stripe_subscription_id = ?',
-            $subscription->{id}
-        )->hash;
-
-        return unless $schedule;
-
-        # Mark schedule and all pending payments as cancelled
-        $db->query(
-            'UPDATE registry.payment_schedules SET status = ?, updated_at = NOW() WHERE id = ?',
-            'cancelled', $schedule->{id}
+        my $schedules = Registry::DAO::PaymentSchedule->find_by_stripe_subscription_id(
+            $db, $subscription->{id}
         );
 
-        $db->query(
-            'UPDATE registry.scheduled_payments SET status = ?, updated_at = NOW() WHERE payment_schedule_id = ? AND status = ?',
-            'cancelled', $schedule->{id}, 'pending'
-        );
+        return unless @$schedules;
+
+        my $schedule = $schedules->[0]; # Should only be one per subscription
+
+        # Use DAO method to cancel schedule and all pending payments atomically
+        $schedule->cancel_with_pending_payments($db);
     }
 }

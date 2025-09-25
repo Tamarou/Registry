@@ -37,6 +37,47 @@ sub find_active ($class, $db) {
     return $class->find($db, { status => 'active' });
 }
 
+sub find_by_stripe_subscription_id ($class, $db, $subscription_id) {
+    return $class->find($db, { stripe_subscription_id => $subscription_id });
+}
+
+# Instance methods for status management
+method update_status ($db, $new_status) {
+    return unless $new_status ne $self->status;
+
+    $db->update($self->table,
+        { status => $new_status, updated_at => \'NOW()' },
+        { id => $self->id }
+    );
+
+    # Update the object field
+    $status = $new_status;
+    return $self;
+}
+
+method cancel_with_pending_payments ($db) {
+    # Start transaction to ensure atomicity
+    my $tx = $db->begin;
+
+    try {
+        # Update schedule status
+        $self->update_status($db, 'cancelled');
+
+        # Cancel all pending scheduled payments
+        $db->update('registry.scheduled_payments',
+            { status => 'cancelled', updated_at => \'NOW()' },
+            { payment_schedule_id => $self->id, status => 'pending' }
+        );
+
+        $tx->commit;
+    } catch ($e) {
+        $tx->rollback;
+        die "Failed to cancel payment schedule: $e";
+    }
+
+    return $self;
+}
+
 }
 
 1;
