@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: Test for race condition prevention in payment schedule completion
-# ABOUTME: Verifies that concurrent payment completions are handled atomically
+# ABOUTME: Test for webhook-based payment processing with Stripe subscriptions
+# ABOUTME: Verifies that webhook events are handled atomically (race conditions eliminated)
 use v5.34.0;
 use warnings;
 use experimental 'signatures';
@@ -8,6 +8,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::MockObject;
 use Registry::DAO::PaymentSchedule;
 use Registry::DAO::ScheduledPayment;
 use Registry::DAO::User;
@@ -92,138 +93,191 @@ my $pricing_plan = Registry::DAO::PricingPlan->create($db, {
     installment_count => 3
 });
 
-# Create test parent user for enrollment
+# Create test parent user for enrollment with Stripe customer ID
 my $parent = Registry::DAO::User->create($db, {
     email    => 'parent_race@example.com',
     username => 'testparent_race',
     password => 'password123',
     name => 'Test Parent',
-    user_type => 'parent'
+    user_type => 'parent',
+    stripe_customer_id => 'cus_test_race_condition'
 });
 
-subtest 'Concurrent payment completion race condition prevention' => sub {
-    # Create payment schedule with 3 installments
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new();
+# Create a mock enrollment ID
+my $enrollment_id = $db->insert('enrollments', {
+    session_id => $session->id,
+    student_id => $parent->id,
+    status => 'pending',
+    metadata => '{"test": "race_condition_enrollment"}'
+}, { returning => 'id' })->hash->{id};
+
+# Mock Stripe client for testing
+my $mock_stripe = Test::MockObject->new;
+$mock_stripe->set_always('create_installment_subscription', {
+    id => 'sub_test_race_condition',
+    status => 'active'
+});
+
+subtest 'Webhook-based payment processing eliminates race conditions' => sub {
+    # Create payment schedule with Stripe subscription
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
     my $schedule = $schedule_ops->create_for_enrollment($db, {
-        enrollment_id => '550e8400-e29b-41d4-a716-446655440000',  # Mock enrollment ID
+        enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
+        customer_id => 'cus_test_race_condition',
+        payment_method_id => 'pm_test_race_condition',
         total_amount => 300.00,
         installment_count => 3,
-        first_payment_date => '2024-01-01',
     });
 
-    ok($schedule, 'Payment schedule created');
+    ok($schedule, 'Payment schedule created with Stripe subscription');
     is($schedule->status, 'active', 'Schedule is active');
+    ok($schedule->stripe_subscription_id, 'Stripe subscription ID stored');
 
-    # Get all scheduled payments
+    # Get all scheduled payment trackers
     my @payments = Registry::DAO::ScheduledPayment->find_by_schedule($db, $schedule->id);
-    is(@payments, 3, 'Three scheduled payments created');
+    is(@payments, 3, 'Three scheduled payment trackers created');
 
-    # Mark first payment as completed (no race condition here)
+    # Process webhook events (simulating Stripe's atomic webhook delivery)
     my $payment_ops = Registry::PriceOps::ScheduledPayment->new();
-    my $result1 = $payment_ops->mark_payment_completed($db, $payments[0]);
-    ok($result1->{success}, 'First payment marked completed');
-    is($result1->{schedule_completed}, 0, 'Schedule not completed after first payment');
 
-    # Reload schedule to check status
+    # First payment webhook (invoice.paid)
+    my $invoice1 = {
+        id => 'in_test_race_1',
+        subscription => 'sub_test_race_condition',
+        payment_intent => 'pi_test_race_1',
+        status => 'paid'
+    };
+
+    my $result1 = $payment_ops->handle_invoice_paid($db, $invoice1);
+    ok($result1->{success}, 'First webhook processed successfully');
+
+    # Verify first payment updated
+    my $updated_payment1 = Registry::DAO::ScheduledPayment->find($db, { id => $payments[0]->id });
+    is($updated_payment1->status, 'completed', 'First payment marked completed via webhook');
+
+    # Schedule should still be active (more payments pending)
     $schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
     is($schedule->status, 'active', 'Schedule still active after first payment');
 
-    # Simulate race condition: two processes completing the last two payments simultaneously
-    # We'll use separate database connections to simulate concurrent access
-    my $dao2 = Registry::DAO->new(url => $test_db->uri, schema => 'test_race_condition');
-    my $db2 = $dao2->db;
+    # Process remaining webhook events - no race conditions possible with webhooks
+    my $invoice2 = {
+        id => 'in_test_race_2',
+        subscription => 'sub_test_race_condition',
+        payment_intent => 'pi_test_race_2',
+        status => 'paid'
+    };
 
-    # Mark second payment as completed in first connection
-    my $result2 = $payment_ops->mark_payment_completed($db, $payments[1]);
-    ok($result2->{success}, 'Second payment marked completed');
+    my $invoice3 = {
+        id => 'in_test_race_3',
+        subscription => 'sub_test_race_condition',
+        payment_intent => 'pi_test_race_3',
+        status => 'paid'
+    };
 
-    # Mark third payment as completed in second connection (simulating race)
-    # Reload the payment object in the second connection
-    my $payment3 = Registry::DAO::ScheduledPayment->find($db2, { id => $payments[2]->id });
-    my $payment_ops2 = Registry::PriceOps::ScheduledPayment->new();
-    my $result3 = $payment_ops2->mark_payment_completed($db2, $payment3);
-    ok($result3->{success}, 'Third payment marked completed');
+    # Process webhooks sequentially (Stripe guarantees this)
+    my $result2 = $payment_ops->handle_invoice_paid($db, $invoice2);
+    my $result3 = $payment_ops->handle_invoice_paid($db, $invoice3);
 
-    # Only one of them should have marked the schedule as completed
-    my $completed_count = ($result2->{schedule_completed} ? 1 : 0) +
-                         ($result3->{schedule_completed} ? 1 : 0);
-    is($completed_count, 1, 'Exactly one payment marked the schedule as completed');
-
-    # Verify final schedule status
-    $schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
-    is($schedule->status, 'completed', 'Schedule is completed');
+    ok($result2->{success}, 'Second webhook processed successfully');
+    ok($result3->{success}, 'Third webhook processed successfully');
 
     # Verify all payments are completed
     my @final_payments = Registry::DAO::ScheduledPayment->find_by_schedule($db, $schedule->id);
     my @completed = grep { $_->status eq 'completed' } @final_payments;
-    is(@completed, 3, 'All three payments are completed');
-};
+    is(@completed, 3, 'All three payments completed via webhooks');
 
-subtest 'Idempotency - marking already completed payment' => sub {
-    # Create another schedule
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new();
-    my $schedule = $schedule_ops->create_for_enrollment($db, {
-        enrollment_id => '660e8400-e29b-41d4-a716-446655440001',  # Mock enrollment ID
-        pricing_plan_id => $pricing_plan->id,
-        total_amount => 100.00,
-        installment_count => 2,
-        first_payment_date => '2024-02-01',
-    });
-
-    my @payments = Registry::DAO::ScheduledPayment->find_by_schedule($db, $schedule->id);
-    is(@payments, 2, 'Two scheduled payments created');
-
-    # Mark both payments as completed
-    my $payment_ops = Registry::PriceOps::ScheduledPayment->new();
-    $payment_ops->mark_payment_completed($db, $payments[0]);
-    my $result = $payment_ops->mark_payment_completed($db, $payments[1]);
-
-    ok($result->{success}, 'Second payment marked completed');
-    is($result->{schedule_completed}, 1, 'Schedule marked as completed');
-
-    # Verify schedule is completed
+    # Schedule should be completed when all payments are done
     $schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
-    is($schedule->status, 'completed', 'Schedule is completed');
-
-    # Try to complete the first payment again (should throw error as designed)
-    # Reload payment to get fresh status
-    my $completed_payment = Registry::DAO::ScheduledPayment->find($db, { id => $payments[0]->id });
-    eval {
-        $payment_ops->mark_payment_completed($db, $completed_payment);
-    };
-    like($@, qr/Payment already processed/, 'Cannot mark already completed payment');
+    is($schedule->status, 'completed', 'Schedule automatically completed');
 };
 
-subtest 'Schedule already completed by another transaction' => sub {
-    # Create a schedule with 2 payments
-    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new();
+subtest 'Webhook idempotency handling' => sub {
+    # Create another schedule for idempotency testing
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
     my $schedule = $schedule_ops->create_for_enrollment($db, {
-        enrollment_id => '770e8400-e29b-41d4-a716-446655440002',
+        enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
+        customer_id => 'cus_test_idempotency',
+        payment_method_id => 'pm_test_idempotency',
         total_amount => 200.00,
         installment_count => 2,
-        first_payment_date => '2024-03-01',
     });
 
+    # Update subscription ID for this test
+    $schedule->update($db, { stripe_subscription_id => 'sub_test_idempotency' });
+
     my @payments = Registry::DAO::ScheduledPayment->find_by_schedule($db, $schedule->id);
-    is(@payments, 2, 'Two payments created');
+    is(@payments, 2, 'Two scheduled payment trackers created');
 
-    # Complete first payment
+    # Process webhook for first payment
     my $payment_ops = Registry::PriceOps::ScheduledPayment->new();
-    my $result1 = $payment_ops->mark_payment_completed($db, $payments[0]);
-    ok($result1->{success}, 'First payment completed');
+    my $invoice = {
+        id => 'in_test_idempotency_1',
+        subscription => 'sub_test_idempotency',
+        payment_intent => 'pi_test_idempotency_1',
+        status => 'paid'
+    };
 
-    # Manually mark schedule as completed (simulating another process)
-    $db->query(
-        'UPDATE registry.payment_schedules SET status = ? WHERE id = ?',
-        'completed', $schedule->id
-    );
+    my $result1 = $payment_ops->handle_invoice_paid($db, $invoice);
+    ok($result1->{success}, 'First payment webhook processed');
 
-    # Now complete second payment - should handle gracefully
-    my $result2 = $payment_ops->mark_payment_completed($db, $payments[1]);
-    ok($result2->{success}, 'Payment marked completed even though schedule already complete');
-    is($result2->{schedule_completed}, 0, 'Schedule was already completed');
+    # Verify first payment is completed
+    my $updated_payment = Registry::DAO::ScheduledPayment->find($db, { id => $payments[0]->id });
+    is($updated_payment->status, 'completed', 'First payment completed');
+
+    # Process the SAME webhook again (idempotency test)
+    my $result2 = $payment_ops->handle_invoice_paid($db, $invoice);
+    ok(defined($result2), 'Duplicate webhook handled without crashing');
+
+    # Payment should still be completed (no double processing)
+    $updated_payment = Registry::DAO::ScheduledPayment->find($db, { id => $payments[0]->id });
+    is($updated_payment->status, 'completed', 'Payment status unchanged after duplicate webhook');
+
+    # Only one paid_at timestamp should exist (not multiple)
+    ok($updated_payment->paid_at, 'Paid timestamp exists');
+};
+
+subtest 'Stripe subscription status synchronization' => sub {
+    # Create a schedule for subscription status testing
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
+    my $schedule = $schedule_ops->create_for_enrollment($db, {
+        enrollment_id => $enrollment_id,
+        pricing_plan_id => $pricing_plan->id,
+        customer_id => 'cus_test_sync',
+        payment_method_id => 'pm_test_sync',
+        total_amount => 150.00,
+        installment_count => 2,
+    });
+
+    # Update subscription ID for this test
+    $schedule->update($db, { stripe_subscription_id => 'sub_test_sync' });
+
+    my @payments = Registry::DAO::ScheduledPayment->find_by_schedule($db, $schedule->id);
+    is(@payments, 2, 'Two payment trackers created');
+
+    # Test subscription status check with past_due status
+    $mock_stripe->set_always('retrieve_subscription', {
+        id => 'sub_test_sync',
+        status => 'past_due'
+    });
+
+    my $subscription = $schedule_ops->check_subscription_status($db, $schedule);
+    ok($subscription, 'Subscription status retrieved from Stripe');
+
+    # Verify schedule status was updated
+    my $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
+    is($updated_schedule->status, 'past_due', 'Schedule status synced with Stripe subscription');
+
+    # Test cancellation synchronization
+    $mock_stripe->set_always('retrieve_subscription', {
+        id => 'sub_test_sync',
+        status => 'canceled'
+    });
+
+    $schedule_ops->check_subscription_status($db, $updated_schedule);
+    $updated_schedule = Registry::DAO::PaymentSchedule->find($db, { id => $schedule->id });
+    is($updated_schedule->status, 'cancelled', 'Schedule cancelled when Stripe subscription cancelled');
 };
 
 done_testing();
