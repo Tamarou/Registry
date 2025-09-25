@@ -25,4 +25,4 @@ requires 'Email::Sender::Simple';
 requires 'JSON';
 requires 'Text::Unidecode';
 requires 'Text::CSV_XS';
-requires 'IO::Socket::SSL' => '2.009';
+requires 'IO::Socket::SSL' => '2.095';
