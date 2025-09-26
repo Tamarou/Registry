@@ -352,13 +352,14 @@ select:invalid {
 }
 
 .htmx-indicator {
-  display: flex;
+  display: none;
   align-items: center;
   color: #666;
   font-size: 0.9rem;
 }
 
 .htmx-indicator.htmx-request {
+  display: flex;
   opacity: 1;
 }
 
