@@ -59,6 +59,12 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-perl-
 
+    - name: Install SSL module explicitly
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        cpanm --notest IO::Socket::SSL
+
     - name: Install Perl dependencies
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
