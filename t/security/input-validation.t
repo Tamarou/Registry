@@ -85,6 +85,9 @@ my $dao     = $test_db->db;
 {    # Test input length validation
     my $very_long_string = 'x' x 10000;    # 10,000 characters
 
+    # Suppress warnings about long input since we're testing this deliberately
+    local $SIG{__WARN__} = sub { };
+
     try {
         my $user = Registry::DAO::User->create(
             $dao->db,
