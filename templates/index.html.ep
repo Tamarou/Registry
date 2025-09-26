@@ -31,7 +31,7 @@
   <!-- Critical CSS for above-the-fold content -->
   <style>
     .hero {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #BF349A 0%, #8C2771 50%, #2ABFBF 100%);
       color: var(--color-white);
       padding: var(--space-20) 0;
       text-align: center;
@@ -166,9 +166,9 @@
   color: var(--color-text-primary);
 }
 
-/* Hero Section - keeping the gradient for brand consistency */
+/* Hero Section - Vaporwave gradient for brand consistency */
 .hero {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #BF349A 0%, #8C2771 50%, #2ABFBF 100%);
   color: var(--color-white);
   padding: var(--space-20) 0;
   text-align: center;
