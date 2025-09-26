@@ -38,7 +38,8 @@ sub find_active ($class, $db) {
 }
 
 sub find_by_stripe_subscription_id ($class, $db, $subscription_id) {
-    return $class->find($db, { stripe_subscription_id => $subscription_id });
+    my $results = $class->find($db, { stripe_subscription_id => $subscription_id });
+    return $results || [];
 }
 
 # Instance methods for status management
