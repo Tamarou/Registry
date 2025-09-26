@@ -86,7 +86,7 @@ subtest 'button style consistency' => sub {
 };
 
 subtest 'color scheme consistency' => sub {
-    # Check for consistent gradient usage
+    # Check for consistent vaporwave gradient usage
     my $landing_template = 'templates/index.html.ep';
     my $workflow_layout = 'templates/layouts/workflow.html.ep';
 
@@ -100,10 +100,10 @@ subtest 'color scheme consistency' => sub {
     { local $/; $workflow_content = <$workflow_fh>; }
     close $workflow_fh;
 
-    # Both should use the same gradient
-    my $landing_gradient = $landing_content =~ /#667eea.*#764ba2/;
-    my $workflow_gradient = $workflow_content =~ /#667eea.*#764ba2/;
+    # Both should use the same vaporwave gradient
+    my $landing_gradient = $landing_content =~ /#BF349A.*#8C2771.*#2ABFBF/;
+    my $workflow_gradient = $workflow_content =~ /#BF349A.*#8C2771.*#2ABFBF/;
 
-    ok($landing_gradient, 'Landing page has purple gradient');
-    ok($workflow_gradient, 'Workflow layout has purple gradient');
+    ok($landing_gradient, 'Landing page has vaporwave gradient');
+    ok($workflow_gradient, 'Workflow layout has vaporwave gradient');
 };

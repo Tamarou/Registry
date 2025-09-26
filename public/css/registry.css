@@ -27,53 +27,53 @@
   --line-height-normal: 1.5;
   --line-height-relaxed: 1.75;
 
-  /* Colors - Unified palette */
-  --color-primary: #1976d2;
-  --color-primary-hover: #1565c0;
-  --color-primary-light: #e3f2fd;
-  --color-primary-dark: #0d47a1;
+  /* Colors - Vaporwave palette inspired by Michelangelo's David */
+  --color-primary: #BF349A;         /* Magenta - Primary accent color */
+  --color-primary-hover: #A62A85;   /* Darker magenta for hover states */
+  --color-primary-light: #F7E8F2;   /* Light magenta for backgrounds */
+  --color-primary-dark: #8C2771;    /* Deep Purple for dark variants */
 
-  --color-secondary: #6c757d;
-  --color-secondary-hover: #5a6268;
-  --color-secondary-light: #f8f9fa;
+  --color-secondary: #2ABFBF;       /* Cyan - Secondary accent color */
+  --color-secondary-hover: #29A6A6; /* Teal - Hover/active states */
+  --color-secondary-light: #E0F7F7; /* Light cyan for backgrounds */
 
-  --color-success: #28a745;
-  --color-success-hover: #218838;
-  --color-success-light: #d4edda;
+  --color-success: #29A6A6;         /* Teal - Success states */
+  --color-success-hover: #238C8C;   /* Darker teal */
+  --color-success-light: #E0F4F4;   /* Light teal background */
 
-  --color-warning: #ffc107;
-  --color-warning-hover: #e0a800;
-  --color-warning-light: #fff3cd;
+  --color-warning: #BF349A;         /* Magenta - Warning states */
+  --color-warning-hover: #A62A85;   /* Darker magenta */
+  --color-warning-light: #F7E8F2;   /* Light magenta background */
 
-  --color-danger: #dc3545;
-  --color-danger-hover: #c82333;
-  --color-danger-light: #f8d7da;
+  --color-danger: #8C2771;          /* Deep Purple - Danger states */
+  --color-danger-hover: #6B1D56;    /* Darker purple */
+  --color-danger-light: #EDE4E9;    /* Light purple background */
 
-  --color-info: #17a2b8;
-  --color-info-hover: #138496;
-  --color-info-light: #d1ecf1;
+  --color-info: #2ABFBF;            /* Cyan - Info states */
+  --color-info-hover: #238C8C;      /* Darker cyan */
+  --color-info-light: #E0F7F7;      /* Light cyan background */
 
-  /* Neutral colors */
+  /* Neutral colors - Vaporwave inspired with light lavender base */
   --color-white: #ffffff;
-  --color-gray-50: #f9fafb;
-  --color-gray-100: #f3f4f6;
-  --color-gray-200: #e5e7eb;
-  --color-gray-300: #d1d5db;
-  --color-gray-400: #9ca3af;
-  --color-gray-500: #6b7280;
-  --color-gray-600: #4b5563;
-  --color-gray-700: #374151;
-  --color-gray-800: #1f2937;
-  --color-gray-900: #111827;
+  --color-gray-50: #E7DCF2;          /* Light Lavender - Primary background */
+  --color-gray-100: #DFD2ED;         /* Slightly darker lavender */
+  --color-gray-200: #D1C1E4;         /* Light lavender with more saturation */
+  --color-gray-300: #BFA7D6;         /* Medium lavender for borders */
+  --color-gray-400: #9B7FC2;         /* Muted lavender for subtle elements */
+  --color-gray-500: #7D5BA6;         /* Mid-tone lavender for secondary text */
+  --color-gray-600: #634589;         /* Darker lavender for main text */
+  --color-gray-700: #4A316D;         /* Deep lavender for headings */
+  --color-gray-800: #321F51;         /* Very dark lavender */
+  --color-gray-900: #1F0D35;         /* Darkest lavender for primary text */
 
-  /* Text colors */
+  /* Text colors - Vaporwave themed */
   --color-text-primary: var(--color-gray-900);
-  --color-text-secondary: var(--color-gray-600);
-  --color-text-muted: var(--color-gray-500);
+  --color-text-secondary: var(--color-gray-700);
+  --color-text-muted: var(--color-gray-600);
 
-  /* Background colors */
+  /* Background colors - Light lavender theme */
   --color-bg-primary: var(--color-white);
-  --color-bg-secondary: var(--color-gray-50);
+  --color-bg-secondary: var(--color-gray-50);   /* Light Lavender */
   --color-bg-muted: var(--color-gray-100);
 
   /* Border colors */
