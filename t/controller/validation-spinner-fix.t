@@ -14,39 +14,53 @@ use Test::Registry::Fixtures;
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 
-subtest 'tenant profile template spinner CSS' => sub {
-    # Test that the profile template has the correct CSS for the validation spinner
+subtest 'tenant profile template spinner elements' => sub {
+    # Test that the profile template has the correct HTML elements for the validation spinner
     my $template_path = 'templates/tenant-signup/profile.html.ep';
+    my $css_file = 'public/css/registry.css';
+
     ok(-f $template_path, 'Profile template file exists');
+    ok(-f $css_file, 'CSS file exists');
 
-    my $content;
-    open my $fh, '<', $template_path or die "Cannot read template: $!";
-    { local $/; $content = <$fh>; }
-    close $fh;
+    my $template_content;
+    open my $template_fh, '<', $template_path or die "Cannot read template: $!";
+    { local $/; $template_content = <$template_fh>; }
+    close $template_fh;
 
-    # Check that spinner element exists with proper class
-    like($content, qr/<div[^>]*id="form-spinner"[^>]*class="[^"]*htmx-indicator[^"]*"/, 'Spinner has htmx-indicator class');
+    my $css_content;
+    open my $css_fh, '<', $css_file or die "Cannot read CSS file: $!";
+    { local $/; $css_content = <$css_fh>; }
+    close $css_fh;
 
-    # Check for existing CSS rules - these tests will fail initially, showing the issue
-    like($content, qr/\.htmx-indicator[^{]*\{[^}]*display:\s*none/, 'Default hidden state defined') ||
-        ok(0, 'EXPECTED FAILURE: htmx-indicator missing default hidden state - this is the bug we need to fix');
+    # Check that spinner element exists with proper class in template
+    like($template_content, qr/<div[^>]*id="form-spinner"[^>]*class="[^"]*htmx-indicator[^"]*"/, 'Spinner has htmx-indicator class');
+
+    # Check that template does NOT have embedded CSS (uses external file)
+    my $template_has_embedded_css = $template_content =~ /<style[^>]*>/;
+    ok(!$template_has_embedded_css, 'Template does not have embedded CSS - uses external file');
+
+    # Check that CSS file has the spinner styles
+    like($css_content, qr/\.htmx-indicator[^{]*\{[^}]*display:\s*none/, 'CSS file defines default hidden state for spinner');
 };
 
-subtest 'spinner behavior verification' => sub {
-    # Verify that the spinner should be hidden by default and shown during requests
-    my $template_path = 'templates/tenant-signup/profile.html.ep';
-    my $content;
-    open my $fh, '<', $template_path or die "Cannot read template: $!";
-    { local $/; $content = <$fh>; }
-    close $fh;
+subtest 'spinner CSS behavior verification' => sub {
+    # Verify that the spinner CSS is correctly defined in the external CSS file
+    my $css_file = 'public/css/registry.css';
 
-    # This test documents what the CSS should look like after our fix
-    my $has_correct_css = $content =~ /\.htmx-indicator\s*\{[^}]*display:\s*none/ &&
-                         $content =~ /\.htmx-indicator\.htmx-request\s*\{[^}]*opacity:\s*1/;
+    my $css_content;
+    open my $css_fh, '<', $css_file or die "Cannot read CSS file: $!";
+    { local $/; $css_content = <$css_fh>; }
+    close $css_fh;
 
-    if (!$has_correct_css) {
-        ok(0, 'CSS rules need to be fixed - spinner not properly hidden by default');
-    } else {
-        ok(1, 'CSS rules are correct');
-    }
+    # Check that CSS defines proper spinner behavior
+    my $has_hidden_default = $css_content =~ /\.htmx-indicator\s*\{[^}]*display:\s*none/;
+    my $has_active_state = $css_content =~ /\.htmx-indicator\.htmx-request\s*\{[^}]*display:\s*flex/ ||
+                          $css_content =~ /\.htmx-indicator\.htmx-request\s*\{[^}]*opacity:\s*1/;
+
+    ok($has_hidden_default, 'CSS defines spinner as hidden by default');
+    ok($has_active_state, 'CSS defines spinner as visible during HTMX requests');
+
+    # Verify we have both states properly defined
+    my $has_correct_behavior = $has_hidden_default && $has_active_state;
+    ok($has_correct_behavior, 'Spinner CSS behavior is correctly implemented');
 };

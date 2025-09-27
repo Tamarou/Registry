@@ -18,34 +18,46 @@ subtest 'template layout consistency' => sub {
     # Read templates to check for consistency
     my $landing_template = 'templates/index.html.ep';
     my $workflow_template = 'templates/tenant-signup/index.html.ep';
+    my $css_file = 'public/css/registry.css';
 
     ok(-f $landing_template, 'Landing page template exists');
     ok(-f $workflow_template, 'Workflow template exists');
+    ok(-f $css_file, 'Central CSS file exists');
 
-    # Read landing page content
+    # Read template contents
     my $landing_content;
     open my $landing_fh, '<', $landing_template or die "Cannot read landing template: $!";
     { local $/; $landing_content = <$landing_fh>; }
     close $landing_fh;
 
-    # Read workflow content
     my $workflow_content;
     open my $workflow_fh, '<', $workflow_template or die "Cannot read workflow template: $!";
     { local $/; $workflow_content = <$workflow_fh>; }
     close $workflow_fh;
 
-    # Check that both use consistent CSS variables for colors
-    my $landing_uses_vars = $landing_content =~ /var\(--color-/;
-    my $workflow_uses_vars = $workflow_content =~ /var\(--color-/;
+    # Read CSS file content
+    my $css_content;
+    open my $css_fh, '<', $css_file or die "Cannot read CSS file: $!";
+    { local $/; $css_content = <$css_fh>; }
+    close $css_fh;
 
-    ok($landing_uses_vars, 'Landing page uses CSS variables');
+    # Check that templates do NOT have embedded CSS (confirming they use external files)
+    my $landing_has_embedded_css = $landing_content =~ /<style[^>]*>/;
+    my $workflow_has_embedded_css = $workflow_content =~ /<style[^>]*>/;
 
-    # After our fix, workflow should also use CSS variables
-    if (!$workflow_uses_vars) {
-        ok(0, 'EXPECTED FAILURE: Workflow templates need CSS variable consistency');
-    } else {
-        ok(1, 'Workflow uses consistent CSS variables');
-    }
+    ok(!$landing_has_embedded_css, 'Landing page does not have embedded CSS - uses external files');
+    ok(!$workflow_has_embedded_css, 'Workflow does not have embedded CSS - uses external files');
+
+    # Check that CSS variables are properly defined in the external CSS file
+    my $css_has_color_vars = $css_content =~ /--color-primary/;
+    ok($css_has_color_vars, 'CSS variables are defined in external CSS file');
+
+    # Check that both templates reference the external CSS file
+    my $landing_references_css = $landing_content =~ /CSS moved to registry\.css/;
+    my $workflow_references_css = $workflow_content =~ /CSS moved to registry\.css/;
+
+    ok($landing_references_css, 'Landing page indicates CSS was moved to external file');
+    ok($workflow_references_css, 'Workflow indicates CSS was moved to external file');
 };
 
 subtest 'button style consistency' => sub {
@@ -86,24 +98,31 @@ subtest 'button style consistency' => sub {
 };
 
 subtest 'color scheme consistency' => sub {
-    # Check for consistent vaporwave gradient usage
-    my $landing_template = 'templates/index.html.ep';
+    # Check for consistent vaporwave color scheme in CSS and layout
     my $workflow_layout = 'templates/layouts/workflow.html.ep';
-
-    my $landing_content;
-    open my $landing_fh, '<', $landing_template or die "Cannot read landing template: $!";
-    { local $/; $landing_content = <$landing_fh>; }
-    close $landing_fh;
+    my $css_file = 'public/css/registry.css';
 
     my $workflow_content;
     open my $workflow_fh, '<', $workflow_layout or die "Cannot read workflow layout: $!";
     { local $/; $workflow_content = <$workflow_fh>; }
     close $workflow_fh;
 
-    # Both should use the same vaporwave gradient
-    my $landing_gradient = $landing_content =~ /#BF349A.*#8C2771.*#2ABFBF/;
-    my $workflow_gradient = $workflow_content =~ /#BF349A.*#8C2771.*#2ABFBF/;
+    my $css_content;
+    open my $css_fh, '<', $css_file or die "Cannot read CSS file: $!";
+    { local $/; $css_content = <$css_fh>; }
+    close $css_fh;
 
-    ok($landing_gradient, 'Landing page has vaporwave gradient');
+    # Check that CSS defines vaporwave color palette
+    my $css_has_vaporwave = $css_content =~ /#BF349A/ && $css_content =~ /#8C2771/ && $css_content =~ /#2ABFBF/;
+    ok($css_has_vaporwave, 'CSS file contains vaporwave color palette');
+
+    # Check that workflow layout uses vaporwave gradient
+    my $workflow_gradient = $workflow_content =~ /#BF349A.*#8C2771.*#2ABFBF/;
     ok($workflow_gradient, 'Workflow layout has vaporwave gradient');
+
+    # Check for CSS color variables
+    my $css_has_color_vars = $css_content =~ /--color-primary:\s*#BF349A/ &&
+                           $css_content =~ /--color-primary-dark:\s*#8C2771/ &&
+                           $css_content =~ /--color-secondary:\s*#2ABFBF/;
+    ok($css_has_color_vars, 'CSS defines vaporwave colors as CSS variables');
 };

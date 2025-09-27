@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Classless CSS Example - Registry</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/public/css/classless-poc.css">
+</head>
+<body>
+    <!-- Example: Landing Page Hero -->
+    <section class="hero" role="banner" aria-labelledby="hero-title">
+        <div>
+            <h1 id="hero-title">After-School Program Management Made Simple</h1>
+            <p>
+                Streamline registrations, track attendance, manage payments, and communicate with families
+                all in one powerful platform designed specifically for after-school programs.
+            </p>
+            <div>
+                <a href="/workflow/tenant-signup" role="button" data-variant="success">
+                    Start Your Free Trial
+                </a>
+                <p><small>30 days free • No credit card required to start</small></p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Example: Main Content with Semantic HTML -->
+    <main>
+        <h2>Everything You Need to Run Successful Programs</h2>
+
+        <!-- Features using semantic article elements -->
+        <article>
+            <header>
+                <h3>📝 Easy Registration</h3>
+            </header>
+            <section>
+                <p>Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.</p>
+            </section>
+        </article>
+
+        <article>
+            <header>
+                <h3>💳 Payment Processing</h3>
+            </header>
+            <section>
+                <p>Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.</p>
+            </section>
+        </article>
+    </main>
+
+    <!-- Example: Form with Semantic HTML -->
+    <main>
+        <h2>Organization Profile</h2>
+        <p>Let's set up your organization. This information will be used for billing and to create your custom Registry subdomain.</p>
+
+        <form method="POST" action="/tenant-signup/profile"
+              hx-post="/tenant-signup/profile"
+              hx-target="#form-errors"
+              hx-indicator=".htmx-indicator">
+
+            <fieldset>
+                <legend>Organization Information</legend>
+
+                <div>
+                    <label for="name" required>Organization Name</label>
+                    <input type="text"
+                           id="name"
+                           name="name"
+                           placeholder="Sunrise After-School Programs"
+                           required>
+                    <small>This will be displayed to families and used to generate your subdomain</small>
+                </div>
+
+                <div>
+                    <label for="description">Description (Optional)</label>
+                    <textarea id="description"
+                              name="description"
+                              placeholder="Tell us about your programs and mission..."
+                              rows="3"></textarea>
+                    <small>This will be displayed on your public program pages</small>
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Billing Information</legend>
+
+                <div>
+                    <label for="billing_email" required>Billing Email</label>
+                    <input type="email"
+                           id="billing_email"
+                           name="billing_email"
+                           placeholder="billing@yourorganization.com"
+                           required>
+                    <small>We'll send invoices and billing notifications to this email</small>
+                </div>
+
+                <div>
+                    <label for="billing_phone">Phone Number</label>
+                    <input type="tel"
+                           id="billing_phone"
+                           name="billing_phone"
+                           placeholder="(555) 123-4567">
+                </div>
+
+                <div>
+                    <label for="billing_country" required>Country</label>
+                    <select id="billing_country" name="billing_country" required>
+                        <option value="">Select Country</option>
+                        <option value="US">United States</option>
+                        <option value="CA">Canada</option>
+                        <option value="GB">United Kingdom</option>
+                        <option value="AU">Australia</option>
+                    </select>
+                </div>
+            </fieldset>
+
+            <!-- Alert example using semantic HTML -->
+            <aside role="alert" data-type="info" id="form-errors">
+                <!-- Dynamic errors would be inserted here via HTMX -->
+            </aside>
+
+            <!-- HTMX loading indicator - minimal class needed -->
+            <div class="htmx-indicator">
+                <span class="spinner"></span> Validating...
+            </div>
+
+            <div>
+                <button type="submit">
+                    Continue to Team Setup →
+                </button>
+            </div>
+        </form>
+    </main>
+
+    <!-- Example: Dashboard with Semantic HTML -->
+    <main>
+        <header>
+            <h1>Admin Dashboard</h1>
+            <p>Program management and oversight</p>
+        </header>
+
+        <!-- Stats using semantic definition list -->
+        <section>
+            <dl>
+                <dt>Active Enrollments</dt>
+                <dd>247</dd>
+
+                <dt>Active Programs</dt>
+                <dd>12</dd>
+
+                <dt>Waitlist Entries</dt>
+                <dd>34</dd>
+
+                <dt>Today's Events</dt>
+                <dd>5</dd>
+            </dl>
+        </section>
+
+        <!-- Table example -->
+        <section>
+            <h2>Recent Enrollments</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Student</th>
+                        <th>Program</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>John Smith</td>
+                        <td>After-School Art</td>
+                        <td>Enrolled</td>
+                        <td>2024-01-15</td>
+                    </tr>
+                    <tr>
+                        <td>Jane Doe</td>
+                        <td>Soccer Club</td>
+                        <td>Waitlisted</td>
+                        <td>2024-01-14</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Alert example -->
+        <aside role="alert" data-type="warning">
+            <h3>Programs Near Capacity</h3>
+            <ul>
+                <li>Art Club - Session 2 (95% full - 19/20 enrolled)</li>
+                <li>Chess Club - Winter (90% full - 27/30 enrolled)</li>
+            </ul>
+        </aside>
+    </main>
+
+    <!-- Example: Navigation -->
+    <nav>
+        <ul>
+            <li><a href="/" aria-current="page">Dashboard</a></li>
+            <li><a href="/programs">Programs</a></li>
+            <li><a href="/enrollments">Enrollments</a></li>
+            <li><a href="/reports">Reports</a></li>
+        </ul>
+    </nav>
+
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</body>
+</html>
