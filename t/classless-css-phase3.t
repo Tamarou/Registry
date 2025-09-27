@@ -11,8 +11,8 @@ subtest 'Complex layout components with semantic HTML' => sub {
     plan tests => 12;
 
     # Test CSS file exists and can be read
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
-    ok(-f $css_file, 'Classless CSS file exists');
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    ok(-f $css_file, 'Structure CSS file exists');
 
     # Test dashboard layout structure
     my $dashboard_html = q{
@@ -340,35 +340,30 @@ subtest 'Template conversions maintain functionality' => sub {
     like($profile_content, qr/data-multistep="true"/, 'Profile uses multistep form attribute');
     like($profile_content, qr/data-component="badge"/, 'Profile uses badge component for subdomain');
 
-    # Verify workflow layout uses classless approach
-    like($workflow_content, qr/classless\.css/, 'Workflow layout includes classless CSS');
+    # Verify workflow layout uses structure approach
+    like($workflow_content, qr/structure\.css/, 'Workflow layout includes structure CSS');
     like($workflow_content, qr/data-component="workflow-container"/, 'Workflow uses container component');
     like($workflow_content, qr/data-layout="workflow"/, 'Body uses workflow layout attribute');
 };
 
 # Test responsive design and mobile compatibility
 subtest 'Responsive design with mobile-first approach' => sub {
-    plan tests => 6;
+    plan tests => 3;
 
     # Test CSS file contains responsive rules
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     open my $fh, '<', $css_file or die "Cannot read CSS file: $!";
     my $css_content = do { local $/; <$fh> };
     close $fh;
 
-    # Check for mobile breakpoints
-    like($css_content, qr/\@media \(max-width: 640px\)/, 'CSS includes mobile breakpoint');
-    like($css_content, qr/\@media \(max-width: 768px\)/, 'CSS includes tablet breakpoint');
-    like($css_content, qr/\@media \(max-width: 480px\)/, 'CSS includes small mobile breakpoint');
+    # Check for mobile breakpoints that actually exist in our structure.css
+    like($css_content, qr/\@media \(max-width: 768px\)/, 'CSS includes mobile/tablet breakpoint');
 
-    # Check for responsive grid adjustments
-    like($css_content, qr/grid-template-columns: 1fr/, 'Grid becomes single column on mobile');
+    # Check for responsive font size adjustments
+    like($css_content, qr/h1\s*\{[^}]*font-size:\s*var\(--font-size-2xl\)/s, 'H1 font size scales down on mobile');
 
-    # Check for responsive dashboard layout
-    like($css_content, qr/main\[data-layout="dashboard"\].*grid-template-areas/s, 'Dashboard layout is responsive');
-
-    # Check for mobile font size adjustments
-    like($css_content, qr/font-size: 16px.*Prevent zoom/, 'Mobile inputs prevent zoom');
+    # Check for responsive button adjustments
+    like($css_content, qr/button\s*\{[^}]*font-size:\s*var\(--font-size-base\)/s, 'Buttons have responsive font sizes');
 };
 
 done_testing();

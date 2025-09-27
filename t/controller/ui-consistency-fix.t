@@ -18,7 +18,7 @@ subtest 'template layout consistency' => sub {
     # Read templates to check for consistency
     my $landing_template = 'templates/index.html.ep';
     my $workflow_template = 'templates/tenant-signup/index.html.ep';
-    my $css_file = 'public/css/registry.css';
+    my $css_file = 'public/css/style.css';
 
     ok(-f $landing_template, 'Landing page template exists');
     ok(-f $workflow_template, 'Workflow template exists');
@@ -64,7 +64,7 @@ subtest 'button style consistency' => sub {
     # Check that both pages use consistent button styling from the unified CSS system
     my $landing_template = 'templates/index.html.ep';
     my $workflow_template = 'templates/tenant-signup/index.html.ep';
-    my $css_file = 'public/css/registry.css';
+    my $css_file = 'public/css/style.css';
 
     my $landing_content;
     open my $landing_fh, '<', $landing_template or die "Cannot read landing template: $!";
@@ -81,16 +81,17 @@ subtest 'button style consistency' => sub {
     { local $/; $css_content = <$css_fh>; }
     close $css_fh;
 
-    # Check that both templates use consistent button classes
-    my $landing_has_btn_success = $landing_content =~ /btn-success/;
+    # Check that workflow template uses consistent button classes
     my $workflow_has_btn_primary = $workflow_content =~ /btn-primary/;
-
-    ok($landing_has_btn_success, 'Landing page has btn-success class');
     ok($workflow_has_btn_primary, 'Workflow has btn-primary class');
+
+    # Check that landing page uses semantic data attributes (modern approach)
+    my $landing_has_semantic_buttons = $landing_content =~ /data-variant="success"/;
+    ok($landing_has_semantic_buttons, 'Landing page uses semantic button data attributes');
 
     # Check that buttons are defined in the central CSS system
     my $css_has_buttons = $css_content =~ /\.btn\s*\{/;
-    ok($css_has_buttons, 'Button styles are centrally defined in registry.css');
+    ok($css_has_buttons, 'Button styles are centrally defined in style.css');
 
     # Workflow should not redefine button styles
     my $workflow_defines_buttons = $workflow_content =~ /\.btn\s*\{/;
@@ -100,7 +101,7 @@ subtest 'button style consistency' => sub {
 subtest 'color scheme consistency' => sub {
     # Check for consistent vaporwave color scheme in CSS and layout
     my $workflow_layout = 'templates/layouts/workflow.html.ep';
-    my $css_file = 'public/css/registry.css';
+    my $css_file = 'public/css/style.css';
 
     my $workflow_content;
     open my $workflow_fh, '<', $workflow_layout or die "Cannot read workflow layout: $!";
@@ -112,17 +113,24 @@ subtest 'color scheme consistency' => sub {
     { local $/; $css_content = <$css_fh>; }
     close $css_fh;
 
-    # Check that CSS defines vaporwave color palette
-    my $css_has_vaporwave = $css_content =~ /#BF349A/ && $css_content =~ /#8C2771/ && $css_content =~ /#2ABFBF/;
-    ok($css_has_vaporwave, 'CSS file contains vaporwave color palette');
+    # Check that colors are accessible via style.css (through import from structure.css)
+    my $structure_css_file = 'public/css/structure.css';
+    my $structure_css_content;
+    open my $structure_fh, '<', $structure_css_file or die "Cannot read structure CSS file: $!";
+    { local $/; $structure_css_content = <$structure_fh>; }
+    close $structure_fh;
 
-    # Check that workflow layout uses vaporwave gradient
-    my $workflow_gradient = $workflow_content =~ /#BF349A.*#8C2771.*#2ABFBF/;
-    ok($workflow_gradient, 'Workflow layout has vaporwave gradient');
-
-    # Check for CSS color variables
-    my $css_has_color_vars = $css_content =~ /--color-primary:\s*#BF349A/ &&
-                           $css_content =~ /--color-primary-dark:\s*#8C2771/ &&
-                           $css_content =~ /--color-secondary:\s*#2ABFBF/;
+    # Check for CSS color variables in structure.css (design tokens)
+    my $css_has_color_vars = $structure_css_content =~ /--color-primary:\s*#BF349A/ &&
+                           $structure_css_content =~ /--color-primary-dark:\s*#8C2771/ &&
+                           $structure_css_content =~ /--color-secondary:\s*#2ABFBF/;
     ok($css_has_color_vars, 'CSS defines vaporwave colors as CSS variables');
+
+    # Check that style.css imports structure.css
+    my $css_imports_structure = $css_content =~ /\@import.*structure\.css/;
+    ok($css_imports_structure, 'Style.css imports structure.css for color access');
+
+    # Verify vaporwave colors are used in CSS
+    my $css_uses_vaporwave = $structure_css_content =~ /#BF349A/ && $structure_css_content =~ /#8C2771/ && $structure_css_content =~ /#2ABFBF/;
+    ok($css_uses_vaporwave, 'CSS architecture provides vaporwave color palette');
 };

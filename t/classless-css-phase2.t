@@ -28,8 +28,8 @@ subtest 'Advanced form components with semantic HTML' => sub {
     };
 
     # Test CSS file exists and can be read
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
-    ok(-f $css_file, 'Classless CSS file exists');
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    ok(-f $css_file, 'Structure CSS file exists');
 
     # Test form validation states using data attributes
     my $validation_html = q{

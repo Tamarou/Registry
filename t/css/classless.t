@@ -4,23 +4,23 @@ use experimental qw(defer try);
 use Test::More import => [qw( done_testing is ok like unlike is_deeply subtest use_ok isa_ok can_ok )];
 defer { done_testing };
 
-# ABOUTME: Tests for classless CSS implementation to ensure semantic HTML styling works correctly
+# ABOUTME: Tests for structure CSS implementation to ensure semantic HTML styling works correctly
 # ABOUTME: Validates that semantic elements receive proper styling without requiring CSS classes
 
-# Test that classless.css file exists and is properly structured
-subtest 'classless CSS file structure' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
-    ok(-f $css_file, 'classless.css file exists');
+# Test that structure.css file exists and is properly structured
+subtest 'structure CSS file structure' => sub {
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    ok(-f $css_file, 'structure.css file exists');
 
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
         <$fh>;
     };
-    ok(length($css_content) > 0, 'classless.css has content');
+    ok(length($css_content) > 0, 'structure.css has content');
 
     # Check for proper file header comments
-    like($css_content, qr/ABOUTME:.*[Cc]lassless.*CSS/i, 'File has proper ABOUTME header describing classless CSS');
+    like($css_content, qr/ABOUTME:.*[Ss]tructure.*CSS/i, 'File has proper ABOUTME header describing structure CSS');
     like($css_content, qr/ABOUTME:.*semantic.*HTML/, 'File explains semantic HTML approach');
 };
 
@@ -222,33 +222,40 @@ subtest 'CSS validation and syntax' => sub {
 };
 
 subtest 'design token consistency' => sub {
-    my $registry_css = do {
+    my $style_css = do {
         local $/;
-        open my $fh, '<', '/home/perigrin/dev/Registry/public/css/registry.css' or die "Cannot read registry.css: $!";
+        open my $fh, '<', '/home/perigrin/dev/Registry/public/css/style.css' or die "Cannot read style.css: $!";
         <$fh>;
     };
-    my $classless_css = do {
+    my $structure_css = do {
         local $/;
-        open my $fh, '<', '/home/perigrin/dev/Registry/public/css/classless.css' or die "Cannot read classless.css: $!";
+        open my $fh, '<', '/home/perigrin/dev/Registry/public/css/structure.css' or die "Cannot read structure.css: $!";
         <$fh>;
     };
 
-    # Extract design tokens from registry.css
-    my @registry_tokens = $registry_css =~ /(--[\w-]+):\s*([^;]+);/g;
-    my %registry_vars;
-    for (my $i = 0; $i < @registry_tokens; $i += 2) {
-        $registry_vars{$registry_tokens[$i]} = $registry_tokens[$i + 1];
+    # Extract design tokens from style.css (should be minimal/none)
+    my @style_tokens = $style_css =~ /(--[\w-]+):\s*([^;]+);/g;
+    my %style_vars;
+    for (my $i = 0; $i < @style_tokens; $i += 2) {
+        $style_vars{$style_tokens[$i]} = $style_tokens[$i + 1];
     }
 
-    # Check that key design tokens are preserved in classless.css
+    # Extract design tokens from structure.css
+    my @structure_tokens = $structure_css =~ /(--[\w-]+):\s*([^;]+);/g;
+    my %registry_vars;  # Keep variable name for compatibility with existing tests
+    for (my $i = 0; $i < @structure_tokens; $i += 2) {
+        $registry_vars{$structure_tokens[$i]} = $structure_tokens[$i + 1];
+    }
+
+    # Check that key design tokens are preserved in structure.css
     for my $token ('--color-primary', '--color-secondary', '--font-family', '--space-4') {
         if (exists $registry_vars{$token}) {
-            like($classless_css, qr/\Q$token\E:\s*\Q$registry_vars{$token}\E/,
+            like($structure_css, qr/\Q$token\E:\s*\Q$registry_vars{$token}\E/,
                  "Design token $token preserved with same value");
         }
     }
 
-    # Check that classless.css uses design tokens consistently
-    my $token_usage = () = $classless_css =~ /var\(--[\w-]+\)/g;
-    ok($token_usage > 20, 'Classless CSS uses design tokens extensively (found ' . $token_usage . ' usages)');
+    # Check that structure.css uses design tokens consistently
+    my $token_usage = () = $structure_css =~ /var\(--[\w-]+\)/g;
+    ok($token_usage > 20, 'Structure CSS uses design tokens extensively (found ' . $token_usage . ' usages)');
 };

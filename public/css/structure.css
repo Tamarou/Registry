@@ -1,0 +1,523 @@
+/* ABOUTME: Structure CSS for Registry - design tokens and semantic HTML styling architecture */
+/* ABOUTME: Single source of truth for design tokens, semantic element styles, and component patterns using data attributes */
+
+/* ============================================================================
+   CSS Custom Properties (Design Tokens) - Single Source of Truth
+   ============================================================================ */
+
+:root {
+  /* Typography */
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-size-xs: 0.75rem;    /* 12px */
+  --font-size-sm: 0.875rem;   /* 14px */
+  --font-size-base: 1rem;     /* 16px */
+  --font-size-lg: 1.125rem;   /* 18px */
+  --font-size-xl: 1.25rem;    /* 20px */
+  --font-size-2xl: 1.5rem;    /* 24px */
+  --font-size-3xl: 1.875rem;  /* 30px */
+  --font-size-4xl: 2.25rem;   /* 36px */
+  --font-size-5xl: 3rem;      /* 48px */
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* Colors - Vaporwave palette inspired by Michelangelo's David */
+  --color-primary: #BF349A;         /* Magenta - Primary accent color */
+  --color-primary-hover: #A62A85;   /* Darker magenta for hover states */
+  --color-primary-light: #F7E8F2;   /* Light magenta for backgrounds */
+  --color-primary-dark: #8C2771;    /* Deep Purple for dark variants */
+
+  --color-secondary: #2ABFBF;       /* Cyan - Secondary accent color */
+  --color-secondary-hover: #29A6A6; /* Teal - Hover/active states */
+  --color-secondary-light: #E0F7F7; /* Light cyan for backgrounds */
+
+  --color-success: #29A6A6;         /* Teal - Success states */
+  --color-success-hover: #238C8C;   /* Darker teal */
+  --color-success-light: #E0F4F4;   /* Light teal background */
+
+  --color-warning: #BF349A;         /* Magenta - Warning states */
+  --color-warning-hover: #A62A85;   /* Darker magenta */
+  --color-warning-light: #F7E8F2;   /* Light magenta background */
+
+  --color-danger: #8C2771;          /* Deep Purple - Danger states */
+  --color-danger-hover: #6B1D56;    /* Darker purple */
+  --color-danger-light: #EDE4E9;    /* Light purple background */
+
+  --color-info: #2ABFBF;            /* Cyan - Info states */
+  --color-info-hover: #238C8C;      /* Darker cyan */
+  --color-info-light: #E0F7F7;      /* Light cyan background */
+
+  /* Neutral colors - Vaporwave inspired with light lavender base */
+  --color-white: #ffffff;
+  --color-gray-50: #E7DCF2;          /* Light Lavender - Primary background */
+  --color-gray-100: #DFD2ED;         /* Slightly darker lavender */
+  --color-gray-200: #D1C1E4;         /* Light lavender with more saturation */
+  --color-gray-300: #BFA7D6;         /* Medium lavender for borders */
+  --color-gray-400: #9B7FC2;         /* Muted lavender for subtle elements */
+  --color-gray-500: #7D5BA6;         /* Mid-tone lavender for secondary text */
+  --color-gray-600: #634589;         /* Darker lavender for main text */
+  --color-gray-700: #4A316D;         /* Deep lavender for headings */
+  --color-gray-800: #321F51;         /* Very dark lavender */
+  --color-gray-900: #1F0D35;         /* Darkest lavender for primary text */
+
+  /* Text colors - Vaporwave themed */
+  --color-text-primary: var(--color-gray-900);
+  --color-text-secondary: var(--color-gray-700);
+  --color-text-muted: var(--color-gray-600);
+
+  /* Background colors - Light lavender theme */
+  --color-bg-primary: var(--color-white);
+  --color-bg-secondary: var(--color-gray-50);   /* Light Lavender */
+  --color-bg-muted: var(--color-gray-100);
+
+  /* Border colors */
+  --color-border: var(--color-gray-200);
+  --color-border-light: var(--color-gray-100);
+  --color-border-dark: var(--color-gray-300);
+
+  /* Spacing scale */
+  --space-0: 0;
+  --space-1: 0.25rem;   /* 4px */
+  --space-2: 0.5rem;    /* 8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-7: 1.75rem;   /* 28px */
+  --space-8: 2rem;      /* 32px */
+  --space-10: 2.5rem;   /* 40px */
+  --space-12: 3rem;     /* 48px */
+  --space-16: 4rem;     /* 64px */
+  --space-20: 5rem;     /* 80px */
+  --space-24: 6rem;     /* 96px */
+
+  /* Border radius */
+  --radius-none: 0;
+  --radius-sm: 0.125rem;   /* 2px */
+  --radius-base: 0.25rem;  /* 4px */
+  --radius-md: 0.375rem;   /* 6px */
+  --radius-lg: 0.5rem;     /* 8px */
+  --radius-xl: 0.75rem;    /* 12px */
+  --radius-2xl: 1rem;      /* 16px */
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-base: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+  /* Transitions */
+  --transition-fast: 150ms ease-in-out;
+  --transition-base: 250ms ease-in-out;
+  --transition-slow: 350ms ease-in-out;
+}
+
+/* ============================================================================
+   CSS Reset and Base Styles
+   ============================================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-family);
+  line-height: var(--line-height-normal);
+  -webkit-text-size-adjust: 100%;
+  -moz-tab-size: 4;
+  tab-size: 4;
+}
+
+body {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  line-height: inherit;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================================
+   Semantic Typography Styles
+   ============================================================================ */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0 0 var(--space-4) 0;
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-tight);
+}
+
+h1 {
+  font-size: var(--font-size-3xl);
+  margin-bottom: var(--space-6);
+}
+
+h2 {
+  font-size: var(--font-size-2xl);
+  margin-bottom: var(--space-5);
+}
+
+h3 {
+  font-size: var(--font-size-xl);
+  margin-bottom: var(--space-4);
+}
+
+h4 {
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--space-3);
+}
+
+h5 {
+  font-size: var(--font-size-base);
+  margin-bottom: var(--space-3);
+}
+
+h6 {
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+p {
+  margin: 0 0 var(--space-4) 0;
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: all var(--transition-fast);
+}
+
+a:hover {
+  color: var(--color-primary-hover);
+  text-decoration-color: currentColor;
+}
+
+a:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+strong {
+  font-weight: var(--font-weight-bold);
+}
+
+em {
+  font-style: italic;
+}
+
+small {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* ============================================================================
+   Semantic Form Element Styles
+   ============================================================================ */
+
+input,
+textarea,
+select {
+  display: block;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-primary);
+  transition: all var(--transition-fast);
+}
+
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="url"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="search"],
+input[type="time"],
+input[type="week"] {
+  line-height: var(--line-height-normal);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+textarea {
+  resize: vertical;
+  min-height: calc(var(--space-4) * 3);
+}
+
+label {
+  display: block;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-2);
+}
+
+fieldset {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+legend {
+  padding: 0 var(--space-2);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+/* ============================================================================
+   Semantic Button Styles with Data Attributes
+   ============================================================================ */
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3) var(--space-6);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  background-color: var(--color-primary);
+  color: var(--color-white);
+}
+
+button:hover {
+  background-color: var(--color-primary-hover);
+}
+
+button:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Button variants via data attributes */
+button[data-variant="primary"] {
+  background-color: var(--color-primary);
+  color: var(--color-white);
+}
+
+button[data-variant="primary"]:hover {
+  background-color: var(--color-primary-hover);
+}
+
+button[data-variant="secondary"] {
+  background-color: var(--color-secondary);
+  color: var(--color-white);
+}
+
+button[data-variant="secondary"]:hover {
+  background-color: var(--color-secondary-hover);
+}
+
+button[data-variant="success"] {
+  background-color: var(--color-success);
+  color: var(--color-white);
+}
+
+button[data-variant="success"]:hover {
+  background-color: var(--color-success-hover);
+}
+
+button[data-variant="danger"] {
+  background-color: var(--color-danger);
+  color: var(--color-white);
+}
+
+button[data-variant="danger"]:hover {
+  background-color: var(--color-danger-hover);
+}
+
+button[data-variant="outline"] {
+  background-color: transparent;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+button[data-variant="outline"]:hover {
+  background-color: var(--color-primary);
+  color: var(--color-white);
+}
+
+/* Button sizes via data attributes */
+button[data-size="sm"] {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+button[data-size="lg"] {
+  padding: var(--space-4) var(--space-8);
+  font-size: var(--font-size-lg);
+}
+
+/* ============================================================================
+   Semantic Layout Elements
+   ============================================================================ */
+
+header {
+  margin-bottom: var(--space-6);
+}
+
+main {
+  margin: var(--space-6) 0;
+}
+
+section {
+  margin-bottom: var(--space-8);
+}
+
+article {
+  margin-bottom: var(--space-6);
+  padding: var(--space-6);
+  background-color: var(--color-bg-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+}
+
+aside {
+  padding: var(--space-4);
+  background-color: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+footer {
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* ============================================================================
+   Essential HTMX and Utility Classes (Minimal Set)
+   ============================================================================ */
+
+.htmx-indicator {
+  display: none;
+}
+
+.htmx-request .htmx-indicator {
+  display: flex;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-gray-300);
+  border-top: 2px solid var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.error {
+  color: var(--color-danger);
+  border-color: var(--color-danger) !important;
+}
+
+.success {
+  color: var(--color-success);
+  border-color: var(--color-success) !important;
+}
+
+input.error,
+textarea.error {
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 3px var(--color-danger-light);
+}
+
+/* ============================================================================
+   Responsive Design
+   ============================================================================ */
+
+@media (max-width: 768px) {
+  h1 {
+    font-size: var(--font-size-2xl);
+  }
+
+  h2 {
+    font-size: var(--font-size-xl);
+  }
+
+  h3 {
+    font-size: var(--font-size-lg);
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font-size: var(--font-size-base);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  button[data-size="lg"] {
+    padding: var(--space-3) var(--space-6);
+    font-size: var(--font-size-base);
+  }
+
+  article {
+    padding: var(--space-4);
+  }
+
+  aside {
+    padding: var(--space-3);
+  }
+}

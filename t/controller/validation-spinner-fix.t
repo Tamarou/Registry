@@ -17,7 +17,7 @@ my $dao = $test_db->db;
 subtest 'tenant profile template spinner elements' => sub {
     # Test that the profile template has the correct HTML elements for the validation spinner
     my $template_path = 'templates/tenant-signup/profile.html.ep';
-    my $css_file = 'public/css/registry.css';
+    my $css_file = 'public/css/style.css';
 
     ok(-f $template_path, 'Profile template file exists');
     ok(-f $css_file, 'CSS file exists');
@@ -45,7 +45,7 @@ subtest 'tenant profile template spinner elements' => sub {
 
 subtest 'spinner CSS behavior verification' => sub {
     # Verify that the spinner CSS is correctly defined in the external CSS file
-    my $css_file = 'public/css/registry.css';
+    my $css_file = 'public/css/style.css';
 
     my $css_content;
     open my $css_fh, '<', $css_file or die "Cannot read CSS file: $!";
