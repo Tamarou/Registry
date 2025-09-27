@@ -9,7 +9,7 @@ defer { done_testing };
 
 # Test that structure.css file exists and is properly structured
 subtest 'structure CSS file structure' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     ok(-f $css_file, 'structure.css file exists');
 
     my $css_content = do {
@@ -25,7 +25,7 @@ subtest 'structure CSS file structure' => sub {
 };
 
 subtest 'design tokens centralization' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -49,7 +49,7 @@ subtest 'design tokens centralization' => sub {
 };
 
 subtest 'semantic typography styles' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -74,7 +74,7 @@ subtest 'semantic typography styles' => sub {
 };
 
 subtest 'semantic form element styles' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -105,7 +105,7 @@ subtest 'semantic form element styles' => sub {
 };
 
 subtest 'component architecture with data attributes' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -133,7 +133,7 @@ subtest 'component architecture with data attributes' => sub {
 };
 
 subtest 'semantic layout elements' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -154,7 +154,7 @@ subtest 'semantic layout elements' => sub {
 };
 
 subtest 'responsive design with semantic elements' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -174,7 +174,7 @@ subtest 'responsive design with semantic elements' => sub {
 };
 
 subtest 'CSS validation and syntax' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
+    my $css_file = 'public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";

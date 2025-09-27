@@ -9,7 +9,7 @@ defer { done_testing };
 
 # Test that style.css file exists and is properly structured
 subtest 'style CSS file structure' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     ok(-f $css_file, 'style.css file exists');
 
     my $css_content = do {
@@ -25,7 +25,7 @@ subtest 'style CSS file structure' => sub {
 };
 
 subtest 'imports structure.css for design tokens' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -56,7 +56,7 @@ subtest 'imports structure.css for design tokens' => sub {
 };
 
 subtest 'legacy utility classes for backward compatibility' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -83,7 +83,7 @@ subtest 'legacy utility classes for backward compatibility' => sub {
 };
 
 subtest 'HTMX indicator classes and dynamic states' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -109,7 +109,7 @@ subtest 'HTMX indicator classes and dynamic states' => sub {
 };
 
 subtest 'page-specific styles' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -131,7 +131,7 @@ subtest 'page-specific styles' => sub {
 };
 
 subtest 'no design token definitions (imports only)' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -148,7 +148,7 @@ subtest 'no design token definitions (imports only)' => sub {
 };
 
 subtest 'CSS validation and syntax' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -169,7 +169,7 @@ subtest 'CSS validation and syntax' => sub {
 };
 
 subtest 'backward compatibility validation' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/style.css';
+    my $css_file = 'public/css/style.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
