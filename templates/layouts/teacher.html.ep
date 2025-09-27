@@ -4,64 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><%= title // 'Teacher Dashboard' %> - Registry</title>
-    <link rel="stylesheet" href="/css/registry.css">
+    <link rel="stylesheet" href="/css/style.css">
 
-    <!-- Teacher-specific mobile-first styles -->
-    <style>
-        body {
-            background-color: var(--color-bg-secondary);
-            padding: var(--space-4);
-        }
-
-        .teacher-container {
-            max-width: 640px; /* Smaller container for mobile-focused teacher interface */
-            margin: 0 auto;
-        }
-
-        .teacher-card {
-            background: var(--color-bg-primary);
-            border-radius: var(--radius-xl);
-            box-shadow: var(--shadow-lg);
-            overflow: hidden;
-        }
-
-        .teacher-header {
-            background: var(--color-primary);
-            color: var(--color-white);
-            padding: var(--space-5);
-            text-align: center;
-        }
-
-        .teacher-header h1 {
-            margin: 0;
-            font-size: var(--font-size-xl);
-            color: var(--color-white);
-        }
-
-        .teacher-content {
-            padding: var(--space-5);
-        }
-
-        /* Mobile-first button overrides */
-        .btn-mobile-block {
-            width: 100%;
-            margin-bottom: var(--space-2);
-            font-size: 16px; /* Touch-friendly button size for mobile */
-        }
-
-        @media (min-width: 768px) {
-            .btn-mobile-block {
-                width: auto;
-                display: inline-flex;
-                margin-right: var(--space-3);
-                margin-bottom: 0;
-            }
-        }
-    </style>
-    
     <!-- HTMX for dynamic interactions -->
     <script src="https://unpkg.com/htmx.org@1.8.4"></script>
-    
+
     <!-- Modern Web Components support check -->
     <script>
         // Check for Web Components support
@@ -71,28 +18,28 @@
         }
     </script>
 </head>
-<body>
+<body class="teacher-layout">
     <div class="teacher-container">
-        <div class="teacher-card">
-            <div class="teacher-header">
+        <article class="teacher-card">
+            <header class="teacher-header">
                 <h1><%= title // 'Teacher Dashboard' %></h1>
-            </div>
-            <div class="teacher-content">
+            </header>
+            <main class="teacher-content">
                 <%= content %>
-                <div class="loading hidden">
+                <section class="loading hidden">
                     <div class="spinner"></div>
-                </div>
-            </div>
-        </div>
+                </section>
+            </main>
+        </article>
     </div>
-    
+
     <script>
         // Show loading spinner during HTMX requests
         document.body.addEventListener('htmx:beforeRequest', function(evt) {
             const loading = document.querySelector('.loading');
             if (loading) loading.style.display = 'block';
         });
-        
+
         document.body.addEventListener('htmx:afterRequest', function(evt) {
             const loading = document.querySelector('.loading');
             if (loading) loading.style.display = 'none';
