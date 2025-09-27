@@ -25,7 +25,7 @@ subtest 'structure CSS file structure' => sub {
 };
 
 subtest 'vaporwave color palette preservation' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -45,7 +45,7 @@ subtest 'vaporwave color palette preservation' => sub {
 };
 
 subtest 'semantic typography styles' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -70,19 +70,19 @@ subtest 'semantic typography styles' => sub {
 };
 
 subtest 'semantic form element styles' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
         <$fh>;
     };
 
-    # Check basic form elements
-    like($css_content, qr/input\s*\{/, 'Input elements have base styles');
-    like($css_content, qr/textarea\s*\{/, 'Textarea elements have styles');
-    like($css_content, qr/select\s*\{/, 'Select elements have styles');
-    like($css_content, qr/button\s*\{/, 'Button elements have styles');
-    like($css_content, qr/label\s*\{/, 'Label elements have styles');
+    # Check basic form elements (they can be grouped with commas)
+    like($css_content, qr/input[,\s\{]/, 'Input elements have base styles');
+    like($css_content, qr/textarea[,\s\{]/, 'Textarea elements have styles');
+    like($css_content, qr/select[,\s\{]/, 'Select elements have styles');
+    like($css_content, qr/button[,\s\{]/, 'Button elements have styles');
+    like($css_content, qr/label[,\s\{]/, 'Label elements have styles');
 
     # Check specific input types
     like($css_content, qr/input\[type=["\']text["\']/, 'Text input styling defined');
@@ -101,7 +101,7 @@ subtest 'semantic form element styles' => sub {
 };
 
 subtest 'button semantic styling with data attributes' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -132,7 +132,7 @@ subtest 'button semantic styling with data attributes' => sub {
 };
 
 subtest 'essential HTMX classes preserved' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -158,7 +158,7 @@ subtest 'essential HTMX classes preserved' => sub {
 };
 
 subtest 'semantic layout elements' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -179,7 +179,7 @@ subtest 'semantic layout elements' => sub {
 };
 
 subtest 'responsive design with semantic elements' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
@@ -199,7 +199,7 @@ subtest 'responsive design with semantic elements' => sub {
 };
 
 subtest 'CSS validation and syntax' => sub {
-    my $css_file = '/home/perigrin/dev/Registry/public/css/classless.css';
+    my $css_file = '/home/perigrin/dev/Registry/public/css/structure.css';
     my $css_content = do {
         local $/;
         open my $fh, '<', $css_file or die "Cannot read $css_file: $!";
