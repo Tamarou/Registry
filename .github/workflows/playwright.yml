@@ -56,8 +56,22 @@ jobs:
     - name: Setup Database
       env:
         DB_URL: postgresql://postgres:postgres@localhost:5432/registry_ci
+        PGHOST: localhost
+        PGPORT: 5432
+        PGUSER: postgres
+        PGPASSWORD: postgres
+        PGDATABASE: registry_ci
       run: |
+        # Wait for PostgreSQL to be ready
+        until pg_isready -h localhost -p 5432 -U postgres; do
+          echo "Waiting for PostgreSQL..."
+          sleep 2
+        done
+
+        # Deploy schema
         carton exec sqitch deploy
+
+        # Import workflows and templates
         carton exec ./registry workflow import registry
         carton exec ./registry template import registry
 
