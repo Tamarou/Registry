@@ -49,7 +49,7 @@ subtest 'Workflow index page includes layout' => sub {
       ->element_exists('body[data-layout="workflow"]', 'Has workflow layout body attribute')
       ->element_exists('main[data-component="workflow-container"]', 'Has workflow container')
       ->element_exists('script[src*="htmx.org"]', 'Has HTMX script')
-      ->element_exists('script[src="/static/js/workflow-progress.js"]', 'Has workflow progress script')
+      ->element_exists('script[src="/js/components/workflow-progress.js"]', 'Has workflow progress script')
       ->content_like(qr/<!DOCTYPE html>/i, 'Has DOCTYPE declaration');
 
     # Verify content is wrapped in layout
