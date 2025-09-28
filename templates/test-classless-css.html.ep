@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classless CSS Test - Registry</title>
+    <link rel="stylesheet" href="/css/structure.css">
+</head>
+<body>
+    <header>
+        <h1>Registry Classless CSS Demo</h1>
+        <p>This page demonstrates semantic HTML styling without CSS classes</p>
+    </header>
+
+    <main>
+        <section>
+            <h2>Typography</h2>
+            <h1>Heading 1 - Large Title</h1>
+            <h2>Heading 2 - Section Title</h2>
+            <h3>Heading 3 - Subsection</h3>
+            <h4>Heading 4 - Sub-subsection</h4>
+            <h5>Heading 5 - Minor heading</h5>
+            <h6>Heading 6 - Smallest heading</h6>
+
+            <p>This is a regular paragraph with <strong>strong text</strong> and <em>emphasized text</em>.
+               Here's a <a href="#">link to somewhere</a> in the middle of text.</p>
+
+            <p><small>This is small text that's less prominent</small></p>
+        </section>
+
+        <section>
+            <h2>Form Elements</h2>
+            <form>
+                <label for="name">Name</label>
+                <input type="text" id="name" placeholder="Your full name">
+
+                <label for="email">Email</label>
+                <input type="email" id="email" placeholder="you@example.com">
+
+                <label for="phone">Phone</label>
+                <input type="tel" id="phone" placeholder="(555) 123-4567">
+
+                <label for="message">Message</label>
+                <textarea id="message" placeholder="Your message here..." rows="4"></textarea>
+
+                <label for="category">Category</label>
+                <select id="category">
+                    <option value="">Select a category</option>
+                    <option value="general">General Inquiry</option>
+                    <option value="support">Support</option>
+                    <option value="billing">Billing</option>
+                </select>
+
+                <button type="submit">Submit Form</button>
+                <button type="button" data-variant="secondary">Cancel</button>
+                <button type="button" data-variant="success" data-size="sm">Small Success</button>
+                <button type="button" data-variant="danger" data-size="lg">Large Danger</button>
+            </form>
+        </section>
+
+        <section>
+            <h2>HTMX Integration</h2>
+            <button hx-get="/api/test" hx-target="#htmx-result" hx-indicator="#htmx-spinner">
+                Load Data via HTMX
+            </button>
+
+            <div id="htmx-spinner" class="htmx-indicator">
+                <span class="spinner"></span> Loading...
+            </div>
+
+            <div id="htmx-result"></div>
+
+            <div class="error">This is an error message</div>
+            <div class="success">This is a success message</div>
+        </section>
+
+        <article>
+            <h3>Article Example</h3>
+            <p>This content is inside an article element, which gets automatic styling including borders and padding.</p>
+        </article>
+
+        <aside>
+            <h4>Sidebar Content</h4>
+            <p>This aside content has different background styling to distinguish it from main content.</p>
+        </aside>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 Registry. Powered by classless CSS and semantic HTML.</p>
+    </footer>
+
+    <script src="https://unpkg.com/htmx.org@1.9.9"></script>
+</body>
+</html>

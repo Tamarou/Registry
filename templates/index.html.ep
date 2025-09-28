@@ -28,31 +28,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   
-  <!-- Critical CSS for above-the-fold content -->
-  <style>
-    .hero {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: var(--color-white);
-      padding: var(--space-20) 0;
-      text-align: center;
-      min-height: 500px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .hero-title {
-      font-size: var(--font-size-5xl);
-      font-weight: var(--font-weight-bold);
-      margin-bottom: var(--space-5);
-      line-height: var(--line-height-tight);
-    }
-    @media (max-width: 768px) {
-      .hero-title { font-size: var(--font-size-4xl); }
-    }
-    @media (max-width: 480px) {
-      .hero-title { font-size: var(--font-size-3xl); }
-    }
-  </style>
+  <!-- CSS moved to registry.css for proper caching -->
   
   <!-- Schema.org structured data -->
   <script type="application/ld+json">
@@ -99,173 +75,87 @@
 
 <div class="marketing-page">
   <!-- Hero Section -->
-  <section class="hero" role="banner" aria-labelledby="hero-title">
-    <div class="container">
-      <div class="hero-content">
-        <h1 id="hero-title" class="hero-title">After-School Program Management Made Simple</h1>
-        <p class="hero-subtitle">
-          Streamline registrations, track attendance, manage payments, and communicate with families 
-          all in one powerful platform designed specifically for after-school programs.
-        </p>
-        <div class="hero-cta">
-          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>"
-             class="btn btn-success btn-xl"
-             role="button"
-             aria-describedby="trial-info">
-            Start Your Free Trial
-          </a>
-          <p id="trial-info" class="trial-info">30 days free • No credit card required to start</p>
-        </div>
-      </div>
+  <section data-component="container" data-size="large" role="banner" aria-labelledby="hero-title">
+    <header>
+      <h1 id="hero-title">After-School Program Management Made Simple</h1>
+      <p>
+        Streamline registrations, track attendance, manage payments, and communicate with families
+        all in one powerful platform designed specifically for after-school programs.
+      </p>
+    </header>
+    <div>
+      <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>"
+         role="button"
+         aria-describedby="trial-info">
+        <button type="button" data-variant="success" data-size="lg">
+          Start Your Free Trial
+        </button>
+      </a>
+      <p id="trial-info"><small>30 days free • No credit card required to start</small></p>
     </div>
   </section>
 
   <!-- Features Section -->
-  <section class="features" role="main" aria-labelledby="features-title">
-    <div class="container">
-      <h2 id="features-title" class="section-title">Everything You Need to Run Successful Programs</h2>
-      <div class="features-grid" role="list">
-        <div class="feature" role="listitem">
-          <div class="feature-icon" aria-hidden="true">📝</div>
+  <section data-component="container" data-size="large" role="main" aria-labelledby="features-title">
+    <header>
+      <h2 id="features-title">Everything You Need to Run Successful Programs</h2>
+    </header>
+    <div data-layout="grid" role="list">
+      <article data-component="card" role="listitem">
+        <header>
           <h3>Easy Registration</h3>
+          <p><span aria-hidden="true">📝</span> Streamlined Workflows</p>
+        </header>
+        <div>
           <p>Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.</p>
         </div>
-        <div class="feature" role="listitem">
-          <div class="feature-icon" aria-hidden="true">💳</div>
+      </article>
+      <article data-component="card" role="listitem">
+        <header>
           <h3>Payment Processing</h3>
+          <p><span aria-hidden="true">💳</span> Secure Transactions</p>
+        </header>
+        <div>
           <p>Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.</p>
         </div>
-        <div class="feature" role="listitem">
-          <div class="feature-icon" aria-hidden="true">📊</div>
+      </article>
+      <article data-component="card" role="listitem">
+        <header>
           <h3>Attendance Tracking</h3>
+          <p><span aria-hidden="true">📊</span> Real-Time Monitoring</p>
+        </header>
+        <div>
           <p>Real-time attendance management with mobile-friendly interfaces for staff and automated parent notifications.</p>
         </div>
-        <div class="feature" role="listitem">
-          <div class="feature-icon" aria-hidden="true">💬</div>
+      </article>
+      <article data-component="card" role="listitem">
+        <header>
           <h3>Family Communication</h3>
+          <p><span aria-hidden="true">💬</span> Built-in Messaging</p>
+        </header>
+        <div>
           <p>Built-in messaging system to keep families informed with program updates, announcements, and direct communication.</p>
         </div>
-        <div class="feature" role="listitem">
-          <div class="feature-icon" aria-hidden="true">📋</div>
+      </article>
+      <article data-component="card" role="listitem">
+        <header>
           <h3>Waitlist Management</h3>
+          <p><span aria-hidden="true">📋</span> Automated Processing</p>
+        </header>
+        <div>
           <p>Automated waitlist processing with email notifications and seamless enrollment when spots become available.</p>
         </div>
-        <div class="feature" role="listitem">
-          <div class="feature-icon" aria-hidden="true">👥</div>
+      </article>
+      <article data-component="card" role="listitem">
+        <header>
           <h3>Staff Management</h3>
+          <p><span aria-hidden="true">👥</span> Role-Based Access</p>
+        </header>
+        <div>
           <p>Role-based access control for administrators, staff, and instructors with customizable permissions and workflows.</p>
         </div>
-      </div>
+      </article>
     </div>
   </section>
 </div>
 
-<style>
-.marketing-page {
-  line-height: var(--line-height-normal);
-  color: var(--color-text-primary);
-}
-
-/* Hero Section - keeping the gradient for brand consistency */
-.hero {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: var(--color-white);
-  padding: var(--space-20) 0;
-  text-align: center;
-}
-
-.hero-subtitle {
-  font-size: var(--font-size-xl);
-  margin-bottom: var(--space-10);
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
-  opacity: 0.95;
-}
-
-.trial-info {
-  margin-top: var(--space-4);
-  font-size: var(--font-size-sm);
-  opacity: 0.9;
-}
-
-/* Features Section */
-.features {
-  padding: var(--space-20) 0;
-  background-color: var(--color-bg-secondary);
-}
-
-.section-title {
-  text-align: center;
-  font-size: var(--font-size-4xl);
-  font-weight: var(--font-weight-bold);
-  margin-bottom: var(--space-16);
-  color: var(--color-text-primary);
-}
-
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: var(--space-10);
-}
-
-.feature {
-  text-align: center;
-  padding: var(--space-8);
-  background: var(--color-bg-primary);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  transition: transform var(--transition-base);
-}
-
-.feature:hover {
-  transform: translateY(-5px);
-}
-
-.feature-icon {
-  font-size: var(--font-size-5xl);
-  margin-bottom: var(--space-5);
-}
-
-.feature h3 {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  margin-bottom: var(--space-4);
-  color: var(--color-text-primary);
-}
-
-.feature p {
-  color: var(--color-text-secondary);
-  line-height: var(--line-height-normal);
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-  .hero-subtitle {
-    font-size: var(--font-size-lg);
-  }
-
-  .features-grid {
-    grid-template-columns: 1fr;
-    gap: var(--space-8);
-  }
-
-  .feature {
-    padding: var(--space-5);
-  }
-
-  .section-title {
-    font-size: var(--font-size-3xl);
-  }
-}
-
-@media (max-width: 480px) {
-  .hero {
-    padding: var(--space-16) 0;
-  }
-
-  .features {
-    padding: var(--space-16) 0;
-  }
-}
-</style>

@@ -29,7 +29,13 @@ subtest 'Enhanced completion step template exists' => sub {
     like($content, qr/admin_email/, 'Template uses admin_email variable');
     like($content, qr/trial_end_date/, 'Template uses trial_end_date variable');
     like($content, qr/success-container/, 'Template has success container CSS class');
-    like($content, qr/\@media.*max-width.*768px/, 'Template includes mobile responsive CSS');
+    # Check that mobile responsive CSS exists in CSS files
+    my $css_content = do {
+        local $/;
+        open my $css_fh, '<', 'public/css/style.css' or die "Cannot read style.css: $!";
+        <$css_fh>;
+    };
+    like($css_content, qr/\@media.*max-width.*768px/, 'Template includes mobile responsive CSS');
 };
 
 subtest 'RegisterTenant class structure' => sub {

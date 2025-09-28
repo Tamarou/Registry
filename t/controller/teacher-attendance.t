@@ -64,7 +64,13 @@ subtest "Mobile Responsive Templates" => sub {
     };
     
     like($layout_content, qr/viewport.*width=device-width/, 'Teacher layout has mobile viewport meta tag');
-    like($layout_content, qr/font-size:\s*16px/, 'Teacher layout has touch-friendly button sizes');
+    # Check that CSS file contains touch-friendly button styles
+    my $css_content = do {
+        local $/;
+        open my $fh, '<', 'public/css/style.css' or die "Cannot read style.css: $!";
+        <$fh>;
+    };
+    like($css_content, qr/font-size:\s*16px/, 'Teacher layout has touch-friendly button sizes');
     
     # Check that Web Components have mobile-responsive styles
     my $js_content = do {

@@ -1,19 +1,19 @@
 % extends 'layouts/default';
 % title 'Welcome to Registry!';
 
-<div class="success-container">
-    <div class="success-header">
-        <div class="success-icon">
+<article class="success-container">
+    <header class="success-header">
+        <section class="success-icon">
             <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="12" cy="12" r="10" stroke="#10b981" stroke-width="2" fill="#f0fdf4"/>
                 <path d="m9 12 2 2 4-4" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-        </div>
+        </section>
         <h1>🎉 Welcome to Registry!</h1>
         <p class="success-subtitle">Your organization is now set up and ready to go. Here's what happens next:</p>
-    </div>
+    </header>
 
-    <div class="tenant-info-card">
+    <section class="tenant-info-card">
         <h2>Your Organization Details</h2>
         <div class="info-grid">
             <div class="info-item">
@@ -33,350 +33,94 @@
                 <span>30 days (ends <%= $trial_end_date %>)</span>
             </div>
         </div>
-    </div>
+    </section>
 
-    <div class="onboarding-checklist">
+    <section class="onboarding-checklist">
         <h2>🚀 Next Steps - Get Started in Minutes</h2>
         <div class="checklist">
-            <div class="checklist-item">
+            <article class="checklist-item">
                 <div class="step-number">1</div>
                 <div class="step-content">
                     <h3>Access Your Dashboard</h3>
                     <p>Log in to your new Registry account and explore the admin dashboard</p>
                     <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary" target="_blank">Go to Dashboard →</a>
                 </div>
-            </div>
-            
-            <div class="checklist-item">
+            </article>
+
+            <article class="checklist-item">
                 <div class="step-number">2</div>
                 <div class="step-content">
                     <h3>Create Your First Program</h3>
                     <p>Set up an after-school program, summer camp, or educational activity</p>
                     <small>Available in your dashboard under Programs → Create New</small>
                 </div>
-            </div>
-            
-            <div class="checklist-item">
+            </article>
+
+            <article class="checklist-item">
                 <div class="step-number">3</div>
                 <div class="step-content">
                     <h3>Add Locations & Sessions</h3>
                     <p>Configure where and when your programs will run</p>
                     <small>Set up classrooms, schedules, and capacity limits</small>
                 </div>
-            </div>
-            
-            <div class="checklist-item">
+            </article>
+
+            <article class="checklist-item">
                 <div class="step-number">4</div>
                 <div class="step-content">
                     <h3>Invite Your Team</h3>
                     <p>Add instructors, administrators, and support staff</p>
                     <small>Team members will receive email invitations with secure access</small>
                 </div>
-            </div>
+            </article>
         </div>
-    </div>
+    </section>
 
-    <div class="trial-info">
+    <section class="trial-info">
         <h2>📅 Your 30-Day Free Trial</h2>
         <div class="trial-details">
-            <div class="trial-feature">
+            <article class="trial-feature">
                 <h4>Full Access</h4>
                 <p>Complete access to all Registry features during your trial period</p>
-            </div>
-            <div class="trial-feature">
+            </article>
+            <article class="trial-feature">
                 <h4>No Commitment</h4>
                 <p>Cancel anytime before <%= $trial_end_date %> with no charges</p>
-            </div>
-            <div class="trial-feature">
+            </article>
+            <article class="trial-feature">
                 <h4>Automatic Billing</h4>
                 <p>$200/month subscription begins after trial (you'll receive email reminders)</p>
-            </div>
+            </article>
         </div>
-    </div>
+    </section>
 
-    <div class="support-section">
+    <section class="support-section">
         <h2>🆘 Need Help Getting Started?</h2>
         <div class="support-options">
-            <div class="support-option">
+            <article class="support-option">
                 <h4>📚 Documentation</h4>
                 <p>Comprehensive guides for all Registry features</p>
                 <a href="https://docs.registry.com" target="_blank">View Documentation</a>
-            </div>
-            <div class="support-option">
+            </article>
+            <article class="support-option">
                 <h4>💬 Live Support</h4>
                 <p>Chat with our team during business hours</p>
                 <a href="mailto:support@registry.com">support@registry.com</a>
-            </div>
-            <div class="support-option">
+            </article>
+            <article class="support-option">
                 <h4>📹 Video Tutorials</h4>
                 <p>Step-by-step video guides for common tasks</p>
                 <a href="https://help.registry.com/videos" target="_blank">Watch Tutorials</a>
-            </div>
+            </article>
         </div>
-    </div>
+    </section>
 
-    <div class="success-actions">
+    <footer class="success-actions">
         <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary btn-large">
             Access Your Registry Dashboard →
         </a>
         <p class="login-note">
             Use your email (<%= $admin_email %>) and the password you created during signup
         </p>
-    </div>
-</div>
-
-<style>
-.success-container {
-    max-width: 800px;
-    margin: 2rem auto;
-    padding: 0 1rem;
-}
-
-.success-header {
-    text-align: center;
-    margin-bottom: 3rem;
-}
-
-.success-icon {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 1rem;
-}
-
-.success-header h1 {
-    color: #10b981;
-    font-size: 2.5rem;
-    margin-bottom: 0.5rem;
-}
-
-.success-subtitle {
-    font-size: 1.2rem;
-    color: #6b7280;
-    margin-bottom: 0;
-}
-
-.tenant-info-card {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-}
-
-.tenant-info-card h2 {
-    margin-top: 0;
-    color: #1f2937;
-    font-size: 1.3rem;
-}
-
-.info-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.75rem;
-}
-
-.info-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #e5e7eb;
-}
-
-.info-item:last-child {
-    border-bottom: none;
-}
-
-.info-item label {
-    font-weight: 600;
-    color: #374151;
-}
-
-.info-item a {
-    color: #2563eb;
-    text-decoration: none;
-}
-
-.info-item a:hover {
-    text-decoration: underline;
-}
-
-.onboarding-checklist {
-    margin-bottom: 2rem;
-}
-
-.onboarding-checklist h2 {
-    color: #1f2937;
-    margin-bottom: 1.5rem;
-}
-
-.checklist {
-    display: grid;
-    gap: 1.5rem;
-}
-
-.checklist-item {
-    display: flex;
-    gap: 1rem;
-    padding: 1rem;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-}
-
-.step-number {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    background: #3b82f6;
-    color: white;
-    border-radius: 50%;
-    font-weight: bold;
-    flex-shrink: 0;
-}
-
-.step-content h3 {
-    margin: 0 0 0.5rem 0;
-    color: #1f2937;
-}
-
-.step-content p {
-    margin: 0 0 0.5rem 0;
-    color: #4b5563;
-}
-
-.step-content small {
-    color: #6b7280;
-    font-style: italic;
-}
-
-.trial-info {
-    background: #fef3c7;
-    border: 1px solid #fbbf24;
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-}
-
-.trial-info h2 {
-    margin-top: 0;
-    color: #92400e;
-}
-
-.trial-details {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-}
-
-.trial-feature h4 {
-    margin: 0 0 0.5rem 0;
-    color: #92400e;
-}
-
-.trial-feature p {
-    margin: 0;
-    color: #78350f;
-}
-
-.support-section {
-    margin-bottom: 2rem;
-}
-
-.support-section h2 {
-    color: #1f2937;
-    margin-bottom: 1rem;
-}
-
-.support-options {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 1rem;
-}
-
-.support-option {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-    padding: 1rem;
-}
-
-.support-option h4 {
-    margin: 0 0 0.5rem 0;
-    color: #1f2937;
-}
-
-.support-option p {
-    margin: 0 0 0.5rem 0;
-    color: #6b7280;
-    font-size: 0.9rem;
-}
-
-.support-option a {
-    color: #2563eb;
-    text-decoration: none;
-    font-weight: 500;
-}
-
-.support-option a:hover {
-    text-decoration: underline;
-}
-
-.success-actions {
-    text-align: center;
-    padding: 2rem 0;
-}
-
-.btn {
-    display: inline-block;
-    padding: 0.75rem 1.5rem;
-    background: #3b82f6;
-    color: white;
-    text-decoration: none;
-    border-radius: 0.375rem;
-    font-weight: 600;
-    transition: background-color 0.2s;
-}
-
-.btn:hover {
-    background: #2563eb;
-}
-
-.btn-large {
-    padding: 1rem 2rem;
-    font-size: 1.1rem;
-}
-
-.login-note {
-    margin-top: 1rem;
-    color: #6b7280;
-    font-size: 0.9rem;
-}
-
-@media (max-width: 768px) {
-    .info-item {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.25rem;
-    }
-    
-    .trial-details {
-        grid-template-columns: 1fr;
-    }
-    
-    .support-options {
-        grid-template-columns: 1fr;
-    }
-    
-    .checklist-item {
-        flex-direction: column;
-        text-align: center;
-    }
-    
-    .step-number {
-        align-self: center;
-    }
-}
-</style>
+    </footer>
+</article>

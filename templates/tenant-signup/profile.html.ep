@@ -1,137 +1,139 @@
 % extends 'layouts/workflow';
 % title 'Organization Profile';
 
-<div class="profile-step">
-  <div class="step-header">
+<section data-component="container">
+  <header>
     <h1>Organization Profile</h1>
-    <p class="step-description">
+    <p>
       Let's set up your organization. This information will be used for billing and to create your custom Registry subdomain.
     </p>
-  </div>
+  </header>
 
-  <form method="POST" action="<%= $action %>" class="profile-form" 
-        hx-post="<%= $action %>" 
-        hx-target="#form-errors" 
+  <form method="POST" action="<%= $action %>" data-multistep="true"
+        hx-post="<%= $action %>"
+        hx-target="#form-errors"
         hx-indicator="#form-spinner">
-    
-    <div class="form-section">
-      <h3>Organization Information</h3>
-      
-      <div class="form-group">
-        <label for="name" class="required">Organization Name</label>
-        <input type="text" 
-               id="name" 
-               name="name" 
-               value="<%= stash('name') // '' %>" 
-               placeholder="Sunrise After-School Programs" 
+
+    <fieldset>
+      <legend>Organization Information</legend>
+
+      <div>
+        <label for="name">Organization Name *</label>
+        <input type="text"
+               id="name"
+               name="name"
+               value="<%= stash('name') // '' %>"
+               placeholder="Sunrise After-School Programs"
                required
                hx-trigger="keyup changed delay:500ms"
                hx-post="/tenant-signup/validate-subdomain"
                hx-target="#subdomain-preview"
                hx-include="[name='name']" />
-        <div class="field-help">This will be displayed to families and used to generate your subdomain</div>
+        <div data-type="help">This will be displayed to families and used to generate your subdomain</div>
       </div>
 
-      <div class="form-group">
+      <div>
         <label>Your Registry Subdomain</label>
-        <div id="subdomain-preview" class="subdomain-preview">
-          <span class="subdomain-display">
-            <span class="subdomain-slug">organization</span>.registry.com
-          </span>
-          <div class="subdomain-help">
-            Your families will access your programs at this URL. You can also set up a custom domain later.
-          </div>
+        <div id="subdomain-preview" data-component="subdomain-preview">
+          <article data-component="card">
+            <div>
+              <span data-component="badge" data-variant="primary">
+                <span id="subdomain-slug">organization</span>.registry.com
+              </span>
+              <p>Your families will access your programs at this URL. You can also set up a custom domain later.</p>
+            </div>
+          </article>
         </div>
       </div>
 
-      <div class="form-group">
+      <div>
         <label for="description">Description (Optional)</label>
-        <textarea id="description" 
-                  name="description" 
+        <textarea id="description"
+                  name="description"
                   placeholder="Tell us about your programs and mission..."
                   rows="3"><%= stash('description') // '' %></textarea>
-        <div class="field-help">This will be displayed on your public program pages</div>
+        <div data-type="help">This will be displayed on your public program pages</div>
       </div>
-    </div>
+    </fieldset>
 
-    <div class="form-section">
-      <h3>Billing Information</h3>
-      
-      <div class="form-group">
-        <label for="billing_email" class="required">Billing Email</label>
-        <input type="email" 
-               id="billing_email" 
-               name="billing_email" 
-               value="<%= stash('billing_email') // '' %>" 
-               placeholder="billing@yourorganization.com" 
+    <fieldset>
+      <legend>Billing Information</legend>
+
+      <div>
+        <label for="billing_email">Billing Email *</label>
+        <input type="email"
+               id="billing_email"
+               name="billing_email"
+               value="<%= stash('billing_email') // '' %>"
+               placeholder="billing@yourorganization.com"
                required />
-        <div class="field-help">We'll send invoices and billing notifications to this email</div>
+        <div data-type="help">We'll send invoices and billing notifications to this email</div>
       </div>
 
-      <div class="form-group">
+      <div>
         <label for="billing_phone">Phone Number</label>
-        <input type="tel" 
-               id="billing_phone" 
-               name="billing_phone" 
-               value="<%= stash('billing_phone') // '' %>" 
+        <input type="tel"
+               id="billing_phone"
+               name="billing_phone"
+               value="<%= stash('billing_phone') // '' %>"
                placeholder="(555) 123-4567" />
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label for="billing_address" class="required">Street Address</label>
-          <input type="text" 
-                 id="billing_address" 
-                 name="billing_address" 
-                 value="<%= stash('billing_address') // '' %>" 
-                 placeholder="123 Main Street" 
+      <div data-layout="grid">
+        <div>
+          <label for="billing_address">Street Address *</label>
+          <input type="text"
+                 id="billing_address"
+                 name="billing_address"
+                 value="<%= stash('billing_address') // '' %>"
+                 placeholder="123 Main Street"
                  required />
         </div>
-        
-        <div class="form-group">
+
+        <div>
           <label for="billing_address2">Address Line 2</label>
-          <input type="text" 
-                 id="billing_address2" 
-                 name="billing_address2" 
-                 value="<%= stash('billing_address2') // '' %>" 
+          <input type="text"
+                 id="billing_address2"
+                 name="billing_address2"
+                 value="<%= stash('billing_address2') // '' %>"
                  placeholder="Suite 100" />
         </div>
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label for="billing_city" class="required">City</label>
-          <input type="text" 
-                 id="billing_city" 
-                 name="billing_city" 
-                 value="<%= stash('billing_city') // '' %>" 
-                 placeholder="San Francisco" 
+      <div data-layout="grid">
+        <div>
+          <label for="billing_city">City *</label>
+          <input type="text"
+                 id="billing_city"
+                 name="billing_city"
+                 value="<%= stash('billing_city') // '' %>"
+                 placeholder="San Francisco"
                  required />
         </div>
-        
-        <div class="form-group">
-          <label for="billing_state" class="required">State/Province</label>
-          <input type="text" 
-                 id="billing_state" 
-                 name="billing_state" 
-                 value="<%= stash('billing_state') // '' %>" 
-                 placeholder="CA" 
+
+        <div>
+          <label for="billing_state">State/Province *</label>
+          <input type="text"
+                 id="billing_state"
+                 name="billing_state"
+                 value="<%= stash('billing_state') // '' %>"
+                 placeholder="CA"
                  required />
         </div>
-        
-        <div class="form-group">
-          <label for="billing_zip" class="required">ZIP/Postal Code</label>
-          <input type="text" 
-                 id="billing_zip" 
-                 name="billing_zip" 
-                 value="<%= stash('billing_zip') // '' %>" 
-                 placeholder="94102" 
+
+        <div>
+          <label for="billing_zip">ZIP/Postal Code *</label>
+          <input type="text"
+                 id="billing_zip"
+                 name="billing_zip"
+                 value="<%= stash('billing_zip') // '' %>"
+                 placeholder="94102"
                  required />
         </div>
       </div>
 
-      <div class="form-group">
-        <label for="billing_country" class="required">Country</label>
+      <div>
+        <label for="billing_country">Country *</label>
         <select id="billing_country" name="billing_country" required>
           <option value="">Select Country</option>
           <option value="US" <%= (stash('billing_country') // '') eq 'US' ? 'selected' : '' %>>United States</option>
@@ -140,320 +142,24 @@
           <option value="AU" <%= (stash('billing_country') // '') eq 'AU' ? 'selected' : '' %>>Australia</option>
         </select>
       </div>
-    </div>
+    </fieldset>
 
-    <div id="form-errors" class="form-errors"></div>
-    
-    <div class="form-actions">
+    <div id="form-errors"></div>
+
+    <div data-component="form-actions">
       <div id="form-spinner" class="htmx-indicator">
-        <span class="spinner"></span> Validating...
+        <div data-component="spinner"></div>
+        <span>Validating...</span>
       </div>
-      <button type="submit" class="btn btn-primary btn-lg">
+      <button type="submit" data-variant="primary" data-size="lg">
         Continue to Team Setup
-        <span class="btn-arrow">→</span>
+        <span>→</span>
       </button>
     </div>
   </form>
-</div>
+</section>
 
-<style>
-.profile-step {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 20px;
-}
-
-.step-header {
-  text-align: center;
-  margin-bottom: 40px;
-}
-
-.step-header h1 {
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: #333;
-  margin-bottom: 15px;
-}
-
-.step-description {
-  font-size: 1.1rem;
-  color: #666;
-  max-width: 600px;
-  margin: 0 auto;
-  line-height: 1.5;
-}
-
-.profile-form {
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  padding: 40px;
-}
-
-.form-section {
-  margin-bottom: 40px;
-}
-
-.form-section:last-of-type {
-  margin-bottom: 20px;
-}
-
-.form-section h3 {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 25px;
-  padding-bottom: 10px;
-  border-bottom: 2px solid #e9ecef;
-}
-
-.form-group {
-  margin-bottom: 20px;
-}
-
-.form-row {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr;
-  gap: 20px;
-  margin-bottom: 20px;
-}
-
-.form-row .form-group {
-  margin-bottom: 0;
-}
-
-label {
-  display: block;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 8px;
-  font-size: 0.95rem;
-}
-
-label.required:after {
-  content: ' *';
-  color: #dc3545;
-}
-
-input[type="text"],
-input[type="email"],
-input[type="tel"],
-textarea,
-select {
-  width: 100%;
-  padding: 12px 16px;
-  border: 2px solid #e9ecef;
-  border-radius: 6px;
-  font-size: 1rem;
-  transition: all 0.3s ease;
-  font-family: inherit;
-}
-
-input:focus,
-textarea:focus,
-select:focus {
-  outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
-
-input:invalid,
-textarea:invalid,
-select:invalid {
-  border-color: #dc3545;
-}
-
-.field-help {
-  font-size: 0.85rem;
-  color: #666;
-  margin-top: 5px;
-  line-height: 1.4;
-}
-
-.subdomain-preview {
-  background: #f8f9fa;
-  border: 2px solid #e9ecef;
-  border-radius: 6px;
-  padding: 15px;
-}
-
-.subdomain-display {
-  display: block;
-  font-size: 1.2rem;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 8px;
-}
-
-.subdomain-slug {
-  color: #667eea;
-  background: #e8ecff;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.subdomain-help {
-  font-size: 0.85rem;
-  color: #666;
-  line-height: 1.4;
-}
-
-.subdomain-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.subdomain-status.available {
-  color: #28a745;
-}
-
-.subdomain-status.unavailable {
-  color: #dc3545;
-}
-
-.status-icon {
-  font-weight: bold;
-}
-
-.subdomain-slug.available {
-  background: #d4edda;
-  color: #155724;
-}
-
-.subdomain-slug.unavailable {
-  background: #f8d7da;
-  color: #721c24;
-}
-
-.form-errors {
-  margin: 20px 0;
-}
-
-.error {
-  background: #f8d7da;
-  color: #721c24;
-  padding: 12px 16px;
-  border-radius: 6px;
-  border: 1px solid #f5c6cb;
-  margin-bottom: 15px;
-}
-
-.form-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 40px;
-  padding-top: 30px;
-  border-top: 1px solid #e9ecef;
-}
-
-.htmx-indicator {
-  display: flex;
-  align-items: center;
-  color: #666;
-  font-size: 0.9rem;
-}
-
-.htmx-indicator.htmx-request {
-  opacity: 1;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid #e9ecef;
-  border-top: 2px solid #667eea;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-right: 8px;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 15px 30px;
-  background: #667eea;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-size: 1.1rem;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-
-.btn:hover {
-  background: #5a6fd8;
-  transform: translateY(-2px);
-}
-
-.btn:active {
-  transform: translateY(0);
-}
-
-.btn-arrow {
-  margin-left: 8px;
-  font-size: 1.2rem;
-}
-
-/* Mobile Responsive */
-@media (max-width: 768px) {
-  .profile-step {
-    padding: 15px;
-  }
-  
-  .profile-form {
-    padding: 25px;
-  }
-  
-  .step-header h1 {
-    font-size: 2rem;
-  }
-  
-  .form-row {
-    grid-template-columns: 1fr;
-    gap: 0;
-  }
-  
-  .form-row .form-group {
-    margin-bottom: 20px;
-  }
-  
-  .form-actions {
-    flex-direction: column;
-    gap: 15px;
-  }
-  
-  .btn {
-    width: 100%;
-    justify-content: center;
-  }
-}
-
-@media (max-width: 480px) {
-  .step-header h1 {
-    font-size: 1.75rem;
-  }
-  
-  .profile-form {
-    padding: 20px;
-  }
-  
-  .form-section h3 {
-    font-size: 1.3rem;
-  }
-}
-</style>
+<!-- CSS moved to registry.css for proper caching and design token consistency -->
 
 <script>
 // Real-time subdomain generation
