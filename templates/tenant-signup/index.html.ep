@@ -98,14 +98,12 @@
         <p>Our team is here to help you every step of the way.</p>
         <ul class="support-options">
             <li>📧 Email: <a href="mailto:support@registry.com">support@registry.com</a></li>
-            <li>📞 Phone: 1-800-REGISTRY</li>
-            <li>💬 Live chat available during business hours</li>
         </ul>
     </div>
 
     <div class="getting-started">
         <h3>Ready to Transform Your Program Management?</h3>
-        <p>Join hundreds of organizations already using Registry to streamline their after-school programs, improve family communication, and boost operational efficiency.</p>
+        <p>Registry is designed to streamline your after-school programs, improve family communication, and boost operational efficiency.</p>
         
         <form method="POST" action="<%= $action %>" class="start-form">
             <button type="submit" class="btn btn-primary btn-xl">

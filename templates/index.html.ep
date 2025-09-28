@@ -54,7 +54,6 @@
       "url": "<%= url_for('/')->to_abs %>",
       "contactPoint": {
         "@type": "ContactPoint",
-        "telephone": "1-800-REGISTRY",
         "email": "support@registry.com",
         "contactType": "Customer Support"
       }
