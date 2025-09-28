@@ -87,30 +87,12 @@
       <!-- Primary CTA -->
       <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>"
          role="button"
-         aria-describedby="trial-info"
-         style="margin-right: var(--space-4);">
+         aria-describedby="trial-info">
         <button type="button" data-variant="success" data-size="xl" data-animate="pulse">
           Get Started Free - No Setup Fees
         </button>
       </a>
-      <!-- Secondary CTA -->
-      <a href="#demo"
-         role="button"
-         aria-label="Watch product demo">
-        <button type="button" data-variant="secondary" data-size="lg">
-          Watch Demo
-        </button>
-      </a>
       <p id="trial-info"><small>30-day free trial • No credit card • Cancel anytime • Setup in 5 minutes</small></p>
-      <!-- Social Proof Section -->
-      <div id="social-proof" style="margin-top: var(--space-6);">
-        <p>
-          <strong>Join 500+ programs</strong> already transforming their management with Registry
-          <span data-rating="4.9" style="margin-left: var(--space-4);">
-            ⭐ 4.9/5 from program directors
-          </span>
-        </p>
-      </div>
     </div>
   </section>
 
