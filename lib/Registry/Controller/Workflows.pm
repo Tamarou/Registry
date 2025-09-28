@@ -66,7 +66,6 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
         $self->render(
             template => $self->param('workflow') . '/index',
-            layout   => 'workflow',  # Explicitly specify the layout for workflow index
             action   => $self->url_for('workflow_start')
         );
     }
@@ -200,7 +199,6 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         
         return $self->render(
             template => $self->param('workflow') . '/' . $self->param('step'),
-            layout   => 'workflow',  # Explicitly specify the layout for workflow steps
             workflow => $self->param('workflow'),
             step     => $self->param('step'),
             status   => 200,
