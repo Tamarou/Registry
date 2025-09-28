@@ -40,6 +40,7 @@
   --color-success: #29A6A6;         /* Teal - Success states */
   --color-success-hover: #238C8C;   /* Darker teal */
   --color-success-light: #E0F4F4;   /* Light teal background */
+  --color-success-rgb: 41, 166, 166; /* RGB values for animation */
 
   --color-warning: #BF349A;         /* Magenta - Warning states */
   --color-warning-hover: #A62A85;   /* Darker magenta */
@@ -392,6 +393,26 @@ button[data-size="sm"] {
 button[data-size="lg"] {
   padding: var(--space-4) var(--space-8);
   font-size: var(--font-size-lg);
+}
+
+button[data-size="xl"] {
+  padding: var(--space-5) var(--space-10);
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+}
+
+/* Button animation effects */
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(var(--color-success-rgb), 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(var(--color-success-rgb), 0);
+  }
+}
+
+button[data-animate="pulse"] {
+  animation: pulse 2s infinite;
 }
 
 /* ============================================================================
