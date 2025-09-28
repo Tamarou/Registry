@@ -14,4 +14,11 @@ $XDG_CACHE_HOME/
 
 # Environment files
 .envrc
+
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/
+.playwright-mcp/
+
 # Force CI refresh

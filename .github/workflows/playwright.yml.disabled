@@ -1,0 +1,100 @@
+# ABOUTME: GitHub Actions workflow for Playwright visual regression testing
+# ABOUTME: Runs automated browser tests on every push and pull request
+
+name: Playwright Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registry_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.40'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install Perl dependencies
+      run: |
+        cpanm --installdeps .
+        carton install
+
+    - name: Install Node dependencies
+      run: npm install
+
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+
+    - name: Setup Database
+      env:
+        DB_URL: postgresql://postgres:postgres@localhost:5432/registry_ci
+        PGHOST: localhost
+        PGPORT: 5432
+        PGUSER: postgres
+        PGPASSWORD: postgres
+        PGDATABASE: registry_ci
+      run: |
+        # Wait for PostgreSQL to be ready
+        until pg_isready -h localhost -p 5432 -U postgres; do
+          echo "Waiting for PostgreSQL..."
+          sleep 2
+        done
+
+        # Deploy schema to the CI database
+        carton exec sqitch deploy --target db:pg://postgres:postgres@localhost:5432/registry_ci
+
+    - name: Start Registry Server
+      env:
+        DB_URL: postgresql://postgres:postgres@localhost:5432/registry_ci
+      run: |
+        carton exec morbo ./registry -l http://localhost:3000 &
+        sleep 10  # Wait for server to start
+
+    - name: Run Playwright tests
+      env:
+        DB_URL: postgresql://postgres:postgres@localhost:5432/registry_ci
+      run: npx playwright test
+
+    - name: Upload Playwright Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 30
+
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: test-results/
+        retention-days: 30

@@ -1,0 +1,14 @@
+{
+  "name": "registry-playwright-tests",
+  "version": "1.0.0",
+  "description": "Playwright visual and interaction tests for Registry",
+  "scripts": {
+    "test:playwright": "playwright test",
+    "test:playwright:headed": "playwright test --headed",
+    "test:playwright:ui": "playwright test --ui",
+    "test:playwright:debug": "playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}

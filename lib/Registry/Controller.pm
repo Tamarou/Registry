@@ -6,6 +6,7 @@ use Object::Pad;
 
 class Registry::Controller :isa(Mojolicious::Controller) {
     use Carp ();
+    use File::Spec ();
 
     my $find_template = method($name) {
         my $dao = $self->app->dao;
@@ -51,6 +52,24 @@ class Registry::Controller :isa(Mojolicious::Controller) {
         if ( my $template = $args{template} ) {
             unless ( $template isa Registry::DAO::Template ) {
                 my $name = $template;
+
+                # Check if a file-based template exists first
+                my $renderer = $self->app->renderer;
+                my $file_template_exists = 0;
+                for my $template_dir (@{$renderer->paths}) {
+                    my $potential_path = File::Spec->catfile($template_dir, "$name.html.ep");
+                    if (-f $potential_path) {
+                        $file_template_exists = 1;
+                        last;
+                    }
+                }
+
+                # If file template exists, prefer it over database template to preserve layout functionality
+                if ($file_template_exists) {
+                    return $self->SUPER::render( template => $name, %args );
+                }
+
+                # Only use database template if no file template exists
                 unless ( $template = $self->$find_template($name) ) {
                     return $self->SUPER::render( template => $name, %args );
                 }
