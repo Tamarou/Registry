@@ -22,6 +22,9 @@ use Registry::DAO::WorkflowStep;
 my $t_db = Test::Registry::DB->new;
 my $db = $t_db->db;
 
+# Import tenant-signup workflow
+$db->import_workflows(['workflows/tenant-signup.yml']);
+
 # Create test app
 my $t = Test::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
@@ -57,14 +60,14 @@ subtest 'Workflow index page includes layout' => sub {
 # Test workflow step page renders with layout
 subtest 'Workflow step page includes layout' => sub {
     # Create a workflow run
-    $t->post_ok('/tenant-signup/start')
+    $t->post_ok('/tenant-signup')
       ->status_is(302);
 
     # Extract run ID and step from redirect
     my $location = $t->tx->res->headers->location;
-    like $location, qr{/tenant-signup/(\w+)/(\w+)}, 'Redirect has run ID and step';
+    like $location, qr{/tenant-signup/([\w-]+)/(\w+)}, 'Redirect has run ID and step';
 
-    my ($run_id, $step_slug) = $location =~ m{/tenant-signup/(\w+)/(\w+)};
+    my ($run_id, $step_slug) = $location =~ m{/tenant-signup/([\w-]+)/(\w+)};
 
     # Verify step page has layout
     $t->get_ok("/tenant-signup/$run_id/$step_slug")
@@ -89,11 +92,11 @@ subtest 'Templates with extends directive work correctly' => sub {
     }
 
     # Create a new run and navigate to profile step
-    $t->post_ok('/tenant-signup/start')
+    $t->post_ok('/tenant-signup')
       ->status_is(302);
 
     my $location = $t->tx->res->headers->location;
-    my ($run_id) = $location =~ m{/tenant-signup/(\w+)/};
+    my ($run_id) = $location =~ m{/tenant-signup/([\w-]+)/};
 
     # Try to access profile step (this would normally require progressing through workflow)
     # For now just verify that if we could access it, it would have the layout
