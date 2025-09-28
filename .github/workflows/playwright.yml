@@ -68,12 +68,8 @@ jobs:
           sleep 2
         done
 
-        # Deploy schema
-        carton exec sqitch deploy
-
-        # Import workflows and templates
-        carton exec ./registry workflow import registry
-        carton exec ./registry template import registry
+        # Deploy schema to the CI database
+        carton exec sqitch deploy --target db:pg://postgres:postgres@localhost:5432/registry_ci
 
     - name: Start Registry Server
       env:
