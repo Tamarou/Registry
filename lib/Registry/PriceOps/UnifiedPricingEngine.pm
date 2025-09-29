@@ -21,8 +21,9 @@ method subscribe_to_plan ($consumer_id, $plan_id, $type = 'auto') {
     my $plan = Registry::DAO::PricingPlan->find_by_id($db, $plan_id);
     die "Pricing plan not found: $plan_id" unless $plan;
 
-    # Determine provider from plan
-    my $provider_id = $plan->offering_tenant_id || '00000000-0000-0000-0000-000000000000';
+    # Platform is the default provider for now
+    # TODO: Determine provider from existing relationships or metadata
+    my $provider_id = '00000000-0000-0000-0000-000000000000';
 
     # Handle tenant subscriptions by finding/creating admin user
     my $final_consumer_id = $consumer_id;
@@ -93,8 +94,6 @@ method calculate_fees ($relationship_id, $period, $usage_data) {
 # Business Logic: Create a new pricing plan
 method create_pricing_plan ($offering_tenant, $configuration) {
     my $plan_data = {
-        offering_tenant_id => $offering_tenant,
-        target_tenant_id => $configuration->{target_tenant_id},
         plan_scope => $configuration->{plan_scope} || 'customer',
         plan_name => $configuration->{plan_name},
         plan_type => $configuration->{plan_type} || 'custom',
@@ -136,23 +135,9 @@ method get_available_plans_for_tenant ($tenant_id, $filters = {}) {
         $where->{plan_scope} = $filters->{plan_scope};
     }
 
-    # Either plans offered to all tenants (target_tenant_id is null)
-    # or plans specifically for this tenant
-    my @plans;
-
-    # Plans for all tenants
-    my @general_plans = Registry::DAO::PricingPlan->find($db, {
-        %$where,
-        target_tenant_id => undef,
-    });
-    push @plans, @general_plans;
-
-    # Plans specifically for this tenant
-    my @specific_plans = Registry::DAO::PricingPlan->find($db, {
-        %$where,
-        target_tenant_id => $tenant_id,
-    });
-    push @plans, @specific_plans;
+    # Get all plans with the specified scope
+    # Relationships determine who can access them
+    my @plans = Registry::DAO::PricingPlan->find($db, $where);
 
     return \@plans;
 }
@@ -176,8 +161,8 @@ method get_tenant_relationships ($tenant_id, $include_inactive = 0) {
 
 # Private: Determine relationship type from plan
 method _determine_relationship_type ($plan) {
-    # Platform tenant relationships
-    if ($plan->offering_tenant_id eq '00000000-0000-0000-0000-000000000000') {
+    # Platform scope indicates platform fee
+    if ($plan->plan_scope eq 'platform') {
         return 'platform_fee';
     }
 

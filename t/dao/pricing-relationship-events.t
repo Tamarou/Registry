@@ -136,8 +136,8 @@ subtest 'Get latest event for relationship' => sub {
 subtest 'Record plan change' => sub {
     # Get a different plan
     my $new_plan_result = $db->query(
-        'SELECT id FROM registry.pricing_plans WHERE offering_tenant_id = ? AND id != ? LIMIT 1',
-        $platform_id,
+        'SELECT id FROM registry.pricing_plans WHERE plan_scope = ? AND id != ? LIMIT 1',
+        'platform',
         $plan_id
     );
     my $new_plan_id = $new_plan_result->hash->{id};

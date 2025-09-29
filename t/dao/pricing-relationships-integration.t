@@ -38,8 +38,8 @@ my $consumer_user = Registry::DAO::User->create($db, {
 # Get platform pricing plans
 my $platform_id = '00000000-0000-0000-0000-000000000000';
 my $result = $db->query(
-    'SELECT id, plan_name FROM registry.pricing_plans WHERE offering_tenant_id = ? ORDER BY plan_name',
-    $platform_id
+    'SELECT id, plan_name FROM registry.pricing_plans WHERE plan_scope = ? ORDER BY plan_name',
+    'platform'
 );
 my $plans = $result->hashes;
 ok(scalar @$plans > 0, 'Found platform pricing plans');

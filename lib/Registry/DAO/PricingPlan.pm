@@ -10,8 +10,6 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     field $id :param :reader;
     field $session_id :param :reader = undef;
-    field $target_tenant_id :param :reader = undef;
-    field $offering_tenant_id :param :reader = undef;
     field $plan_scope :param :reader = 'customer';
     field $plan_name :param :reader;
     field $plan_type :param :reader = 'standard';

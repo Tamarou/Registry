@@ -41,7 +41,6 @@ subtest 'Create pricing relationship' => sub {
         plan_type => 'standard',
         pricing_model_type => 'fixed',
         amount => 100.00,
-        offering_tenant_id => $tenant->id,
         plan_scope => 'customer',
     });
 
@@ -86,8 +85,7 @@ subtest 'Platform billing relationships' => sub {
         plan_type => 'subscription',
         pricing_model_type => 'fixed',
         amount => 200.00,
-        offering_tenant_id => $platform_id,
-        plan_scope => 'tenant',
+        plan_scope => 'platform',
     });
 
     # Create platform -> tenant relationship
@@ -124,7 +122,6 @@ subtest 'B2C enrollment relationships' => sub {
         plan_type => 'enrollment',
         pricing_model_type => 'fixed',
         amount => 500.00,
-        offering_tenant_id => $program_tenant->id,
         plan_scope => 'customer',
         # session_id => '123e4567-e89b-12d3-a456-426614174000', # Would be from a real session
     });
@@ -179,7 +176,6 @@ subtest 'B2B corporate relationships' => sub {
         plan_type => 'partnership',
         pricing_model_type => 'percentage',
         amount => 0.15,  # 15% discount
-        offering_tenant_id => $service_tenant->id,
         plan_scope => 'tenant',
     });
 
@@ -220,7 +216,6 @@ subtest 'Find relationships' => sub {
         plan_type => 'standard',
         pricing_model_type => 'fixed',
         amount => 50.00,
-        offering_tenant_id => $tenant->id,
     });
 
     # Create multiple relationships
@@ -271,7 +266,6 @@ subtest 'Status transitions' => sub {
         plan_type => 'standard',
         pricing_model_type => 'fixed',
         amount => 100.00,
-        offering_tenant_id => $tenant->id,
     });
 
     my $relationship = Registry::DAO::PricingRelationship->create($db, {
@@ -312,7 +306,6 @@ subtest 'Relationship helpers' => sub {
         plan_type => 'standard',
         pricing_model_type => 'fixed',
         amount => 100.00,
-        offering_tenant_id => $tenant->id,
     });
 
     my $relationship = Registry::DAO::PricingRelationship->create($db, {
