@@ -1,9 +1,9 @@
-# ABOUTME: Data access object for billing periods in tenant-to-tenant relationships
-# ABOUTME: Tracks billing cycles and payment status for pricing relationships
+# ABOUTME: Data access object for billing periods across all pricing relationships
+# ABOUTME: Tracks billing cycles and payment status for B2B, B2C, and platform billing
 
 use 5.40.2;
 use utf8;
-use experimental qw(try);
+use experimental qw(try keyword_any);
 use Object::Pad;
 
 class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
@@ -38,7 +38,7 @@ class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
 
         # Validate payment status
         my @valid_statuses = qw(pending processing paid failed refunded);
-        unless (grep { $_ eq $payment_status } @valid_statuses) {
+        unless (any { $_ eq $payment_status } @valid_statuses) {
             croak "Invalid payment_status: $payment_status";
         }
     }
