@@ -9,30 +9,55 @@ use Object::Pad;
 class Registry::PriceOps::UnifiedPricingEngine {
 
 use Registry::DAO::PricingPlan;
-use Registry::DAO::TenantPricingRelationship;
+use Registry::DAO::PricingRelationship;
 use Registry::DAO::BillingPeriod;
 use Mojo::JSON qw(encode_json decode_json);
 
 field $db :param :reader;
 
-# Business Logic: Subscribe a tenant to a pricing plan
-method subscribe_to_plan ($payer_tenant, $plan_id) {
+# Business Logic: Subscribe a consumer to a pricing plan
+method subscribe_to_plan ($consumer_id, $plan_id, $type = 'auto') {
     # Get the pricing plan
     my $plan = Registry::DAO::PricingPlan->find_by_id($db, $plan_id);
     die "Pricing plan not found: $plan_id" unless $plan;
 
-    # Determine payee from plan
-    my $payee_tenant = $plan->offering_tenant_id || '00000000-0000-0000-0000-000000000000';
+    # Determine provider from plan
+    my $provider_id = $plan->offering_tenant_id || '00000000-0000-0000-0000-000000000000';
 
-    # Determine relationship type based on plan
-    my $relationship_type = $self->_determine_relationship_type($plan);
+    # Handle tenant subscriptions by finding/creating admin user
+    my $final_consumer_id = $consumer_id;
+    if ($type eq 'tenant') {
+        require Registry::DAO::Tenant;
+        require Registry::DAO::User;
+        my $tenant = Registry::DAO::Tenant->find_by_id($db, $consumer_id);
+        die "Tenant not found: $consumer_id" unless $tenant;
+
+        # Find admin user
+        my @admins = Registry::DAO::User->find($db, {
+            tenant_id => $consumer_id,
+            user_type => ['admin', 'tenant_admin'],
+        });
+
+        if (@admins) {
+            $final_consumer_id = $admins[0]->id;
+        } else {
+            # Create admin user
+            my $admin = Registry::DAO::User->create($db, {
+                name => $tenant->name . ' Admin',
+                email => 'admin+' . $tenant->id . '@registry.system',
+                tenant_id => $tenant->id,
+                user_type => 'admin',
+            });
+            $final_consumer_id = $admin->id;
+        }
+    }
 
     # Create the relationship
-    my $relationship = Registry::DAO::TenantPricingRelationship->create($db, {
-        payer_tenant_id => $payer_tenant,
-        payee_tenant_id => $payee_tenant,
+    my $relationship = Registry::DAO::PricingRelationship->create($db, {
+        provider_id => $provider_id,
+        consumer_id => $final_consumer_id,
         pricing_plan_id => $plan_id,
-        relationship_type => $relationship_type,
+        status => 'active',
     });
 
     return $relationship;
@@ -41,7 +66,7 @@ method subscribe_to_plan ($payer_tenant, $plan_id) {
 # Business Logic: Calculate fees for a billing period
 method calculate_fees ($relationship_id, $period, $usage_data) {
     # Get the relationship
-    my $relationship = Registry::DAO::TenantPricingRelationship->find_by_id($db, $relationship_id);
+    my $relationship = Registry::DAO::PricingRelationship->find_by_id($db, $relationship_id);
     die "Relationship not found: $relationship_id" unless $relationship;
 
     # Get the pricing plan

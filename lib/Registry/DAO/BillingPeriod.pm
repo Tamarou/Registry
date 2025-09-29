@@ -121,8 +121,8 @@ class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
     }
 
     method get_pricing_relationship ($db) {
-        require Registry::DAO::TenantPricingRelationship;
-        return Registry::DAO::TenantPricingRelationship->find_by_id($db, $pricing_relationship_id);
+        require Registry::DAO::PricingRelationship;
+        return Registry::DAO::PricingRelationship->find_by_id($db, $pricing_relationship_id);
     }
 }
 

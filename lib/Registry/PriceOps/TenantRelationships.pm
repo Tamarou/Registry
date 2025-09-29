@@ -1,5 +1,5 @@
-# ABOUTME: Manages relationships between tenants for pricing and billing
-# ABOUTME: Handles establishment, modification, and termination of pricing relationships
+# ABOUTME: Manages unified pricing relationships for platform, B2C, and B2B
+# ABOUTME: Handles establishment, modification, and termination of all pricing relationships
 
 use 5.40.2;
 use warnings;
@@ -8,45 +8,75 @@ use experimental 'signatures', 'try', 'builtin';
 use Object::Pad;
 class Registry::PriceOps::TenantRelationships {
 
-use Registry::DAO::TenantPricingRelationship;
+use Registry::DAO::PricingRelationship;
 use Registry::DAO::BillingPeriod;
 use Registry::DAO::PricingPlan;
+use Registry::DAO::User;
 
 # Static method to establish a new relationship
-sub establish_relationship ($db, $payer, $payee, $plan) {
+# Now accepts either tenant IDs (for B2B) or user IDs (for B2C/platform)
+sub establish_relationship ($db, $provider, $consumer, $plan, $type = 'auto') {
     # Validate inputs
     die "Database connection required" unless $db;
-    die "Payer tenant ID required" unless $payer;
-    die "Payee tenant ID required" unless $payee;
+    die "Provider ID required" unless $provider;
+    die "Consumer ID required" unless $consumer;
     die "Pricing plan ID required" unless $plan;
 
-    # Get the pricing plan to determine relationship type
+    # Get the pricing plan
     my $pricing_plan = Registry::DAO::PricingPlan->find_by_id($db, $plan);
     die "Pricing plan not found: $plan" unless $pricing_plan;
 
-    # Determine relationship type
-    my $relationship_type = _determine_type($pricing_plan);
+    # Determine if consumer is a user ID or needs to be resolved
+    my $consumer_id;
+    if ($type eq 'b2b' || $type eq 'tenant') {
+        # For B2B, find or create admin user for the tenant
+        require Registry::DAO::Tenant;
+        my $tenant = Registry::DAO::Tenant->find_by_id($db, $consumer);
+        die "Tenant not found: $consumer" unless $tenant;
+
+        # Find or create admin user
+        my @admins = Registry::DAO::User->find($db, {
+            tenant_id => $consumer,
+            user_type => ['admin', 'tenant_admin'],
+        });
+
+        if (@admins) {
+            $consumer_id = $admins[0]->id;
+        } else {
+            # Create admin user for tenant
+            my $admin = Registry::DAO::User->create($db, {
+                name => $tenant->name . ' Admin',
+                email => 'admin+' . $tenant->id . '@registry.system',
+                tenant_id => $tenant->id,
+                user_type => 'admin',
+            });
+            $consumer_id = $admin->id;
+        }
+    } else {
+        # Direct user ID for B2C/platform relationships
+        $consumer_id = $consumer;
+    }
 
     # Check for existing active relationship
-    my @existing = Registry::DAO::TenantPricingRelationship->find($db, {
-        payer_tenant_id => $payer,
-        payee_tenant_id => $payee,
-        is_active => 1,
-    });
+    if (Registry::DAO::PricingRelationship->exists_between($db, $provider, $consumer_id)) {
+        # Cancel existing relationships
+        my @existing = Registry::DAO::PricingRelationship->find($db, {
+            provider_id => $provider,
+            consumer_id => $consumer_id,
+            status => ['active', 'pending'],
+        });
 
-    if (@existing) {
-        # Deactivate existing relationships
         for my $rel (@existing) {
-            $rel->deactivate($db);
+            $rel->cancel($db);
         }
     }
 
     # Create new relationship
-    my $relationship = Registry::DAO::TenantPricingRelationship->create($db, {
-        payer_tenant_id => $payer,
-        payee_tenant_id => $payee,
+    my $relationship = Registry::DAO::PricingRelationship->create($db, {
+        provider_id => $provider,
+        consumer_id => $consumer_id,
         pricing_plan_id => $plan,
-        relationship_type => $relationship_type,
+        status => 'active',
     });
 
     return $relationship;
@@ -54,7 +84,7 @@ sub establish_relationship ($db, $payer, $payee, $plan) {
 
 # Calculate billing for a period
 sub calculate_billing_period ($db, $relationship_id, $period) {
-    my $relationship = Registry::DAO::TenantPricingRelationship->find_by_id($db, $relationship_id);
+    my $relationship = Registry::DAO::PricingRelationship->find_by_id($db, $relationship_id);
     die "Relationship not found: $relationship_id" unless $relationship;
 
     my $plan = $relationship->get_pricing_plan($db);
@@ -78,11 +108,11 @@ sub calculate_billing_period ($db, $relationship_id, $period) {
 
 # Handle relationship changes (upgrades, downgrades, cancellations)
 sub handle_relationship_changes ($db, $relationship_id, $changes) {
-    my $relationship = Registry::DAO::TenantPricingRelationship->find_by_id($db, $relationship_id);
+    my $relationship = Registry::DAO::PricingRelationship->find_by_id($db, $relationship_id);
     die "Relationship not found: $relationship_id" unless $relationship;
 
     if ($changes->{action} eq 'cancel') {
-        $relationship->deactivate($db);
+        $relationship->cancel($db);
         return {status => 'cancelled', relationship => $relationship};
     }
     elsif ($changes->{action} eq 'upgrade' || $changes->{action} eq 'downgrade') {
@@ -93,46 +123,24 @@ sub handle_relationship_changes ($db, $relationship_id, $changes) {
         return {status => 'updated', relationship => $relationship};
     }
     elsif ($changes->{action} eq 'pause') {
-        $relationship->update($db, {
-            is_active => 0,
-            metadata => {%{$relationship->metadata}, paused_at => time()},
-        });
-        return {status => 'paused', relationship => $relationship};
+        $relationship->suspend($db);
+        return {status => 'suspended', relationship => $relationship};
     }
     elsif ($changes->{action} eq 'resume') {
-        $relationship->update($db, {
-            is_active => 1,
-            metadata => {%{$relationship->metadata}, resumed_at => time()},
-        });
-        return {status => 'resumed', relationship => $relationship};
+        $relationship->activate($db);
+        return {status => 'active', relationship => $relationship};
     }
     else {
         die "Unknown action: $changes->{action}";
     }
 }
 
-# Private: Determine relationship type from plan
-sub _determine_type ($plan) {
-    # Platform relationships
-    if ($plan->offering_tenant_id eq '00000000-0000-0000-0000-000000000000') {
-        return 'platform_fee';
-    }
-
-    # Revenue share
-    if ($plan->pricing_model_type eq 'percentage') {
-        my $config = $plan->pricing_configuration || {};
-        if ($config->{applies_to} && $config->{applies_to} =~ /revenue/) {
-            return 'revenue_share';
-        }
-    }
-
-    # Default to service fee
-    return 'service_fee';
-}
 
 # Private: Get usage data for billing calculation
 sub _get_usage_data ($db, $relationship, $period) {
-    my $payer_id = $relationship->payer_tenant_id;
+    # Get the consumer's tenant (if B2B) or use provider for B2C
+    my $consumer_tenant = $relationship->get_consumer_tenant($db);
+    my $tenant_id = $consumer_tenant ? $consumer_tenant->id : $relationship->provider_id;
     my $plan = $relationship->get_pricing_plan($db);
     my $config = $plan->pricing_configuration || {};
 
@@ -148,7 +156,7 @@ sub _get_usage_data ($db, $relationship, $period) {
               AND created_at >= ?
               AND created_at <= ?
               AND status = 'completed'
-        }, $payer_id, $period->{start}, $period->{end});
+        }, $tenant_id, $period->{start}, $period->{end});
 
         $usage_data->{customer_payments} = $result->hash->{total} || 0;
     }
@@ -164,7 +172,7 @@ sub _get_usage_data ($db, $relationship, $period) {
               AND created_at >= ?
               AND created_at <= ?
               AND status = 'completed'
-        }, $payer_id, $period->{start}, $period->{end});
+        }, $tenant_id, $period->{start}, $period->{end});
 
         my $row = $result->hash;
         $usage_data->{transaction_count} = $row->{count} || 0;
