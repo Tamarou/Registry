@@ -1,0 +1,145 @@
+% layout 'workflow';
+% title 'Pricing Plan Basics';
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Create Pricing Plan</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Step 1: Plan Basics</h2>
+        <p class="text-gray-600 mb-6">Define the basic information for your pricing plan.</p>
+
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'plan-basics') %>"
+              id="plan-basics-form">
+
+            <div class="space-y-6">
+                <!-- Plan Name -->
+                <div>
+                    <label for="plan_name" class="block text-sm font-medium text-gray-700 mb-2">
+                        Plan Name <span class="text-red-500">*</span>
+                    </label>
+                    <input type="text"
+                           id="plan_name"
+                           name="plan_name"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="e.g., Premium Monthly, Basic Annual"
+                           required>
+                    <p class="mt-1 text-sm text-gray-500">Choose a clear, descriptive name for this plan</p>
+                </div>
+
+                <!-- Plan Description -->
+                <div>
+                    <label for="plan_description" class="block text-sm font-medium text-gray-700 mb-2">
+                        Plan Description
+                    </label>
+                    <textarea id="plan_description"
+                              name="plan_description"
+                              rows="3"
+                              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="Describe what this plan offers and who it's for"></textarea>
+                </div>
+
+                <!-- Plan Type -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Plan Type <span class="text-red-500">*</span>
+                    </label>
+                    <div class="space-y-3">
+                        <% my $plan_types = stash('step_data')->{plan_types} || []; %>
+                        <% for my $type (@$plan_types) { %>
+                            <label class="flex items-start p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                                <input type="radio"
+                                       name="plan_type"
+                                       value="<%= $type->{value} %>"
+                                       class="mt-1 mr-3"
+                                       required>
+                                <div>
+                                    <span class="font-medium"><%= $type->{label} %></span>
+                                    <p class="text-sm text-gray-600 mt-1"><%= $type->{description} %></p>
+                                </div>
+                            </label>
+                        <% } %>
+                    </div>
+                </div>
+
+                <!-- Target Audience -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Target Audience <span class="text-red-500">*</span>
+                    </label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <% my $audiences = stash('step_data')->{target_audiences} || []; %>
+                        <% for my $audience (@$audiences) { %>
+                            <label class="flex items-start p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                                <input type="radio"
+                                       name="target_audience"
+                                       value="<%= $audience->{value} %>"
+                                       class="mt-1 mr-3"
+                                       required>
+                                <div>
+                                    <span class="font-medium text-sm"><%= $audience->{label} %></span>
+                                    <p class="text-xs text-gray-600 mt-1"><%= $audience->{description} %></p>
+                                </div>
+                            </label>
+                        <% } %>
+                    </div>
+                </div>
+
+                <!-- Plan Scope -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Plan Scope <span class="text-red-500">*</span>
+                    </label>
+                    <div class="space-y-3">
+                        <% my $scopes = stash('step_data')->{plan_scopes} || []; %>
+                        <% for my $scope (@$scopes) { %>
+                            <label class="flex items-start p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                                <input type="radio"
+                                       name="plan_scope"
+                                       value="<%= $scope->{value} %>"
+                                       class="mt-1 mr-3"
+                                       required>
+                                <div>
+                                    <span class="font-medium"><%= $scope->{label} %></span>
+                                    <p class="text-sm text-gray-600 mt-1"><%= $scope->{description} %></p>
+                                </div>
+                            </label>
+                        <% } %>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Display -->
+            <% if (my $errors = stash('errors')) { %>
+                <div class="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p class="text-red-800 font-medium">Please correct the following errors:</p>
+                    <ul class="mt-2 list-disc list-inside text-red-700">
+                        <% for my $error (@$errors) { %>
+                            <li><%= $error %></li>
+                        <% } %>
+                    </ul>
+                </div>
+            <% } %>
+
+            <div class="mt-8 flex justify-end">
+                <button type="submit"
+                        class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    Continue to Pricing Model
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div class="mt-6">
+        <div class="flex items-center justify-between text-sm text-gray-600">
+            <span class="font-medium">Step 1 of 5</span>
+            <div class="flex space-x-2">
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+            </div>
+        </div>
+    </div>
+</div>

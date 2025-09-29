@@ -1,0 +1,361 @@
+% layout 'workflow';
+% title 'Requirements and Rules';
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Create Pricing Plan</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Step 4: Requirements & Rules</h2>
+        <p class="text-gray-600 mb-6">Set eligibility requirements, discounts, and renewal policies.</p>
+
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'requirements-rules') %>"
+              id="requirements-rules-form">
+
+            <div class="space-y-8">
+                <!-- Eligibility Requirements -->
+                <div class="border-b pb-6">
+                    <h3 class="text-lg font-semibold mb-4">Eligibility Requirements</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="min_age" class="block text-sm font-medium text-gray-700 mb-2">
+                                Minimum Age
+                            </label>
+                            <input type="number"
+                                   id="min_age"
+                                   name="min_age"
+                                   min="0"
+                                   max="100"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="No minimum">
+                        </div>
+                        <div>
+                            <label for="max_age" class="block text-sm font-medium text-gray-700 mb-2">
+                                Maximum Age
+                            </label>
+                            <input type="number"
+                                   id="max_age"
+                                   name="max_age"
+                                   min="0"
+                                   max="100"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="No maximum">
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <label for="location_restrictions" class="block text-sm font-medium text-gray-700 mb-2">
+                            Location Restrictions
+                        </label>
+                        <input type="text"
+                               id="location_restrictions"
+                               name="location_restrictions"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                               placeholder="e.g., ZIP codes: 10001, 10002 (comma-separated)">
+                        <p class="mt-1 text-xs text-gray-500">Leave blank for no restrictions</p>
+                    </div>
+
+                    <% if (stash('step_data')->{programs} && @{stash('step_data')->{programs}}) { %>
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Prerequisite Programs
+                            </label>
+                            <div class="max-h-40 overflow-y-auto border rounded-md p-2">
+                                <% for my $program (@{stash('step_data')->{programs}}) { %>
+                                    <label class="flex items-center p-1 hover:bg-gray-50">
+                                        <input type="checkbox"
+                                               name="prerequisite_programs"
+                                               value="<%= $program->id %>"
+                                               class="mr-2">
+                                        <span class="text-sm"><%= $program->name %></span>
+                                    </label>
+                                <% } %>
+                            </div>
+                        </div>
+                    <% } %>
+                </div>
+
+                <!-- Early Bird Discount -->
+                <div class="border-b pb-6">
+                    <h3 class="text-lg font-semibold mb-4">Early Bird Discount</h3>
+                    <div class="flex items-center mb-4">
+                        <input type="checkbox"
+                               id="early_bird_enabled"
+                               name="early_bird_enabled"
+                               value="1"
+                               class="mr-2"
+                               onclick="toggleEarlyBird()">
+                        <label for="early_bird_enabled" class="font-medium">
+                            Enable early bird discount
+                        </label>
+                    </div>
+                    <div id="early-bird-config" class="hidden grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="early_bird_discount" class="block text-sm font-medium text-gray-700 mb-2">
+                                Discount Percentage
+                            </label>
+                            <input type="number"
+                                   id="early_bird_discount"
+                                   name="early_bird_discount"
+                                   min="0"
+                                   max="100"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="e.g., 10">
+                        </div>
+                        <div>
+                            <label for="early_bird_cutoff_date" class="block text-sm font-medium text-gray-700 mb-2">
+                                Cutoff Date
+                            </label>
+                            <input type="date"
+                                   id="early_bird_cutoff_date"
+                                   name="early_bird_cutoff_date"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Family/Group Discounts -->
+                <div class="border-b pb-6">
+                    <h3 class="text-lg font-semibold mb-4">Family/Group Discounts</h3>
+                    <div class="flex items-center mb-4">
+                        <input type="checkbox"
+                               id="family_discount_enabled"
+                               name="family_discount_enabled"
+                               value="1"
+                               class="mr-2"
+                               onclick="toggleFamilyDiscount()">
+                        <label for="family_discount_enabled" class="font-medium">
+                            Enable family/group discount
+                        </label>
+                    </div>
+                    <div id="family-discount-config" class="hidden space-y-4">
+                        <div class="grid grid-cols-3 gap-4">
+                            <div>
+                                <label for="min_children" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Minimum Members
+                                </label>
+                                <input type="number"
+                                       id="min_children"
+                                       name="min_children"
+                                       min="2"
+                                       value="2"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label for="family_discount_type" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Discount Type
+                                </label>
+                                <select id="family_discount_type"
+                                        name="family_discount_type"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <% my $types = stash('step_data')->{discount_types} || []; %>
+                                    <% for my $type (@$types) { %>
+                                        <option value="<%= $type->{value} %>"><%= $type->{label} %></option>
+                                    <% } %>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="family_discount_amount" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Discount Amount
+                                </label>
+                                <input type="number"
+                                       id="family_discount_amount"
+                                       name="family_discount_amount"
+                                       step="0.01"
+                                       min="0"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="Amount or percentage">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Renewal Policies -->
+                <div class="border-b pb-6">
+                    <h3 class="text-lg font-semibold mb-4">Renewal Policies</h3>
+                    <div class="space-y-4">
+                        <div class="flex items-center">
+                            <input type="checkbox"
+                                   id="auto_renew"
+                                   name="auto_renew"
+                                   value="yes"
+                                   checked
+                                   class="mr-2">
+                            <label for="auto_renew" class="text-sm">
+                                Automatically renew subscription
+                            </label>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label for="renewal_notice_days" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Renewal Notice (days before)
+                                </label>
+                                <input type="number"
+                                       id="renewal_notice_days"
+                                       name="renewal_notice_days"
+                                       min="1"
+                                       value="30"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label for="cancellation_notice_days" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Cancellation Notice (days required)
+                                </label>
+                                <input type="number"
+                                       id="cancellation_notice_days"
+                                       name="cancellation_notice_days"
+                                       min="0"
+                                       value="7"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="refund_policy" class="block text-sm font-medium text-gray-700 mb-2">
+                                Refund Policy
+                            </label>
+                            <select id="refund_policy"
+                                    name="refund_policy"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <% my $policies = stash('step_data')->{refund_policies} || []; %>
+                                <% for my $policy (@$policies) { %>
+                                    <option value="<%= $policy->{value} %>"><%= $policy->{label} %></option>
+                                <% } %>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trial Period -->
+                <div class="border-b pb-6">
+                    <h3 class="text-lg font-semibold mb-4">Trial Period</h3>
+                    <div class="flex items-center mb-4">
+                        <input type="checkbox"
+                               id="trial_enabled"
+                               name="trial_enabled"
+                               value="1"
+                               class="mr-2"
+                               onclick="toggleTrial()">
+                        <label for="trial_enabled" class="font-medium">
+                            Offer trial period
+                        </label>
+                    </div>
+                    <div id="trial-config" class="hidden grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="trial_days" class="block text-sm font-medium text-gray-700 mb-2">
+                                Trial Duration (days)
+                            </label>
+                            <input type="number"
+                                   id="trial_days"
+                                   name="trial_days"
+                                   min="1"
+                                   max="90"
+                                   value="7"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label for="trial_features" class="block text-sm font-medium text-gray-700 mb-2">
+                                Trial Features
+                            </label>
+                            <select id="trial_features"
+                                    name="trial_features"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <% my $levels = stash('step_data')->{trial_feature_levels} || []; %>
+                                <% for my $level (@$levels) { %>
+                                    <option value="<%= $level->{value} %>"><%= $level->{label} %></option>
+                                <% } %>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Proration Rules -->
+                <div>
+                    <h3 class="text-lg font-semibold mb-4">Proration Rules</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center">
+                            <input type="checkbox"
+                                   id="prorate_on_upgrade"
+                                   name="prorate_on_upgrade"
+                                   value="yes"
+                                   checked
+                                   class="mr-2">
+                            <label for="prorate_on_upgrade" class="text-sm">
+                                Prorate charges when upgrading plans
+                            </label>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox"
+                                   id="prorate_on_downgrade"
+                                   name="prorate_on_downgrade"
+                                   value="yes"
+                                   checked
+                                   class="mr-2">
+                            <label for="prorate_on_downgrade" class="text-sm">
+                                Prorate credits when downgrading plans
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Display -->
+            <% if (my $errors = stash('errors')) { %>
+                <div class="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p class="text-red-800 font-medium">Please correct the following errors:</p>
+                    <ul class="mt-2 list-disc list-inside text-red-700">
+                        <% for my $error (@$errors) { %>
+                            <li><%= $error %></li>
+                        <% } %>
+                    </ul>
+                </div>
+            <% } %>
+
+            <div class="mt-8 flex justify-between">
+                <button type="button"
+                        onclick="history.back()"
+                        class="px-6 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50">
+                    Back
+                </button>
+                <button type="submit"
+                        class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    Review & Activate
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div class="mt-6">
+        <div class="flex items-center justify-between text-sm text-gray-600">
+            <span class="font-medium">Step 4 of 5</span>
+            <div class="flex space-x-2">
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleEarlyBird() {
+    const config = document.getElementById('early-bird-config');
+    const checkbox = document.getElementById('early_bird_enabled');
+    config.classList.toggle('hidden', !checkbox.checked);
+}
+
+function toggleFamilyDiscount() {
+    const config = document.getElementById('family-discount-config');
+    const checkbox = document.getElementById('family_discount_enabled');
+    config.classList.toggle('hidden', !checkbox.checked);
+}
+
+function toggleTrial() {
+    const config = document.getElementById('trial-config');
+    const checkbox = document.getElementById('trial_enabled');
+    config.classList.toggle('hidden', !checkbox.checked);
+}
+</script>

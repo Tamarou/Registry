@@ -1,0 +1,298 @@
+% layout 'workflow';
+% title 'Review and Activate Pricing Plan';
+
+<div class="max-w-5xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Create Pricing Plan</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Step 5: Review & Activate</h2>
+        <p class="text-gray-600 mb-6">Review your pricing plan configuration before activation.</p>
+
+        <% my $summary = stash('step_data')->{summary} || {}; %>
+
+        <!-- Plan Summary -->
+        <div class="space-y-6">
+            <!-- Basic Information -->
+            <div class="border-b pb-6">
+                <h3 class="text-lg font-semibold mb-4 text-blue-600">Basic Information</h3>
+                <dl class="grid grid-cols-2 gap-4">
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Plan Name</dt>
+                        <dd class="mt-1 text-sm text-gray-900"><%= $summary->{plan_name} || 'Not specified' %></dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Plan Type</dt>
+                        <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{plan_type} || 'standard') %></dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Target Audience</dt>
+                        <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{target_audience} || 'individual') %></dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Plan Scope</dt>
+                        <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{plan_scope} || 'customer') %></dd>
+                    </div>
+                    <% if ($summary->{plan_description}) { %>
+                        <div class="col-span-2">
+                            <dt class="text-sm font-medium text-gray-500">Description</dt>
+                            <dd class="mt-1 text-sm text-gray-900"><%= $summary->{plan_description} %></dd>
+                        </div>
+                    <% } %>
+                </dl>
+            </div>
+
+            <!-- Pricing Model -->
+            <div class="border-b pb-6">
+                <h3 class="text-lg font-semibold mb-4 text-blue-600">Pricing Model</h3>
+                <dl class="grid grid-cols-2 gap-4">
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Pricing Type</dt>
+                        <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{pricing_model_type} || 'fixed') %></dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Amount</dt>
+                        <dd class="mt-1 text-sm text-gray-900 font-semibold"><%= $summary->{formatted_amount} || '$0.00' %></dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Billing Frequency</dt>
+                        <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{billing_frequency} || 'monthly') %></dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Installments</dt>
+                        <dd class="mt-1 text-sm text-gray-900">
+                            <% if ($summary->{installments_allowed}) { %>
+                                <%= $summary->{installment_count} %> payments allowed
+                            <% } else { %>
+                                Not allowed
+                            <% } %>
+                        </dd>
+                    </div>
+                </dl>
+            </div>
+
+            <!-- Resource Allocation -->
+            <div class="border-b pb-6">
+                <h3 class="text-lg font-semibold mb-4 text-blue-600">Resource Allocation</h3>
+
+                <% if ($summary->{resources}) { %>
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">Service Quotas</h4>
+                    <dl class="grid grid-cols-3 gap-4 mb-4">
+                        <% if (defined $summary->{resources}{classes_per_month}) { %>
+                            <div>
+                                <dt class="text-xs font-medium text-gray-500">Classes/Month</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $summary->{resources}{classes_per_month} || 'Unlimited' %>
+                                </dd>
+                            </div>
+                        <% } %>
+                        <% if (defined $summary->{resources}{api_calls_per_day}) { %>
+                            <div>
+                                <dt class="text-xs font-medium text-gray-500">API Calls/Day</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $summary->{resources}{api_calls_per_day} %>
+                                </dd>
+                            </div>
+                        <% } %>
+                        <% if (defined $summary->{resources}{storage_gb}) { %>
+                            <div>
+                                <dt class="text-xs font-medium text-gray-500">Storage</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $summary->{resources}{storage_gb} %> GB
+                                </dd>
+                            </div>
+                        <% } %>
+                        <% if (defined $summary->{resources}{max_students}) { %>
+                            <div>
+                                <dt class="text-xs font-medium text-gray-500">Max Students</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $summary->{resources}{max_students} || 'Unlimited' %>
+                                </dd>
+                            </div>
+                        <% } %>
+                        <% if (defined $summary->{resources}{staff_accounts}) { %>
+                            <div>
+                                <dt class="text-xs font-medium text-gray-500">Staff Accounts</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $summary->{resources}{staff_accounts} %>
+                                </dd>
+                            </div>
+                        <% } %>
+                    </dl>
+
+                    <% if ($summary->{resources}{features} && @{$summary->{resources}{features}}) { %>
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">Included Features</h4>
+                        <div class="flex flex-wrap gap-2">
+                            <% for my $feature (@{$summary->{resources}{features}}) { %>
+                                <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                    <%= ucfirst($feature =~ s/_/ /gr) %>
+                                </span>
+                            <% } %>
+                        </div>
+                    <% } %>
+                <% } %>
+
+                <% if ($summary->{quotas}) { %>
+                    <h4 class="text-sm font-medium text-gray-700 mt-4 mb-2">Quota Policies</h4>
+                    <dl class="grid grid-cols-3 gap-4">
+                        <div>
+                            <dt class="text-xs font-medium text-gray-500">Reset Period</dt>
+                            <dd class="mt-1 text-sm text-gray-900">
+                                <%= ucfirst($summary->{quotas}{reset_period} || 'monthly') %>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs font-medium text-gray-500">Rollover</dt>
+                            <dd class="mt-1 text-sm text-gray-900">
+                                <%= $summary->{quotas}{rollover_allowed} ? 'Allowed' : 'Not allowed' %>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs font-medium text-gray-500">Overage Policy</dt>
+                            <dd class="mt-1 text-sm text-gray-900">
+                                <%= ucfirst($summary->{quotas}{overage_policy} || 'block') %>
+                            </dd>
+                        </div>
+                    </dl>
+                <% } %>
+            </div>
+
+            <!-- Requirements & Rules -->
+            <div class="border-b pb-6">
+                <h3 class="text-lg font-semibold mb-4 text-blue-600">Requirements & Rules</h3>
+
+                <% if ($summary->{requirements}) { %>
+                    <% my $reqs = $summary->{requirements}; %>
+                    <dl class="grid grid-cols-2 gap-4">
+                        <% if ($reqs->{early_bird_enabled}) { %>
+                            <div>
+                                <dt class="text-sm font-medium text-gray-500">Early Bird Discount</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $reqs->{early_bird_discount} %>% off until <%= $reqs->{early_bird_cutoff_date} %>
+                                </dd>
+                            </div>
+                        <% } %>
+                        <% if ($reqs->{family_discount_enabled}) { %>
+                            <div>
+                                <dt class="text-sm font-medium text-gray-500">Family Discount</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $reqs->{family_discount_amount} %>
+                                    <%= $reqs->{family_discount_type} eq 'percentage' ? '%' : '' %>
+                                    off for <%= $reqs->{min_children} %>+ members
+                                </dd>
+                            </div>
+                        <% } %>
+                    </dl>
+                <% } %>
+
+                <% if ($summary->{rules}) { %>
+                    <% my $rules = $summary->{rules}; %>
+                    <dl class="grid grid-cols-2 gap-4 mt-4">
+                        <div>
+                            <dt class="text-sm font-medium text-gray-500">Auto-Renewal</dt>
+                            <dd class="mt-1 text-sm text-gray-900">
+                                <%= $rules->{auto_renew} ? 'Enabled' : 'Disabled' %>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-sm font-medium text-gray-500">Refund Policy</dt>
+                            <dd class="mt-1 text-sm text-gray-900">
+                                <%= ucfirst($rules->{refund_policy} =~ s/_/ /gr) %>
+                            </dd>
+                        </div>
+                        <% if ($rules->{trial_enabled}) { %>
+                            <div>
+                                <dt class="text-sm font-medium text-gray-500">Trial Period</dt>
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    <%= $rules->{trial_days} %> days (<%= $rules->{trial_features} %> features)
+                                </dd>
+                            </div>
+                        <% } %>
+                    </dl>
+                <% } %>
+            </div>
+
+            <!-- Activation Options -->
+            <% if (stash('step_data')->{can_activate}) { %>
+                <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'review-activate') %>">
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <h3 class="text-lg font-semibold mb-4">Activation Options</h3>
+
+                        <div class="space-y-3">
+                            <label class="flex items-center p-3 bg-white border rounded-lg cursor-pointer hover:bg-gray-50">
+                                <input type="radio" name="action" value="activate" class="mr-3" checked>
+                                <div>
+                                    <span class="font-medium">Activate Immediately</span>
+                                    <p class="text-sm text-gray-600">Plan will be available for use right away</p>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center p-3 bg-white border rounded-lg cursor-pointer hover:bg-gray-50">
+                                <input type="radio" name="action" value="activate" class="mr-3">
+                                <div>
+                                    <span class="font-medium">Schedule Activation</span>
+                                    <p class="text-sm text-gray-600">Set a future date for plan availability</p>
+                                    <input type="date"
+                                           name="activation_date"
+                                           class="mt-2 px-3 py-1 border border-gray-300 rounded text-sm"
+                                           min="<%= DateTime->now->ymd %>">
+                                </div>
+                            </label>
+
+                            <label class="flex items-center p-3 bg-white border rounded-lg cursor-pointer hover:bg-gray-50">
+                                <input type="radio" name="action" value="save_draft" class="mr-3">
+                                <div>
+                                    <span class="font-medium">Save as Draft</span>
+                                    <p class="text-sm text-gray-600">Save plan without activating</p>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="mt-4">
+                            <label class="flex items-center">
+                                <input type="checkbox" name="requires_approval" value="yes" class="mr-2">
+                                <span class="text-sm">Require platform admin approval before activation</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Error Display -->
+                    <% if (my $errors = stash('errors')) { %>
+                        <div class="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                            <p class="text-red-800 font-medium">Please correct the following errors:</p>
+                            <ul class="mt-2 list-disc list-inside text-red-700">
+                                <% for my $error (@$errors) { %>
+                                    <li><%= $error %></li>
+                                <% } %>
+                            </ul>
+                        </div>
+                    <% } %>
+
+                    <div class="mt-8 flex justify-between">
+                        <button type="submit" name="action" value="back"
+                                class="px-6 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50">
+                            Back to Edit
+                        </button>
+                        <button type="submit"
+                                class="bg-green-600 text-white px-8 py-2 rounded hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500">
+                            Create Pricing Plan
+                        </button>
+                    </div>
+                </form>
+            <% } %>
+        </div>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div class="mt-6">
+        <div class="flex items-center justify-between text-sm text-gray-600">
+            <span class="font-medium">Step 5 of 5</span>
+            <div class="flex space-x-2">
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+            </div>
+        </div>
+    </div>
+</div>

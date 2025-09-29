@@ -1,0 +1,188 @@
+% layout 'workflow';
+% title 'Pricing Model Configuration';
+
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Create Pricing Plan</h1>
+
+    <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-2xl font-semibold mb-4">Step 2: Pricing Model</h2>
+        <p class="text-gray-600 mb-6">Configure how customers will be charged for this plan.</p>
+
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'pricing-model') %>"
+              id="pricing-model-form">
+
+            <div class="space-y-6">
+                <!-- Pricing Type -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Pricing Type <span class="text-red-500">*</span>
+                    </label>
+                    <select id="pricing_model_type"
+                            name="pricing_model_type"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            required
+                            hx-post="/htmx/pricing-type-config"
+                            hx-target="#pricing-config"
+                            hx-trigger="change">
+                        <option value="">Select pricing type...</option>
+                        <% my $types = stash('step_data')->{pricing_model_types} || []; %>
+                        <% for my $type (@$types) { %>
+                            <option value="<%= $type->{value} %>"><%= $type->{label} %> - <%= $type->{description} %></option>
+                        <% } %>
+                    </select>
+                </div>
+
+                <!-- Dynamic Pricing Configuration -->
+                <div id="pricing-config">
+                    <!-- Fixed Pricing (default) -->
+                    <div class="space-y-4 p-4 bg-gray-50 rounded-lg">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label for="base_amount" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Base Amount <span class="text-red-500">*</span>
+                                </label>
+                                <input type="number"
+                                       id="base_amount"
+                                       name="base_amount"
+                                       step="0.01"
+                                       min="0"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="0.00">
+                            </div>
+                            <div>
+                                <label for="currency" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Currency <span class="text-red-500">*</span>
+                                </label>
+                                <select id="currency"
+                                        name="currency"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        required>
+                                    <% my $currencies = stash('step_data')->{currencies} || []; %>
+                                    <% for my $curr (@$currencies) { %>
+                                        <option value="<%= $curr->{value} %>" <%= $curr->{value} eq 'USD' ? 'selected' : '' %>>
+                                            <%= $curr->{label} %>
+                                        </option>
+                                    <% } %>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="billing_frequency" class="block text-sm font-medium text-gray-700 mb-2">
+                                Billing Frequency
+                            </label>
+                            <select id="billing_frequency"
+                                    name="billing_frequency"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <% my $frequencies = stash('step_data')->{billing_frequencies} || []; %>
+                                <% for my $freq (@$frequencies) { %>
+                                    <option value="<%= $freq->{value} %>"><%= $freq->{label} %></option>
+                                <% } %>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Installment Options -->
+                <div class="p-4 border rounded-lg">
+                    <div class="flex items-center mb-4">
+                        <input type="checkbox"
+                               id="installments_allowed"
+                               name="installments_allowed"
+                               value="1"
+                               class="mr-2"
+                               hx-post="/htmx/installments-toggle"
+                               hx-target="#installments-config"
+                               hx-trigger="change">
+                        <label for="installments_allowed" class="font-medium">
+                            Allow Installment Payments
+                        </label>
+                    </div>
+                    <div id="installments-config" class="hidden">
+                        <div>
+                            <label for="installment_count" class="block text-sm font-medium text-gray-700 mb-2">
+                                Number of Installments
+                            </label>
+                            <input type="number"
+                                   id="installment_count"
+                                   name="installment_count"
+                                   min="2"
+                                   max="12"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="e.g., 3">
+                            <p class="mt-1 text-sm text-gray-500">Split payment into this many equal parts</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advanced Pricing Options (for percentage, tiered, etc.) -->
+                <div id="advanced-pricing" class="hidden">
+                    <!-- This section will be populated dynamically based on pricing type selection -->
+                </div>
+            </div>
+
+            <!-- Error Display -->
+            <% if (my $errors = stash('errors')) { %>
+                <div class="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p class="text-red-800 font-medium">Please correct the following errors:</p>
+                    <ul class="mt-2 list-disc list-inside text-red-700">
+                        <% for my $error (@$errors) { %>
+                            <li><%= $error %></li>
+                        <% } %>
+                    </ul>
+                </div>
+            <% } %>
+
+            <div class="mt-8 flex justify-between">
+                <button type="button"
+                        onclick="history.back()"
+                        class="px-6 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50">
+                    Back
+                </button>
+                <button type="submit"
+                        class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    Continue to Resource Allocation
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div class="mt-6">
+        <div class="flex items-center justify-between text-sm text-gray-600">
+            <span class="font-medium">Step 2 of 5</span>
+            <div class="flex space-x-2">
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-blue-500 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+                <div class="w-8 h-2 bg-gray-300 rounded"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Toggle installments configuration
+document.getElementById('installments_allowed').addEventListener('change', function() {
+    const config = document.getElementById('installments-config');
+    if (this.checked) {
+        config.classList.remove('hidden');
+    } else {
+        config.classList.add('hidden');
+    }
+});
+
+// Dynamic pricing type configuration
+document.getElementById('pricing_model_type').addEventListener('change', function() {
+    // This would normally be handled by HTMX, but adding basic JS for fallback
+    const advancedSection = document.getElementById('advanced-pricing');
+    const basicConfig = document.getElementById('pricing-config');
+
+    if (this.value === 'percentage' || this.value === 'tiered' || this.value === 'usage_based') {
+        advancedSection.classList.remove('hidden');
+    } else {
+        advancedSection.classList.add('hidden');
+    }
+});
+</script>
