@@ -35,3 +35,4 @@ drop-transfer-business-rules [fix-multi-child-enrollments] 2025-09-18T00:00:00Z 
 remove-waitlist-position-constraint [fix-waitlist-reorder-v3] 2025-09-21T00:00:00Z Claude <noreply@anthropic.com> # Remove unique constraint on waitlist position to allow status-based visibility
 installment-payment-schedules [payments] 2025-09-23T03:35:05Z Chris Prather <chris.prather@tamarou.com> # Add payment schedules and scheduled payments for installment processing
 simplify-installment-schema-for-stripe [installment-payment-schedules] 2025-09-24T18:00:00Z Claude <noreply@anthropic.com> # Simplify database schema to use Stripe native scheduling and retry features
+unified-pricing-infrastructure 2025-09-29T00:44:03Z Chris Prather <chris.prather@tamarou.com> # Add unified tenant-to-tenant pricing infrastructure
