@@ -18,7 +18,7 @@ use Test::Registry::Fixtures;
 # These modules don't exist yet - they will fail until implemented
 # use Registry::PriceOps::UnifiedPricingEngine;
 # use Registry::PriceOps::TenantRelationships;
-# use Registry::DAO::TenantPricingRelationship;
+# use Registry::DAO::PricingRelationship;
 # use Registry::DAO::BillingPeriod;
 
 # Setup test database
@@ -85,7 +85,7 @@ subtest 'Plan switching with relationship preservation' => sub {
 };
 
 subtest 'Billing period constraints' => sub {
-    plan skip_all => "BillingPeriod and TenantPricingRelationship DAOs not yet implemented";
+    plan skip_all => "BillingPeriod and PricingRelationship DAOs not yet implemented";
 };
 
 subtest 'Multiple concurrent pricing relationships' => sub {

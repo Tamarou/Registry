@@ -110,7 +110,7 @@ method create_pricing_plan ($offering_tenant, $configuration) {
 
 # Business Logic: Switch a relationship to a new plan
 method process_plan_switch ($relationship_id, $new_plan_id) {
-    my $relationship = Registry::DAO::TenantPricingRelationship->find_by_id($db, $relationship_id);
+    my $relationship = Registry::DAO::PricingRelationship->find_by_id($db, $relationship_id);
     die "Relationship not found: $relationship_id" unless $relationship;
 
     # Get new plan
@@ -161,16 +161,16 @@ method get_available_plans_for_tenant ($tenant_id, $filters = {}) {
 method get_tenant_relationships ($tenant_id, $include_inactive = 0) {
     my $where = {
         -or => [
-            {payer_tenant_id => $tenant_id},
-            {payee_tenant_id => $tenant_id},
+            {provider_id => $tenant_id},
+            {consumer_id => $tenant_id},
         ],
     };
 
     unless ($include_inactive) {
-        $where->{is_active} = 1;
+        $where->{status} = ['active', 'pending'];
     }
 
-    my @relationships = Registry::DAO::TenantPricingRelationship->find($db, $where);
+    my @relationships = Registry::DAO::PricingRelationship->find($db, $where);
     return \@relationships;
 }
 
