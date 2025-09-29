@@ -37,3 +37,4 @@ installment-payment-schedules [payments] 2025-09-23T03:35:05Z Chris Prather <chr
 simplify-installment-schema-for-stripe [installment-payment-schedules] 2025-09-24T18:00:00Z Claude <noreply@anthropic.com> # Simplify database schema to use Stripe native scheduling and retry features
 unified-pricing-infrastructure 2025-09-29T00:44:03Z Chris Prather <chris.prather@tamarou.com> # Add unified tenant-to-tenant pricing infrastructure
 consolidate-pricing-relationships [unified-pricing-infrastructure] 2025-09-29T16:07:15Z Chris Prather <chris.prather@tamarou.com> # Consolidate pricing relationships into unified model
+pricing-relationship-events [consolidate-pricing-relationships] 2025-09-29T19:55:59Z Chris Prather <chris.prather@tamarou.com> # Add event sourcing for pricing relationship audit trail

@@ -1,17 +1,18 @@
-# ABOUTME: Manages unified pricing relationships for platform, B2C, and B2B
-# ABOUTME: Handles establishment, modification, and termination of all pricing relationships
+# ABOUTME: Manages unified pricing relationships with complete event sourcing audit trail
+# ABOUTME: Handles platform, B2C, and B2B relationships with compliance tracking
 
 use 5.40.2;
 use warnings;
 use experimental 'signatures', 'try', 'builtin';
 
 use Object::Pad;
-class Registry::PriceOps::TenantRelationships {
+class Registry::PriceOps::PricingRelationships {
 
 use Registry::DAO::PricingRelationship;
 use Registry::DAO::BillingPeriod;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::User;
+use Registry::DAO::PricingRelationshipEvent;
 
 # Static method to establish a new relationship
 # Now accepts either tenant IDs (for B2B) or user IDs (for B2C/platform)
@@ -79,6 +80,19 @@ sub establish_relationship ($db, $provider, $consumer, $plan, $type = 'auto') {
         status => 'active',
     });
 
+    # Record creation event for audit trail
+    Registry::DAO::PricingRelationshipEvent->record_creation(
+        $db,
+        $relationship->id,
+        $consumer_id,  # Actor is the consumer initiating the relationship
+        {
+            provider_id => $provider,
+            consumer_id => $consumer_id,
+            pricing_plan_id => $plan,
+            relationship_type => $type,
+        }
+    );
+
     return $relationship;
 }
 
@@ -113,26 +127,90 @@ sub handle_relationship_changes ($db, $relationship_id, $changes) {
 
     if ($changes->{action} eq 'cancel') {
         $relationship->cancel($db);
+
+        # Record termination event
+        Registry::DAO::PricingRelationshipEvent->record_termination(
+            $db,
+            $relationship_id,
+            $changes->{actor_id} || $relationship->consumer_id,
+            $changes->{reason} || 'User requested cancellation'
+        );
+
         return {status => 'cancelled', relationship => $relationship};
     }
     elsif ($changes->{action} eq 'upgrade' || $changes->{action} eq 'downgrade') {
+        my $old_plan_id = $relationship->pricing_plan_id;
+
         # Update to new plan
         $relationship->update($db, {
             pricing_plan_id => $changes->{new_plan_id},
         });
+
+        # Record plan change event
+        Registry::DAO::PricingRelationshipEvent->record_plan_change(
+            $db,
+            $relationship_id,
+            $changes->{actor_id} || $relationship->consumer_id,
+            $old_plan_id,
+            $changes->{new_plan_id},
+            $changes->{reason} || "Customer ${\$changes->{action}}"
+        );
+
         return {status => 'updated', relationship => $relationship};
     }
     elsif ($changes->{action} eq 'pause') {
         $relationship->suspend($db);
+
+        # Record suspension event
+        Registry::DAO::PricingRelationshipEvent->record_suspension(
+            $db,
+            $relationship_id,
+            $changes->{actor_id} || $relationship->consumer_id,
+            $changes->{reason} || 'User requested pause'
+        );
+
         return {status => 'suspended', relationship => $relationship};
     }
     elsif ($changes->{action} eq 'resume') {
         $relationship->activate($db);
+
+        # Record activation event
+        Registry::DAO::PricingRelationshipEvent->record_activation(
+            $db,
+            $relationship_id,
+            $changes->{actor_id} || $relationship->consumer_id,
+            $changes->{reason} || 'User requested resumption'
+        );
+
         return {status => 'active', relationship => $relationship};
     }
     else {
         die "Unknown action: $changes->{action}";
     }
+}
+
+# Get complete audit trail for a relationship
+sub get_audit_trail ($db, $relationship_id) {
+    return Registry::DAO::PricingRelationshipEvent->get_audit_trail($db, $relationship_id);
+}
+
+# Check if a state transition is valid
+sub can_transition_state ($db, $relationship_id, $from_state, $to_state) {
+    return Registry::DAO::PricingRelationshipEvent->can_transition(
+        $db,
+        $relationship_id,
+        $from_state,
+        $to_state
+    );
+}
+
+# Get relationship state at a specific point in time
+sub get_relationship_state_at ($db, $relationship_id, $timestamp) {
+    return Registry::DAO::PricingRelationshipEvent->get_state_at_time(
+        $db,
+        $relationship_id,
+        $timestamp
+    );
 }
 
 

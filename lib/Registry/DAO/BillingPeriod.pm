@@ -3,11 +3,12 @@
 
 use 5.40.2;
 use utf8;
-use experimental qw(try keyword_any);
+use experimental qw(try);
 use Object::Pad;
 
 class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
     use Carp qw( croak );
+    use List::Util qw( any );
     use Mojo::JSON qw( decode_json encode_json );
 
     field $id :param :reader;

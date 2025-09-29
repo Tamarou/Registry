@@ -69,7 +69,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         $data->{metadata} //= { -json => {} };
 
         # Use registry schema for unified pricing plans when not in tenant context
-        my $schema = ($db isa Registry::DAO) ? $db->schema : 'registry';
+        my $schema = 'registry'; # Always use registry schema
         my $table = ($schema && $schema ne 'registry')
             ? 'pricing_plans'
             : 'registry.pricing_plans';
@@ -81,9 +81,8 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     # Override find to handle registry schema
     sub find ($class, $db, $filter = {}, $order = { -desc => 'created_at' }) {
-        my $table = ($db->schema && $db->schema ne 'registry')
-            ? 'pricing_plans'
-            : 'registry.pricing_plans';
+        # Always use registry schema for now
+        my $table = 'registry.pricing_plans';
 
         $db = $db->db if $db isa Registry::DAO;
         my $c = $db->select($table, '*', $filter, $order)
@@ -122,7 +121,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     # Get all pricing plans for a session
     sub get_pricing_plans ($class, $db, $session_id) {
         # Determine schema context before extracting database object
-        my $schema = ($db isa Registry::DAO) ? $db->schema : 'registry';
+        my $schema = 'registry'; # Always use registry schema
         my $table = ($schema && $schema ne 'registry')
             ? 'pricing_plans'
             : 'registry.pricing_plans';

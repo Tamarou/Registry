@@ -17,7 +17,7 @@ use Test::Registry::Fixtures;
 
 # These modules don't exist yet - they will fail until implemented
 # use Registry::PriceOps::UnifiedPricingEngine;
-# use Registry::PriceOps::TenantRelationships;
+# use Registry::PriceOps::PricingRelationships;
 # use Registry::DAO::PricingRelationship;
 # use Registry::DAO::BillingPeriod;
 
@@ -77,7 +77,7 @@ subtest 'Calculate billing for percentage-based pricing' => sub {
 };
 
 subtest 'Cross-tenant service relationships' => sub {
-    plan skip_all => "TenantRelationships module not yet implemented";
+    plan skip_all => "PricingRelationships module not yet implemented";
 };
 
 subtest 'Plan switching with relationship preservation' => sub {
