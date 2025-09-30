@@ -1,0 +1,295 @@
+% extends 'layouts/workflow';
+% title 'Choose Your Plan';
+% my $data = stash('data') || {};
+% my $pricing_plans = $data->{pricing_plans} || [];
+% my $org_info = $data->{organization_info} || {};
+% my $errors = stash('errors') || [];
+
+<section data-component="container">
+  <header>
+    <h1>Choose Your Plan</h1>
+    <p>
+      Select the Registry plan that best fits your organization's needs. You can upgrade or downgrade at any time.
+    </p>
+  </header>
+
+  % if (@$errors) {
+    <div data-component="alert" data-variant="error" role="alert">
+      <h4>Please fix the following:</h4>
+      % for my $error (@$errors) {
+        <p><%= $error %></p>
+      % }
+    </div>
+  % }
+
+  % if ($org_info->{organization_name}) {
+    <div data-component="card" data-variant="info">
+      <div>
+        <h3><%= $org_info->{organization_name} %></h3>
+        % if ($org_info->{admin_email}) {
+          <p>Admin: <%= $org_info->{admin_email} %></p>
+        % }
+        % if ($org_info->{subdomain}) {
+          <p>URL: <strong><%= $org_info->{subdomain} %>.registry.com</strong></p>
+        % }
+      </div>
+    </div>
+  % }
+
+  <form method="POST" action="<%= $action %>"
+        hx-post="<%= $action %>"
+        hx-target="#form-errors"
+        hx-indicator="#form-spinner">
+
+    <div data-component="pricing-plans" data-layout="grid">
+      % for my $plan (@$pricing_plans) {
+        <article data-component="pricing-card"
+                 data-plan="<%= $plan->{plan_name} %>"
+                 <%= $plan->{metadata}->{suitable_for} eq 'medium_programs' ? 'data-featured="true"' : '' %>>
+
+          <header>
+            <h3><%= $plan->{plan_name} %></h3>
+            % if ($plan->{pricing_configuration}->{description}) {
+              <p class="plan-description"><%= $plan->{pricing_configuration}->{description} %></p>
+            % }
+          </header>
+
+          <div class="plan-pricing">
+            <span class="price-amount"><%= $plan->{formatted_price} %></span>
+            % if ($plan->{pricing_configuration}->{billing_cycle}) {
+              <span class="price-period">/<%= $plan->{pricing_configuration}->{billing_cycle} %></span>
+            % }
+
+            % if ($plan->{pricing_configuration}->{trial_days}) {
+              <div class="trial-info">
+                <span data-component="badge" data-variant="success">
+                  <%= $plan->{pricing_configuration}->{trial_days} %>-day free trial
+                </span>
+              </div>
+            % }
+          </div>
+
+          % if ($plan->{pricing_configuration}->{features}) {
+            <ul class="plan-features">
+              % for my $feature (@{$plan->{pricing_configuration}->{features}}) {
+                <li>
+                  <span class="feature-icon">✓</span>
+                  <span><%= $feature %></span>
+                </li>
+              % }
+            </ul>
+          % }
+
+          <div class="plan-action">
+            <label class="plan-selector">
+              <input type="radio"
+                     name="selected_plan_id"
+                     value="<%= $plan->{id} %>"
+                     required />
+              <span class="plan-select-button" data-variant="primary" data-size="lg">
+                Select <%= $plan->{plan_name} %>
+              </span>
+            </label>
+          </div>
+
+          % if ($plan->{metadata}->{suitable_for} eq 'medium_programs') {
+            <div class="plan-badge">
+              <span data-component="badge" data-variant="primary">Most Popular</span>
+            </div>
+          % }
+        </article>
+      % }
+    </div>
+
+    <div id="form-errors"></div>
+
+    <div data-component="form-actions">
+      <div id="form-spinner" class="htmx-indicator">
+        <div data-component="spinner"></div>
+        <span>Processing...</span>
+      </div>
+      <button type="submit" data-variant="primary" data-size="lg">
+        Continue to Payment
+        <span>→</span>
+      </button>
+    </div>
+  </form>
+</section>
+
+<style>
+[data-component="pricing-plans"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  margin: 2rem 0;
+}
+
+[data-component="pricing-card"] {
+  position: relative;
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 0.75rem;
+  padding: 2rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+[data-component="pricing-card"]:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+[data-component="pricing-card"][data-featured="true"] {
+  border-color: #3b82f6;
+  box-shadow: 0 10px 25px rgba(59, 130, 246, 0.15);
+  scale: 1.05;
+}
+
+[data-component="pricing-card"] header h3 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.5rem 0;
+}
+
+.plan-description {
+  color: #6b7280;
+  font-size: 0.875rem;
+  margin: 0 0 1.5rem 0;
+}
+
+.plan-pricing {
+  margin: 1.5rem 0;
+  text-align: center;
+}
+
+.price-amount {
+  font-size: 3rem;
+  font-weight: 800;
+  color: #111827;
+  line-height: 1;
+}
+
+.price-period {
+  font-size: 1rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.trial-info {
+  margin-top: 0.5rem;
+}
+
+.plan-features {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0;
+}
+
+.plan-features li {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0;
+  color: #374151;
+}
+
+.feature-icon {
+  color: #10b981;
+  font-weight: 700;
+  margin-right: 0.75rem;
+  font-size: 1.1rem;
+}
+
+.plan-action {
+  margin-top: 2rem;
+}
+
+.plan-selector {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+}
+
+.plan-selector input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.plan-select-button {
+  display: block;
+  width: 100%;
+  padding: 1rem;
+  text-align: center;
+  background: #f3f4f6;
+  border: 2px solid #e5e7eb;
+  border-radius: 0.5rem;
+  color: #374151;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.plan-selector input[type="radio"]:checked + .plan-select-button {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.plan-selector:hover .plan-select-button {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+}
+
+.plan-selector input[type="radio"]:checked + .plan-select-button:hover {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.plan-badge {
+  position: absolute;
+  top: -0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  [data-component="pricing-plans"] {
+    grid-template-columns: 1fr;
+  }
+
+  [data-component="pricing-card"][data-featured="true"] {
+    scale: 1;
+  }
+
+  .price-amount {
+    font-size: 2.5rem;
+  }
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Add visual feedback when plans are selected
+  const planCards = document.querySelectorAll('[data-component="pricing-card"]');
+  const radioButtons = document.querySelectorAll('input[name="selected_plan_id"]');
+
+  radioButtons.forEach(radio => {
+    radio.addEventListener('change', function() {
+      // Remove selected state from all cards
+      planCards.forEach(card => {
+        card.style.borderColor = '#e5e7eb';
+        card.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.1)';
+      });
+
+      // Add selected state to chosen card
+      if (this.checked) {
+        const selectedCard = this.closest('[data-component="pricing-card"]');
+        selectedCard.style.borderColor = '#3b82f6';
+        selectedCard.style.boxShadow = '0 10px 25px rgba(59, 130, 246, 0.25)';
+      }
+    });
+  });
+});
+</script>

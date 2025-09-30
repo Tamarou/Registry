@@ -113,26 +113,60 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     }
 
     method get_subscription_config($db) {
-        # This could be stored in database configuration table, but for now use defaults
-        # In production, this would be configurable via admin interface
+        # Get selected pricing plan from workflow data
+        my $workflow = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
+        my $selected_plan;
+
+        # Check if we have a run and it has pricing plan data
+        if ($run && $run->data && $run->data->{selected_pricing_plan}) {
+            $selected_plan = $run->data->{selected_pricing_plan};
+        }
+
+        # If no plan selected, fall back to default (for backwards compatibility)
+        unless ($selected_plan) {
+            return {
+                plan_name => 'Registry Professional',
+                monthly_amount => 20000, # $200.00 in cents
+                currency => 'usd',
+                trial_days => 30,
+                description => 'Complete after-school program management solution',
+                features => [
+                    'Unlimited student enrollments',
+                    'Attendance tracking and reporting',
+                    'Parent communication tools',
+                    'Payment processing',
+                    'Waitlist management',
+                    'Staff scheduling',
+                    'Custom reporting'
+                ],
+                billing_cycle => 'monthly',
+                formatted_price => '$200.00/month'
+            };
+        }
+
+        # Use selected plan configuration
+        my $config = $selected_plan->{pricing_configuration} || {};
         return {
-            plan_name => 'Registry Professional',
-            monthly_amount => 20000, # $200.00 in cents
-            currency => 'usd',
-            trial_days => 30,
-            description => 'Complete after-school program management solution',
-            features => [
-                'Unlimited student enrollments',
-                'Attendance tracking and reporting', 
-                'Parent communication tools',
-                'Payment processing',
-                'Waitlist management',
-                'Staff scheduling',
-                'Custom reporting'
-            ],
-            billing_cycle => 'monthly',
-            formatted_price => '$200.00/month'
+            plan_name => $selected_plan->{plan_name},
+            monthly_amount => $selected_plan->{amount},
+            currency => lc($selected_plan->{currency} || 'usd'),
+            trial_days => $config->{trial_days} || 30,
+            description => $config->{description} || $selected_plan->{plan_name},
+            features => $config->{features} || [],
+            billing_cycle => $config->{billing_cycle} || 'monthly',
+            formatted_price => $self->format_price_for_display($selected_plan->{amount}, $selected_plan->{currency})
         };
+    }
+
+    method format_price_for_display($amount_cents, $currency) {
+        my $amount_dollars = $amount_cents / 100;
+
+        if (uc($currency) eq 'USD') {
+            return sprintf('$%.0f/month', $amount_dollars);
+        }
+
+        return sprintf('%.0f %s/month', $amount_dollars, uc($currency));
     }
 
     method create_setup_intent($db, $run, $form_data) {
