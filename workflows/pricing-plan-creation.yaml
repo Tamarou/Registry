@@ -11,25 +11,21 @@ steps:
     template: pricing-plan-creation/plan-basics
     outcome-definition: Plan Basics
     class: Registry::DAO::WorkflowSteps::PricingPlanBasics
-    next_step: pricing-model
 
   - slug: pricing-model
     template: pricing-plan-creation/pricing-model
     outcome-definition: Pricing Model Configuration
     class: Registry::DAO::WorkflowSteps::PricingModel
-    next_step: resource-allocation
 
   - slug: resource-allocation
     template: pricing-plan-creation/resource-allocation
     outcome-definition: Resource Allocation
     class: Registry::DAO::WorkflowSteps::ResourceAllocation
-    next_step: requirements-rules
 
   - slug: requirements-rules
     template: pricing-plan-creation/requirements-rules
     outcome-definition: Requirements and Rules
     class: Registry::DAO::WorkflowSteps::RequirementsRules
-    next_step: review-activate
 
   - slug: review-activate
     template: pricing-plan-creation/review-activate
