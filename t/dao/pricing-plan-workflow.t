@@ -358,10 +358,10 @@ subtest 'Step 5: Review and Activate' => sub {
 };
 
 subtest 'Integration: Complete Workflow Flow' => sub {
-    use Registry::WorkflowProcessor;
+    use Registry::Utility::WorkflowProcessor;
 
     # Create a fresh workflow run
-    my $processor = Registry::WorkflowProcessor->new(dao => $fixtures->dao);
+    my $processor = Registry::Utility::WorkflowProcessor->new(dao => $fixtures->dao);
     my $integration_run = $processor->new_run($workflow, {});
 
     ok($integration_run, 'Workflow run created');
