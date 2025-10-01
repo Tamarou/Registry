@@ -118,7 +118,7 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
                     activation_date => $options->{activation_date},
                     draft => $options->{draft},
                     requires_approval => $options->{requires_approval},
-                    created_by_workflow => $workflow->id,
+                    created_by_workflow => $self->workflow($db)->id,
                     created_by_run => $run->id,
                 }
             });
