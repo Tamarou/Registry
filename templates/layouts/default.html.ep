@@ -54,15 +54,31 @@
             }
         }
 
-        // Load saved theme preference on page load
+        // Load theme preference (system preference or saved override)
         window.addEventListener('DOMContentLoaded', function() {
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            document.body.setAttribute('data-theme', savedTheme);
+            // Check if user has manually set a preference, otherwise use system preference
+            const savedTheme = localStorage.getItem('theme');
+            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
+
+            document.body.setAttribute('data-theme', theme);
 
             const icon = document.getElementById('theme-icon');
             if (icon) {
-                icon.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+                icon.textContent = theme === 'light' ? '🌙' : '☀️';
             }
+
+            // Listen for system theme changes (only if user hasn't manually set a preference)
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+                if (!localStorage.getItem('theme')) {
+                    const newTheme = e.matches ? 'dark' : 'light';
+                    document.body.setAttribute('data-theme', newTheme);
+                    const icon = document.getElementById('theme-icon');
+                    if (icon) {
+                        icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+                    }
+                }
+            });
         });
     </script>
 </body>

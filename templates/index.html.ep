@@ -186,16 +186,31 @@
     localStorage.setItem('landing-theme', newTheme);
   }
 
-  // Load saved theme preference
+  // Load theme preference (system preference or saved override)
   window.addEventListener('DOMContentLoaded', function() {
-    const savedTheme = localStorage.getItem('landing-theme') || 'light';
     const landingPage = document.querySelector('.landing-page');
     const icon = document.getElementById('landing-theme-icon');
 
+    // Check if user has manually set a preference, otherwise use system preference
+    const savedTheme = localStorage.getItem('landing-theme');
+    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
+
     if (landingPage && icon) {
-      landingPage.setAttribute('data-landing-theme', savedTheme);
-      icon.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+      landingPage.setAttribute('data-landing-theme', theme);
+      icon.textContent = theme === 'light' ? '🌙' : '☀️';
     }
+
+    // Listen for system theme changes (only if user hasn't manually set a preference)
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+      if (!localStorage.getItem('landing-theme')) {
+        const newTheme = e.matches ? 'dark' : 'light';
+        if (landingPage && icon) {
+          landingPage.setAttribute('data-landing-theme', newTheme);
+          icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+        }
+      }
+    });
   });
 
   // Add optimized parallax effect to floating shapes using requestAnimationFrame

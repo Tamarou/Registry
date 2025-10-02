@@ -1,26 +1,33 @@
-<form action="<%= $action %>">
-    <h2>Basic Workflow Information</h2>
-    <div class="form-group">
-        <label for="name">Workflow Name:</label>
-        <input type="text" id="name" name="name" placeholder="Example: User Registration" required />
-    </div>
-    
-    <div class="form-group">
-        <label for="slug">Workflow Slug:</label>
-        <input type="text" id="slug" name="slug" placeholder="example: user-registration" required />
-        <small>Used in URLs. Use lowercase letters, numbers, and hyphens only.</small>
-    </div>
-    
-    <div class="form-group">
-        <label for="description">Description:</label>
-        <textarea id="description" name="description" placeholder="Describe the purpose of this workflow" rows="3"></textarea>
-    </div>
-    
-    <h2>Workflow Steps</h2>
-    
-    <div id="steps-container">
-        <div class="step" data-step-index="0">
-            <h3>Step 1</h3>
+% extends 'layouts/workflow';
+% title 'Create New Workflow';
+
+<form action="<%= $action %>" method="POST">
+    <fieldset>
+        <legend>Basic Workflow Information</legend>
+
+        <div class="form-group">
+            <label for="name">Workflow Name:</label>
+            <input type="text" id="name" name="name" placeholder="Example: User Registration" required />
+        </div>
+
+        <div class="form-group">
+            <label for="slug">Workflow Slug:</label>
+            <input type="text" id="slug" name="slug" placeholder="example: user-registration" required />
+            <small>Used in URLs. Use lowercase letters, numbers, and hyphens only.</small>
+        </div>
+
+        <div class="form-group">
+            <label for="description">Description:</label>
+            <textarea id="description" name="description" placeholder="Describe the purpose of this workflow" rows="3"></textarea>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Workflow Steps</legend>
+
+        <div id="steps-container">
+            <div class="step" data-step-index="0">
+                <h3>Step 1</h3>
             
             <div class="form-group">
                 <label for="step-0-slug">Step Slug:</label>
@@ -41,19 +48,19 @@
                 <label for="step-0-class">Step Class:</label>
                 <select id="step-0-class" name="steps[0][class]">
                     <option value="Registry::DAO::WorkflowStep">Registry::DAO::WorkflowStep (Standard)</option>
-                    <option value="Registry::DAO::CreateUser">Registry::DAO::CreateUser</option>
-                    <option value="Registry::DAO::CreateProject">Registry::DAO::CreateProject</option>
-                    <option value="Registry::DAO::CreateEvent">Registry::DAO::CreateEvent</option>
-                    <option value="Registry::DAO::CreateSession">Registry::DAO::CreateSession</option>
+                    <option value="Registry::DAO::WorkflowSteps::CreateUser">Registry::DAO::WorkflowSteps::CreateUser</option>
+                    <option value="Registry::DAO::WorkflowSteps::CreateProject">Registry::DAO::WorkflowSteps::CreateProject</option>
+                    <option value="Registry::DAO::WorkflowSteps::CreateEvent">Registry::DAO::WorkflowSteps::CreateEvent</option>
+                    <option value="Registry::DAO::WorkflowSteps::CreateSession">Registry::DAO::WorkflowSteps::CreateSession</option>
                 </select>
             </div>
         </div>
-    </div>
-    
-    <button type="button" id="add-step">Add Another Step</button>
-    
+    </fieldset>
+
+    <button type="button" id="add-step" data-variant="outline">Add Another Step</button>
+
     <div class="form-actions">
-        <input type="submit" value="Create Workflow" />
+        <button type="submit" data-variant="primary">Create Workflow</button>
     </div>
 </form>
 
@@ -91,10 +98,10 @@
                     <label for="step-${stepIndex}-class">Step Class:</label>
                     <select id="step-${stepIndex}-class" name="steps[${stepIndex}][class]">
                         <option value="Registry::DAO::WorkflowStep">Registry::DAO::WorkflowStep (Standard)</option>
-                        <option value="Registry::DAO::CreateUser">Registry::DAO::CreateUser</option>
-                        <option value="Registry::DAO::CreateProject">Registry::DAO::CreateProject</option>
-                        <option value="Registry::DAO::CreateEvent">Registry::DAO::CreateEvent</option>
-                        <option value="Registry::DAO::CreateSession">Registry::DAO::CreateSession</option>
+                        <option value="Registry::DAO::WorkflowSteps::CreateUser">Registry::DAO::WorkflowSteps::CreateUser</option>
+                        <option value="Registry::DAO::WorkflowSteps::CreateProject">Registry::DAO::WorkflowSteps::CreateProject</option>
+                        <option value="Registry::DAO::WorkflowSteps::CreateEvent">Registry::DAO::WorkflowSteps::CreateEvent</option>
+                        <option value="Registry::DAO::WorkflowSteps::CreateSession">Registry::DAO::WorkflowSteps::CreateSession</option>
                     </select>
                 </div>
                 
