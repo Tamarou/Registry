@@ -4,18 +4,66 @@
     <title><%= title || 'Registry' %></title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Design System CSS -->
+    <link rel="stylesheet" href="/css/design-system.css">
+    <link rel="stylesheet" href="/css/components.css">
     <link rel="stylesheet" href="/css/style.css">
 
     <%= content 'head' %>
 </head>
-<body>
-    <div class="container">
-        <header class="mb-8">
-            <h1><%= title || 'Registry' %></h1>
-        </header>
-        <main>
-            <%= content %>
-        </main>
-    </div>
+<body data-theme="light">
+    <!-- Background Effects (optional - can be enabled per page) -->
+    <% if (stash('enable_background_effects')) { %>
+        <div class="grid-background"></div>
+        <div class="floating-shapes">
+            <div class="shape shape-1"></div>
+            <div class="shape shape-2"></div>
+        </div>
+    <% } %>
+
+    <% if (stash('no_container')) { %>
+        <%= content %>
+    <% } else { %>
+        <div class="container">
+            <header class="mb-8">
+                <h1><%= title || 'Registry' %></h1>
+            </header>
+            <main>
+                <%= content %>
+            </main>
+        </div>
+    <% } %>
+
+    <script>
+        // Theme toggle functionality for default layout
+        function toggleTheme() {
+            const body = document.body;
+            const currentTheme = body.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+
+            body.setAttribute('data-theme', newTheme);
+
+            // Save preference
+            localStorage.setItem('theme', newTheme);
+
+            // Update theme icon if present
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+            }
+        }
+
+        // Load saved theme preference on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.body.setAttribute('data-theme', savedTheme);
+
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+            }
+        });
+    </script>
 </body>
 </html>

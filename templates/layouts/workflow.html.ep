@@ -4,10 +4,24 @@
     <title><%= title || 'Registry Workflow' %></title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Design System CSS -->
+    <link rel="stylesheet" href="/css/design-system.css">
+    <link rel="stylesheet" href="/css/components.css">
     <link rel="stylesheet" href="/css/structure.css">
+
+    <!-- Note: All workflow styles now in /css/design-system.css and /css/components.css -->
     <%= content 'head' %>
 </head>
-<body data-layout="workflow">
+<body data-layout="workflow" data-theme="light">
+    <!-- Navigation bar -->
+    <nav class="workflow-nav">
+        <div class="workflow-logo">REGISTRY</div>
+        <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+            <span id="theme-icon">🌙</span>
+        </button>
+    </nav>
+
     <main data-component="workflow-container"
           data-current-step="<%= stash('current_step') || 1 %>"
           data-total-steps="<%= stash('total_steps') || 1 %>"
@@ -51,6 +65,28 @@
 
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="/js/components/workflow-progress.js"></script>
+    <script>
+        // Theme toggle functionality
+        function toggleTheme() {
+            const body = document.body;
+            const currentTheme = body.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            const icon = document.getElementById('theme-icon');
+
+            body.setAttribute('data-theme', newTheme);
+            icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+
+            // Save preference
+            localStorage.setItem('theme', newTheme);
+        }
+
+        // Load saved theme preference
+        window.addEventListener('load', () => {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.body.setAttribute('data-theme', savedTheme);
+            document.getElementById('theme-icon').textContent = savedTheme === 'light' ? '🌙' : '☀️';
+        });
+    </script>
     <%= content 'javascript' %>
 </body>
 </html>
