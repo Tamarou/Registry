@@ -179,7 +179,9 @@
     const newTheme = currentTheme === 'light' ? 'dark' : 'light';
     const icon = document.getElementById('landing-theme-icon');
 
+    // Set theme on both landing-page and body for proper CSS variable inheritance
     landingPage.setAttribute('data-landing-theme', newTheme);
+    document.body.setAttribute('data-theme', newTheme);
     icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
 
     // Save preference
@@ -197,7 +199,9 @@
     const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
 
     if (landingPage && icon) {
+      // Set theme on both landing-page and body for proper CSS variable inheritance
       landingPage.setAttribute('data-landing-theme', theme);
+      document.body.setAttribute('data-theme', theme);
       icon.textContent = theme === 'light' ? '🌙' : '☀️';
     }
 
@@ -206,7 +210,9 @@
       if (!localStorage.getItem('landing-theme')) {
         const newTheme = e.matches ? 'dark' : 'light';
         if (landingPage && icon) {
+          // Set theme on both landing-page and body for proper CSS variable inheritance
           landingPage.setAttribute('data-landing-theme', newTheme);
+          document.body.setAttribute('data-theme', newTheme);
           icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
         }
       }
