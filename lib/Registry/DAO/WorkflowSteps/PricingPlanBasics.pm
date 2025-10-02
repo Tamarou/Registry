@@ -27,10 +27,9 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
             };
         }
 
-        # Validate plan name uniqueness for this tenant
-        my $tenant_id = $self->get_tenant_id($db, $run);
+        # Validate plan name uniqueness globally
+        # Since plans are now relationship-agnostic, ensure global uniqueness
         my $existing = Registry::DAO::PricingPlan->find($db, {
-            offering_tenant_id => $tenant_id,
             plan_name => $form_data->{plan_name}
         });
 
@@ -49,7 +48,6 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
                 plan_type => $form_data->{plan_type},
                 target_audience => $form_data->{target_audience},
                 plan_scope => $form_data->{plan_scope},
-                offering_tenant_id => $tenant_id,
             }
         });
 

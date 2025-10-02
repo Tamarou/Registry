@@ -1,1 +1,41 @@
-resource-aware-pricing-plans unified-pricing-infrastructure 2025-01-29T10:00:00Z perigrin <chris.prather@tamarou.com> # Enhanced pricing configuration for resource allocation
+%syntax-version=1.0.0
+%project=registry
+
+users 2024-05-13T17:21:58Z Chris Prather <chris@prather.org> # initial creation of users table and basic schema etc
+workflows [users] 2024-05-13T17:30:35Z Chris Prather <chris@prather.org> # add workflows\n\nWorkflows define a sequence of steps to be executed. We process each step and record the outcome in a workflow run.
+tenant-on-boarding [workflows users] 2024-05-20T21:00:32Z Chris Prather <chris@prather.org> # create an onboarding workflow for tenants
+schema-based-multitennancy [tenant-on-boarding] 2024-05-21T01:43:52Z Chris Prather <chris@prather.org> # add the tools to do the schema-based multi-tenancy
+events-and-sessions [schema-based-multitennancy] 2024-05-31T03:36:11Z Chris Prather <chris.prather@tamarou.com> # Add events and sessions to the system
+edit-template-workflow 2025-02-11T23:59:19Z Chris Prather <chris.prather@tamarou.com> # default workflow for editing templates
+outcomes 2025-02-21T06:45:47Z Chris Prather <chris.prather@tamarou.com> # add outcome definitions
+summer-camp-module 2025-02-22T04:38:37Z Chris Prather <chris.prather@tamarou.com> # add summer-camp-module
+fix-tenant-workflows [schema-based-multitennancy] 2025-03-22T18:57:13Z Chris Prather <chris.prather@tamarou.com> # Fix tenant workflows to include first_step
+program-types [schema-based-multitennancy] 2025-01-27T12:00:00Z Claude <noreply@anthropic.com> # Add program types configuration system
+enhanced-pricing-model [summer-camp-module] 2025-01-27T12:30:00Z Claude <noreply@anthropic.com> # Transform pricing to flexible pricing_plans with multiple tiers per session
+attendance-tracking [summer-camp-module program-types] 2025-01-27T13:00:00Z Claude <noreply@anthropic.com> # Add attendance tracking infrastructure
+waitlist-management [summer-camp-module program-types] 2025-01-27T13:30:00Z Claude <noreply@anthropic.com> # Add waitlist functionality to enrollment system
+add-program-type-to-projects [program-types] 2025-01-27T14:00:00Z Claude <noreply@anthropic.com> # Add program type reference to projects
+add-user-fields-for-family [users] 2025-01-27T14:25:00Z Claude <noreply@anthropic.com> # Add birth_date, user_type, grade fields to users
+multi-child-data-model [summer-camp-module add-user-fields-for-family program-types] 2025-01-27T14:30:00Z Claude <noreply@anthropic.com> # Add family_members table for multi-child support
+payments [schema-based-multitennancy] 2025-01-27T19:00:00Z Claude <noreply@anthropic.com> # Add payments infrastructure for Stripe integration
+add-payment-to-enrollments [payments summer-camp-module] 2025-01-27T19:15:00Z Claude <noreply@anthropic.com> # Add payment_id reference to enrollments table
+notifications-and-preferences [attendance-tracking] 2025-01-28T10:00:00Z Claude <noreply@anthropic.com> # Add notifications and user preferences for attendance tracking
+parent-communication-system [notifications-and-preferences] 2025-01-28T11:00:00Z Claude <noreply@anthropic.com> # Add parent communication system with messages, recipients, and templates
+performance-optimization [parent-communication-system] 2025-01-28T15:00:00Z Claude <noreply@anthropic.com> # Add database indexes and performance optimizations for production readiness
+stripe-subscription-integration [enhanced-pricing-model] 2025-01-28T16:00:00Z Claude <noreply@anthropic.com> # Add Stripe subscription integration for tenant billing
+# restructure-data-model [summer-camp-module] 2025-01-14T20:00:00Z Claude <noreply@anthropic.com> # Restructure data model: Programs -> Sessions -> Events -> Curriculum
+fix-multi-child-enrollments [multi-child-data-model] 2025-07-15T00:34:24Z Chris Prather <chris.prather@tamarou.com> # Fix multi-child enrollment constraints for cleaner architecture
+flexible-enrollment-architecture [fix-multi-child-enrollments] 2025-07-15T01:09:59Z Chris Prather <chris.prather@tamarou.com> # Create flexible enrollment architecture supporting family, individual, group, and corporate students
+remove-student-id-foreign-key [flexible-enrollment-architecture] 2025-07-15T01:28:59Z Chris Prather <chris.prather@tamarou.com> # Remove student_id foreign key constraint to support polymorphic student references
+fix-waitlist-family-member-refs [remove-student-id-foreign-key] 2025-07-16T14:30:00Z Claude <noreply@anthropic.com> # Fix waitlist student_id to reference family_members instead of users
+fix-waitlist-reorder [waitlist-management] 2025-07-16T12:30:00Z Claude <noreply@anthropic.com> # Fix waitlist position reordering to avoid unique constraint violations
+fix-waitlist-reorder-v2 [fix-waitlist-reorder] 2025-07-16T22:50:00Z Claude <noreply@anthropic.com> # Improved waitlist position reordering to fully avoid constraint violations
+fix-waitlist-reorder-v3 [fix-waitlist-reorder-v2] 2025-07-17T00:00:00Z Claude <noreply@anthropic.com> # Remove problematic database trigger and handle position reordering in application code
+drop-transfer-business-rules [fix-multi-child-enrollments] 2025-09-18T00:00:00Z Claude <noreply@anthropic.com> # Add drop and transfer business rules with admin approval workflow
+remove-waitlist-position-constraint [fix-waitlist-reorder-v3] 2025-09-21T00:00:00Z Claude <noreply@anthropic.com> # Remove unique constraint on waitlist position to allow status-based visibility
+installment-payment-schedules [payments] 2025-09-23T03:35:05Z Chris Prather <chris.prather@tamarou.com> # Add payment schedules and scheduled payments for installment processing
+simplify-installment-schema-for-stripe [installment-payment-schedules] 2025-09-24T18:00:00Z Claude <noreply@anthropic.com> # Simplify database schema to use Stripe native scheduling and retry features
+unified-pricing-infrastructure 2025-09-29T00:44:03Z Chris Prather <chris.prather@tamarou.com> # Add unified tenant-to-tenant pricing infrastructure
+consolidate-pricing-relationships [unified-pricing-infrastructure] 2025-09-29T16:07:15Z Chris Prather <chris.prather@tamarou.com> # Consolidate pricing relationships into unified model
+pricing-relationship-events [consolidate-pricing-relationships] 2025-09-29T19:55:59Z Chris Prather <chris.prather@tamarou.com> # Add event sourcing for pricing relationship audit trail
+remove-pricing-plan-relationship-fields 2025-09-29T22:27:51Z Chris Prather <chris.prather@tamarou.com> # Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans
