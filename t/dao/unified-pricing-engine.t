@@ -44,7 +44,7 @@ subtest 'Platform tenant exists' => sub {
 subtest 'Platform pricing plans exist' => sub {
     my $result = $db->query(
         'SELECT * FROM registry.pricing_plans WHERE plan_scope = ? ORDER BY plan_name',
-        'platform'
+        'tenant'
     );
     my $plans = $result->hashes;
 

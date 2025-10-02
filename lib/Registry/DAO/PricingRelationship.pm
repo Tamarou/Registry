@@ -99,32 +99,38 @@ class Registry::DAO::PricingRelationship :isa(Registry::DAO::Object) {
 
     # Status transition methods
     method activate ($db) {
+        $status = 'active';
+        $metadata = {
+            %$metadata,
+            activated_at => time(),
+        };
         return $self->update($db, {
             status => 'active',
-            metadata => {
-                %$metadata,
-                activated_at => time(),
-            }
+            metadata => $metadata,
         });
     }
 
     method suspend ($db) {
+        $status = 'suspended';
+        $metadata = {
+            %$metadata,
+            suspended_at => time(),
+        };
         return $self->update($db, {
             status => 'suspended',
-            metadata => {
-                %$metadata,
-                suspended_at => time(),
-            }
+            metadata => $metadata,
         });
     }
 
     method cancel ($db) {
+        $status = 'cancelled';
+        $metadata = {
+            %$metadata,
+            cancelled_at => time(),
+        };
         return $self->update($db, {
             status => 'cancelled',
-            metadata => {
-                %$metadata,
-                cancelled_at => time(),
-            }
+            metadata => $metadata,
         });
     }
 
@@ -152,12 +158,12 @@ class Registry::DAO::PricingRelationship :isa(Registry::DAO::Object) {
     # Helper methods to get related objects
     method get_pricing_plan ($db) {
         require Registry::DAO::PricingPlan;
-        return Registry::DAO::PricingPlan->find_by_id($db, $pricing_plan_id);
+        return Registry::DAO::PricingPlan->find($db, { id => $pricing_plan_id });
     }
 
     method get_provider_tenant ($db) {
         require Registry::DAO::Tenant;
-        return Registry::DAO::Tenant->find_by_id($db, $provider_id);
+        return Registry::DAO::Tenant->find($db, { id => $provider_id });
     }
 
     method get_consumer_user ($db) {
@@ -181,7 +187,7 @@ class Registry::DAO::PricingRelationship :isa(Registry::DAO::Object) {
         return unless $row && $row->{tenant_id};
 
         require Registry::DAO::Tenant;
-        return Registry::DAO::Tenant->find_by_id($db, $row->{tenant_id});
+        return Registry::DAO::Tenant->find($db, { id => $row->{tenant_id} });
     }
 
     # Find active relationships for a consumer

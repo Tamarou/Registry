@@ -331,7 +331,7 @@ subtest 'Relationship helpers' => sub {
 
     # Get consumer's tenant (if applicable)
     my $consumer_tenant = $relationship->get_consumer_tenant($db);
-    ok(defined $consumer_tenant, 'Consumer tenant check works');
+    ok(!defined $consumer_tenant, 'Consumer tenant check works (B2C user has no tenant)');
 };
 
 done_testing();

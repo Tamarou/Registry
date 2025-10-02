@@ -14,7 +14,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
 
     method process($db, $form_data) {
-        
+
         my $workflow = $self->workflow($db);
         my $run = $workflow->latest_run($db);
         my $error_handler = Registry::Utility::ErrorHandler->new();
@@ -295,7 +295,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     method handle_setup_completion($db, $run, $form_data) {
         my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
         my $setup_data = $run->data->{payment_setup} || {};
-        
+
         # Test mode: skip Stripe validation if setup_intent_id starts with 'seti_test'
         if ($form_data->{setup_intent_id} && $form_data->{setup_intent_id} =~ /^seti_test/) {
             # Mock successful subscription for testing
@@ -314,7 +314,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 }
             });
             
-            
+
             # For testing, create the tenant directly instead of delegating to RegisterTenant step
             my $tenant_result = $self->create_tenant_directly($db, $run);
 
@@ -390,9 +390,12 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     
     # For testing mode, create tenant directly (duplicates RegisterTenant logic)
     method create_tenant_directly($db, $run) {
-        
+
         my $profile = $run->data;
-        
+
+        # Preserve tenant name before any modifications
+        my $tenant_name = $profile->{name};
+
         # Handle backward compatibility for old 'users' format (same logic as RegisterTenant)
         my $user_data;
         if (exists $profile->{users} && ref $profile->{users} eq 'ARRAY') {
@@ -405,13 +408,13 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         } else {
             # New format: extract user data from individual fields
             my $admin_user_data = {
-                name => delete $profile->{admin_name},
-                email => delete $profile->{admin_email},
-                username => delete $profile->{admin_username},
-                password => delete $profile->{admin_password},
-                user_type => delete $profile->{admin_user_type} || 'admin',
+                name => $profile->{admin_name},
+                email => $profile->{admin_email},
+                username => $profile->{admin_username},
+                password => $profile->{admin_password},
+                user_type => $profile->{admin_user_type} || 'admin',
             };
-            
+
             $user_data = [$admin_user_data];
         }
         
@@ -424,7 +427,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         
         # Generate subdomain slug from organization name (PostgreSQL schema compatible)
-        my $slug = lc($profile->{name} || 'test_tenant');
+        my $slug = lc($tenant_name || 'test_tenant');
         $slug =~ s/[^a-z0-9\s_]//g;  # Remove special characters (allow underscores)
         $slug =~ s/\s+/_/g;          # Replace spaces with underscores
         $slug =~ s/_+/_/g;           # Remove multiple consecutive underscores
@@ -434,7 +437,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         # Create clean tenant data with only fields that belong in the tenant table
         my $tenant_data = {
-            name => $profile->{name},
+            name => $tenant_name,
             slug => $slug,
         };
         
@@ -456,7 +459,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         my $tenant = Registry::DAO::Tenant->create($db, $tenant_data);
         $db->query('SELECT clone_schema(?)', $tenant->slug);
-        
+
         $tenant->set_primary_user($db, $primary_user);
         
         
@@ -485,7 +488,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 $db->query('SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $tenant->slug, $workflow->id);
             }
         }
-        
+
         $tx->commit;
         
         
