@@ -29,31 +29,27 @@ subtest 'Enhanced CTA on landing page' => sub {
       ->status_is(200)
       ->element_exists('section[role="banner"]', 'Hero section exists with proper role');
 
-    # Test primary CTA button with XL size
-    $t->element_exists('button[data-size="xl"][data-variant="success"]', 'Primary CTA button has XL size')
-      ->text_like('button[data-size="xl"]', qr/Get Started Free/, 'Primary CTA has compelling text');
+    # Test primary CTA link
+    $t->element_exists('.landing-cta-button', 'Primary CTA button exists')
+      ->text_like('.landing-cta-button', qr/Get Started Free/, 'Primary CTA has compelling text');
 
-    # Test secondary CTA button (Watch Demo)
-    $t->element_exists('button[data-variant="secondary"][data-size="lg"]', 'Secondary Watch Demo button exists')
-      ->text_like('button[data-variant="secondary"][data-size="lg"]', qr/Watch Demo/, 'Secondary button has Watch Demo text');
+    # Test secondary CTA link (Explore Features)
+    $t->element_exists('.landing-cta-secondary', 'Secondary CTA button exists')
+      ->text_like('.landing-cta-secondary', qr/Explore Features/, 'Secondary button has appropriate text');
 
-    # Test enhanced supporting text
-    $t->text_like('#trial-info small', qr/30-day free trial/, 'Supporting text mentions 30-day trial')
-      ->text_like('#trial-info small', qr/No credit card/, 'Supporting text mentions no credit card')
-      ->text_like('#trial-info small', qr/Cancel anytime/, 'Supporting text mentions cancel anytime')
-      ->text_like('#trial-info small', qr/Setup in 5 minutes/, 'Supporting text mentions quick setup');
+    # Test enhanced supporting text (updated class)
+    $t->text_like('.landing-trial-info', qr/30-day free trial/, 'Supporting text mentions 30-day trial')
+      ->text_like('.landing-trial-info', qr/No credit card/, 'Supporting text mentions no credit card')
+      ->text_like('.landing-trial-info', qr/Cancel anytime/, 'Supporting text mentions cancel anytime')
+      ->text_like('.landing-trial-info', qr/Setup in 5 minutes/, 'Supporting text mentions quick setup');
 
-    # Test social proof section
-    $t->element_exists('#social-proof', 'Social proof section exists');
+    # Test social proof section (updated class)
+    $t->element_exists('.landing-social-proof', 'Social proof section exists');
 
     # Extract and test social proof text properly
-    my $social_text = $t->tx->res->dom->at('#social-proof')->all_text;
+    my $social_text = $t->tx->res->dom->at('.landing-social-proof')->all_text;
     like($social_text, qr/Join \d+\+ programs/i, 'Social proof shows program count');
-
-    $t->element_exists('#social-proof [data-rating]', 'Social proof includes rating');
-
-    # Test CSS animation class
-    $t->element_exists('button[data-animate="pulse"]', 'Primary CTA has pulse animation');
+    like($social_text, qr/4\.9\/5/i, 'Social proof includes rating');
 };
 
 # Test accessibility compliance
@@ -61,15 +57,16 @@ subtest 'CTA accessibility compliance' => sub {
     $t->get_ok('/');
 
     # Test ARIA attributes
-    $t->element_exists('a[role="button"][aria-describedby="trial-info"]', 'CTA link has proper ARIA attributes')
-      ->element_exists('section[role="banner"][aria-labelledby="hero-title"]', 'Hero section has proper ARIA labeling');
+    $t->element_exists('section[role="banner"][aria-labelledby="hero-title"]', 'Hero section has proper ARIA labeling')
+      ->element_exists('h1#hero-title', 'Hero title has proper ID for ARIA reference');
 
-    # Test button focus states (checking CSS classes exist)
-    $t->element_exists('button[data-size="xl"]', 'XL button size is rendered');
+    # Test CTA links exist and are accessible
+    $t->element_exists('.landing-cta-button', 'Primary CTA link exists')
+      ->element_exists('.landing-cta-secondary', 'Secondary CTA link exists');
 
-    # Test contrast and visibility
-    $t->element_exists('button[data-variant="success"]', 'Success variant button for proper contrast')
-      ->element_exists('button[data-variant="secondary"]', 'Secondary variant button exists');
+    # Test proper link structure for navigation
+    $t->element_exists('a[href*="tenant-signup"]', 'Primary CTA links to signup workflow')
+      ->element_exists('a[href="#features"]', 'Secondary CTA links to features section');
 };
 
 # Test mobile responsiveness
@@ -78,12 +75,13 @@ subtest 'Mobile CTA optimization' => sub {
     $t->ua->max_redirects(0);
     $t->get_ok('/');
 
-    # Verify buttons exist and are accessible on mobile
-    $t->element_exists('button[data-size="xl"]', 'XL button exists for mobile touch targets')
-      ->element_exists('button[data-size="lg"]', 'Secondary button with appropriate size');
+    # Verify CTA links exist and are accessible on mobile
+    $t->element_exists('.landing-cta-button', 'Primary CTA exists for mobile')
+      ->element_exists('.landing-cta-secondary', 'Secondary CTA exists for mobile');
 
-    # Test that buttons are in proper container
-    $t->element_exists('section[data-component="container"][data-size="large"]', 'Proper container for mobile layout');
+    # Test that CTAs are in proper container
+    $t->element_exists('.landing-cta-container', 'CTAs are in proper container')
+      ->element_exists('.landing-hero', 'Hero section exists for proper layout');
 };
 
 done_testing();
