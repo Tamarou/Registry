@@ -14,7 +14,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
 
     method process($db, $form_data) {
-
         my $workflow = $self->workflow($db);
         my $run = $workflow->latest_run($db);
         my $error_handler = Registry::Utility::ErrorHandler->new();
@@ -316,7 +315,14 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             
 
             # For testing, create the tenant directly instead of delegating to RegisterTenant step
-            my $tenant_result = $self->create_tenant_directly($db, $run);
+            my $tenant_result = eval { $self->create_tenant_directly($db, $run) };
+            if ($@) {
+                return {
+                    next_step => $self->id,
+                    errors => ["Failed to create tenant: $@"],
+                    data => $self->prepare_payment_data($db, $run)
+                };
+            }
 
             # Payment successful, move to completion
             return {
@@ -387,6 +393,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     }
 
     method template { 'tenant-signup/payment' }
+
+    # Provide data for template rendering on GET requests
+    method prepare_template_data($db, $run) {
+        return $self->prepare_payment_data($db, $run);
+    }
     
     # For testing mode, create tenant directly (duplicates RegisterTenant logic)
     method create_tenant_directly($db, $run) {
