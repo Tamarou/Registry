@@ -1,5 +1,6 @@
 % layout 'default';
 % title 'Registry - After-School Program Management Made Simple';
+% stash no_container => 1;
 
 % content_for 'head' => begin
   <!-- SEO Meta Tags -->
@@ -8,28 +9,28 @@
   <meta name="robots" content="index, follow">
   <meta name="language" content="en-US">
   <link rel="canonical" href="<%= url_for('/')->to_abs %>">
-  
+
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="<%= url_for('/')->to_abs %>">
   <meta property="og:title" content="Registry - After-School Program Management Software">
   <meta property="og:description" content="Complete solution for managing after-school programs. Registration, attendance, payments, and parent communication in one platform.">
   <meta property="og:image" content="<%= url_for('/images/registry-social-preview.png')->to_abs %>">
-  
+
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image">
   <meta property="twitter:url" content="<%= url_for('/')->to_abs %>">
   <meta property="twitter:title" content="Registry - After-School Program Management">
   <meta property="twitter:description" content="Streamline your after-school programs with comprehensive management tools.">
   <meta property="twitter:image" content="<%= url_for('/images/registry-twitter-card.png')->to_abs %>">
-  
+
   <!-- Performance optimizations -->
   <link rel="preconnect" href="https://js.stripe.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  
-  <!-- CSS moved to registry.css for proper caching -->
-  
+
+  <!-- Note: All landing page styles now in /css/design-system.css and /css/components.css -->
+
   <!-- Schema.org structured data -->
   <script type="application/ld+json">
   {
@@ -61,7 +62,7 @@
     },
     "featureList": [
       "Student Registration Management",
-      "Attendance Tracking", 
+      "Attendance Tracking",
       "Payment Processing",
       "Parent Communication",
       "Waitlist Management",
@@ -73,108 +74,153 @@
   </script>
 % end
 
-<div class="marketing-page">
+<div class="landing-page" data-landing-theme="light">
+  <!-- Background Effects -->
+  <div class="landing-grid-background"></div>
+  <div class="landing-floating-shapes">
+    <div class="landing-shape landing-shape-1"></div>
+    <div class="landing-shape landing-shape-2"></div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="landing-nav">
+    <div class="landing-logo">Registry</div>
+    <button class="landing-theme-toggle" onclick="toggleLandingTheme()" aria-label="Toggle theme">
+      <span id="landing-theme-icon">🌙</span>
+    </button>
+  </nav>
+
   <!-- Hero Section -->
-  <section data-component="container" data-size="large" role="banner" aria-labelledby="hero-title">
-    <header>
-      <h1 id="hero-title">After-School Program Management Made Simple</h1>
+  <section class="landing-hero" role="banner" aria-labelledby="hero-title">
+    <h1 id="hero-title">After-School Program Management Made Simple</h1>
+    <p class="landing-hero-subtitle">
+      Streamline registrations, track attendance, manage payments, and communicate with families—all in one powerful platform designed specifically for after-school programs.
+    </p>
+    <div class="landing-cta-container">
+      <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">
+        Get Started Free - No Setup Fees
+      </a>
+      <a href="#features" class="landing-cta-button landing-cta-secondary">
+        Explore Features
+      </a>
+    </div>
+    <p class="landing-trial-info">30-day free trial • No credit card • Cancel anytime • Setup in 5 minutes</p>
+    <div class="landing-social-proof">
       <p>
-        Streamline registrations, track attendance, manage payments, and communicate with families
-        all in one powerful platform designed specifically for after-school programs.
+        <strong>Join 500+ programs</strong> already transforming their management with Registry
+        <span style="margin-left: 1rem;">⭐ 4.9/5 from program directors</span>
       </p>
-    </header>
-    <div>
-      <!-- Primary CTA -->
-      <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>"
-         role="button"
-         aria-describedby="trial-info"
-         style="margin-right: var(--space-4);">
-        <button type="button" data-variant="success" data-size="xl" data-animate="pulse">
-          Get Started Free - No Setup Fees
-        </button>
-      </a>
-      <!-- Secondary CTA -->
-      <a href="#demo"
-         role="button"
-         aria-label="Watch product demo">
-        <button type="button" data-variant="secondary" data-size="lg">
-          Watch Demo
-        </button>
-      </a>
-      <p id="trial-info"><small>30-day free trial • No credit card • Cancel anytime • Setup in 5 minutes</small></p>
-      <!-- Social Proof Section -->
-      <div id="social-proof" style="margin-top: var(--space-6);">
-        <p>
-          <strong>Join 500+ programs</strong> already transforming their management with Registry
-          <span data-rating="4.9" style="margin-left: var(--space-4);">
-            ⭐ 4.9/5 from program directors
-          </span>
-        </p>
-      </div>
     </div>
   </section>
 
   <!-- Features Section -->
-  <section data-component="container" data-size="large" role="main" aria-labelledby="features-title">
-    <header>
+  <section id="features" class="landing-features" role="main" aria-labelledby="features-title">
+    <div class="landing-features-container">
       <h2 id="features-title">Everything You Need to Run Successful Programs</h2>
-    </header>
-    <div data-layout="grid" role="list">
-      <article data-component="card" role="listitem">
-        <header>
-          <h3>Easy Registration</h3>
-          <p><span aria-hidden="true">📝</span> Streamlined Workflows</p>
-        </header>
-        <div>
-          <p>Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.</p>
-        </div>
-      </article>
-      <article data-component="card" role="listitem">
-        <header>
-          <h3>Payment Processing</h3>
-          <p><span aria-hidden="true">💳</span> Secure Transactions</p>
-        </header>
-        <div>
-          <p>Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.</p>
-        </div>
-      </article>
-      <article data-component="card" role="listitem">
-        <header>
-          <h3>Attendance Tracking</h3>
-          <p><span aria-hidden="true">📊</span> Real-Time Monitoring</p>
-        </header>
-        <div>
-          <p>Real-time attendance management with mobile-friendly interfaces for staff and automated parent notifications.</p>
-        </div>
-      </article>
-      <article data-component="card" role="listitem">
-        <header>
-          <h3>Family Communication</h3>
-          <p><span aria-hidden="true">💬</span> Built-in Messaging</p>
-        </header>
-        <div>
-          <p>Built-in messaging system to keep families informed with program updates, announcements, and direct communication.</p>
-        </div>
-      </article>
-      <article data-component="card" role="listitem">
-        <header>
-          <h3>Waitlist Management</h3>
-          <p><span aria-hidden="true">📋</span> Automated Processing</p>
-        </header>
-        <div>
-          <p>Automated waitlist processing with email notifications and seamless enrollment when spots become available.</p>
-        </div>
-      </article>
-      <article data-component="card" role="listitem">
-        <header>
-          <h3>Staff Management</h3>
-          <p><span aria-hidden="true">👥</span> Role-Based Access</p>
-        </header>
-        <div>
-          <p>Role-based access control for administrators, staff, and instructors with customizable permissions and workflows.</p>
-        </div>
-      </article>
+      <div class="landing-features-grid">
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon" aria-hidden="true">📝</span>
+          <h3 class="landing-feature-title">Easy Registration</h3>
+          <p class="landing-feature-subtitle">Streamlined Workflows</p>
+          <p class="landing-feature-description">
+            Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon" aria-hidden="true">💳</span>
+          <h3 class="landing-feature-title">Payment Processing</h3>
+          <p class="landing-feature-subtitle">Secure Transactions</p>
+          <p class="landing-feature-description">
+            Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon" aria-hidden="true">📊</span>
+          <h3 class="landing-feature-title">Attendance Tracking</h3>
+          <p class="landing-feature-subtitle">Real-Time Monitoring</p>
+          <p class="landing-feature-description">
+            Real-time attendance management with mobile-friendly interfaces for staff and automated parent notifications.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon" aria-hidden="true">💬</span>
+          <h3 class="landing-feature-title">Family Communication</h3>
+          <p class="landing-feature-subtitle">Built-in Messaging</p>
+          <p class="landing-feature-description">
+            Built-in messaging system to keep families informed with program updates, announcements, and direct communication.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon" aria-hidden="true">📋</span>
+          <h3 class="landing-feature-title">Waitlist Management</h3>
+          <p class="landing-feature-subtitle">Automated Processing</p>
+          <p class="landing-feature-description">
+            Automated waitlist processing with email notifications and seamless enrollment when spots become available.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon" aria-hidden="true">👥</span>
+          <h3 class="landing-feature-title">Staff Management</h3>
+          <p class="landing-feature-subtitle">Role-Based Access</p>
+          <p class="landing-feature-description">
+            Role-based access control for administrators, staff, and instructors with customizable permissions and workflows.
+          </p>
+        </article>
+      </div>
     </div>
   </section>
 </div>
+
+<script>
+  // Theme toggle functionality
+  function toggleLandingTheme() {
+    const landingPage = document.querySelector('.landing-page');
+    const currentTheme = landingPage.getAttribute('data-landing-theme');
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    const icon = document.getElementById('landing-theme-icon');
+
+    landingPage.setAttribute('data-landing-theme', newTheme);
+    icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+
+    // Save preference
+    localStorage.setItem('landing-theme', newTheme);
+  }
+
+  // Load saved theme preference
+  window.addEventListener('DOMContentLoaded', function() {
+    const savedTheme = localStorage.getItem('landing-theme') || 'light';
+    const landingPage = document.querySelector('.landing-page');
+    const icon = document.getElementById('landing-theme-icon');
+
+    if (landingPage && icon) {
+      landingPage.setAttribute('data-landing-theme', savedTheme);
+      icon.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+    }
+  });
+
+  // Add parallax effect to floating shapes
+  window.addEventListener('scroll', function() {
+    const scrolled = window.pageYOffset;
+    const shapes = document.querySelectorAll('.landing-shape');
+
+    shapes.forEach(function(shape, index) {
+      const speed = index === 0 ? 0.5 : 0.3;
+      shape.style.transform = 'translateY(' + (scrolled * speed) + 'px)';
+    });
+  });
+
+  // Smooth scroll for anchor links
+  document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
+    anchor.addEventListener('click', function(e) {
+      const href = this.getAttribute('href');
+      if (href !== '#') {
+        e.preventDefault();
+        const target = document.querySelector(href);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }
+      }
+    });
+  });
+</script>
 
