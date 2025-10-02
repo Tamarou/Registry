@@ -241,6 +241,7 @@ body[data-layout="workflow"]::after {
 
 /* Landing page container */
 .landing-page {
+    position: relative;
     background: var(--landing-bg-primary);
     color: var(--landing-text-primary);
     overflow-x: hidden;
