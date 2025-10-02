@@ -1,0 +1,42 @@
+{
+  "name": "Plan Basics",
+  "description": "Basic information for a pricing plan",
+  "fields": [
+    {
+      "id": "plan_name",
+      "type": "text",
+      "label": "Plan Name",
+      "required": true,
+      "placeholder": "e.g. Standard Monthly, Premium Annual"
+    },
+    {
+      "id": "plan_type",
+      "type": "select",
+      "label": "Plan Type",
+      "required": true,
+      "options": [
+        {"value": "subscription", "label": "Subscription"},
+        {"value": "one_time", "label": "One Time"},
+        {"value": "usage_based", "label": "Usage Based"}
+      ]
+    },
+    {
+      "id": "description",
+      "type": "textarea",
+      "label": "Description",
+      "required": false,
+      "placeholder": "Describe what this plan includes"
+    },
+    {
+      "id": "plan_scope",
+      "type": "select",
+      "label": "Plan Scope",
+      "required": true,
+      "options": [
+        {"value": "platform", "label": "Platform Level"},
+        {"value": "tenant", "label": "Organization Level"},
+        {"value": "customer", "label": "Customer Level"}
+      ]
+    }
+  ]
+}

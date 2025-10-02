@@ -8,6 +8,7 @@ use Test::Exception;
 use experimental qw(signatures try);
 
 use lib 't/lib';
+use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
 # Load the workflow steps
@@ -20,8 +21,8 @@ use Registry::DAO::PricingPlan;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 
-my $fixtures = Test::Registry::Fixtures->new;
-my $db = $fixtures->db;
+my $t = Test::Registry::DB->new;
+my $db = $t->db;
 
 # Create a test workflow
 my $workflow = Registry::DAO::Workflow->create($db, {
@@ -35,39 +36,34 @@ my $step1 = Registry::DAO::WorkflowStep->create($db, {
     workflow_id => $workflow->id,
     slug => 'plan-basics',
     description => 'Plan basics step',
-    class => 'Registry::DAO::WorkflowSteps::PricingPlanBasics',
-    next_step => 'pricing-model'
 });
 
 my $step2 = Registry::DAO::WorkflowStep->create($db, {
     workflow_id => $workflow->id,
     slug => 'pricing-model',
     description => 'Pricing model step',
-    class => 'Registry::DAO::WorkflowSteps::PricingModel',
-    next_step => 'resource-allocation'
+    depends_on => $step1->id,
 });
 
 my $step3 = Registry::DAO::WorkflowStep->create($db, {
     workflow_id => $workflow->id,
     slug => 'resource-allocation',
     description => 'Resource allocation step',
-    class => 'Registry::DAO::WorkflowSteps::ResourceAllocation',
-    next_step => 'requirements-rules'
+    depends_on => $step2->id,
 });
 
 my $step4 = Registry::DAO::WorkflowStep->create($db, {
     workflow_id => $workflow->id,
     slug => 'requirements-rules',
     description => 'Requirements and rules step',
-    class => 'Registry::DAO::WorkflowSteps::RequirementsRules',
-    next_step => 'review-activate'
+    depends_on => $step3->id,
 });
 
 my $step5 = Registry::DAO::WorkflowStep->create($db, {
     workflow_id => $workflow->id,
     slug => 'review-activate',
     description => 'Review and activate step',
-    class => 'Registry::DAO::WorkflowSteps::ReviewActivatePlan'
+    depends_on => $step4->id,
 });
 
 # Create a workflow run
@@ -361,7 +357,7 @@ subtest 'Integration: Complete Workflow Flow' => sub {
     use Registry::Utility::WorkflowProcessor;
 
     # Create a fresh workflow run
-    my $processor = Registry::Utility::WorkflowProcessor->new(dao => $fixtures->dao);
+    my $processor = Registry::Utility::WorkflowProcessor->new(dao => $t->db);
     my $integration_run = $processor->new_run($workflow, {});
 
     ok($integration_run, 'Workflow run created');

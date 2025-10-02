@@ -1,0 +1,76 @@
+{
+  "name": "Resource Allocation",
+  "description": "Define what resources and limits this plan includes",
+  "fields": [
+    {
+      "id": "resource_limits",
+      "type": "object",
+      "label": "Resource Limits",
+      "required": false,
+      "properties": {
+        "max_programs": {
+          "type": "number",
+          "label": "Maximum Programs",
+          "min": "0",
+          "placeholder": "Leave blank for unlimited"
+        },
+        "max_enrollments": {
+          "type": "number",
+          "label": "Maximum Enrollments",
+          "min": "0",
+          "placeholder": "Leave blank for unlimited"
+        },
+        "max_storage_gb": {
+          "type": "number",
+          "label": "Maximum Storage (GB)",
+          "min": "0",
+          "placeholder": "Leave blank for unlimited"
+        },
+        "max_users": {
+          "type": "number",
+          "label": "Maximum Users",
+          "min": "0",
+          "placeholder": "Leave blank for unlimited"
+        }
+      }
+    },
+    {
+      "id": "included_features",
+      "type": "array",
+      "label": "Included Features",
+      "required": false,
+      "items": {
+        "type": "select",
+        "options": [
+          {"value": "basic_reporting", "label": "Basic Reporting"},
+          {"value": "advanced_analytics", "label": "Advanced Analytics"},
+          {"value": "custom_branding", "label": "Custom Branding"},
+          {"value": "api_access", "label": "API Access"},
+          {"value": "priority_support", "label": "Priority Support"},
+          {"value": "sso_integration", "label": "SSO Integration"},
+          {"value": "mobile_app", "label": "Mobile App Access"},
+          {"value": "email_marketing", "label": "Email Marketing Tools"}
+        ]
+      }
+    },
+    {
+      "id": "support_level",
+      "type": "select",
+      "label": "Support Level",
+      "required": false,
+      "options": [
+        {"value": "community", "label": "Community Support"},
+        {"value": "email", "label": "Email Support"},
+        {"value": "priority", "label": "Priority Support"},
+        {"value": "dedicated", "label": "Dedicated Support"}
+      ]
+    },
+    {
+      "id": "resource_allocation_notes",
+      "type": "textarea",
+      "label": "Additional Resource Notes",
+      "required": false,
+      "placeholder": "Any additional resource allocation details"
+    }
+  ]
+}

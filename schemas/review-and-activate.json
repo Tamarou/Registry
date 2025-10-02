@@ -1,0 +1,84 @@
+{
+  "name": "Review and Activate",
+  "description": "Review all plan details and activate the pricing plan",
+  "fields": [
+    {
+      "id": "plan_summary",
+      "type": "readonly",
+      "label": "Plan Summary",
+      "value": "This field will be populated with a summary of the plan configuration"
+    },
+    {
+      "id": "effective_date",
+      "type": "date",
+      "label": "Effective Date",
+      "required": true,
+      "default": "today"
+    },
+    {
+      "id": "expiration_date",
+      "type": "date",
+      "label": "Expiration Date",
+      "required": false,
+      "help": "Leave blank if this plan should remain available indefinitely"
+    },
+    {
+      "id": "is_active",
+      "type": "boolean",
+      "label": "Activate Plan",
+      "required": true,
+      "default": true,
+      "help": "Uncheck to save as draft"
+    },
+    {
+      "id": "is_public",
+      "type": "boolean",
+      "label": "Make Plan Public",
+      "required": false,
+      "default": false,
+      "help": "Check to make this plan visible to customers"
+    },
+    {
+      "id": "approval_required",
+      "type": "boolean",
+      "label": "Require Approval for Subscriptions",
+      "required": false,
+      "default": false,
+      "help": "Check if subscriptions to this plan require manual approval"
+    },
+    {
+      "id": "metadata",
+      "type": "object",
+      "label": "Additional Metadata",
+      "required": false,
+      "properties": {
+        "internal_notes": {
+          "type": "textarea",
+          "label": "Internal Notes",
+          "placeholder": "Notes for internal use only"
+        },
+        "marketing_tags": {
+          "type": "array",
+          "label": "Marketing Tags",
+          "items": {
+            "type": "string",
+            "placeholder": "e.g. popular, featured, recommended"
+          }
+        },
+        "display_order": {
+          "type": "number",
+          "label": "Display Order",
+          "min": "0",
+          "help": "Lower numbers appear first"
+        }
+      }
+    },
+    {
+      "id": "confirmation",
+      "type": "boolean",
+      "label": "I confirm that all information is correct",
+      "required": true,
+      "help": "Check to confirm and activate this pricing plan"
+    }
+  ]
+}

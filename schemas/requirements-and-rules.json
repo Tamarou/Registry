@@ -1,0 +1,102 @@
+{
+  "name": "Requirements and Rules",
+  "description": "Define eligibility requirements and business rules for this plan",
+  "fields": [
+    {
+      "id": "requirements",
+      "type": "object",
+      "label": "Plan Requirements",
+      "required": false,
+      "properties": {
+        "min_enrollments": {
+          "type": "number",
+          "label": "Minimum Enrollments",
+          "min": "0"
+        },
+        "max_enrollments": {
+          "type": "number",
+          "label": "Maximum Enrollments",
+          "min": "0"
+        },
+        "subscriber_type": {
+          "type": "select",
+          "label": "Allowed Subscriber Type",
+          "options": [
+            {"value": "any", "label": "Any"},
+            {"value": "individual", "label": "Individual Only"},
+            {"value": "organization", "label": "Organization Only"},
+            {"value": "nonprofit", "label": "Non-profit Only"}
+          ]
+        },
+        "geographic_restrictions": {
+          "type": "array",
+          "label": "Geographic Restrictions",
+          "items": {
+            "type": "string",
+            "placeholder": "Country or region code"
+          }
+        }
+      }
+    },
+    {
+      "id": "business_rules",
+      "type": "object",
+      "label": "Business Rules",
+      "required": false,
+      "properties": {
+        "auto_renewal": {
+          "type": "boolean",
+          "label": "Auto-Renewal Enabled"
+        },
+        "cancellation_policy": {
+          "type": "select",
+          "label": "Cancellation Policy",
+          "options": [
+            {"value": "immediate", "label": "Immediate"},
+            {"value": "end_of_period", "label": "End of Billing Period"},
+            {"value": "30_day_notice", "label": "30 Day Notice Required"}
+          ]
+        },
+        "refund_policy": {
+          "type": "select",
+          "label": "Refund Policy",
+          "options": [
+            {"value": "no_refund", "label": "No Refunds"},
+            {"value": "prorated", "label": "Prorated Refund"},
+            {"value": "full_refund", "label": "Full Refund Within Period"}
+          ]
+        },
+        "upgrade_downgrade_rules": {
+          "type": "textarea",
+          "label": "Upgrade/Downgrade Rules",
+          "placeholder": "Describe how plan changes are handled"
+        }
+      }
+    },
+    {
+      "id": "discount_rules",
+      "type": "object",
+      "label": "Discount Rules",
+      "required": false,
+      "properties": {
+        "early_bird_discount": {
+          "type": "number",
+          "label": "Early Bird Discount (%)",
+          "min": "0",
+          "max": "100"
+        },
+        "bulk_discount_threshold": {
+          "type": "number",
+          "label": "Bulk Discount Threshold",
+          "min": "1"
+        },
+        "bulk_discount_percentage": {
+          "type": "number",
+          "label": "Bulk Discount (%)",
+          "min": "0",
+          "max": "100"
+        }
+      }
+    }
+  ]
+}

@@ -39,13 +39,15 @@ my $consumer_user = Registry::DAO::User->create($db, {
     passhash => '$2b$12$DummyHash',
 });
 
-# Get a platform pricing plan
-my $result = $db->query(
-    'SELECT id FROM registry.pricing_plans WHERE offering_tenant_id = ? LIMIT 1',
-    $platform_id
-);
-my $plan_id = $result->hash->{id};
-ok($plan_id, 'Found platform pricing plan');
+# Create a platform pricing plan for testing
+my $platform_plan = Registry::DAO::PricingPlan->create($db, {
+    plan_name => 'Test Platform Plan',
+    plan_type => 'subscription',
+    amount => 200.00,
+    plan_scope => 'platform',
+});
+my $plan_id = $platform_plan->id;
+ok($plan_id, 'Created platform pricing plan');
 
 # Create a test relationship
 my $relationship = Registry::DAO::PricingRelationship->create($db, {
@@ -134,14 +136,14 @@ subtest 'Get latest event for relationship' => sub {
 };
 
 subtest 'Record plan change' => sub {
-    # Get a different plan
-    my $new_plan_result = $db->query(
-        'SELECT id FROM registry.pricing_plans WHERE plan_scope = ? AND id != ? LIMIT 1',
-        'platform',
-        $plan_id
-    );
-    my $new_plan_id = $new_plan_result->hash->{id};
-    skip "No alternative plan available", 1 unless $new_plan_id;
+    # Create a second plan for plan change testing
+    my $alternative_plan = Registry::DAO::PricingPlan->create($db, {
+        plan_name => 'Test Platform Plan Premium',
+        plan_type => 'subscription',
+        amount => 400.00,
+        plan_scope => 'platform',
+    });
+    my $new_plan_id = $alternative_plan->id;
 
     my $plan_change = Registry::DAO::PricingRelationshipEvent->record_plan_change(
         $db,

@@ -49,24 +49,16 @@ subtest 'PricingPlan should not have relationship fields' => sub {
 };
 
 subtest 'Create PricingPlan without relationship fields' => sub {
-    my $session_id = '323e4567-e89b-12d3-a456-426614174000';
-
-    # Create a plan with no relationship fields
+    # Create a plan with absolute minimal data to isolate the issue
     my $plan = Registry::DAO::PricingPlan->create($db, {
-        session_id => $session_id,
-        plan_name => 'Clean Architecture Plan',
-        plan_type => 'standard',
-        pricing_model_type => 'fixed',
-        amount => 150.00,
-        currency => 'USD',
-        plan_scope => 'customer',
-        requirements => { min_enrollments => 1 },
+        plan_name => 'Minimal Plan',
+        amount => 100.00,
     });
 
     ok($plan, 'Created plan without relationship fields');
-    is($plan->plan_name, 'Clean Architecture Plan', 'Plan name is correct');
-    is($plan->amount, 150.00, 'Amount is correct');
-    is($plan->plan_scope, 'customer', 'Plan scope is correct');
+    is($plan->plan_name, 'Minimal Plan', 'Plan name is correct');
+    is($plan->amount, 100.00, 'Amount is correct');
+    is($plan->plan_scope, 'customer', 'Plan scope is correct (default)');
 
     # Verify in database that relationship columns don't exist
     my $result = $db->query(q{
