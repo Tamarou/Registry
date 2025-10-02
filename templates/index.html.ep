@@ -197,15 +197,22 @@
     }
   });
 
-  // Add parallax effect to floating shapes
+  // Add optimized parallax effect to floating shapes using requestAnimationFrame
+  let ticking = false;
   window.addEventListener('scroll', function() {
-    const scrolled = window.pageYOffset;
-    const shapes = document.querySelectorAll('.landing-shape');
+    if (!ticking) {
+      window.requestAnimationFrame(function() {
+        const scrolled = window.pageYOffset;
+        const shapes = document.querySelectorAll('.landing-shape');
 
-    shapes.forEach(function(shape, index) {
-      const speed = index === 0 ? 0.5 : 0.3;
-      shape.style.transform = 'translateY(' + (scrolled * speed) + 'px)';
-    });
+        shapes.forEach(function(shape, index) {
+          const speed = index === 0 ? 0.5 : 0.3;
+          shape.style.transform = 'translateY(' + (scrolled * speed) + 'px)';
+        });
+        ticking = false;
+      });
+      ticking = true;
+    }
   });
 
   // Smooth scroll for anchor links
