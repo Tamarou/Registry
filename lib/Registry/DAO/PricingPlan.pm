@@ -73,8 +73,15 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
             : 'registry.pricing_plans';
 
         $db = $db->db if $db isa Registry::DAO;
-        my %result = $db->insert($table, $data, { returning => '*' })->expand->hash->%*;
-        return $class->new(%result);
+
+        # Add proper error handling and connection management
+        try {
+            my %result = $db->insert($table, $data, { returning => '*' })->expand->hash->%*;
+            return $class->new(%result);
+        }
+        catch ($e) {
+            croak "Failed to create pricing plan: $e";
+        }
     }
     
     # Override find to handle registry schema

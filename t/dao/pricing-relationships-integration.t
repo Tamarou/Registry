@@ -35,11 +35,11 @@ my $consumer_user = Registry::DAO::User->create($db, {
     passhash => '$2b$12$DummyHash',
 });
 
-# Get platform pricing plans
+# Get platform pricing plans (they have plan_scope = 'tenant' in unified infrastructure)
 my $platform_id = '00000000-0000-0000-0000-000000000000';
 my $result = $db->query(
     'SELECT id, plan_name FROM registry.pricing_plans WHERE plan_scope = ? ORDER BY plan_name',
-    'platform'
+    'tenant'
 );
 my $plans = $result->hashes;
 ok(scalar @$plans > 0, 'Found platform pricing plans');

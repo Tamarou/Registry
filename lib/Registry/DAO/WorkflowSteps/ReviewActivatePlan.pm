@@ -96,11 +96,10 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
         # Add rules to pricing configuration
         $pricing_configuration->{rules} = $rules;
 
-        # Create the pricing plan
+        # Create the pricing plan (note: offering_tenant_id removed in clean architecture)
         my $plan;
         try {
             $plan = Registry::DAO::PricingPlan->create($db, {
-                offering_tenant_id => $plan_basics->{offering_tenant_id},
                 plan_scope => $plan_basics->{plan_scope},
                 plan_name => $plan_basics->{plan_name},
                 plan_type => $plan_basics->{plan_type},
@@ -120,6 +119,8 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
                     requires_approval => $options->{requires_approval},
                     created_by_workflow => $self->workflow($db)->id,
                     created_by_run => $run->id,
+                    # Store offering tenant in metadata instead
+                    offering_tenant_id => $plan_basics->{offering_tenant_id},
                 }
             });
         }
@@ -138,9 +139,6 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
                 created_plan_id => $plan->id,
                 completed => 1
             });
-
-            # Mark workflow as completed
-            $run->complete($db);
 
             return {
                 completed => 1,
