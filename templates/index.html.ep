@@ -96,10 +96,10 @@
       Streamline registrations, track attendance, manage payments, and communicate with families—all in one powerful platform designed specifically for after-school programs.
     </p>
     <div class="landing-cta-container">
-      <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">
+      <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button" data-variant="success">
         Get Started Free - No Setup Fees
       </a>
-      <a href="#features" class="landing-cta-button landing-cta-secondary">
+      <a href="#features" class="landing-cta-button landing-cta-secondary" data-variant="secondary">
         Explore Features
       </a>
     </div>
