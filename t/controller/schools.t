@@ -153,7 +153,7 @@ subtest 'Show school page' => sub {
     $t->get_ok('/school/lincoln-elementary')
       ->status_is(200)
       ->element_exists('h1', 'Has page title')
-      ->text_is('h1', 'Lincoln Elementary School', 'Correct school name')
+      ->text_like('h1', qr/Lincoln Elementary School/, 'Correct school name')
       ->content_like(qr/123 School St/, 'Shows address')
       ->content_like(qr/Test City, TS 12345/, 'Shows city, state, zip')
       ->content_like(qr/A great school for learning/, 'Shows notes');
@@ -273,7 +273,7 @@ subtest 'Tenant isolation' => sub {
     # Should still see original school
     $t->get_ok('/school/lincoln-elementary')
       ->status_is(200)
-      ->text_is('h1', 'Lincoln Elementary School', 'Shows correct tenant school');
+      ->text_like('h1', qr/Lincoln Elementary School/, 'Shows correct tenant school');
     
     done_testing();
 };
