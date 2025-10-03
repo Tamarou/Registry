@@ -9,52 +9,51 @@
         </p>
     </header>
 
-    <section class="primary-admin-section">
-        <h3>Primary Administrator Account</h3>
-        <p>This will be your login account with full administrative access.</p>
-        
-        <form action="<%= $action %>" method="POST" class="admin-user-form">
+    <form action="<%= $action %>" method="POST" class="admin-user-form" id="team-setup-form">
+        <section class="primary-admin-section">
+            <h3>Primary Administrator Account</h3>
+            <p>This will be your login account with full administrative access.</p>
+
             <div class="form-row">
                 <div class="form-field">
                     <label for="admin_name">Full Name *</label>
-                    <input type="text" id="admin_name" name="admin_name" 
+                    <input type="text" id="admin_name" name="admin_name"
                            value="<%= stash('admin_name') // '' %>" required
                            placeholder="John Smith">
                 </div>
-                
+
                 <div class="form-field">
                     <label for="admin_email">Email Address *</label>
-                    <input type="email" id="admin_email" name="admin_email" 
+                    <input type="email" id="admin_email" name="admin_email"
                            value="<%= stash('admin_email') // '' %>" required
                            placeholder="john@example.com">
                 </div>
             </div>
-            
+
             <div class="form-row">
                 <div class="form-field">
                     <label for="admin_username">Username *</label>
-                    <input type="text" id="admin_username" name="admin_username" 
+                    <input type="text" id="admin_username" name="admin_username"
                            value="<%= stash('admin_username') // '' %>" required
                            placeholder="jsmith">
                 </div>
-                
+
                 <div class="form-field">
                     <label for="admin_password">Password *</label>
-                    <input type="password" id="admin_password" name="admin_password" 
+                    <input type="password" id="admin_password" name="admin_password"
                            required minlength="8"
                            placeholder="At least 8 characters">
                 </div>
             </div>
-            
-            <input type="hidden" name="admin_user_type" value="admin">
-        </form>
-    </div>
 
-    <div class="team-members-section">
-        <h3>Additional Team Members <span class="optional">(Optional)</span></h3>
-        <p>Invite additional team members to your organization. They'll receive email invitations to set up their accounts.</p>
-        
-        <div id="team-members-list">
+            <input type="hidden" name="admin_user_type" value="admin">
+        </section>
+
+        <section class="team-members-section">
+            <h3>Additional Team Members <span class="optional">(Optional)</span></h3>
+            <p>Invite additional team members to your organization. They'll receive email invitations to set up their accounts.</p>
+
+            <div id="team-members-list">
             % my $team_members = stash('team_members') // [];
             % for my $i (0 .. $#$team_members) {
                 % my $member = $team_members->[$i];
@@ -107,7 +106,8 @@
     <div class="form-actions">
         <button type="submit" class="primary-btn">Continue</button>
     </div>
-</div>
+</form>
+</section>
 
 <script>
 let memberIndex = <%= scalar(@{stash('team_members') // []}) %>;
