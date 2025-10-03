@@ -31,8 +31,8 @@ subtest 'utility classes are available in rendered content' => sub {
     # Test that pages can use utility classes by checking they render without errors
     $t->get_ok('/')
       ->status_is(200)
-      ->element_exists('.container', 'Container utility class is used')
-      ->element_exists('header.mb-8', 'Margin utility classes work');
+      ->element_exists('.landing-page', 'Landing page container class is used')
+      ->element_exists('.landing-features-container', 'Landing features container utility class works');
 
     # Test that CSS contains expected utility classes
     $t->get_ok('/css/style.css')
