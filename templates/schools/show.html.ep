@@ -1,5 +1,40 @@
 % layout 'default';
-% title $location->name;
+% title $location->name . ' - After School Programs';
+% content_for head => begin
+    <meta name="description" content="Browse and register for after-school programs at <%= $location->name %>. View available sessions, pricing, and enrollment information.">
+    <meta name="keywords" content="after school programs, <%= $location->name %>, <%= $location->address_city %>, enrichment, education">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="<%= url_for()->to_abs %>">
+    <meta property="og:title" content="<%= $location->name %> - After School Programs">
+    <meta property="og:description" content="Discover enrichment programs and activities at <%= $location->name %>. Easy online registration available.">
+
+    <!-- Twitter Card -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="<%= url_for()->to_abs %>">
+    <meta property="twitter:title" content="<%= $location->name %> - After School Programs">
+    <meta property="twitter:description" content="Discover enrichment programs and activities at <%= $location->name %>. Easy online registration available.">
+
+    <!-- Structured Data for SEO -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "School",
+      "name": "<%= $location->name %>",
+      "address": {
+        "@type": "PostalAddress",
+        % if ($location->address_info) {
+          "streetAddress": "<%= $location->address_info->{street_address} // '' %>",
+          "addressLocality": "<%= $location->address_info->{city} // '' %>",
+          "addressRegion": "<%= $location->address_info->{state} // '' %>",
+          "postalCode": "<%= $location->address_info->{postal_code} // '' %>"
+        % }
+      },
+      "url": "<%= url_for()->to_abs %>"
+    }
+    </script>
+% end
 
 <div class="container mx-auto px-4 py-8">
   <header class="mb-8">
@@ -96,18 +131,50 @@
 </script>
 
 <style>
-  /* Mobile-responsive styles */
-  @media (max-width: 640px) {
-    .program-card {
-      padding: 1rem;
-    }
-    
+  /* Mobile-first responsive design */
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    max-width: 100%;
+  }
+
+  @media (min-width: 640px) {
     .container {
-      padding-left: 1rem;
-      padding-right: 1rem;
+      padding-left: 2rem;
+      padding-right: 2rem;
     }
   }
-  
+
+  @media (min-width: 1024px) {
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+  }
+
+  /* Mobile-optimized card layout */
+  .program-card {
+    padding: 1rem;
+    transition: all 0.3s ease;
+  }
+
+  @media (min-width: 640px) {
+    .program-card {
+      padding: 1.5rem;
+    }
+  }
+
+  .program-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Touch-friendly buttons */
+  .btn-enroll {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
   /* Utility class for line clamping */
   .line-clamp-3 {
     overflow: hidden;
@@ -115,9 +182,63 @@
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
   }
-  
-  /* Visual indicators */
+
+  /* Visual indicators with better mobile visibility */
   .filling-up {
     background: linear-gradient(to right, #fef3c7 0%, #fbbf24 var(--fill-percentage));
+    border-left: 3px solid #f59e0b;
+  }
+
+  /* Mobile-friendly filter section */
+  .filters-section {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: #f9fafb;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
+  @media (max-width: 640px) {
+    .filters-section {
+      padding: 0.75rem;
+    }
+
+    .filters-section h2 {
+      font-size: 1.125rem;
+    }
+
+    /* Stack filter inputs on mobile */
+    #filter-form {
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+  }
+
+  /* Accessibility improvements */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Loading state */
+  .htmx-request .htmx-indicator {
+    display: inline-block;
+  }
+
+  .htmx-indicator {
+    display: none;
+  }
+
+  /* Focus indicators for accessibility */
+  *:focus {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
   }
 </style>

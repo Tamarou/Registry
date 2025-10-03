@@ -5,7 +5,7 @@ class Registry::Controller::Schools :isa(Mojolicious::Controller) {
     use experimental qw(try);
     
     method show ($slug = $self->param('slug')) {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         
         # Load location by slug
         my $location = Registry::DAO::Location->find($dao, { slug => $slug });

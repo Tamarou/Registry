@@ -1,4 +1,9 @@
-<h2 class="text-2xl font-semibold mb-6">Available Programs</h2>
+<h2 class="text-2xl font-semibold mb-6">
+  Available Programs
+  <span class="htmx-indicator ml-2">
+    <i class="fas fa-spinner fa-spin text-blue-600"></i>
+  </span>
+</h2>
 
 % if (@$programs) {
   <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -78,13 +83,13 @@
               
               <div class="mt-4">
                 % if ($session_info->{is_full}) {
-                  <a href="<%= url_for('workflow_index', workflow => 'summer-camp-registration') %>?session_id=<%= $session->id %>&action=waitlist" 
-                     class="inline-block px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors text-sm">
+                  <a href="<%= url_for('workflow_index', workflow => 'summer-camp-registration') %>?session_id=<%= $session->id %>&action=waitlist"
+                     class="btn-enroll inline-block px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-base font-medium shadow-sm hover:shadow-md">
                     <i class="fas fa-list"></i> Join Waitlist
                   </a>
                 % } else {
-                  <a href="<%= url_for('workflow_index', workflow => 'summer-camp-registration') %>?session_id=<%= $session->id %>" 
-                     class="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm">
+                  <a href="<%= url_for('workflow_index', workflow => 'summer-camp-registration') %>?session_id=<%= $session->id %>"
+                     class="btn-enroll inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-base font-medium shadow-sm hover:shadow-md">
                     <i class="fas fa-user-plus"></i> Enroll Now
                   </a>
                 % }
