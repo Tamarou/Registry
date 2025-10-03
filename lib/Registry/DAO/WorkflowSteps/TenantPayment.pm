@@ -14,7 +14,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
 
     method process($db, $form_data) {
-        
         my $workflow = $self->workflow($db);
         my $run = $workflow->latest_run($db);
         my $error_handler = Registry::Utility::ErrorHandler->new();
@@ -113,26 +112,60 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     }
 
     method get_subscription_config($db) {
-        # This could be stored in database configuration table, but for now use defaults
-        # In production, this would be configurable via admin interface
+        # Get selected pricing plan from workflow data
+        my $workflow = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
+        my $selected_plan;
+
+        # Check if we have a run and it has pricing plan data
+        if ($run && $run->data && $run->data->{selected_pricing_plan}) {
+            $selected_plan = $run->data->{selected_pricing_plan};
+        }
+
+        # If no plan selected, fall back to default (for backwards compatibility)
+        unless ($selected_plan) {
+            return {
+                plan_name => 'Registry Professional',
+                monthly_amount => 20000, # $200.00 in cents
+                currency => 'usd',
+                trial_days => 30,
+                description => 'Complete after-school program management solution',
+                features => [
+                    'Unlimited student enrollments',
+                    'Attendance tracking and reporting',
+                    'Parent communication tools',
+                    'Payment processing',
+                    'Waitlist management',
+                    'Staff scheduling',
+                    'Custom reporting'
+                ],
+                billing_cycle => 'monthly',
+                formatted_price => '$200.00/month'
+            };
+        }
+
+        # Use selected plan configuration
+        my $config = $selected_plan->{pricing_configuration} || {};
         return {
-            plan_name => 'Registry Professional',
-            monthly_amount => 20000, # $200.00 in cents
-            currency => 'usd',
-            trial_days => 30,
-            description => 'Complete after-school program management solution',
-            features => [
-                'Unlimited student enrollments',
-                'Attendance tracking and reporting', 
-                'Parent communication tools',
-                'Payment processing',
-                'Waitlist management',
-                'Staff scheduling',
-                'Custom reporting'
-            ],
-            billing_cycle => 'monthly',
-            formatted_price => '$200.00/month'
+            plan_name => $selected_plan->{plan_name},
+            monthly_amount => $selected_plan->{amount},
+            currency => lc($selected_plan->{currency} || 'usd'),
+            trial_days => $config->{trial_days} || 30,
+            description => $config->{description} || $selected_plan->{plan_name},
+            features => $config->{features} || [],
+            billing_cycle => $config->{billing_cycle} || 'monthly',
+            formatted_price => $self->format_price_for_display($selected_plan->{amount}, $selected_plan->{currency})
         };
+    }
+
+    method format_price_for_display($amount_cents, $currency) {
+        my $amount_dollars = $amount_cents / 100;
+
+        if (uc($currency) eq 'USD') {
+            return sprintf('$%.0f/month', $amount_dollars);
+        }
+
+        return sprintf('%.0f %s/month', $amount_dollars, uc($currency));
     }
 
     method create_setup_intent($db, $run, $form_data) {
@@ -261,7 +294,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     method handle_setup_completion($db, $run, $form_data) {
         my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
         my $setup_data = $run->data->{payment_setup} || {};
-        
+
         # Test mode: skip Stripe validation if setup_intent_id starts with 'seti_test'
         if ($form_data->{setup_intent_id} && $form_data->{setup_intent_id} =~ /^seti_test/) {
             # Mock successful subscription for testing
@@ -280,9 +313,16 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 }
             });
             
-            
+
             # For testing, create the tenant directly instead of delegating to RegisterTenant step
-            my $tenant_result = $self->create_tenant_directly($db, $run);
+            my $tenant_result = eval { $self->create_tenant_directly($db, $run) };
+            if ($@) {
+                return {
+                    next_step => $self->id,
+                    errors => ["Failed to create tenant: $@"],
+                    data => $self->prepare_payment_data($db, $run)
+                };
+            }
 
             # Payment successful, move to completion
             return {
@@ -353,12 +393,20 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     }
 
     method template { 'tenant-signup/payment' }
+
+    # Provide data for template rendering on GET requests
+    method prepare_template_data($db, $run) {
+        return $self->prepare_payment_data($db, $run);
+    }
     
     # For testing mode, create tenant directly (duplicates RegisterTenant logic)
     method create_tenant_directly($db, $run) {
-        
+
         my $profile = $run->data;
-        
+
+        # Preserve tenant name before any modifications
+        my $tenant_name = $profile->{name};
+
         # Handle backward compatibility for old 'users' format (same logic as RegisterTenant)
         my $user_data;
         if (exists $profile->{users} && ref $profile->{users} eq 'ARRAY') {
@@ -371,13 +419,13 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         } else {
             # New format: extract user data from individual fields
             my $admin_user_data = {
-                name => delete $profile->{admin_name},
-                email => delete $profile->{admin_email},
-                username => delete $profile->{admin_username},
-                password => delete $profile->{admin_password},
-                user_type => delete $profile->{admin_user_type} || 'admin',
+                name => $profile->{admin_name},
+                email => $profile->{admin_email},
+                username => $profile->{admin_username},
+                password => $profile->{admin_password},
+                user_type => $profile->{admin_user_type} || 'admin',
             };
-            
+
             $user_data = [$admin_user_data];
         }
         
@@ -390,7 +438,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         
         # Generate subdomain slug from organization name (PostgreSQL schema compatible)
-        my $slug = lc($profile->{name} || 'test_tenant');
+        my $slug = lc($tenant_name || 'test_tenant');
         $slug =~ s/[^a-z0-9\s_]//g;  # Remove special characters (allow underscores)
         $slug =~ s/\s+/_/g;          # Replace spaces with underscores
         $slug =~ s/_+/_/g;           # Remove multiple consecutive underscores
@@ -400,7 +448,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         # Create clean tenant data with only fields that belong in the tenant table
         my $tenant_data = {
-            name => $profile->{name},
+            name => $tenant_name,
             slug => $slug,
         };
         
@@ -422,7 +470,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         
         my $tenant = Registry::DAO::Tenant->create($db, $tenant_data);
         $db->query('SELECT clone_schema(?)', $tenant->slug);
-        
+
         $tenant->set_primary_user($db, $primary_user);
         
         
@@ -451,7 +499,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 $db->query('SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $tenant->slug, $workflow->id);
             }
         }
-        
+
         $tx->commit;
         
         

@@ -50,7 +50,7 @@
     </main>
 
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="/static/js/workflow-progress.js"></script>
+    <script src="/js/components/workflow-progress.js"></script>
     <%= content 'javascript' %>
 </body>
 </html>

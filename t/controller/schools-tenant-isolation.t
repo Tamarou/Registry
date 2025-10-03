@@ -77,7 +77,7 @@ my $event_tenant1 = Test::Registry::Fixtures::create_event($dao_a->db, {
 
 $session_tenant1->add_events($dao_a->db, $event_tenant1->id);
 
-Registry::DAO::PricingPlan->create($dao_a->db, {
+Registry::DAO::PricingPlan->create($dao_a, {
     session_id => $session_tenant1->id,
     plan_name => 'District A Standard',
     plan_type => 'standard',
@@ -123,7 +123,7 @@ my $event_tenant2 = Test::Registry::Fixtures::create_event($dao_b->db, {
 
 $session_tenant2->add_events($dao_b->db, $event_tenant2->id);
 
-Registry::DAO::PricingPlan->create($dao_b->db, {
+Registry::DAO::PricingPlan->create($dao_b, {
     session_id => $session_tenant2->id,
     plan_name => 'District B Standard',
     plan_type => 'standard',

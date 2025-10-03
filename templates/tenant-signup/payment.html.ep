@@ -38,7 +38,6 @@
                     <p>Please contact our support team for assistance:</p>
                     <div class="support-contacts">
                         <a href="mailto:support@registry.com" class="support-email">support@registry.com</a>
-                        <span class="support-phone">1-800-REGISTRY</span>
                     </div>
                 </div>
             % }
@@ -272,7 +271,6 @@
             <p>
                 Questions? Contact us at
                 <a href="mailto:support@registry.com">support@registry.com</a>
-                or call 1-800-REGISTRY
             </p>
         </section>
     </footer>

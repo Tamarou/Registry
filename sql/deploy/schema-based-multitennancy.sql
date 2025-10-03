@@ -308,8 +308,11 @@ BEGIN
     EXECUTE 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object);
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
 
-    EXECUTE 'SELECT last_value, max_value, start_value, increment_by, min_value, cache_value, log_cnt, is_cycled, is_called
-              FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';'
+    -- Get sequence parameters for PostgreSQL 17 compatibility
+    EXECUTE 'SELECT s.seqstart, s.seqmax, s.seqstart, s.seqincrement, s.seqmin, s.seqcache, 0 as log_cnt, s.seqcycle, false as is_called
+              FROM pg_sequence s
+              JOIN pg_class c ON s.seqrelid = c.oid
+              WHERE c.relname = ' || quote_literal(object) || ' AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = ' || quote_literal(source_schema) || ');'
     INTO sq_last_value, sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_log_cnt, sq_is_cycled, sq_is_called ;
 
     IF sq_is_cycled
@@ -326,7 +329,7 @@ BEGIN
             || ' START WITH '   || sq_start_value
             || ' RESTART '      || sq_min_value
             || ' CACHE '        || sq_cache_value
-            || sq_cycled || ' ;' ;
+            || ' ' || sq_cycled || ' ;' ;
 
     buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     IF include_recs

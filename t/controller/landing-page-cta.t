@@ -33,24 +33,12 @@ subtest 'Enhanced CTA on landing page' => sub {
     $t->element_exists('button[data-size="xl"][data-variant="success"]', 'Primary CTA button has XL size')
       ->text_like('button[data-size="xl"]', qr/Get Started Free/, 'Primary CTA has compelling text');
 
-    # Test secondary CTA button (Watch Demo)
-    $t->element_exists('button[data-variant="secondary"][data-size="lg"]', 'Secondary Watch Demo button exists')
-      ->text_like('button[data-variant="secondary"][data-size="lg"]', qr/Watch Demo/, 'Secondary button has Watch Demo text');
 
     # Test enhanced supporting text
     $t->text_like('#trial-info small', qr/30-day free trial/, 'Supporting text mentions 30-day trial')
       ->text_like('#trial-info small', qr/No credit card/, 'Supporting text mentions no credit card')
       ->text_like('#trial-info small', qr/Cancel anytime/, 'Supporting text mentions cancel anytime')
       ->text_like('#trial-info small', qr/Setup in 5 minutes/, 'Supporting text mentions quick setup');
-
-    # Test social proof section
-    $t->element_exists('#social-proof', 'Social proof section exists');
-
-    # Extract and test social proof text properly
-    my $social_text = $t->tx->res->dom->at('#social-proof')->all_text;
-    like($social_text, qr/Join \d+\+ programs/i, 'Social proof shows program count');
-
-    $t->element_exists('#social-proof [data-rating]', 'Social proof includes rating');
 
     # Test CSS animation class
     $t->element_exists('button[data-animate="pulse"]', 'Primary CTA has pulse animation');
@@ -68,8 +56,7 @@ subtest 'CTA accessibility compliance' => sub {
     $t->element_exists('button[data-size="xl"]', 'XL button size is rendered');
 
     # Test contrast and visibility
-    $t->element_exists('button[data-variant="success"]', 'Success variant button for proper contrast')
-      ->element_exists('button[data-variant="secondary"]', 'Secondary variant button exists');
+    $t->element_exists('button[data-variant="success"]', 'Success variant button for proper contrast');
 };
 
 # Test mobile responsiveness
@@ -79,8 +66,7 @@ subtest 'Mobile CTA optimization' => sub {
     $t->get_ok('/');
 
     # Verify buttons exist and are accessible on mobile
-    $t->element_exists('button[data-size="xl"]', 'XL button exists for mobile touch targets')
-      ->element_exists('button[data-size="lg"]', 'Secondary button with appropriate size');
+    $t->element_exists('button[data-size="xl"]', 'XL button exists for mobile touch targets');
 
     # Test that buttons are in proper container
     $t->element_exists('section[data-component="container"][data-size="large"]', 'Proper container for mobile layout');

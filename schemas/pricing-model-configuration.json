@@ -1,0 +1,79 @@
+{
+  "name": "Pricing Model Configuration",
+  "description": "Configure the pricing model and amount for this plan",
+  "fields": [
+    {
+      "id": "pricing_model_type",
+      "type": "select",
+      "label": "Pricing Model",
+      "required": true,
+      "options": [
+        {"value": "fixed", "label": "Fixed Price"},
+        {"value": "tiered", "label": "Tiered Pricing"},
+        {"value": "usage", "label": "Usage Based"},
+        {"value": "per_user", "label": "Per User"}
+      ]
+    },
+    {
+      "id": "amount",
+      "type": "number",
+      "label": "Base Amount",
+      "required": true,
+      "step": "0.01",
+      "min": "0"
+    },
+    {
+      "id": "currency",
+      "type": "select",
+      "label": "Currency",
+      "required": true,
+      "options": [
+        {"value": "USD", "label": "US Dollar (USD)"},
+        {"value": "EUR", "label": "Euro (EUR)"},
+        {"value": "GBP", "label": "British Pound (GBP)"}
+      ]
+    },
+    {
+      "id": "billing_interval",
+      "type": "select",
+      "label": "Billing Interval",
+      "required": false,
+      "options": [
+        {"value": "monthly", "label": "Monthly"},
+        {"value": "quarterly", "label": "Quarterly"},
+        {"value": "annually", "label": "Annually"},
+        {"value": "one_time", "label": "One Time"}
+      ]
+    },
+    {
+      "id": "pricing_configuration",
+      "type": "object",
+      "label": "Advanced Pricing Configuration",
+      "required": false,
+      "properties": {
+        "setup_fee": {
+          "type": "number",
+          "label": "Setup Fee",
+          "step": "0.01",
+          "min": "0"
+        },
+        "trial_period_days": {
+          "type": "number",
+          "label": "Trial Period (days)",
+          "min": "0"
+        },
+        "usage_charges": {
+          "type": "array",
+          "label": "Usage-based Charges",
+          "items": {
+            "type": "object",
+            "properties": {
+              "metric": {"type": "string", "label": "Metric"},
+              "price_per_unit": {"type": "number", "label": "Price per Unit"}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

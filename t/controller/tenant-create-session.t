@@ -11,6 +11,7 @@ use Registry::DAO;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(process_workflow);
 use YAML::XS                qw( Load );
+use Data::Dumper;
 
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
@@ -22,6 +23,25 @@ for my $file (@files) {
 }
 
 $ENV{DB_URL} = $dao->url;
+
+# Set up a pricing relationship for the test to use
+# Create a test user for the pricing relationship (required as consumer)
+my $test_user = Registry::DAO::User->find_or_create($dao->db, {
+    username => 'test_relationship_user',
+    passhash => '$2b$12$DummyHashForTesting'
+});
+
+# Get the Registry Standard pricing plan and create pricing relationship for the test
+my $standard_plan = Registry::DAO::PricingPlan->find($dao->db, { plan_name => 'Registry Standard - $200/month' });
+if ($standard_plan) {
+    # Create pricing relationship between platform tenant and standard plan
+    Registry::DAO::PricingRelationship->create($dao->db, {
+        provider_id => '00000000-0000-0000-0000-000000000000',  # Platform tenant UUID
+        consumer_id => $test_user->id,
+        pricing_plan_id => $standard_plan->id,
+        status => 'active'
+    });
+}
 
 my $t = Test::Mojo->new('Registry');
 
@@ -50,15 +70,10 @@ END {
             setup_intent_id  => 'seti_test_123',
             payment_method_id => 'pm_test_123',
             collect_payment_method => '1',
+            # Pricing plan selection - using Registry Standard plan (ID will be looked up)
+            selected_plan_id => $standard_plan ? $standard_plan->id : 'cb4e92cf-193a-4832-b785-608c4b02dac8',
         }
     );
-    
-    # Debug: Print what's in the request logs
-    note "Debug: Check the application logs above for workflow processing details";
-
-    # Debug: Check what tenants exist
-    my @tenants = $dao->find( Tenant => {} );
-    note "Found tenants: " . join(', ', map { $_->name // 'unnamed' } @tenants);
     
     ok my ($tenant) = $dao->find( Tenant => { name => 'Test Tenant' } ),
       'got tenant';

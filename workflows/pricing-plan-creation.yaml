@@ -1,0 +1,33 @@
+# ABOUTME: Workflow for creating comprehensive pricing plans with resource allocation definitions
+# ABOUTME: Enables tenant admins to define both pricing and what resources customers get
+
+name: Pricing Plan Creation
+description: Create and configure resource-aware pricing plans for your organization
+slug: pricing-plan-creation
+first_step: plan-basics
+
+steps:
+  - slug: plan-basics
+    template: pricing-plan-creation/plan-basics
+    outcome-definition: Plan Basics
+    class: Registry::DAO::WorkflowSteps::PricingPlanBasics
+
+  - slug: pricing-model
+    template: pricing-plan-creation/pricing-model
+    outcome-definition: Pricing Model Configuration
+    class: Registry::DAO::WorkflowSteps::PricingModel
+
+  - slug: resource-allocation
+    template: pricing-plan-creation/resource-allocation
+    outcome-definition: Resource Allocation
+    class: Registry::DAO::WorkflowSteps::ResourceAllocation
+
+  - slug: requirements-rules
+    template: pricing-plan-creation/requirements-rules
+    outcome-definition: Requirements and Rules
+    class: Registry::DAO::WorkflowSteps::RequirementsRules
+
+  - slug: review-activate
+    template: pricing-plan-creation/review-activate
+    outcome-definition: Review and Activate
+    class: Registry::DAO::WorkflowSteps::ReviewActivatePlan

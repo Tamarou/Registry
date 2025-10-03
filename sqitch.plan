@@ -39,3 +39,4 @@ unified-pricing-infrastructure 2025-09-29T00:44:03Z Chris Prather <chris.prather
 consolidate-pricing-relationships [unified-pricing-infrastructure] 2025-09-29T16:07:15Z Chris Prather <chris.prather@tamarou.com> # Consolidate pricing relationships into unified model
 pricing-relationship-events [consolidate-pricing-relationships] 2025-09-29T19:55:59Z Chris Prather <chris.prather@tamarou.com> # Add event sourcing for pricing relationship audit trail
 remove-pricing-plan-relationship-fields 2025-09-29T22:27:51Z Chris Prather <chris.prather@tamarou.com> # Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans
+create-default-pricing-relationships [remove-pricing-plan-relationship-fields] 2025-10-02T20:30:00Z Claude <noreply@anthropic.com> # Create missing pricing relationships for default platform pricing plans

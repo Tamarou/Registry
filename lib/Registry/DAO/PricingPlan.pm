@@ -9,14 +9,17 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     use List::Util qw( min );
     
     field $id :param :reader;
-    field $session_id :param :reader;
+    field $session_id :param :reader = undef;
+    field $plan_scope :param :reader = 'customer';
     field $plan_name :param :reader;
     field $plan_type :param :reader = 'standard';
+    field $pricing_model_type :param :reader = 'fixed';
     field $amount :param :reader;
     field $currency :param :reader = 'USD';
     field $installments_allowed :param :reader = 0;
-    field $installment_count :param :reader;
+    field $installment_count :param :reader = undef;
     field $requirements :param :reader = {};
+    field $pricing_configuration :param :reader = {};
     field $metadata :param :reader = {};
     field $created_at :param :reader;
     field $updated_at :param :reader;
@@ -25,7 +28,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Decode JSON fields if they're strings
-        for my $field ($requirements, $metadata) {
+        for my $field ($requirements, $pricing_configuration, $metadata) {
             if (defined $field && !ref $field) {
                 try {
                     $field = decode_json($field);
@@ -47,30 +50,64 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     sub create ($class, $db, $data) {
         # Encode JSON fields
-        for my $field (qw(requirements metadata)) {
+        for my $field (qw(requirements pricing_configuration metadata)) {
             if (exists $data->{$field} && ref $data->{$field} eq 'HASH') {
                 $data->{$field} = { -json => $data->{$field} };
             }
         }
-        
+
         # Set defaults
         $data->{plan_type} //= 'standard';
+        $data->{pricing_model_type} //= 'fixed';
+        $data->{plan_scope} //= 'customer';
         $data->{currency} //= 'USD';
         $data->{installments_allowed} //= 0;
         $data->{requirements} //= { -json => {} };
+        $data->{pricing_configuration} //= { -json => {} };
         $data->{metadata} //= { -json => {} };
-        
-        $class->SUPER::create($db, $data);
+
+        # Use registry schema for unified pricing plans when not in tenant context
+        my $schema = 'registry'; # Always use registry schema
+        my $table = ($schema && $schema ne 'registry')
+            ? 'pricing_plans'
+            : 'registry.pricing_plans';
+
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Add proper error handling and connection management
+        try {
+            my %result = $db->insert($table, $data, { returning => '*' })->expand->hash->%*;
+            return $class->new(%result);
+        }
+        catch ($e) {
+            croak "Failed to create pricing plan: $e";
+        }
     }
     
+    # Override find to handle registry schema
+    sub find ($class, $db, $filter = {}, $order = { -desc => 'created_at' }) {
+        # Always use registry schema for now
+        my $table = 'registry.pricing_plans';
+
+        $db = $db->db if $db isa Registry::DAO;
+        my $c = $db->select($table, '*', $filter, $order)
+            ->expand->hashes->map(sub { $class->new($_->%*) });
+        return wantarray ? $c->to_array->@* : $c->first;
+    }
+
+    # Add find_by_id for compatibility
+    sub find_by_id ($class, $db, $id) {
+        return $class->find($db, { id => $id });
+    }
+
     method update ($db, $data) {
         # Encode JSON fields
-        for my $field (qw(requirements metadata)) {
+        for my $field (qw(requirements pricing_configuration metadata)) {
             if (exists $data->{$field} && ref $data->{$field} eq 'HASH') {
                 $data->{$field} = { -json => $data->{$field} };
             }
         }
-        
+
         $self->SUPER::update($db, $data);
     }
     
@@ -88,8 +125,15 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     # Get all pricing plans for a session
     sub get_pricing_plans ($class, $db, $session_id) {
+        # Determine schema context before extracting database object
+        my $schema = 'registry'; # Always use registry schema
+        my $table = ($schema && $schema ne 'registry')
+            ? 'pricing_plans'
+            : 'registry.pricing_plans';
+
         $db = $db->db if $db isa Registry::DAO;
-        my $results = $db->select($class->table, undef, { session_id => $session_id })->hashes;
+        my $results = $db->select($table, undef, { session_id => $session_id })->hashes;
+
         return [ map { $class->new(%$_) } @$results ];
     }
     

@@ -1,0 +1,124 @@
+% layout 'workflow';
+% title 'Pricing Plan Created Successfully';
+
+<div class="max-w-4xl mx-auto p-6">
+    <div class="bg-white shadow rounded-lg p-8 text-center">
+        <!-- Success Icon -->
+        <div class="mx-auto w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mb-6">
+            <svg class="w-16 h-16 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+        </div>
+
+        <h1 class="text-3xl font-bold text-gray-900 mb-4">Pricing Plan Created Successfully!</h1>
+
+        <% my $plan_id = stash('plan_id'); %>
+        <% my $summary = stash('summary') || {}; %>
+
+        <p class="text-lg text-gray-600 mb-6">
+            Your pricing plan "<strong><%= $summary->{plan_name} || 'New Plan' %></strong>" has been created
+            <% if ($summary->{metadata} && $summary->{metadata}{draft}) { %>
+                as a draft.
+            <% } elsif ($summary->{metadata} && $summary->{metadata}{activation_date}) { %>
+                and will activate on <%= $summary->{metadata}{activation_date} %>.
+            <% } else { %>
+                and is now active.
+            <% } %>
+        </p>
+
+        <% if ($plan_id) { %>
+            <div class="bg-gray-50 rounded-lg p-4 mb-6">
+                <p class="text-sm text-gray-600 mb-2">Plan ID</p>
+                <code class="font-mono text-sm bg-white px-3 py-1 rounded border"><%= $plan_id %></code>
+            </div>
+        <% } %>
+
+        <div class="space-y-4">
+            <h2 class="text-xl font-semibold mb-4">What's Next?</h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+                <div class="border rounded-lg p-4">
+                    <h3 class="font-semibold mb-2">Assign to Customers</h3>
+                    <p class="text-sm text-gray-600">Start offering this plan to your customers during enrollment.</p>
+                    <a href="/pricing-plans" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
+                        View All Plans →
+                    </a>
+                </div>
+
+                <div class="border rounded-lg p-4">
+                    <h3 class="font-semibold mb-2">Create Another Plan</h3>
+                    <p class="text-sm text-gray-600">Set up additional pricing options for different customer segments.</p>
+                    <a href="/workflows/pricing-plan-creation" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
+                        Create New Plan →
+                    </a>
+                </div>
+
+                <% if ($summary->{metadata} && $summary->{metadata}{draft}) { %>
+                    <div class="border rounded-lg p-4">
+                        <h3 class="font-semibold mb-2">Edit Draft</h3>
+                        <p class="text-sm text-gray-600">Continue editing this draft plan before activation.</p>
+                        <a href="/pricing-plans/<%= $plan_id %>/edit" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
+                            Edit Plan →
+                        </a>
+                    </div>
+                <% } %>
+
+                <div class="border rounded-lg p-4">
+                    <h3 class="font-semibold mb-2">View Reports</h3>
+                    <p class="text-sm text-gray-600">Monitor plan performance and customer adoption.</p>
+                    <a href="/reports/pricing" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
+                        View Reports →
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8 pt-6 border-t">
+            <div class="flex justify-center space-x-4">
+                <a href="/dashboard"
+                   class="px-6 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50">
+                    Return to Dashboard
+                </a>
+                <a href="/pricing-plans"
+                   class="px-6 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                    Manage Pricing Plans
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Card -->
+    <div class="mt-6 bg-white shadow rounded-lg p-6">
+        <h2 class="text-lg font-semibold mb-4">Plan Summary</h2>
+        <dl class="grid grid-cols-2 gap-4 text-sm">
+            <div>
+                <dt class="font-medium text-gray-500">Plan Type</dt>
+                <dd class="mt-1 text-gray-900"><%= ucfirst($summary->{plan_type} || 'standard') %></dd>
+            </div>
+            <div>
+                <dt class="font-medium text-gray-500">Pricing Model</dt>
+                <dd class="mt-1 text-gray-900"><%= ucfirst($summary->{pricing_model_type} || 'fixed') %></dd>
+            </div>
+            <div>
+                <dt class="font-medium text-gray-500">Amount</dt>
+                <dd class="mt-1 text-gray-900 font-semibold"><%= $summary->{formatted_amount} || '$0.00' %></dd>
+            </div>
+            <div>
+                <dt class="font-medium text-gray-500">Target Audience</dt>
+                <dd class="mt-1 text-gray-900"><%= ucfirst($summary->{target_audience} || 'individual') %></dd>
+            </div>
+            <% if ($summary->{resources} && $summary->{resources}{features} && @{$summary->{resources}{features}}) { %>
+                <div class="col-span-2">
+                    <dt class="font-medium text-gray-500 mb-2">Features Included</dt>
+                    <dd class="flex flex-wrap gap-1">
+                        <% for my $feature (@{$summary->{resources}{features}}) { %>
+                            <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                <%= ucfirst($feature =~ s/_/ /gr) %>
+                            </span>
+                        <% } %>
+                    </dd>
+                </div>
+            <% } %>
+        </dl>
+    </div>
+</div>
