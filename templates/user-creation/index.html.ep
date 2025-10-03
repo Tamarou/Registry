@@ -1,17 +1,15 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Add a User</title>
-    </head>
-    <body>
-        <header>
-            <h1>Add a User</h1>
-            <p></p>
-        </header>
-        <main>
-            <form method="POST" action="<%= $action %>">
-                <button>Start Here</button>
-            </form>
-        </main>
-    </body>
-</html>
+% extends 'layouts/workflow';
+% title 'Add a User';
+
+<article class="workflow-start">
+    <header class="workflow-header">
+        <h1>Add a User</h1>
+        <p>Create a new user account for your organization.</p>
+    </header>
+
+    <form method="post" action="<%= $action %>" class="registry-form">
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Start User Creation</button>
+        </div>
+    </form>
+</article>
