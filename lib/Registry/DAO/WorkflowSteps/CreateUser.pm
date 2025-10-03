@@ -17,8 +17,21 @@ class Registry::DAO::WorkflowSteps::CreateUser :isa(Registry::DAO::WorkflowStep)
         my $user_db = $db;
 
         # Pass both the database connection and tenant context to User::create
-        my $user = Registry::DAO::User->create( $user_db,
-            { $data->%{ 'username', 'password' }, __tenant_slug => $data->{__tenant_slug} } );
+        # Only include defined values to avoid null constraint violations
+        my %user_data = ( __tenant_slug => $data->{__tenant_slug} );
+        for my $field (qw(username password)) {
+            $user_data{$field} = $data->{$field} if defined $data->{$field};
+        }
+
+        # Generate a default username if none provided (required by database constraint)
+        if (!defined $user_data{username}) {
+            # Use a timestamp-based username to ensure uniqueness
+            my $timestamp = time();
+            my $rand = int(rand(10000));
+            $user_data{username} = "user_${timestamp}_${rand}";
+        }
+
+        my $user = Registry::DAO::User->create( $user_db, \%user_data );
 
         $run->update_data(
             $db,
