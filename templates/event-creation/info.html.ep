@@ -1,11 +1,60 @@
+% extends 'layouts/workflow';
+% title 'Create New Event';
+
 % my $location_url = url_for "workflow_callcc", target => 'location-creation';
 % my $project_url = url_for "workflow_callcc", target => 'project-creation';
 % my $teacher_url = url_for "workflow_callcc", target => 'user-creation';
-<form action="<%= $action %>">
-    <input type="time" name="time" />
-    <input type="text" name="duration" placeholder="120"/>
-    <a rel="create-page location" href="<%= $location_url %>">Add Location</a>
-    <a rel="create-page project" href="<%= $project_url %>">Add Project</a>
-    <input type="text" name="teacher_id" />
-    <input type="submit>Save</input>
+
+<form action="<%= $action %>" method="POST">
+    <fieldset>
+        <legend>Event Details</legend>
+
+        <div class="form-group">
+            <label for="time">Event Time:</label>
+            <input type="time" id="time" name="time" required />
+        </div>
+
+        <div class="form-group">
+            <label for="duration">Duration (minutes):</label>
+            <input type="number" id="duration" name="duration" placeholder="120" min="15" step="15" required />
+        </div>
+
+        <div class="form-group">
+            <label for="teacher_id">Teacher:</label>
+            <input type="text" id="teacher_id" name="teacher_id" placeholder="Teacher ID" required />
+            <small>
+                <a href="<%= $teacher_url %>" rel="create-page teacher" data-variant="outline">Add New Teacher</a>
+            </small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Event Location & Project</legend>
+
+        <div class="form-group">
+            <label for="location_id">Location:</label>
+            <select id="location_id" name="location_id">
+                <option value="">Select a location</option>
+                <!-- Location options will be populated dynamically -->
+            </select>
+            <small>
+                <a href="<%= $location_url %>" rel="create-page location" data-variant="outline">Add New Location</a>
+            </small>
+        </div>
+
+        <div class="form-group">
+            <label for="project_id">Project:</label>
+            <select id="project_id" name="project_id">
+                <option value="">Select a project</option>
+                <!-- Project options will be populated dynamically -->
+            </select>
+            <small>
+                <a href="<%= $project_url %>" rel="create-page project" data-variant="outline">Add New Project</a>
+            </small>
+        </div>
+    </fieldset>
+
+    <div class="form-actions">
+        <button type="submit" data-variant="primary">Save Event</button>
+    </div>
 </form>

@@ -1,2 +1,21 @@
-<form action="<%= $action %>">
-</form>
+% extends 'layouts/workflow';
+% title 'User Created Successfully';
+
+<article class="success-container">
+    <header class="success-header">
+        <section class="success-icon">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" stroke="#10b981" stroke-width="2" fill="#f0fdf4"/>
+                <path d="m9 12 2 2 4-4" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </section>
+        <h1>User Created Successfully!</h1>
+        <p class="success-subtitle">The new user account has been created and is ready to use.</p>
+    </header>
+
+    <form action="<%= $action %>" method="post">
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Continue</button>
+        </div>
+    </form>
+</article>

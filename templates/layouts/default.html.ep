@@ -4,18 +4,82 @@
     <title><%= title || 'Registry' %></title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Design System CSS -->
+    <link rel="stylesheet" href="/css/design-system.css">
+    <link rel="stylesheet" href="/css/components.css">
     <link rel="stylesheet" href="/css/style.css">
 
     <%= content 'head' %>
 </head>
-<body>
-    <div class="container">
-        <header class="mb-8">
-            <h1><%= title || 'Registry' %></h1>
-        </header>
-        <main>
-            <%= content %>
-        </main>
-    </div>
+<body data-theme="light">
+    <!-- Background Effects (optional - can be enabled per page) -->
+    <% if (stash('enable_background_effects')) { %>
+        <div class="grid-background"></div>
+        <div class="floating-shapes">
+            <div class="shape shape-1"></div>
+            <div class="shape shape-2"></div>
+        </div>
+    <% } %>
+
+    <% if (stash('no_container')) { %>
+        <%= content %>
+    <% } else { %>
+        <div class="container">
+            <header class="mb-8">
+                <h1><%= title || 'Registry' %></h1>
+            </header>
+            <main>
+                <%= content %>
+            </main>
+        </div>
+    <% } %>
+
+    <script>
+        // Theme toggle functionality for default layout
+        function toggleTheme() {
+            const body = document.body;
+            const currentTheme = body.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+
+            body.setAttribute('data-theme', newTheme);
+
+            // Save preference
+            localStorage.setItem('theme', newTheme);
+
+            // Update theme icon if present
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+            }
+        }
+
+        // Load theme preference (system preference or saved override)
+        window.addEventListener('DOMContentLoaded', function() {
+            // Check if user has manually set a preference, otherwise use system preference
+            const savedTheme = localStorage.getItem('theme');
+            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
+
+            document.body.setAttribute('data-theme', theme);
+
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = theme === 'light' ? '🌙' : '☀️';
+            }
+
+            // Listen for system theme changes (only if user hasn't manually set a preference)
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+                if (!localStorage.getItem('theme')) {
+                    const newTheme = e.matches ? 'dark' : 'light';
+                    document.body.setAttribute('data-theme', newTheme);
+                    const icon = document.getElementById('theme-icon');
+                    if (icon) {
+                        icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+                    }
+                }
+            });
+        });
+    </script>
 </body>
 </html>

@@ -60,12 +60,21 @@ class WorkflowProgress extends HTMLElement {
                 .progress-container {
                     display: flex;
                     align-items: center;
-                    gap: 0.5rem;
-                    padding: 1rem;
-                    background: #f8f9fa;
-                    border-radius: 0.5rem;
-                    border: 1px solid #e9ecef;
+                    gap: 0.75rem;
+                    padding: 1.5rem;
+                    background: rgba(255, 255, 255, 0.85);
+                    backdrop-filter: blur(10px);
+                    border-radius: 1rem;
+                    border: 2px solid rgba(255, 0, 255, 0.3);
                     overflow-x: auto;
+                    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+                }
+
+                @media (prefers-color-scheme: dark) {
+                    .progress-container {
+                        background: rgba(26, 8, 41, 0.85);
+                        border-color: rgba(255, 0, 255, 0.5);
+                    }
                 }
 
                 .step {
@@ -73,51 +82,66 @@ class WorkflowProgress extends HTMLElement {
                     align-items: center;
                     gap: 0.5rem;
                     flex-shrink: 0;
-                    padding: 0.5rem 0.75rem;
-                    border-radius: 0.375rem;
-                    transition: all 0.2s ease;
+                    padding: 0.75rem 1rem;
+                    border-radius: 50px;
+                    transition: all 0.3s ease;
                     text-decoration: none;
                     color: inherit;
                     min-height: 2.5rem;
+                    font-weight: 600;
                 }
 
                 .step:focus {
-                    outline: 2px solid #3b82f6;
+                    outline: 2px solid #00ffff;
                     outline-offset: 2px;
                 }
 
                 .step.completed {
-                    background: #22c55e;
+                    background: linear-gradient(135deg, #29a6a6 0%, #2abfbf 100%);
                     color: white;
                     cursor: pointer;
+                    box-shadow: 0 3px 10px rgba(42, 191, 191, 0.3);
                 }
 
                 .step.completed:hover {
-                    background: #16a34a;
+                    transform: translateY(-2px);
+                    box-shadow: 0 5px 15px rgba(42, 191, 191, 0.5);
                 }
 
                 .step.current {
-                    background: #3b82f6;
+                    background: linear-gradient(135deg, #667eea 0%, #9d4edd 100%);
                     color: white;
-                    font-weight: 600;
+                    font-weight: 700;
+                    box-shadow: 0 5px 15px rgba(157, 78, 221, 0.4);
+                    animation: pulse-glow 2s ease-in-out infinite;
+                }
+
+                @keyframes pulse-glow {
+                    0%, 100% {
+                        box-shadow: 0 5px 15px rgba(157, 78, 221, 0.4);
+                    }
+                    50% {
+                        box-shadow: 0 5px 20px rgba(157, 78, 221, 0.6);
+                    }
                 }
 
                 .step.upcoming {
-                    background: #e5e7eb;
-                    color: #6b7280;
+                    background: rgba(157, 78, 221, 0.1);
+                    color: #9d4edd;
                     cursor: not-allowed;
+                    opacity: 0.6;
                 }
 
                 .step-number {
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    width: 1.5rem;
-                    height: 1.5rem;
+                    width: 1.75rem;
+                    height: 1.75rem;
                     border-radius: 50%;
-                    background: rgba(255, 255, 255, 0.2);
+                    background: rgba(255, 255, 255, 0.25);
                     font-size: 0.875rem;
-                    font-weight: 600;
+                    font-weight: 700;
                 }
 
                 .step.completed .step-number {
@@ -125,23 +149,25 @@ class WorkflowProgress extends HTMLElement {
                 }
 
                 .step.current .step-number {
-                    background: rgba(255, 255, 255, 0.2);
+                    background: rgba(255, 255, 255, 0.3);
                 }
 
                 .step.upcoming .step-number {
-                    background: rgba(107, 114, 128, 0.1);
+                    background: rgba(157, 78, 221, 0.15);
                 }
 
                 .step-name {
                     font-size: 0.875rem;
                     white-space: nowrap;
+                    letter-spacing: 0.5px;
                 }
 
                 .separator {
-                    width: 1rem;
-                    height: 2px;
-                    background: #d1d5db;
+                    width: 1.5rem;
+                    height: 3px;
+                    background: linear-gradient(90deg, rgba(157, 78, 221, 0.3) 0%, rgba(0, 255, 255, 0.3) 100%);
                     flex-shrink: 0;
+                    border-radius: 2px;
                 }
 
                 .sr-only {
@@ -158,12 +184,12 @@ class WorkflowProgress extends HTMLElement {
 
                 @media (max-width: 640px) {
                     .progress-container {
-                        padding: 0.75rem;
-                        gap: 0.25rem;
+                        padding: 1rem;
+                        gap: 0.5rem;
                     }
 
                     .step {
-                        padding: 0.375rem 0.5rem;
+                        padding: 0.5rem 0.75rem;
                     }
 
                     .step-name {
@@ -171,14 +197,14 @@ class WorkflowProgress extends HTMLElement {
                     }
 
                     .separator {
-                        width: 0.5rem;
+                        width: 0.75rem;
                     }
                 }
 
                 @media (max-width: 480px) {
                     .step-number {
-                        width: 1.25rem;
-                        height: 1.25rem;
+                        width: 1.5rem;
+                        height: 1.5rem;
                         font-size: 0.75rem;
                     }
                 }

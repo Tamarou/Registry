@@ -91,13 +91,13 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
             $user_data{passhash} = $crypt->hash_password( delete $user_data{password} );
             
             # Validate input lengths for security
-            if (exists $profile_data{email} && length($profile_data{email}) > 255) {
+            if (exists $profile_data{email} && defined $profile_data{email} && length($profile_data{email}) > 255) {
                 croak "Email address is too long (maximum 255 characters)";
             }
-            if (exists $profile_data{name} && length($profile_data{name}) > 255) {
+            if (exists $profile_data{name} && defined $profile_data{name} && length($profile_data{name}) > 255) {
                 croak "Name is too long (maximum 255 characters)";
             }
-            if (exists $user_data{username} && length($user_data{username}) > 255) {
+            if (exists $user_data{username} && defined $user_data{username} && length($user_data{username}) > 255) {
                 croak "Username is too long (maximum 255 characters)";
             }
             

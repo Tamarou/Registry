@@ -1,0 +1,311 @@
+/* ABOUTME: Core design system CSS with variables, animations, and base styles for Registry application
+   ABOUTME: Includes cyberpunk/synthwave theme system with light and dark mode support */
+
+/* ========================================================================
+   CSS Custom Properties (Design Tokens)
+   ======================================================================== */
+
+:root {
+    /* Light theme variables - default */
+    --landing-bg-primary: #f0e6ff;
+    --landing-bg-secondary: #fff5f5;
+    --landing-text-primary: #2a1b3d;
+    --landing-text-secondary: #44306e;
+    --landing-accent-pink: #ff00ff;
+    --landing-accent-cyan: #00ffff;
+    --landing-accent-purple: #9d4edd;
+    --landing-accent-blue: #7209b7;
+    --landing-gradient-1: linear-gradient(135deg, #667eea 0%, #ff00ff 50%, #00ffff 100%);
+    --landing-gradient-2: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+    --landing-card-bg: rgba(255, 255, 255, 0.85);
+    --landing-glow-color: rgba(255, 0, 255, 0.3);
+    --landing-grid-color: rgba(157, 78, 221, 0.1);
+
+    /* Workflow theme variables (mirror landing for consistency) */
+    --bg-primary: #f0e6ff;
+    --bg-secondary: #fff5f5;
+    --text-primary: #2a1b3d;
+    --text-secondary: #44306e;
+    --accent-pink: #ff00ff;
+    --accent-cyan: #00ffff;
+    --accent-purple: #9d4edd;
+    --accent-blue: #7209b7;
+    --gradient-1: linear-gradient(135deg, #667eea 0%, #ff00ff 50%, #00ffff 100%);
+    --gradient-2: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+    --card-bg: rgba(255, 255, 255, 0.85);
+    --glow-color: rgba(255, 0, 255, 0.3);
+    --grid-color: rgba(157, 78, 221, 0.1);
+}
+
+/* Dark theme - applies to elements with data-landing-theme="dark" or data-theme="dark" */
+[data-landing-theme="dark"],
+[data-theme="dark"] {
+    --landing-bg-primary: #0a0014;
+    --landing-bg-secondary: #1a0829;
+    --landing-text-primary: #ffffff;
+    --landing-text-secondary: #e0b3ff;
+    --landing-accent-pink: #ff00ff;
+    --landing-accent-cyan: #00ffff;
+    --landing-accent-purple: #c77dff;
+    --landing-accent-blue: #9d4edd;
+    --landing-gradient-1: linear-gradient(135deg, #667eea 0%, #ff00ff 50%, #00ffff 100%);
+    --landing-gradient-2: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+    --landing-card-bg: rgba(26, 8, 41, 0.85);
+    --landing-glow-color: rgba(255, 0, 255, 0.5);
+    --landing-grid-color: rgba(157, 78, 221, 0.2);
+
+    /* Workflow variables for dark mode */
+    --bg-primary: #0a0014;
+    --bg-secondary: #1a0829;
+    --text-primary: #ffffff;
+    --text-secondary: #e0b3ff;
+    --accent-pink: #ff00ff;
+    --accent-cyan: #00ffff;
+    --accent-purple: #c77dff;
+    --accent-blue: #9d4edd;
+    --card-bg: rgba(26, 8, 41, 0.85);
+    --glow-color: rgba(255, 0, 255, 0.5);
+    --grid-color: rgba(157, 78, 221, 0.2);
+}
+
+/* ========================================================================
+   Base Styles and Resets
+   ======================================================================== */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* ========================================================================
+   Animations
+   ======================================================================== */
+
+/* Grid movement animation - creates the illusion of infinite scrolling grid */
+@keyframes landing-grid-move {
+    0% { transform: translate(0, 0); }
+    100% { transform: translate(50px, 50px); }
+}
+
+@keyframes grid-move {
+    0% { transform: translate(0, 0); }
+    100% { transform: translate(50px, 50px); }
+}
+
+/* Glow pulse animation - for hero text and emphasis elements */
+@keyframes landing-glow-pulse {
+    0%, 100% { filter: drop-shadow(0 0 20px var(--landing-glow-color)); }
+    50% { filter: drop-shadow(0 0 40px var(--landing-glow-color)); }
+}
+
+@keyframes glow-pulse {
+    0%, 100% { filter: drop-shadow(0 0 20px var(--glow-color)); }
+    50% { filter: drop-shadow(0 0 40px var(--glow-color)); }
+}
+
+/* Floating shape animations - for background decorative elements */
+@keyframes landing-float-1 {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50% { transform: translate(100px, -50px) rotate(180deg); }
+}
+
+@keyframes landing-float-2 {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50% { transform: translate(-80px, 30px) rotate(-180deg); }
+}
+
+@keyframes float-1 {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50% { transform: translate(100px, -50px) rotate(180deg); }
+}
+
+@keyframes float-2 {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50% { transform: translate(-80px, 30px) rotate(-180deg); }
+}
+
+/* Subtle float animation for workflow pages */
+@keyframes float-subtle {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50% { transform: translate(-50px, 30px) rotate(90deg); }
+}
+
+/* ========================================================================
+   Background Effects - Grid and Floating Shapes
+   ======================================================================== */
+
+/* Animated grid background */
+.landing-grid-background {
+    position: fixed;
+    top: -50px;
+    left: -50px;
+    width: calc(100% + 50px);
+    height: calc(100% + 50px);
+    background-color: var(--landing-bg-primary);
+    background-image:
+        linear-gradient(var(--landing-grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--landing-grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    z-index: -2;
+    animation: landing-grid-move 20s linear infinite;
+}
+
+.grid-background {
+    position: fixed;
+    top: -50px;
+    left: -50px;
+    width: calc(100% + 50px);
+    height: calc(100% + 50px);
+    background-color: var(--bg-primary);
+    background-image:
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    z-index: -2;
+    animation: grid-move 20s linear infinite;
+}
+
+/* Grid background as pseudo-element for workflow layout */
+body[data-layout="workflow"]::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    z-index: -2;
+    animation: grid-move 20s linear infinite;
+}
+
+/* Floating shapes container */
+.landing-floating-shapes,
+.floating-shapes {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+/* Individual floating shapes */
+.landing-shape,
+.shape {
+    position: absolute;
+    opacity: 0.3;
+}
+
+.landing-shape-1,
+.shape-1 {
+    width: 300px;
+    height: 300px;
+    background: var(--landing-gradient-1);
+    border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+    top: 10%;
+    left: -150px;
+    animation: landing-float-1 20s infinite ease-in-out;
+}
+
+.landing-shape-2,
+.shape-2 {
+    width: 200px;
+    height: 200px;
+    background: var(--landing-gradient-2);
+    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+    top: 60%;
+    right: -100px;
+    animation: landing-float-2 15s infinite ease-in-out;
+}
+
+/* Subtle floating shape for workflow as pseudo-element */
+body[data-layout="workflow"]::after {
+    content: '';
+    position: fixed;
+    width: 300px;
+    height: 300px;
+    background: var(--gradient-1);
+    border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+    top: 10%;
+    right: -100px;
+    opacity: 0.15;
+    z-index: -1;
+    animation: float-subtle 25s infinite ease-in-out;
+}
+
+/* ========================================================================
+   Base Layout Styles
+   ======================================================================== */
+
+/* Landing page container */
+.landing-page {
+    position: relative;
+    /* Background color removed - using fixed background elements instead */
+    color: var(--landing-text-primary);
+    overflow-x: hidden;
+    transition: color 0.3s ease;
+    min-height: 100vh;
+}
+
+/* Workflow layout body styling */
+body[data-layout="workflow"] {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    overflow-x: hidden;
+    transition: background 0.3s ease, color 0.3s ease;
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+}
+
+/* ========================================================================
+   Accessibility Utilities
+   ======================================================================== */
+
+/* Screen reader only content */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ========================================================================
+   HTMX Loading States
+   ======================================================================== */
+
+/* Visual feedback during HTMX requests */
+.htmx-request section[data-component="workflow-content"] {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* ========================================================================
+   Responsive Design Utilities
+   ======================================================================== */
+
+/* Mobile-first responsive breakpoints */
+@media (max-width: 768px) {
+    /* Reduce animation intensity on mobile for performance */
+    .landing-grid-background,
+    .grid-background,
+    body[data-layout="workflow"]::before {
+        animation-duration: 30s;
+    }
+
+    .landing-shape,
+    .shape,
+    body[data-layout="workflow"]::after {
+        animation-duration: 30s;
+    }
+}

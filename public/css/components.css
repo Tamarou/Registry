@@ -1,0 +1,699 @@
+/* ABOUTME: Reusable component styles for Registry application UI elements
+   ABOUTME: Includes buttons, cards, forms, navigation, and glassmorphic effects */
+
+/* ========================================================================
+   Navigation Components
+   ======================================================================== */
+
+/* Primary landing page navigation */
+.landing-nav {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    padding: 1.5rem 2rem;
+    background: var(--landing-card-bg);
+    backdrop-filter: blur(10px);
+    z-index: 100;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid var(--landing-glow-color);
+}
+
+/* Workflow navigation */
+body[data-layout="workflow"] nav.workflow-nav {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    padding: 1rem 2rem;
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    z-index: 100;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid var(--glow-color);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Logo styles for landing page */
+.landing-logo {
+    font-size: 1.8rem;
+    font-weight: bold;
+    background: var(--landing-gradient-1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 30px var(--landing-glow-color);
+    font-family: 'Courier New', monospace;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}
+
+.landing-logo::before {
+    content: "[ ";
+    font-weight: normal;
+}
+
+.landing-logo::after {
+    content: " ]";
+    font-weight: normal;
+}
+
+/* Logo styles for workflow pages */
+.workflow-logo {
+    font-size: 1.5rem;
+    font-weight: bold;
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-family: 'Courier New', monospace;
+    letter-spacing: 2px;
+}
+
+/* Generic logo for standalone pages */
+.logo {
+    font-size: 1.8rem;
+    font-weight: bold;
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 30px var(--glow-color);
+    font-family: 'Courier New', monospace;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}
+
+.logo::before {
+    content: "[ ";
+    font-weight: normal;
+}
+
+.logo::after {
+    content: " ]";
+    font-weight: normal;
+}
+
+/* Navigation button container */
+.nav-buttons {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+/* ========================================================================
+   Theme Toggle Button
+   ======================================================================== */
+
+.landing-theme-toggle,
+.theme-toggle {
+    background: transparent;
+    border: 2px solid var(--landing-accent-purple);
+    color: var(--landing-accent-purple);
+    padding: 0.5rem;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.2rem;
+    transition: all 0.3s ease;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.landing-theme-toggle:hover,
+.theme-toggle:hover {
+    background: var(--landing-accent-purple);
+    color: white;
+    box-shadow: 0 0 20px var(--landing-accent-purple);
+}
+
+body[data-layout="workflow"] .theme-toggle {
+    border-color: var(--accent-purple);
+    color: var(--accent-purple);
+    width: 2.5rem;
+    height: 2.5rem;
+}
+
+body[data-layout="workflow"] .theme-toggle:hover {
+    background: var(--accent-purple);
+    box-shadow: 0 0 20px var(--accent-purple);
+}
+
+/* ========================================================================
+   Button Components
+   ======================================================================== */
+
+/* Primary CTA button for landing page */
+.landing-cta-button {
+    background: var(--landing-gradient-1);
+    color: white;
+    border: none;
+    padding: 1.2rem 3rem;
+    font-size: 1.2rem;
+    border-radius: 50px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: all 0.3s ease;
+    box-shadow: 0 10px 30px rgba(255, 0, 255, 0.3);
+    text-decoration: none;
+    display: inline-block;
+}
+
+.landing-cta-button:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 15px 40px rgba(255, 0, 255, 0.5);
+}
+
+/* Secondary CTA button variant */
+.landing-cta-secondary {
+    background: transparent;
+    border: 2px solid var(--landing-accent-purple);
+    color: var(--landing-text-primary);
+    padding: 1rem 2.5rem;
+    font-size: 1.1rem;
+}
+
+.landing-cta-secondary:hover {
+    background: var(--landing-accent-purple);
+    color: white;
+}
+
+/* Generic CTA button */
+.cta-button {
+    background: var(--gradient-1);
+    color: white;
+    border: none;
+    padding: 1.2rem 3rem;
+    font-size: 1.2rem;
+    border-radius: 50px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: all 0.3s ease;
+    box-shadow: 0 10px 30px rgba(255, 0, 255, 0.3);
+}
+
+.cta-button:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 15px 40px rgba(255, 0, 255, 0.5);
+}
+
+/* Workflow form buttons */
+section[data-component="workflow-content"] button,
+section[data-component="workflow-content"] .button {
+    background: var(--gradient-1);
+    color: white;
+    border: none;
+    padding: 1rem 2rem;
+    font-size: 1rem;
+    border-radius: 50px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+    box-shadow: 0 5px 15px rgba(255, 0, 255, 0.3);
+}
+
+section[data-component="workflow-content"] button:hover,
+section[data-component="workflow-content"] .button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(255, 0, 255, 0.5);
+}
+
+/* Button variants */
+section[data-component="workflow-content"] button[data-variant="secondary"],
+section[data-component="workflow-content"] .button[data-variant="secondary"] {
+    background: var(--gradient-2);
+}
+
+section[data-component="workflow-content"] button[data-variant="outline"],
+section[data-component="workflow-content"] .button[data-variant="outline"] {
+    background: transparent;
+    border: 2px solid var(--accent-purple);
+    color: var(--accent-purple);
+}
+
+section[data-component="workflow-content"] button[data-variant="outline"]:hover,
+section[data-component="workflow-content"] .button[data-variant="outline"]:hover {
+    background: var(--accent-purple);
+    color: white;
+}
+
+/* Workflow navigation footer buttons */
+footer[data-component="workflow-navigation"] button {
+    background: var(--gradient-1);
+    color: white;
+    border: none;
+    padding: 0.8rem 2rem;
+    font-size: 1rem;
+    border-radius: 50px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.3s ease;
+    box-shadow: 0 5px 15px rgba(255, 0, 255, 0.3);
+}
+
+footer[data-component="workflow-navigation"] button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(255, 0, 255, 0.5);
+}
+
+/* Submit button for forms */
+.submit-button {
+    background: var(--gradient-2);
+    color: white;
+    border: none;
+    padding: 1rem 2rem;
+    border-radius: 50px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.submit-button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 10px 30px rgba(245, 87, 108, 0.5);
+}
+
+/* ========================================================================
+   Card Components (Glassmorphic Design)
+   ======================================================================== */
+
+/* Feature cards for landing page */
+.landing-feature-card {
+    background: var(--landing-card-bg);
+    padding: 2rem;
+    border-radius: 20px;
+    border: 2px solid var(--landing-glow-color);
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+}
+
+.landing-feature-card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 20px 40px var(--landing-glow-color);
+    border-color: var(--landing-accent-cyan);
+}
+
+/* Generic feature cards */
+.feature-card {
+    background: var(--card-bg);
+    padding: 2rem;
+    border-radius: 20px;
+    border: 2px solid var(--glow-color);
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+}
+
+.feature-card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 20px 40px var(--glow-color);
+    border-color: var(--accent-cyan);
+}
+
+/* Feature card content elements */
+.landing-feature-icon,
+.feature-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    display: block;
+}
+
+.landing-feature-title,
+.feature-title {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--landing-accent-purple);
+}
+
+.landing-feature-subtitle {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    color: var(--landing-text-secondary);
+    font-weight: 600;
+}
+
+.landing-feature-description,
+.feature-description {
+    color: var(--landing-text-secondary);
+    line-height: 1.6;
+}
+
+/* Social proof card */
+.landing-social-proof {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    background: var(--landing-card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 15px;
+    border: 1px solid var(--landing-glow-color);
+    max-width: 600px;
+}
+
+.landing-social-proof p {
+    margin: 0;
+    color: var(--landing-text-primary);
+}
+
+/* Workflow header card */
+header[data-component="workflow-header"] {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding: 2rem;
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    border: 2px solid var(--glow-color);
+}
+
+/* Workflow content card */
+section[data-component="workflow-content"] {
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    border: 2px solid var(--glow-color);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* Workflow navigation footer card */
+footer[data-component="workflow-navigation"] {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    border: 2px solid var(--glow-color);
+}
+
+/* ========================================================================
+   Form Components
+   ======================================================================== */
+
+/* Text inputs, textareas, and selects in workflow forms */
+section[data-component="workflow-content"] input,
+section[data-component="workflow-content"] textarea,
+section[data-component="workflow-content"] select {
+    padding: 1rem 1.5rem;
+    border: 2px solid var(--accent-purple);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    border-radius: 50px;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    width: 100%;
+    font-family: inherit;
+}
+
+section[data-component="workflow-content"] textarea {
+    border-radius: 1rem;
+    min-height: 120px;
+}
+
+section[data-component="workflow-content"] input:focus,
+section[data-component="workflow-content"] textarea:focus,
+section[data-component="workflow-content"] select:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 20px var(--accent-cyan);
+}
+
+/* Form labels */
+section[data-component="workflow-content"] label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+/* Email input for early access forms */
+.email-input {
+    flex: 1;
+    min-width: 250px;
+    padding: 1rem 1.5rem;
+    border: 2px solid var(--accent-purple);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    border-radius: 50px;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+}
+
+.email-input:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 20px var(--accent-cyan);
+}
+
+/* ========================================================================
+   Hero Section Components
+   ======================================================================== */
+
+/* Hero section container */
+.landing-hero,
+.hero {
+    margin-top: 100px;
+    padding: 4rem 2rem;
+    text-align: center;
+    min-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Hero title */
+.landing-hero h1,
+.hero h1 {
+    font-size: clamp(2.5rem, 8vw, 5rem);
+    margin-bottom: 1rem;
+    background: var(--landing-gradient-1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: landing-glow-pulse 3s ease-in-out infinite;
+    line-height: 1.2;
+}
+
+/* Hero subtitle */
+.landing-hero-subtitle,
+.hero-subtitle {
+    font-size: 1.5rem;
+    color: var(--landing-text-secondary);
+    margin-bottom: 3rem;
+    max-width: 700px;
+    line-height: 1.6;
+}
+
+.hero-subtitle {
+    max-width: 600px;
+}
+
+/* CTA container */
+.landing-cta-container {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+}
+
+/* Trial info text */
+.landing-trial-info {
+    font-size: 0.95rem;
+    color: var(--landing-text-secondary);
+    margin-bottom: 2rem;
+}
+
+/* ========================================================================
+   Section Components
+   ======================================================================== */
+
+/* Features section */
+.landing-features,
+.features {
+    padding: 4rem 2rem;
+    background: var(--landing-bg-secondary);
+    position: relative;
+}
+
+.features {
+    background: var(--bg-secondary);
+}
+
+/* Features container */
+.landing-features-container,
+.features-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Features section title */
+.landing-features h2,
+.features h2 {
+    text-align: center;
+    font-size: 3rem;
+    margin-bottom: 3rem;
+    background: var(--landing-gradient-2);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Features grid layout */
+.landing-features-grid,
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+}
+
+/* Workflow header title */
+header[data-component="workflow-header"] h1 {
+    font-size: clamp(1.8rem, 5vw, 2.5rem);
+    margin: 0 0 1rem 0;
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: bold;
+}
+
+header[data-component="workflow-header"] p {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    margin: 0;
+    line-height: 1.6;
+}
+
+/* Workflow container */
+main[data-component="workflow-container"] {
+    max-width: 900px;
+    margin: 6rem auto 2rem;
+    padding: 2rem;
+}
+
+/* Progress section */
+section[data-component="workflow-progress"],
+div[data-component="progress-steps"] {
+    margin-bottom: 2rem;
+}
+
+/* Early access section */
+.early-access {
+    padding: 4rem 2rem;
+    text-align: center;
+    background: var(--bg-primary);
+}
+
+.early-access h2 {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.early-access-form {
+    max-width: 500px;
+    margin: 2rem auto;
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+/* ========================================================================
+   Footer Components
+   ======================================================================== */
+
+footer {
+    padding: 2rem;
+    text-align: center;
+    background: var(--bg-secondary);
+    border-top: 2px solid var(--glow-color);
+}
+
+.footer-text {
+    color: var(--text-secondary);
+}
+
+/* ========================================================================
+   Responsive Design - Mobile Optimizations
+   ======================================================================== */
+
+@media (max-width: 768px) {
+    /* Navigation adjustments */
+    .landing-nav,
+    body[data-layout="workflow"] nav.workflow-nav {
+        padding: 1rem;
+    }
+
+    .landing-logo {
+        font-size: 1.4rem;
+    }
+
+    /* Hero section adjustments */
+    .landing-hero h1,
+    .hero h1 {
+        font-size: 2.5rem;
+    }
+
+    .landing-hero-subtitle,
+    .hero-subtitle {
+        font-size: 1.2rem;
+    }
+
+    /* Button adjustments */
+    .landing-cta-button,
+    .cta-button {
+        padding: 1rem 2rem;
+        font-size: 1rem;
+    }
+
+    /* Features section adjustments */
+    .landing-features h2,
+    .features h2 {
+        font-size: 2rem;
+    }
+
+    /* Workflow container adjustments */
+    main[data-component="workflow-container"] {
+        margin-top: 5rem;
+        padding: 1rem;
+    }
+
+    header[data-component="workflow-header"],
+    section[data-component="workflow-content"],
+    footer[data-component="workflow-navigation"] {
+        padding: 1.5rem;
+    }
+
+    header[data-component="workflow-header"] h1 {
+        font-size: 1.5rem;
+    }
+
+    /* Workflow navigation footer stacking */
+    footer[data-component="workflow-navigation"] {
+        flex-direction: column;
+    }
+
+    footer[data-component="workflow-navigation"] button {
+        width: 100%;
+    }
+}
