@@ -42,7 +42,7 @@ $dao->db->query('SELECT clone_schema(?)', 'district_b');
 # Switch to district_a schema
 my $dao_a = Registry::DAO->new(url => $t_db->uri, schema => 'district_a');
 my $school_tenant1 = Test::Registry::Fixtures::create_location($dao_a->db, {
-    name => 'Lincoln Elementary - District A',
+    name => 'Lincoln Elementary',
     slug => 'lincoln-elementary',
     notes => 'District A school',
 });
@@ -88,7 +88,7 @@ Registry::DAO::PricingPlan->create($dao_a, {
 # Switch to district_b schema
 my $dao_b = Registry::DAO->new(url => $t_db->uri, schema => 'district_b');
 my $school_tenant2 = Test::Registry::Fixtures::create_location($dao_b->db, {
-    name => 'Lincoln Elementary - District B',
+    name => 'Lincoln Elementary',
     slug => 'lincoln-elementary',  # Same slug as tenant1
     notes => 'District B school',
 });
@@ -142,7 +142,7 @@ subtest 'Tenant isolation - District A sees only their programs' => sub {
 
     $t->get_ok('/school/lincoln-elementary')
       ->status_is(200)
-      ->text_is('h1', 'Lincoln Elementary - District A', 'Shows District A school')
+      ->text_is('h1', 'Lincoln Elementary', 'Shows Lincoln Elementary school')
       ->content_like(qr/District A school/, 'Shows District A notes')
       ->content_like(qr/District A After School Program/, 'Shows District A program')
       ->content_like(qr/\$100\.00/, 'Shows District A pricing')
@@ -163,7 +163,7 @@ subtest 'Tenant isolation - District B sees only their programs' => sub {
 
     $t->get_ok('/school/lincoln-elementary')
       ->status_is(200)
-      ->text_is('h1', 'Lincoln Elementary - District B', 'Shows District B school')
+      ->text_is('h1', 'Lincoln Elementary', 'Shows Lincoln Elementary school')
       ->content_like(qr/District B school/, 'Shows District B notes')
       ->content_like(qr/District B Sports Program/, 'Shows District B program')
       ->content_like(qr/\$200\.00/, 'Shows District B pricing')

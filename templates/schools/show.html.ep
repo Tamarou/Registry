@@ -1,5 +1,6 @@
 % layout 'default';
 % title $location->name . ' - After School Programs';
+% stash no_container => 1;
 % content_for head => begin
     <meta name="description" content="Browse and register for after-school programs at <%= $location->name %>. View available sessions, pricing, and enrollment information.">
     <meta name="keywords" content="after school programs, <%= $location->name %>, <%= $location->address_city %>, enrichment, education">
