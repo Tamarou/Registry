@@ -1,30 +1,13 @@
 -- Revert registry:add-program-type-to-projects from pg
+-- NOTE: This migration is a no-op as the restructure-data-model migration
+-- supersedes this functionality by replacing projects table with programs table
 
 BEGIN;
 
 SET client_min_messages = 'warning';
 SET search_path TO registry, public;
 
--- Drop from tenant schemas first
-DO
-$$
-DECLARE
-    s name;
-BEGIN
-    FOR s IN SELECT slug FROM registry.tenants LOOP
-        -- Drop constraint
-        EXECUTE format('ALTER TABLE %I.projects DROP CONSTRAINT IF EXISTS fk_projects_program_type;', s);
-        
-        -- Drop column
-        EXECUTE format('ALTER TABLE %I.projects DROP COLUMN IF EXISTS program_type_slug;', s);
-    END LOOP;
-END;
-$$ LANGUAGE plpgsql;
-
--- Drop constraint
-ALTER TABLE projects DROP CONSTRAINT IF EXISTS fk_projects_program_type;
-
--- Drop column
-ALTER TABLE projects DROP COLUMN IF EXISTS program_type_slug;
+-- No-op revert: This migration is superseded by restructure-data-model
+-- Nothing to revert since the deploy was a no-op
 
 COMMIT;

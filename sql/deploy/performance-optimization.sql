@@ -31,10 +31,10 @@ CREATE INDEX IF NOT EXISTS idx_sessions_name ON registry.sessions(name);
 CREATE INDEX IF NOT EXISTS idx_sessions_slug ON registry.sessions(slug);
 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON registry.sessions(created_at);
 
--- Projects table indexes
-CREATE INDEX IF NOT EXISTS idx_projects_name ON registry.projects(name);
-CREATE INDEX IF NOT EXISTS idx_projects_slug ON registry.projects(slug);
-CREATE INDEX IF NOT EXISTS idx_projects_program_type ON registry.projects(program_type_slug);
+-- Projects table indexes (removed - projects table is replaced by programs table in restructure-data-model migration)
+-- CREATE INDEX IF NOT EXISTS idx_projects_name ON registry.projects(name);
+-- CREATE INDEX IF NOT EXISTS idx_projects_slug ON registry.projects(slug);
+-- CREATE INDEX IF NOT EXISTS idx_projects_program_type ON registry.projects(program_type_slug);
 
 -- Family members table indexes
 CREATE INDEX IF NOT EXISTS idx_family_members_family_id ON registry.family_members(family_id);
@@ -96,7 +96,7 @@ ANALYZE registry.enrollments;
 ANALYZE registry.events;
 ANALYZE registry.attendance_records;
 ANALYZE registry.sessions;
-ANALYZE registry.projects;
+-- ANALYZE registry.projects; -- Removed - projects table is replaced by programs table
 ANALYZE registry.family_members;
 ANALYZE registry.waitlist;
 ANALYZE registry.messages;
