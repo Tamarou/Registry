@@ -41,17 +41,24 @@ SELECT
 FROM session_teachers
 WHERE false;
 
--- Verify pricing table
-SELECT
-    id,
-    session_id,
-    amount,
-    currency,
-    early_bird_amount,
-    early_bird_cutoff_date,
-    sibling_discount
-FROM pricing
-WHERE false;
+-- Verify pricing table (will be renamed to pricing_plans in enhanced-pricing-model)
+-- Check for both names since verification runs after all deployments
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'registry' AND table_name = 'pricing') THEN
+        -- Table is still called pricing
+        PERFORM id, session_id, amount, currency, early_bird_amount, early_bird_cutoff_date, sibling_discount
+        FROM pricing
+        WHERE false;
+    ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'registry' AND table_name = 'pricing_plans') THEN
+        -- Table has been renamed to pricing_plans
+        PERFORM id, session_id, amount, currency
+        FROM pricing_plans
+        WHERE false;
+    ELSE
+        RAISE EXCEPTION 'Neither pricing nor pricing_plans table exists';
+    END IF;
+END $$;
 
 -- Verify enrollments table
 SELECT

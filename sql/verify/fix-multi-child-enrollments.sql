@@ -17,12 +17,12 @@ BEGIN
     END IF;
 END $$;
 
--- Check that new constraint exists
+-- Check that new constraint exists (may be renamed in later migrations)
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM information_schema.table_constraints 
-        WHERE constraint_name = 'enrollments_session_family_member_unique'
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name IN ('enrollments_session_family_member_unique', 'enrollments_session_student_type_unique')
         AND table_name = 'enrollments'
         AND table_schema = 'registry'
     ) THEN
@@ -33,18 +33,7 @@ END $$;
 -- Check that parent_id column exists
 SELECT parent_id FROM enrollments WHERE false;
 
--- Check that student_id is nullable
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'enrollments'
-        AND column_name = 'student_id'
-        AND is_nullable = 'NO'
-        AND table_schema = 'registry'
-    ) THEN
-        RAISE EXCEPTION 'student_id is still NOT NULL';
-    END IF;
-END $$;
+-- Note: student_id nullability is changed back to NOT NULL in flexible-enrollment-architecture
+-- This migration only needs to verify the constraint changes and parent_id column
 
 ROLLBACK;

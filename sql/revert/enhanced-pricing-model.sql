@@ -49,38 +49,44 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Drop index
-DROP INDEX IF EXISTS idx_pricing_plans_session_type;
+-- Only revert if pricing_plans exists (it may not if deploy failed early)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'registry' AND table_name = 'pricing_plans') THEN
+        -- Drop index
+        DROP INDEX IF EXISTS idx_pricing_plans_session_type;
 
--- Add back old columns
-ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS early_bird_amount decimal(10,2);
-ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS early_bird_cutoff_date date;
-ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS sibling_discount decimal(5,2);
+        -- Add back old columns
+        ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS early_bird_amount decimal(10,2);
+        ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS early_bird_cutoff_date date;
+        ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS sibling_discount decimal(5,2);
 
--- Restore data
-UPDATE pricing_plans 
-SET 
-    early_bird_cutoff_date = (requirements->>'early_bird_cutoff_date')::date,
-    sibling_discount = (requirements->>'sibling_discount')::decimal(5,2)
-WHERE requirements IS NOT NULL;
+        -- Restore data
+        UPDATE pricing_plans
+        SET
+            early_bird_cutoff_date = (requirements->>'early_bird_cutoff_date')::date,
+            sibling_discount = (requirements->>'sibling_discount')::decimal(5,2)
+        WHERE requirements IS NOT NULL;
 
--- Drop new columns
-ALTER TABLE pricing_plans DROP CONSTRAINT IF EXISTS check_installment_config;
-ALTER TABLE pricing_plans DROP COLUMN IF EXISTS plan_name;
-ALTER TABLE pricing_plans DROP COLUMN IF EXISTS plan_type;
-ALTER TABLE pricing_plans DROP COLUMN IF EXISTS installments_allowed;
-ALTER TABLE pricing_plans DROP COLUMN IF EXISTS installment_count;
-ALTER TABLE pricing_plans DROP COLUMN IF EXISTS requirements;
+        -- Drop new columns
+        ALTER TABLE pricing_plans DROP CONSTRAINT IF EXISTS check_installment_config;
+        ALTER TABLE pricing_plans DROP COLUMN IF EXISTS plan_name;
+        ALTER TABLE pricing_plans DROP COLUMN IF EXISTS plan_type;
+        ALTER TABLE pricing_plans DROP COLUMN IF EXISTS installments_allowed;
+        ALTER TABLE pricing_plans DROP COLUMN IF EXISTS installment_count;
+        ALTER TABLE pricing_plans DROP COLUMN IF EXISTS requirements;
 
--- Remove duplicates
-DELETE FROM pricing_plans WHERE ctid NOT IN (
-    SELECT MIN(ctid) FROM pricing_plans GROUP BY session_id
-);
+        -- Remove duplicates
+        DELETE FROM pricing_plans WHERE ctid NOT IN (
+            SELECT MIN(ctid) FROM pricing_plans GROUP BY session_id
+        );
 
--- Restore unique constraint
-ALTER TABLE pricing_plans ADD CONSTRAINT pricing_session_id_key UNIQUE (session_id);
+        -- Restore unique constraint
+        ALTER TABLE pricing_plans ADD CONSTRAINT pricing_session_id_key UNIQUE (session_id);
 
--- Rename back
-ALTER TABLE pricing_plans RENAME TO pricing;
+        -- Rename back
+        ALTER TABLE pricing_plans RENAME TO pricing;
+    END IF;
+END $$;
 
 COMMIT;
