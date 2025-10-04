@@ -2,6 +2,7 @@
 
 BEGIN;
 
--- XXX Add verifications here.
+-- This migration doesn't create any database objects, just a placeholder
+-- Verification passes if we got here
 
 ROLLBACK;
