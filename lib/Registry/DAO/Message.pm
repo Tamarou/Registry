@@ -152,7 +152,7 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
             FROM messages m
             JOIN message_recipients mr ON m.id = mr.message_id
             LEFT JOIN user_profiles up ON m.sender_id = up.user_id
-            LEFT JOIN projects p ON m.scope = 'program' AND m.scope_id = p.id
+            LEFT JOIN programs p ON m.scope = 'program' AND m.scope_id = p.id
             LEFT JOIN sessions s ON m.scope = 'session' AND m.scope_id = s.id  
             LEFT JOIN locations l ON m.scope = 'location' AND m.scope_id = l.id
             WHERE mr.recipient_id = ? 

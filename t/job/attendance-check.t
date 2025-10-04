@@ -13,7 +13,7 @@ use Registry::Job::AttendanceCheck;
 use Registry::Job::WorkflowExecutor;
 use Registry::DAO::User;
 use Registry::DAO::Location;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Event;
 use Registry::DAO::Session;
 use Registry::DAO::Enrollment;
@@ -61,8 +61,8 @@ sub setup_test_data {
     });
 
     # Create a project
-    my $project = Registry::DAO::Project->create($db, {
-        name => 'Test Project ' . $unique_id,
+    my $program = Registry::DAO::Program->create($db, {
+        name => 'Test Program ' . $unique_id,
         slug => 'test-project-' . $unique_id
     });
 

@@ -9,7 +9,7 @@ use Registry::DAO::PaymentSchedule;
 use Registry::DAO::ScheduledPayment;
 use Registry::DAO::User;
 use Registry::DAO::Session;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Location;
 use Registry::DAO::FamilyMember;
 use Registry::Controller::Webhooks;
@@ -49,8 +49,8 @@ my $location = Registry::DAO::Location->create($db, {
     metadata => {}
 });
 
-my $project = Registry::DAO::Project->create($db, {
-    name => 'Webhook Test Project',
+my $program = Registry::DAO::Program->create($db, {
+    name => 'Webhook Test Program',
     metadata => { description => 'Testing webhook processing' }
 });
 

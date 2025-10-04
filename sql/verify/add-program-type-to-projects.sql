@@ -1,14 +1,12 @@
 -- Verify registry:add-program-type-to-projects on pg
+-- NOTE: This migration is a no-op as the restructure-data-model migration
+-- supersedes this functionality by replacing projects table with programs table
 
 BEGIN;
 
 SET search_path TO registry, public;
 
--- Verify column exists
-SELECT program_type_slug FROM projects WHERE FALSE;
-
--- Verify constraint exists
-SELECT 1 FROM pg_constraint 
-WHERE conname = 'fk_projects_program_type';
+-- No-op verification: This migration is superseded by restructure-data-model
+-- The functionality is now in the programs table instead of projects table
 
 ROLLBACK;

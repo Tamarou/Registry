@@ -35,7 +35,7 @@ my $event = $dao->create(
         location_id =>
           $dao->create( Location => { name => 'Event Venue' } )->id,
         project_id =>
-          $dao->create( Project => { name => 'Event Curriculum' } )->id,
+          $dao->create( Program => { name => 'Event Curriculum' } )->id,
     }
 );
 

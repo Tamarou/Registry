@@ -9,7 +9,7 @@ use Registry::DAO::PaymentSchedule;
 use Registry::DAO::ScheduledPayment;
 use Registry::DAO::User;
 use Registry::DAO::Session;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Location;
 use Registry::DAO::FamilyMember;
 use JSON qw(encode_json decode_json);
@@ -46,14 +46,14 @@ my $location = Registry::DAO::Location->create($db, {
     metadata => {}
 });
 
-my $project = Registry::DAO::Project->create($db, {
-    name => 'Admin Dashboard Test Project',
+my $program = Registry::DAO::Program->create($db, {
+    name => 'Admin Dashboard Test Program',
     metadata => { description => 'Testing admin dashboard integration' }
 });
 
 my $session = Registry::DAO::Session->create($db, {
     name => 'Admin Dashboard Test Session',
-    project_id => $project->id,
+    project_id => $program->id,
     location_id => $location->id,
     start_date => time() + 86400 * 30,
     end_date => time() + 86400 * 60,

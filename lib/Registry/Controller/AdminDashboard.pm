@@ -36,8 +36,8 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $dao = $c->dao($c->stash('tenant'));
         my $time_range = $c->param('range') || 'current'; # current, upcoming, all
         
-        require Registry::DAO::Project;
-        my $programs = Registry::DAO::Project->get_program_overview($dao->db, $time_range);
+        require Registry::DAO::Program;
+        my $programs = Registry::DAO::Program->get_program_overview($dao->db, $time_range);
         
         $c->stash(programs => $programs, time_range => $time_range);
         $c->render(template => 'admin_dashboard/program_overview', layout => undef);

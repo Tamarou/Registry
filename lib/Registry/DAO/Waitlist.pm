@@ -394,7 +394,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
                 up.email as parent_email
             FROM waitlist w
             JOIN sessions s ON w.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
+            JOIN programs p ON s.project_id = p.id
             LEFT JOIN locations l ON w.location_id = l.id
             LEFT JOIN family_members fm ON w.student_id = fm.id
             LEFT JOIN user_profiles up ON w.parent_id = up.user_id

@@ -379,7 +379,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
                 COUNT(ar.id) as attended_events
             FROM enrollments e
             JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
+            JOIN programs p ON s.project_id = p.id
             LEFT JOIN locations l ON s.location_id = l.id
             JOIN family_members fm ON e.family_member_id = fm.id
             LEFT JOIN events ev ON ev.session_id = s.id

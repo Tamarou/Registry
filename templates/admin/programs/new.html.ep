@@ -1,0 +1,48 @@
+% layout 'default';
+% title 'Create New Program';
+
+<h2>Create New Program</h2>
+
+<form id="program-form" action="/admin/programs/new" method="post">
+    <div class="form-group">
+        <label for="name">Program Name</label>
+        <input type="text" id="name" name="name" class="form-control" required>
+    </div>
+
+    <div class="form-group">
+        <label for="description">Description</label>
+        <textarea id="description" name="description" class="form-control"></textarea>
+    </div>
+
+    <div class="form-group">
+        <label for="type">Program Type</label>
+        <select id="type" name="type" class="form-control">
+            <option value="academic">Academic</option>
+            <option value="stem">STEM</option>
+            <option value="arts">Arts</option>
+            <option value="sports">Sports</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="age_min">Minimum Age</label>
+        <input type="number" id="age_min" name="age_min" class="form-control">
+    </div>
+
+    <div class="form-group">
+        <label for="age_max">Maximum Age</label>
+        <input type="number" id="age_max" name="age_max" class="form-control">
+    </div>
+
+    <div class="form-group">
+        <label for="capacity">Capacity</label>
+        <input type="number" id="capacity" name="capacity" class="form-control">
+    </div>
+
+    <div class="form-group">
+        <label for="price">Price</label>
+        <input type="number" id="price" name="price" class="form-control" step="0.01">
+    </div>
+
+    <button type="submit" class="btn btn-primary">Create Program</button>
+</form>

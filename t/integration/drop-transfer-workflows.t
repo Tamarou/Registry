@@ -58,7 +58,7 @@ sub setup_test_data {
     });
 
     # Create project
-    $setup->{project} = $dao->create(Project => {
+    $setup->{project} = $dao->create(Program => {
         name => "Test Program $test_suffix",
         program_type_slug => 'afterschool',
         metadata => { description => 'Test program', status => 'active' }

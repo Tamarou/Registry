@@ -78,7 +78,7 @@ my $dao = $test_db->db;
     my $morgan = $dao->find( User => { email => 'morgan@afterschoolprograms.org' });
     
     # Create STEM program
-    my $stem_program = $dao->create( Project => {
+    my $stem_program = $dao->create( Program => {
         name => 'STEM Explorers',
         notes => 'Hands-on science, technology, engineering, and math activities',
         program_type_slug => 'afterschool',
@@ -98,7 +98,7 @@ my $dao = $test_db->db;
     });
     
     # Create Arts program
-    my $arts_program = $dao->create( Project => {
+    my $arts_program = $dao->create( Program => {
         name => 'Creative Arts Workshop',
         notes => 'Explore various art mediums and creative expression',
         program_type_slug => 'afterschool',

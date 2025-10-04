@@ -61,7 +61,7 @@ class Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer :isa(Registry::D
                 fm.child_name
             FROM enrollments e
             JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
+            JOIN programs p ON s.project_id = p.id
             LEFT JOIN locations l ON s.location_id = l.id
             JOIN family_members fm ON e.family_member_id = fm.id
             WHERE fm.family_id = ?

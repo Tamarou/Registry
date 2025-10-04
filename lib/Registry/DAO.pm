@@ -11,7 +11,7 @@ use Registry::DAO::Object;
 use Registry::DAO::User;
 use Registry::DAO::Tenant;
 use Registry::DAO::Location;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Template;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
@@ -26,6 +26,9 @@ use Registry::DAO::FamilyMember;
 use Registry::DAO::OutcomeDefinition;
 use Registry::DAO::CreateOutcomeDefinition;
 use Registry::DAO::TransferRequest;
+use Registry::DAO::Program;
+use Registry::DAO::Curriculum;
+use Registry::DAO::ProgramTeacher;
 
 class Registry::DAO {
     use Carp         qw(croak);

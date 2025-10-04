@@ -178,7 +178,7 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
             FROM drop_requests dr
             JOIN enrollments e ON dr.enrollment_id = e.id
             JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
+            JOIN programs p ON s.project_id = p.id
             LEFT JOIN locations l ON s.location_id = l.id
             LEFT JOIN family_members fm ON e.family_member_id = fm.id
             JOIN users u ON fm.family_id = u.id

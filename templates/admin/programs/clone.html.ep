@@ -1,0 +1,26 @@
+% layout 'default';
+% title 'Clone Program: ' . $program->name;
+
+<h2>Clone Program: <%= $program->name %></h2>
+
+<p>This will create a copy of the program with a new name and optional date changes.</p>
+
+<form action="/admin/programs/<%= $program->id %>/clone" method="post">
+    <div class="form-group">
+        <label for="name">New Program Name</label>
+        <input type="text" id="name" name="name" value="<%= $program->name %> (Copy)" class="form-control" required>
+    </div>
+
+    <div class="form-group">
+        <label for="start_date">Start Date (optional)</label>
+        <input type="date" id="start_date" name="start_date" class="form-control">
+    </div>
+
+    <div class="form-group">
+        <label for="end_date">End Date (optional)</label>
+        <input type="date" id="end_date" name="end_date" class="form-control">
+    </div>
+
+    <button type="submit" class="btn btn-primary">Clone Program</button>
+    <a href="/admin/programs/<%= $program->id %>" class="btn btn-secondary">Cancel</a>
+</form>

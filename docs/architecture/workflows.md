@@ -200,20 +200,20 @@ method process ( $db, $ ) {
     my ($workflow) = $self->workflow($db);
     my $run        = $workflow->latest_run($db);
     my %data       = $run->data->%{ 'name', 'metadata', 'notes' };
-    my $project    = Registry::DAO::Project->create( $db, \%data );
+    my $program    = Registry::DAO::Program->create( $db, \%data );
 
-    # Update the current run with the project ID
-    $run->update_data( $db, { projects => [ $project->id ] } );
+    # Update the current run with the program ID
+    $run->update_data( $db, { programs => [ $program->id ] } );
 
     # If this workflow is a continuation of another, update that one too
     if ( $run->has_continuation ) {
         my ($continuation) = $run->continuation($db);
-        my $projects = $continuation->data->{projects} // [];
-        push $projects->@*, $project->id;
-        $continuation->update_data( $db, { projects => $projects } );
+        my $programs = $continuation->data->{programs} // [];
+        push $programs->@*, $program->id;
+        $continuation->update_data( $db, { programs => $programs } );
     }
 
-    return { project => $project->id };
+    return { program => $program->id };
 }
 ```
 
