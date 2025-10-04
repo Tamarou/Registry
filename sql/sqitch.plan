@@ -23,7 +23,7 @@ notifications-and-preferences [attendance-tracking] 2025-01-28T10:00:00Z Claude 
 parent-communication-system [notifications-and-preferences] 2025-01-28T11:00:00Z Claude <noreply@anthropic.com> # Add parent communication system with messages, recipients, and templates
 performance-optimization [parent-communication-system] 2025-01-28T15:00:00Z Claude <noreply@anthropic.com> # Add database indexes and performance optimizations for production readiness
 stripe-subscription-integration [enhanced-pricing-model] 2025-01-28T16:00:00Z Claude <noreply@anthropic.com> # Add Stripe subscription integration for tenant billing
-restructure-data-model [summer-camp-module] 2025-01-14T20:00:00Z Claude <noreply@anthropic.com> # Restructure data model: Programs -> Sessions -> Events -> Curriculum
+# restructure-data-model [summer-camp-module] 2025-01-14T20:00:00Z Claude <noreply@anthropic.com> # Restructure data model: Programs -> Sessions -> Events -> Curriculum
 fix-multi-child-enrollments [multi-child-data-model] 2025-07-15T00:34:24Z Chris Prather <chris.prather@tamarou.com> # Fix multi-child enrollment constraints for cleaner architecture
 flexible-enrollment-architecture [fix-multi-child-enrollments] 2025-07-15T01:09:59Z Chris Prather <chris.prather@tamarou.com> # Create flexible enrollment architecture supporting family, individual, group, and corporate students
 remove-student-id-foreign-key [flexible-enrollment-architecture] 2025-07-15T01:28:59Z Chris Prather <chris.prather@tamarou.com> # Remove student_id foreign key constraint to support polymorphic student references
