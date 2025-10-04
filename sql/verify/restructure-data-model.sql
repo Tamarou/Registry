@@ -6,7 +6,7 @@ SET client_min_messages = 'warning';
 SET search_path TO registry, public;
 
 -- Verify programs table exists and has correct structure
-SELECT id, name, slug, metadata, notes, created_at, updated_at
+SELECT id, name, slug, description, metadata, notes, created_at, updated_at
 FROM programs WHERE FALSE;
 
 -- Verify curriculum table exists and has correct structure  
@@ -68,12 +68,15 @@ DECLARE
     s name;
 BEGIN
    FOR s IN SELECT slug FROM registry.tenants LOOP
-       -- Verify each tenant schema has the new structure
-       EXECUTE format('SELECT id, name, slug, metadata, notes, created_at, updated_at FROM %I.programs WHERE FALSE;', s);
-       EXECUTE format('SELECT id, name, slug, description, metadata, notes, created_at, updated_at FROM %I.curriculum WHERE FALSE;', s);
-       EXECUTE format('SELECT id, event_id, curriculum_id, created_at FROM %I.event_curriculum WHERE FALSE;', s);
-       EXECUTE format('SELECT id, time, duration, location_id, session_id, teacher_id, metadata, notes, created_at, updated_at FROM %I.events WHERE FALSE;', s);
-       EXECUTE format('SELECT id, name, slug, program_id, metadata, notes, created_at, updated_at FROM %I.sessions WHERE FALSE;', s);
+       -- Only verify if schema exists (some tenants may not have schemas created yet)
+       IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = s) THEN
+           -- Verify each tenant schema has the new structure
+           EXECUTE format('SELECT id, name, slug, description, metadata, notes, created_at, updated_at FROM "%s".programs WHERE FALSE;', s);
+           EXECUTE format('SELECT id, name, slug, description, metadata, notes, created_at, updated_at FROM "%s".curriculum WHERE FALSE;', s);
+           EXECUTE format('SELECT id, event_id, curriculum_id, created_at FROM "%s".event_curriculum WHERE FALSE;', s);
+           EXECUTE format('SELECT id, time, duration, location_id, session_id, teacher_id, metadata, notes, created_at, updated_at FROM "%s".events WHERE FALSE;', s);
+           EXECUTE format('SELECT id, name, slug, program_id, metadata, notes, created_at, updated_at FROM "%s".sessions WHERE FALSE;', s);
+       END IF;
    END LOOP;
 END;
 $$ LANGUAGE plpgsql;

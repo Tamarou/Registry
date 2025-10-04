@@ -12,13 +12,15 @@ DECLARE
     s name;
 BEGIN
    FOR s IN SELECT slug FROM registry.tenants LOOP
-       -- Drop new tables
-       EXECUTE format('DROP TABLE IF EXISTS %I.event_curriculum;', s);
-       EXECUTE format('DROP TABLE IF EXISTS %I.curriculum;', s);
-       EXECUTE format('DROP TABLE IF EXISTS %I.programs;', s);
-       
-       -- Recreate original projects table
-       EXECUTE format('CREATE TABLE IF NOT EXISTS %I.projects (
+       -- Only process if schema exists
+       IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = s) THEN
+           -- Drop new tables
+           EXECUTE format('DROP TABLE IF EXISTS "%s".event_curriculum;', s);
+           EXECUTE format('DROP TABLE IF EXISTS "%s".curriculum;', s);
+           EXECUTE format('DROP TABLE IF EXISTS "%s".programs;', s);
+
+           -- Recreate original projects table
+           EXECUTE format('CREATE TABLE IF NOT EXISTS "%s".projects (
            id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
            name text UNIQUE NOT NULL,
            slug text UNIQUE NOT NULL,
@@ -29,23 +31,24 @@ BEGIN
        );', s);
        
        -- Remove session_id from events and add back project_id
-       EXECUTE format('ALTER TABLE %I.events DROP COLUMN IF EXISTS session_id;', s);
-       EXECUTE format('ALTER TABLE %I.events ADD COLUMN project_id uuid REFERENCES %I.projects(id);', s, s);
-       
+       EXECUTE format('ALTER TABLE "%s".events DROP COLUMN IF EXISTS session_id;', s);
+       EXECUTE format('ALTER TABLE "%s".events ADD COLUMN project_id uuid REFERENCES "%s".projects(id);', s, s);
+
        -- Remove program_id from sessions
-       EXECUTE format('ALTER TABLE %I.sessions DROP COLUMN IF EXISTS program_id;', s);
+       EXECUTE format('ALTER TABLE "%s".sessions DROP COLUMN IF EXISTS program_id;', s);
        
        -- Restore original constraints and indexes
-       EXECUTE format('ALTER TABLE %I.events DROP CONSTRAINT IF EXISTS events_session_location_time_unique;', s);
-       EXECUTE format('ALTER TABLE %I.events ADD CONSTRAINT events_project_id_location_id_time_key 
+       EXECUTE format('ALTER TABLE "%s".events DROP CONSTRAINT IF EXISTS events_session_location_time_unique;', s);
+       EXECUTE format('ALTER TABLE "%s".events ADD CONSTRAINT events_project_id_location_id_time_key
            UNIQUE (project_id, location_id, time);', s);
        
        -- Restore original indexes
-       EXECUTE format('DROP INDEX IF EXISTS %I.idx_events_session_id;', s);
-       EXECUTE format('DROP INDEX IF EXISTS %I.idx_sessions_program_id;', s);
-       EXECUTE format('DROP INDEX IF EXISTS %I.idx_event_curriculum_event_id;', s);
-       EXECUTE format('DROP INDEX IF EXISTS %I.idx_event_curriculum_curriculum_id;', s);
-       EXECUTE format('CREATE INDEX IF NOT EXISTS idx_events_project_id ON %I.events(project_id);', s);
+       EXECUTE format('DROP INDEX IF EXISTS "%s".idx_events_session_id;', s);
+       EXECUTE format('DROP INDEX IF EXISTS "%s".idx_sessions_program_id;', s);
+       EXECUTE format('DROP INDEX IF EXISTS "%s".idx_event_curriculum_event_id;', s);
+       EXECUTE format('DROP INDEX IF EXISTS "%s".idx_event_curriculum_curriculum_id;', s);
+       EXECUTE format('CREATE INDEX IF NOT EXISTS idx_events_project_id ON "%s".events(project_id);', s);
+       END IF; -- end schema exists check
    END LOOP;
 END;
 $$ LANGUAGE plpgsql;

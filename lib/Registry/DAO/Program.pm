@@ -13,6 +13,7 @@ class Registry::DAO::Program :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $name :param :reader;
     field $slug :param :reader;
+    field $description :param :reader = '';
     field $metadata :param :reader = {};
     field $notes :param :reader = '';
     field $created_at :param :reader;
@@ -174,10 +175,11 @@ class Registry::DAO::Program :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
 
         my $clone_data = {
-            name     => $new_name,
-            slug     => lc( $new_name =~ s/\s+/-/gr ),
-            metadata => { %$metadata },
-            notes    => $notes,
+            name        => $new_name,
+            slug        => lc( $new_name =~ s/\s+/-/gr ),
+            description => $description,
+            metadata    => { %$metadata },
+            notes       => $notes,
             %$additional_data
         };
 
