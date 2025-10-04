@@ -9,7 +9,7 @@ use Registry::DAO::Payment;
 use Registry::DAO::User;
 use Registry::DAO::Session;
 use Registry::DAO::PricingPlan;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Event;
 use Registry::DAO::Location;
 use Time::Piece;

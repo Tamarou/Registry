@@ -222,7 +222,7 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
                 l.name as location_name,
                 COALESCE(COUNT(e.id), 0) as current_enrollments
             FROM sessions s
-            JOIN projects p ON s.project_id = p.id
+            JOIN programs p ON s.project_id = p.id
             LEFT JOIN locations l ON s.location_id = l.id
             LEFT JOIN enrollments e ON s.id = e.session_id AND e.status IN ('active', 'pending')
             WHERE s.id != ?

@@ -71,7 +71,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 ev.capacity,
                 (COUNT(DISTINCT e.id)::float / ev.capacity * 100) as utilization_rate
             FROM sessions s
-            JOIN projects p ON s.project_id = p.id
+            JOIN programs p ON s.project_id = p.id
             JOIN enrollments e ON s.id = e.session_id AND e.status = 'active'
             JOIN events ev ON s.id = ev.session_id
             WHERE s.start_date > ?
@@ -173,7 +173,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 JOIN family_members fm ON e.family_member_id = fm.id
                 JOIN user_profiles up ON fm.family_id = up.user_id
                 JOIN sessions s ON e.session_id = s.id
-                JOIN projects p ON s.project_id = p.id
+                JOIN programs p ON s.project_id = p.id
                 LEFT JOIN locations l ON s.location_id = l.id
                 ORDER BY e.created_at DESC
             })->hashes->to_array;
@@ -213,7 +213,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 JOIN family_members fm ON w.student_id = fm.id
                 JOIN user_profiles up ON w.parent_id = up.user_id
                 JOIN sessions s ON w.session_id = s.id
-                JOIN projects p ON s.project_id = p.id
+                JOIN programs p ON s.project_id = p.id
                 ORDER BY w.created_at DESC
             })->hashes->to_array;
         }

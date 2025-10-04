@@ -9,7 +9,7 @@ use Test::Registry::Fixtures;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::User;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::ProgramType;
 use Registry::DAO::WorkflowSteps::ProgramTypeSelection;
 use Registry::DAO::WorkflowSteps::CurriculumDetails;

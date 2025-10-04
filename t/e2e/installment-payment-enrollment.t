@@ -11,7 +11,7 @@ use Registry::DAO::ScheduledPayment;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::Location;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Session;
 use Registry::DAO::User;
 use Registry::DAO::FamilyMember;
@@ -45,9 +45,9 @@ my $location = Registry::DAO::Location->create($db, {
     metadata => {}
 });
 
-my $project = Registry::DAO::Project->create($db, {
-    name => 'E2E Test Project',
-    metadata => { description => 'End-to-end testing project' }
+my $program = Registry::DAO::Program->create($db, {
+    name => 'E2E Test Program',
+    metadata => { description => 'End-to-end testing program' }
 });
 
 my $parent = Registry::DAO::User->create($db, {

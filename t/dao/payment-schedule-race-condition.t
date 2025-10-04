@@ -14,7 +14,7 @@ use Registry::DAO::ScheduledPayment;
 use Registry::DAO::User;
 use Registry::DAO::Session;
 use Registry::DAO::PricingPlan;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Event;
 use Registry::DAO::Location;
 use Registry::PriceOps::PaymentSchedule;
@@ -57,8 +57,8 @@ my $teacher = Registry::DAO::User->create($db, {
     user_type => 'staff'
 });
 
-my $project = Registry::DAO::Project->create($db, {
-    name => 'Test Project',
+my $program = Registry::DAO::Program->create($db, {
+    name => 'Test Program',
     metadata => {}
 });
 
@@ -66,7 +66,7 @@ my $event = Registry::DAO::Event->create($db, {
     time => '2024-07-01 10:00:00',
     duration => 120,
     location_id => $location->id,
-    project_id => $project->id,
+    project_id => $program->id,
     teacher_id => $teacher->id,
     metadata => {},
     capacity => 20

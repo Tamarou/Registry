@@ -13,7 +13,7 @@ use Registry::DAO::WorkflowStep;
 use Registry::DAO::User;
 use Registry::DAO::Family;
 use Registry::DAO::Session;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Event;
 use Registry::DAO::Location;
 use Registry::DAO::ProgramType;
@@ -53,8 +53,8 @@ my $teacher = Registry::DAO::User->create($db, {
     user_type => 'staff'
 });
 
-my $project = Registry::DAO::Project->create($db, {
-    name => 'Test Project',
+my $program = Registry::DAO::Program->create($db, {
+    name => 'Test Program',
     metadata => {}
 });
 
@@ -63,7 +63,6 @@ my $event1 = Registry::DAO::Event->create($db, {
     time => '2024-07-01 10:00:00',
     duration => 120,
     location_id => $location->id,
-    project_id => $project->id,
     teacher_id => $teacher->id,
     metadata => {},
     capacity => 10,
@@ -75,7 +74,6 @@ my $event2 = Registry::DAO::Event->create($db, {
     time => '2024-07-02 10:00:00',
     duration => 120,
     location_id => $location->id,
-    project_id => $project->id,
     teacher_id => $teacher->id,
     metadata => {},
     capacity => 5,
@@ -90,6 +88,7 @@ my $session1 = Registry::DAO::Session->create($db, {
     end_date => '2025-12-09',
     status => 'published',
     capacity => 10,
+    program_id => $program->id,
     metadata => {}
 });
 
@@ -99,12 +98,13 @@ my $session2 = Registry::DAO::Session->create($db, {
     end_date => '2025-12-09',
     status => 'published',
     capacity => 5,
+    program_id => $program->id,
     metadata => {}
 });
 
-# Link events to sessions
-$session1->add_events($db, $event1->id);
-$session2->add_events($db, $event2->id);
+# Update events to link to their respective sessions
+$event1->update($db, { session_id => $session1->id });
+$event2->update($db, { session_id => $session2->id });
 
 # Create program type with sibling rules
 my $program_type = Registry::DAO::ProgramType->create($db, {
@@ -118,7 +118,7 @@ my $program_type = Registry::DAO::ProgramType->create($db, {
 });
 
 # Update project to use program type
-$project->update($db, { program_type_slug => $program_type->slug });
+$program->update($db, { program_type_slug => $program_type->slug });
 
 # Create workflow
 my $workflow = Registry::DAO::Workflow->create($db, {
@@ -194,7 +194,7 @@ subtest 'Initial page load with selected children' => sub {
         user_id => $parent->id,
         selected_child_ids => [$child1->id, $child2->id],
         location_id => $location->id,
-        program_id => $project->id,
+        program_id => $program->id,
     });
 
     # Get the actual step from database
@@ -213,7 +213,7 @@ subtest 'Submit without session selections' => sub {
         user_id => $parent->id,
         selected_child_ids => [$child1->id, $child2->id],
         location_id => $location->id,
-        program_id => $project->id,
+        program_id => $program->id,
     });
 
     my $step = $workflow->get_step($db, { slug => 'session-selection' });
@@ -235,7 +235,7 @@ subtest 'Submit with valid session selections' => sub {
         user_id => $parent->id,
         selected_child_ids => [$child1->id, $child2->id],
         location_id => $location->id,
-        program_id => $project->id,
+        program_id => $program->id,
     });
 
     my $step = $workflow->get_step($db, { slug => 'session-selection' });
@@ -269,7 +269,7 @@ subtest 'Program type sibling rule validation' => sub {
         user_id => $parent->id,
         selected_child_ids => [$child1->id, $child2->id],
         location_id => $location->id,
-        program_id => $project->id,
+        program_id => $program->id,
     });
 
     my $step = $workflow->get_step($db, { slug => 'session-selection' });
@@ -292,17 +292,17 @@ subtest 'get_available_sessions method' => sub {
         user_id => $parent->id,
         selected_child_ids => [$child1->id, $child2->id],
         location_id => $location->id,
-        program_id => $project->id,
+        program_id => $program->id,
     });
 
     my $step = $workflow->get_step($db, { slug => 'session-selection' });
 
     # Get available sessions for child1 (9 years old - eligible for both)
-    my $available1 = $step->get_available_sessions($db, $location->id, $project->id, $child1);
+    my $available1 = $step->get_available_sessions($db, $location->id, $program->id, $child1);
     is scalar(@$available1), 2, 'Child1 has 2 available sessions';
 
     # Get available sessions for child2 (7 years old - only eligible for session1)
-    my $available2 = $step->get_available_sessions($db, $location->id, $project->id, $child2);
+    my $available2 = $step->get_available_sessions($db, $location->id, $program->id, $child2);
     is scalar(@$available2), 1, 'Child2 has 1 available session';
     is $available2->[0]->{session}->id, $session1->id, 'Child2 eligible for session1';
 };
@@ -357,13 +357,13 @@ subtest 'Session capacity constraints' => sub {
         user_id => $parent->id,
         selected_child_ids => [$child1->id],
         location_id => $location->id,
-        program_id => $project->id,
+        program_id => $program->id,
     });
 
     my $step = $workflow->get_step($db, { slug => 'session-selection' });
 
     # Get available sessions for child1 - session2 should be filtered out due to capacity
-    my $available1 = $step->get_available_sessions($db, $location->id, $project->id, $child1);
+    my $available1 = $step->get_available_sessions($db, $location->id, $program->id, $child1);
 
     # Should only show session1 now since session2 is at capacity
     is scalar(@$available1), 1, 'Only 1 session available due to capacity';

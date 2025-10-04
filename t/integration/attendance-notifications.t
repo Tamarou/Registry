@@ -12,7 +12,7 @@ use Test::Registry::DB;
 use Registry::Job::AttendanceCheck;
 use Registry::DAO::User;
 use Registry::DAO::Location;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Event;
 use Registry::DAO::Session;
 use Registry::DAO::Enrollment;
@@ -97,12 +97,12 @@ subtest 'End-to-end attendance notification workflow' => sub {
         address_info => { building => 'B', room => '202' }
     });
 
-    my $project1 = Registry::DAO::Project->create($db, {
+    my $program1 = Registry::DAO::Program->create($db, {
         name => 'Math Tutoring',
         slug => 'math-tutoring'
     });
 
-    my $project2 = Registry::DAO::Project->create($db, {
+    my $program2 = Registry::DAO::Program->create($db, {
         name => 'Art Workshop',
         slug => 'art-workshop'
     });
@@ -314,7 +314,7 @@ subtest 'Notification preferences respected' => sub {
         address_info => {}
     });
 
-    my $project = Registry::DAO::Project->create($db, {
+    my $program = Registry::DAO::Program->create($db, {
         name => 'Silent Study',
         slug => 'silent-study'
     });
@@ -398,9 +398,9 @@ subtest 'Duplicate prevention' => sub {
         address_info => {}
     });
 
-    my $project = Registry::DAO::Project->create($db, {
-        name => 'Dup Test Project',
-        slug => 'dup-test-project'
+    my $program = Registry::DAO::Program->create($db, {
+        name => 'Dup Test Program',
+        slug => 'dup-test-program'
     });
 
     my $session = Registry::DAO::Session->create($db, {

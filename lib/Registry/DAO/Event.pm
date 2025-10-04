@@ -117,7 +117,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 e.metadata->>'capacity' as capacity
             FROM registry.events e
             JOIN registry.locations l ON e.location_id = l.id
-            JOIN registry.projects p ON e.project_id = p.id
+            JOIN registry.programs p ON e.project_id = p.id
             LEFT JOIN registry.sessions s ON s.project_id = p.id
             LEFT JOIN registry.enrollments en ON en.session_id = s.id AND en.status = 'active'
             JOIN registry.session_teachers st ON st.teacher_id = ?
@@ -146,7 +146,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 e.metadata->>'capacity' as capacity
             FROM registry.events e
             JOIN registry.locations l ON e.location_id = l.id
-            JOIN registry.projects p ON e.project_id = p.id
+            JOIN registry.programs p ON e.project_id = p.id
             LEFT JOIN registry.sessions s ON s.project_id = p.id
             LEFT JOIN registry.enrollments en ON en.session_id = s.id AND en.status = 'active'
             JOIN registry.session_teachers st ON st.teacher_id = ?
@@ -175,7 +175,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 COUNT(en.id) as enrolled_count
             FROM events e
             JOIN locations l ON e.location_id = l.id
-            JOIN projects p ON e.project_id = p.id
+            JOIN programs p ON e.project_id = p.id
             LEFT JOIN session_events se ON e.id = se.event_id
             LEFT JOIN sessions s ON se.session_id = s.id
             LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
@@ -218,7 +218,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 COUNT(en.id) as enrolled_count
             FROM events e
             JOIN locations l ON e.location_id = l.id
-            JOIN projects p ON e.project_id = p.id
+            JOIN programs p ON e.project_id = p.id
             LEFT JOIN session_events se ON e.id = se.event_id
             LEFT JOIN sessions s ON se.session_id = s.id
             LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
@@ -256,7 +256,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 COUNT(en.id) as enrolled_count
             FROM events e
             JOIN locations l ON e.location_id = l.id
-            JOIN projects p ON e.project_id = p.id
+            JOIN programs p ON e.project_id = p.id
             LEFT JOIN session_events se ON e.id = se.event_id
             LEFT JOIN sessions s ON se.session_id = s.id
             LEFT JOIN enrollments en ON en.session_id = s.id AND en.status = 'active'
@@ -340,7 +340,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 COUNT(DISTINCT CASE WHEN ar.status = 'absent' THEN ar.id END) as absent_count
             FROM events ev
             JOIN sessions s ON ev.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
+            JOIN programs p ON s.project_id = p.id
             LEFT JOIN locations l ON ev.location_id = l.id
             LEFT JOIN enrollments e ON s.id = e.session_id AND e.status = 'active'
             LEFT JOIN attendance_records ar ON ev.id = ar.event_id
