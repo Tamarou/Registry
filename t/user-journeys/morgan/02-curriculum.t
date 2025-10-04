@@ -50,8 +50,8 @@ ok my $teacher = $dao->create( 'User', {
     username   => 'teacher_jones',
     password   => 'password123',
     email      => 'jones@example.org',
-    name => 'Bob Jones',
-    metadata   => { role => 'teacher' }
+    name       => 'Bob Jones',
+    user_type  => 'staff'
 }), 'Create teacher for sharing';
 
 ok $curriculum->share_with($dao->db, $teacher->id, 'view_edit'),

@@ -42,8 +42,8 @@ ok my $teacher = $dao->create( 'User', {
     username   => 'teacher_smith',
     password   => 'password123',
     email      => 'smith@example.org',
-    name => 'Jane Smith',
-    metadata   => { role => 'teacher' }
+    name       => 'Jane Smith',
+    user_type  => 'staff'
 }), 'Create teacher account';
 
 ok $program->add_teachers( $dao->db, $teacher->id ), 'Assign teachers to program';
