@@ -42,8 +42,7 @@ ok my $teacher = $dao->create( 'User', {
     username   => 'teacher_smith',
     password   => 'password123',
     email      => 'smith@example.org',
-    first_name => 'Jane',
-    last_name  => 'Smith',
+    name => 'Jane Smith',
     metadata   => { role => 'teacher' }
 }), 'Create teacher account';
 

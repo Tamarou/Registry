@@ -19,8 +19,7 @@ my $dao = Registry::DAO->new( db => $db );
 ok my $teacher = $dao->create( 'User', {
     username   => 'sarah_teacher',
     email      => 'sarah@school.edu',
-    first_name => 'Sarah',
-    last_name  => 'Thompson',
+    name => 'Sarah Thompson',
     password   => 'secure_password',
     metadata   => {
         role           => 'teacher',
