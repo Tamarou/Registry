@@ -1,0 +1,55 @@
+% layout 'default';
+% title 'Program Schedule: ' . $program->name;
+
+<h2>Program Schedule: <%= $program->name %></h2>
+
+% if (flash('success')) {
+    <div class="success alert alert-success"><%= flash('success') %></div>
+% }
+
+% my $schedule = $program->schedule($c->dao->db);
+% if ($schedule && keys %$schedule) {
+    <div class="current-schedule">
+        <h3>Current Schedule</h3>
+        <p><strong>Start Date:</strong> <%= $schedule->{start_date} %></p>
+        <p><strong>End Date:</strong> <%= $schedule->{end_date} %></p>
+        <p><strong>Days:</strong> <%= $schedule->{days} %></p>
+        <p><strong>Time:</strong> <%= $schedule->{start_time} %> - <%= $schedule->{end_time} %></p>
+    </div>
+% }
+
+<h3>Set Schedule</h3>
+<form id="schedule-form" action="/admin/programs/<%= $program->id %>/schedule" method="post">
+    <div class="form-group">
+        <label for="start_date">Start Date</label>
+        <input type="date" id="start_date" name="start_date" class="form-control" required>
+    </div>
+
+    <div class="form-group">
+        <label for="end_date">End Date</label>
+        <input type="date" id="end_date" name="end_date" class="form-control" required>
+    </div>
+
+    <div class="form-group">
+        <label for="days">Days</label>
+        <input type="text" id="days" name="days" placeholder="monday,wednesday,friday" class="form-control" required>
+    </div>
+
+    <div class="form-group">
+        <label for="start_time">Start Time</label>
+        <input type="time" id="start_time" name="start_time" class="form-control" required>
+    </div>
+
+    <div class="form-group">
+        <label for="end_time">End Time</label>
+        <input type="time" id="end_time" name="end_time" class="form-control" required>
+    </div>
+
+    <div class="form-group">
+        <label for="location_id">Location ID</label>
+        <input type="number" id="location_id" name="location_id" class="form-control">
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Schedule</button>
+    <a href="/admin/programs/<%= $program->id %>" class="btn btn-secondary">Back to Program</a>
+</form>

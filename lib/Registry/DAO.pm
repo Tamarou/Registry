@@ -28,6 +28,7 @@ use Registry::DAO::CreateOutcomeDefinition;
 use Registry::DAO::TransferRequest;
 use Registry::DAO::Program;
 use Registry::DAO::Curriculum;
+use Registry::DAO::ProgramTeacher;
 
 class Registry::DAO {
     use Carp         qw(croak);

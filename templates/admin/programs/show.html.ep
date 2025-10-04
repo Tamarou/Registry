@@ -1,0 +1,37 @@
+% layout 'default';
+% title $program->name;
+
+<h2><%= $program->name %></h2>
+
+% if (flash('success')) {
+    <div class="success alert alert-success"><%= flash('success') %></div>
+% }
+
+<div class="program-details">
+    <p><strong>Description:</strong> <%= $program->description // 'N/A' %></p>
+    <p><strong>Type:</strong> <%= $program->metadata->{type} // 'N/A' %></p>
+    <p><strong>Age Range:</strong> <%= $program->metadata->{age_min} // 'N/A' %> - <%= $program->metadata->{age_max} // 'N/A' %></p>
+    <p><strong>Capacity:</strong> <%= $program->metadata->{capacity} // 'N/A' %></p>
+    <p><strong>Price:</strong> $<%= $program->metadata->{price} // 'N/A' %></p>
+    <p><strong>Status:</strong> <%= $program->status %></p>
+</div>
+
+<div class="actions">
+    <a href="/admin/programs/<%= $program->id %>/edit" class="btn btn-secondary">Edit</a>
+    <a href="/admin/programs/<%= $program->id %>/teachers" class="btn btn-secondary">Manage Teachers</a>
+    <a href="/admin/programs/<%= $program->id %>/schedule" class="btn btn-secondary">Schedule</a>
+
+    % if ($program->status ne 'published') {
+        <form action="/admin/programs/<%= $program->id %>/publish" method="post" style="display:inline;">
+            <button type="submit" name="publish" class="btn btn-success">Publish</button>
+        </form>
+    % }
+
+    % if ($program->status ne 'archived') {
+        <form action="/admin/programs/<%= $program->id %>/archive" method="post" style="display:inline;">
+            <button type="submit" class="btn btn-warning">Archive</button>
+        </form>
+    % }
+
+    <a href="/admin/programs/<%= $program->id %>/clone" class="btn btn-info">Clone</a>
+</div>

@@ -210,6 +210,23 @@ class Registry :isa(Mojolicious) {
         $r->get('/admin/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $r->post('/admin/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
 
+        # Admin program management routes
+        $r->get('/admin/programs')->to('admin_programs#index')->name('admin_programs');
+        $r->get('/admin/programs/new')->to('admin_programs#new_program')->name('admin_programs_new');
+        $r->post('/admin/programs/new')->to('admin_programs#create')->name('admin_programs_create');
+        $r->get('/admin/programs/:id')->to('admin_programs#show')->name('admin_programs_show');
+        $r->get('/admin/programs/:id/edit')->to('admin_programs#edit')->name('admin_programs_edit');
+        $r->post('/admin/programs/:id/edit')->to('admin_programs#update')->name('admin_programs_update');
+        $r->get('/admin/programs/:id/teachers')->to('admin_programs#teachers')->name('admin_programs_teachers');
+        $r->post('/admin/programs/:id/teachers')->to('admin_programs#assign_teacher')->name('admin_programs_assign_teacher');
+        $r->get('/admin/programs/:id/schedule')->to('admin_programs#schedule')->name('admin_programs_schedule');
+        $r->post('/admin/programs/:id/schedule')->to('admin_programs#update_schedule')->name('admin_programs_update_schedule');
+        $r->post('/admin/programs/:id/schedule/update')->to('admin_programs#update_schedule')->name('admin_programs_schedule_update');
+        $r->post('/admin/programs/:id/publish')->to('admin_programs#publish')->name('admin_programs_publish');
+        $r->post('/admin/programs/:id/archive')->to('admin_programs#archive')->name('admin_programs_archive');
+        $r->get('/admin/programs/:id/clone')->to('admin_programs#clone_form')->name('admin_programs_clone_form');
+        $r->post('/admin/programs/:id/clone')->to('admin_programs#clone')->name('admin_programs_clone');
+
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
         $w->get('')->to('#index')->name("workflow_index");
