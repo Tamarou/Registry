@@ -33,8 +33,8 @@ package Test::Registry::Fixtures {
     }
     
     sub create_project ($db, $data) {
-        require Registry::DAO::Project;
-        Registry::DAO::Project->create($db, $data);
+        require Registry::DAO::Program;
+        Registry::DAO::Program->create($db, $data);
     }
     
     sub create_session ($db, $data) {

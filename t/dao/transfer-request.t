@@ -34,13 +34,13 @@ my $family_member = $dao->create(FamilyMember => {
 });
 
 # Create projects first
-my $source_project = $dao->create(Project => {
+my $source_project = $dao->create(Program => {
     name => 'Source Project',
     slug => 'source-project',
     notes => 'Test project for source session'
 });
 
-my $target_project = $dao->create(Project => {
+my $target_project = $dao->create(Program => {
     name => 'Target Project',
     slug => 'target-project',
     notes => 'Test project for target session'

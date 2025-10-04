@@ -37,7 +37,7 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         my $program;
         my $program_type;
         if ($program_id) {
-            $program = Registry::DAO::Project->find($db, { id => $program_id });
+            $program = Registry::DAO::Program->find($db, { id => $program_id });
             if ($program && $program->program_type_slug) {
                 $program_type = Registry::DAO::ProgramType->find_by_slug(
                     $db, 

@@ -97,8 +97,8 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     method project($db) {
         return unless $project_id;
         
-        require Registry::DAO::Project;
-        Registry::DAO::Project->find($db, { id => $project_id });
+        require Registry::DAO::Program;
+        Registry::DAO::Program->find($db, { id => $project_id });
     }
     
     # Get events for a teacher on a specific date

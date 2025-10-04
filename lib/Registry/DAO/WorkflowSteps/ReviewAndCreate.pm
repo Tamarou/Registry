@@ -4,7 +4,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ReviewAndCreate :isa(Registry::DAO::WorkflowStep) {
 
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Event;
 use Mojo::JSON qw(encode_json);
 
@@ -61,7 +61,7 @@ method create_program ($db, $run) {
     )->save($db);
     
     # Create the project with all program details
-    my $project = Registry::DAO::Project->new(
+    my $project = Registry::DAO::Program->new(
         name => $curriculum->{name},
         event_id => $event->id,
         program_type_id => $run->data->{program_type_id},

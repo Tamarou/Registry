@@ -11,7 +11,7 @@ use Registry::DAO::Object;
 use Registry::DAO::User;
 use Registry::DAO::Tenant;
 use Registry::DAO::Location;
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 use Registry::DAO::Template;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;

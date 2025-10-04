@@ -4,7 +4,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::SelectProgram :isa(Registry::DAO::WorkflowStep) {
 
-use Registry::DAO::Project;
+use Registry::DAO::Program;
 
 method process ($db, $form_data) {
     my $workflow = $self->workflow($db);
@@ -13,7 +13,7 @@ method process ($db, $form_data) {
     # If form was submitted
     if ($form_data->{project_id}) {
         # Validate project exists
-        my $project = Registry::DAO::Project->new(
+        my $project = Registry::DAO::Program->new(
             id => $form_data->{project_id}
         )->load($db);
         
@@ -44,7 +44,7 @@ method process ($db, $form_data) {
 
 method prepare_data ($db) {
     # Get all available programs/projects
-    my $projects = Registry::DAO::Project->list($db);
+    my $projects = Registry::DAO::Program->list($db);
     
     return {
         projects => $projects

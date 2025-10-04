@@ -145,7 +145,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
     sub get_admin_dashboard_data($class, $db, $user) {
         return {
             overview_stats => $class->get_overview_stats($db),
-            program_summary => Registry::DAO::Project->get_program_overview($db, 'current'),
+            program_summary => Registry::DAO::Program->get_program_overview($db, 'current'),
             todays_events => Registry::DAO::Event->get_events_for_date($db, DateTime->now->ymd),
             recent_notifications => Registry::DAO::Notification->get_recent_for_admin($db, 5, 'all'),
             waitlist_summary => $class->get_waitlist_summary($db),

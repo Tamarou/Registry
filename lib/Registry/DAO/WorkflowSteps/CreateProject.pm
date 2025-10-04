@@ -10,7 +10,7 @@ class Registry::DAO::WorkflowSteps::CreateProject :isa(Registry::DAO::WorkflowSt
         my ($workflow) = $self->workflow($db);
         my $run        = $workflow->latest_run($db);
         my %data       = $run->data->%{ 'name', 'metadata', 'notes' };
-        my $project    = Registry::DAO::Project->create( $db, \%data );
+        my $project    = Registry::DAO::Program->create( $db, \%data );
         $run->update_data( $db, { projects => [ $project->id ] } );
         if ( $run->has_continuation ) {
             my ($continuation) = $run->continuation($db);

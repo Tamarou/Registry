@@ -19,15 +19,18 @@ my $dao = $test_db->db;
         address_info => { street => '123 School Street', city => 'Test City', state => 'TS', zip => '12345' }
     });
     
-    my $program = $dao->create( Project => {
+    my $program = $dao->create( Program => {
         name => 'After School Robotics',
-        program_type_slug => 'afterschool',
-        metadata => { description => 'Learn programming and robotics', status => 'active' }
+        metadata => {
+            program_type_slug => 'afterschool',
+            description => 'Learn programming and robotics',
+            status => 'active'
+        }
     });
     
     my $session = $dao->create( Session => {
         name => 'Fall 2024 Robotics',
-        project_id => $program->id,
+        program_id => $program->id,
         location_id => $location->id,
         start_date => time() + 86400 * 7, # Next week
         end_date => time() + 86400 * 77, # 11 weeks later
@@ -53,7 +56,6 @@ my $dao = $test_db->db;
             my $event = $dao->create( Event => {
                 session_id => $session->id,
                 location_id => $location->id,
-                project_id => $program->id,
                 teacher_id => $teacher->id,
                 start_time => $start_dt,
                 end_time => $end_dt,
@@ -204,7 +206,7 @@ my $dao = $test_db->db;
             fm.child_name
         FROM enrollments e
         JOIN sessions s ON e.session_id = s.id
-        JOIN projects p ON (s.metadata->>'project_id')::uuid = p.id
+        JOIN programs p ON s.program_id = p.id
         JOIN family_members fm ON e.student_id = fm.id
         WHERE fm.family_id = ? AND e.status = 'active'
     }, $parent->id)->hashes->to_array;
@@ -259,15 +261,18 @@ my $dao = $test_db->db;
     my $location = $dao->find( Location => { slug => 'sunny-elementary' });
     
     # Create a full session
-    my $program2 = $dao->create( Project => {
+    my $program2 = $dao->create( Program => {
         name => 'Advanced Art Class',
-        program_type_slug => 'afterschool',
-        metadata => { description => 'Advanced art techniques', status => 'active' }
+        metadata => {
+            program_type_slug => 'afterschool',
+            description => 'Advanced art techniques',
+            status => 'active'
+        }
     });
     
     my $full_session = $dao->create( Session => {
         name => 'Fall 2024 Advanced Art',
-        project_id => $program2->id,
+        program_id => $program2->id,
         location_id => $location->id,
         start_date => time() + 86400 * 14, # Two weeks from now
         end_date => time() + 86400 * 84, # 12 weeks later
