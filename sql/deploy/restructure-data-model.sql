@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS programs (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     name text UNIQUE NOT NULL,
     slug text UNIQUE NOT NULL,
+    description text NULL,
     metadata jsonb NULL,
     notes text NULL,
     created_at timestamp with time zone DEFAULT now(),
@@ -98,32 +99,35 @@ BEGIN
    -- Only process tenants if they exist
    IF tenants_exist THEN
        FOR s IN SELECT slug FROM registry.tenants LOOP
-           -- Create programs table in tenant schema
-           EXECUTE format('CREATE TABLE IF NOT EXISTS %I.programs (
+           -- Check if the schema exists before processing
+           IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = s) THEN
+               -- Create programs table in tenant schema
+               EXECUTE format('CREATE TABLE IF NOT EXISTS "%s".programs (
                id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
                name text UNIQUE NOT NULL,
                slug text UNIQUE NOT NULL,
+               description text NULL,
                metadata jsonb NULL,
                notes text NULL,
                created_at timestamp with time zone DEFAULT now(),
                updated_at timestamp NOT NULL DEFAULT current_timestamp
            );', s);
-           
+
            -- Add program_id to sessions
-           EXECUTE format('ALTER TABLE %I.sessions ADD COLUMN IF NOT EXISTS program_id uuid REFERENCES %I.programs(id);', s, s);
-           
+           EXECUTE format('ALTER TABLE "%s".sessions ADD COLUMN IF NOT EXISTS program_id uuid REFERENCES "%s".programs(id);', s, s);
+
            -- Add session_id to events
-           EXECUTE format('ALTER TABLE %I.events ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES %I.sessions(id);', s, s);
+           EXECUTE format('ALTER TABLE "%s".events ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES "%s".sessions(id);', s, s);
            
            -- Drop old project_id from events (if it exists)
            IF EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_schema = s AND table_name = 'events' AND column_name = 'project_id') THEN
-               EXECUTE format('ALTER TABLE %I.events DROP COLUMN project_id;', s);
+               EXECUTE format('ALTER TABLE "%s".events DROP COLUMN project_id;', s);
            END IF;
            
            -- Drop old projects table and recreate as curriculum
-           EXECUTE format('DROP TABLE IF EXISTS %I.projects CASCADE;', s);
-           EXECUTE format('CREATE TABLE IF NOT EXISTS %I.curriculum (
+           EXECUTE format('DROP TABLE IF EXISTS "%s".projects CASCADE;', s);
+           EXECUTE format('CREATE TABLE IF NOT EXISTS "%s".curriculum (
                id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
                name text NOT NULL,
                slug text NOT NULL,
@@ -136,25 +140,32 @@ BEGIN
            );', s);
            
            -- Create event_curriculum junction table
-           EXECUTE format('CREATE TABLE IF NOT EXISTS %I.event_curriculum (
+           EXECUTE format('CREATE TABLE IF NOT EXISTS "%s".event_curriculum (
                id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-               event_id uuid NOT NULL REFERENCES %I.events(id) ON DELETE CASCADE,
-               curriculum_id uuid NOT NULL REFERENCES %I.curriculum(id) ON DELETE CASCADE,
+               event_id uuid NOT NULL REFERENCES "%s".events(id) ON DELETE CASCADE,
+               curriculum_id uuid NOT NULL REFERENCES "%s".curriculum(id) ON DELETE CASCADE,
                created_at timestamp with time zone DEFAULT now(),
                UNIQUE(event_id, curriculum_id)
            );', s, s, s);
            
            -- Update constraints
-           EXECUTE format('ALTER TABLE %I.events DROP CONSTRAINT IF EXISTS events_project_id_location_id_time_key;', s);
-           EXECUTE format('ALTER TABLE %I.events ADD CONSTRAINT events_session_location_time_unique 
-               UNIQUE (session_id, location_id, time);', s);
+           EXECUTE format('ALTER TABLE "%s".events DROP CONSTRAINT IF EXISTS events_project_id_location_id_time_key;', s);
+
+           -- Only add new constraint if it doesn't exist
+           IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
+                          WHERE constraint_name = 'events_session_location_time_unique'
+                          AND table_name = 'events' AND table_schema = s) THEN
+               EXECUTE format('ALTER TABLE "%s".events ADD CONSTRAINT events_session_location_time_unique
+                   UNIQUE (session_id, location_id, time);', s);
+           END IF;
                
            -- Update indexes for tenant schema
-           EXECUTE format('DROP INDEX IF EXISTS %I.idx_events_project_id;', s);
-           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_events_session_id ON %I.events(session_id);', s);
-           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_sessions_program_id ON %I.sessions(program_id);', s);
-           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_event_curriculum_event_id ON %I.event_curriculum(event_id);', s);
-           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_event_curriculum_curriculum_id ON %I.event_curriculum(curriculum_id);', s);
+           EXECUTE format('DROP INDEX IF EXISTS "%s".idx_events_project_id;', s);
+           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_events_session_id ON "%s".events(session_id);', s);
+           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_sessions_program_id ON "%s".sessions(program_id);', s);
+           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_event_curriculum_event_id ON "%s".event_curriculum(event_id);', s);
+           EXECUTE format('CREATE INDEX IF NOT EXISTS idx_event_curriculum_curriculum_id ON "%s".event_curriculum(curriculum_id);', s);
+           END IF; -- end schema exists check
        END LOOP;
    END IF;
 END;

@@ -1,0 +1,38 @@
+% layout 'default';
+% title 'Program Management';
+
+<h1>Program Management</h1>
+
+<div class="mb-4">
+    <a href="/admin/programs/new" class="btn btn-primary">Create New Program</a>
+</div>
+
+<div class="programs-list">
+    % if (@$programs) {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                % for my $program (@$programs) {
+                    <tr>
+                        <td><%= $program->name %></td>
+                        <td><%= $program->metadata->{type} // 'N/A' %></td>
+                        <td><%= $program->status %></td>
+                        <td>
+                            <a href="/admin/programs/<%= $program->id %>">View</a> |
+                            <a href="/admin/programs/<%= $program->id %>/edit">Edit</a>
+                        </td>
+                    </tr>
+                % }
+            </tbody>
+        </table>
+    % } else {
+        <p>No programs found.</p>
+    % }
+</div>
