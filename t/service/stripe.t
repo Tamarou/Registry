@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: Comprehensive tests for Registry::Service::Stripe async/promise handling
-# ABOUTME: Validates Stripe API integration, webhook verification, and error handling
+# ABOUTME: Tests for Registry::Service::Stripe async/promise handling verification
+# ABOUTME: Validates that async methods exist and webhook verification works
 
 use 5.40.2;
 use warnings;
