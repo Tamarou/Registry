@@ -109,8 +109,8 @@ jobs:
         export PGPASSWORD=postgres
         # Clean up any existing test artifacts
         psql -h localhost -U postgres -d registry_test -c "
-          TRUNCATE users, family_members, enrollments, payments, attendance_records, 
-                   waitlist, sessions, events, session_events, projects, locations, 
+          TRUNCATE users, family_members, enrollments, payments, attendance_records,
+                   waitlist, sessions, events, session_events, programs, locations,
                    messages, message_recipients CASCADE;" || true
         echo "Database cleaned for fresh test run"
 
