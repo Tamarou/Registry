@@ -26,3 +26,4 @@ requires 'JSON';
 requires 'Text::Unidecode';
 requires 'Text::CSV_XS';
 requires 'IO::Socket::SSL';
+requires 'SlapbirdAPM::Agent::Mojo';
