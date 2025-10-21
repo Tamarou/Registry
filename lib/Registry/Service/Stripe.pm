@@ -269,7 +269,75 @@ class Registry::Service::Stripe {
     method list_invoices($params = {}) {
         return $self->list_invoices_async($params)->wait;
     }
-    
+
+    method retrieve_invoice($invoice_id) {
+        return $self->retrieve_invoice_async($invoice_id)->wait;
+    }
+
+    method confirm_payment_intent($intent_id, $params = {}) {
+        return $self->confirm_payment_intent_async($intent_id, $params)->wait;
+    }
+
+    method cancel_payment_intent($intent_id) {
+        return $self->cancel_payment_intent_async($intent_id)->wait;
+    }
+
+    method retrieve_customer($customer_id) {
+        return $self->retrieve_customer_async($customer_id)->wait;
+    }
+
+    method update_customer($customer_id, $params) {
+        return $self->update_customer_async($customer_id, $params)->wait;
+    }
+
+    method delete_customer($customer_id) {
+        return $self->delete_customer_async($customer_id)->wait;
+    }
+
+    method create_payment_method($params) {
+        return $self->create_payment_method_async($params)->wait;
+    }
+
+    method retrieve_payment_method($pm_id) {
+        return $self->retrieve_payment_method_async($pm_id)->wait;
+    }
+
+    method attach_payment_method($pm_id, $customer_id) {
+        return $self->attach_payment_method_async($pm_id, $customer_id)->wait;
+    }
+
+    method detach_payment_method($pm_id) {
+        return $self->detach_payment_method_async($pm_id)->wait;
+    }
+
+    method list_customer_payment_methods($customer_id, $type = 'card') {
+        return $self->list_customer_payment_methods_async($customer_id, $type)->wait;
+    }
+
+    method retrieve_refund($refund_id) {
+        return $self->retrieve_refund_async($refund_id)->wait;
+    }
+
+    method create_price($params) {
+        return $self->create_price_async($params)->wait;
+    }
+
+    method retrieve_price($price_id) {
+        return $self->retrieve_price_async($price_id)->wait;
+    }
+
+    method list_prices($params = {}) {
+        return $self->list_prices_async($params)->wait;
+    }
+
+    method create_product($params) {
+        return $self->create_product_async($params)->wait;
+    }
+
+    method retrieve_product($product_id) {
+        return $self->retrieve_product_async($product_id)->wait;
+    }
+
     # Helper method for secure string comparison
     method _secure_compare($a, $b) {
         return 0 if length($a) != length($b);

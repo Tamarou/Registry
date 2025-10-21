@@ -47,6 +47,40 @@ Current test coverage includes:
 
 **Test execution must be pristine** - no warnings, errors, or unexpected output.
 
+### Test Command Conventions
+
+- **Full test suite**: `carton exec prove -lr t/` (or `make test`)
+- **Single test file**: `carton exec prove -lv t/path/to/test.t`
+- **CRITICAL**: Always use `-lr` flags, NEVER use `-r` alone
+  - `-l` adds `lib/` to @INC for proper module loading
+  - `-r` alone causes absolute paths that break the `-l` behavior
+- **Before workflow tests**: Always run `carton exec ./registry workflow import registry`
+  - Workflow tests will fail silently if workflows not imported
+  - This is the #1 most frequently forgotten step
+
+### Common Test Failures and Solutions
+
+**1. "Can't locate Registry/DAO/Foo.pm"**
+- **Cause**: @INC path issue, using `prove -r` instead of `prove -lr`
+- **Solution**: Ensure using `carton exec prove -lr t/` or `prove -lv` for single files
+
+**2. "Workflow not found" or workflow tests failing mysteriously**
+- **Cause**: Workflows not imported to database after YAML changes
+- **Solution**: Run `carton exec ./registry workflow import registry`
+- **Prevention**: Always import after editing any file in `workflows/`
+
+**3. Schema detection failure in DAO classes**
+- **Cause**: Wrong database schema in multi-tenant code
+- **Solution**: Check for correct schema usage, use `isa` operator not `ref eq`
+
+**4. UUID pattern match failures in tests**
+- **Cause**: Incorrect regex pattern for UUID format
+- **Solution**: Use `[\w-]+` not `\w+` for UUID patterns (need to match hyphens)
+
+**5. PostgreSQL schema name errors**
+- **Cause**: Schema names with hyphens (not allowed in PostgreSQL)
+- **Solution**: Replace hyphens with underscores in schema names
+
 ### Docker Development
 ```bash
 docker-compose up  # Start all services
@@ -98,12 +132,53 @@ class Foo :isa(Bar) {
   - **Test-only infrastructure belongs in `t/lib/` files** - NEVER add test-specific methods or infrastructure to core production classes. Test helpers, mocks, and specialized test infrastructure should be isolated in the test directory structure.
 - **Template Extension**: Templates can specify a different workflow layout via `extends 'layouts/workflow'`
 
+### Workflow Development Gotchas
+
+**CRITICAL: Workflow Import Requirement**
+
+After editing any workflow YAML file, you MUST run:
+```bash
+carton exec ./registry workflow import registry
+```
+
+- Workflow tests will fail silently if workflows not imported to database
+- This is the #1 most frequently forgotten step (82% of development sessions)
+- Workflow import errors are often YAML syntax issues (check indentation)
+- Custom workflow steps live in `lib/Registry/DAO/WorkflowSteps/`
+- Test workflows using `Registry::WorkflowProcessor->new_run($workflow, $data)`
+
+**Workflow Development Cycle:**
+1. Edit workflow YAML in `workflows/` directory
+2. Import workflow: `carton exec ./registry workflow import registry`
+3. Run workflow tests to verify functionality
+4. Fix issues in YAML or custom workflow step classes
+5. **Re-import workflow** (don't forget this step!)
+6. Retest until passing
+7. Commit YAML and any custom step classes together
+
+### Database Migration Workflow
+
+**Sqitch Migration Steps:**
+
+1. **Create migration**: `carton exec sqitch add [name] -n "Description"`
+2. **Write deploy SQL**: Edit `sql/deploy/[name].sql`
+3. **Write revert SQL**: Edit `sql/revert/[name].sql`
+4. **Write verify SQL**: Edit `sql/verify/[name].sql`
+5. **Deploy**: `carton exec sqitch deploy`
+6. **Import workflows** (if workflow steps changed): `carton exec ./registry workflow import registry`
+7. **Run tests**: `carton exec prove -lr t/`
+8. **Commit**: Commit migration files and code changes together
+
+**Common Sqitch Issues:**
+- **Deploy to wrong database**: Ensure correct database name in `sqitch.conf`
+- **Foreign key violations**: Check migration dependency order in `sqitch.plan`
+- **Verify failures**: Ensure verify SQL matches actual deployed schema
+
 ### Important Notes
 
 - **Pre-Alpha System**: Registry is pre-alpha with no users yet. Do NOT worry about backwards compatibility unless explicitly told otherwise. Make the best technical decisions for the current codebase.
 - **100% Test Pass Rate**: ALL tests must pass at 100% before any code changes are considered complete. This is non-negotiable.
 - **Test Infrastructure Isolation**: Test-only infrastructure must be isolated in `t/lib/` files, never in core production classes. For example, workflow testing should use the real `Registry::WorkflowProcessor` or individual workflow step classes, not fake compatibility layers in production code.
-- When modifying workflows, remember to re-import them with the workflow import command
 - The workflow processor (`lib/Registry/Utility/WorkflowProcessor.pm`) handles workflow execution
 - Custom workflow steps must inherit from base step classes and implement required methods
 - HTMX attributes are used extensively for dynamic behavior without full page reloads
