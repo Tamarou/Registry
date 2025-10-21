@@ -1,8 +1,8 @@
 databases:
-  - name: registry-postgres
-    databaseName: registry
-    user: registry_user
-    plan: free
+  - name: registry-db
+    databaseName: registry_db
+    user: registry_db_user
+    plan: standard
 
 services:
   - type: web
@@ -14,7 +14,7 @@ services:
     envVars:
       - key: DB_URL
         fromDatabase:
-          name: registry-postgres
+          name: registry-db
           property: connectionString
       - key: MOJO_MODE
         value: production
@@ -36,7 +36,7 @@ services:
         value: web
       - key: SQITCH_TARGET
         fromDatabase:
-          name: registry-postgres
+          name: registry-db
           property: connectionString
     healthCheckPath: /health
     buildCommand: |
@@ -57,7 +57,7 @@ services:
     envVars:
       - key: DB_URL
         fromDatabase:
-          name: registry-postgres
+          name: registry-db
           property: connectionString
       - key: MOJO_MODE
         value: production
@@ -86,7 +86,7 @@ services:
     envVars:
       - key: DB_URL
         fromDatabase:
-          name: registry-postgres
+          name: registry-db
           property: connectionString
       - key: MOJO_MODE
         value: production
