@@ -531,25 +531,618 @@ window.addEventListener('load', () => {
 - **Background Shapes**: 0.3
 - **Glass Cards**: 0.85
 
-## 11. Integration with Registry Application
+## 11. CSS File Structure & Organization
 
-To integrate this design system into the existing Registry Mojolicious templates:
+The Registry design system is organized across four main CSS files:
 
-1. **Extract CSS into separate file**: Create `/public/css/design-system.css`
-2. **Update base layout**: Modify `templates/layouts/default.html.ep` to include design system CSS
-3. **Apply component classes**: Update existing templates to use the design system classes
-4. **Maintain HTMX compatibility**: Ensure animations don't interfere with HTMX transitions
-5. **Progressive enhancement**: Apply effects that degrade gracefully for older browsers
-
-### Template Integration Example
-```perl
-# In templates/layouts/default.html.ep
+### File Import Order
+```html
+<!-- In templates: Import in this specific order -->
 <link rel="stylesheet" href="/css/design-system.css">
+<link rel="stylesheet" href="/css/components.css">
+<link rel="stylesheet" href="/css/structure.css">
+<link rel="stylesheet" href="/css/style.css"> <!-- Optional: Legacy support -->
+```
 
-# In templates/index.html.ep
-<button class="cta-button" hx-post="/api/register">
+### File Responsibilities
+
+#### `/public/css/design-system.css`
+- Core design tokens and CSS custom properties
+- Theme definitions (light/dark)
+- Keyframe animations
+- Background effects
+- Base body/html styles
+
+#### `/public/css/components.css`
+- Reusable component styles (navigation, buttons, cards, forms)
+- Hero sections
+- Landing page components
+- Feature cards
+- Navigation patterns
+
+#### `/public/css/structure.css`
+- Extended design tokens (typography, spacing, shadows)
+- Semantic HTML element styling
+- Base element reset/normalization
+- Semantic color palette
+
+#### `/public/css/style.css`
+- Utility classes (display, flex, grid, text, spacing)
+- Page-specific styles
+- Legacy button classes (backward compatibility)
+- Container system
+
+## 12. Extended Design Tokens
+
+### Semantic Color Palette
+```css
+:root {
+    --color-primary: #BF349A;    /* Magenta for primary actions */
+    --color-secondary: #2ABFBF;  /* Cyan for secondary actions */
+    --color-success: #29A6A6;    /* Teal */
+    --color-warning: #BF349A;    /* Magenta */
+    --color-danger: #8C2771;     /* Deep purple */
+    --color-info: #2ABFBF;       /* Cyan */
+}
+```
+
+### Complete Spacing Scale
+```css
+:root {
+    --space-0: 0;
+    --space-1: 0.25rem;   /* 4px */
+    --space-2: 0.5rem;    /* 8px */
+    --space-3: 0.75rem;   /* 12px */
+    --space-4: 1rem;      /* 16px */
+    --space-5: 1.25rem;   /* 20px */
+    --space-6: 1.5rem;    /* 24px */
+    --space-7: 1.75rem;   /* 28px */
+    --space-8: 2rem;      /* 32px */
+    --space-10: 2.5rem;   /* 40px */
+    --space-12: 3rem;     /* 48px */
+    --space-16: 4rem;     /* 64px */
+    --space-20: 5rem;     /* 80px */
+    --space-24: 6rem;     /* 96px */
+}
+```
+
+### Complete Typography Scale
+```css
+:root {
+    /* Font Sizes */
+    --font-size-xs: 0.75rem;    /* 12px */
+    --font-size-sm: 0.875rem;   /* 14px */
+    --font-size-base: 1rem;     /* 16px */
+    --font-size-lg: 1.125rem;   /* 18px */
+    --font-size-xl: 1.25rem;    /* 20px */
+    --font-size-2xl: 1.5rem;    /* 24px */
+    --font-size-3xl: 1.875rem;  /* 30px */
+    --font-size-4xl: 2.25rem;   /* 36px */
+    --font-size-5xl: 3rem;      /* 48px */
+
+    /* Font Weights */
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    /* Line Heights */
+    --line-height-tight: 1.25;
+    --line-height-normal: 1.5;
+    --line-height-relaxed: 1.75;
+}
+```
+
+### Shadow System
+```css
+:root {
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-base: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+```
+
+### Border Radius Scale
+```css
+:root {
+    --radius-none: 0;
+    --radius-sm: 0.125rem;   /* 2px */
+    --radius-base: 0.25rem;  /* 4px */
+    --radius-md: 0.375rem;   /* 6px */
+    --radius-lg: 0.5rem;     /* 8px */
+    --radius-xl: 0.75rem;    /* 12px */
+    --radius-2xl: 1rem;      /* 16px */
+    --radius-full: 9999px;
+}
+```
+
+### Transition Speeds
+```css
+:root {
+    --transition-fast: 150ms ease-in-out;
+    --transition-base: 250ms ease-in-out;
+    --transition-slow: 350ms ease-in-out;
+}
+```
+
+## 13. Workflow-Specific Components
+
+### Workflow Layout
+```css
+body[data-layout="workflow"] {
+    /* Workflow-specific styling */
+    background: var(--bg-primary);
+}
+
+/* Background grid effect for workflows */
+body[data-layout="workflow"]::before {
+    content: '';
+    position: fixed;
+    top: -50px;
+    left: -50px;
+    width: calc(100% + 50px);
+    height: calc(100% + 50px);
+    background-image:
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    z-index: -2;
+    animation: grid-move 20s linear infinite;
+}
+
+/* Floating shape for workflows */
+body[data-layout="workflow"]::after {
+    content: '';
+    position: fixed;
+    width: 300px;
+    height: 300px;
+    background: var(--gradient-1);
+    border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+    animation: float-subtle 25s infinite ease-in-out;
+    opacity: 0.15;
+    z-index: -1;
+}
+```
+
+### Workflow Components
+```css
+/* Workflow Header */
+header[data-component="workflow-header"] {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding: 2rem;
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+}
+
+/* Workflow Content Section */
+section[data-component="workflow-content"] {
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    border: 2px solid var(--glow-color);
+    padding: 2rem;
+    margin-bottom: 2rem;
+}
+
+/* Workflow Navigation Footer */
+footer[data-component="workflow-navigation"] {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+}
+
+/* Workflow container */
+div[data-component="workflow-container"] {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+```
+
+### Workflow Form Elements
+```css
+/* Inputs within workflow content */
+section[data-component="workflow-content"] input[type="text"],
+section[data-component="workflow-content"] input[type="email"],
+section[data-component="workflow-content"] input[type="tel"],
+section[data-component="workflow-content"] input[type="date"] {
+    width: 100%;
+    padding: 1rem 1.5rem;
+    border: 2px solid var(--accent-purple);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    border-radius: 50px;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+}
+
+section[data-component="workflow-content"] textarea {
+    border-radius: 1rem; /* Less rounded than text inputs */
+}
+
+section[data-component="workflow-content"] select {
+    border-radius: 50px;
+    padding-right: 2.5rem; /* Space for dropdown arrow */
+}
+```
+
+## 14. HTMX Integration Patterns
+
+### Loading States
+```css
+/* Disable interaction during HTMX requests */
+.htmx-request section[data-component="workflow-content"] {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Show loading indicators during requests */
+.htmx-indicator {
+    display: none;
+}
+.htmx-request .htmx-indicator {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Spinner animation for loading */
+.spinner {
+    border: 3px solid var(--glow-color);
+    border-top-color: var(--accent-purple);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+```
+
+### Swap Transitions
+```css
+/* Smooth transitions for HTMX content swaps */
+.htmx-swapping {
+    opacity: 0;
+    transition: opacity var(--transition-base);
+}
+
+.htmx-settling {
+    opacity: 1;
+    transition: opacity var(--transition-base);
+}
+```
+
+## 15. Utility Classes
+
+### Display Utilities
+```css
+.d-none { display: none; }
+.d-block { display: block; }
+.d-inline { display: inline; }
+.d-inline-block { display: inline-block; }
+.d-flex { display: flex; }
+.d-inline-flex { display: inline-flex; }
+.d-grid { display: grid; }
+```
+
+### Flexbox Utilities
+```css
+/* Flex Direction */
+.flex-row { flex-direction: row; }
+.flex-column { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.flex-nowrap { flex-wrap: nowrap; }
+
+/* Justify Content */
+.justify-start { justify-content: flex-start; }
+.justify-center { justify-content: center; }
+.justify-end { justify-content: flex-end; }
+.justify-between { justify-content: space-between; }
+.justify-around { justify-content: space-around; }
+.justify-evenly { justify-content: space-evenly; }
+
+/* Align Items */
+.items-start { align-items: flex-start; }
+.items-center { align-items: center; }
+.items-end { align-items: flex-end; }
+.items-baseline { align-items: baseline; }
+.items-stretch { align-items: stretch; }
+```
+
+### Spacing Utilities
+```css
+/* Padding */
+.p-0 { padding: var(--space-0); }
+.p-1 { padding: var(--space-1); }
+.p-2 { padding: var(--space-2); }
+.p-4 { padding: var(--space-4); }
+.p-6 { padding: var(--space-6); }
+.p-8 { padding: var(--space-8); }
+
+/* Margin */
+.m-0 { margin: var(--space-0); }
+.m-2 { margin: var(--space-2); }
+.m-4 { margin: var(--space-4); }
+.m-6 { margin: var(--space-6); }
+.m-8 { margin: var(--space-8); }
+
+/* Directional margin/padding available: .mt-*, .mb-*, .ml-*, .mr-* */
+```
+
+### Text Utilities
+```css
+/* Text Color */
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-success { color: var(--color-success); }
+.text-danger { color: var(--color-danger); }
+.text-warning { color: var(--color-warning); }
+.text-info { color: var(--color-info); }
+.text-muted { color: var(--text-secondary); opacity: 0.7; }
+
+/* Font Weight */
+.font-normal { font-weight: var(--font-weight-normal); }
+.font-medium { font-weight: var(--font-weight-medium); }
+.font-semibold { font-weight: var(--font-weight-semibold); }
+.font-bold { font-weight: var(--font-weight-bold); }
+```
+
+### Accessibility Utilities
+```css
+/* Screen reader only */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+```
+
+## 16. Web Components
+
+The Registry system includes custom web components built with Web Components API.
+
+### Workflow Progress Component
+
+Custom element: `<workflow-progress>`
+
+#### Attributes
+```html
+<workflow-progress
+    data-current-step="2"
+    data-total-steps="5"
+    data-step-names='["Info", "Payment", "Review", "Submit", "Complete"]'
+    data-step-urls='["/step1", "/step2", "/step3", "/step4", "/step5"]'
+    data-completed-steps='["1"]'>
+</workflow-progress>
+```
+
+#### Features
+- Shadow DOM encapsulation for style isolation
+- Breadcrumb-style progress indicator
+- Interactive navigation (click to visit completed steps)
+- Keyboard accessible (Enter/Space for navigation)
+- HTMX integration for seamless page navigation
+- Responsive: hides step names on mobile devices
+- Visual states: completed (✓), current (highlighted), upcoming
+
+#### Internal Styling
+```css
+/* Defined within Shadow DOM */
+.progress-step {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.step-indicator.completed {
+    background: linear-gradient(135deg, #29A6A6, #2ABFBF);
+}
+
+.step-indicator.current {
+    background: linear-gradient(135deg, #667eea, #9d4edd);
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% {
+        box-shadow: 0 5px 15px rgba(157, 78, 221, 0.4);
+    }
+    50% {
+        box-shadow: 0 5px 20px rgba(157, 78, 221, 0.6);
+    }
+}
+```
+
+#### Usage Example
+```html
+<!-- In workflow templates -->
+<workflow-progress
+    data-current-step="<%= $current_step %>"
+    data-total-steps="<%= $total_steps %>"
+    data-step-names='<%= $step_names_json %>'
+    data-step-urls='<%= $step_urls_json %>'
+    data-completed-steps='<%= $completed_steps_json %>'>
+</workflow-progress>
+```
+
+### Form Builder Component
+
+Custom element: `<form-builder>`
+
+#### Features
+- Dynamic form generation from JSON Schema
+- Automatic validation
+- Support for multiple field types
+- Error messaging
+- HTMX-compatible form submission
+
+#### Field Types Supported
+- `text`, `email`, `tel`, `url`
+- `textarea`
+- `select` (with options)
+- `radio`, `checkbox`
+- `date`, `time`, `datetime-local`
+- `number`, `range`
+
+#### Usage Example
+```html
+<form-builder
+    data-schema='<%= $form_schema_json %>'
+    data-action="/api/submit"
+    data-method="POST">
+</form-builder>
+```
+
+## 17. Data Attribute Conventions
+
+### Layout Control
+```html
+<!-- Activates workflow-specific styling -->
+<body data-layout="workflow">
+
+<!-- Controls color theme -->
+<body data-theme="dark">  <!-- or "light" -->
+
+<!-- Landing page theme override -->
+<body data-landing-theme="dark">
+```
+
+### Component Identification
+```html
+<!-- Workflow components -->
+<header data-component="workflow-header">
+<section data-component="workflow-content">
+<footer data-component="workflow-navigation">
+<div data-component="workflow-container">
+
+<!-- Progress tracking -->
+<div data-component="workflow-progress">
+```
+
+### Button Variants
+```html
+<!-- Using data attributes for button styling -->
+<button data-variant="primary">Primary Action</button>
+<button data-variant="secondary">Secondary Action</button>
+<button data-variant="success">Success</button>
+<button data-variant="danger">Delete</button>
+<button data-variant="outline">Outline</button>
+
+<!-- Button sizes -->
+<button data-size="sm">Small</button>
+<button data-size="lg">Large</button>
+<button data-size="xl">Extra Large</button>
+```
+
+## 18. Integration with Registry Application
+
+### Current Implementation Status
+The design system is **fully integrated** into Registry's Mojolicious templates:
+
+- ✅ CSS files organized in `/public/css/`
+- ✅ Base layouts include design system (`templates/layouts/`)
+- ✅ Component classes applied throughout templates
+- ✅ HTMX compatibility maintained
+- ✅ Theme toggle implemented with system preference detection
+- ✅ Web components deployed
+- ✅ Responsive design patterns in use
+
+### Template Integration Examples
+
+#### Layout Integration
+```perl
+# In templates/layouts/workflow.html.ep
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+
+    <!-- Design system CSS -->
+    <link rel="stylesheet" href="/css/design-system.css">
+    <link rel="stylesheet" href="/css/components.css">
+    <link rel="stylesheet" href="/css/structure.css">
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+
+    <!-- Web Components -->
+    <script src="/js/components/workflow-progress.js"></script>
+</head>
+<body data-layout="workflow" data-theme="light">
+    <%= content %>
+
+    <!-- Theme toggle script -->
+    <script>
+        // Theme detection and toggle implementation
+    </script>
+</body>
+</html>
+```
+
+#### Workflow Template Example
+```perl
+# In templates/workflow/registration_step.html.ep
+<div data-component="workflow-container">
+    <header data-component="workflow-header">
+        <h1 class="gradient-text"><%= $step_title %></h1>
+        <p><%= $step_description %></p>
+    </header>
+
+    <workflow-progress
+        data-current-step="<%= $current_step %>"
+        data-total-steps="<%= $total_steps %>"
+        data-step-names='<%= $step_names_json %>'
+        data-step-urls='<%= $step_urls_json %>'
+        data-completed-steps='<%= $completed_steps_json %>'>
+    </workflow-progress>
+
+    <section data-component="workflow-content">
+        <form hx-post="<%= $next_step_url %>" hx-target="#workflow-container">
+            <!-- Form fields -->
+            <div class="htmx-indicator spinner"></div>
+        </form>
+    </section>
+
+    <footer data-component="workflow-navigation">
+        <button data-variant="outline" hx-get="<%= $prev_step_url %>">
+            Previous
+        </button>
+        <button data-variant="primary" type="submit">
+            Next Step
+        </button>
+    </footer>
+</div>
+```
+
+#### HTMX Button Example
+```html
+<button class="cta-button"
+        hx-post="/api/register"
+        hx-target="#registration-form"
+        hx-indicator="#spinner">
     Join Early Access
 </button>
+<div id="spinner" class="htmx-indicator spinner"></div>
 ```
 
 ## 12. Performance Considerations
