@@ -262,38 +262,42 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             }
         }
 
-        my $result = $run->process( $dao->db, $step, $data );
-        
-        # Check for validation errors
-        if ($result->{_validation_errors}) {
-            # Store errors in flash for retrieval on redirect
-            $self->flash(validation_errors => $result->{_validation_errors});
-            
+        # Process step asynchronously - returns a promise
+        return $run->process_async( $dao->db, $step, $data )->then(sub ($result) {
+            # Check for validation errors
+            if ($result->{_validation_errors}) {
+                # Store errors in flash for retrieval on redirect
+                $self->flash(validation_errors => $result->{_validation_errors});
+                return $self->redirect_to($self->url_for);
+            }
+
+            # if we're still not done, redirect to the next step
+            if ( !$run->completed( $dao->db ) ) {
+                my ($next) = $run->next_step( $dao->db );
+                my $url = $self->url_for( step => $next->slug );
+                return $self->redirect_to($url);
+            }
+
+            # if this is a continuation, redirect to the continuation
+            if ( $run->has_continuation ) {
+                my ($continuation_run) = $run->continuation( $dao->db );
+                my ($workflow) = $continuation_run->workflow( $dao->db );
+                my ($next_step) = $continuation_run->next_step( $dao->db );
+                my $url = $self->url_for(
+                    'workflow_step',
+                    workflow => $workflow->slug,
+                    run      => $continuation_run->id,
+                    step     => $next_step->slug,
+                );
+                return $self->redirect_to($url);
+            }
+
+            return $self->render( text => 'DONE', status => 201 );
+        })->catch(sub ($error) {
+            # Handle errors from async processing
+            $self->flash(error => "Workflow processing error: $error");
             return $self->redirect_to($self->url_for);
-        }
-
-        # if we're still not done, redirect to the next step
-        if ( !$run->completed( $dao->db ) ) {
-            my ($next) = $run->next_step( $dao->db );
-            my $url = $self->url_for( step => $next->slug );
-            return $self->redirect_to($url);
-        }
-
-        # if this is a continuation, redirect to the continuation
-        if ( $run->has_continuation ) {
-            my ($run)      = $run->continuation( $dao->db );
-            my ($workflow) = $run->workflow( $dao->db );
-            my ($step)     = $run->next_step( $dao->db );
-            my $url        = $self->url_for(
-                'workflow_step',
-                workflow => $workflow->slug,
-                run      => $run->id,
-                step     => $step->slug,
-            );
-            return $self->redirect_to($url);
-        }
-
-        return $self->render( text => 'DONE', status => 201 );
+        });
     }
 
     method get_outcome_definition {

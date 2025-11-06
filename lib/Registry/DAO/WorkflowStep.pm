@@ -3,6 +3,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     use Carp qw(confess);
+    use Mojo::Promise;
 
     field $id :param :reader;
     field $slug :param :reader;
@@ -144,14 +145,27 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
         Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
     }
 
-    method process ( $db, $data ) { 
+    method process ( $db, $data ) {
         # Always validate input
         my $validation = $self->validate($db, $data);
         if (!$validation->{valid}) {
             return { _validation_errors => $validation->{errors} };
         }
-        
+
         # Default implementation - simple passthrough
         return $data;
+    }
+
+    method process_async ( $db, $data ) {
+        # Default async implementation wraps synchronous process in a promise
+        # Subclasses should override this for true async behavior
+        return Mojo::Promise->new(sub ($resolve, $reject) {
+            my $result = eval { $self->process($db, $data) };
+            if ($@) {
+                $reject->($@);
+            } else {
+                $resolve->($result);
+            }
+        });
     }
 }

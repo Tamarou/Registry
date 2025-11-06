@@ -98,6 +98,135 @@ class Foo :isa(Bar) {
   - **Test-only infrastructure belongs in `t/lib/` files** - NEVER add test-specific methods or infrastructure to core production classes. Test helpers, mocks, and specialized test infrastructure should be isolated in the test directory structure.
 - **Template Extension**: Templates can specify a different workflow layout via `extends 'layouts/workflow'`
 
+### Async Workflow Architecture
+
+**IMPORTANT**: Registry uses **asynchronous workflow processing** with Mojo::Promise to avoid blocking the event loop during I/O operations (Stripe API calls, external services, etc.).
+
+#### Async vs Sync Methods
+
+All workflow steps should implement both interfaces:
+
+**Async Methods (Preferred)**:
+- `WorkflowStep->process_async($db, $data)` - Returns Mojo::Promise
+- `WorkflowRun->process_async($db, $step, $data)` - Returns Mojo::Promise
+- Use for: Controller actions, async operations, Stripe API calls
+
+**Sync Methods (Legacy/Backwards Compatibility)**:
+- `WorkflowStep->process($db, $data)` - Returns data directly
+- `WorkflowRun->process($db, $step, $data)` - Returns data directly
+- Use for: Testing with `->wait`, CLI scripts, synchronous workflows
+
+#### Creating Async Workflow Steps
+
+```perl
+# lib/Registry/DAO/WorkflowSteps/MyStep.pm
+use Mojo::Promise;
+
+# Override process_async for true async behavior
+method process_async ($db, $form_data) {
+    # Return a promise for async operations
+    return $some_async_operation->then(sub ($result) {
+        return {
+            next_step => 'next_step_slug',
+            data => { ... }
+        };
+    })->catch(sub ($error) {
+        return {
+            next_step => $self->id,  # Stay on current step
+            errors => ["Error: $error"],
+        };
+    });
+}
+
+# Sync version calls async and waits (for testing/backwards compat)
+method process ($db, $form_data) {
+    return $self->process_async($db, $form_data)->wait;
+}
+```
+
+#### Controller Pattern for Async Workflows
+
+```perl
+# Controllers return promises - Mojolicious handles them automatically
+method process_workflow_run_step {
+    my $dao = $self->app->dao;
+    my $run = ...; # Load run
+    my $step = ...; # Load step
+    my $data = $self->req->params->to_hash;
+
+    # Return promise - no need to call ->wait!
+    return $run->process_async($dao->db, $step, $data)->then(sub ($result) {
+        # Handle validation errors, redirects, etc.
+        if ($result->{_validation_errors}) {
+            $self->flash(validation_errors => $result->{_validation_errors});
+            return $self->redirect_to($self->url_for);
+        }
+
+        # Continue workflow or complete
+        return $self->redirect_to(...);
+    })->catch(sub ($error) {
+        # Handle async errors
+        $self->flash(error => "Error: $error");
+        return $self->redirect_to($self->url_for);
+    });
+}
+```
+
+#### Example: Payment Step (Async Stripe Integration)
+
+```perl
+# lib/Registry/DAO/WorkflowSteps/Payment.pm
+method process_async ($db, $form_data) {
+    if ($form_data->{agreeTerms}) {
+        return $self->create_payment_async($db, $run, $form_data);
+    }
+
+    # Non-async path returns immediately resolved promise
+    return Mojo::Promise->resolve({
+        next_step => $self->id,
+        data => $self->prepare_payment_data($db, $run)
+    });
+}
+
+method create_payment_async ($db, $run, $form_data) {
+    my $payment = Registry::DAO::Payment->create($db, {...});
+
+    # Stripe API call is async - returns promise
+    return $payment->create_payment_intent_async($db, {
+        description => 'Program Enrollment',
+        receipt_email => $user->email,
+    })->then(sub ($intent) {
+        return {
+            next_step => $self->id,
+            data => {
+                client_secret => $intent->{client_secret},
+                show_stripe_form => 1,
+            }
+        };
+    })->catch(sub ($error) {
+        return {
+            next_step => $self->id,
+            errors => ["Payment error: $error"],
+        };
+    });
+}
+```
+
+#### Benefits of Async Architecture
+
+1. **Non-blocking**: Event loop stays free for other requests during Stripe API calls
+2. **Scalable**: Can handle many concurrent workflows without thread-per-request
+3. **Modern**: Follows Mojolicious/async Perl best practices
+4. **Composable**: Easy to chain multiple async operations with `->then`
+5. **Testable**: Tests can use `->wait` to convert promises to sync for simpler testing
+
+#### Migration Path for Existing Code
+
+1. **New code**: Always implement `process_async` first, make `process` call `->wait`
+2. **Legacy code**: Works as-is; base class wraps `process` in a promise automatically
+3. **Controllers**: Must return promises for async steps (Mojolicious handles them)
+4. **Testing**: Use `->wait` to block: `$result = $step->process_async($db, $data)->wait`
+
 ### Important Notes
 
 - **Pre-Alpha System**: Registry is pre-alpha with no users yet. Do NOT worry about backwards compatibility unless explicitly told otherwise. Make the best technical decisions for the current codebase.

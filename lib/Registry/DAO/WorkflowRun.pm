@@ -3,6 +3,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(encode_json);
+    use Mojo::Promise;
     use Carp       qw( croak );
 
     field $id :param      = 0;
@@ -84,6 +85,28 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         )->expand->hash->@{qw(latest_step_id)};
 
         return $data;
+    }
+
+    method process_async ( $db, $step, $new_data = {} ) {
+        unless ( $step isa Registry::DAO::WorkflowStep ) {
+            $step = Registry::DAO::WorkflowStep->find( $db, { slug => $step } );
+        }
+
+        # Call async step processing and chain updates
+        return $step->process_async( $db, $new_data )->then(sub ($result) {
+            # Update workflow run data with step results
+            $self->update_data( $db, $result );
+
+            # Update latest step ID
+            ($latest_step_id) = $db->update(
+                $self->table,
+                { latest_step_id => $step->id },
+                { id             => $id },
+                { returning      => [qw(latest_step_id)] }
+            )->expand->hash->@{qw(latest_step_id)};
+
+            return $data;
+        });
     }
 
     method first_step ($db) {
