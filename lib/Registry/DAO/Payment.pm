@@ -196,12 +196,17 @@ field $_stripe_client = undef;
         })->then(sub ($intent) {
             # Update payment record with Stripe intent ID
             $stripe_payment_intent_id = $intent->{id};
-            $self->save($db);
+            $self->update($db, {
+                stripe_payment_intent_id => $stripe_payment_intent_id
+            });
             return $intent;
         })->catch(sub ($error) {
             $error_message = $error;
             $status = 'failed';
-            $self->save($db);
+            $self->update($db, {
+                error_message => $error_message,
+                status => $status
+            });
             die "Failed to create payment intent: $error";
         });
     }
@@ -210,32 +215,52 @@ field $_stripe_client = undef;
         return $self->stripe_client->retrieve_payment_intent_async($payment_intent_id)
             ->then(sub ($intent) {
                 # Update payment status based on intent status
+                my $update_data = { status => undef };
+
                 if ($intent->{status} eq 'succeeded') {
                     $status = 'completed';
                     $completed_at = \'NOW()';
+                    $stripe_payment_method_id = $intent->{payment_method};
+                    $update_data = {
+                        status => $status,
+                        completed_at => \'NOW()',
+                        stripe_payment_method_id => $stripe_payment_method_id
+                    };
                 } elsif ($intent->{status} eq 'processing') {
                     $status = 'processing';
+                    $update_data = { status => $status };
                 } elsif ($intent->{status} eq 'requires_payment_method') {
                     $status = 'failed';
                     $error_message = 'Payment method required';
+                    $update_data = {
+                        status => $status,
+                        error_message => $error_message
+                    };
                 } else {
                     $status = 'failed';
                     $error_message = 'Payment failed with status: ' . $intent->{status};
+                    $update_data = {
+                        status => $status,
+                        error_message => $error_message
+                    };
                 }
-                
-                $self->save($db);
-                
-                return { 
-                    success => $status eq 'completed' ? 1 : 0, 
+
+                $self->update($db, $update_data);
+
+                return {
+                    success => $status eq 'completed' ? 1 : 0,
                     status => $status,
-                    intent => $intent 
+                    intent => $intent
                 };
             })
             ->catch(sub ($error) {
                 $error_message = $error;
                 $status = 'failed';
-                $self->save($db);
-                return { success => 0, error => $error };
+                $self->update($db, {
+                    error_message => $error_message,
+                    status => $status
+                });
+                die "Payment processing failed: $error";
             });
     }
     
@@ -257,13 +282,16 @@ field $_stripe_client = undef;
             } else {
                 $status = 'partially_refunded';
             }
-            
+
             # Update metadata to track refund
             $metadata->{refund_id} = $refund->{id};
             $metadata->{refund_amount} = $refund_amount;
             $metadata->{refund_reason} = $reason;
-            
-            $self->save($db);
+
+            $self->update($db, {
+                status => $status,
+                metadata => $metadata
+            });
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";

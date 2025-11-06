@@ -217,82 +217,134 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     method process_workflow_run_step {
         my $dao = $self->app->dao;
 
-        my ($run) = $dao->find(
-            WorkflowRun => {
-                id => $self->param('run'),
-            }
-        );
-
-        # if we're done, stop now
-        if ( $run->completed( $dao->db ) ) {
-            return $self->render( text => 'DONE', status => 201 );
-        }
-
-        # we're not done so process the next step
-        my ($step) = $run->next_step( $dao->db );
-        die "No step found" unless $step;
-
-        die "Wrong step expected ${\$step->slug}"
-          unless $step->slug eq $self->param('step');
-
-        my $data = $self->req->params->to_hash;
-        
-        # Special validation for review step
-        if ($step->slug eq 'review') {
-            unless ($data->{terms_accepted}) {
-                $self->flash(validation_errors => ['Terms of Service must be accepted to continue']);
-                return $self->redirect_to($self->url_for);
-            }
-            
-            # Validate that required data exists
-            my $run_data = $run->data || {};
-            my @missing_fields;
-            
-            # Check organization info
-            push @missing_fields, 'Organization name' unless $run_data->{name} || $run_data->{organization_name};
-            push @missing_fields, 'Billing email' unless $run_data->{billing_email};
-            push @missing_fields, 'Admin name' unless $run_data->{admin_name};
-            push @missing_fields, 'Admin email' unless $run_data->{admin_email};
-            
-            if (@missing_fields) {
-                $self->flash(validation_errors => [
-                    'Missing required information: ' . join(', ', @missing_fields)
-                ]);
-                return $self->redirect_to($self->url_for);
-            }
-        }
-
-        # Process step asynchronously - returns a promise
-        return $run->process_async( $dao->db, $step, $data )->then(sub ($result) {
-            # Check for validation errors
-            if ($result->{_validation_errors}) {
-                # Store errors in flash for retrieval on redirect
-                $self->flash(validation_errors => $result->{_validation_errors});
-                return $self->redirect_to($self->url_for);
-            }
-
-            # if we're still not done, redirect to the next step
-            if ( !$run->completed( $dao->db ) ) {
-                my ($next) = $run->next_step( $dao->db );
-                my $url = $self->url_for( step => $next->slug );
-                return $self->redirect_to($url);
-            }
-
-            # if this is a continuation, redirect to the continuation
-            if ( $run->has_continuation ) {
-                my ($continuation_run) = $run->continuation( $dao->db );
-                my ($workflow) = $continuation_run->workflow( $dao->db );
-                my ($next_step) = $continuation_run->next_step( $dao->db );
-                my $url = $self->url_for(
-                    'workflow_step',
-                    workflow => $workflow->slug,
-                    run      => $continuation_run->id,
-                    step     => $next_step->slug,
+        # Load run asynchronously
+        return Mojo::Promise->new(sub ($resolve, $reject) {
+            eval {
+                my ($run) = $dao->find(
+                    WorkflowRun => {
+                        id => $self->param('run'),
+                    }
                 );
-                return $self->redirect_to($url);
+                die "Run not found" unless $run;
+
+                # if we're done, stop now
+                if ( $run->completed( $dao->db ) ) {
+                    $resolve->({ done => 1 });
+                } else {
+                    $resolve->({ done => 0, run => $run });
+                }
+            };
+            if ($@) {
+                $reject->($@);
+            }
+        })->then(sub ($result) {
+            # Early return if completed
+            if ($result->{done}) {
+                return $self->render( text => 'DONE', status => 201 );
             }
 
-            return $self->render( text => 'DONE', status => 201 );
+            my $run = $result->{run};
+
+            # Load next step asynchronously
+            return Mojo::Promise->new(sub ($resolve, $reject) {
+                eval {
+                    my ($step) = $run->next_step( $dao->db );
+                    die "No step found" unless $step;
+
+                    die "Wrong step expected ${\$step->slug}"
+                      unless $step->slug eq $self->param('step');
+
+                    $resolve->({ run => $run, step => $step });
+                };
+                if ($@) {
+                    $reject->($@);
+                }
+            });
+        })->then(sub ($context) {
+            my $run = $context->{run};
+            my $step = $context->{step};
+            my $data = $self->req->params->to_hash;
+        
+            # Special validation for review step
+            if ($step->slug eq 'review') {
+                unless ($data->{terms_accepted}) {
+                    $self->flash(validation_errors => ['Terms of Service must be accepted to continue']);
+                    return $self->redirect_to($self->url_for);
+                }
+
+                # Validate that required data exists
+                my $run_data = $run->data || {};
+                my @missing_fields;
+
+                # Check organization info
+                push @missing_fields, 'Organization name' unless $run_data->{name} || $run_data->{organization_name};
+                push @missing_fields, 'Billing email' unless $run_data->{billing_email};
+                push @missing_fields, 'Admin name' unless $run_data->{admin_name};
+                push @missing_fields, 'Admin email' unless $run_data->{admin_email};
+
+                if (@missing_fields) {
+                    $self->flash(validation_errors => [
+                        'Missing required information: ' . join(', ', @missing_fields)
+                    ]);
+                    return $self->redirect_to($self->url_for);
+                }
+            }
+
+            # Process step asynchronously - returns a promise
+            return $run->process_async( $dao->db, $step, $data )->then(sub ($result) {
+                # Check for validation errors
+                if ($result->{_validation_errors}) {
+                    # Store errors in flash for retrieval on redirect
+                    $self->flash(validation_errors => $result->{_validation_errors});
+                    return $self->redirect_to($self->url_for);
+                }
+
+                # Check completion and continuation asynchronously
+                return Mojo::Promise->new(sub ($resolve, $reject) {
+                    eval {
+                        # if we're still not done, redirect to the next step
+                        if ( !$run->completed( $dao->db ) ) {
+                            my ($next) = $run->next_step( $dao->db );
+                            $resolve->({ action => 'next_step', next => $next });
+                        }
+                        # if this is a continuation, redirect to the continuation
+                        elsif ( $run->has_continuation ) {
+                            my ($continuation_run) = $run->continuation( $dao->db );
+                            my ($workflow) = $continuation_run->workflow( $dao->db );
+                            my ($next_step) = $continuation_run->next_step( $dao->db );
+                            $resolve->({
+                                action => 'continuation',
+                                workflow => $workflow,
+                                continuation_run => $continuation_run,
+                                next_step => $next_step
+                            });
+                        }
+                        else {
+                            $resolve->({ action => 'done' });
+                        }
+                    };
+                    if ($@) {
+                        $reject->($@);
+                    }
+                })->then(sub ($routing) {
+                    if ($routing->{action} eq 'next_step') {
+                        my $url = $self->url_for( step => $routing->{next}->slug );
+                        return $self->redirect_to($url);
+                    }
+                    elsif ($routing->{action} eq 'continuation') {
+                        my $url = $self->url_for(
+                            'workflow_step',
+                            workflow => $routing->{workflow}->slug,
+                            run      => $routing->{continuation_run}->id,
+                            step     => $routing->{next_step}->slug,
+                        );
+                        return $self->redirect_to($url);
+                    }
+                    else {
+                        return $self->render( text => 'DONE', status => 201 );
+                    }
+                });
+            });
         })->catch(sub ($error) {
             # Handle errors from async processing
             $self->flash(error => "Workflow processing error: $error");

@@ -88,24 +88,55 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     }
 
     method process_async ( $db, $step, $new_data = {} ) {
-        unless ( $step isa Registry::DAO::WorkflowStep ) {
-            $step = Registry::DAO::WorkflowStep->find( $db, { slug => $step } );
+        # Make step lookup async to avoid blocking
+        my $step_promise;
+        if ( $step isa Registry::DAO::WorkflowStep ) {
+            $step_promise = Mojo::Promise->resolve($step);
+        } else {
+            $step_promise = Mojo::Promise->new(sub ($resolve, $reject) {
+                eval {
+                    my $found_step = Registry::DAO::WorkflowStep->find($db, { slug => $step });
+                    $resolve->($found_step);
+                };
+                if ($@) {
+                    $reject->($@);
+                }
+            });
         }
 
-        # Call async step processing and chain updates
-        return $step->process_async( $db, $new_data )->then(sub ($result) {
-            # Update workflow run data with step results
-            $self->update_data( $db, $result );
+        # Chain step lookup -> step processing -> database updates
+        return $step_promise->then(sub ($step_obj) {
+            # Call async step processing and chain updates
+            return $step_obj->process_async( $db, $new_data )->then(sub ($result) {
+                # Use transaction for atomic update of both data and latest_step_id
+                return Mojo::Promise->new(sub ($resolve, $reject) {
+                    eval {
+                        $db->db->tx(sub ($tx) {
+                            # Get current data
+                            my $current_data = $self->data();
+                            my $updated_data = { $current_data->%*, $result->%* };
 
-            # Update latest step ID
-            ($latest_step_id) = $db->update(
-                $self->table,
-                { latest_step_id => $step->id },
-                { id             => $id },
-                { returning      => [qw(latest_step_id)] }
-            )->expand->hash->@{qw(latest_step_id)};
+                            # Single atomic update of both data and latest_step_id
+                            $tx->update(
+                                $self->table,
+                                {
+                                    data => { -json => $updated_data },
+                                    latest_step_id => $step_obj->id
+                                },
+                                { id => $id }
+                            );
 
-            return $data;
+                            # Update object fields
+                            $data = $updated_data;
+                            $latest_step_id = $step_obj->id;
+                        });
+                        $resolve->($data);
+                    };
+                    if ($@) {
+                        $reject->($@);
+                    }
+                });
+            });
         });
     }
 
