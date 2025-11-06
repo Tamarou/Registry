@@ -283,8 +283,7 @@ method handle_payment_callback_async ($db, $run, $form_data) {
         }
     })->then(sub ($payment) {
         # Process the payment asynchronously
-        return $payment->process_payment_async($db, $form_data->{payment_intent_id})
-        ->then(sub ($result) {
+        return $payment->process_payment_async($db, $form_data->{payment_intent_id})->then(sub ($result) {
             if ($result->{success}) {
                 # Create enrollments for each child asynchronously with transaction
                 my $children = $run->data->{children} || [];
