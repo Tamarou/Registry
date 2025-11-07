@@ -1,7 +1,7 @@
-## Reese
+## Alex
 
-* Role: Registry Platform Owner and Founder
-* [profile](reese.md)
+* Role: Registry Solo Founder (Platform Owner, Developer, and Operator)
+* [profile](alex.md)
 
 ## Jordan
 
