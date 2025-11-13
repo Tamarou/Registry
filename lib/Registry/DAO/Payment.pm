@@ -68,79 +68,15 @@ field $_stripe_client = undef;
     }
     
     method create_payment_intent ($db, $args = {}) {
-        my $description = $args->{description} // 'Registry Program Enrollment';
-        my $receipt_email = $args->{receipt_email};
-        
-        # Create payment intent with Stripe
-        my $intent;
-        try {
-            $intent = $self->stripe_client->create_payment_intent({
-                amount => int($amount * 100), # Convert to cents
-                currency => $currency,
-                description => $description,
-                receipt_email => $receipt_email,
-                metadata => {
-                    user_id => $user_id,
-                    payment_id => $self->id,
-                    %{$metadata},
-                },
-            });
-        }
-        catch ($e) {
-            $error_message = $e;
-            $status = 'failed';
-            $self->update($db, {
-                error_message => $error_message,
-                status => $status
-            });
-            die "Failed to create payment intent: $e";
-        }
-        
-        # Update payment record with Stripe intent ID
-        $stripe_payment_intent_id = $intent->{id};
-        $self->update($db, {
-            stripe_payment_intent_id => $stripe_payment_intent_id
-        });
-        
-        return {
-            client_secret => $intent->{client_secret},
-            payment_intent_id => $intent->{id},
-        };
+        # Synchronous wrapper around async method for backwards compatibility
+        # NOTE: This blocks the event loop - prefer create_payment_intent_async in async contexts
+        return $self->create_payment_intent_async($db, $args)->wait;
     }
     
     method process_payment ($db, $payment_intent_id) {
-        # Retrieve payment intent from Stripe
-        my $intent;
-        try {
-            $intent = $self->stripe_client->retrieve_payment_intent($payment_intent_id);
-        }
-        catch ($e) {
-            $error_message = $e;
-            $status = 'failed';
-            $self->save($db);
-            return { success => 0, error => $e };
-        }
-        
-        # Update payment status based on intent status
-        if ($intent->{status} eq 'succeeded') {
-            $status = 'completed';
-            $completed_at = \'NOW()';
-            $stripe_payment_method_id = $intent->{payment_method};
-            $self->save($db);
-            
-            return { success => 1, payment => $self };
-        } elsif ($intent->{status} eq 'processing') {
-            $status = 'processing';
-            $self->save($db);
-            
-            return { success => 0, processing => 1 };
-        } else {
-            $status = 'failed';
-            $error_message = $intent->{last_payment_error}->{message} // 'Payment failed';
-            $self->save($db);
-            
-            return { success => 0, error => $error_message };
-        }
+        # Synchronous wrapper around async method for backwards compatibility
+        # NOTE: This blocks the event loop - prefer process_payment_async in async contexts
+        return $self->process_payment_async($db, $payment_intent_id)->wait;
     }
     
     method add_line_item ($db, $args) {
@@ -174,39 +110,9 @@ field $_stripe_client = undef;
     }
     
     method refund ($db, $args = {}) {
-        die "Cannot refund non-completed payment" unless $status eq 'completed';
-        die "No payment intent to refund" unless $stripe_payment_intent_id;
-        
-        my $refund_amount = $args->{amount} // $amount;
-        my $reason = $args->{reason} // 'requested_by_customer';
-        
-        my $refund;
-        try {
-            $refund = $self->stripe_client->create_refund({
-                payment_intent => $stripe_payment_intent_id,
-                amount => int($refund_amount * 100),
-                reason => $reason,
-            });
-        }
-        catch ($e) {
-            die "Refund failed: $e";
-        }
-        
-        # Update payment status
-        if ($refund_amount >= $amount) {
-            $status = 'refunded';
-        } else {
-            $status = 'partially_refunded';
-        }
-        
-        # Update metadata to track refund
-        $metadata->{refund_id} = $refund->{id};
-        $metadata->{refund_amount} = $refund_amount;
-        $metadata->{refund_reason} = $reason;
-        
-        $self->save($db);
-        
-        return $refund;
+        # Synchronous wrapper around async method for backwards compatibility
+        # NOTE: This blocks the event loop - prefer refund_async in async contexts
+        return $self->refund_async($db, $args)->wait;
     }
     
     sub for_user ($class, $db, $user_id) {
@@ -290,12 +196,17 @@ field $_stripe_client = undef;
         })->then(sub ($intent) {
             # Update payment record with Stripe intent ID
             $stripe_payment_intent_id = $intent->{id};
-            $self->save($db);
+            $self->update($db, {
+                stripe_payment_intent_id => $stripe_payment_intent_id
+            });
             return $intent;
         })->catch(sub ($error) {
             $error_message = $error;
             $status = 'failed';
-            $self->save($db);
+            $self->update($db, {
+                error_message => $error_message,
+                status => $status
+            });
             die "Failed to create payment intent: $error";
         });
     }
@@ -304,32 +215,52 @@ field $_stripe_client = undef;
         return $self->stripe_client->retrieve_payment_intent_async($payment_intent_id)
             ->then(sub ($intent) {
                 # Update payment status based on intent status
+                my $update_data = { status => undef };
+
                 if ($intent->{status} eq 'succeeded') {
                     $status = 'completed';
                     $completed_at = \'NOW()';
+                    $stripe_payment_method_id = $intent->{payment_method};
+                    $update_data = {
+                        status => $status,
+                        completed_at => \'NOW()',
+                        stripe_payment_method_id => $stripe_payment_method_id
+                    };
                 } elsif ($intent->{status} eq 'processing') {
                     $status = 'processing';
+                    $update_data = { status => $status };
                 } elsif ($intent->{status} eq 'requires_payment_method') {
                     $status = 'failed';
                     $error_message = 'Payment method required';
+                    $update_data = {
+                        status => $status,
+                        error_message => $error_message
+                    };
                 } else {
                     $status = 'failed';
                     $error_message = 'Payment failed with status: ' . $intent->{status};
+                    $update_data = {
+                        status => $status,
+                        error_message => $error_message
+                    };
                 }
-                
-                $self->save($db);
-                
-                return { 
-                    success => $status eq 'completed' ? 1 : 0, 
+
+                $self->update($db, $update_data);
+
+                return {
+                    success => $status eq 'completed' ? 1 : 0,
                     status => $status,
-                    intent => $intent 
+                    intent => $intent
                 };
             })
             ->catch(sub ($error) {
                 $error_message = $error;
                 $status = 'failed';
-                $self->save($db);
-                return { success => 0, error => $error };
+                $self->update($db, {
+                    error_message => $error_message,
+                    status => $status
+                });
+                die "Payment processing failed: $error";
             });
     }
     
@@ -351,13 +282,16 @@ field $_stripe_client = undef;
             } else {
                 $status = 'partially_refunded';
             }
-            
+
             # Update metadata to track refund
             $metadata->{refund_id} = $refund->{id};
             $metadata->{refund_amount} = $refund_amount;
             $metadata->{refund_reason} = $reason;
-            
-            $self->save($db);
+
+            $self->update($db, {
+                status => $status,
+                metadata => $metadata
+            });
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";

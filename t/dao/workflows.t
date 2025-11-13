@@ -99,3 +99,59 @@ my $dao = $test_db->db;
     is $run->data->{name},          'Test User', 'run data is updated';
 
 }
+
+{
+    # async workflow processing
+    my $workflow = $dao->create(
+        Workflow => {
+            slug => 'async-test',
+            name => "Async Test Workflow",
+        }
+    );
+
+    $workflow->add_step(
+        $dao, { slug => 'start', description => 'Start step' }
+    );
+    $workflow->add_step(
+        $dao,
+        {
+            slug        => 'middle',
+            description => 'Middle step',
+            depends_on  => $workflow->first_step( $dao->db )->id
+        }
+    );
+
+    my $run = $workflow->new_run( $dao->db );
+
+    # Test async processing
+    my $result = $run->process_async( $dao->db, $run->next_step( $dao->db ), { async_data => 'test' } )->wait;
+    ok $result, 'Async processing completed';
+    is $result->{async_data}, 'test', 'Async data passed through';
+
+    # Verify state after async processing
+    is $run->latest_step( $dao->db )->slug, 'start', 'Latest step updated after async processing';
+    is $run->next_step( $dao->db )->slug, 'middle', 'Next step is correct after async';
+
+    # Test chaining async operations
+    $result = $run->process_async( $dao->db, $run->next_step( $dao->db ), { chained => 1 } )->wait;
+    is $result->{chained}, 1, 'Chained async operation completed';
+}
+
+{
+    # async step processing
+    my $workflow = $dao->create(
+        Workflow => {
+            slug => 'async-step-test',
+            name => "Async Step Test",
+        }
+    );
+
+    my $step = $workflow->add_step(
+        $dao, { slug => 'async-step', description => 'Async test step' }
+    );
+
+    # Test async step processing directly
+    my $result = $step->process_async( $dao->db, { step_data => 'value' } )->wait;
+    ok $result, 'Async step processing returned result';
+    is $result->{step_data}, 'value', 'Async step data preserved';
+}

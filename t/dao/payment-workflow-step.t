@@ -349,4 +349,127 @@ subtest 'Enrollment creation on successful payment' => sub {
     $db->query('SET session_replication_role = DEFAULT');
 };
 
+subtest 'Async payment step data preparation' => sub {
+    my $run = $workflow->new_run($db);
+
+    # Set up run data as if coming from previous steps
+    $run->update_data($db, {
+        user_id => $parent->id,
+        children => [
+            {
+                id => $child1->id,
+                first_name => 'Alice',
+                last_name => 'Smith',
+                birth_date => '2016-03-15',
+                grade => '3'
+            }
+        ],
+        session_selections => {
+            $child1->id => $session->id
+        }
+    });
+
+    # Get the actual payment step from database
+    my $payment_step = $workflow->get_step($db, { slug => 'payment' });
+
+    # Process step asynchronously without form data to get payment page
+    my $result = $payment_step->process_async($db, {})->wait;
+
+    is $result->{next_step}, $payment_step->id, 'Stays on payment step (async)';
+    ok $result->{data}, 'Payment data prepared (async)';
+    is $result->{data}->{total}, 150, 'Total calculated correctly (async)';
+    is scalar(@{$result->{data}->{items}}), 1, 'One line item prepared (async)';
+};
+
+subtest 'Async workflow run processing' => sub {
+    my $run = $workflow->new_run($db);
+
+    # Set up run data
+    $run->update_data($db, {
+        user_id => $parent->id,
+        children => [
+            {
+                id => $child1->id,
+                first_name => 'Alice',
+                last_name => 'Smith',
+                birth_date => '2016-03-15',
+                grade => '3'
+            }
+        ],
+        session_selections => {
+            $child1->id => $session->id
+        }
+    });
+
+    # Get the payment step
+    my $payment_step = $workflow->get_step($db, { slug => 'payment' });
+
+    # Process step asynchronously via workflow run
+    my $result = $run->process_async($db, $payment_step, {})->wait;
+
+    ok $result, 'Async workflow processing returned result';
+    is $result->{next_step}, $payment_step->id, 'Stays on payment step';
+    ok $result->{data}, 'Payment data in result';
+};
+
+subtest 'Async promise chain' => sub {
+    my $run = $workflow->new_run($db);
+
+    # Set up run data
+    $run->update_data($db, {
+        user_id => $parent->id,
+        children => [
+            {
+                id => $child1->id,
+                first_name => 'Alice',
+                last_name => 'Smith',
+                birth_date => '2016-03-15',
+                grade => '3'
+            }
+        ],
+        session_selections => {
+            $child1->id => $session->id
+        }
+    });
+
+    # Get the payment step
+    my $payment_step = $workflow->get_step($db, { slug => 'payment' });
+
+    # Test promise chaining
+    my $promise_completed = 0;
+    my $result;
+
+    $payment_step->process_async($db, {})->then(sub ($data) {
+        $result = $data;
+        $promise_completed = 1;
+        return Mojo::Promise->resolve(1);
+    })->wait;
+
+    is $promise_completed, 1, 'Promise chain executed';
+    ok $result, 'Result passed through promise chain';
+    is $result->{next_step}, $payment_step->id, 'Correct next step in promise';
+};
+
+subtest 'Async error handling' => sub {
+    my $run = $workflow->new_run($db);
+
+    # Set up run data with missing required field
+    $run->update_data($db, {
+        # Missing user_id intentionally
+        children => [],
+        session_selections => {}
+    });
+
+    # Get the payment step
+    my $payment_step = $workflow->get_step($db, { slug => 'payment' });
+
+    # Attempt to create payment async (should fail gracefully)
+    eval {
+        my $result = $payment_step->process_async($db, { agreeTerms => 1 })->wait;
+    };
+
+    ok $@, 'Async error handling catches exceptions';
+    like $@, qr/user_id/, 'Error message mentions missing user_id';
+};
+
 done_testing;

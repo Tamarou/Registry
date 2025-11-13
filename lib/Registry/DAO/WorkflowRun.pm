@@ -3,6 +3,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(encode_json);
+    use Mojo::Promise;
     use Carp       qw( croak );
 
     field $id :param      = 0;
@@ -84,6 +85,59 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         )->expand->hash->@{qw(latest_step_id)};
 
         return $data;
+    }
+
+    method process_async ( $db, $step, $new_data = {} ) {
+        # Make step lookup async to avoid blocking
+        my $step_promise;
+        if ( $step isa Registry::DAO::WorkflowStep ) {
+            $step_promise = Mojo::Promise->resolve($step);
+        } else {
+            $step_promise = Mojo::Promise->new(sub ($resolve, $reject) {
+                eval {
+                    my $found_step = Registry::DAO::WorkflowStep->find($db, { slug => $step });
+                    $resolve->($found_step);
+                };
+                if ($@) {
+                    $reject->($@);
+                }
+            });
+        }
+
+        # Chain step lookup -> step processing -> database updates
+        return $step_promise->then(sub ($step_obj) {
+            # Call async step processing and chain updates
+            return $step_obj->process_async( $db, $new_data )->then(sub ($result) {
+                # Use transaction for atomic update of both data and latest_step_id
+                return Mojo::Promise->new(sub ($resolve, $reject) {
+                    eval {
+                        $db->db->tx(sub ($tx) {
+                            # Get current data
+                            my $current_data = $self->data();
+                            my $updated_data = { $current_data->%*, $result->%* };
+
+                            # Single atomic update of both data and latest_step_id
+                            $tx->update(
+                                $self->table,
+                                {
+                                    data => { -json => $updated_data },
+                                    latest_step_id => $step_obj->id
+                                },
+                                { id => $id }
+                            );
+
+                            # Update object fields
+                            $data = $updated_data;
+                            $latest_step_id = $step_obj->id;
+                        });
+                        $resolve->($data);
+                    };
+                    if ($@) {
+                        $reject->($@);
+                    }
+                });
+            });
+        });
     }
 
     method first_step ($db) {
