@@ -2,6 +2,7 @@ use 5.40.2;
 use experimental qw(try);
 use Object::Pad;
 use Registry::DAO;
+use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
@@ -157,6 +158,17 @@ class Registry :isa(Mojolicious) {
                 $self->import_templates;
                 $self->import_workflows(); # Use defaults: schema='registry', files=undef, verbose=0
                 $self->setup_recurring_jobs;
+            }
+        );
+
+        # Rate limiting: applied to all requests before dispatch.
+        # Webhook and static-asset paths are excluded (see Registry::Middleware::RateLimit).
+        # Auth endpoints (login, signup, etc.) are limited to 10 req/min per IP.
+        # All other endpoints are limited to 100 req/min per IP (or authenticated user).
+        my $rate_limiter = Registry::Middleware::RateLimit->new;
+        $self->hook(
+            before_dispatch => sub ($c) {
+                $rate_limiter->before_dispatch($c);
             }
         );
 
