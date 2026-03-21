@@ -1,3 +1,5 @@
+# ABOUTME: Main Mojolicious application class for Registry.
+# ABOUTME: Configures plugins, routes, helpers, and security middleware.
 use 5.40.2;
 use experimental qw(try);
 use Object::Pad;
@@ -157,6 +159,34 @@ class Registry :isa(Mojolicious) {
                 $self->import_templates;
                 $self->import_workflows(); # Use defaults: schema='registry', files=undef, verbose=0
                 $self->setup_recurring_jobs;
+            }
+        );
+
+        # Set security headers on every response
+        my $csp = join( '; ',
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' js.stripe.com unpkg.com cdn.jsdelivr.net",
+            "style-src 'self' 'unsafe-inline'",
+            "connect-src 'self' api.stripe.com",
+            "frame-src js.stripe.com",
+            "img-src 'self' data:",
+            "font-src 'self'",
+        );
+        $self->hook(
+            after_dispatch => sub ($c) {
+                my $headers = $c->res->headers;
+                $headers->header( 'X-Frame-Options'        => 'DENY' );
+                $headers->header( 'X-Content-Type-Options' => 'nosniff' );
+                $headers->header( 'X-XSS-Protection'       => '0' );
+                $headers->header( 'Content-Security-Policy' => $csp );
+
+                # HSTS only over HTTPS (direct TLS or via trusted proxy)
+                my $forwarded_proto = $c->req->headers->header('X-Forwarded-Proto') // '';
+                if ( $c->req->is_secure || $forwarded_proto eq 'https' ) {
+                    $headers->header(
+                        'Strict-Transport-Security' => 'max-age=31536000; includeSubDomains'
+                    );
+                }
             }
         );
 
