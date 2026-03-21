@@ -7,7 +7,7 @@ use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok subtest like diag plan )];
 defer { done_testing };
 
-use Test::Mojo;
+use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
 
@@ -16,7 +16,7 @@ my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
 
-my $t = Test::Mojo->new('Registry');
+my $t = Test::Registry::Mojo->new('Registry');
 
 subtest "AdminDashboard controller has only data retrieval methods" => sub {
     plan tests => 4;

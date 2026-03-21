@@ -1,8 +1,8 @@
 #!/usr/bin/env perl
 use 5.42.0;
-use Test::More;
-use Test::Mojo;
 use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry;
@@ -13,7 +13,7 @@ my $db = $t_db->db;
 $ENV{DB_URL} = $t_db->uri;
 
 # Create test app
-my $t = Test::Mojo->new('Registry');
+my $t = Test::Registry::Mojo->new('Registry');
 
 subtest 'Enhanced profile template renders correctly' => sub {
     # Start a tenant signup workflow

@@ -2,7 +2,7 @@ use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
 
-use Test::Mojo;
+use Test::Registry::Mojo;
 use Mojo::Home;
 use Test::More import => [qw( done_testing is )];
 defer { done_testing };
@@ -41,7 +41,7 @@ our $project = $dao->create(
 );
 
 {
-    my $t = Test::Mojo->new('Registry');
+    my $t = Test::Registry::Mojo->new('Registry');
 
     my ($workflow) = $dao->find( Workflow => { slug => 'event-creation' } );
     my $first_step = $workflow->first_step( $dao->db );

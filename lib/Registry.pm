@@ -1,5 +1,6 @@
+# ABOUTME: Main Mojolicious application class for Registry.
+# ABOUTME: Registers plugins, helpers, hooks, and routes for the web app.
 use 5.42.0;
-
 use Object::Pad;
 use Registry::DAO;
 use Registry::Job::AttendanceCheck;
@@ -157,6 +158,49 @@ class Registry :isa(Mojolicious) {
                 $self->import_templates;
                 $self->import_workflows(); # Use defaults: schema='registry', files=undef, verbose=0
                 $self->setup_recurring_jobs;
+            }
+        );
+
+        # CSRF token validation for all state-changing requests.
+        # Webhook endpoints use their own HMAC-based auth and are excluded.
+        # Accepts token from the csrf_token form field or the X-CSRF-Token header.
+        $self->hook(
+            before_dispatch => sub ($c) {
+                my $method = $c->req->method;
+
+                # Only validate state-changing HTTP methods
+                return unless $method eq 'POST' || $method eq 'PUT' || $method eq 'DELETE';
+
+                # Webhook endpoints use their own authentication scheme
+                return if $c->req->url->path =~ m{^/webhooks/};
+
+                my $expected = $c->csrf_token;
+
+                my $supplied =
+                     $c->req->param('csrf_token')
+                  || $c->req->headers->header('X-CSRF-Token')
+                  || '';
+
+                unless ( $supplied eq $expected ) {
+                    $c->render( text => 'CSRF token validation failed', status => 403 );
+                    $c->stash( exception => 'CSRF' );
+                }
+            }
+        );
+
+        # Inject the CSRF hidden input into every HTML form in the rendered response.
+        # This covers all templates without requiring each one to be updated individually.
+        # The token value comes from the session-bound csrf_token helper.
+        $self->hook(
+            after_render => sub ($c, $output, $format) {
+                return unless $format && $format eq 'html';
+                return unless ref $output eq 'SCALAR';
+
+                my $token = $c->csrf_token;
+                my $hidden = qq{<input type="hidden" name="csrf_token" value="$token">};
+
+                # Insert the hidden field immediately after each opening <form tag
+                $$output =~ s{(<form\b[^>]*>)}{$1$hidden}gi;
             }
         );
 

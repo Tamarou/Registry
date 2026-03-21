@@ -1,3 +1,5 @@
+# ABOUTME: Test helpers for Registry workflow integration tests.
+# ABOUTME: Provides process_workflow and URL helper functions for Test::Mojo-based tests.
 use 5.42.0;
 
 package Test::Registry::Helpers {
@@ -28,12 +30,22 @@ package Test::Registry::Helpers {
           $form->find('input')
           ->grep( sub ( $field = $_ ) { $field->attr('name') } )
           ->map( sub ( $f      = $_ ) { $f->attr('name') } )->to_array->@*;
+
+        # Collect pre-filled hidden input values (e.g. csrf_token injected server-side)
+        # so that form submissions automatically include them without callers needing
+        # to know about infrastructure fields.
+        my %hidden =
+          $form->find('input[type="hidden"]')
+          ->grep( sub ( $f = $_ ) { $f->attr('name') && defined $f->attr('value') } )
+          ->map( sub ( $f  = $_ ) { $f->attr('name') => $f->attr('value') } )
+          ->to_array->@*;
+
         my @workflows =
           $form->find('a')
           ->grep( sub ( $a = $_ ) { ($a->attr('rel') // '') =~ /\bcreate-page\b/ } )
           ->map( sub ( $a  = $_ ) { $a->attr('href') } )->to_array->@*;
 
-        return [ $action, \@fields, \@workflows ];
+        return [ $action, \@fields, \@workflows, \%hidden ];
     }
 
     my sub submit_form ( $t, $url, $headers, %data ) {
@@ -58,16 +70,23 @@ package Test::Registry::Helpers {
             unless ($form_result) {
                 last; # No form found, exit gracefully
             }
-            my ( $action, $fields, $workflows ) = @$form_result;
+            my ( $action, $fields, $workflows, $hidden ) = @$form_result;
+
+            # Build the submission data from the user-supplied data hash, then
+            # apply pre-filled hidden values (such as csrf_token) on top so that
+            # infrastructure fields always arrive with the correct server-issued
+            # value, even when the caller's data hash also contains those keys.
+            my %submit = ( $data->%{@$fields}, %$hidden );
+
             for my $workflow (@$workflows) {
                 next if $seen{ [ split( '/', $workflow ) ]->[-1] }++;
                 __SUB__->(
                     $t,
-                    submit_form( $t, $workflow, $headers, $data->%{@$fields} ),
+                    submit_form( $t, $workflow, $headers, %submit ),
                     $data, $headers
                 );
             }
-            $url = submit_form( $t, $action, $headers, $data->%{@$fields} );
+            $url = submit_form( $t, $action, $headers, %submit );
         }
     }
 

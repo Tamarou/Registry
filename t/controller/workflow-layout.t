@@ -6,10 +6,9 @@ use 5.42.0;
 use warnings;
 use utf8;
 
-use Test::More;
-use Test::Mojo;
-
 use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
@@ -25,7 +24,7 @@ my $db = $t_db->db;
 $db->import_workflows(['workflows/tenant-signup.yml']);
 
 # Create test app
-my $t = Test::Mojo->new('Registry');
+my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 
 # Create test tenant if needed

@@ -3,9 +3,10 @@
 # ABOUTME: Ensures proper encoding/decoding of non-ASCII characters
 
 use 5.42.0;
+use lib qw(lib t/lib);
 use utf8;
 use Test::More;
-use Test::Mojo;
+use Test::Registry::Mojo;
 use Mojo::File qw(path);
 
 # Skip test if database is not available
@@ -17,7 +18,7 @@ BEGIN {
 use Registry::DAO;
 
 # Initialize test application
-my $t = Test::Mojo->new('Registry');
+my $t = Test::Registry::Mojo->new('Registry');
 
 # Use test database URL from environment
 my $test_schema = 'test_utf8_' . $$;  # Use PID to make schema unique
