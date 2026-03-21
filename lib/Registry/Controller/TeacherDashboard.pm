@@ -1,21 +1,12 @@
+# ABOUTME: Controller for teacher-facing dashboard pages and attendance management
+# ABOUTME: Route-level authentication is handled by under() guards in Registry.pm
 use 5.40.2;
 use experimental 'signatures';
 use Object::Pad;
 use DateTime;
 
 class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
-    
-    method auth_check {
-        # Basic auth check - in production this would verify teacher role
-        my $user_id = $self->session('user_id');
-        unless ($user_id) {
-            return $self->redirect_to('/user-creation');
-        }
-        $self->stash(user_id => $user_id);
-        $self->stash(tenant => 'test-tenant'); # For testing
-        return 1;
-    }
-    
+
     method attendance {
         my $event_id = $self->param('event_id');
         my $dao = $self->app->dao;
@@ -54,8 +45,9 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
             return $self->render(json => { error => 'Invalid attendance data' }, status => 400);
         }
         
-        my $user_id = $self->stash('user_id') // $self->session('user_id');
-        
+        my $current_user = $self->stash('current_user');
+        my $user_id      = $current_user ? $current_user->{id} : $self->session('user_id');
+
         try {
             my $db = $dao->db;
             my $tx = $db->begin;
@@ -89,7 +81,8 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
     }
     
     method dashboard {
-        my $user_id = $self->stash('user_id') // $self->session('user_id');
+        my $current_user = $self->stash('current_user');
+        my $user_id      = $current_user ? $current_user->{id} : $self->session('user_id');
         my $dao = $self->app->dao;
         
         # Get today's events for this teacher - use class method
