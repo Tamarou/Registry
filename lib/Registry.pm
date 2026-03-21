@@ -3,6 +3,7 @@
 use 5.42.0;
 use Object::Pad;
 use Registry::DAO;
+use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
@@ -161,6 +162,7 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+<<<<<<< HEAD
         # CSRF token validation for all state-changing requests.
         # Webhook endpoints use their own HMAC-based auth and are excluded.
         # Accepts token from the csrf_token form field or the X-CSRF-Token header.
@@ -229,6 +231,17 @@ class Registry :isa(Mojolicious) {
 
                 # Insert the hidden field immediately after each opening <form tag
                 $$output =~ s{(<form\b[^>]*>)}{$1$hidden}gi;
+            }
+        );
+
+        # Rate limiting: applied to all requests before dispatch.
+        # Webhook and static-asset paths are excluded (see Registry::Middleware::RateLimit).
+        # Auth endpoints (login, signup, etc.) are limited to 10 req/min per IP.
+        # All other endpoints are limited to 100 req/min per IP (or authenticated user).
+        my $rate_limiter = Registry::Middleware::RateLimit->new;
+        $self->hook(
+            before_dispatch => sub ($c) {
+                $rate_limiter->before_dispatch($c);
             }
         );
 
