@@ -25,17 +25,17 @@ subtest "Teacher Dashboard Controller Exists" => sub {
     ok(Registry::Controller::TeacherDashboard->can('attendance'), 'TeacherDashboard has attendance method');
     ok(Registry::Controller::TeacherDashboard->can('dashboard'), 'TeacherDashboard has dashboard method');
     ok(Registry::Controller::TeacherDashboard->can('mark_attendance'), 'TeacherDashboard has mark_attendance method');
-    ok(Registry::Controller::TeacherDashboard->can('auth_check'), 'TeacherDashboard has auth_check method');
+    # auth_check was removed - authentication is handled by centralized under() guards in Registry.pm
+    ok(!Registry::Controller::TeacherDashboard->can('auth_check'), 'TeacherDashboard no longer has auth_check (centralized auth in Registry.pm)');
 };
 
 subtest "Teacher Routes Configuration" => sub {
-    # The teacher routes are set up to require tenant context, so they fail with 500
-    # This is expected behavior - the test is verifying the routes exist
+    # Unauthenticated requests are redirected to login by the centralized under() guard
     $t->get_ok('/teacher/')
-      ->status_is(500); # Internal error due to missing tenant context
-    
+      ->status_is(302); # Redirect to login for unauthenticated request
+
     $t->get_ok('/teacher/attendance/test-event-123')
-      ->status_is(500); # Internal error due to missing tenant context
+      ->status_is(302); # Redirect to login for unauthenticated request
 };
 
 subtest "Event DAO Methods" => sub {
