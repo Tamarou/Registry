@@ -2,10 +2,9 @@
 # ABOUTME: Tests for pricing relationship event sourcing and audit trail
 # ABOUTME: Validates event creation, state reconstruction, and audit functionality
 
-use v5.34.0;
+use 5.42.0;
 use warnings;
 use utf8;
-use experimental qw(signatures);
 
 use Test::More;
 use Test::Exception;

@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
-use 5.40.2;
-use experimental qw(try defer);
+use 5.42.0;
+use experimental qw(defer);
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;

@@ -1,4 +1,4 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::Controller::Tenants :isa(Registry::Controller) {

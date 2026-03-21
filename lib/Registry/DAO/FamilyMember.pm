@@ -1,10 +1,10 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::FamilyMember :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Mojo::JSON qw( decode_json encode_json );
-    use experimental qw(try);
+
     
     field $id :param :reader;
     field $family_id :param :reader;

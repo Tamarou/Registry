@@ -1,8 +1,8 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::SelectTargetSession :isa(Registry::DAO::WorkflowStep) {
-    use experimental qw(try);
+
 
     method process($db, $form_data, $run_data = {}) {
         my $enrollment_id = $run_data->{enrollment_id} or die "Enrollment ID required";

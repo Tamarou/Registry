@@ -1,9 +1,9 @@
 # ABOUTME: Workflow step for defining resource allocations and quotas
 # ABOUTME: Configures what resources and features are included in the pricing plan
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try signatures);
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ResourceAllocation :isa(Registry::DAO::WorkflowStep) {

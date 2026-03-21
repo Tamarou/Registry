@@ -1,11 +1,11 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     use YAML::XS;
     use Mojo::JSON qw(decode_json);
     use Carp qw(croak);
-    use experimental qw(try);
+
 
     field $id :param :reader;
     field $slug :param :reader;

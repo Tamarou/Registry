@@ -1,8 +1,8 @@
 # ABOUTME: Business logic for scheduled payment status management via Stripe webhooks
 # ABOUTME: Handles payment status updates from Stripe subscription events
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try', 'builtin';
+
 
 use Object::Pad;
 class Registry::PriceOps::ScheduledPayment {

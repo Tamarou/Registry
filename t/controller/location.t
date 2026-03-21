@@ -1,6 +1,6 @@
-use 5.40.2;
+use 5.42.0;
 use lib          qw(lib t/lib);
-use experimental qw(defer builtin declared_refs);
+use experimental qw(defer declared_refs);
 
 use Test::Mojo;
 use Test::More import => [qw(done_testing is note ok)];

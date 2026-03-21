@@ -2,7 +2,7 @@
 # ABOUTME: Test UTF-8 character handling in workflows and templates
 # ABOUTME: Ensures proper encoding/decoding of non-ASCII characters
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Test::More;
 use Test::Mojo;

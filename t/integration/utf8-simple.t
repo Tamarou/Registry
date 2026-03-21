@@ -2,7 +2,7 @@
 # ABOUTME: Simple test for UTF-8 character handling in templates
 # ABOUTME: Focuses on template rendering without database complexity
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Test::More;
 use Test::Mojo;

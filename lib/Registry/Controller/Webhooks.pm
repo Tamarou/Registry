@@ -1,5 +1,5 @@
-use 5.34.0;
-use experimental qw(signatures try);
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::Controller::Webhooks :isa(Registry::Controller) {

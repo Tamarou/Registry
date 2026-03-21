@@ -1,10 +1,10 @@
-use v5.34.0;
+use 5.42.0;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Registry::DAO;
 
 package Test::Registry::Fixtures {
-    use experimental qw(signatures);
+
 
     sub new ($class, %args) {
         bless { %args }, $class;

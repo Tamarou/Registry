@@ -1,6 +1,5 @@
 #!/usr/bin/env perl
-use 5.40.2;
-use experimental qw(try);
+use 5.42.0;
 
 use Test::More;
 use lib qw(lib t/lib);

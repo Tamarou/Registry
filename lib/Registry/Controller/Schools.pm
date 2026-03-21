@@ -1,8 +1,8 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::Controller::Schools :isa(Mojolicious::Controller) {
-    use experimental qw(try);
+
     
     method show ($slug = $self->param('slug')) {
         my $dao = $self->dao;

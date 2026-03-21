@@ -1,8 +1,8 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::SelectEnrollmentForDrop :isa(Registry::DAO::WorkflowStep) {
-    use experimental qw(try);
+
 
     method process($db, $form_data, $run_data = {}) {
         my $user = $run_data->{user} or die "User required for enrollment selection";

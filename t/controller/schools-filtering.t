@@ -1,8 +1,7 @@
 #!/usr/bin/env perl
-use v5.34.0;
+use 5.42.0;
 use warnings;
 use utf8;
-use experimental qw(signatures);
 
 use Test::More;
 use Test::Mojo;
@@ -142,7 +141,7 @@ Registry::DAO::PricingPlan->create($db, {
     plan_name => 'Early Bird',
     plan_type => 'early_bird',
     amount => 150.00,
-    requirements => { early_bird_cutoff_date => '2025-12-31' } # Future date
+    requirements => { early_bird_cutoff_date => '2027-12-31' } # Future date
 });
 
 # Create enrollments to test fill indicators
@@ -223,7 +222,7 @@ subtest 'Visual indicators - early bird' => sub {
       ->element_exists('.early-bird-notice', 'Has early bird notice')
       ->content_like(qr/Early Bird Special/, 'Shows early bird text')
       ->content_like(qr/\$150\.00/, 'Shows early bird price')
-      ->content_like(qr/expires 2025-12-31/, 'Shows early bird expiration');
+      ->content_like(qr/expires 2027-12-31/, 'Shows early bird expiration');
 };
 
 subtest 'Visual indicators - waitlist' => sub {

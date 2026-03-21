@@ -1,9 +1,10 @@
-use 5.40.2;
+use 5.42.0;
 use lib          qw(lib t/lib);
-use experimental qw(defer builtin);
+use experimental qw(defer);
 
 use Test::More import => [qw( done_testing is ok fail subtest )];
 use Test::Exception;
+use POSIX qw(strftime);
 defer { done_testing };
 
 use Registry::DAO;
@@ -12,12 +13,16 @@ use Test::Registry::DB;
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 
+# Compute future and past dates dynamically so tests remain valid over time
+my $future_start = strftime('%Y-%m-%d', localtime(time + 365 * 86400));
+my $future_end   = strftime('%Y-%m-%d', localtime(time + 380 * 86400));
+
 subtest 'Session has_started method' => sub {
     # Test session that hasn't started yet
     my $future_session = $dao->create(Session => {
         name => 'Future Session',
-        start_date => '2025-12-01',
-        end_date => '2025-12-15'
+        start_date => $future_start,
+        end_date => $future_end
     });
 
     ok !$future_session->has_started(),
@@ -30,7 +35,7 @@ subtest 'Session has_started method' => sub {
     my $today_session = $dao->create(Session => {
         name => 'Today Session',
         start_date => $today,
-        end_date => '2025-12-15'
+        end_date => $future_end
     });
 
     ok $today_session->has_started(),
@@ -49,7 +54,7 @@ subtest 'Session has_started method' => sub {
     # Test session with no start date
     my $no_date_session = $dao->create(Session => {
         name => 'No Date Session',
-        end_date => '2025-12-15'
+        end_date => $future_end
     });
 
     ok !$no_date_session->has_started(),
@@ -71,8 +76,8 @@ subtest 'Enrollment drop permission checks' => sub {
     # Create session that hasn't started
     my $future_session = $dao->create(Session => {
         name => 'Future Drop Test Session',
-        start_date => '2025-12-01',
-        end_date => '2025-12-15'
+        start_date => $future_start,
+        end_date => $future_end
     });
 
     # Create enrollment

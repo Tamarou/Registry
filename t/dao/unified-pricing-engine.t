@@ -2,10 +2,9 @@
 # ABOUTME: Tests for unified pricing engine supporting tenant-to-tenant relationships
 # ABOUTME: Validates platform-as-tenant and cross-tenant pricing capabilities
 
-use v5.34.0;
+use 5.42.0;
 use warnings;
 use utf8;
-use experimental qw(signatures);
 
 use Test::More;
 use Test::Exception;

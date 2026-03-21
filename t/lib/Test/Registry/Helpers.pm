@@ -1,7 +1,7 @@
-use 5.40.2;
+use 5.42.0;
 
 package Test::Registry::Helpers {
-    use experimental qw(builtin declared_refs);
+    use experimental qw(declared_refs);
     use builtin      qw(export_lexically);
 
     sub import(@) {

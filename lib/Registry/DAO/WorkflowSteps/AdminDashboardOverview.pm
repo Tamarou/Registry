@@ -1,6 +1,6 @@
 # ABOUTME: Workflow step to display admin dashboard overview with pending tasks and continuations
 # ABOUTME: Loads dashboard data and prepares it for template rendering
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 require Registry::DAO::WorkflowStep;

@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-use 5.40.2;
+use 5.42.0;
 use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Registry::DAO;

@@ -1,5 +1,5 @@
-use 5.40.2;
-use experimental 'signatures', 'try', 'builtin';
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::Payment :isa(Registry::DAO::WorkflowStep) {

@@ -1,5 +1,5 @@
-use 5.40.2;
-use experimental qw(try);
+use 5.42.0;
+
 use Object::Pad;
 use Registry::DAO;
 use Registry::Job::AttendanceCheck;

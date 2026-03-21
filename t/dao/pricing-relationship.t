@@ -2,10 +2,9 @@
 # ABOUTME: Test suite for unified PricingRelationship DAO
 # ABOUTME: Validates all pricing relationship types (platform, B2C, B2B)
 
-use 5.40.2;
+use 5.42.0;
 use warnings;
 use utf8;
-use experimental 'signatures';
 
 use lib qw(lib t/lib);
 use Test::More;

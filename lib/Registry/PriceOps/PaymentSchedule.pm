@@ -1,8 +1,8 @@
 # ABOUTME: Business logic for payment schedule management and installment processing
 # ABOUTME: Handles installment calculation, scheduling rules, and payment lifecycle management
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try', 'builtin';
+
 
 use Object::Pad;
 class Registry::PriceOps::PaymentSchedule {

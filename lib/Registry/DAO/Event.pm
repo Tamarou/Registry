@@ -1,10 +1,10 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Event :isa(Registry::DAO::Object) {
     use Carp         qw( carp );
     use DateTime;
-    use experimental qw(try);
+
 
     field $id :param :reader;
     field $time :param :reader = undef;

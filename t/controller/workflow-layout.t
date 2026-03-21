@@ -2,10 +2,9 @@
 # ABOUTME: Tests for workflow controller layout rendering to ensure templates get proper HTML structure
 # ABOUTME: Verifies fix for GitHub Issue #60 where workflow pages served raw content without layout
 
-use v5.34.0;
+use 5.42.0;
 use warnings;
 use utf8;
-use experimental qw(signatures);
 
 use Test::More;
 use Test::Mojo;

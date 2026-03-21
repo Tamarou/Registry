@@ -2,10 +2,9 @@
 # ABOUTME: Integration tests for PricingRelationships with event sourcing
 # ABOUTME: Validates complete flow including audit trail and state reconstruction
 
-use v5.34.0;
+use 5.42.0;
 use warnings;
 use utf8;
-use experimental qw(signatures);
 
 use Test::More;
 use Test::Exception;

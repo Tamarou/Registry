@@ -1,8 +1,8 @@
 # ABOUTME: Business logic for pricing plan management and installment configuration
 # ABOUTME: Handles pricing calculation, installment validation, and plan selection rules
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try', 'builtin';
+
 
 use Object::Pad;
 class Registry::PriceOps::PricingPlan {

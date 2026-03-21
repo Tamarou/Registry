@@ -1,9 +1,9 @@
 # ABOUTME: Workflow step for reviewing and activating the pricing plan
 # ABOUTME: Creates the plan in the database and sets activation parameters
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try signatures);
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::WorkflowStep) {

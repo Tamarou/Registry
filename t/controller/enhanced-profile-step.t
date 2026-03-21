@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-use 5.40.0;
+use 5.42.0;
 use Test::More;
 use Test::Mojo;
 use lib qw(lib t/lib);

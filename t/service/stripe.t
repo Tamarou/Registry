@@ -2,9 +2,8 @@
 # ABOUTME: Tests for Registry::Service::Stripe async/promise handling verification
 # ABOUTME: Validates that async methods exist and webhook verification works
 
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try';
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;

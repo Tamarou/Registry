@@ -1,9 +1,8 @@
 #!/usr/bin/env perl
 # ABOUTME: Tests for MultiChildSessionSelection workflow step using real production interfaces
 # ABOUTME: Validates session selection for multiple children with age and capacity constraints
-use v5.34.0;
+use 5.42.0;
 use warnings;
-use experimental 'signatures';
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
@@ -86,8 +85,8 @@ my $event2 = Registry::DAO::Event->create($db, {
 # Create sessions with future dates and capacity limits
 my $session1 = Registry::DAO::Session->create($db, {
     name => 'Morning Session',
-    start_date => '2025-12-02',
-    end_date => '2025-12-09',
+    start_date => '2027-12-02',
+    end_date => '2027-12-09',
     status => 'published',
     capacity => 10,
     metadata => {}
@@ -95,8 +94,8 @@ my $session1 = Registry::DAO::Session->create($db, {
 
 my $session2 = Registry::DAO::Session->create($db, {
     name => 'Afternoon Session',
-    start_date => '2025-12-02',
-    end_date => '2025-12-09',
+    start_date => '2027-12-02',
+    end_date => '2027-12-09',
     status => 'published',
     capacity => 5,
     metadata => {}

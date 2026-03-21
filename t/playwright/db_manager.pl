@@ -2,7 +2,7 @@
 # ABOUTME: Database manager for Playwright tests that keeps Test::PostgreSQL instances alive
 # ABOUTME: Handles creating, maintaining and cleaning up test databases during Playwright test runs
 
-use 5.40.2;
+use 5.42.0;
 use strict;
 use warnings;
 use lib qw(lib t/lib);

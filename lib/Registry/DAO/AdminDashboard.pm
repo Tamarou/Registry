@@ -1,6 +1,6 @@
 # ABOUTME: AdminDashboard DAO for aggregating administrative dashboard data and statistics
 # ABOUTME: Provides methods for overview stats, alerts, and administrative data aggregation
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {

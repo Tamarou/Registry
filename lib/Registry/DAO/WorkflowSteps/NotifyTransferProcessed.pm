@@ -1,6 +1,6 @@
 # ABOUTME: Sends notifications to parent and admin about processed transfer request
 # ABOUTME: Handles email notifications confirming transfer approval or denial
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Object::Pad;
 

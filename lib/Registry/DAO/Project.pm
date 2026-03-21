@@ -1,10 +1,10 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Project :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(decode_json encode_json);
     use Carp qw(croak);
-    use experimental qw(try);
+
 
     field $id :param :reader;
     field $name :param :reader;

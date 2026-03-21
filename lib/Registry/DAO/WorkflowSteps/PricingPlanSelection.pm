@@ -1,8 +1,8 @@
 # ABOUTME: Workflow step for tenant pricing plan selection during signup
 # ABOUTME: Fetches active platform pricing plans and handles plan selection
 
-use 5.34.0;
-use experimental 'signatures';
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::WorkflowStep) {

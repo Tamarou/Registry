@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 
-use 5.40.2;
-use experimental qw( try );
+use 5.42.0;
 
 # Set up test email transport BEFORE loading any modules that might use Email::Sender
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test'; }

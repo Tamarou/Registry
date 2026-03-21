@@ -1,6 +1,6 @@
 # ABOUTME: Workflow step for admin to select and continue with pending administrative tasks
 # ABOUTME: Handles continuation to drop/transfer approval workflows and other admin actions
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 require Registry::DAO::WorkflowStep;

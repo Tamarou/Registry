@@ -1,9 +1,9 @@
 # ABOUTME: Data access object for billing periods across all pricing relationships
 # ABOUTME: Tracks billing cycles and payment status for B2B, B2C, and platform billing
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try);
+
 use Object::Pad;
 
 class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {

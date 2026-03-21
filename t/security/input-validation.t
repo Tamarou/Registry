@@ -1,6 +1,8 @@
-use 5.40.2;
+# ABOUTME: Security test suite for input validation in Registry DAOs.
+# ABOUTME: Verifies protection against SQL injection, XSS, null bytes, and Unicode handling.
+use 5.42.0;
 use lib          qw(lib t/lib);
-use experimental qw(defer try);
+use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok like is_deeply unlike )];
 defer { done_testing };
 
@@ -129,18 +131,31 @@ my $dao     = $test_db->db;
 }
 
 {    # Test Unicode handling
+    # Unicode test string: "Jose Maria <CJK> <Arabic> <Cyrillic>"
+    # Constructed with chr() to avoid non-ASCII bytes in source (required by use 5.42.0)
+    # Jose\x{E9} Mar\x{ED}a \x{6D4B}\x{8BD5} \x{0627}\x{0644}\x{0639}\x{0631}\x{0628}\x{064A}\x{0629} \x{0440}\x{0443}\x{0441}\x{0441}\x{043A}\x{0438}\x{0439}
+    my $unicode_name = join(
+        '',
+        'Jos', chr(0x00E9), ' Mar', chr(0x00ED), 'a ',    # Jose+accent Mar+accent+a
+        chr(0x6D4B), chr(0x8BD5), ' ',                    # CJK test characters
+        chr(0x0627), chr(0x0644), chr(0x0639),             # Arabic alef-lam-ain
+        chr(0x0631), chr(0x0628), chr(0x064A), chr(0x0629), ' ',    # Arabic ra-ba-ya-ta
+        chr(0x0440), chr(0x0443), chr(0x0441), chr(0x0441),          # Cyrillic ru-ss
+        chr(0x043A), chr(0x0438), chr(0x0439)                        # Cyrillic kiy
+    );
+
     my $unicode_user = Registry::DAO::User->create(
         $dao->db,
         {
             username => 'testuser' . int( rand(10000) ),
             password => 'password123',
             email    => 'unicode@example.com',
-            name     => 'José María 测试 العربية русский'
+            name     => $unicode_name
         }
     );
 
     ok $unicode_user, 'Unicode user created successfully';
-    is $unicode_user->name, 'José María 测试 العربية русский',
+    is $unicode_user->name, $unicode_name,
       'Unicode text preserved correctly';
 }
 

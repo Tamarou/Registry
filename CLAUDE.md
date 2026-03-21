@@ -138,3 +138,23 @@ Registry is production-ready with comprehensive implementations for:
 - **Integration tests**: Workflow and payment processing validation
 
 See README.md for complete production deployment checklist and configuration details.
+
+## Perl Development
+
+<!-- Backend: pvm -->
+<!-- Include the perl:using-pvm skill for toolchain commands -->
+
+### Version Detection
+
+Before writing Perl code, detect the active version:
+
+1. Read `.perl-version` if present
+2. Run `pvm current` (or backend equivalent) if absent
+3. Check for `use VERSION` in existing source files
+
+Select the appropriate writing skill:
+- Perl 5.42.x -> `perl:write-5.42`
+- Perl 5.40.x -> `perl:write-5.40`
+- Perl 5.38.x -> `perl:write-5.38`
+- Perl 5.36.x -> `perl:write-5.36`
+- Perl 5.20-5.34 or CPAN dist -> `perl:write-toolchain`

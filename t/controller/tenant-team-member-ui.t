@@ -2,9 +2,9 @@
 # ABOUTME: Tests for tenant team member creation UI
 # ABOUTME: Ensures no duplicate buttons and working add member functionality
 
-use 5.40.2;
+use 5.42.0;
 use lib qw(lib t/lib);
-use experimental qw(defer try);
+use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok like is_deeply subtest use_ok isa_ok can_ok )];
 use Test::Mojo;
 defer { done_testing };

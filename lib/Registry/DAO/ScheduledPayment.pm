@@ -1,8 +1,8 @@
 # ABOUTME: Data access object for scheduled payments table operations
 # ABOUTME: Handles SQL operations for individual payment tracking and retrieval
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try', 'builtin';
+
 
 use Object::Pad;
 class Registry::DAO::ScheduledPayment :isa(Registry::DAO::Object) {

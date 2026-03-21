@@ -1,11 +1,11 @@
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Object::Pad;
 
 class Registry::Command::schema :isa(Mojolicious::Command) {
     use Registry::DAO::OutcomeDefinition;
     use Mojo::JSON qw(encode_json);
-    use experimental 'try';
+
 
     field $description :reader = 'Outcome definition (schema) management commands';
     field $usage :reader = <<~"END";

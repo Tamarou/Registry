@@ -1,6 +1,6 @@
 # ABOUTME: Processes the actual enrollment transfer between sessions
 # ABOUTME: Updates enrollment session and transfer status with admin tracking
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Object::Pad;
 
