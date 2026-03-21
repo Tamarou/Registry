@@ -1,6 +1,6 @@
 # ABOUTME: Tests that security headers are present on all response types.
 # ABOUTME: Verifies X-Frame-Options, CSP, X-Content-Type-Options, X-XSS-Protection.
-use 5.40.2;
+use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing subtest ok is like )];

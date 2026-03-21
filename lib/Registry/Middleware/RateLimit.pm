@@ -1,8 +1,7 @@
 # ABOUTME: Rate limiting middleware for Registry, using a fixed window counter per IP/user.
 # ABOUTME: In-memory counters reset on server restart (acceptable for MVP; use Redis for multi-process).
 
-use 5.40.2;
-use experimental qw(signatures);
+use 5.42.0;
 
 package Registry::Middleware::RateLimit;
 

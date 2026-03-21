@@ -1,10 +1,10 @@
 # ABOUTME: Tests for rate limiting middleware on auth and general endpoints.
 # ABOUTME: Verifies 429 responses, Retry-After headers, and webhook exclusions.
 
-use 5.40.2;
+use 5.42.0;
 use FindBin qw($Bin);
 use lib "$Bin/../../lib", "$Bin/../lib", "lib", "t/lib";
-use experimental qw(defer try);
+use experimental qw(defer);
 use Test::More import => [qw( done_testing is isnt ok is_deeply plan subtest pass )];
 defer { done_testing };
 
