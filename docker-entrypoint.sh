@@ -8,6 +8,8 @@ set -e
 # Function to deploy database schema (only for web service)
 deploy_schema() {
     echo "Deploying database schema..."
+    echo "DEBUG: DB_URL host = $(echo "$DB_URL" | sed 's|.*@\([^/]*\)/.*|\1|')"
+    echo "DEBUG: SQITCH_TARGET host = $(echo "$SQITCH_TARGET" | sed 's|.*@\([^/]*\)/.*|\1|')"
     # Use SQITCH_TARGET if set, otherwise derive from DB_URL.
     # Sqitch requires db:pg:// URIs, not postgresql:// — convert if needed.
     local target="${SQITCH_TARGET:-$DB_URL}"
