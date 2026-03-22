@@ -235,6 +235,19 @@ DISTRIBUTIONS
       MooX::Types::MooseLike 0
       Test::Exception 0
       perl 5.008
+  Const-Fast-0.014
+    pathname: L/LE/LEONT/Const-Fast-0.014.tar.gz
+    provides:
+      Const::Fast 0.014
+    requirements:
+      Carp 0
+      Module::Build::Tiny 0.021
+      Scalar::Util 0
+      Storable 0
+      Sub::Exporter::Progressive 0.001007
+      perl 5.008
+      strict 0
+      warnings 0
   Crypt-Argon2-0.030
     pathname: L/LE/LEONT/Crypt-Argon2-0.030.tar.gz
     provides:
@@ -1583,6 +1596,31 @@ DISTRIBUTIONS
       Text::ParseWords 0
       perl 5.006001
       version 0.87
+  Module-Build-Tiny-0.053
+    pathname: L/LE/LEONT/Module-Build-Tiny-0.053.tar.gz
+    provides:
+      Module::Build::Tiny 0.053
+    requirements:
+      CPAN::Meta 0
+      DynaLoader 0
+      Exporter 5.57
+      ExtUtils::CBuilder 0
+      ExtUtils::Config 0.003
+      ExtUtils::Helpers 0.020
+      ExtUtils::Install 0
+      ExtUtils::InstallPaths 0.002
+      ExtUtils::ParseXS 0
+      File::Basename 0
+      File::Find 0
+      File::Path 0
+      File::Spec::Functions 0
+      Getopt::Long 2.36
+      JSON::PP 2
+      Pod::Man 0
+      TAP::Harness::Env 0
+      perl 5.006
+      strict 0
+      warnings 0
   Module-Implementation-0.09
     pathname: D/DR/DROLSKY/Module-Implementation-0.09.tar.gz
     provides:
@@ -2009,6 +2047,28 @@ DISTRIBUTIONS
       ExtUtils::MakeMaker 0
       SQL::Abstract 2.0
       perl 5.016
+  SlapbirdAPM-Agent-Mojo-0.012
+    pathname: R/RA/RAWLEYFOW/SlapbirdAPM-Agent-Mojo-0.012.tar.gz
+    provides:
+      Mojolicious::Plugin::SlapbirdAPM undef
+      Mojolicious::Plugin::SlapbirdAPM::Tracer undef
+      SlapbirdAPM::Agent::Mojo 0.012
+      SlapbirdAPM::DBIx::Tracer 0.03
+      SlapbirdAPM::Trace undef
+    requirements:
+      Carp 0
+      Const::Fast 0.014
+      DBI 0
+      ExtUtils::MakeMaker 0
+      IPC::Open2 0
+      Mojolicious 0
+      POSIX 0
+      System::Info 0.064
+      Time::HiRes 1.9764
+      Time::Piece 1.3401
+      Try::Tiny 0.31
+      namespace::clean 0.27
+      perl 5.024
   Specio-0.50
     pathname: D/DR/DROLSKY/Specio-0.50.tar.gz
     provides:
@@ -2156,6 +2216,27 @@ DISTRIBUTIONS
       perl 5.006
       strict 0
       warnings 0
+  System-Info-0.067
+    pathname: H/HM/HMBRAND/System-Info-0.067.tgz
+    provides:
+      System::Info 0.067
+      System::Info::AIX 0.050
+      System::Info::BSD 0.051
+      System::Info::Base 0.050
+      System::Info::Cygwin 0.050
+      System::Info::Darwin 0.056
+      System::Info::Generic 0.050
+      System::Info::HPUX 0.051
+      System::Info::Haiku 0.050
+      System::Info::Irix 0.050
+      System::Info::Linux 0.054
+      System::Info::Solaris 0.050
+      System::Info::VMS 0.050
+      System::Info::Windows 0.051
+    requirements:
+      ExtUtils::MakeMaker 0
+      POSIX 0
+      perl 5.008003
   Template-Tiny-1.16
     pathname: E/ET/ETHER/Template-Tiny-1.16.tar.gz
     provides:

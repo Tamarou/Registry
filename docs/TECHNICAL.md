@@ -6,7 +6,7 @@ Registry is a robust, extensible platform for after-school program management,
 designed with flexibility and maintainability in mind.
 
 ### Technical Specifications
-- **Core Language**: Perl 5.40 with Object::Pad feature classes
+- **Core Language**: Perl 5.42 with Object::Pad feature classes
 - **Web Framework**: Mojolicious
 - **Database**: PostgreSQL with Mojo::Pg
 - **Authentication**: Multi-layer security (Crypt::Passphrase)
@@ -73,7 +73,7 @@ docker run -p 3000:3000 \
 - Code coverage tracking
 
 ## System Requirements
-- Perl 5.40+
+- Perl 5.42+
 - PostgreSQL 12+
 - Docker (optional)
 
@@ -84,7 +84,7 @@ docker run -p 3000:3000 \
 - Caching mechanisms implemented
 
 ## Monitoring and Maintenance
-- Built-in logging
+- Structured JSON logging
 - Performance metric collection
 - Easy backup and migration paths
 
