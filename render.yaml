@@ -1,8 +1,21 @@
+envVarGroups:
+  - name: registry-database
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: registry-db
+          property: connectionString
+      - key: SQITCH_TARGET
+        fromDatabase:
+          name: registry-db
+          property: connectionString
+
 databases:
-  - name: registry-postgres
+  - name: registry-db
     databaseName: registry
     user: registry_user
-    plan: free
+    plan: standard
+    region: oregon
 
 services:
   - type: web
@@ -12,10 +25,7 @@ services:
     branch: main
     dockerfilePath: ./Dockerfile
     envVars:
-      - key: DB_URL
-        fromDatabase:
-          name: registry-postgres
-          property: connectionString
+      - fromGroup: registry-database
       - key: MOJO_MODE
         value: production
       - key: REGISTRY_SECRET
@@ -34,14 +44,7 @@ services:
         value: 10000
       - key: SERVICE_TYPE
         value: web
-      - key: SQITCH_TARGET
-        fromDatabase:
-          name: registry-postgres
-          property: connectionString
     healthCheckPath: /health
-    buildCommand: |
-      # Install dependencies only during build
-      carton install --deployment
     autoDeploy: true
     disk:
       name: registry-storage
@@ -55,10 +58,7 @@ services:
     branch: main
     dockerfilePath: ./Dockerfile
     envVars:
-      - key: DB_URL
-        fromDatabase:
-          name: registry-postgres
-          property: connectionString
+      - fromGroup: registry-database
       - key: MOJO_MODE
         value: production
       - key: REGISTRY_SECRET
@@ -72,8 +72,6 @@ services:
         value: noreply@registry-demo.onrender.com
       - key: SERVICE_TYPE
         value: worker
-    buildCommand: |
-      carton install --deployment
     autoDeploy: true
 
   - type: cron
@@ -84,14 +82,9 @@ services:
     dockerfilePath: ./Dockerfile
     schedule: "*/5 * * * *"
     envVars:
-      - key: DB_URL
-        fromDatabase:
-          name: registry-postgres
-          property: connectionString
+      - fromGroup: registry-database
       - key: MOJO_MODE
         value: production
       - key: SERVICE_TYPE
         value: scheduler
-    buildCommand: |
-      carton install --deployment
     autoDeploy: true
