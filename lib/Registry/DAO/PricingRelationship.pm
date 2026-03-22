@@ -1,9 +1,9 @@
 # ABOUTME: Data access object for unified pricing relationships
 # ABOUTME: Manages all pricing relationships - platform, B2C enrollments, and B2B partnerships
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try);
+
 use Object::Pad;
 
 class Registry::DAO::PricingRelationship :isa(Registry::DAO::Object) {

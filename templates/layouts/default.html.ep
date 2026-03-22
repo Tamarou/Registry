@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/css/components.css">
     <link rel="stylesheet" href="/css/style.css">
 
+    <meta name="csrf-token" content="<%= csrf_token %>">
     <%= content 'head' %>
 </head>
 <body data-theme="light">
@@ -35,6 +36,25 @@
         </div>
     <% } %>
 
+    <script>
+        // Inject CSRF token as a hidden field into every HTML form on this page.
+        // This ensures all form submissions include the token without requiring
+        // each template to be updated individually.
+        document.addEventListener('DOMContentLoaded', function () {
+            var token = document.querySelector('meta[name="csrf-token"]');
+            if (!token) return;
+            var tokenValue = token.getAttribute('content');
+            document.querySelectorAll('form').forEach(function (form) {
+                if (!form.querySelector('input[name="csrf_token"]')) {
+                    var input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'csrf_token';
+                    input.value = tokenValue;
+                    form.appendChild(input);
+                }
+            });
+        });
+    </script>
     <script>
         // Theme toggle functionality for default layout
         function toggleTheme() {

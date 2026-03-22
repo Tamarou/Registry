@@ -34,7 +34,7 @@ jobs:
     - name: Setup Perl
       uses: shogo82148/actions-setup-perl@v1
       with:
-        perl-version: '5.40'
+        perl-version: '5.42'
 
     - name: Install system dependencies
       run: |
@@ -134,7 +134,7 @@ jobs:
     - name: Setup Perl
       uses: shogo82148/actions-setup-perl@v1
       with:
-        perl-version: '5.40'
+        perl-version: '5.42'
 
     - name: Install Perl::Critic
       run: |
@@ -199,7 +199,7 @@ jobs:
     - name: Setup Perl
       uses: shogo82148/actions-setup-perl@v1
       with:
-        perl-version: '5.40'
+        perl-version: '5.42'
 
     - name: Install system dependencies
       run: |
@@ -275,7 +275,7 @@ jobs:
     - name: Setup Perl
       uses: shogo82148/actions-setup-perl@v1
       with:
-        perl-version: '5.40'
+        perl-version: '5.42'
 
     - name: Install system dependencies
       run: |

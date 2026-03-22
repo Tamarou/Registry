@@ -1,5 +1,5 @@
-use 5.34.0;
-use experimental 'signatures';
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowStep) {

@@ -2,9 +2,8 @@
 # ABOUTME: Test to demonstrate the async/promise bug in Stripe Service
 # ABOUTME: Shows the actual error when using the service
 
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try';
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;

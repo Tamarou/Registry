@@ -1,9 +1,9 @@
 # ABOUTME: Workflow management command for Registry CLI tool
 # ABOUTME: Handles workflow import, list and other workflow operations
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Object::Pad;
-use experimental qw(try);
+
 
 class Registry::Command::workflow :isa(Mojolicious::Command) {
     use Carp          qw(carp);

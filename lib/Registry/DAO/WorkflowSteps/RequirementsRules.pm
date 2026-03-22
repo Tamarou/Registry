@@ -1,9 +1,9 @@
 # ABOUTME: Workflow step for defining eligibility requirements and business rules
 # ABOUTME: Configures discounts, eligibility criteria, and renewal policies
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try signatures);
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::WorkflowStep) {

@@ -1,9 +1,9 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::OutcomeDefinition :isa(Registry::DAO::Object) {
     use Carp         qw(carp);
-    use experimental qw(try);
+
     use Mojo::JSON   qw(encode_json decode_json);
     use Mojo::File   qw(path);
 

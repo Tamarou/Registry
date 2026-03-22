@@ -1,6 +1,6 @@
 # ABOUTME: Workflow step to collect admin decision (approve/deny) and notes for drop request
 # ABOUTME: Validates admin input and prepares data for processing the decision
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 require Registry::DAO::WorkflowStep;

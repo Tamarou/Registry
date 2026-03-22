@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use 5.40.2;
+use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok isa_ok can_ok subtest )];

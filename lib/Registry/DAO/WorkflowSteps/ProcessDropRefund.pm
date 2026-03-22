@@ -1,6 +1,6 @@
 # ABOUTME: Processes refund for dropped enrollment if requested
 # ABOUTME: Handles refund calculation and triggers payment processing workflow if needed
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Object::Pad;
 

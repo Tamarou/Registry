@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
-use v5.34.0;
+use 5.42.0;
 use warnings;
-use experimental 'signatures';
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;

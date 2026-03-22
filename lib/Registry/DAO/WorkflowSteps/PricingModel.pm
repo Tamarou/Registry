@@ -1,9 +1,9 @@
 # ABOUTME: Workflow step for configuring the pricing model and payment structure
 # ABOUTME: Handles pricing type, amounts, billing frequency, and installment options
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try signatures);
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowStep) {

@@ -1,6 +1,6 @@
 # ABOUTME: Processes waitlist for session when enrollment spot opens up from drop
 # ABOUTME: Triggers waitlist processing to move next waiting family into the session
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Object::Pad;
 

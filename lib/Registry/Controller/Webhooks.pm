@@ -1,5 +1,5 @@
-use 5.34.0;
-use experimental qw(signatures try);
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::Controller::Webhooks :isa(Registry::Controller) {
@@ -89,7 +89,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Check if this event is related to installment payment subscriptions
         my $event_type = $event->{type};
 
-        return 0 unless $event_type =~ /^(invoice\.paid|invoice\.payment_failed|customer\.subscription\.)$/;
+        return 0 unless defined $event_type && $event_type =~ /^(invoice\.paid|invoice\.payment_failed|customer\.subscription\.)$/;
 
         # Check if the subscription has payment_schedule_id in metadata
         my $subscription_id;

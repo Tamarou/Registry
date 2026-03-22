@@ -1,8 +1,8 @@
 # ABOUTME: Data Access Object layer for Registry application database interactions
 # ABOUTME: Provides base functionality for all DAO classes and database operations
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(builtin try);
+
 use builtin      qw(export_lexically);
 use Object::Pad;
 
@@ -29,8 +29,8 @@ use Registry::DAO::TransferRequest;
 
 class Registry::DAO {
     use Carp         qw(croak);
-    use experimental qw(builtin try);
-    use builtin      qw(blessed);
+
+
 
     field $url :param :reader //= $ENV{DB_URL};
     field $schema :param = 'registry';

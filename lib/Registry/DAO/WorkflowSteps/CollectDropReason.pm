@@ -1,8 +1,8 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::CollectDropReason :isa(Registry::DAO::WorkflowStep) {
-    use experimental qw(try);
+
 
     method process($db, $form_data, $run_data = {}) {
         # If reason is provided, validate and proceed

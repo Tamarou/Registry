@@ -1,6 +1,6 @@
 # ABOUTME: Validates drop request eligibility and enrollment status
 # ABOUTME: Ensures drop request exists and enrollment is in valid state for dropping
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Object::Pad;
 

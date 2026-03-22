@@ -1,6 +1,6 @@
-use 5.40.2;
+use 5.42.0;
 use lib          qw(lib t/lib);
-use experimental qw(defer try);
+use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok like is_deeply )];
 defer { done_testing };
 

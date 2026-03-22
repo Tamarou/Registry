@@ -1,5 +1,5 @@
 # Build stage - install dependencies and build tools
-FROM perl:5.40.2 AS builder
+FROM perl:5.42.0 AS builder
 
 # Install system dependencies
 RUN apt-get update \
@@ -26,7 +26,7 @@ RUN grep -v "Test::" cpanfile > cpanfile.prod \
   && find /usr/local -name "perl5" -type d
 
 # Production stage - minimal runtime image
-FROM perl:5.40.2
+FROM perl:5.42.0
 
 # Install only runtime dependencies (no build tools)
 RUN apt-get update \

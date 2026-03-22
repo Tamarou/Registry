@@ -1,4 +1,4 @@
-requires 'perl' => 'v5.40.2';
+requires 'perl' => 'v5.42.0';
 requires "Mojolicious::Plugin::HTMX";
 requires 'App::Sqitch';
 requires 'Clone';

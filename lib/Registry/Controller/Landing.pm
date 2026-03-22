@@ -1,6 +1,6 @@
 # ABOUTME: Landing page controller for the default workflow
 # ABOUTME: Handles the root route and renders the default workflow landing page
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::Controller::Landing :isa(Registry::Controller) {

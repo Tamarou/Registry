@@ -1,9 +1,9 @@
 # ABOUTME: Workflow step for collecting basic pricing plan information
 # ABOUTME: Handles plan name, type, target audience, and scope configuration
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try signatures);
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::WorkflowStep) {

@@ -2,7 +2,7 @@
 # ABOUTME: Test UTF-8 handling in Registry workflow system
 # ABOUTME: Ensures proper encoding in workflows, templates, and database storage
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use lib qw(lib t/lib);
 use experimental qw(defer);

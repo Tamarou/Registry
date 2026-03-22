@@ -1,9 +1,9 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::User :isa(Registry::DAO::Object) {
     use Carp         qw( carp croak );
-    use experimental qw(try);
+
     use Crypt::Passphrase;
 
     field $id :param :reader;

@@ -1,8 +1,8 @@
-use 5.40.2;
+use 5.42.0;
 use lib          qw(lib t/lib);
-use experimental qw(defer builtin);
+use experimental qw(defer);
 
-use Test::Mojo;
+use Test::Registry::Mojo;
 use Test::More import => [qw( done_testing is like ok fail )];
 use Scalar::Util qw(blessed);
 defer { done_testing };
@@ -40,7 +40,7 @@ my $event = $dao->create(
 );
 
 {
-    my $t = Test::Mojo->new('Registry');
+    my $t = Test::Registry::Mojo->new('Registry');
 
     my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
     my $first_step = $workflow->first_step( $dao->db );
@@ -123,7 +123,7 @@ my $event = $dao->create(
 }
 
 {
-    my $t          = Test::Mojo->new('Registry');
+    my $t          = Test::Registry::Mojo->new('Registry');
     my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
     my $first_step = $workflow->first_step( $dao->db );
     my $next_url =

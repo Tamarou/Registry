@@ -2,10 +2,9 @@
 # ABOUTME: Test that PricingPlan is relationship-agnostic and focuses on plan definition
 # ABOUTME: Verifies clean separation between pricing plans and pricing relationships
 
-use 5.40.2;
+use 5.42.0;
 use warnings;
 use utf8;
-use experimental 'signatures';
 
 use lib qw(lib t/lib);
 use Test::More;

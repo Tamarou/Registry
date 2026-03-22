@@ -1596,10 +1596,10 @@ DISTRIBUTIONS
       Text::ParseWords 0
       perl 5.006001
       version 0.87
-  Module-Build-Tiny-0.052
-    pathname: L/LE/LEONT/Module-Build-Tiny-0.052.tar.gz
+  Module-Build-Tiny-0.053
+    pathname: L/LE/LEONT/Module-Build-Tiny-0.053.tar.gz
     provides:
-      Module::Build::Tiny 0.052
+      Module::Build::Tiny 0.053
     requirements:
       CPAN::Meta 0
       DynaLoader 0
@@ -2216,10 +2216,10 @@ DISTRIBUTIONS
       perl 5.006
       strict 0
       warnings 0
-  System-Info-0.066
-    pathname: H/HM/HMBRAND/System-Info-0.066.tgz
+  System-Info-0.067
+    pathname: H/HM/HMBRAND/System-Info-0.067.tgz
     provides:
-      System::Info 0.066
+      System::Info 0.067
       System::Info::AIX 0.050
       System::Info::BSD 0.051
       System::Info::Base 0.050

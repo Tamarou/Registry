@@ -2,7 +2,7 @@
 # ABOUTME: Minimal UTF-8 test without database dependency
 # ABOUTME: Tests template rendering and form handling for UTF-8 characters
 
-use 5.40.2;
+use 5.42.0;
 use utf8;
 use Test::More;
 use Test::Mojo;

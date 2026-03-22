@@ -1,7 +1,7 @@
 # ABOUTME: Asynchronous Stripe API service wrapper using Mojo::UserAgent
 # ABOUTME: Provides modern Stripe API support with webhook verification and async operations
-use 5.40.2;
-use experimental qw(signatures try);
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::Service::Stripe {

@@ -1,6 +1,6 @@
-use 5.40.2;
+use 5.42.0;
 use lib          qw(lib t/lib);
-use experimental qw(defer try);
+use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok like is_deeply diag )];
 defer { done_testing };
 
@@ -217,8 +217,8 @@ my $dao = $test_db->db;
         }
     }
     
-    is $stem_events, 24, 'All STEM events created (12 weeks × 2 days)';
-    is $arts_events, 24, 'All Arts events created (12 weeks × 2 days)';
+    is $stem_events, 24, 'All STEM events created (12 weeks x 2 days)';
+    is $arts_events, 24, 'All Arts events created (12 weeks x 2 days)';
     
     # Debug: Check if events were actually persisted
     my $db_events_after_creation = $dao->db->select('events', 'COUNT(*)')->array->[0];
@@ -461,7 +461,7 @@ my $dao = $test_db->db;
     }
     
     is $payment_count, 20, 'Payments processed for all enrolled students';
-    ok $total_revenue >= 300000, 'Total revenue recorded (at least $3000)'; # 20 students × $150+ each
+    ok $total_revenue >= 300000, 'Total revenue recorded (at least $3000)'; # 20 students x $150+ each
 }
 
 {    # Step 10: Program Communication

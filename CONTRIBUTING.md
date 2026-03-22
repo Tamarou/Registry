@@ -17,7 +17,7 @@ Thank you for your interest in contributing to Registry! This document provides 
 ### Prerequisites
 
 **Required:**
-- Perl 5.40.2 or later
+- Perl 5.42.0 or later
 - PostgreSQL 12+ 
 - Git
 - cpanm (Perl package manager)
@@ -261,8 +261,8 @@ carton exec sqitch deploy
 # lib/Registry/DAO/WorkflowSteps/YourNewStep.pm
 
 # Follow the pattern:
-use 5.40.2;
-use experimental 'signatures';
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::YourNewStep :isa(Registry::DAO::WorkflowStep) {
@@ -317,7 +317,7 @@ carton exec prove -lr t/user-journeys/
 Follow existing test patterns:
 
 ```perl
-use 5.40.2;
+use 5.42.0;
 use Test::More;
 use Test::Mojo;
 use lib 't/lib';
@@ -338,17 +338,18 @@ done_testing;
 
 ### Perl Style Guidelines
 
-- **Modern Perl**: Use Perl 5.40.2+ features
+- **Modern Perl**: Use Perl 5.42.0+ features
 - **Object::Pad**: Use for all new classes
-- **Signatures**: Use subroutine signatures (`sub foo ($arg) { ... }`)
-- **Experimental Features**: `use experimental qw(signatures try);`
+- **Signatures**: Included in 5.42 feature bundle (`sub foo ($arg) { ... }`)
+- **Try/Catch**: Included in 5.42 feature bundle
+- **Experimental Features**: Only `defer` and `declared_refs` still need `use experimental`
 
 ### Code Patterns
 
 **DAO Classes:**
 ```perl
-use 5.40.2;
-use experimental 'signatures';
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::DAO::YourClass :isa(Registry::DAO::Object) {
@@ -365,7 +366,7 @@ class Registry::DAO::YourClass :isa(Registry::DAO::Object) {
 
 **Controller Classes:**
 ```perl
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::Controller::YourController :isa(Registry::Controller) {
@@ -453,3 +454,11 @@ By contributing to Registry, you agree that your contributions will be licensed 
 ---
 
 Thank you for contributing to Registry! Your help makes this project better for everyone.
+## Short Links to Important Resources
+
+- [Plans](docs/plans) — implementation plans and roadmap documents
+- [Decisions](docs/decisions) — architecture decision records (ADRs)
+- [Contributing guides](docs/contributing) — coding conventions and development workflow
+- [Guides](docs/guides) — how-to guides for common tasks
+- [Architecture](docs/architecture) — system design and component descriptions
+- [Reference](docs/reference) — reference documentation

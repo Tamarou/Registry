@@ -1,4 +1,4 @@
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
@@ -6,7 +6,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     use Carp qw(croak);
     use Scalar::Util qw(blessed);
     use DateTime;
-    use experimental qw(try);
+
     
     field $id :param :reader;
     field $session_id :param :reader;

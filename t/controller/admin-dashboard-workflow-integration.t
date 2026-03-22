@@ -1,13 +1,13 @@
 # ABOUTME: Tests AdminDashboard workflow architecture with admin-specific workflows
 # ABOUTME: Verifies that admin dashboard routes properly redirect to admin workflows
 
-use 5.40.2;
+use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing is ok subtest like diag plan )];
 defer { done_testing };
 
-use Test::Mojo;
+use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
 
@@ -16,7 +16,7 @@ my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
 
-my $t = Test::Mojo->new('Registry');
+my $t = Test::Registry::Mojo->new('Registry');
 
 subtest "AdminDashboard controller has only data retrieval methods" => sub {
     plan tests => 4;

@@ -1,6 +1,6 @@
 # ABOUTME: Workflow step to load and validate a transfer request for admin review
 # ABOUTME: Ensures the transfer request exists and is in a valid state for processing
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 require Registry::DAO::WorkflowStep;

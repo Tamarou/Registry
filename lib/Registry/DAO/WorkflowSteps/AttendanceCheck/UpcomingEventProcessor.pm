@@ -1,5 +1,5 @@
-use 5.40.2;
-use experimental qw(try);
+use 5.42.0;
+
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor :isa(Registry::DAO::WorkflowStep) {

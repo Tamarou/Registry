@@ -1,6 +1,6 @@
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try', 'builtin';
+
 
 use Object::Pad;
 class Registry::DAO::Payment :isa(Registry::DAO::Object) {

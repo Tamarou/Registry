@@ -1,12 +1,13 @@
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try);
+
 use Object::Pad;
 
 class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Email::Simple;
     use Email::Sender::Simple qw(sendmail);
+    use Registry::Email::Template;
     
     field $id :param :reader;
     field $user_id :param :reader;
@@ -51,41 +52,103 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         $class->SUPER::create($db, $data);
     }
     
-    # Send an email notification
+    # Map notification type to email template name
+    method _template_name_for_type {
+        return 'attendance_alert'     if $type eq 'attendance_missing';
+        return 'attendance_alert'     if $type eq 'attendance_reminder';
+        return 'message_notification' if $type eq 'message_announcement';
+        return 'message_notification' if $type eq 'message_update';
+        return 'message_notification' if $type eq 'message_emergency';
+        return '';  # general and unknown types use fallback
+    }
+
+    # Build template variables from notification data and user profile
+    method _template_vars ($user_profile) {
+        my $name = $user_profile->{name} || 'User';
+        my $meta = $metadata || {};
+
+        if ($type eq 'attendance_missing' || $type eq 'attendance_reminder') {
+            return (
+                name       => $name,
+                event      => $meta->{event_title}    || $meta->{title}    || '',
+                start_time => $meta->{event_time}     || $meta->{start_time} || '',
+                location   => $meta->{location_name}  || $meta->{location} || '',
+            );
+        }
+        if ($type eq 'message_announcement' || $type eq 'message_update' || $type eq 'message_emergency') {
+            return (
+                name    => $name,
+                subject => $subject,
+                body    => $message,
+            );
+        }
+        return (name => $name);
+    }
+
+    # Build a raw multipart/alternative MIME body string.
+    # This avoids a dependency on Email::MIME which is not in cpanfile.
+    method _build_mime_body ($boundary, $text_part, $html_part) {
+        return join('',
+            "--$boundary\r\n",
+            "Content-Type: text/plain; charset=UTF-8\r\n",
+            "Content-Transfer-Encoding: quoted-printable\r\n",
+            "\r\n",
+            $text_part,
+            "\r\n",
+            "--$boundary\r\n",
+            "Content-Type: text/html; charset=UTF-8\r\n",
+            "Content-Transfer-Encoding: quoted-printable\r\n",
+            "\r\n",
+            $html_part,
+            "\r\n",
+            "--$boundary--\r\n",
+        );
+    }
+
+    # Send an email notification using HTML templates
     method send_email ($db) {
         return unless $channel eq 'email';
         return if $sent_at; # Already sent
-        
+
         try {
             # Get user email from profile
             my $user_profile = $db->select('user_profiles', ['email', 'name'], { user_id => $user_id })->hash;
             croak "No email found for user $user_id" unless $user_profile && $user_profile->{email};
-            
-            # Create email
+
+            # Render HTML and plain-text versions via the template system
+            my $tmpl_name = $self->_template_name_for_type;
+            my %vars      = $self->_template_vars($user_profile);
+            my $rendered  = Registry::Email::Template->render($tmpl_name, %vars);
+
+            # Use a unique boundary for the multipart message
+            my $boundary = 'registry_' . sprintf('%x', int(rand(0xFFFFFFFF)));
+
             my $email = Email::Simple->create(
                 header => [
-                    To      => sprintf('%s <%s>', $user_profile->{name} || 'User', $user_profile->{email}),
-                    From    => $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com',
-                    Subject => $subject,
+                    To           => sprintf('%s <%s>', $user_profile->{name} || 'User', $user_profile->{email}),
+                    From         => $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com',
+                    Subject      => $subject,
+                    'MIME-Version' => '1.0',
+                    'Content-Type' => "multipart/alternative; boundary=\"$boundary\"",
                 ],
-                body => $message,
+                body => $self->_build_mime_body($boundary, $rendered->{text}, $rendered->{html}),
             );
-            
+
             # Send email
             sendmail($email);
-            
+
             # Mark as sent
             $self->update($db, { sent_at => \'now()' });
-            
+
             return 1;
         }
         catch ($e) {
             # Mark as failed
-            $self->update($db, { 
+            $self->update($db, {
                 failed_at => \'now()',
                 failure_reason => $e
             });
-            
+
             # Log the error but don't die
             warn "Failed to send email notification $id: $e";
             return 0;

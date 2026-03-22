@@ -2,7 +2,7 @@
 # ABOUTME: Tests database migration verification scripts to ensure they work correctly
 # ABOUTME: Verifies that all Sqitch verify scripts execute without errors
 
-use 5.40.0;
+use 5.42.0;
 use Test::More;
 use Test::Exception;
 use App::Sqitch;

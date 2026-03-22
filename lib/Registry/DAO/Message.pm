@@ -1,6 +1,6 @@
-use 5.40.2;
+use 5.42.0;
 use utf8;
-use experimental qw(try);
+
 use Object::Pad;
 
 class Registry::DAO::Message :isa(Registry::DAO::Object) {

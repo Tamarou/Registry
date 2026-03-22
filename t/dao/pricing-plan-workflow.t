@@ -2,10 +2,9 @@
 # ABOUTME: Tests for pricing plan creation workflow with resource allocation
 # ABOUTME: Validates all workflow steps and resource configuration storage
 
-use 5.40.2;
+use 5.42.0;
 use Test::More;
 use Test::Exception;
-use experimental qw(signatures try);
 
 use lib 't/lib';
 use Test::Registry::DB;

@@ -1,6 +1,6 @@
 # ABOUTME: Workflow step to process admin decision and trigger the appropriate drop request workflow
 # ABOUTME: Starts the drop-request-processing workflow with admin decision data
-use 5.40.2;
+use 5.42.0;
 use Object::Pad;
 
 require Registry::DAO::WorkflowStep;

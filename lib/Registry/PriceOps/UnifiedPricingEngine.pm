@@ -1,9 +1,9 @@
 # ABOUTME: Unified pricing engine for all tenant-to-tenant pricing operations
 # ABOUTME: Handles platform fees, cross-tenant services, and revenue sharing
 
-use 5.40.2;
+use 5.42.0;
 use warnings;
-use experimental 'signatures', 'try', 'builtin';
+
 
 use Object::Pad;
 class Registry::PriceOps::UnifiedPricingEngine {
