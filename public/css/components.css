@@ -44,7 +44,6 @@ body[data-layout="workflow"] nav.workflow-nav {
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    transform: rotate(-1deg);
 }
 
 /* Logo styles for workflow pages */
@@ -133,11 +132,10 @@ body[data-layout="workflow"] .theme-toggle:hover {
     box-shadow: 0 10px 30px var(--landing-glow-color);
     text-decoration: none;
     display: inline-block;
-    transform: rotate(-1deg);
 }
 
 .landing-cta-button:hover {
-    transform: rotate(0deg) translateY(-3px);
+    transform: translateY(-3px);
     box-shadow: 0 15px 40px var(--landing-glow-color);
 }
 
@@ -267,15 +265,14 @@ footer[data-component="workflow-navigation"] button:hover {
     border: 3px dashed var(--landing-accent-purple);
     backdrop-filter: blur(10px);
     transition: all 0.3s ease;
-    transform: rotate(-0.5deg);
 }
 
-.landing-feature-card:nth-child(2) { transform: rotate(0.4deg); border-radius: 20px 14px 22px 16px; }
-.landing-feature-card:nth-child(3) { transform: rotate(-0.3deg); border-radius: 16px 22px 12px 24px; }
-.landing-feature-card:nth-child(4) { transform: rotate(0.6deg); border-radius: 22px 16px 24px 14px; }
+.landing-feature-card:nth-child(2) { border-radius: 20px 14px 22px 16px; }
+.landing-feature-card:nth-child(3) { border-radius: 16px 22px 12px 24px; }
+.landing-feature-card:nth-child(4) { border-radius: 22px 16px 24px 14px; }
 
 .landing-feature-card:hover {
-    transform: rotate(0deg) translateY(-5px);
+    transform: translateY(-5px);
     box-shadow: 0 15px 30px var(--landing-glow-color);
     border-color: var(--landing-accent-cyan);
     border-style: solid;
@@ -470,7 +467,6 @@ section[data-component="workflow-content"] label {
     background-clip: text;
     -webkit-text-fill-color: transparent;
     line-height: 1.1;
-    transform: rotate(-2deg);
     filter: drop-shadow(0 4px 20px var(--landing-glow-color));
 }
 
