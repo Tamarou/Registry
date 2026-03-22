@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0014"/>
+      <stop offset="50%" stop-color="#1a0829"/>
+      <stop offset="100%" stop-color="#0a0014"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#667eea"/>
+      <stop offset="50%" stop-color="#ff00ff"/>
+      <stop offset="100%" stop-color="#00ffff"/>
+    </linearGradient>
+    <linearGradient id="crown-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#667eea"/>
+      <stop offset="50%" stop-color="#ff00ff"/>
+      <stop offset="100%" stop-color="#00ffff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Subtle grid -->
+  <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+    <path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(157,77,221,0.08)" stroke-width="1"/>
+  </pattern>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+
+  <!-- Accent line top -->
+  <rect x="0" y="0" width="1200" height="4" fill="url(#accent)"/>
+
+  <!-- Crown icon -->
+  <path d="M540 160 L540 120 L570 145 L600 100 L630 145 L660 120 L660 160 Z" fill="url(#crown-grad)" opacity="0.9"/>
+  <rect x="540" y="160" width="120" height="12" rx="2" fill="url(#crown-grad)" opacity="0.9"/>
+
+  <!-- Title -->
+  <text x="600" y="250" text-anchor="middle" font-family="Georgia, serif" font-size="72" font-weight="bold" fill="white">Tiny Art Empire</text>
+
+  <!-- Tagline -->
+  <text x="600" y="320" text-anchor="middle" font-family="system-ui, sans-serif" font-size="28" fill="#e0b3ff">Streamline your art teaching business</text>
+
+  <!-- Divider -->
+  <rect x="450" y="355" width="300" height="2" fill="url(#accent)" opacity="0.5"/>
+
+  <!-- Features -->
+  <text x="600" y="410" text-anchor="middle" font-family="system-ui, sans-serif" font-size="22" fill="#b388d9">Enrollment  |  Payments  |  Scheduling  |  Attendance</text>
+
+  <!-- CTA hint -->
+  <rect x="420" y="460" width="360" height="56" rx="28" fill="none" stroke="url(#accent)" stroke-width="2" opacity="0.7"/>
+  <text x="600" y="496" text-anchor="middle" font-family="system-ui, sans-serif" font-size="22" font-weight="bold" fill="white">Start Your Tiny Art Empire</text>
+
+  <!-- Footer -->
+  <text x="600" y="585" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" fill="#8866aa">tinyartempire.com</text>
+
+  <!-- Accent line bottom -->
+  <rect x="0" y="626" width="1200" height="4" fill="url(#accent)"/>
+</svg>
