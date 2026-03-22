@@ -5,10 +5,7 @@ envVarGroups:
         fromDatabase:
           name: registry-db
           property: connectionString
-      - key: SQITCH_TARGET
-        fromDatabase:
-          name: registry-db
-          property: connectionString
+
 
 databases:
   - name: registry-db
