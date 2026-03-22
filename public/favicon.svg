@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#667eea"/>
+      <stop offset="50%" stop-color="#ff00ff"/>
+      <stop offset="100%" stop-color="#00ffff"/>
+    </linearGradient>
+  </defs>
+  <!-- Crown shape - Tiny Art Empire -->
+  <path d="M4 24 L4 12 L10 18 L16 8 L22 18 L28 12 L28 24 Z" fill="url(#g)" stroke="none"/>
+  <!-- Base -->
+  <rect x="4" y="24" width="24" height="4" rx="1" fill="url(#g)"/>
+</svg>
