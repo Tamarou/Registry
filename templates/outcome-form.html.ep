@@ -6,7 +6,7 @@
 <% if ($has_outcome) { %>
     <%# Add JavaScript for the form builder Web Component %>
     <% content_for head => begin %>
-        <script src="/js/form-builder.js"></script>
+        <script src="<%= static_url %>/js/form-builder.js"></script>
     <% end %>
     
     <%# Use the Form Builder component %>

@@ -5,6 +5,10 @@ envVarGroups:
         fromDatabase:
           name: registry-db
           property: connectionString
+  - name: registry-static
+    envVars:
+      - key: STATIC_URL
+        value: https://tinyartempire-assets.onrender.com
 
 
 databases:

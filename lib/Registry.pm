@@ -28,6 +28,12 @@ class Registry :isa(Mojolicious) {
 
         $self->secrets( [hostname] );
 
+        # Static asset URL prefix. When STATIC_URL is set, CSS/JS/images are
+        # served from an external static site (e.g. Render static service or CDN).
+        # When unset, assets are served from the app itself (same-origin).
+        my $static_url = $ENV{STATIC_URL} // '';
+        $self->helper( static_url => sub { $static_url } );
+
         # Configure proper UTF-8 handling
         $self->renderer->default_format('html');
         $self->renderer->encoding('UTF-8');
@@ -279,14 +285,16 @@ class Registry :isa(Mojolicious) {
         );
 
         # Set security headers on every response
+        # Build CSP with optional static asset origin
+        my $static_origin = $static_url ? " $static_url" : '';
         my $csp = join( '; ',
-            "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' js.stripe.com unpkg.com cdn.jsdelivr.net",
-            "style-src 'self' 'unsafe-inline'",
+            "default-src 'self'$static_origin",
+            "script-src 'self' 'unsafe-inline' js.stripe.com unpkg.com cdn.jsdelivr.net$static_origin",
+            "style-src 'self' 'unsafe-inline'$static_origin",
             "connect-src 'self' api.stripe.com",
             "frame-src js.stripe.com",
-            "img-src 'self' data:",
-            "font-src 'self'",
+            "img-src 'self' data:$static_origin",
+            "font-src 'self' fonts.googleapis.com fonts.gstatic.com$static_origin",
         );
         $self->hook(
             after_dispatch => sub ($c) {

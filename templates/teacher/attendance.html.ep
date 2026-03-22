@@ -70,7 +70,7 @@
 % }
 
 <!-- Load Web Components -->
-<script src="/js/attendance-components.js"></script>
+<script src="<%= static_url %>/js/attendance-components.js"></script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {

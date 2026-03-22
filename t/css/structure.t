@@ -54,7 +54,7 @@ subtest 'teacher layout uses semantic HTML5 structure' => sub {
     like($teacher_template, qr/<header/, 'Teacher layout uses semantic header element');
     like($teacher_template, qr/<main/, 'Teacher layout uses semantic main element');
     like($teacher_template, qr/class="teacher-/, 'Teacher layout uses teacher-specific CSS classes');
-    like($teacher_template, qr/href="\/css\/style\.css"/, 'Teacher layout links to style.css');
+    like($teacher_template, qr/style\.css/, 'Teacher layout links to style.css');
 };
 
 subtest 'responsive design meta tags are present' => sub {
