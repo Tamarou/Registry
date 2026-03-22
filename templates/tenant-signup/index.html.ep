@@ -1,10 +1,10 @@
 % layout 'workflow';
-% title 'Welcome to Registry - Let\'s Get Started!';
+% title 'Welcome to Tiny Art Empire';
 
 <div class="welcome-section">
     <div class="welcome-header">
-        <h2>Welcome to Registry!</h2>
-        <p class="lead">You're about to set up your organization's after-school program management system. This quick setup process will have you up and running in just a few minutes.</p>
+        <h2>Welcome to Tiny Art Empire!</h2>
+        <p class="lead">Let's set up your program management so you can get back to the studio. This quick process takes about 5 minutes.</p>
     </div>
 
     <div class="process-overview">
@@ -13,104 +13,69 @@
             <div class="step">
                 <div class="step-number">1</div>
                 <div class="step-content">
-                    <h4>Welcome & Overview</h4>
-                    <p>You are here - understanding the setup process</p>
+                    <h4>Welcome</h4>
+                    <p>You are here</p>
                 </div>
             </div>
             <div class="step">
                 <div class="step-number">2</div>
                 <div class="step-content">
-                    <h4>Organization Profile</h4>
-                    <p>Basic information about your organization and billing</p>
+                    <h4>Your Program</h4>
+                    <p>Name, description, and billing details</p>
                 </div>
             </div>
             <div class="step">
                 <div class="step-number">3</div>
                 <div class="step-content">
-                    <h4>Team Setup</h4>
-                    <p>Create your admin account and invite team members</p>
+                    <h4>Your Account</h4>
+                    <p>Create your login and invite any team members</p>
                 </div>
             </div>
             <div class="step">
                 <div class="step-number">4</div>
                 <div class="step-content">
-                    <h4>Complete Setup</h4>
-                    <p>Finalize your account and start your free trial</p>
+                    <h4>You're Live</h4>
+                    <p>Start your free trial and begin enrolling students</p>
                 </div>
             </div>
-        </div>
-        <div class="time-estimate">
-            <strong>⏱️ Estimated time:</strong> 5-10 minutes
-        </div>
-    </div>
-
-    <div class="deployment-options">
-        <h3>About Your Registry Setup</h3>
-        <div class="option-note">
-            <p><strong>You're setting up a hosted account</strong> with our managed service. This includes:</p>
-            <ul>
-                <li>✓ 30-day free trial with full features</li>
-                <li>✓ Automatic updates and maintenance</li>
-                <li>✓ 24/7 hosting and support</li>
-                <li>✓ SSL certificates and security</li>
-                <li>✓ Daily backups and disaster recovery</li>
-            </ul>
-        </div>
-        
-        <div class="self-hosting-note">
-            <p><strong>💡 Did you know?</strong> Registry is also available for self-hosting!</p>
-            <p>Download the open-source version for complete data control, unlimited customization, and no monthly fees.</p>
-            <a href="https://github.com/perigrin/Registry" target="_blank" rel="noopener" class="self-hosting-link">
-                Learn about self-hosting options →
-            </a>
         </div>
     </div>
 
     <div class="trial-info">
-        <h3>What Happens Next</h3>
+        <h3>What You Get</h3>
         <div class="trial-features">
             <div class="feature-grid">
                 <div class="feature">
-                    <span class="icon">✅</span>
-                    <strong>Full access</strong> to all Registry features
+                    <span class="icon">&#x2705;</span>
+                    <strong>Full access</strong> to all features for 30 days
                 </div>
                 <div class="feature">
-                    <span class="icon">💳</span>
+                    <span class="icon">&#x1F4B3;</span>
                     <strong>No credit card</strong> required to start
                 </div>
                 <div class="feature">
-                    <span class="icon">🔄</span>
-                    <strong>Cancel anytime</strong> during your trial
+                    <span class="icon">&#x1F3A8;</span>
+                    <strong>Your own enrollment page</strong> for parents to find you
                 </div>
                 <div class="feature">
-                    <span class="icon">📞</span>
-                    <strong>Support included</strong> to help you get started
+                    <span class="icon">&#x1F4B0;</span>
+                    <strong>Payment processing</strong> built right in
                 </div>
             </div>
         </div>
         <p class="trial-terms">
-            <small>After your 30-day trial, your subscription will be $200/month. You can cancel at any time before the trial ends with no charges.</small>
+            <small>After your 30-day trial, plans start at $200/month. Cancel anytime before the trial ends with no charges.</small>
         </p>
     </div>
 
-    <div class="support-info">
-        <h3>Need Help?</h3>
-        <p>Our team is here to help you every step of the way.</p>
-        <ul class="support-options">
-            <li>📧 Email: <a href="mailto:support@registry.com">support@registry.com</a></li>
-        </ul>
-    </div>
-
     <div class="getting-started">
-        <h3>Ready to Transform Your Program Management?</h3>
-        <p>Registry is designed to streamline your after-school programs, improve family communication, and boost operational efficiency.</p>
-        
+        <h3>Ready to Build Your Empire?</h3>
+        <p>Tiny Art Empire handles enrollment, payments, scheduling, and attendance so you can focus on teaching art.</p>
+
         <form method="POST" action="<%= $action %>" class="start-form">
             <button type="submit" class="btn btn-primary btn-xl">
-                Let's Get Started →
+                Let's Build Your Empire &#x2192;
             </button>
         </form>
     </div>
 </div>
-
-<!-- CSS moved to registry.css for proper caching -->

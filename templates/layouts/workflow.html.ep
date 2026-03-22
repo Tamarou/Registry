@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title><%= title || 'Registry Workflow' %></title>
+    <title><%= title || 'Tiny Art Empire' %></title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -17,7 +17,7 @@
 <body data-layout="workflow" data-theme="light">
     <!-- Navigation bar -->
     <nav class="workflow-nav">
-        <div class="workflow-logo">REGISTRY</div>
+        <div class="workflow-logo">TINY ART EMPIRE</div>
         <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
             <span id="theme-icon">🌙</span>
         </button>

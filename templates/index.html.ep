@@ -1,11 +1,11 @@
 % layout 'default';
-% title 'Registry - After-School Program Management Made Simple';
+% title 'Tiny Art Empire - Streamline Your Art Teaching Business';
 % stash no_container => 1;
 
 % content_for 'head' => begin
   <!-- SEO Meta Tags -->
-  <meta name="description" content="Streamline your after-school programs with Registry. Manage registrations, track attendance, handle payments, and communicate with families. 30-day free trial.">
-  <meta name="keywords" content="after-school programs, registration software, program management, student tracking, attendance, payments, school administration, enrollment system">
+  <meta name="description" content="Build your Tiny Art Empire. Manage enrollment, payments, scheduling, and attendance for your after-school art programs so you can get back to the studio.">
+  <meta name="keywords" content="after-school art programs, art teaching business, ceramics classes, pottery workshops, art education, enrollment management, NCECA, program management">
   <meta name="robots" content="index, follow">
   <meta name="language" content="en-US">
   <link rel="canonical" href="<%= url_for('/')->to_abs %>">
@@ -13,21 +13,19 @@
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="<%= url_for('/')->to_abs %>">
-  <meta property="og:title" content="Registry - After-School Program Management Software">
-  <meta property="og:description" content="Complete solution for managing after-school programs. Registration, attendance, payments, and parent communication in one platform.">
+  <meta property="og:title" content="Tiny Art Empire - Streamline Your Art Teaching Business">
+  <meta property="og:description" content="You already teach art. Now streamline the business side so you can spend more time in the studio.">
   <meta property="og:image" content="<%= url_for('/images/registry-social-preview.png')->to_abs %>">
 
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image">
   <meta property="twitter:url" content="<%= url_for('/')->to_abs %>">
-  <meta property="twitter:title" content="Registry - After-School Program Management">
-  <meta property="twitter:description" content="Streamline your after-school programs with comprehensive management tools.">
+  <meta property="twitter:title" content="Tiny Art Empire - More Studio Time, Less Paperwork">
+  <meta property="twitter:description" content="Manage enrollment, payments, and attendance for your art programs. Built for working artists.">
   <meta property="twitter:image" content="<%= url_for('/images/registry-twitter-card.png')->to_abs %>">
 
   <!-- Performance optimizations -->
   <link rel="preconnect" href="https://js.stripe.com" crossorigin>
-  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
   <!-- Note: All landing page styles now in /css/design-system.css and /css/components.css -->
 
@@ -36,39 +34,30 @@
   {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    "name": "Registry",
-    "description": "Complete after-school program management software solution",
+    "name": "Tiny Art Empire",
+    "description": "Program management software for art educators running after-school programs",
     "url": "<%= url_for('/')->to_abs %>",
     "applicationCategory": "BusinessApplication",
     "operatingSystem": "Web Browser",
     "offers": {
       "@type": "Offer",
-      "price": "200.00",
+      "price": "0",
       "priceCurrency": "USD",
-      "priceValidUntil": "2025-12-31",
-      "availability": "https://schema.org/InStock",
-      "description": "Monthly subscription with 30-day free trial"
+      "description": "30-day free trial"
     },
     "provider": {
       "@type": "Organization",
-      "name": "Registry",
-      "url": "<%= url_for('/')->to_abs %>",
-      "contactPoint": {
-        "@type": "ContactPoint",
-        "email": "support@registry.com",
-        "contactType": "Customer Support"
-      }
+      "name": "Super Awesome Cool Pottery",
+      "url": "<%= url_for('/')->to_abs %>"
     },
     "featureList": [
-      "Student Registration Management",
-      "Attendance Tracking",
+      "Online Enrollment",
       "Payment Processing",
-      "Parent Communication",
+      "Attendance Tracking",
+      "Schedule Management",
       "Waitlist Management",
-      "Staff Scheduling",
-      "Reporting and Analytics"
-    ],
-    "screenshot": "<%= url_for('/images/registry-screenshot.png')->to_abs %>"
+      "Parent Communication"
+    ]
   }
   </script>
 % end
@@ -83,91 +72,90 @@
 
   <!-- Navigation -->
   <nav class="landing-nav">
-    <div class="landing-logo">Registry</div>
+    <div class="landing-logo">Tiny Art Empire</div>
     <button class="landing-theme-toggle" onclick="toggleLandingTheme()" aria-label="Toggle theme">
-      <span id="landing-theme-icon">🌙</span>
+      <span id="landing-theme-icon">&#x1F319;</span>
     </button>
   </nav>
 
   <!-- Hero Section -->
   <section class="landing-hero" role="banner" aria-labelledby="hero-title">
-    <h1 id="hero-title">After-School Program Management Made Simple</h1>
+    <h1 id="hero-title">Build Your Tiny Art Empire</h1>
     <p class="landing-hero-subtitle">
-      Streamline registrations, track attendance, manage payments, and communicate with families—all in one powerful platform designed specifically for after-school programs.
+      You already teach art. Now streamline the business side -- enrollment, payments,
+      scheduling, attendance -- so you can spend the other half of your time in the studio.
     </p>
     <div class="landing-cta-container">
       <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button" data-variant="success">
-        Get Started Free - No Setup Fees
-      </a>
-      <a href="#features" class="landing-cta-button landing-cta-secondary" data-variant="secondary">
-        Explore Features
+        Start Your Tiny Art Empire
       </a>
     </div>
-    <p class="landing-trial-info">30-day free trial • No credit card • Cancel anytime • Setup in 5 minutes</p>
-    <div class="landing-social-proof">
-      <p>
-        <strong>Join 500+ programs</strong> already transforming their management with Registry
-        <span style="margin-left: 1rem;">⭐ 4.9/5 from program directors</span>
-      </p>
-    </div>
+    <p class="landing-trial-info">30-day free trial &#x2022; No credit card required &#x2022; Setup in 5 minutes</p>
   </section>
 
   <!-- Features Section -->
   <section id="features" class="landing-features" role="main" aria-labelledby="features-title">
     <div class="landing-features-container">
-      <h2 id="features-title">Everything You Need to Run Successful Programs</h2>
+      <h2 id="features-title">What Tiny Art Empire Handles For You</h2>
       <div class="landing-features-grid">
         <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">📝</span>
-          <h3 class="landing-feature-title">Easy Registration</h3>
-          <p class="landing-feature-subtitle">Streamlined Workflows</p>
+          <span class="landing-feature-icon" aria-hidden="true">&#x1F4CB;</span>
+          <h3 class="landing-feature-title">Enrollment Made Simple</h3>
           <p class="landing-feature-description">
-            Streamlined registration workflows that handle complex family structures, multiple children, and custom program requirements.
+            Parents sign up online. You get notified. No more paper forms,
+            phone tag, or lost registrations.
           </p>
         </article>
         <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">💳</span>
-          <h3 class="landing-feature-title">Payment Processing</h3>
-          <p class="landing-feature-subtitle">Secure Transactions</p>
+          <span class="landing-feature-icon" aria-hidden="true">&#x1F4B3;</span>
+          <h3 class="landing-feature-title">Get Paid On Time</h3>
           <p class="landing-feature-description">
-            Secure payment processing with flexible pricing plans, automatic billing, and comprehensive financial reporting.
+            Families pay online. You get paid automatically.
+            No more chasing checks.
           </p>
         </article>
         <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">📊</span>
-          <h3 class="landing-feature-title">Attendance Tracking</h3>
-          <p class="landing-feature-subtitle">Real-Time Monitoring</p>
+          <span class="landing-feature-icon" aria-hidden="true">&#x2705;</span>
+          <h3 class="landing-feature-title">Know Who Shows Up</h3>
           <p class="landing-feature-description">
-            Real-time attendance management with mobile-friendly interfaces for staff and automated parent notifications.
+            Track attendance with a tap. Parents get notified
+            automatically. You always know who is in your classroom.
           </p>
         </article>
         <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">💬</span>
-          <h3 class="landing-feature-title">Family Communication</h3>
-          <p class="landing-feature-subtitle">Built-in Messaging</p>
+          <span class="landing-feature-icon" aria-hidden="true">&#x1F4C5;</span>
+          <h3 class="landing-feature-title">Your Schedule, Organized</h3>
           <p class="landing-feature-description">
-            Built-in messaging system to keep families informed with program updates, announcements, and direct communication.
-          </p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">📋</span>
-          <h3 class="landing-feature-title">Waitlist Management</h3>
-          <p class="landing-feature-subtitle">Automated Processing</p>
-          <p class="landing-feature-description">
-            Automated waitlist processing with email notifications and seamless enrollment when spots become available.
-          </p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">👥</span>
-          <h3 class="landing-feature-title">Staff Management</h3>
-          <p class="landing-feature-subtitle">Role-Based Access</p>
-          <p class="landing-feature-description">
-            Role-based access control for administrators, staff, and instructors with customizable permissions and workflows.
+            Manage classes, waitlists, and capacity in one place.
+            Fill every spot without the headache.
           </p>
         </article>
       </div>
     </div>
   </section>
+
+  <!-- Studio Time Section -->
+  <section class="landing-features" aria-labelledby="studio-title">
+    <div class="landing-features-container" style="text-align: center;">
+      <h2 id="studio-title">More Time in the Studio</h2>
+      <p style="max-width: 700px; margin: 0 auto 2rem; font-size: 1.25rem; line-height: 1.8; color: var(--landing-text-secondary);">
+        You got into teaching art because you love it. But the business side --
+        enrollment spreadsheets, payment reminders, attendance tracking -- eats
+        into your studio time. Tiny Art Empire handles all of that so you can
+        get back to making art.
+      </p>
+      <div class="landing-cta-container">
+        <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button" data-variant="success">
+          Start Your Tiny Art Empire
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer style="text-align: center; padding: 2rem; color: var(--landing-text-secondary); font-size: 0.875rem;">
+    <p>A <strong>Super Awesome Cool Pottery</strong> project</p>
+  </footer>
 </div>
 
 <script>
@@ -181,7 +169,7 @@
     // Set theme on both landing-page and body for proper CSS variable inheritance
     landingPage.setAttribute('data-landing-theme', newTheme);
     document.body.setAttribute('data-theme', newTheme);
-    icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+    icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
 
     // Save preference
     localStorage.setItem('landing-theme', newTheme);
@@ -201,33 +189,33 @@
       // Set theme on both landing-page and body for proper CSS variable inheritance
       landingPage.setAttribute('data-landing-theme', theme);
       document.body.setAttribute('data-theme', theme);
-      icon.textContent = theme === 'light' ? '🌙' : '☀️';
+      icon.textContent = theme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
     }
 
     // Listen for system theme changes (only if user hasn't manually set a preference)
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
       if (!localStorage.getItem('landing-theme')) {
-        const newTheme = e.matches ? 'dark' : 'light';
+        var newTheme = e.matches ? 'dark' : 'light';
         if (landingPage && icon) {
           // Set theme on both landing-page and body for proper CSS variable inheritance
           landingPage.setAttribute('data-landing-theme', newTheme);
           document.body.setAttribute('data-theme', newTheme);
-          icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+          icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
         }
       }
     });
   });
 
   // Add optimized parallax effect to floating shapes using requestAnimationFrame
-  let ticking = false;
+  var ticking = false;
   window.addEventListener('scroll', function() {
     if (!ticking) {
       window.requestAnimationFrame(function() {
-        const scrolled = window.pageYOffset;
-        const shapes = document.querySelectorAll('.landing-shape');
+        var scrolled = window.pageYOffset;
+        var shapes = document.querySelectorAll('.landing-shape');
 
         shapes.forEach(function(shape, index) {
-          const speed = index === 0 ? 0.5 : 0.3;
+          var speed = index === 0 ? 0.5 : 0.3;
           shape.style.transform = 'translateY(' + (scrolled * speed) + 'px)';
         });
         ticking = false;
@@ -235,19 +223,4 @@
       ticking = true;
     }
   });
-
-  // Smooth scroll for anchor links
-  document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
-    anchor.addEventListener('click', function(e) {
-      const href = this.getAttribute('href');
-      if (href !== '#') {
-        e.preventDefault();
-        const target = document.querySelector(href);
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth' });
-        }
-      }
-    });
-  });
 </script>
-
