@@ -72,8 +72,14 @@ subtest 'Error response has security headers' => sub {
 };
 
 subtest 'Redirect response has security headers' => sub {
-    # POST to workflow start typically redirects to next step
+    # Fetch the form first so that the CSRF token is in the session
+    $t->get_ok('/tenant-signup')->status_is(200);
+    my $csrf_input = $t->tx->res->dom->at('input[name="csrf_token"]');
+    my $token = $csrf_input ? $csrf_input->attr('value') : '';
+
+    # POST to workflow start with a valid CSRF token - should redirect to next step
     $t->post_ok( '/tenant-signup' => form => {
+        csrf_token        => $token,
         organization_name => 'Test Org',
         billing_email     => 'test@example.com',
     } )->status_is(302);

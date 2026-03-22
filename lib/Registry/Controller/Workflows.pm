@@ -344,7 +344,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             inline => qq{
                 <span class="subdomain-slug $status_class">$slug</span>.registry.com
                 <div class="subdomain-status $status_class">
-                    <span class="status-icon">} . ($is_available ? '✓' : '✗') . qq{</span>
+                    <span class="status-icon">} . ($is_available ? 'OK' : 'X') . qq{</span>
                     $status_text
                 </div>
             },

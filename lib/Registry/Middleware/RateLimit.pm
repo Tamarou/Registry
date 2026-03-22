@@ -7,12 +7,12 @@ package Registry::Middleware::RateLimit;
 
 # --- Configuration constants ---
 
-# Auth-sensitive route patterns (login, signup) - tighter limit
+# Credential-sensitive route patterns (login, password reset) - tighter limit.
+# Only paths where brute-forcing credentials is a meaningful threat belong here.
+# Signup/registration flows require many sequential requests per legitimate user
+# and should use the general (higher) limit instead.
 our @AUTH_PATHS = qw(
     login
-    signup
-    register
-    tenant-signup
     password
 );
 
@@ -27,15 +27,15 @@ our $AUTH_LIMIT      = 10;   # requests per window
 our $GENERAL_LIMIT   = 100;  # requests per window
 our $WINDOW_SECONDS  = 60;   # sliding window duration
 
-# Package-level store: { "$key" => { count => N, window_start => epoch } }
-# NOTE: This state is per-process and resets on server restart. For a
-# multi-process (prefork) deployment, a shared store such as Redis is needed.
-my %_counters;
+# Per-instance counter store: { "$key" => { count => N, window_start => epoch } }
+# Storing counters on the instance means each app instance starts with a fresh
+# slate, which keeps test runs isolated.  In a multi-process (prefork)
+# deployment a shared store such as Redis is needed for cross-worker consistency.
 
 # --- Public interface ---
 
 sub new ($class, %args) {
-    return bless {}, $class;
+    return bless { _counters => {} }, $class;
 }
 
 # Returns the rate-limit key for a request context.
@@ -68,39 +68,40 @@ sub _is_excluded ($class_or_self, $path) {
 
 # Evict expired entries to prevent unbounded memory growth.
 # Called on every request (cheap linear scan; fine for MVP load levels).
-sub _evict_expired ($class_or_self) {
-    my $now  = time();
-    my @keys = keys %_counters;
-    for my $key (@keys) {
-        if ($now - $_counters{$key}{window_start} >= $WINDOW_SECONDS) {
-            delete $_counters{$key};
+sub _evict_expired ($self) {
+    my $counters = $self->{_counters};
+    my $now      = time();
+    for my $key ( keys %$counters ) {
+        if ( $now - $counters->{$key}{window_start} >= $WINDOW_SECONDS ) {
+            delete $counters->{$key};
         }
     }
 }
 
 # Core check: increments counter and returns (allowed => bool, retry_after => seconds).
-sub check ($class_or_self, $key, $limit) {
-    my $now = time();
+sub check ($self, $key, $limit) {
+    my $now      = time();
+    my $counters = $self->{_counters};
 
-    $class_or_self->_evict_expired();
+    $self->_evict_expired();
 
-    my $entry = $_counters{$key};
+    my $entry = $counters->{$key};
 
-    if (!$entry || ($now - $entry->{window_start} >= $WINDOW_SECONDS)) {
+    if ( !$entry || ( $now - $entry->{window_start} >= $WINDOW_SECONDS ) ) {
         # Start a fresh window
-        $_counters{$key} = { count => 1, window_start => $now };
-        return (allowed => 1, retry_after => 0);
+        $counters->{$key} = { count => 1, window_start => $now };
+        return ( allowed => 1, retry_after => 0 );
     }
 
     $entry->{count}++;
 
-    if ($entry->{count} > $limit) {
-        my $retry_after = $WINDOW_SECONDS - ($now - $entry->{window_start});
+    if ( $entry->{count} > $limit ) {
+        my $retry_after = $WINDOW_SECONDS - ( $now - $entry->{window_start} );
         $retry_after = 1 if $retry_after < 1;
-        return (allowed => 0, retry_after => $retry_after);
+        return ( allowed => 0, retry_after => $retry_after );
     }
 
-    return (allowed => 1, retry_after => 0);
+    return ( allowed => 1, retry_after => 0 );
 }
 
 # Mojolicious before_dispatch hook handler.

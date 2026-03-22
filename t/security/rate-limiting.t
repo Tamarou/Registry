@@ -14,8 +14,9 @@ use Test::Registry::DB;
 my $test_db = Test::Registry::DB->new();
 local $ENV{DB_URL} = $test_db->uri;
 
-# NOTE: Rate limit counters are stored in-memory (package-level hash in
-# Registry::Middleware::RateLimit). State resets on server restart.
+# NOTE: Rate limit counters are stored in-memory on each RateLimit instance.
+# Each Registry app instance (and therefore each Test::Mojo instance) has its
+# own counter store.  State resets on server restart.
 # This is acceptable for MVP; a persistent store (Redis) would be needed
 # for multi-process deployments.
 

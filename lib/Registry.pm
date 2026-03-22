@@ -217,7 +217,7 @@ class Registry :isa(Mojolicious) {
                     return 1 if $user_role eq $allowed;
                 }
 
-                # Wrong role — send 403
+                # Wrong role - send 403
                 if (   $c->req->headers->header('X-Requested-With')
                     || ( $c->req->headers->accept // '' ) =~ m{application/json} )
                 {
