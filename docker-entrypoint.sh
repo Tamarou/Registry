@@ -8,9 +8,13 @@ set -e
 # Function to deploy database schema (only for web service)
 deploy_schema() {
     echo "Deploying database schema..."
-    if [ -n "$SQITCH_TARGET" ]; then
-        echo "Using sqitch target: ${SQITCH_TARGET%:*}:****"
-        if sqitch deploy "$SQITCH_TARGET"; then
+    # Use SQITCH_TARGET if set, otherwise derive from DB_URL.
+    # Sqitch requires db:pg:// URIs, not postgresql:// — convert if needed.
+    local target="${SQITCH_TARGET:-$DB_URL}"
+    target="${target/#postgresql:/db:pg:}"
+    if [ -n "$target" ]; then
+        echo "Using sqitch target: ${target%%@*}@****"
+        if sqitch deploy "$target"; then
             echo "Database schema deployed successfully"
         else
             echo "Warning: Database schema deployment failed"
