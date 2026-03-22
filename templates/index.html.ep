@@ -14,15 +14,18 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="<%= url_for('/')->to_abs %>">
   <meta property="og:title" content="Tiny Art Empire - Streamline Your Art Teaching Business">
-  <meta property="og:description" content="You already teach art. Now streamline the business side so you can spend more time in the studio.">
-  <meta property="og:image" content="<%= url_for('/images/registry-social-preview.png')->to_abs %>">
+  <meta property="og:description" content="You're an artist who wants to teach. Streamline the business so you can focus more time on the art.">
+  <meta property="og:image" content="<%= url_for('/images/social-preview.svg')->to_abs %>">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="Tiny Art Empire">
 
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image">
   <meta property="twitter:url" content="<%= url_for('/')->to_abs %>">
   <meta property="twitter:title" content="Tiny Art Empire - More Studio Time, Less Paperwork">
   <meta property="twitter:description" content="Manage enrollment, payments, and attendance for your art programs. Built for working artists.">
-  <meta property="twitter:image" content="<%= url_for('/images/registry-twitter-card.png')->to_abs %>">
+  <meta property="twitter:image" content="<%= url_for('/images/social-preview.svg')->to_abs %>">
 
   <!-- Performance optimizations -->
   <link rel="preconnect" href="https://js.stripe.com" crossorigin>
