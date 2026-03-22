@@ -83,7 +83,7 @@
     <h1 id="hero-title">Build Your Tiny Art Empire</h1>
     <p class="landing-hero-subtitle">
       You already teach art. Now streamline the business side -- enrollment, payments,
-      scheduling, attendance -- so you can spend the other half of your time in the studio.
+      scheduling, attendance -- so you can spend more time on your art.
     </p>
     <div class="landing-cta-container">
       <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button" data-variant="success">
