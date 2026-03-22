@@ -10,7 +10,7 @@ deploy_schema() {
     echo "Deploying database schema..."
     if [ -n "$SQITCH_TARGET" ]; then
         echo "Using sqitch target: ${SQITCH_TARGET%:*}:****"
-        if sqitch deploy; then
+        if sqitch deploy "$SQITCH_TARGET"; then
             echo "Database schema deployed successfully"
         else
             echo "Warning: Database schema deployment failed"
