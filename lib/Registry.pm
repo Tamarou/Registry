@@ -13,10 +13,19 @@ use Registry::Command::workflow;
 
 class Registry :isa(Mojolicious) {
     our $VERSION = v0.001;
-    use Sys::Hostname qw( hostname );
-    use YAML::XS      qw(Load);
+    use Sys::Hostname            qw( hostname );
+    use YAML::XS                 qw(Load);
+    use Registry::Utility::Logger;
 
     method startup {
+        # Replace default Mojolicious logger with structured JSON logger.
+        # Level defaults to the LOG_LEVEL environment variable, falling back to 'info'.
+        $self->log(
+            Registry::Utility::Logger->new(
+                level => $ENV{LOG_LEVEL} // 'info'
+            )
+        );
+
         $self->secrets( [hostname] );
 
         # Configure proper UTF-8 handling
