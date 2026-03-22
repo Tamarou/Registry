@@ -6,9 +6,9 @@
     <title><%= title // 'Teacher Dashboard' %> - Registry</title>
 
     <!-- Design System CSS -->
-    <link rel="stylesheet" href="/css/design-system.css">
-    <link rel="stylesheet" href="/css/components.css">
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="<%= static_url %>/css/design-system.css">
+    <link rel="stylesheet" href="<%= static_url %>/css/components.css">
+    <link rel="stylesheet" href="<%= static_url %>/css/style.css">
 
     <!-- HTMX for dynamic interactions -->
     <script src="https://unpkg.com/htmx.org@1.8.4"></script>
