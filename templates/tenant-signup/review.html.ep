@@ -1,9 +1,8 @@
 % extends 'layouts/workflow';
 % title 'Review Your Setup';
 
-% my $data = stash('data') || {};
-% my $profile = $data->{profile} || {};
-% my $team = $data->{team} || {};
+% my $profile = stash('profile') || {};
+% my $team = stash('team') || {};
 % my $admin = $team->{admin} || {};
 % my $team_members = $team->{team_members} || [];
 % my $errors = stash('errors') || [];
