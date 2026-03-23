@@ -673,3 +673,66 @@ footer {
         width: 100%;
     }
 }
+
+/* ========================================================================
+   Workflow Content Legibility Overrides
+   Ensures headings and layout elements are readable in both themes.
+   These rules use high specificity to win over structure.css/style.css.
+   ======================================================================== */
+
+/* All headings inside workflow content cards: solid readable color */
+section[data-component="workflow-content"] h2,
+section[data-component="workflow-content"] h3,
+section[data-component="workflow-content"] h4 {
+    color: var(--text-primary);
+    -webkit-text-fill-color: var(--text-primary);
+    background: none;
+}
+
+/* Step layout: number circle beside text, not stacked */
+section[data-component="workflow-content"] .step {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-bottom: 1.25rem;
+}
+
+section[data-component="workflow-content"] .step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    min-width: 2.5rem;
+    background: var(--gradient-1);
+    color: white;
+    border-radius: 50%;
+    font-family: 'Chelsea Market', cursive;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+section[data-component="workflow-content"] .step-content h4 {
+    margin: 0 0 0.25rem 0;
+    color: var(--text-primary);
+    -webkit-text-fill-color: var(--text-primary);
+}
+
+section[data-component="workflow-content"] .step-content p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+/* Feature grid inside workflow cards */
+section[data-component="workflow-content"] .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+/* Trial terms text */
+section[data-component="workflow-content"] .trial-terms {
+    color: var(--text-secondary);
+    margin-top: 1rem;
+}
