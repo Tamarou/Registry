@@ -81,7 +81,9 @@
 /* Typography */
 body,
 .landing-page {
-    font-family: 'Crimson Text', serif;
+    font-family: 'Cormorant', serif;
+    font-weight: 300;
+    font-size: 1.1rem;
 }
 
 h1, h2, h3,
@@ -276,7 +278,7 @@ body[data-layout="workflow"]::after {
 
 /* Workflow layout body styling */
 body[data-layout="workflow"] {
-    font-family: 'Crimson Text', serif;
+    font-family: 'Cormorant', serif;
     background: var(--bg-primary);
     color: var(--text-primary);
     overflow-x: hidden;
