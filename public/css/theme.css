@@ -93,11 +93,11 @@
     --landing-grid-color: var(--grid-color);
 
     /* --- Typography --- */
-    --font-family-body: 'Cormorant', serif;
+    --font-family-body: 'Alegreya Sans', sans-serif;
     --font-family-heading: 'Chelsea Market', cursive;
 
     /* Legacy single font-family token (points to body face) */
-    --font-family: 'Cormorant', serif;
+    --font-family: 'Alegreya Sans', sans-serif;
 
     --font-size-xs: 0.75rem;
     --font-size-sm: 0.875rem;
