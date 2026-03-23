@@ -9,10 +9,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chelsea+Market&family=Cormorant:ital,wght@0,300;0,400;0,700;1,300;1,400&display=swap" rel="stylesheet">
 
-    <!-- Design System CSS -->
-    <link rel="stylesheet" href="<%= static_url %>/css/design-system.css">
-    <link rel="stylesheet" href="<%= static_url %>/css/components.css">
-    <link rel="stylesheet" href="<%= static_url %>/css/style.css">
+    <!-- CSS -->
+    <link rel="stylesheet" href="<%= static_url %>/css/theme.css">
+    <link rel="stylesheet" href="<%= static_url %>/css/app.css">
 
     <meta name="csrf-token" content="<%= csrf_token %>">
     <%= content 'head' %>

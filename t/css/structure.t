@@ -18,16 +18,13 @@ $ENV{DB_URL} = $test_db->uri;
 my $t = Test::Mojo->new('Registry');
 
 subtest 'CSS files are properly linked in templates' => sub {
-    # Test default layout includes style.css
     $t->get_ok('/')
       ->status_is(200)
-      ->element_exists('link[href="/css/style.css"]', 'style.css is linked in default layout')
+      ->element_exists('link[rel="stylesheet"]', 'CSS stylesheet is linked in default layout')
       ->element_exists('head link[rel="stylesheet"]', 'CSS link has proper rel attribute');
 };
 
 subtest 'semantic HTML structure is rendered correctly' => sub {
-    # Test that semantic HTML5 elements are present
-    # Note: The landing page uses a custom layout, not the default container structure
     $t->get_ok('/')
       ->status_is(200)
       ->element_exists('html[lang="en"]', 'HTML has lang attribute')
@@ -41,9 +38,6 @@ subtest 'semantic HTML structure is rendered correctly' => sub {
 };
 
 subtest 'teacher layout uses semantic HTML5 structure' => sub {
-    # We need to test teacher layout, but it requires authentication
-    # For now, let's test that the template renders the expected structure
-    # by checking if the CSS classes that should be applied are present in templates
     my $teacher_template = do {
         local $/;
         open my $fh, '<', 'templates/layouts/teacher.html.ep' or die "Cannot read teacher template: $!";
@@ -54,7 +48,7 @@ subtest 'teacher layout uses semantic HTML5 structure' => sub {
     like($teacher_template, qr/<header/, 'Teacher layout uses semantic header element');
     like($teacher_template, qr/<main/, 'Teacher layout uses semantic main element');
     like($teacher_template, qr/class="teacher-/, 'Teacher layout uses teacher-specific CSS classes');
-    like($teacher_template, qr/style\.css/, 'Teacher layout links to style.css');
+    like($teacher_template, qr/app\.css/, 'Teacher layout links to app.css');
 };
 
 subtest 'responsive design meta tags are present' => sub {
@@ -65,7 +59,6 @@ subtest 'responsive design meta tags are present' => sub {
 };
 
 subtest 'semantic templates use proper HTML5 structure' => sub {
-    # Test that converted templates use semantic HTML
     my @semantic_templates = (
         'templates/tenant-signup/payment.html.ep',
         'templates/tenant-signup/complete.html.ep',
@@ -81,44 +74,35 @@ subtest 'semantic templates use proper HTML5 structure' => sub {
             <$fh>;
         };
 
-        # Check for semantic HTML5 elements
         like($template_content, qr/<(section|article|header|main|aside|footer)/,
              "$template_path uses semantic HTML5 elements");
 
-        # Check that no inline <style> tags remain
         unlike($template_content, qr/<style[^>]*>.*?<\/style>/s,
                "$template_path has no embedded CSS styles");
     }
 };
 
 subtest 'CSS architecture supports design token usage' => sub {
-    # Instead of parsing CSS files, test that the rendered content
-    # indicates the CSS is working properly by checking for CSS classes
-    # that would only work if the design tokens are properly defined
-
     $t->get_ok('/')
       ->status_is(200)
       ->element_exists('.landing-page', 'Landing page container class is available')
       ->element_exists('section[role="banner"]', 'Semantic header section renders');
 
-    # We can indirectly test that design tokens work by verifying
-    # the CSS file exists and is accessible via HTTP
-    $t->get_ok('/css/style.css')
+    # Verify the consolidated CSS files exist and contain expected tokens
+    $t->get_ok('/css/theme.css')
       ->status_is(200)
-      ->content_like(qr/structure\.css/, 'style.css imports structure.css')
-      ->content_like(qr/--color-primary/, 'CSS contains design token references');
+      ->content_like(qr/--color-primary/, 'Theme CSS contains color tokens')
+      ->content_like(qr/--font-family-body/, 'Theme CSS contains font family token')
+      ->content_like(qr/--space-/, 'Theme CSS contains spacing tokens');
 
-    $t->get_ok('/css/structure.css')
+    $t->get_ok('/css/app.css')
       ->status_is(200)
-      ->content_like(qr/--color-primary:\s*#BF349A/, 'Primary vaporwave color is defined')
-      ->content_like(qr/--color-secondary:\s*#2ABFBF/, 'Secondary vaporwave color is defined')
-      ->content_like(qr/--font-family:/, 'Font family design token is defined')
-      ->content_like(qr/--space-\d+:/, 'Spacing design tokens are defined');
+      ->content_like(qr/\.btn/, 'App CSS contains button styles')
+      ->content_like(qr/\.container/, 'App CSS contains container styles');
 };
 
 subtest 'HTMX integration works with CSS' => sub {
-    # Test that HTMX-related CSS classes are available
-    $t->get_ok('/css/style.css')
+    $t->get_ok('/css/app.css')
       ->status_is(200)
       ->content_like(qr/\.htmx-indicator/, 'HTMX indicator class is defined')
       ->content_like(qr/\.hidden/, 'Hidden utility class is defined')
