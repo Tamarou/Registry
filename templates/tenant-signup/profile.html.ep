@@ -1,13 +1,8 @@
 % extends 'layouts/workflow';
 % title 'Organization Profile';
+% stash description => "Let's set up your organization. This information will be used for billing and to create your custom Registry subdomain.";
 
 <section data-component="container">
-  <header>
-    <h1>Organization Profile</h1>
-    <p>
-      Let's set up your organization. This information will be used for billing and to create your custom Registry subdomain.
-    </p>
-  </header>
 
   <form method="POST" action="<%= $action %>" data-multistep="true">
 

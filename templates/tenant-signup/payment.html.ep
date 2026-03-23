@@ -1,4 +1,6 @@
 % extends 'layouts/workflow';
+% title 'Complete Your Registry Setup';
+% stash description => "Add a payment method to activate your 30-day free trial. You won't be charged until your trial ends.";
 % my $data = stash('data') || {};
 % my $billing = $data->{billing_summary} || {};
 % my $config = $data->{subscription_config} || {};
@@ -8,13 +10,6 @@
 % my $retry_delay = $data->{retry_delay} || 0;
 
 <section class="payment-step">
-    <header class="step-header">
-        <h2>Complete Your Registry Setup</h2>
-        <p class="step-description">
-            Add a payment method to activate your 30-day free trial.
-            You won't be charged until your trial ends.
-        </p>
-    </header>
 
     % if (@$errors) {
         <div class="alert alert-error" role="alert">

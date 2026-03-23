@@ -1,17 +1,12 @@
 % extends 'layouts/workflow';
 % title 'Choose Your Plan';
+% stash description => "Select the Registry plan that best fits your organization's needs. You can upgrade or downgrade at any time.";
 % my $data = stash('data') || {};
 % my $pricing_plans = $data->{pricing_plans} || [];
 % my $org_info = $data->{organization_info} || {};
 % my $errors = stash('errors') || [];
 
 <section data-component="container">
-  <header>
-    <h1>Choose Your Plan</h1>
-    <p>
-      Select the Registry plan that best fits your organization's needs. You can upgrade or downgrade at any time.
-    </p>
-  </header>
 
   % if (@$errors) {
     <div data-component="alert" data-variant="error" role="alert">
