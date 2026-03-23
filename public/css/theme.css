@@ -77,6 +77,21 @@
     --glow-color: rgba(255, 0, 255, 0.3);
     --grid-color: rgba(157, 78, 221, 0.1);
 
+    /* --- Landing page aliases (used by app.css landing components) --- */
+    --landing-bg-primary: var(--bg-primary);
+    --landing-bg-secondary: var(--bg-secondary);
+    --landing-text-primary: var(--text-primary);
+    --landing-text-secondary: var(--text-secondary);
+    --landing-accent-pink: var(--accent-pink);
+    --landing-accent-cyan: var(--accent-cyan);
+    --landing-accent-purple: var(--accent-purple);
+    --landing-accent-blue: var(--accent-blue);
+    --landing-gradient-1: var(--gradient-1);
+    --landing-gradient-2: var(--gradient-2);
+    --landing-card-bg: var(--card-bg);
+    --landing-glow-color: var(--glow-color);
+    --landing-grid-color: var(--grid-color);
+
     /* --- Typography --- */
     --font-family-body: 'Cormorant', serif;
     --font-family-heading: 'Chelsea Market', cursive;
@@ -162,6 +177,21 @@
     --card-bg: rgba(26, 8, 41, 0.85);
     --glow-color: rgba(255, 0, 255, 0.5);
     --grid-color: rgba(157, 78, 221, 0.2);
+
+    /* --- Landing page aliases (used by app.css landing components) --- */
+    --landing-bg-primary: var(--bg-primary);
+    --landing-bg-secondary: var(--bg-secondary);
+    --landing-text-primary: var(--text-primary);
+    --landing-text-secondary: var(--text-secondary);
+    --landing-accent-pink: var(--accent-pink);
+    --landing-accent-cyan: var(--accent-cyan);
+    --landing-accent-purple: var(--accent-purple);
+    --landing-accent-blue: var(--accent-blue);
+    --landing-gradient-1: var(--gradient-1);
+    --landing-gradient-2: var(--gradient-2);
+    --landing-card-bg: var(--card-bg);
+    --landing-glow-color: var(--glow-color);
+    --landing-grid-color: var(--grid-color);
 
     /* Semantic tokens mapped to dark values */
     --color-text-primary: #ffffff;
