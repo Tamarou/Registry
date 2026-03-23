@@ -43,7 +43,7 @@ subtest 'Workflow index page includes layout' => sub {
       ->element_exists('html', 'Has HTML element')
       ->element_exists('head', 'Has HEAD element')
       ->element_exists('head meta[charset="utf-8"]', 'Has UTF-8 charset meta tag')
-      ->element_exists('head link[rel="stylesheet"][href="/css/structure.css"]', 'Has structure.css link')
+      ->element_exists('head link[rel="stylesheet"][href="/css/theme.css"]', 'Has theme.css link')
       ->element_exists('body[data-layout="workflow"]', 'Has workflow layout body attribute')
       ->element_exists('main[data-component="workflow-container"]', 'Has workflow container')
       ->element_exists('script[src*="htmx.org"]', 'Has HTMX script')
@@ -73,7 +73,7 @@ subtest 'Workflow step page includes layout' => sub {
       ->element_exists('html', 'Step page has HTML element')
       ->element_exists('head', 'Step page has HEAD element')
       ->element_exists('head meta[charset="utf-8"]', 'Step page has UTF-8 charset')
-      ->element_exists('head link[rel="stylesheet"][href="/css/structure.css"]', 'Step page has CSS')
+      ->element_exists('head link[rel="stylesheet"][href="/css/theme.css"]', 'Step page has CSS')
       ->element_exists('body[data-layout="workflow"]', 'Step page has workflow layout')
       ->element_exists('main[data-component="workflow-container"]', 'Step page has workflow container')
       ->content_like(qr/<!DOCTYPE html>/i, 'Step page has DOCTYPE');

@@ -32,7 +32,7 @@ subtest 'Enhanced completion step template exists' => sub {
     # Check that mobile responsive CSS exists in CSS files
     my $css_content = do {
         local $/;
-        open my $css_fh, '<', 'public/css/style.css' or die "Cannot read style.css: $!";
+        open my $css_fh, '<', 'public/css/app.css' or die "Cannot read app.css: $!";
         <$css_fh>;
     };
     like($css_content, qr/\@media.*max-width.*768px/, 'Template includes mobile responsive CSS');

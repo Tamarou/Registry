@@ -19,24 +19,24 @@ my $t = Test::Mojo->new(Registry->new(db => $dao));
 
 subtest 'CSS assets are served and contain design tokens' => sub {
     # Test that CSS files are properly served via HTTP
-    $t->get_ok('/css/structure.css')
+    $t->get_ok('/css/theme.css')
       ->status_is(200)
       ->content_type_is('text/css')
-      ->content_like(qr/--color-primary:\s*#BF349A/, 'Structure CSS contains vaporwave primary color')
-      ->content_like(qr/--color-secondary:\s*#2ABFBF/, 'Structure CSS contains vaporwave secondary color');
+      ->content_like(qr/--color-primary:\s*#BF349A/, 'Theme CSS contains vaporwave primary color')
+      ->content_like(qr/--color-secondary:\s*#2ABFBF/, 'Theme CSS contains vaporwave secondary color');
 
-    $t->get_ok('/css/style.css')
+    $t->get_ok('/css/app.css')
       ->status_is(200)
       ->content_type_is('text/css')
-      ->content_like(qr/\@import.*structure\.css/, 'Style CSS imports structure CSS');
+      ->content_like(qr/\.htmx-indicator/, 'App CSS contains component styles');
 };
 
 subtest 'rendered HTML consistency between pages' => sub {
-    # Test landing page renders without embedded CSS (uses default layout with style.css)
+    # Test landing page renders without embedded CSS (uses default layout with theme.css + app.css)
     $t->get_ok('/')
       ->status_is(200)
       ->content_type_is('text/html;charset=UTF-8')
-      ->content_like(qr/<link[^>]*href="[^"]*css\/style\.css"/, 'Landing page links to style.css')
+      ->content_like(qr/<link[^>]*href="[^"]*css\/theme\.css"/, 'Landing page links to theme.css')
       ->content_unlike(qr/<style[^>]*>/, 'Landing page has no embedded CSS')
       ->content_like(qr/data-variant="success"/, 'Landing page uses semantic data attributes for buttons');
 
@@ -61,20 +61,20 @@ subtest 'rendered HTML consistency between pages' => sub {
 
 subtest 'vaporwave color scheme validation' => sub {
     # Use Mojo::File for proper file reading
-    my $structure_css = Mojo::File->new('public/css/structure.css')->slurp;
-    my $style_css = Mojo::File->new('public/css/style.css')->slurp;
+    my $theme_css = Mojo::File->new('public/css/theme.css')->slurp;
+    my $app_css = Mojo::File->new('public/css/app.css')->slurp;
 
-    # Verify vaporwave design tokens in structure.css
-    like($structure_css, qr/--color-primary:\s*#BF349A/, 'Structure CSS defines vaporwave primary color');
-    like($structure_css, qr/--color-primary-dark:\s*#8C2771/, 'Structure CSS defines vaporwave primary-dark color');
-    like($structure_css, qr/--color-secondary:\s*#2ABFBF/, 'Structure CSS defines vaporwave secondary color');
+    # Verify vaporwave design tokens in theme.css
+    like($theme_css, qr/--color-primary:\s*#BF349A/, 'Theme CSS defines vaporwave primary color');
+    like($theme_css, qr/--color-primary-dark:\s*#8C2771/, 'Theme CSS defines vaporwave primary-dark color');
+    like($theme_css, qr/--color-secondary:\s*#2ABFBF/, 'Theme CSS defines vaporwave secondary color');
 
-    # Verify style.css imports structure.css
-    like($style_css, qr/\@import.*structure\.css/, 'Style.css imports structure.css for design tokens');
+    # Verify app.css contains component styles
+    like($app_css, qr/\.htmx-indicator/, 'App CSS contains component styles');
 
     # Test that CSS is served correctly with proper vaporwave colors
-    $t->get_ok('/css/structure.css')
-      ->content_like(qr/#BF349A/, 'Served CSS contains vaporwave magenta')
-      ->content_like(qr/#8C2771/, 'Served CSS contains vaporwave purple')
-      ->content_like(qr/#2ABFBF/, 'Served CSS contains vaporwave cyan');
+    $t->get_ok('/css/theme.css')
+      ->content_like(qr/#BF349A/, 'Served theme CSS contains vaporwave magenta')
+      ->content_like(qr/#8C2771/, 'Served theme CSS contains vaporwave purple')
+      ->content_like(qr/#2ABFBF/, 'Served theme CSS contains vaporwave cyan');
 };

@@ -28,7 +28,7 @@ my %vaporwave_colors = (
 
 subtest 'vaporwave colors served via HTTP CSS' => sub {
     # Test that CSS files are properly served and contain vaporwave colors
-    $t->get_ok('/css/structure.css')
+    $t->get_ok('/css/theme.css')
       ->status_is(200)
       ->content_type_is('text/css')
       ->content_like(qr/#BF349A/i, 'Magenta color #BF349A served in CSS')
@@ -37,11 +37,11 @@ subtest 'vaporwave colors served via HTTP CSS' => sub {
       ->content_like(qr/#2ABFBF/i, 'Cyan color #2ABFBF served in CSS')
       ->content_like(qr/#29A6A6/i, 'Teal color #29A6A6 served in CSS');
 
-    # Verify that style.css also provides access to these colors (via import)
-    $t->get_ok('/css/style.css')
+    # Verify that app.css contains component styles
+    $t->get_ok('/css/app.css')
       ->status_is(200)
       ->content_type_is('text/css')
-      ->content_like(qr/\@import.*structure\.css/, 'Style.css imports structure.css for vaporwave colors');
+      ->content_like(qr/\.htmx-indicator/, 'App CSS contains component styles');
 };
 
 subtest 'vaporwave theme via rendered HTML pages' => sub {
@@ -49,11 +49,11 @@ subtest 'vaporwave theme via rendered HTML pages' => sub {
     $t->get_ok('/')
       ->status_is(200)
       ->content_type_is('text/html;charset=UTF-8')
-      ->content_like(qr/<link[^>]*href="[^"]*css\/style\.css"/, 'Landing page links to vaporwave CSS architecture')
+      ->content_like(qr/<link[^>]*href="[^"]*css\/theme\.css"/, 'Landing page links to theme CSS')
       ->content_unlike(qr/<style[^>]*>/, 'Landing page uses external CSS (not embedded) for vaporwave theme');
 
     # Test that vaporwave color variables are defined in the served CSS
-    $t->get_ok('/css/structure.css')
+    $t->get_ok('/css/theme.css')
       ->content_like(qr/--color-primary:\s*#BF349A/, 'Primary vaporwave color defined as CSS variable')
       ->content_like(qr/--color-secondary:\s*#2ABFBF/, 'Secondary vaporwave color defined as CSS variable')
       ->content_like(qr/--color-primary-dark:\s*#8C2771/, 'Dark vaporwave color defined as CSS variable');
@@ -61,12 +61,12 @@ subtest 'vaporwave theme via rendered HTML pages' => sub {
 
 subtest 'vaporwave accessibility via HTTP CSS' => sub {
     # Test that accessibility text colors are served via HTTP
-    $t->get_ok('/css/structure.css')
+    $t->get_ok('/css/theme.css')
       ->content_like(qr/--color-text-primary/, 'Text color variables served for accessibility')
       ->content_like(qr/--color-text-secondary/, 'Secondary text color variables served for accessibility');
 
     # Use Mojo::File only for detailed CSS content analysis when needed
-    my $css_content = Mojo::File->new('public/css/structure.css')->slurp;
+    my $css_content = Mojo::File->new('public/css/theme.css')->slurp;
     my $has_accessible_text = $css_content =~ /--color-text-primary/ &&
                              $css_content =~ /--color-text-secondary/;
 

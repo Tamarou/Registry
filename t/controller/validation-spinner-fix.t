@@ -19,29 +19,29 @@ my $t = Test::Mojo->new(Registry->new(db => $dao));
 
 subtest 'spinner CSS served via HTTP' => sub {
     # Test that spinner CSS is properly served via HTTP
-    $t->get_ok('/css/style.css')
+    $t->get_ok('/css/app.css')
       ->status_is(200)
       ->content_type_is('text/css')
       ->content_like(qr/\.htmx-indicator[^{]*\{[^}]*display:\s*none/, 'Default hidden spinner state served via HTTP CSS');
 
-    # Also check structure.css for spinner styles
-    $t->get_ok('/css/structure.css')
+    # Also check theme.css for design tokens
+    $t->get_ok('/css/theme.css')
       ->status_is(200)
       ->content_type_is('text/css');
 
     # Use Mojo::File to verify spinner behavior is defined
-    my $css_content = Mojo::File->new('public/css/style.css')->slurp;
+    my $css_content = Mojo::File->new('public/css/app.css')->slurp;
     like($css_content, qr/\.htmx-indicator/, 'Spinner styles defined in CSS architecture');
 };
 
 subtest 'spinner behavior via HTTP CSS validation' => sub {
     # Test spinner behavior states via HTTP
-    $t->get_ok('/css/style.css')
+    $t->get_ok('/css/app.css')
       ->content_like(qr/\.htmx-indicator\s*\{[^}]*display:\s*none/, 'Hidden default state served via HTTP')
       ->content_like(qr/\.htmx-indicator\.(htmx-request|active)/, 'Active spinner state defined in served CSS');
 
     # Use Mojo::File for detailed behavior verification
-    my $css_content = Mojo::File->new('public/css/style.css')->slurp;
+    my $css_content = Mojo::File->new('public/css/app.css')->slurp;
 
     my $has_hidden_default = $css_content =~ /\.htmx-indicator\s*\{[^}]*display:\s*none/;
     my $has_active_state = $css_content =~ /\.htmx-indicator\.(htmx-request|active)\s*\{[^}]*display:\s*(flex|block)/ ||

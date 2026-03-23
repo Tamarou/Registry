@@ -67,7 +67,7 @@ subtest "Mobile Responsive Templates" => sub {
     # Check that CSS file contains touch-friendly button styles
     my $css_content = do {
         local $/;
-        open my $fh, '<', 'public/css/style.css' or die "Cannot read style.css: $!";
+        open my $fh, '<', 'public/css/app.css' or die "Cannot read app.css: $!";
         <$fh>;
     };
     like($css_content, qr/font-size:\s*16px/, 'Teacher layout has touch-friendly button sizes');
