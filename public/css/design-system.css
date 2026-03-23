@@ -81,7 +81,7 @@
 /* Typography */
 body,
 .landing-page {
-    font-family: 'Nunito', sans-serif;
+    font-family: 'Crimson Text', serif;
 }
 
 h1, h2, h3,
@@ -276,7 +276,7 @@ body[data-layout="workflow"]::after {
 
 /* Workflow layout body styling */
 body[data-layout="workflow"] {
-    font-family: 'Nunito', sans-serif;
+    font-family: 'Crimson Text', serif;
     background: var(--bg-primary);
     color: var(--text-primary);
     overflow-x: hidden;
