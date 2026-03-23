@@ -70,7 +70,7 @@ main[data-component="workflow-container"] {
    2. NAVIGATION
    ============================================================================ */
 
-/* Primary landing page navigation */
+/* Primary landing page navigation - z-index 1000 ensures it sits above all page content (fixes #127) */
 .landing-nav {
   position: fixed;
   top: 0;
@@ -78,14 +78,14 @@ main[data-component="workflow-container"] {
   padding: 1.5rem 2rem;
   background: var(--landing-card-bg);
   backdrop-filter: blur(10px);
-  z-index: 100;
+  z-index: 1000;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 2px solid var(--landing-glow-color);
 }
 
-/* Workflow navigation */
+/* Workflow navigation - z-index 1000 ensures it sits above all page content on mobile (fixes #127) */
 body[data-layout="workflow"] nav.workflow-nav {
   position: fixed;
   top: 0;
@@ -93,7 +93,7 @@ body[data-layout="workflow"] nav.workflow-nav {
   padding: 1rem 2rem;
   background: var(--card-bg);
   backdrop-filter: blur(10px);
-  z-index: 100;
+  z-index: 1000;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -789,10 +789,11 @@ legend {
   -webkit-text-fill-color: transparent;
 }
 
+/* Feature card grid: 2x2 by default, 4-across on wide screens (fixes #132 - 4th card orphan) */
 .landing-features-grid,
 .features-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 2rem;
 }
 
@@ -1920,14 +1921,20 @@ footer {
     font-size: 2rem;
   }
 
+  /* Single column on mobile for landing feature cards (fixes #132 - 2x2 default is too narrow on small screens) */
+  .landing-features-grid,
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+
   .feature-grid {
     grid-template-columns: 1fr;
     gap: var(--space-6);
   }
 
-  /* Workflow containers */
+  /* Workflow containers - 5.5rem top margin ensures content clears the sticky nav on mobile (fixes #127) */
   main[data-component="workflow-container"] {
-    margin-top: 5rem;
+    margin-top: 5.5rem;
     padding: 1rem;
   }
 
@@ -2007,5 +2014,13 @@ footer {
   .form-row {
     flex-direction: column;
     gap: var(--space-3);
+  }
+}
+
+/* Wide desktop: feature cards go 4-across (fixes #132 - complements the 2x2 default grid) */
+@media (min-width: 1280px) {
+  .landing-features-grid,
+  .features-grid {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
