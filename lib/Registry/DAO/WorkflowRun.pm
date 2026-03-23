@@ -64,9 +64,20 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
             encode_json($new_data), $id
         )->expand->hash;
 
+        croak "WorkflowRun id=$id not found during update_data" unless $result;
+
         # Update the in-memory field with the authoritative merged result
         $data = $result->{data};
     }
+
+    # Keys returned by workflow steps that are control-flow signals, not
+    # persistent domain data. These are stripped before merging into the
+    # run's JSONB data column to prevent transient metadata from polluting
+    # the workflow state.
+    my @TRANSIENT_KEYS = qw(
+        next_step errors data _validation_errors
+        retry_count retry_delay retry_exceeded should_retry
+    );
 
     method process ( $db, $step, $new_data = {} ) {
         unless ( $step isa Registry::DAO::WorkflowStep ) {
@@ -77,13 +88,26 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
         my $step_result = $step->process( $db, $new_data );
 
+        # Don't persist validation errors or advance the step pointer on
+        # failure. The controller inspects these keys and redirects; the
+        # user retries the same step.
+        if ($step_result->{_validation_errors} || $step_result->{errors}) {
+            return $step_result;
+        }
+
+        # Strip transient control-flow keys so only domain data is persisted.
+        my %to_persist = %$step_result;
+        delete @to_persist{@TRANSIENT_KEYS};
+
         # Atomic merge of step data + advance latest_step_id in a single query.
         # Avoids the race where a crash between two separate UPDATEs could leave
         # data updated but latest_step_id stale.
         my $result = $db->query(
             'UPDATE workflow_runs SET data = COALESCE(data, \'{}\'::jsonb) || ?::jsonb, latest_step_id = ? WHERE id = ? RETURNING data, latest_step_id',
-            encode_json($step_result), $step->id, $id
+            encode_json(\%to_persist), $step->id, $id
         )->expand->hash;
+
+        croak "WorkflowRun id=$id not found during process" unless $result;
 
         $data = $result->{data};
         $latest_step_id = $result->{latest_step_id};

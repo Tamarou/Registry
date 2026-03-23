@@ -50,7 +50,7 @@ subtest 'Subscription configuration' => sub {
     my $config = $payment_step->get_subscription_config($db);
     
     ok($config, 'Configuration returned');
-    is($config->{plan_name}, 'Registry Professional', 'Plan name correct');
+    is($config->{plan_name}, 'Seed', 'Plan name correct');
     is($config->{monthly_amount}, 20000, 'Monthly amount is $200.00');
     is($config->{currency}, 'usd', 'Currency is USD');
     is($config->{trial_days}, 30, 'Trial period is 30 days');
@@ -102,10 +102,10 @@ subtest 'Initial payment page process' => sub {
 
 subtest 'Retry logic' => sub {
     plan tests => 4;
-    
+
     my $run = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
-        data => encode_json({})
+        data => {}
     });
     
     is($payment_step->get_retry_count($run), 0, 'Initial retry count is 0');

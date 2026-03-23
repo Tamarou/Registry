@@ -1,12 +1,17 @@
 % extends 'layouts/workflow';
 % title 'Complete Your Registry Setup';
-% stash description => "Add a payment method to activate your 30-day free trial. You won't be charged until your trial ends.";
 % my $billing = stash('billing_summary') || {};
 % my $config = stash('subscription_config') || {};
+% my $trial_days = $config->{trial_days} // 30;
 % my $errors = stash('errors') || [];
 % my $retry_count = stash('retry_count') || 0;
 % my $retry_exceeded = stash('retry_exceeded') || 0;
 % my $retry_delay = stash('retry_delay') || 0;
+% my $show_payment_form = stash('show_payment_form') || 0;
+% my $stripe_publishable_key = stash('stripe_publishable_key') || '';
+% my $client_secret = stash('client_secret') || '';
+% my $setup_intent_id = stash('setup_intent_id') || '';
+% stash description => "Add a payment method to activate your ${\ $trial_days}-day free trial. You won't be charged until your trial ends.";
 
 <section class="payment-step">
 
@@ -55,7 +60,7 @@
                 <h4><%= $config->{plan_name} %></h4>
                 <div class="price">
                     <span class="amount"><%= $config->{formatted_price} %></span>
-                    <span class="trial">30-day free trial</span>
+                    <span class="trial"><%= $trial_days %>-day free trial</span>
                 </div>
 
                 <section class="features">
@@ -70,16 +75,16 @@
 
             <section class="trial-info">
                 <div class="trial-notice">
-                    <strong>Free for 30 days</strong><br>
+                    <strong>Free for <%= $trial_days %> days</strong><br>
                     Your trial starts immediately. Cancel anytime before
-                    <%= DateTime->now->add(days => 30)->strftime('%B %d, %Y') %>
+                    <%= DateTime->now->add(days => $trial_days)->strftime('%B %d, %Y') %>
                     to avoid being charged.
                 </div>
             </section>
         </aside>
 
         <section class="payment-form-container">
-            % unless ($data->{show_payment_form}) {
+            % unless ($show_payment_form) {
                 <form method="post" action="<%= url_for 'workflow_process_step' %>">
                     <input type="hidden" name="collect_payment_method" value="1">
                     <!-- Test mode fields for automated testing -->
@@ -116,11 +121,17 @@
                     </form>
                 </div>
 
+                <div id="stripe-config"
+                     data-key="<%= $stripe_publishable_key %>"
+                     data-secret="<%= $client_secret %>"
+                     data-intent="<%= $setup_intent_id %>"
+                     style="display:none"></div>
                 <script src="https://js.stripe.com/v3/"></script>
                 <script>
-                    const stripe = Stripe('<%= $data->{stripe_publishable_key} %>');
+                    const stripeConfig = document.getElementById('stripe-config').dataset;
+                    const stripe = Stripe(stripeConfig.key);
                     const elements = stripe.elements({
-                        clientSecret: '<%= $data->{client_secret} %>'
+                        clientSecret: stripeConfig.secret
                     });
 
                     const paymentElement = elements.create('payment');
@@ -161,7 +172,7 @@
                             spinner.classList.add('hidden');
                         } else {
                             // Setup succeeded, submit to server
-                            const setupIntentId = '<%= $data->{setup_intent_id} %>';
+                            const setupIntentId = stripeConfig.intent;
                             
                             // Submit to server via standard form POST
                             var form = document.createElement('form');
@@ -209,20 +220,34 @@
                             errorDiv = document.createElement('div');
                             errorDiv.id = 'payment-error-display';
                             errorDiv.className = 'payment-error';
-                            
+
+                            // Build DOM nodes to avoid innerHTML XSS risk
+                            const content = document.createElement('div');
+                            content.className = 'error-content';
+
+                            const icon = document.createElement('div');
+                            icon.className = 'error-icon';
+                            icon.textContent = '\u26A0\uFE0F';
+
+                            const msg = document.createElement('div');
+                            msg.className = 'error-message';
+
+                            const dismiss = document.createElement('button');
+                            dismiss.className = 'error-dismiss';
+                            dismiss.textContent = '\u00D7';
+                            dismiss.addEventListener('click', () => { errorDiv.style.display = 'none'; });
+
+                            content.append(icon, msg, dismiss);
+                            errorDiv.appendChild(content);
+
                             const paymentForm = document.getElementById('payment-form');
                             paymentForm.parentNode.insertBefore(errorDiv, paymentForm);
                         }
-                        
-                        errorDiv.innerHTML = `
-                            <div class="error-content">
-                                <div class="error-icon">⚠️</div>
-                                <div class="error-message">${message}</div>
-                                <button class="error-dismiss" onclick="this.parentElement.parentElement.style.display='none'">×</button>
-                            </div>
-                        `;
+
+                        // Set message text safely via textContent
+                        errorDiv.querySelector('.error-message').textContent = message;
                         errorDiv.style.display = 'block';
-                        
+
                         // Auto-hide after 10 seconds
                         setTimeout(() => {
                             if (errorDiv) {

@@ -264,11 +264,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
         my $result = $run->process( $dao->db, $step, $data );
         
-        # Check for validation errors
-        if ($result->{_validation_errors}) {
+        # Check for validation errors from workflow steps.
+        # Steps may use either '_validation_errors' or 'errors' key.
+        my $validation_errors = $result->{_validation_errors} || $result->{errors};
+        if ($validation_errors) {
             # Store errors in flash for retrieval on redirect
-            $self->flash(validation_errors => $result->{_validation_errors});
-            
+            $self->flash(validation_errors => $validation_errors);
+
             return $self->redirect_to($self->url_for);
         }
 

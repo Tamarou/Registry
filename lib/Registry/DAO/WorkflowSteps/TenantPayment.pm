@@ -151,7 +151,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             plan_name => $selected_plan->{plan_name},
             monthly_amount => $selected_plan->{amount},
             currency => lc($selected_plan->{currency} || 'usd'),
-            trial_days => $config->{trial_days} || 30,
+            trial_days => $config->{trial_days} // 30,
             description => $config->{description} || $selected_plan->{plan_name},
             features => $config->{features} || [],
             billing_cycle => $config->{billing_cycle} || 'monthly',
