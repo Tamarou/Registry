@@ -1,9 +1,8 @@
 % extends 'layouts/workflow';
 % title 'Choose Your Plan';
-% stash description => "Select the Registry plan that best fits your organization's needs. You can upgrade or downgrade at any time.";
-% my $data = stash('data') || {};
-% my $pricing_plans = $data->{pricing_plans} || [];
-% my $org_info = $data->{organization_info} || {};
+% stash description => "Choose the plan that fits where you are today. You can upgrade or downgrade at any time.";
+% my $pricing_plans = stash('pricing_plans') || [];
+% my $org_info = stash('organization_info') || {};
 % my $errors = stash('errors') || [];
 
 <section data-component="container">
@@ -25,7 +24,7 @@
           <p>Admin: <%= $org_info->{admin_email} %></p>
         % }
         % if ($org_info->{subdomain}) {
-          <p>URL: <strong><%= $org_info->{subdomain} %>.registry.com</strong></p>
+          <p>URL: <strong><%= $org_info->{subdomain} %>.tinyartempire.com</strong></p>
         % }
       </div>
     </div>

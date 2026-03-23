@@ -11,9 +11,6 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
     use Carp qw(croak);
 
     method process($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
-
         # Check if plan selection was submitted
         unless (exists $form_data->{selected_plan_id}) {
             # Show plan selection page (unless we're in auto-select mode for workflow testing)
@@ -57,19 +54,23 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
             };
         }
 
-        # Store selected plan in workflow data
-        $run->update_data($db, {
+        # Return selected plan data for WorkflowRun::process to persist.
+        # The run's update_data merges this into the accumulated workflow data.
+        return {
             selected_pricing_plan => {
                 id => $selected_plan->id,
                 plan_name => $selected_plan->plan_name,
-                amount => int($selected_plan->amount),  # Convert to integer
+                amount => int($selected_plan->amount),
                 currency => $selected_plan->currency,
                 pricing_configuration => $selected_plan->pricing_configuration
             }
-        });
+        };
+    }
 
-        # Move to next step (typically payment)
-        return {};
+    # Provide pricing plans and org info to the template via the controller's
+    # standard prepare_template_data interface
+    method prepare_template_data($db, $run) {
+        return $self->prepare_pricing_data($db);
     }
 
     method prepare_pricing_data($db) {

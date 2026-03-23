@@ -6,6 +6,8 @@
 % my $team = stash('team') || {};
 % my $admin = $team->{admin} || {};
 % my $team_members = $team->{team_members} || [];
+% my $selected_plan = stash('selected_plan') || {};
+% my $plan_config = $selected_plan->{pricing_configuration} || {};
 % my $errors = stash('errors') || [];
 
 <div class="review-step">
@@ -134,37 +136,43 @@
         <!-- Subscription Information -->
         <div class="review-section">
             <div class="section-header">
-                <h3>Subscription & Trial</h3>
-                <div class="pricing-badge">$200/month</div>
+                <h3>Your Plan</h3>
+                % if ($selected_plan->{plan_name}) {
+                    <div class="pricing-badge"><%= $selected_plan->{plan_name} %></div>
+                % }
             </div>
-            
+
             <div class="section-content">
                 <div class="subscription-details">
+                    % if ($plan_config->{description}) {
+                        <div class="plan-summary">
+                            <p><%= $plan_config->{description} %></p>
+                        </div>
+                    % }
+
                     <div class="trial-info">
-                        <h4>🎉 30-Day Free Trial</h4>
+                        <h4>30-Day Free Trial</h4>
                         <p>
-                            Your trial begins immediately after payment setup. 
-                            You won't be charged until <%= DateTime->now->add(days => 30)->strftime('%B %d, %Y') %>.
+                            Your trial begins immediately after setup.
+                            % my $trial_days = $plan_config->{trial_days} || 30;
+                            You won't be charged until <%= DateTime->now->add(days => $trial_days)->strftime('%B %d, %Y') %>.
                         </p>
                     </div>
-                    
-                    <div class="features-included">
-                        <h4>What's Included:</h4>
-                        <ul>
-                            <li>Unlimited student enrollments</li>
-                            <li>Complete program management suite</li>
-                            <li>Parent communication system</li>
-                            <li>Attendance tracking and reporting</li>
-                            <li>Payment processing integration</li>
-                            <li>Custom branding and domain support</li>
-                            <li>Priority email support</li>
-                        </ul>
-                    </div>
-                    
+
+                    % if ($plan_config->{features} && @{$plan_config->{features}}) {
+                        <div class="features-included">
+                            <h4>What's Included:</h4>
+                            <ul>
+                                % for my $feature (@{$plan_config->{features}}) {
+                                    <li><%= $feature %></li>
+                                % }
+                            </ul>
+                        </div>
+                    % }
+
                     <div class="billing-terms">
                         <h4>Billing Terms:</h4>
                         <ul>
-                            <li>Monthly billing at $200 per month</li>
                             <li>Cancel anytime with 30 days notice</li>
                             <li>No setup fees or hidden charges</li>
                             <li>Full data export available upon cancellation</li>

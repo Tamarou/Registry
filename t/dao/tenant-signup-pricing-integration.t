@@ -124,17 +124,16 @@ subtest 'Full tenant signup integration test' => sub {
     is $enterprise_plan->{plan_name}, 'Registry Enterprise', 'Enterprise plan available';
     is $enterprise_plan->{amount}, 50000, 'Plan amount correct';
 
-    # Select the enterprise plan
-    my $selection_result = $pricing_step_obj->process($dao->db, {
+    # Select the enterprise plan through the run (which merges returned data)
+    my $selection_result = $run->process($dao->db, $pricing_step_obj, {
         selected_plan_id => $enterprise_plan->{id}
     });
 
-    ok !$selection_result->{errors}, 'No errors when selecting plan';
-    isnt $selection_result->{next_step}, $pricing_step->id, 'Moves to next step after selection';
+    ok !$selection_result->{_validation_errors}, 'No errors when selecting plan';
+    ok $selection_result->{selected_pricing_plan}, 'Moves to next step after selection';
 
     # Verify plan was stored in workflow data
-    my $updated_run = $workflow->latest_run($dao->db);
-    my $stored_plan = $updated_run->data->{selected_pricing_plan};
+    my $stored_plan = $run->data->{selected_pricing_plan};
 
     ok $stored_plan, 'Pricing plan stored in workflow data';
     is $stored_plan->{plan_name}, 'Registry Enterprise', 'Correct plan name stored';
@@ -153,7 +152,7 @@ subtest 'Full tenant signup integration test' => sub {
     like $payment_config->{description}, qr/Advanced features/, 'Payment uses selected plan description';
 
     # Test payment data preparation
-    my $payment_data = $payment_step_obj->prepare_payment_data($dao->db, $updated_run);
+    my $payment_data = $payment_step_obj->prepare_payment_data($dao->db, $run);
 
     ok $payment_data->{billing_summary}, 'Billing summary prepared';
     is $payment_data->{billing_summary}->{organization_name}, 'Test Enterprise Organization', 'Organization name correct';

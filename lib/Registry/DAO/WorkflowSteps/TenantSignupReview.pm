@@ -9,6 +9,8 @@ class Registry::DAO::WorkflowSteps::TenantSignupReview :isa(Registry::DAO::Workf
         my $raw_data = $run->data || {};
         
         # Structure the data for the review template
+        my $selected_plan = $raw_data->{selected_pricing_plan} || {};
+
         return {
             profile => {
                 name => $raw_data->{name} || $raw_data->{organization_name},
@@ -31,6 +33,7 @@ class Registry::DAO::WorkflowSteps::TenantSignupReview :isa(Registry::DAO::Workf
                 },
                 team_members => $raw_data->{team_members} || [],
             },
+            selected_plan => $selected_plan,
         };
     }
 
