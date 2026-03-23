@@ -30,7 +30,7 @@
   <!-- Performance optimizations -->
   <link rel="preconnect" href="https://js.stripe.com" crossorigin>
 
-  <!-- Note: All landing page styles now in /css/design-system.css and /css/components.css -->
+  <!-- Note: All styles in /css/theme.css (tokens) and /css/app.css (components) -->
 
   <!-- Schema.org structured data -->
   <script type="application/ld+json">

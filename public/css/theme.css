@@ -1,0 +1,450 @@
+/* ABOUTME: Consolidated theme file for Registry - design tokens, base typography, animations, and background effects */
+/* ABOUTME: Single source of truth for "what things look like": colors, fonts, spacing, and visual atmosphere */
+
+/* ========================================================================
+   CSS Custom Properties - Design Tokens
+   ======================================================================== */
+
+:root {
+
+    /* --- Colors: Vaporwave palette (light mode defaults) --- */
+    --color-primary: #BF349A;
+    --color-primary-hover: #A62A85;
+    --color-primary-light: #F7E8F2;
+    --color-primary-dark: #8C2771;
+
+    --color-secondary: #2ABFBF;
+    --color-secondary-hover: #29A6A6;
+    --color-secondary-light: #E0F7F7;
+
+    --color-success: #29A6A6;
+    --color-success-hover: #238C8C;
+    --color-success-light: #E0F4F4;
+    --color-success-rgb: 41, 166, 166;
+
+    --color-warning: #BF349A;
+    --color-warning-hover: #A62A85;
+    --color-warning-light: #F7E8F2;
+
+    --color-danger: #8C2771;
+    --color-danger-hover: #6B1D56;
+    --color-danger-light: #EDE4E9;
+
+    --color-info: #2ABFBF;
+    --color-info-hover: #238C8C;
+    --color-info-light: #E0F7F7;
+
+    /* --- Neutral grays (lavender-tinted) --- */
+    --color-white: #ffffff;
+    --color-gray-50: #E7DCF2;
+    --color-gray-100: #DFD2ED;
+    --color-gray-200: #D1C1E4;
+    --color-gray-300: #BFA7D6;
+    --color-gray-400: #9B7FC2;
+    --color-gray-500: #7D5BA6;
+    --color-gray-600: #634589;
+    --color-gray-700: #4A316D;
+    --color-gray-800: #321F51;
+    --color-gray-900: #1F0D35;
+
+    /* --- Semantic text colors --- */
+    --color-text-primary: var(--color-gray-900);
+    --color-text-secondary: var(--color-gray-700);
+    --color-text-muted: var(--color-gray-600);
+
+    /* --- Semantic background colors --- */
+    --color-bg-primary: var(--color-white);
+    --color-bg-secondary: var(--color-gray-50);
+    --color-bg-muted: var(--color-gray-100);
+
+    /* --- Border colors --- */
+    --color-border: var(--color-gray-200);
+    --color-border-light: var(--color-gray-100);
+    --color-border-dark: var(--color-gray-300);
+
+    /* --- Vaporwave accent tokens --- */
+    --bg-primary: #f0e6ff;
+    --bg-secondary: #fff5f5;
+    --text-primary: #2a1b3d;
+    --text-secondary: #44306e;
+    --accent-pink: #ff00ff;
+    --accent-cyan: #00ffff;
+    --accent-purple: #9d4edd;
+    --accent-blue: #7209b7;
+    --gradient-1: linear-gradient(135deg, #667eea 0%, #ff00ff 50%, #00ffff 100%);
+    --gradient-2: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+    --card-bg: rgba(255, 255, 255, 0.85);
+    --glow-color: rgba(255, 0, 255, 0.3);
+    --grid-color: rgba(157, 78, 221, 0.1);
+
+    /* --- Typography --- */
+    --font-family-body: 'Cormorant', serif;
+    --font-family-heading: 'Chelsea Market', cursive;
+
+    /* Legacy single font-family token (points to body face) */
+    --font-family: 'Cormorant', serif;
+
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    --font-size-2xl: 1.5rem;
+    --font-size-3xl: 1.875rem;
+    --font-size-4xl: 2.25rem;
+    --font-size-5xl: 3rem;
+
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    --line-height-tight: 1.25;
+    --line-height-normal: 1.5;
+    --line-height-relaxed: 1.75;
+
+    /* --- Spacing --- */
+    --space-0: 0;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-7: 1.75rem;
+    --space-8: 2rem;
+    --space-10: 2.5rem;
+    --space-12: 3rem;
+    --space-16: 4rem;
+    --space-20: 5rem;
+    --space-24: 6rem;
+
+    /* --- Border radius --- */
+    --radius-none: 0;
+    --radius-sm: 0.125rem;
+    --radius-base: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 0.75rem;
+    --radius-2xl: 1rem;
+    --radius-full: 9999px;
+
+    /* --- Shadows --- */
+    --shadow-sm:   0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-base: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-md:   0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg:   0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl:   0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+    /* --- Transitions --- */
+    --transition-fast: 150ms ease-in-out;
+    --transition-base: 250ms ease-in-out;
+    --transition-slow: 350ms ease-in-out;
+}
+
+/* ========================================================================
+   Dark Theme
+   [data-theme="dark"]         - canonical selector going forward
+   [data-landing-theme="dark"] - backward compat until templates are updated
+   ======================================================================== */
+
+[data-theme="dark"],
+[data-landing-theme="dark"] {
+    /* Vaporwave dark palette */
+    --bg-primary: #0a0014;
+    --bg-secondary: #1a0829;
+    --text-primary: #ffffff;
+    --text-secondary: #e0b3ff;
+    --accent-pink: #ff00ff;
+    --accent-cyan: #00ffff;
+    --accent-purple: #c77dff;
+    --accent-blue: #9d4edd;
+    --card-bg: rgba(26, 8, 41, 0.85);
+    --glow-color: rgba(255, 0, 255, 0.5);
+    --grid-color: rgba(157, 78, 221, 0.2);
+
+    /* Semantic tokens mapped to dark values */
+    --color-text-primary: #ffffff;
+    --color-text-secondary: #e0b3ff;
+    --color-text-muted: #c77dff;
+    --color-bg-primary: #0a0014;
+    --color-bg-secondary: #1a0829;
+    --color-bg-muted: #2a0d3e;
+    --color-border: rgba(157, 78, 221, 0.3);
+    --color-border-light: rgba(157, 78, 221, 0.15);
+    --color-border-dark: rgba(157, 78, 221, 0.5);
+}
+
+/* ========================================================================
+   Base Reset and Typography
+   ======================================================================== */
+
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    font-family: var(--font-family-body);
+    line-height: var(--line-height-normal);
+    -webkit-text-size-adjust: 100%;
+    -moz-tab-size: 4;
+    tab-size: 4;
+}
+
+body,
+.landing-page {
+    font-family: var(--font-family-body);
+    font-weight: 300;
+    font-size: 1.2rem;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6,
+.landing-logo,
+.workflow-logo,
+.logo {
+    font-family: var(--font-family-heading);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+    line-height: var(--line-height-tight);
+}
+
+a {
+    color: var(--color-primary);
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    transition: all var(--transition-fast);
+}
+
+a:hover {
+    color: var(--color-primary-hover);
+    text-decoration-color: currentColor;
+}
+
+a:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+strong {
+    font-weight: var(--font-weight-bold);
+}
+
+em {
+    font-style: italic;
+}
+
+small {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+}
+
+/* ========================================================================
+   Animations
+   One canonical copy of each keyframe - no landing- prefixes
+   ======================================================================== */
+
+/* Grid movement - creates the illusion of an infinite scrolling grid */
+@keyframes grid-move {
+    0%   { transform: translate(0, 0); }
+    100% { transform: translate(50px, 50px); }
+}
+
+/* Glow pulse - hero text and emphasis elements */
+@keyframes glow-pulse {
+    0%, 100% { filter: drop-shadow(0 0 20px var(--glow-color)); }
+    50%       { filter: drop-shadow(0 0 40px var(--glow-color)); }
+}
+
+/* Floating shapes - decorative background elements */
+@keyframes float-1 {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50%       { transform: translate(100px, -50px) rotate(180deg); }
+}
+
+@keyframes float-2 {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50%       { transform: translate(-80px, 30px) rotate(-180deg); }
+}
+
+/* Subtle float for workflow page pseudo-element shape */
+@keyframes float-subtle {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50%       { transform: translate(-50px, 30px) rotate(90deg); }
+}
+
+/* Spinner - rotating loading indicator */
+@keyframes spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Pulse - button attention animation using success color */
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(var(--color-success-rgb), 0.7); }
+    50%       { box-shadow: 0 0 0 10px rgba(var(--color-success-rgb), 0); }
+}
+
+/* ========================================================================
+   Background Effects - Grid
+   ======================================================================== */
+
+/* Dot grid - fixed, no animation (used on landing pages) */
+.grid-background,
+.landing-grid-background {
+    position: fixed;
+    top: -50px;
+    left: -50px;
+    width: calc(100% + 50px);
+    height: calc(100% + 50px);
+    background-color: var(--bg-primary);
+    background-image: radial-gradient(var(--grid-color) 1.5px, transparent 1.5px);
+    background-size: 30px 30px;
+    z-index: -2;
+    animation: grid-move 20s linear infinite;
+}
+
+/* Animated line grid used as pseudo-element on workflow layout body */
+body[data-layout="workflow"]::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    z-index: -2;
+    animation: grid-move 20s linear infinite;
+}
+
+/* ========================================================================
+   Background Effects - Floating Shapes
+   ======================================================================== */
+
+/* Container for floating decorative shapes */
+.floating-shapes,
+.landing-floating-shapes {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+/* Individual shape base style */
+.shape,
+.landing-shape {
+    position: absolute;
+    opacity: 0.3;
+}
+
+/* Shape 1 - blob, top-left */
+.shape-1,
+.landing-shape-1 {
+    width: 300px;
+    height: 300px;
+    background: var(--gradient-1);
+    border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+    top: 10%;
+    left: -150px;
+    animation: float-1 20s infinite ease-in-out;
+}
+
+/* Shape 2 - triangle, bottom-right */
+.shape-2,
+.landing-shape-2 {
+    width: 200px;
+    height: 200px;
+    background: var(--gradient-2);
+    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+    top: 60%;
+    right: -100px;
+    animation: float-2 15s infinite ease-in-out;
+}
+
+/* Subtle blob on workflow pages via body pseudo-element */
+body[data-layout="workflow"]::after {
+    content: '';
+    position: fixed;
+    width: 300px;
+    height: 300px;
+    background: var(--gradient-1);
+    border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+    top: 10%;
+    right: -100px;
+    opacity: 0.15;
+    z-index: -1;
+    animation: float-subtle 25s infinite ease-in-out;
+}
+
+/* ========================================================================
+   Noise Texture Overlay
+   ======================================================================== */
+
+/* Subtle sketchbook/paper feel on landing pages */
+.landing-page::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.04;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* ========================================================================
+   Accessibility
+   ======================================================================== */
+
+/* Screen-reader-only content */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ========================================================================
+   HTMX Loading State
+   ======================================================================== */
+
+/* Dim workflow content area while an HTMX request is in flight */
+.htmx-request section[data-component="workflow-content"] {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* ========================================================================
+   Responsive - Slow animations on mobile for performance
+   ======================================================================== */
+
+@media (max-width: 768px) {
+    .grid-background,
+    .landing-grid-background,
+    body[data-layout="workflow"]::before {
+        animation-duration: 30s;
+    }
+
+    .shape,
+    .landing-shape,
+    body[data-layout="workflow"]::after {
+        animation-duration: 30s;
+    }
+}
