@@ -176,11 +176,8 @@
         </script>
     <% } else { %>
         <!-- Initial Agreement Form -->
-        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>" 
-              class="bg-white shadow rounded-lg p-6"
-              hx-post="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>"
-              hx-target="body"
-              hx-indicator="#payment-loading">
+        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>"
+              class="bg-white shadow rounded-lg p-6">
             <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
             
             <% if ($ENV{STRIPE_SECRET_KEY}) { %>

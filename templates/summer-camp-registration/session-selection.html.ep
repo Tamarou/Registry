@@ -53,12 +53,8 @@
     <div id="form-container">
         <h1 class="text-3xl font-bold mb-6">Select Sessions for Your Children</h1>
     
-    <form action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
-          method="POST" class="space-y-6" 
-          hx-post="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>"
-          hx-target="#form-container"
-          hx-swap="outerHTML"
-          hx-indicator="#loading-spinner">
+    <form action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>"
+          method="POST" class="space-y-6">
         
         <% my $children = $run->data->{children} || []; %>
         <% my $program_type_id = $run->data->{program_type_id}; %>

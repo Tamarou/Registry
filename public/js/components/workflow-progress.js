@@ -236,12 +236,9 @@ class WorkflowProgress extends HTMLElement {
             }
 
             const stepElement = `
-                <${isCompleted && stepUrl ? 'a' : 'div'} 
-                    class="step ${stepClass}" 
+                <${isCompleted && stepUrl ? 'a' : 'div'}
+                    class="step ${stepClass}"
                     ${isCompleted && stepUrl ? `href="${stepUrl}"` : ''}
-                    ${isCompleted && stepUrl ? `hx-get="${stepUrl}"` : ''}
-                    ${isCompleted && stepUrl ? 'hx-target="body"' : ''}
-                    ${isCompleted && stepUrl ? 'hx-push-url="true"' : ''}
                     tabindex="${tabIndex}"
                     role="${isCompleted && stepUrl ? 'link' : 'text'}"
                     aria-label="${ariaLabel}"
@@ -275,11 +272,7 @@ class WorkflowProgress extends HTMLElement {
                 const target = e.target;
                 if (target.classList.contains('completed') && target.href) {
                     e.preventDefault();
-                    if (typeof htmx !== 'undefined') {
-                        htmx.ajax('GET', target.href, { target: 'body', swap: 'outerHTML' });
-                    } else {
-                        window.location.href = target.href;
-                    }
+                    window.location.href = target.href;
                 }
             }
         });
@@ -300,19 +293,7 @@ class WorkflowProgress extends HTMLElement {
                     bubbles: true
                 }));
 
-                // Use HTMX if available, otherwise fallback to regular navigation
-                if (typeof htmx !== 'undefined') {
-                    htmx.ajax('GET', target.href, { 
-                        target: 'body', 
-                        swap: 'outerHTML',
-                        headers: {
-                            'HX-Request': 'true',
-                            'HX-Current-URL': window.location.href
-                        }
-                    });
-                } else {
-                    window.location.href = target.href;
-                }
+                window.location.href = target.href;
             }
         });
     }

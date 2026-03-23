@@ -162,42 +162,6 @@ function removeMember(index) {
     }
 }
 
-// Form submission handling
-document.querySelector('.admin-user-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    // Collect all form data
-    const formData = new FormData();
-    
-    // Add admin user data
-    const adminFields = ['admin_name', 'admin_email', 'admin_username', 'admin_password', 'admin_user_type'];
-    adminFields.forEach(field => {
-        const input = document.getElementById(field);
-        if (input) {
-            formData.append(field, input.value);
-        }
-    });
-    
-    // Add team member data
-    const memberCards = document.querySelectorAll('.team-member-card');
-    memberCards.forEach((card, index) => {
-        const nameInput = card.querySelector(`input[name*="[name]"]`);
-        const emailInput = card.querySelector(`input[name*="[email]"]`);
-        const roleSelect = card.querySelector(`select[name*="[user_type]"]`);
-        
-        if (nameInput && nameInput.value.trim()) {
-            formData.append(`team_members[${index}][name]`, nameInput.value);
-            formData.append(`team_members[${index}][email]`, emailInput.value);
-            formData.append(`team_members[${index}][user_type]`, roleSelect.value);
-        }
-    });
-    
-    // Submit via HTMX
-    htmx.ajax('POST', '<%= $action %>', {
-        values: Object.fromEntries(formData.entries()),
-        target: 'body',
-        swap: 'outerHTML'
-    });
-});
+// Form submits normally via its action and method attributes
 </script>
 

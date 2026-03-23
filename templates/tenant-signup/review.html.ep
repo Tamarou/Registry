@@ -30,11 +30,8 @@
         <div class="review-section">
             <div class="section-header">
                 <h3>Organization Information</h3>
-                <a href="<%= url_for('workflow_step', step => 'profile') %>" 
-                   class="edit-btn" 
-                   hx-get="<%= url_for('workflow_step', step => 'profile') %>"
-                   hx-target="body"
-                   hx-swap="outerHTML">
+                <a href="<%= url_for('workflow_step', step => 'profile') %>"
+                   class="edit-btn">
                     Edit
                 </a>
             </div>
@@ -94,11 +91,8 @@
         <div class="review-section">
             <div class="section-header">
                 <h3>Team Setup</h3>
-                <a href="<%= url_for('workflow_step', step => 'users') %>" 
-                   class="edit-btn"
-                   hx-get="<%= url_for('workflow_step', step => 'users') %>"
-                   hx-target="body"
-                   hx-swap="outerHTML">
+                <a href="<%= url_for('workflow_step', step => 'users') %>"
+                   class="edit-btn">
                     Edit
                 </a>
             </div>
@@ -265,13 +259,9 @@
                 <p>Questions? <a href="mailto:support@registry.com">Contact Support</a></p>
             </div>
             
-            <button type="submit" 
-                    class="btn btn-primary btn-large" 
+            <button type="submit"
+                    class="btn btn-primary btn-large"
                     id="proceed-to-payment"
-                    hx-post="<%= url_for 'workflow_process_step' %>"
-                    hx-target="body"
-                    hx-swap="outerHTML"
-                    hx-indicator="#payment-spinner"
                     disabled>
                 <span class="btn-text">Complete Setup & Start Trial</span>
                 <span class="btn-arrow">→</span>

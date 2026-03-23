@@ -86,8 +86,7 @@
 
         <section class="payment-form-container">
             % unless ($data->{show_payment_form}) {
-                <form method="post" hx-post="<%= url_for 'workflow_process_step' %>"
-                      hx-target="#main-content" hx-swap="outerHTML">
+                <form method="post" action="<%= url_for 'workflow_process_step' %>">
                     <input type="hidden" name="collect_payment_method" value="1">
                     <!-- Test mode fields for automated testing -->
                     <input type="hidden" name="setup_intent_id" value="">
@@ -170,14 +169,25 @@
                             // Setup succeeded, submit to server
                             const setupIntentId = '<%= $data->{setup_intent_id} %>';
                             
-                            // Use HTMX to submit the completion
-                            htmx.ajax('POST', '<%= url_for 'workflow_process_step' %>', {
-                                values: { 
-                                    setup_intent_id: setupIntentId 
-                                },
-                                target: '#main-content',
-                                swap: 'outerHTML'
-                            });
+                            // Submit to server via standard form POST
+                            var form = document.createElement('form');
+                            form.method = 'POST';
+                            form.action = '<%= url_for 'workflow_process_step' %>';
+                            var input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = 'setup_intent_id';
+                            input.value = setupIntentId;
+                            form.appendChild(input);
+                            var csrfToken = document.querySelector('meta[name="csrf-token"]');
+                            if (csrfToken) {
+                                var csrfInput = document.createElement('input');
+                                csrfInput.type = 'hidden';
+                                csrfInput.name = 'csrf_token';
+                                csrfInput.value = csrfToken.getAttribute('content');
+                                form.appendChild(csrfInput);
+                            }
+                            document.body.appendChild(form);
+                            form.submit();
                         }
                     });
 
