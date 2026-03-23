@@ -36,10 +36,7 @@
     </div>
   % }
 
-  <form method="POST" action="<%= $action %>"
-        hx-post="<%= $action %>"
-        hx-target="#form-errors"
-        hx-indicator="#form-spinner">
+  <form method="POST" action="<%= $action %>">
 
     <div data-component="pricing-plans" data-layout="grid">
       % for my $plan (@$pricing_plans) {
