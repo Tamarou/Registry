@@ -70,14 +70,21 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="<%= static_url %>/js/components/workflow-progress.js"></script>
     <script>
-        // Inject CSRF token as a hidden field into every HTML form on this page.
-        // This ensures all form submissions include the token without requiring
-        // each template to be updated individually.
-        document.addEventListener('DOMContentLoaded', function () {
+        // Configure HTMX to include CSRF token in all requests
+        document.addEventListener('htmx:configRequest', function(event) {
+            var token = document.querySelector('meta[name="csrf-token"]');
+            if (token) {
+                event.detail.headers['X-CSRF-Token'] = token.getAttribute('content');
+            }
+        });
+
+        // Inject CSRF token as a hidden field into forms (including dynamically loaded ones).
+        // Safety net for standard-POST forms inside dynamically loaded content.
+        function injectCsrfTokens() {
             var token = document.querySelector('meta[name="csrf-token"]');
             if (!token) return;
             var tokenValue = token.getAttribute('content');
-            document.querySelectorAll('form').forEach(function (form) {
+            document.querySelectorAll('form').forEach(function(form) {
                 if (!form.querySelector('input[name="csrf_token"]')) {
                     var input = document.createElement('input');
                     input.type = 'hidden';
@@ -86,7 +93,10 @@
                     form.appendChild(input);
                 }
             });
-        });
+        }
+
+        document.addEventListener('DOMContentLoaded', injectCsrfTokens);
+        document.addEventListener('htmx:afterSwap', injectCsrfTokens);
     </script>
     <script>
         // Theme toggle functionality
