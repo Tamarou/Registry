@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
     use Registry::DAO::PricingPlan;
     use Registry::DAO::PricingRelationship;
     use Carp qw(croak);
+    use Registry::Utility::PriceFormat qw(format_price);
 
     use constant PLATFORM_UUID => '00000000-0000-0000-0000-000000000000';
 
@@ -95,7 +96,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
                 currency => $plan->currency,
                 pricing_configuration => $plan->pricing_configuration,
                 metadata => $plan->metadata,
-                formatted_price => $self->format_price($plan->amount, $plan->currency),
+                formatted_price => format_price($plan->amount, $plan->currency),
             };
         }
 
@@ -155,18 +156,6 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
             admin_email => $data->{admin_email} || $data->{billing_email} || '',
             subdomain => $data->{subdomain} || ''
         };
-    }
-
-    method format_price($amount_cents, $currency) {
-        $amount_cents //= 0;
-        $currency //= 'USD';
-        my $amount_dollars = $amount_cents / 100;
-
-        if ($currency eq 'USD') {
-            return sprintf('$%.0f', $amount_dollars);
-        }
-
-        return sprintf('%.0f %s', $amount_dollars, $currency);
     }
 
     method template { 'tenant-signup/pricing' }

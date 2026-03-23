@@ -54,19 +54,18 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     method update_data ( $db, $new_data ||= {} ) {
         croak "new data must be a hashref" unless ref $new_data eq 'HASH';
         $db = $db->db if $db isa Registry::DAO;
-        
-        # Get current data, properly parsed
-        my $current_data = $self->data();
-        
-        my $updated_data = { $current_data->%*, $new_data->%* };
-        $db->update(
-            $self->table,
-            { data      => { -json => $updated_data } },
-            { id        => $id }
-        );
-        
-        # Update the field with the merged data
-        $data = $updated_data;
+
+        # Atomic merge at the database level using PostgreSQL jsonb concatenation.
+        # This avoids the read-modify-write race where two concurrent requests
+        # could each read the same initial state, merge independently, and the
+        # second write would overwrite the first merge.
+        my $result = $db->query(
+            'UPDATE workflow_runs SET data = COALESCE(data, \'{}\'::jsonb) || ?::jsonb WHERE id = ? RETURNING data',
+            encode_json($new_data), $id
+        )->expand->hash;
+
+        # Update the in-memory field with the authoritative merged result
+        $data = $result->{data};
     }
 
     method process ( $db, $step, $new_data = {} ) {
@@ -74,14 +73,20 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
             $step = Registry::DAO::WorkflowStep->find( $db, { slug => $step } );
         }
 
-        # TODO we really should inline these two calls into a single query
-        $self->update_data( $db, $step->process( $db, $new_data ) );
-        ($latest_step_id) = $db->update(
-            $self->table,
-            { latest_step_id => $step->id },
-            { id             => $id },
-            { returning      => [qw(latest_step_id)] }
-        )->expand->hash->@{qw(latest_step_id)};
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $step_result = $step->process( $db, $new_data );
+
+        # Atomic merge of step data + advance latest_step_id in a single query.
+        # Avoids the race where a crash between two separate UPDATEs could leave
+        # data updated but latest_step_id stale.
+        my $result = $db->query(
+            'UPDATE workflow_runs SET data = COALESCE(data, \'{}\'::jsonb) || ?::jsonb, latest_step_id = ? WHERE id = ? RETURNING data, latest_step_id',
+            encode_json($step_result), $step->id, $id
+        )->expand->hash;
+
+        $data = $result->{data};
+        $latest_step_id = $result->{latest_step_id};
 
         return $data;
     }

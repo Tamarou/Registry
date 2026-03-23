@@ -12,6 +12,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use JSON qw(encode_json decode_json);
     use Carp qw(croak);
     use DateTime;
+    use Registry::Utility::PriceFormat qw(format_price);
 
     method process($db, $form_data) {
         my $workflow = $self->workflow($db);
@@ -140,7 +141,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                     'Custom reporting'
                 ],
                 billing_cycle => 'monthly',
-                formatted_price => '$200.00/month'
+                formatted_price => format_price(20000, 'USD', suffix => '/month')
             };
         }
 
@@ -154,19 +155,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             description => $config->{description} || $selected_plan->{plan_name},
             features => $config->{features} || [],
             billing_cycle => $config->{billing_cycle} || 'monthly',
-            formatted_price => $self->format_price_for_display($selected_plan->{amount}, $selected_plan->{currency})
+            formatted_price => format_price($selected_plan->{amount}, $selected_plan->{currency}, suffix => '/month')
         };
     }
 
-    method format_price_for_display($amount_cents, $currency) {
-        my $amount_dollars = $amount_cents / 100;
-
-        if (uc($currency) eq 'USD') {
-            return sprintf('$%.0f/month', $amount_dollars);
-        }
-
-        return sprintf('%.0f %s/month', $amount_dollars, uc($currency));
-    }
+    # Price formatting delegated to Registry::Utility::PriceFormat
 
     method create_setup_intent($db, $run, $form_data) {
         my $subscription_dao = Registry::DAO::Subscription->new(db => $db);

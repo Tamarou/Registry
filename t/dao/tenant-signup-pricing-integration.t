@@ -190,7 +190,7 @@ subtest 'Backwards compatibility test' => sub {
 
     is $legacy_config->{plan_name}, 'Seed', 'Falls back to default plan name';
     is $legacy_config->{monthly_amount}, 20000, 'Falls back to default amount';
-    is $legacy_config->{formatted_price}, '$200.00/month', 'Falls back to default price format';
+    is $legacy_config->{formatted_price}, '$200/month', 'Falls back to default price format';
 
     ok 1, 'Backwards compatibility maintained';
 };
