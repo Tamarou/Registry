@@ -96,6 +96,19 @@
     <p class="landing-trial-info">Free to start &#x2022; We only earn when you do &#x2022; Setup in 5 minutes</p>
   </section>
 
+  <!-- Product Screenshot -->
+  <section style="padding: 2rem; text-align: center;">
+    <div style="max-width: 500px; margin: 0 auto;">
+      <img src="<%= static_url %>/images/product-screenshot.png"
+           alt="Tiny Art Empire signup - set up your art teaching business in minutes"
+           style="width: 100%; border-radius: 16px; box-shadow: 0 20px 60px rgba(157, 78, 221, 0.3); border: 2px solid var(--landing-glow-color);"
+           loading="lazy">
+      <p style="margin-top: 1rem; font-size: 0.95rem; color: var(--landing-text-secondary); font-style: italic;">
+        Set up your program in minutes
+      </p>
+    </div>
+  </section>
+
   <!-- Features Section -->
   <section id="features" class="landing-features" role="main" aria-labelledby="features-title">
     <div class="landing-features-container">
