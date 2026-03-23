@@ -30,7 +30,7 @@
           <article data-component="card">
             <div>
               <span data-component="badge" data-variant="primary">
-                <span id="subdomain-slug">organization</span>.registry.com
+                <span id="subdomain-slug">organization</span>.tinyartempire.com
               </span>
               <p>Your families will access your programs at this URL. You can also set up a custom domain later.</p>
             </div>

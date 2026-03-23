@@ -328,7 +328,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         
         unless ($name) {
             return $self->render(
-                inline => '<span class="subdomain-slug">organization</span>.registry.com',
+                inline => '<span class="subdomain-slug">organization</span>.tinyartempire.com',
                 format => 'html'
             );
         }
@@ -342,7 +342,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         
         return $self->render(
             inline => qq{
-                <span class="subdomain-slug $status_class">$slug</span>.registry.com
+                <span class="subdomain-slug $status_class">$slug</span>.tinyartempire.com
                 <div class="subdomain-status $status_class">
                     <span class="status-icon">} . ($is_available ? 'OK' : 'X') . qq{</span>
                     $status_text
