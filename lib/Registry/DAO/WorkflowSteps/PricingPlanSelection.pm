@@ -37,9 +37,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
         # Check for empty or invalid plan ID
         if (!$selected_plan_id || $selected_plan_id eq '') {
             return {
-                next_step => $self->id,
-                errors => ['Please select a pricing plan.'],
-                data => $self->prepare_pricing_data($db)
+                _validation_errors => ['Please select a pricing plan.'],
             };
         }
 
@@ -48,9 +46,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
 
         if (!$selected_plan) {
             return {
-                next_step => $self->id,
-                errors => ['The selected pricing plan is not available.'],
-                data => $self->prepare_pricing_data($db)
+                _validation_errors => ['The selected pricing plan is not available.'],
             };
         }
 
@@ -70,10 +66,10 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
     # Provide pricing plans and org info to the template via the controller's
     # standard prepare_template_data interface
     method prepare_template_data($db, $run) {
-        return $self->prepare_pricing_data($db);
+        return $self->prepare_pricing_data($db, $run);
     }
 
-    method prepare_pricing_data($db) {
+    method prepare_pricing_data($db, $run = undef) {
         my $platform_uuid = '00000000-0000-0000-0000-000000000000';
 
         # Get active pricing plans available for new tenant signups
@@ -110,7 +106,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
 
         return {
             pricing_plans => \@pricing_plans,
-            organization_info => $self->get_organization_preview($db)
+            organization_info => $self->get_organization_preview($db, $run)
         };
     }
 
@@ -145,10 +141,12 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
         return $plan;
     }
 
-    method get_organization_preview($db) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
-        my $data = $run->data || {};
+    method get_organization_preview($db, $run = undef) {
+        unless ($run) {
+            my $workflow = $self->workflow($db);
+            $run = $workflow->latest_run($db);
+        }
+        my $data = $run ? ($run->data || {}) : {};
 
         return {
             organization_name => $data->{name} || $data->{organization_name} || 'Your Organization',
@@ -158,6 +156,8 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
     }
 
     method format_price($amount_cents, $currency) {
+        $amount_cents //= 0;
+        $currency //= 'USD';
         my $amount_dollars = $amount_cents / 100;
 
         if ($currency eq 'USD') {

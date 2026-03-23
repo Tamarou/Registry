@@ -265,18 +265,16 @@ subtest 'Error handling' => sub {
         selected_plan_id => ''
     });
 
-    ok $result->{errors}, 'Error when empty plan selected';
-    like $result->{errors}->[0], qr/please select/i, 'Appropriate error message';
-    is $result->{next_step}, $pricing_step->id, 'Stays on pricing step';
+    ok $result->{_validation_errors}, 'Error when empty plan selected';
+    like $result->{_validation_errors}->[0], qr/please select/i, 'Appropriate error message';
 
     # Test invalid plan ID
     $result = $pricing_step->process($dao->db, {
         selected_plan_id => 'invalid-plan-id'
     });
 
-    ok $result->{errors}, 'Error when invalid plan selected';
-    like $result->{errors}->[0], qr/not available/i, 'Appropriate error message for invalid plan';
-    is $result->{next_step}, $pricing_step->id, 'Stays on pricing step';
+    ok $result->{_validation_errors}, 'Error when invalid plan selected';
+    like $result->{_validation_errors}->[0], qr/not available/i, 'Appropriate error message for invalid plan';
 
     # Test plan that exists but isn't active for platform
     my $inactive_plan = Registry::DAO::PricingPlan->create($dao->db, {
@@ -294,8 +292,8 @@ subtest 'Error handling' => sub {
         selected_plan_id => $inactive_plan->id
     });
 
-    ok $result->{errors}, 'Error when plan not available for platform';
-    like $result->{errors}->[0], qr/not available/i, 'Appropriate error message for unavailable plan';
+    ok $result->{_validation_errors}, 'Error when plan not available for platform';
+    like $result->{_validation_errors}->[0], qr/not available/i, 'Appropriate error message for unavailable plan';
 };
 
 subtest 'Template method' => sub {

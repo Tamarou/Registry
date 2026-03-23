@@ -36,7 +36,7 @@
       % for my $plan (@$pricing_plans) {
         <article data-component="pricing-card"
                  data-plan="<%= $plan->{plan_name} %>"
-                 <%= $plan->{metadata}->{suitable_for} eq 'medium_programs' ? 'data-featured="true"' : '' %>>
+                 <%= ($plan->{metadata}->{suitable_for} // '') eq 'medium_programs' ? 'data-featured="true"' : '' %>>
 
           <header>
             <h3><%= $plan->{plan_name} %></h3>
@@ -83,7 +83,7 @@
             </label>
           </div>
 
-          % if ($plan->{metadata}->{suitable_for} eq 'medium_programs') {
+          % if (($plan->{metadata}->{suitable_for} // '') eq 'medium_programs') {
             <div class="plan-badge">
               <span data-component="badge" data-variant="primary">Most Popular</span>
             </div>

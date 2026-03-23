@@ -1,13 +1,12 @@
 % extends 'layouts/workflow';
 % title 'Complete Your Registry Setup';
 % stash description => "Add a payment method to activate your 30-day free trial. You won't be charged until your trial ends.";
-% my $data = stash('data') || {};
-% my $billing = $data->{billing_summary} || {};
-% my $config = $data->{subscription_config} || {};
+% my $billing = stash('billing_summary') || {};
+% my $config = stash('subscription_config') || {};
 % my $errors = stash('errors') || [];
-% my $retry_count = $data->{retry_count} || 0;
+% my $retry_count = stash('retry_count') || 0;
 % my $retry_exceeded = stash('retry_exceeded') || 0;
-% my $retry_delay = $data->{retry_delay} || 0;
+% my $retry_delay = stash('retry_delay') || 0;
 
 <section class="payment-step">
 
