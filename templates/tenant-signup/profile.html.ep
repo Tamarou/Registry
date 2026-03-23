@@ -165,7 +165,7 @@
 // Real-time subdomain generation
 document.addEventListener('DOMContentLoaded', function() {
   const nameInput = document.getElementById('name');
-  const preview = document.querySelector('.subdomain-slug');
+  const preview = document.querySelector('#subdomain-slug');
   
   function updateSubdomainPreview(orgName) {
     if (!orgName) {

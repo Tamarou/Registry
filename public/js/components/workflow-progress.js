@@ -332,8 +332,10 @@ class WorkflowProgress extends HTMLElement {
     }
 }
 
-// Register the custom element
-customElements.define('workflow-progress', WorkflowProgress);
+// Register the custom element, guarding against re-registration on hot reload
+if (!customElements.get('workflow-progress')) {
+    customElements.define('workflow-progress', WorkflowProgress);
+}
 
 // Export for potential module usage
 if (typeof module !== 'undefined' && module.exports) {
