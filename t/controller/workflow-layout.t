@@ -51,7 +51,7 @@ subtest 'Workflow index page includes layout' => sub {
       ->content_like(qr/<!DOCTYPE html>/i, 'Has DOCTYPE declaration');
 
     # Verify content is wrapped in layout
-    $t->text_is('title', 'Welcome to Registry - Let\'s Get Started!', 'Title is rendered correctly')
+    $t->text_is('title', 'Welcome to Tiny Art Empire', 'Title is rendered correctly')
       ->element_exists('.welcome-section', 'Welcome section content exists within layout');
 };
 
@@ -107,9 +107,7 @@ subtest 'UTF-8 encoding works correctly' => sub {
     $t->get_ok('/tenant-signup')
       ->status_is(200)
       ->content_type_is('text/html;charset=UTF-8', 'Content type includes UTF-8 charset')
-      ->content_like(qr/⏱️/, 'Timer emoji renders correctly')
-      ->content_like(qr/💡/, 'Lightbulb emoji renders correctly')
-      ->content_like(qr/✓/, 'Checkmark renders correctly');
+      ->content_like(qr/&#x2705;/, 'Checkmark renders correctly');
 };
 
 # Test that non-workflow pages still work

@@ -21,7 +21,7 @@ my $t = Test::Registry::Mojo->new('Registry');
 # Start tenant signup workflow
 $t->get_ok('/tenant-signup')
     ->status_is(200)
-    ->content_like(qr/Let's Get Started/);
+    ->content_like(qr/Welcome to Tiny Art Empire/);
 
 # Start the workflow
 $t->post_ok('/tenant-signup')

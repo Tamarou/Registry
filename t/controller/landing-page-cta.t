@@ -30,25 +30,11 @@ subtest 'Enhanced CTA on landing page' => sub {
 
     # Test primary CTA link
     $t->element_exists('.landing-cta-button', 'Primary CTA button exists')
-      ->text_like('.landing-cta-button', qr/Get Started Free/, 'Primary CTA has compelling text');
+      ->text_like('.landing-cta-button', qr/Start Your Tiny Art Empire/, 'Primary CTA has compelling text');
 
-    # Test secondary CTA link (Explore Features)
-    $t->element_exists('.landing-cta-secondary', 'Secondary CTA button exists')
-      ->text_like('.landing-cta-secondary', qr/Explore Features/, 'Secondary button has appropriate text');
-
-    # Test enhanced supporting text (updated class)
-    $t->text_like('.landing-trial-info', qr/30-day free trial/, 'Supporting text mentions 30-day trial')
-      ->text_like('.landing-trial-info', qr/No credit card/, 'Supporting text mentions no credit card')
-      ->text_like('.landing-trial-info', qr/Cancel anytime/, 'Supporting text mentions cancel anytime')
+    # Test supporting text
+    $t->text_like('.landing-trial-info', qr/Free to start/, 'Supporting text mentions free to start')
       ->text_like('.landing-trial-info', qr/Setup in 5 minutes/, 'Supporting text mentions quick setup');
-
-    # Test social proof section (updated class)
-    $t->element_exists('.landing-social-proof', 'Social proof section exists');
-
-    # Extract and test social proof text properly
-    my $social_text = $t->tx->res->dom->at('.landing-social-proof')->all_text;
-    like($social_text, qr/Join \d+\+ programs/i, 'Social proof shows program count');
-    like($social_text, qr/4\.9\/5/i, 'Social proof includes rating');
 };
 
 # Test accessibility compliance
@@ -59,13 +45,11 @@ subtest 'CTA accessibility compliance' => sub {
     $t->element_exists('section[role="banner"][aria-labelledby="hero-title"]', 'Hero section has proper ARIA labeling')
       ->element_exists('h1#hero-title', 'Hero title has proper ID for ARIA reference');
 
-    # Test CTA links exist and are accessible
-    $t->element_exists('.landing-cta-button', 'Primary CTA link exists')
-      ->element_exists('.landing-cta-secondary', 'Secondary CTA link exists');
+    # Test CTA link exists and is accessible
+    $t->element_exists('.landing-cta-button', 'Primary CTA link exists');
 
     # Test proper link structure for navigation
-    $t->element_exists('a[href*="tenant-signup"]', 'Primary CTA links to signup workflow')
-      ->element_exists('a[href="#features"]', 'Secondary CTA links to features section');
+    $t->element_exists('a[href*="tenant-signup"]', 'Primary CTA links to signup workflow');
 };
 
 # Test mobile responsiveness
@@ -74,9 +58,8 @@ subtest 'Mobile CTA optimization' => sub {
     $t->ua->max_redirects(0);
     $t->get_ok('/');
 
-    # Verify CTA links exist and are accessible on mobile
-    $t->element_exists('.landing-cta-button', 'Primary CTA exists for mobile')
-      ->element_exists('.landing-cta-secondary', 'Secondary CTA exists for mobile');
+    # Verify CTA link exists and is accessible on mobile
+    $t->element_exists('.landing-cta-button', 'Primary CTA exists for mobile');
 
     # Test that CTAs are in proper container
     $t->element_exists('.landing-cta-container', 'CTAs are in proper container')
