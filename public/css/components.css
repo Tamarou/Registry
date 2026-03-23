@@ -163,8 +163,6 @@ body[data-layout="workflow"] .theme-toggle:hover {
     border-radius: 50px;
     cursor: pointer;
     font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 2px;
     transition: all 0.3s ease;
     box-shadow: 0 10px 30px rgba(255, 0, 255, 0.3);
 }
@@ -182,11 +180,9 @@ section[data-component="workflow-content"] .button {
     border: none;
     padding: 1rem 2rem;
     font-size: 1rem;
-    border-radius: 50px;
+    border-radius: 12px;
     cursor: pointer;
     font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
     transition: all 0.3s ease;
     box-shadow: 0 5px 15px rgba(255, 0, 255, 0.3);
 }
