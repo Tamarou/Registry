@@ -29,7 +29,7 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 $db->current_tenant('registry');
 
-# Seed platform pricing plans matching the Tiny Art Empire tier structure
+# Seed platform pricing plans matching Solo/Studio/Empire tier structure
 my $platform_uuid = '00000000-0000-0000-0000-000000000000';
 
 # Create platform user for pricing relationships
@@ -47,93 +47,91 @@ $db->db->query(q{
     VALUES (?, ?, ?)
 }, $platform_uuid, $platform_user_id, 1);
 
-my $seed_plan = Registry::DAO::PricingPlan->create($db->db, {
-    plan_name  => 'Seed',
+my $solo_plan = Registry::DAO::PricingPlan->create($db->db, {
+    plan_name  => 'Solo',
     plan_type  => 'standard',
     plan_scope => 'tenant',
     pricing_model_type => 'percentage',
     amount     => 0,
     currency   => 'USD',
     pricing_configuration => {
-        revenue_share_percent => 5,
+        revenue_share_percent => 2.5,
         billing_cycle => 'monthly',
-        description   => 'Free to start. 5% of processed revenue.',
+        description   => '2.5% of processed revenue. No monthly fee.',
         features      => [
-            'Up to 5 programs',
-            '1 seat included',
+            'Unlimited programs',
             'Online enrollment',
             'Payment processing',
             'Attendance tracking',
+            'Waitlist management',
         ],
     },
-    metadata => { display_order => 1, suitable_for => 'solo_teachers' },
+    metadata => { display_order => 1, featured => 1 },
 });
 
 Registry::DAO::PricingRelationship->create($db->db, {
     provider_id     => $platform_uuid,
     consumer_id     => $platform_user_id,
-    pricing_plan_id => $seed_plan->id,
+    pricing_plan_id => $solo_plan->id,
     status          => 'active',
     metadata        => { plan_type => 'tenant_subscription' },
 });
 
-my $scale_plan = Registry::DAO::PricingPlan->create($db->db, {
-    plan_name  => 'Scale',
-    plan_type  => 'standard',
-    plan_scope => 'tenant',
-    pricing_model_type => 'hybrid',
-    amount     => 9900,
-    currency   => 'USD',
-    pricing_configuration => {
-        revenue_share_percent => 2.5,
-        billing_cycle => 'monthly',
-        description   => '$99/mo + 2.5% of processed revenue.',
-        features      => [
-            'Unlimited programs',
-            '3 seats included',
-            'Everything in Seed',
-            'Email support',
-            'Peer benchmarking',
-        ],
-    },
-    metadata => { display_order => 2, suitable_for => 'medium_programs' },
-});
-
-Registry::DAO::PricingRelationship->create($db->db, {
-    provider_id     => $platform_uuid,
-    consumer_id     => $platform_user_id,
-    pricing_plan_id => $scale_plan->id,
-    status          => 'active',
-    metadata        => { plan_type => 'tenant_subscription' },
-});
-
-my $grow_plan = Registry::DAO::PricingPlan->create($db->db, {
-    plan_name  => 'Grow',
+my $studio_plan = Registry::DAO::PricingPlan->create($db->db, {
+    plan_name  => 'Studio',
     plan_type  => 'standard',
     plan_scope => 'tenant',
     pricing_model_type => 'hybrid',
     amount     => 19900,
     currency   => 'USD',
     pricing_configuration => {
-        revenue_share_percent => 1,
+        revenue_share_percent => 2,
         billing_cycle => 'monthly',
-        description   => '$199/mo + 1% of processed revenue.',
+        description   => '$199/mo + 2% of processed revenue.',
         features      => [
-            'Unlimited programs',
-            '10 seats included',
-            'Everything in Scale',
+            'Everything in Solo',
+            'Team seats (up to 5)',
             'Priority email support',
-            'Full analytics + API',
-            'White-label branding',
+            'Advanced analytics',
         ],
     },
-    metadata => { display_order => 3, suitable_for => 'large_programs' },
+    metadata => { display_order => 2, coming_soon => 1 },
 });
 
 Registry::DAO::PricingRelationship->create($db->db, {
     provider_id     => $platform_uuid,
     consumer_id     => $platform_user_id,
-    pricing_plan_id => $grow_plan->id,
+    pricing_plan_id => $studio_plan->id,
+    status          => 'active',
+    metadata        => { plan_type => 'tenant_subscription' },
+});
+
+my $empire_plan = Registry::DAO::PricingPlan->create($db->db, {
+    plan_name  => 'Empire',
+    plan_type  => 'standard',
+    plan_scope => 'tenant',
+    pricing_model_type => 'hybrid',
+    amount     => 99900,
+    currency   => 'USD',
+    pricing_configuration => {
+        revenue_share_percent => 1,
+        billing_cycle => 'monthly',
+        description   => '$999/mo + 1% of processed revenue.',
+        features      => [
+            'Everything in Studio',
+            'Unlimited team seats',
+            'White-label branding',
+            'Full API access',
+            'Dedicated support',
+        ],
+    },
+    metadata => { display_order => 3, coming_soon => 1 },
+});
+
+Registry::DAO::PricingRelationship->create($db->db, {
+    provider_id     => $platform_uuid,
+    consumer_id     => $platform_user_id,
+    pricing_plan_id => $empire_plan->id,
     status          => 'active',
     metadata        => { plan_type => 'tenant_subscription' },
 });
@@ -167,12 +165,17 @@ subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
 
     my $plans = $template_data->{pricing_plans};
     is scalar(@$plans), 3, 'three pricing plans returned';
-    is $plans->[0]{plan_name}, 'Seed', 'first plan is Seed (sorted by display_order)';
-    is $plans->[1]{plan_name}, 'Scale', 'second plan is Scale';
-    is $plans->[2]{plan_name}, 'Grow', 'third plan is Grow';
+    is $plans->[0]{plan_name}, 'Solo', 'first plan is Solo (sorted by display_order)';
+    is $plans->[1]{plan_name}, 'Studio', 'second plan is Studio';
+    is $plans->[2]{plan_name}, 'Empire', 'third plan is Empire';
+
+    # Coming-soon metadata is passed through
+    ok $plans->[1]{metadata}{coming_soon}, 'Studio is marked coming_soon';
+    ok $plans->[2]{metadata}{coming_soon}, 'Empire is marked coming_soon';
+    ok !$plans->[0]{metadata}{coming_soon}, 'Solo is not coming_soon';
 };
 
-subtest 'pricing step renders plan cards' => sub {
+subtest 'pricing step renders plan cards with coming-soon styling' => sub {
     # Start workflow and advance to pricing
     $t->post_ok('/tenant-signup')->status_is(302);
     my $url = $t->tx->res->headers->location;
@@ -195,17 +198,19 @@ subtest 'pricing step renders plan cards' => sub {
 
     $t->get_ok($pricing_url)
       ->status_is(200)
-      ->content_like(qr/Seed/, 'pricing page shows Seed plan')
-      ->content_like(qr/Scale/, 'pricing page shows Scale plan')
-      ->content_like(qr/Grow/, 'pricing page shows Grow plan')
-      ->content_like(qr/selected_plan_id/, 'pricing page has plan selection radio buttons');
+      ->content_like(qr/Solo/, 'pricing page shows Solo plan')
+      ->content_like(qr/Studio/, 'pricing page shows Studio plan')
+      ->content_like(qr/Empire/, 'pricing page shows Empire plan')
+      ->content_like(qr/selected_plan_id/, 'pricing page has plan selection radio buttons')
+      ->content_like(qr/Coming Soon/, 'pricing page shows Coming Soon badges')
+      ->content_like(qr/data-coming-soon/, 'pricing page marks coming-soon cards');
 };
 
 subtest 'selected plan appears on review step dynamically' => sub {
-    # Continue from previous subtest - select the Scale plan
+    # Continue from previous subtest - select the Solo plan
     my $pricing_url = $t->tx->req->url->path->to_string;
     $t->post_ok($pricing_url => form => {
-        selected_plan_id => $scale_plan->id,
+        selected_plan_id => $solo_plan->id,
     })->status_is(302);
 
     my $review_url = $t->tx->res->headers->location;
@@ -213,7 +218,7 @@ subtest 'selected plan appears on review step dynamically' => sub {
 
     $t->get_ok($review_url)
       ->status_is(200)
-      ->content_like(qr/Scale/, 'review page shows selected plan name')
+      ->content_like(qr/Solo/, 'review page shows selected plan name')
       ->content_unlike(qr/\$200\/month/, 'review page does not hardcode $200/month');
 };
 

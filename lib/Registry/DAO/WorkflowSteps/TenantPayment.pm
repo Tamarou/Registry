@@ -123,14 +123,15 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             $selected_plan = $run->data->{selected_pricing_plan};
         }
 
-        # If no plan selected, fall back to default (for backwards compatibility)
+        # If no plan selected, fall back to Solo tier defaults
         unless ($selected_plan) {
             return {
-                plan_name => 'Seed',
-                monthly_amount => 20000, # $200.00 in cents
+                plan_name => 'Solo',
+                monthly_amount => 0,
                 currency => 'usd',
-                trial_days => 30,
-                description => 'Complete after-school program management solution',
+                trial_days => 0,
+                revenue_share_percent => 2.5,
+                description => '2.5% of processed revenue. No monthly fee.',
                 features => [
                     'Unlimited student enrollments',
                     'Attendance tracking and reporting',
@@ -141,7 +142,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                     'Custom reporting'
                 ],
                 billing_cycle => 'monthly',
-                formatted_price => format_price(20000, 'USD', suffix => '/month')
+                formatted_price => 'Free'
             };
         }
 

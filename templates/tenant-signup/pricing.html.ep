@@ -1,6 +1,6 @@
 % extends 'layouts/workflow';
 % title 'Choose Your Plan';
-% stash description => "Choose the plan that fits where you are today. You can upgrade or downgrade at any time.";
+% stash description => "Start free with Solo. You only pay when you process revenue.";
 % my $pricing_plans = stash('pricing_plans') || [];
 % my $org_info = stash('organization_info') || {};
 % my $errors = stash('errors') || [];
@@ -34,9 +34,17 @@
 
     <div data-component="pricing-plans" data-layout="grid">
       % for my $plan (@$pricing_plans) {
+        % my $is_coming_soon = ($plan->{metadata}->{coming_soon} // 0);
         <article data-component="pricing-card"
                  data-plan="<%= $plan->{plan_name} %>"
-                 <%= ($plan->{metadata}->{suitable_for} // '') eq 'medium_programs' ? 'data-featured="true"' : '' %>>
+                 <%= $is_coming_soon ? 'data-coming-soon="true"' : '' %>
+                 <%= ($plan->{metadata}->{featured} // 0) ? 'data-featured="true"' : '' %>>
+
+          % if ($is_coming_soon) {
+            <div class="plan-badge">
+              <span data-component="badge" data-variant="secondary">Coming Soon</span>
+            </div>
+          % }
 
           <header>
             <h3><%= $plan->{plan_name} %></h3>
@@ -46,12 +54,21 @@
           </header>
 
           <div class="plan-pricing">
-            <span class="price-amount"><%= $plan->{formatted_price} %></span>
-            % if ($plan->{pricing_configuration}->{billing_cycle}) {
-              <span class="price-period">/<%= $plan->{pricing_configuration}->{billing_cycle} %></span>
+            % if ($plan->{amount} == 0) {
+              <span class="price-amount">$0</span>
+              <span class="price-period">/mo</span>
+            % } else {
+              <span class="price-amount"><%= $plan->{formatted_price} %></span>
+              <span class="price-period">/mo</span>
             % }
 
-            % if ($plan->{pricing_configuration}->{trial_days}) {
+            % if ($plan->{pricing_configuration}->{revenue_share_percent}) {
+              <div class="revenue-share-info">
+                + <%= $plan->{pricing_configuration}->{revenue_share_percent} %>% of processed revenue
+              </div>
+            % }
+
+            % if ($plan->{pricing_configuration}->{trial_days} && !$is_coming_soon) {
               <div class="trial-info">
                 <span data-component="badge" data-variant="success">
                   <%= $plan->{pricing_configuration}->{trial_days} %>-day free trial
@@ -72,22 +89,22 @@
           % }
 
           <div class="plan-action">
-            <label class="plan-selector">
-              <input type="radio"
-                     name="selected_plan_id"
-                     value="<%= $plan->{id} %>"
-                     required />
-              <span class="plan-select-button" data-variant="primary" data-size="lg">
-                Select <%= $plan->{plan_name} %>
+            % if ($is_coming_soon) {
+              <span class="plan-coming-soon-button">
+                Coming Soon
               </span>
-            </label>
+            % } else {
+              <label class="plan-selector">
+                <input type="radio"
+                       name="selected_plan_id"
+                       value="<%= $plan->{id} %>"
+                       required />
+                <span class="plan-select-button" data-variant="primary" data-size="lg">
+                  Get Started with <%= $plan->{plan_name} %>
+                </span>
+              </label>
+            % }
           </div>
-
-          % if (($plan->{metadata}->{suitable_for} // '') eq 'medium_programs') {
-            <div class="plan-badge">
-              <span data-component="badge" data-variant="primary">Most Popular</span>
-            </div>
-          % }
         </article>
       % }
     </div>
@@ -100,7 +117,7 @@
         <span>Processing...</span>
       </div>
       <button type="submit" data-variant="primary" data-size="lg">
-        Continue to Payment
+        Continue to Review
         <span>→</span>
       </button>
     </div>
@@ -110,42 +127,49 @@
 <style>
 [data-component="pricing-plans"] {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 2rem;
   margin: 2rem 0;
 }
 
 [data-component="pricing-card"] {
   position: relative;
-  background: white;
-  border: 2px solid #e5e7eb;
+  background: var(--card-bg, white);
+  border: 2px solid var(--border-color, #e5e7eb);
   border-radius: 0.75rem;
   padding: 2rem;
   transition: all 0.2s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-[data-component="pricing-card"]:hover {
-  border-color: #3b82f6;
+[data-component="pricing-card"]:not([data-coming-soon]):hover {
+  border-color: var(--landing-accent-cyan, #3b82f6);
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
   transform: translateY(-2px);
 }
 
 [data-component="pricing-card"][data-featured="true"] {
-  border-color: #3b82f6;
+  border-color: var(--landing-accent-cyan, #3b82f6);
   box-shadow: 0 10px 25px rgba(59, 130, 246, 0.15);
   scale: 1.05;
+}
+
+/* Coming soon cards are visually muted */
+[data-component="pricing-card"][data-coming-soon="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+  filter: grayscale(30%);
 }
 
 [data-component="pricing-card"] header h3 {
   font-size: 1.5rem;
   font-weight: 700;
-  color: #111827;
+  color: var(--text-primary, #111827);
   margin: 0 0 0.5rem 0;
 }
 
 .plan-description {
-  color: #6b7280;
+  color: var(--text-secondary, #6b7280);
   font-size: 0.875rem;
   margin: 0 0 1.5rem 0;
 }
@@ -158,13 +182,20 @@
 .price-amount {
   font-size: 3rem;
   font-weight: 800;
-  color: #111827;
+  color: var(--text-primary, #111827);
   line-height: 1;
 }
 
 .price-period {
   font-size: 1rem;
-  color: #6b7280;
+  color: var(--text-secondary, #6b7280);
+  font-weight: 500;
+}
+
+.revenue-share-info {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary, #6b7280);
   font-weight: 500;
 }
 
@@ -182,7 +213,7 @@
   display: flex;
   align-items: center;
   padding: 0.5rem 0;
-  color: #374151;
+  color: var(--text-primary, #374151);
 }
 
 .feature-icon {
@@ -213,28 +244,40 @@
   width: 100%;
   padding: 1rem;
   text-align: center;
-  background: #f3f4f6;
-  border: 2px solid #e5e7eb;
+  background: var(--card-bg, #f3f4f6);
+  border: 2px solid var(--border-color, #e5e7eb);
   border-radius: 0.5rem;
-  color: #374151;
+  color: var(--text-primary, #374151);
   font-weight: 600;
   transition: all 0.2s ease;
 }
 
 .plan-selector input[type="radio"]:checked + .plan-select-button {
-  background: #3b82f6;
-  border-color: #3b82f6;
+  background: var(--landing-accent-cyan, #3b82f6);
+  border-color: var(--landing-accent-cyan, #3b82f6);
   color: white;
 }
 
 .plan-selector:hover .plan-select-button {
-  background: #e5e7eb;
-  border-color: #d1d5db;
+  background: var(--border-color, #e5e7eb);
+  border-color: var(--text-secondary, #d1d5db);
 }
 
 .plan-selector input[type="radio"]:checked + .plan-select-button:hover {
   background: #2563eb;
   border-color: #2563eb;
+}
+
+.plan-coming-soon-button {
+  display: block;
+  width: 100%;
+  padding: 1rem;
+  text-align: center;
+  background: var(--card-bg, #f3f4f6);
+  border: 2px dashed var(--border-color, #d1d5db);
+  border-radius: 0.5rem;
+  color: var(--text-secondary, #9ca3af);
+  font-weight: 600;
 }
 
 .plan-badge {
@@ -263,24 +306,30 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   // Add visual feedback when plans are selected
-  const planCards = document.querySelectorAll('[data-component="pricing-card"]');
+  const planCards = document.querySelectorAll('[data-component="pricing-card"]:not([data-coming-soon])');
   const radioButtons = document.querySelectorAll('input[name="selected_plan_id"]');
 
   radioButtons.forEach(radio => {
     radio.addEventListener('change', function() {
       // Remove selected state from all cards
       planCards.forEach(card => {
-        card.style.borderColor = '#e5e7eb';
-        card.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.1)';
+        card.style.borderColor = '';
+        card.style.boxShadow = '';
       });
 
       // Add selected state to chosen card
       if (this.checked) {
         const selectedCard = this.closest('[data-component="pricing-card"]');
-        selectedCard.style.borderColor = '#3b82f6';
+        selectedCard.style.borderColor = 'var(--landing-accent-cyan, #3b82f6)';
         selectedCard.style.boxShadow = '0 10px 25px rgba(59, 130, 246, 0.25)';
       }
     });
   });
+
+  // Auto-select if there's only one selectable plan
+  if (radioButtons.length === 1) {
+    radioButtons[0].checked = true;
+    radioButtons[0].dispatchEvent(new Event('change'));
+  }
 });
 </script>

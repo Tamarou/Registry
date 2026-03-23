@@ -50,10 +50,10 @@ subtest 'Subscription configuration' => sub {
     my $config = $payment_step->get_subscription_config($db);
     
     ok($config, 'Configuration returned');
-    is($config->{plan_name}, 'Seed', 'Plan name correct');
-    is($config->{monthly_amount}, 20000, 'Monthly amount is $200.00');
+    is($config->{plan_name}, 'Solo', 'Plan name correct');
+    is($config->{monthly_amount}, 0, 'Monthly amount is $0 (Solo tier)');
     is($config->{currency}, 'usd', 'Currency is USD');
-    is($config->{trial_days}, 30, 'Trial period is 30 days');
+    is($config->{trial_days}, 0, 'No trial period (Solo is already free)');
     ok($config->{features} && @{$config->{features}} > 0, 'Features list provided');
 };
 
