@@ -903,6 +903,13 @@ textarea.error {
   border-radius: var(--radius-lg);
 }
 
+.step {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
 .step-number {
   display: flex;
   align-items: center;
