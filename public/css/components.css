@@ -125,6 +125,7 @@ body[data-layout="workflow"] .theme-toggle:hover {
     padding: 1.2rem 3rem;
     font-size: 1.3rem;
     font-family: 'Chelsea Market', cursive;
+    letter-spacing: 0.5px;
     border-radius: 12px;
     cursor: pointer;
     font-weight: bold;
@@ -180,6 +181,7 @@ section[data-component="workflow-content"] .button {
     border: none;
     padding: 1rem 2rem;
     font-size: 1rem;
+    font-family: 'Chelsea Market', cursive;
     border-radius: 12px;
     cursor: pointer;
     font-weight: bold;
