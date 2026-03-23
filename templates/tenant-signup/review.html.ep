@@ -255,7 +255,7 @@
         <input type="hidden" name="terms_accepted" value="1">
         <div class="form-actions">
             <div class="support-info">
-                <p>Questions? <a href="mailto:support@registry.com">Contact Support</a></p>
+                <p>Questions? <a href="mailto:support@tinyartempire.com">Contact Support</a></p>
             </div>
             
             <button type="submit"

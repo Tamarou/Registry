@@ -1,4 +1,5 @@
 % extends 'layouts/workflow';
+% title 'Team Setup';
 
 <section class="team-setup-container">
     <header>
