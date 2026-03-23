@@ -1,9 +1,9 @@
-/**
- * Workflow Progress Web Component
- * 
- * A reusable breadcrumb-style progress indicator for Registry workflows.
- * Supports backward navigation and integrates with HTMX.
- */
+// ABOUTME: Workflow Progress Web Component for Registry workflow breadcrumb navigation.
+// ABOUTME: Supports backward navigation, accessibility, and HTMX integration.
+
+// Guard the entire block to prevent "already declared" errors on repeated script loads.
+if (!customElements.get('workflow-progress')) {
+
 class WorkflowProgress extends HTMLElement {
     constructor() {
         super();
@@ -313,12 +313,12 @@ class WorkflowProgress extends HTMLElement {
     }
 }
 
-// Register the custom element, guarding against re-registration on hot reload
-if (!customElements.get('workflow-progress')) {
-    customElements.define('workflow-progress', WorkflowProgress);
-}
+// Register the custom element (outer guard ensures we only reach here once)
+customElements.define('workflow-progress', WorkflowProgress);
 
 // Export for potential module usage
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = WorkflowProgress;
 }
+
+} // end: if (!customElements.get('workflow-progress'))
