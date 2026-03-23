@@ -1,14 +1,8 @@
 % extends 'layouts/workflow';
 % title 'Team Setup';
+% stash description => "Set up your organization's team members. You'll be created as the primary administrator, and you can invite additional team members with specific roles.";
 
 <section class="team-setup-container">
-    <header>
-        <h2>Team Setup</h2>
-        <p class="setup-description">
-            Set up your organization's team members. You'll be created as the primary administrator,
-            and you can invite additional team members with specific roles.
-        </p>
-    </header>
 
     <form action="<%= $action %>" method="POST" class="admin-user-form" id="team-setup-form">
         <section class="primary-admin-section">

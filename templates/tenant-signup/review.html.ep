@@ -1,5 +1,6 @@
 % extends 'layouts/workflow';
 % title 'Review Your Setup';
+% stash description => 'Please review all your information before proceeding to payment. You can edit any section by clicking the "Edit" button.';
 
 % my $profile = stash('profile') || {};
 % my $team = stash('team') || {};
@@ -8,13 +9,6 @@
 % my $errors = stash('errors') || [];
 
 <div class="review-step">
-    <div class="step-header">
-        <h1>Review Your Setup</h1>
-        <p class="step-description">
-            Please review all your information before proceeding to payment. 
-            You can edit any section by clicking the "Edit" button.
-        </p>
-    </div>
 
     % if (@$errors) {
         <div class="alert alert-error" role="alert">

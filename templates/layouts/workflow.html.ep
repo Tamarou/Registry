@@ -40,7 +40,8 @@
             % }
         </header>
 
-        % if (my $progress = content 'progress') {
+        % my $progress = content 'progress';
+        % if ($progress && $progress =~ /\S/) {
             <section data-component="workflow-progress">
                 <%= $progress %>
             </section>
@@ -60,7 +61,8 @@
             <%= content %>
         </section>
 
-        % if (my $navigation = content 'navigation') {
+        % my $navigation = content 'navigation';
+        % if ($navigation && $navigation =~ /\S/) {
             <footer data-component="workflow-navigation">
                 <%= $navigation %>
             </footer>
