@@ -290,7 +290,7 @@ class Registry :isa(Mojolicious) {
         my $csp = join( '; ',
             "default-src 'self'$static_origin",
             "script-src 'self' 'unsafe-inline' js.stripe.com unpkg.com cdn.jsdelivr.net$static_origin",
-            "style-src 'self' 'unsafe-inline'$static_origin",
+            "style-src 'self' 'unsafe-inline' fonts.googleapis.com$static_origin",
             "connect-src 'self' api.stripe.com",
             "frame-src js.stripe.com",
             "img-src 'self' data:$static_origin",
