@@ -810,6 +810,8 @@ legend {
   background: var(--landing-gradient-1);
   border-radius: 50%;
   filter: drop-shadow(0 4px 12px var(--landing-glow-color));
+  /* Ensure emoji characters render correctly across platforms */
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
 }
 
 .landing-feature-title,
@@ -885,6 +887,15 @@ section[data-component="workflow-content"] .feature-grid {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 1rem;
   margin-bottom: 1rem;
+}
+
+/* Emoji icon spans in workflow content (e.g. welcome step feature list) */
+section[data-component="workflow-content"] .icon {
+  /* Ensure emoji characters render correctly across platforms */
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
+  font-size: 1.4rem;
+  margin-right: 0.5rem;
+  flex-shrink: 0;
 }
 
 /* Trial terms text */
