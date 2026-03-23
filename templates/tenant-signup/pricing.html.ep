@@ -1,15 +1,14 @@
 % extends 'layouts/workflow';
 % title 'Choose Your Plan';
-% my $data = stash('data') || {};
-% my $pricing_plans = $data->{pricing_plans} || [];
-% my $org_info = $data->{organization_info} || {};
+% my $pricing_plans = stash('pricing_plans') || [];
+% my $org_info = stash('organization_info') || {};
 % my $errors = stash('errors') || [];
 
 <section data-component="container">
   <header>
     <h1>Choose Your Plan</h1>
     <p>
-      Select the Registry plan that best fits your organization's needs. You can upgrade or downgrade at any time.
+      Choose the plan that fits where you are today. You can upgrade or downgrade at any time.
     </p>
   </header>
 

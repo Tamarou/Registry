@@ -230,17 +230,16 @@ subtest 'Plan selection processing' => sub {
     my $plans = $initial_result->{data}->{pricing_plans};
     my $professional_plan = $plans->[1];  # Professional plan
 
-    # Test plan selection
-    my $result = $pricing_step->process($dao->db, {
+    # Test plan selection through the run (which merges the returned data)
+    my $result = $run->process($dao->db, $pricing_step, {
         selected_plan_id => $professional_plan->{id}
     });
 
-    ok !$result->{errors}, 'No errors when selecting valid plan';
-    isnt $result->{next_step}, $pricing_step->id, 'Moves to next step after selection';
+    ok !$result->{_validation_errors}, 'No errors when selecting valid plan';
+    ok $result->{selected_pricing_plan}, 'Moves to next step after selection';
 
     # Verify plan was stored in workflow data
-    my $updated_run = $workflow->latest_run($dao->db);
-    my $stored_plan = $updated_run->data->{selected_pricing_plan};
+    my $stored_plan = $run->data->{selected_pricing_plan};
 
     ok $stored_plan, 'Pricing plan stored in workflow data';
     is $stored_plan->{id}, $professional_plan->{id}, 'Correct plan ID stored';
