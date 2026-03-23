@@ -50,7 +50,7 @@
     },
     "provider": {
       "@type": "Organization",
-      "name": "Super Awesome Cool Pottery",
+      "name": "Tamarou & Super Awesome Cool Pottery",
       "url": "<%= url_for('/')->to_abs %>"
     },
     "featureList": [
@@ -157,7 +157,7 @@
 
   <!-- Footer -->
   <footer style="text-align: center; padding: 2rem; color: var(--landing-text-secondary); font-size: 0.875rem;">
-    <p>A <strong>Super Awesome Cool Pottery</strong> project</p>
+    <p>A <strong>Tamarou</strong> &amp; <strong>Super Awesome Cool Pottery</strong> project</p>
   </footer>
 </div>
 
