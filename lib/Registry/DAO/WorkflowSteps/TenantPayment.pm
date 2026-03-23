@@ -125,7 +125,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         # If no plan selected, fall back to default (for backwards compatibility)
         unless ($selected_plan) {
             return {
-                plan_name => 'Registry Professional',
+                plan_name => 'Seed',
                 monthly_amount => 20000, # $200.00 in cents
                 currency => 'usd',
                 trial_days => 30,

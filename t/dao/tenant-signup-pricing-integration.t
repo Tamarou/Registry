@@ -188,7 +188,7 @@ subtest 'Backwards compatibility test' => sub {
     my $legacy_payment_obj = $legacy_workflow->get_step($dao->db, { slug => 'payment' });
     my $legacy_config = $legacy_payment_obj->get_subscription_config($dao->db);
 
-    is $legacy_config->{plan_name}, 'Registry Professional', 'Falls back to default plan name';
+    is $legacy_config->{plan_name}, 'Seed', 'Falls back to default plan name';
     is $legacy_config->{monthly_amount}, 20000, 'Falls back to default amount';
     is $legacy_config->{formatted_price}, '$200.00/month', 'Falls back to default price format';
 

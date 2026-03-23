@@ -10,6 +10,8 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
     use Registry::DAO::PricingRelationship;
     use Carp qw(croak);
 
+    use constant PLATFORM_UUID => '00000000-0000-0000-0000-000000000000';
+
     method process($db, $form_data) {
         # Check if plan selection was submitted
         unless (exists $form_data->{selected_plan_id}) {
@@ -70,7 +72,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
     }
 
     method prepare_pricing_data($db, $run = undef) {
-        my $platform_uuid = '00000000-0000-0000-0000-000000000000';
+        my $platform_uuid = PLATFORM_UUID;
 
         # Get active pricing plans available for new tenant signups
         my @relationships = Registry::DAO::PricingRelationship->find($db, {
@@ -124,7 +126,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
         return unless $plan;
 
         # Verify plan is available for platform tenant signups
-        my $platform_uuid = '00000000-0000-0000-0000-000000000000';
+        my $platform_uuid = PLATFORM_UUID;
 
         my @relationships;
         eval {

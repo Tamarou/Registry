@@ -340,15 +340,18 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $status_class = $is_available ? 'available' : 'unavailable';
         my $status_text = $is_available ? 'Available' : 'Already taken';
         
+        my $icon = $is_available ? 'OK' : 'X';
         return $self->render(
-            inline => qq{
-                <span class="subdomain-slug $status_class">$slug</span>.tinyartempire.com
-                <div class="subdomain-status $status_class">
-                    <span class="status-icon">} . ($is_available ? 'OK' : 'X') . qq{</span>
-                    $status_text
-                </div>
-            },
-            format => 'html'
+            inline => '<span class="subdomain-slug <%= $status_class %>"><%= $slug %></span>.tinyartempire.com'
+                     . '<div class="subdomain-status <%= $status_class %>">'
+                     . '<span class="status-icon"><%= $icon %></span>'
+                     . '<%= $status_text %>'
+                     . '</div>',
+            format => 'html',
+            slug => $slug,
+            status_class => $status_class,
+            status_text => $status_text,
+            icon => $icon,
         );
     }
 

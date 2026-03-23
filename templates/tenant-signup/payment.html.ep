@@ -31,7 +31,7 @@
                     <p><strong>Maximum attempts exceeded.</strong></p>
                     <p>Please contact our support team for assistance:</p>
                     <div class="support-contacts">
-                        <a href="mailto:support@registry.com" class="support-email">support@registry.com</a>
+                        <a href="mailto:support@tinyartempire.com" class="support-email">support@tinyartempire.com</a>
                     </div>
                 </div>
             % }
@@ -44,7 +44,7 @@
             <section class="org-info">
                 <div class="org-name"><%= $billing->{organization_name} %></div>
                 <div class="org-subdomain">
-                    Access: <strong><%= $billing->{subdomain} %>.registry.com</strong>
+                    Access: <strong><%= $billing->{subdomain} %>.tinyartempire.com</strong>
                 </div>
                 <div class="billing-email">
                     Billing: <%= $billing->{billing_email} %>
@@ -274,7 +274,7 @@
         <section class="support-contact">
             <p>
                 Questions? Contact us at
-                <a href="mailto:support@registry.com">support@registry.com</a>
+                <a href="mailto:support@tinyartempire.com">support@tinyartempire.com</a>
             </p>
         </section>
     </footer>
