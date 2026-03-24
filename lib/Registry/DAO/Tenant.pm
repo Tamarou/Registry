@@ -89,4 +89,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;
     }
+
+    method can_accept_payments ($db) {
+        require Registry::DAO::TenantStripeAccount;
+        my $account = Registry::DAO::TenantStripeAccount->find_by_tenant($db, $id);
+        return 0 unless $account;
+        return $account->can_accept_payments;
+    }
 }
