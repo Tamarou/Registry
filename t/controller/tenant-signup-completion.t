@@ -27,7 +27,7 @@ subtest 'Enhanced completion step template exists' => sub {
     like($content, qr/organization_name/, 'Template uses organization_name variable');
     like($content, qr/subdomain/, 'Template uses subdomain variable');
     like($content, qr/admin_email/, 'Template uses admin_email variable');
-    like($content, qr/trial_end_date/, 'Template uses trial_end_date variable');
+    like($content, qr/Stripe|Connect/, 'Template includes Stripe Connect CTA');
     like($content, qr/success-container/, 'Template has success container CSS class');
     # Check that mobile responsive CSS exists in CSS files
     my $css_content = do {
