@@ -363,6 +363,60 @@ field $_stripe_client = undef;
             die "Refund failed: $error";
         });
     }
+    # Stripe Connect Direct Charge Support
+
+    sub calculate_application_fee ($class, $db, $tenant_id, $amount_cents) {
+        require Registry::DAO::Tenant;
+        require Registry::DAO::PricingRelationship;
+
+        my $platform_uuid = '00000000-0000-0000-0000-000000000000';
+
+        # Review fix #5: consumer_id is a USER ID, not tenant ID.
+        # Look up the tenant's primary user for the pricing relationship lookup.
+        my $tenant = Registry::DAO::Tenant->find($db, { id => $tenant_id });
+        my $primary_user = $tenant ? $tenant->primary_user($db) : undef;
+
+        my $revenue_share_percent = 2.5;  # fallback default
+
+        if ($primary_user) {
+            my @relationships = Registry::DAO::PricingRelationship->find($db, {
+                provider_id => $platform_uuid,
+                consumer_id => $primary_user->id,
+                status => 'active',
+            });
+            if (@relationships) {
+                my $plan = $relationships[0]->get_pricing_plan($db);
+                if ($plan && $plan->pricing_configuration->{revenue_share_percent}) {
+                    $revenue_share_percent = $plan->pricing_configuration->{revenue_share_percent};
+                }
+            }
+        }
+
+        return int($amount_cents * $revenue_share_percent / 100);
+    }
+
+    sub build_connect_charge_params ($class, $db, $args) {
+        require Registry::DAO::TenantStripeAccount;
+
+        my $tenant_id = $args->{tenant_id} || die "tenant_id required";
+        my $amount = $args->{amount} || die "amount required";
+
+        # Look up tenant's Stripe Connect account
+        my $stripe_account = Registry::DAO::TenantStripeAccount->find_by_tenant($db, $tenant_id);
+        die "Tenant has no Stripe account connected" unless $stripe_account;
+        die "Tenant's Stripe account charges not enabled" unless $stripe_account->charges_enabled;
+
+        my $application_fee = $class->calculate_application_fee($db, $tenant_id, $amount);
+
+        return {
+            amount => $amount,
+            currency => $args->{currency} || 'usd',
+            description => $args->{description},
+            application_fee_amount => $application_fee,
+            stripe_account => $stripe_account->stripe_account_id,
+            metadata => $args->{metadata} || {},
+        };
+    }
 }
 
 1;
