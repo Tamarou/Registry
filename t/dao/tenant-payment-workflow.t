@@ -17,8 +17,8 @@ my $db = $dao->db;
 
 # Create test tenant with schema cloning  
 $db->query(q{
-    INSERT INTO registry.tenants (id, name, slug, billing_status)
-    VALUES ('00000000-0000-4000-8000-000000000001', 'Test Tenant', 'test-tenant', 'active')
+    INSERT INTO registry.tenants (id, name, slug)
+    VALUES ('00000000-0000-4000-8000-000000000001', 'Test Tenant', 'test_tenant')
 });
 $db->query("SET search_path TO tenant_00000000_0000_4000_8000_000000000001, registry, public");
 

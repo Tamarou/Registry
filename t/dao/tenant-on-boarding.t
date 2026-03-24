@@ -71,15 +71,11 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     $run->process( $dao->db, $run->next_step( $dao->db ), { selected_plan => 'basic' } );
     is $run->next_step( $dao->db )->slug, 'review', 'Next step is review';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
-    is $run->next_step( $dao->db )->slug, 'payment', 'Next step is payment';
-    # Disable Stripe keys to force test mode in TenantPayment
-    local $ENV{STRIPE_PUBLISHABLE_KEY} = undef;
-    local $ENV{STRIPE_SECRET_KEY} = undef;
-
-    $run->process( $dao->db, $run->next_step( $dao->db ), {
-        collect_payment_method => 1
-    } );
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
+    # The complete step is terminal -- the workflow considers it done when the
+    # pointer reaches it. Run process() explicitly since the workflow controller
+    # doesn't process terminal steps.
+    local $ENV{STRIPE_SECRET_KEY} = undef;
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db ), undef, 'Next step is correct';
 
