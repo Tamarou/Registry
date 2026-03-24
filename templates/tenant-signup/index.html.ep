@@ -1,11 +1,8 @@
 % layout 'workflow';
 % title 'Welcome to Tiny Art Empire';
+% stash description => "Let's set up your program management so you can get back to the studio. This quick process takes about 5 minutes.";
 
 <div class="welcome-section">
-    <div class="welcome-header">
-        <h2>Welcome to Tiny Art Empire!</h2>
-        <p class="lead">Let's set up your program management so you can get back to the studio. This quick process takes about 5 minutes.</p>
-    </div>
 
     <div class="process-overview">
         <h3>What to Expect</h3>
@@ -47,24 +44,24 @@
             <div class="feature-grid">
                 <div class="feature">
                     <span class="icon">&#x2705;</span>
-                    <strong>Full access</strong> to all features for 30 days
+                    <strong>Full access</strong> to every feature, no limits
                 </div>
                 <div class="feature">
-                    <span class="icon">&#x1F4B3;</span>
-                    <strong>No credit card</strong> required to start
+                    <span class="icon">&#x1F4B0;</span>
+                    <strong>$0 monthly fee</strong> &mdash; we only earn when you do
                 </div>
                 <div class="feature">
                     <span class="icon">&#x1F3A8;</span>
                     <strong>Your own enrollment page</strong> for parents to find you
                 </div>
                 <div class="feature">
-                    <span class="icon">&#x1F4B0;</span>
+                    <span class="icon">&#x1F4B3;</span>
                     <strong>Payment processing</strong> built right in
                 </div>
             </div>
         </div>
         <p class="trial-terms">
-            <small>Free to start. We take a small percentage of revenue -- we only earn when you do. No upfront costs, no monthly fees.</small>
+            <small>2.5% of processed revenue. No upfront costs, no monthly fees, no lock-in.</small>
         </p>
     </div>
 
