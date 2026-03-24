@@ -23,10 +23,6 @@ steps:
   description: Review and confirm setup details
   slug: review
   template: tenant-signup/review
-- class: Registry::DAO::WorkflowSteps::TenantPayment
-  description: Payment and subscription setup
-  slug: payment
-  template: tenant-signup/payment
 - class: Registry::DAO::WorkflowSteps::RegisterTenant
   description: Tenant onboarding complete
   slug: complete

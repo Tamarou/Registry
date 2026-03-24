@@ -1,6 +1,6 @@
 % extends 'layouts/workflow';
 % title 'Review Your Setup';
-% stash description => 'Please review all your information before proceeding to payment. You can edit any section by clicking the "Edit" button.';
+% stash description => 'Please review all your information before completing setup. You can edit any section by clicking the "Edit" button.';
 
 % my $profile = stash('profile') || {};
 % my $team = stash('team') || {};
@@ -127,11 +127,10 @@
                     % }
 
                     <div class="trial-info">
-                        % my $trial_days = $plan_config->{trial_days} // 30;
-                        <h4><%= $trial_days %>-Day Free Trial</h4>
+                        <h4>Revenue Share Model</h4>
                         <p>
-                            Your trial begins immediately after setup.
-                            You won't be charged until <%= DateTime->now->add(days => $trial_days)->strftime('%B %d, %Y') %>.
+                            No upfront fees. A small percentage of each payment processed
+                            through your account goes to the platform.
                         </p>
                     </div>
 
@@ -147,10 +146,10 @@
                     % }
 
                     <div class="billing-terms">
-                        <h4>Billing Terms:</h4>
+                        <h4>Terms:</h4>
                         <ul>
-                            <li>Cancel anytime with 30 days notice</li>
                             <li>No setup fees or hidden charges</li>
+                            <li>Connect your own Stripe account after signup</li>
                             <li>Full data export available upon cancellation</li>
                         </ul>
                     </div>
@@ -161,7 +160,7 @@
         <!-- What Happens Next -->
         <div class="review-section next-steps">
             <div class="section-header">
-                <h3>What Happens After Payment</h3>
+                <h3>What Happens Next</h3>
             </div>
             
             <div class="section-content">
@@ -238,7 +237,7 @@
                     class="btn btn-primary btn-large"
                     id="proceed-to-payment"
                     disabled>
-                <span class="btn-text">Complete Setup & Start Trial</span>
+                <span class="btn-text">Complete Setup</span>
                 <span class="btn-arrow">→</span>
             </button>
             

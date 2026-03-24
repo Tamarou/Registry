@@ -1,3 +1,5 @@
+%# ABOUTME: Tenant signup completion page showing success and Stripe Connect CTA.
+%# ABOUTME: Prompts new tenants to connect their Stripe account for payment processing.
 % extends 'layouts/default';
 % title 'Welcome to Registry!';
 
@@ -9,8 +11,8 @@
                 <path d="m9 12 2 2 4-4" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </section>
-        <h1>🎉 Welcome to Registry!</h1>
-        <p class="success-subtitle">Your organization is now set up and ready to go. Here's what happens next:</p>
+        <h1>Welcome to Registry!</h1>
+        <p class="success-subtitle">Your organization is set up and ready to go. Here's what happens next:</p>
     </header>
 
     <section class="tenant-info-card">
@@ -28,22 +30,45 @@
                 <label>Admin Login:</label>
                 <span><%= $admin_email %></span>
             </div>
-            <div class="info-item">
-                <label>Trial Period:</label>
-                <span>30 days (ends <%= $trial_end_date %>)</span>
-            </div>
         </div>
     </section>
 
+    <section class="connect-stripe-cta">
+        <h2>Connect Your Stripe Account</h2>
+        <p>To accept payments from families, connect a Stripe account. Stripe handles all payment processing securely -- you own your account and all payment data.</p>
+
+        <div class="connect-benefits">
+            <div class="benefit-item">
+                <h4>Accept Payments</h4>
+                <p>Credit cards, debit cards, and bank transfers from families</p>
+            </div>
+            <div class="benefit-item">
+                <h4>Direct Deposits</h4>
+                <p>Payments go directly to your bank account</p>
+            </div>
+            <div class="benefit-item">
+                <h4>PCI Compliant</h4>
+                <p>No sensitive payment data stored on our servers</p>
+            </div>
+        </div>
+
+        % if (stash('tenant_id')) {
+            <a href="<%= url_for('connect_onboard', tenant_id => stash('tenant_id')) %>"
+               class="btn btn-primary btn-xl">
+                Connect with Stripe
+            </a>
+        % }
+        <p class="connect-note">You can also connect Stripe later from your admin settings.</p>
+    </section>
+
     <section class="onboarding-checklist">
-        <h2>🚀 Next Steps - Get Started in Minutes</h2>
+        <h2>Next Steps</h2>
         <div class="checklist">
             <article class="checklist-item">
                 <div class="step-number">1</div>
                 <div class="step-content">
-                    <h3>Access Your Dashboard</h3>
-                    <p>Log in to your new Registry account and explore the admin dashboard</p>
-                    <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary" target="_blank">Go to Dashboard →</a>
+                    <h3>Connect Stripe</h3>
+                    <p>Set up payment processing so families can enroll and pay</p>
                 </div>
             </article>
 
@@ -52,72 +77,38 @@
                 <div class="step-content">
                     <h3>Create Your First Program</h3>
                     <p>Set up an after-school program, summer camp, or educational activity</p>
-                    <small>Available in your dashboard under Programs → Create New</small>
                 </div>
             </article>
 
             <article class="checklist-item">
                 <div class="step-number">3</div>
                 <div class="step-content">
-                    <h3>Add Locations & Sessions</h3>
-                    <p>Configure where and when your programs will run</p>
-                    <small>Set up classrooms, schedules, and capacity limits</small>
+                    <h3>Share with Families</h3>
+                    <p>Invite families to browse programs and register at your Registry URL</p>
                 </div>
-            </article>
-
-            <article class="checklist-item">
-                <div class="step-number">4</div>
-                <div class="step-content">
-                    <h3>Invite Your Team</h3>
-                    <p>Add instructors, administrators, and support staff</p>
-                    <small>Team members will receive email invitations with secure access</small>
-                </div>
-            </article>
-        </div>
-    </section>
-
-    <section class="trial-info">
-        <h2>📅 Your 30-Day Free Trial</h2>
-        <div class="trial-details">
-            <article class="trial-feature">
-                <h4>Full Access</h4>
-                <p>Complete access to all Registry features during your trial period</p>
-            </article>
-            <article class="trial-feature">
-                <h4>No Commitment</h4>
-                <p>Cancel anytime before <%= $trial_end_date %> with no charges</p>
-            </article>
-            <article class="trial-feature">
-                <h4>Automatic Billing</h4>
-                <p>$200/month subscription begins after trial (you'll receive email reminders)</p>
             </article>
         </div>
     </section>
 
     <section class="support-section">
-        <h2>🆘 Need Help Getting Started?</h2>
+        <h2>Need Help Getting Started?</h2>
         <div class="support-options">
             <article class="support-option">
-                <h4>📚 Documentation</h4>
+                <h4>Documentation</h4>
                 <p>Comprehensive guides for all Registry features</p>
                 <a href="https://docs.tinyartempire.com" target="_blank">View Documentation</a>
             </article>
             <article class="support-option">
-                <h4>💬 Live Support</h4>
+                <h4>Live Support</h4>
                 <p>Chat with our team during business hours</p>
                 <a href="mailto:support@tinyartempire.com">support@tinyartempire.com</a>
-            </article>
-            <article class="support-option">
-                <h4>📹 Video Tutorials</h4>
-                <p>Step-by-step video guides for common tasks</p>
-                <a href="https://help.tinyartempire.com/videos" target="_blank">Watch Tutorials</a>
             </article>
         </div>
     </section>
 
     <footer class="success-actions">
         <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary btn-large">
-            Access Your Registry Dashboard →
+            Access Your Registry Dashboard
         </a>
         <p class="login-note">
             Use your email (<%= $admin_email %>) and the password you created during signup

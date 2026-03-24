@@ -6,6 +6,7 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Workflow;
+use Registry::DAO::TenantStripeAccount;
 use Registry::Utility::ErrorHandler;
 use Carp qw(carp croak);
 use Text::Unidecode qw(unidecode);
@@ -65,25 +66,8 @@ method process ( $db, $ ) {
         $profile->{slug} = $self->_generate_subdomain_slug($db, $profile->{name});
     }
 
-    # Validate required billing fields (skip for backward compatibility)
-    if (!exists $run->data->{users}) {
-        $self->_validate_billing_info($profile);
-    }
-
-    # Validate that subscription was set up successfully (skip for backward compatibility)
-    my $subscription_data = $run->data->{subscription};
-    my $has_subscription = $subscription_data && $subscription_data->{stripe_subscription_id};
-    
-    # Debug output for test troubleshooting
-    
-    # For backward compatibility, only require subscription if not using old 'users' format
-    # Also skip if tenant was already created by TenantPayment step (test mode)
+    # If tenant was already created by a prior step, just return success
     my $tenant_already_created = exists $run->data->{tenant_created} && $run->data->{tenant_created};
-    if (!$has_subscription && !exists $run->data->{users} && !$tenant_already_created) {
-        croak 'Payment setup must be completed before creating tenant';
-    }
-    
-    # If tenant was already created by TenantPayment, just return success
     if ($tenant_already_created) {
         return {
             tenant => $run->data->{tenant},
@@ -101,22 +85,50 @@ method process ( $db, $ ) {
         croak 'Could not create primary user';
     }
 
-    # Include subscription data in tenant creation (if available)
-    if ($has_subscription) {
-        $profile->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
-        $profile->{billing_status} = 'trial';
-        $profile->{trial_ends_at} = $subscription_data->{trial_ends_at};
-        $profile->{subscription_started_at} = DateTime->now->iso8601();
-    } else {
-        # Backward compatibility: set defaults for testing
-        $profile->{billing_status} = 'test';
-        $profile->{subscription_started_at} = DateTime->now->iso8601();
-    }
+    my $tenant_name = $profile->{name};
 
-    my $tenant = Registry::DAO::Tenant->create( $db, $profile );
+    # Only pass columns that exist on the tenants table
+    my $tenant_data = {
+        name => $profile->{name},
+        slug => $profile->{slug},
+    };
+    my $tenant = Registry::DAO::Tenant->create( $db, $tenant_data );
     $db->query( 'SELECT clone_schema(?)', $tenant->slug );
 
     $tenant->set_primary_user( $db, $primary_user );
+
+    # Create Stripe Connect account for the new tenant
+    # Review fix #4: check env BEFORE instantiating Client::Stripe
+    my $stripe_account_id;
+    if ($ENV{STRIPE_SECRET_KEY}) {
+        eval {
+            require Registry::Client::Stripe;
+            my $client = Registry::Client::Stripe->new();
+            my $account = $client->create_connect_account({
+                metadata => {
+                    tenant_id => $tenant->id,
+                    tenant_name => $tenant_name,
+                },
+            });
+            $stripe_account_id = $account->{id} if $account;
+        };
+        if ($@ || !$stripe_account_id) {
+            carp "Failed to create Stripe Connect account via API: " . ($@ || 'no account returned')
+                if $@;
+            # Fall back to placeholder so the tenant still gets a record
+            $stripe_account_id = 'acct_test_' . substr($tenant->id, 0, 8);
+        }
+    } else {
+        # No Stripe key: generate a placeholder account ID
+        $stripe_account_id = 'acct_test_' . substr($tenant->id, 0, 8);
+    }
+
+    if ($stripe_account_id) {
+        Registry::DAO::TenantStripeAccount->create($db, {
+            tenant_id => $tenant->id,
+            stripe_account_id => $stripe_account_id,
+        });
+    }
 
     my $tx = $db->begin;
     for my $data ( $user_data->@* ) {
@@ -134,6 +146,19 @@ method process ( $db, $ ) {
         }
     }
 
+    # Copy outcome definitions first -- workflow steps may reference them via FK
+    my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
+    for my $def (@outcome_defs) {
+        Registry::DAO::OutcomeDefinition->create(
+            $tenant->dao($db)->db,
+            {
+                id => $def->id,  # Use same ID to maintain relationships
+                name => $def->name,
+                schema => $def->schema
+            }
+        );
+    }
+
     # NOTE: Previously we were getting a problem where workflows were missing their first step
     # after being copied to tenant schemas. To fix this, we'll directly copy the workflows using
     # the copy_workflow function instead of relying on the schema clone
@@ -143,23 +168,23 @@ method process ( $db, $ ) {
     {
         my $workflow =
             Registry::DAO::Workflow->find( $db, { slug => $slug } );
-            
+
         # Skip if workflow not found (this helps with testing)
         next unless $workflow;
-            
+
         # Use the improved copy_workflow function to ensure first_step is preserved
         $db->query(
             'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
             $tenant->slug, $workflow->id );
-            
+
         # Verify first_step exists in tenant schema
         my $tenant_dao = $tenant->dao($db);
         my $tenant_workflow = $tenant_dao->find(Workflow => { slug => $slug });
-        
+
         if ($tenant_workflow) {
             my $first_step_slug = $tenant_workflow->first_step_slug($tenant_dao->db);
             my $first_step = $tenant_workflow->first_step($tenant_dao->db);
-            
+
             # If first_step value exists but the step doesn't, create it
             if ($first_step_slug && !$first_step) {
                 Registry::DAO::WorkflowStep->create(
@@ -175,20 +200,6 @@ method process ( $db, $ ) {
         }
     }
     
-    # Copy outcome definitions
-    my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
-    for my $def (@outcome_defs) {
-        # Create in tenant schema directly
-        Registry::DAO::OutcomeDefinition->create(
-            $tenant->dao($db)->db,
-            {
-                id => $def->id,  # Use same ID to maintain relationships
-                name => $def->name,
-                schema => $def->schema
-            }
-        );
-    }
-    
     $tx->commit;
 
     if ( $run->has_continuation ) {
@@ -201,10 +212,10 @@ method process ( $db, $ ) {
     # Store success data for completion template
     my $success_data = {
         tenant => $tenant->id,
-        organization_name => $profile->{name},
+        organization_name => $tenant_name,
         subdomain => $tenant->slug,
         admin_email => $user_data->[0]->{email} || $user_data->[0]->{username},
-        trial_end_date => $has_subscription ? $self->_format_trial_end_date($subscription_data->{trial_ends_at}) : 'N/A',
+        stripe_account_id => $stripe_account_id,
         success_timestamp => DateTime->now->iso8601()
     };
 
@@ -437,23 +448,36 @@ method prepare_template_data ($db, $run) {
 
 method prepare_completion_data($db, $run) {
     my $raw_data = $run->data || {};
-    
-    # Generate trial end date (30 days from now)
-    my $trial_end = DateTime->now->add(days => 30);
-    my $trial_end_date = $trial_end->strftime('%B %d, %Y');
-    
-    # Generate subdomain from organization name
-    my $org_name = $raw_data->{name} || $raw_data->{organization_name} || 'organization';
-    my $subdomain = $self->_generate_subdomain_slug($db, $org_name);
-    
-    # Structure the data for the completion template
+
+    # If process() hasn't run yet (terminal step is never processed by the
+    # workflow controller), create the tenant now on first GET.
+    unless ($raw_data->{tenant}) {
+        my $result = eval { $self->process($db, {}) };
+        # Persist the result into the run so we don't re-create on refresh
+        if ($result && $result->{tenant}) {
+            $run->update_data($db, $result);
+            $raw_data = $run->data || {};
+        }
+    }
+
+    my $org_name = $raw_data->{organization_name} || $raw_data->{name} || 'organization';
+    my $subdomain = $raw_data->{subdomain} || $self->_generate_subdomain_slug($db, $org_name);
+
+    # Look up Stripe Connect account for the tenant
+    my $tenant_id = $raw_data->{tenant};
+    my $stripe_account;
+    if ($tenant_id) {
+        $stripe_account = Registry::DAO::TenantStripeAccount->find_by_tenant($db, $tenant_id);
+    }
+
     return {
         organization_name => $org_name,
         subdomain => $subdomain,
         admin_email => $raw_data->{admin_email},
         admin_name => $raw_data->{admin_name},
-        trial_end_date => $trial_end_date,
         billing_email => $raw_data->{billing_email},
+        tenant_id => $tenant_id,
+        stripe_account => $stripe_account,
     };
 }
 
