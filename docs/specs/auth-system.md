@@ -320,14 +320,62 @@ GET  /auth/verify-email/:token    → Verify email address
 
 All `/auth/*` routes are unprotected (no `require_auth`).
 
-### New DAO Classes
+### New DAO Classes (Object::Pad feature classes)
 
-- `Registry::DAO::Passkey` — CRUD for passkeys table
+All new classes use the project's standard Object::Pad pattern:
+
+```perl
+use 5.34.0;
+use experimental 'signatures';
+use Object::Pad;
+
+class Registry::DAO::Passkey :isa(Registry::DAO::Base) { ... }
+```
+
+- `Registry::DAO::Passkey` — CRUD for passkeys table, sign count tracking
 - `Registry::DAO::MagicLinkToken` — create, find_by_hash, consume, expired?
 - `Registry::DAO::ApiKey` — create (returns plaintext once), find_by_hash,
-  check_scope
+  check_scope (bitvector AND)
 
-### New Controller
+### WebAuthn Library (`Registry::Auth::WebAuthn`)
+
+Custom implementation built from spec using low-level crypto primitives. No
+dependency on `Authen::WebAuthn` — that module lacks discoverable credential
+support, has incomplete validation, and depends on Mouse. Our implementation
+uses Object::Pad feature classes throughout.
+
+```perl
+class Registry::Auth::WebAuthn {
+    field $rp_id :param :reader;
+    field $rp_name :param :reader;
+    field $origin :param :reader;
+
+    # Registration
+    method generate_registration_options($user_id, $user_name, $user_display_name, %opts);
+    method verify_registration_response($challenge, $client_data_json, $attestation_object);
+
+    # Authentication (supports discoverable credentials)
+    method generate_authentication_options(%opts);  # allow_credentials optional
+    method verify_authentication_response($challenge, $client_data_json,
+        $authenticator_data, $signature, $credential_public_key, $stored_sign_count);
+}
+```
+
+Supporting classes:
+
+- `Registry::Auth::WebAuthn::Challenge` — challenge generation and
+  session storage
+- `Registry::Auth::WebAuthn::COSE` — COSE key parsing (decode CBOR
+  public keys to `Crypt::PK::ECC` / `Crypt::PK::RSA` objects)
+- `Registry::Auth::WebAuthn::AuthenticatorData` — parse the 37+ byte
+  authenticator data structure (rpIdHash, flags, signCount, attested
+  credential data)
+
+The implementation covers WebAuthn Level 2 for ES256 (P-256 ECDSA) and RS256
+algorithms. EdDSA (Ed25519) support can be added later via `CryptX` which
+already supports it.
+
+### New Controller (Object::Pad feature class)
 
 - `Registry::Controller::Auth` — handles all `/auth/*` routes
 
@@ -347,9 +395,22 @@ All `/auth/*` routes are unprotected (no `require_auth`).
 
 ### CPAN Dependencies
 
-- `Authen::WebAuthn` — WebAuthn/FIDO2 server-side verification
-- `Crypt::URandom` — cryptographic random token generation
+New dependencies (added to `cpanfile`):
+
+- `CBOR::XS` — CBOR decoding for WebAuthn attestation objects and COSE keys
+- `CryptX` — provides `Crypt::PK::ECC` (ES256 signature verification),
+  `Crypt::PK::RSA` (RS256), and `Crypt::Digest::SHA256`
+- `Crypt::URandom` — cryptographic random bytes for challenges and tokens
 - `MIME::Base64` (core) — base64url encoding for WebAuthn and tokens
+- `Digest::SHA` (core) — SHA-256 hashing for token storage
+
+Not needed (removed from earlier draft):
+
+- ~~`Authen::WebAuthn`~~ — replaced by `Registry::Auth::WebAuthn` (custom,
+  Object::Pad, fewer deps, full discoverable credential support)
+- ~~`Crypt::OpenSSL::X509`~~ — not needed without attestation verification
+- ~~`Net::SSLeay`~~ — already a Mojolicious transitive dep, not directly used
+- ~~`Mouse`~~ — avoided entirely by using Object::Pad
 
 ## Email Verification Flow
 
@@ -495,36 +556,53 @@ These are the journey tests that motivated this spec:
    tables; `users.passhash` nullable; `users.email_verified_at` column;
    tenant `canonical_domain`
 2. **DAO classes** — `Passkey`, `MagicLinkToken`, `ApiKey` with full test
-   coverage
-3. **Magic links** — token generation, email sending, consumption, controller
+   coverage (Object::Pad feature classes, `:isa(Registry::DAO::Base)`)
+3. **WebAuthn library** — `Registry::Auth::WebAuthn` and supporting classes
+   (`Challenge`, `COSE`, `AuthenticatorData`). Object::Pad feature classes.
+   Built on `CBOR::XS` + `CryptX`. Full unit test coverage against known
+   WebAuthn test vectors before integration.
+4. **Magic links** — token generation, email sending, consumption, controller
    routes. This unblocks all auth flows since magic links bootstrap first
-   sessions.
-4. **Session management** — `before_dispatch` rewrite, session writing,
+   sessions. Requires SMTP solution.
+5. **Session management** — `before_dispatch` rewrite, session writing,
    `require_auth` redirect update, logout
-5. **WebAuthn/Passkeys** — registration and authentication flows, frontend JS,
-   controller routes
-6. **Signup workflow changes** — remove password field, add passkey
+6. **WebAuthn controller integration** — registration and authentication
+   flows, frontend JS, `/auth/webauthn/*` routes
+7. **Signup workflow changes** — remove password field, add passkey
    registration to completion page, email verification, invitation token
    generation
-7. **API keys** — generation, bearer token auth in `before_dispatch`, scope
+8. **API keys** — generation, bearer token auth in `before_dispatch`, scope
    checking, admin dashboard UI
-8. **Enrollment workflow auth** — "sign in or create account" step with
+9. **Enrollment workflow auth** — "sign in or create account" step with
    passkey/magic link integration
-9. **Playwright journey tests** — full onboarding journey with all three
-   personas
+10. **Playwright journey tests** — full onboarding journey with all three
+    personas (Jordan → Morgan → Nancy)
+
+## Resolved Decisions
+
+1. **Email delivery**: SMTP. Mail solution TBD — prerequisite for magic links.
+2. **Passkey attestation**: Accept `none`. No hardware attestation required.
+   Consumer-facing app; attestation reduces compatibility for no meaningful
+   security gain.
+3. **Multiple passkeys per user**: Yes. Users can register multiple passkeys
+   (phone + laptop + security key). The `passkeys` table supports multiple
+   rows per `user_id`.
+4. **API key management**: Any authenticated user can generate keys. Keys
+   cannot exceed the user's own role permissions — scope bitvector is
+   intersected with the user's role capabilities at validation time.
+5. **WebAuthn library**: Custom implementation (`Registry::Auth::WebAuthn`)
+   using Object::Pad feature classes, built on `CBOR::XS` + `CryptX`. Avoids
+   `Authen::WebAuthn` due to: missing discoverable credential support,
+   incomplete spec validation, Mouse dependency, bus-factor-1 maintenance.
 
 ## Open Questions
 
-1. **Email delivery**: What email service/transport? The invitation stub
-   currently just `warn`s. Need SMTP config, or a transactional email service
-   (SendGrid, Postmark, SES)?
-2. **Passkey attestation**: Should we require attestation (verify the
-   authenticator hardware) or accept `none` attestation? For consumer-facing
-   use, `none` is standard and simplest.
-3. **Multiple passkeys per user**: Allow users to register multiple passkeys
-   (phone + laptop)? Recommended yes for usability.
-4. **API key management UI**: Admin-only, or can any authenticated user
-   generate keys? Scope restrictions per role?
-5. **WebAuthn library choice**: `Authen::WebAuthn` is the main CPAN option.
-   Need to verify it supports discoverable credentials and is actively
-   maintained.
+1. **SMTP configuration**: Which SMTP service/provider? Needed before magic
+   links can be implemented. Options: self-hosted (Postfix), transactional
+   service (Postmark, SendGrid, SES), or Mojolicious plugin
+   (`Mojolicious::Plugin::Mail`).
+2. **Domain alias mechanics**: How are domain aliases configured and
+   provisioned? DNS verification? This affects the `canonical_domain` field
+   and WebAuthn RP ID transitions.
+3. **EdDSA timeline**: Some modern authenticators use Ed25519. `CryptX`
+   supports it. Add to initial implementation or defer?
