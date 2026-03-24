@@ -172,6 +172,27 @@ method create_installment_payment_intent ($args) {
     });
 }
 
+# Stripe Connect Operations
+method create_connect_account ($args = {}) {
+    return $stripe_service->create_account({
+        type => 'standard',
+        %$args,
+    });
+}
+
+method create_onboarding_link ($account_id, $return_url, $refresh_url) {
+    return $stripe_service->create_account_link({
+        account => $account_id,
+        return_url => $return_url,
+        refresh_url => $refresh_url,
+        type => 'account_onboarding',
+    });
+}
+
+method retrieve_connect_account ($account_id) {
+    return $stripe_service->retrieve_account($account_id);
+}
+
 # Error Handling Helpers
 method is_card_error ($error) {
     return $stripe_service->is_card_error($error);

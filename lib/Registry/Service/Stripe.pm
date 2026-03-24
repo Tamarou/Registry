@@ -29,9 +29,14 @@ class Registry::Service::Stripe {
             'Stripe-Version' => $api_version,
             'User-Agent' => 'Registry/1.0 (https://registry.com)',
         };
-        
+
+        # Support Stripe Connect direct charges via Stripe-Account header
+        if (my $stripe_account = delete $data->{stripe_account}) {
+            $headers->{'Stripe-Account'} = $stripe_account;
+        }
+
         my $promise;
-        
+
         if ($method eq 'GET') {
             # For GET requests, put data in query parameters
             my $url_with_params = Mojo::URL->new($url);
@@ -197,6 +202,31 @@ class Registry::Service::Stripe {
         return $self->_request_async('GET', "products/$product_id");
     }
     
+    # Connected Account Operations (Stripe Connect)
+    method create_account_async ($args) {
+        return $self->_request_async('POST', 'accounts', $args);
+    }
+
+    method create_account ($args) {
+        return $self->create_account_async($args)->wait;
+    }
+
+    method retrieve_account_async ($account_id) {
+        return $self->_request_async('GET', "accounts/$account_id");
+    }
+
+    method retrieve_account ($account_id) {
+        return $self->retrieve_account_async($account_id)->wait;
+    }
+
+    method create_account_link_async ($args) {
+        return $self->_request_async('POST', 'account_links', $args);
+    }
+
+    method create_account_link ($args) {
+        return $self->create_account_link_async($args)->wait;
+    }
+
     # Webhook signature verification
     method verify_webhook_signature($payload, $signature_header) {
         croak "Webhook secret not configured" unless $webhook_secret;
