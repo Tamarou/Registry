@@ -6,6 +6,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use JSON;
     use Digest::SHA qw(hmac_sha256_hex);
     use Registry::DAO::PaymentSchedule;
+    use Registry::DAO::TenantStripeAccount;
 
     method stripe() {
         # Verify webhook signature
@@ -32,6 +33,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $dao = $self->app->dao;
 
         try {
+            # Handle Stripe Connect account events
+            if ($event->{type} eq 'account.updated') {
+                $self->_handle_account_updated($event->{data});
+                $self->render(status => 200, text => 'OK');
+                return;
+            }
+
             # Determine if this is an installment payment or tenant billing event
             if ($self->_is_installment_payment_event($event)) {
                 $self->_process_installment_payment_event($dao->db, $event);
@@ -156,6 +164,29 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # Use DAO method to update status
         $schedule->update_status($db, $new_status);
+    }
+
+    method _handle_account_updated ($event_data) {
+        my $account_data = $event_data->{object};
+        my $stripe_account_id = $account_data->{id};
+
+        my $account = Registry::DAO::TenantStripeAccount->find(
+            $self->app->dao->db, { stripe_account_id => $stripe_account_id }
+        );
+
+        unless ($account) {
+            $self->app->log->warn("account.updated for unknown Stripe account: $stripe_account_id");
+            return 1;
+        }
+
+        $account->update_from_stripe($self->app->dao->db, {
+            charges_enabled => $account_data->{charges_enabled},
+            payouts_enabled => $account_data->{payouts_enabled},
+            details_submitted => $account_data->{details_submitted},
+        });
+
+        $self->app->log->info("Updated Stripe Connect status for account $stripe_account_id");
+        return 1;
     }
 
     method _handle_installment_subscription_cancelled($db, $subscription) {
