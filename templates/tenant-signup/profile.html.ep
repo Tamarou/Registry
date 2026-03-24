@@ -7,54 +7,42 @@
   <form method="POST" action="<%= $action %>" data-multistep="true">
 
     <div id="subdomain-preview" data-component="subdomain-preview">
-      <article data-component="card">
-        <div>
-          <span data-component="badge" data-variant="primary">
-            <span id="subdomain-slug">organization</span>.tinyartempire.com
-          </span>
-          <p>Your families will access your programs at this URL. You can also set up a custom domain later.</p>
-        </div>
-      </article>
+      <span data-component="badge" data-variant="primary">
+        <span id="subdomain-slug">organization</span>.tinyartempire.com
+      </span>
     </div>
 
-    <fieldset>
-      <legend>Organization Information</legend>
+    <div>
+      <label for="name">Organization Name *</label>
+      <input type="text"
+             id="name"
+             name="name"
+             value="<%= stash('name') // '' %>"
+             placeholder="Sunrise After-School Programs"
+             required
+             hx-trigger="keyup changed delay:500ms"
+             hx-post="/tenant-signup/validate-subdomain"
+             hx-target="#subdomain-preview"
+             hx-include="[name='name']" />
+    </div>
 
-      <div>
-        <label for="name">Organization Name *</label>
-        <input type="text"
-               id="name"
-               name="name"
-               value="<%= stash('name') // '' %>"
-               placeholder="Sunrise After-School Programs"
-               required
-               hx-trigger="keyup changed delay:500ms"
-               hx-post="/tenant-signup/validate-subdomain"
-               hx-target="#subdomain-preview"
-               hx-include="[name='name']" />
-        <div data-type="help">This will be displayed to families and used to generate your subdomain</div>
-      </div>
+    <div>
+      <label for="description">Description</label>
+      <textarea id="description"
+                name="description"
+                placeholder="Describe your programs. This appears on your public page."
+                rows="3"><%= stash('description') // '' %></textarea>
+    </div>
 
-      <div>
-        <label for="description">Description (Optional)</label>
-        <textarea id="description"
-                  name="description"
-                  placeholder="Tell us about your programs and mission..."
-                  rows="3"><%= stash('description') // '' %></textarea>
-        <div data-type="help">This will be displayed on your public program pages</div>
-      </div>
-
-      <div>
-        <label for="billing_email">Contact Email *</label>
-        <input type="email"
-               id="billing_email"
-               name="billing_email"
-               value="<%= stash('billing_email') // '' %>"
-               placeholder="you@yourorganization.com"
-               required />
-        <div data-type="help">We'll use this for account notifications and platform communications</div>
-      </div>
-    </fieldset>
+    <div>
+      <label for="billing_email">Contact Email *</label>
+      <input type="email"
+             id="billing_email"
+             name="billing_email"
+             value="<%= stash('billing_email') // '' %>"
+             placeholder="you@yourorganization.com"
+             required />
+    </div>
 
     <div id="form-errors"></div>
 

@@ -28,7 +28,7 @@ subtest 'Profile template renders correctly' => sub {
     # Check that profile form fields are present
     $tx->content_like(qr/Organization Profile/i)
       ->content_like(qr/Organization Name/i)
-      ->content_like(qr/Subdomain/i)
+      ->content_like(qr/tinyartempire\.com/i)
       ->content_like(qr/Contact Email/i)
       ->content_like(qr/billing_email/i);
 
