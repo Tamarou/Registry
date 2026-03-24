@@ -51,33 +51,9 @@
                     </div>
                 % }
                 
-                <div class="billing-address">
-                    <h4>Billing Information</h4>
-                    <div class="address-block">
-                        <div class="info-row">
-                            <label>Email:</label>
-                            <span class="value"><%= $profile->{billing_email} // 'Not provided' %></span>
-                        </div>
-                        
-                        % if ($profile->{billing_phone}) {
-                            <div class="info-row">
-                                <label>Phone:</label>
-                                <span class="value"><%= $profile->{billing_phone} %></span>
-                            </div>
-                        % }
-                        
-                        <div class="info-row">
-                            <label>Address:</label>
-                            <span class="value">
-                                <%= $profile->{billing_address} // 'Not provided' %>
-                                % if ($profile->{billing_address2}) {
-                                    <br><%= $profile->{billing_address2} %>
-                                % }
-                                <br><%= $profile->{billing_city} // '' %>, <%= $profile->{billing_state} // '' %> <%= $profile->{billing_zip} // '' %>
-                                <br><%= $profile->{billing_country} // '' %>
-                            </span>
-                        </div>
-                    </div>
+                <div class="info-row">
+                    <label>Contact Email:</label>
+                    <span class="value"><%= $profile->{billing_email} // 'Not provided' %></span>
                 </div>
             </div>
         </div>

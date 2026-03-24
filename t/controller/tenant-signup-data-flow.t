@@ -68,17 +68,11 @@ subtest 'profile data persists through workflow and appears on review step' => s
     # GET the profile page first (to establish session/CSRF)
     $t->get_ok($redirect)->status_is(200);
 
-    # Submit profile data
+    # Submit profile data (billing address handled by Stripe Connect)
     $t->post_ok($redirect => form => {
         name            => 'Portland Art Collective',
         description     => 'Art classes for all ages',
         billing_email   => 'billing@portlandart.com',
-        billing_phone   => '503-555-1234',
-        billing_address => '123 NW Everett St',
-        billing_city    => 'Portland',
-        billing_state   => 'OR',
-        billing_zip     => '97209',
-        billing_country => 'US',
     })->status_is(302);
 
     my $users_url = $t->tx->res->headers->location;

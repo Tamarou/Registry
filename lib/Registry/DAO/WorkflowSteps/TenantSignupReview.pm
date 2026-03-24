@@ -17,13 +17,6 @@ class Registry::DAO::WorkflowSteps::TenantSignupReview :isa(Registry::DAO::Workf
                 subdomain => $raw_data->{subdomain},
                 description => $raw_data->{description},
                 billing_email => $raw_data->{billing_email},
-                billing_phone => $raw_data->{billing_phone},
-                billing_address => $raw_data->{billing_address},
-                billing_address2 => $raw_data->{billing_address2},
-                billing_city => $raw_data->{billing_city},
-                billing_state => $raw_data->{billing_state},
-                billing_zip => $raw_data->{billing_zip},
-                billing_country => $raw_data->{billing_country},
             },
             team => {
                 admin => {

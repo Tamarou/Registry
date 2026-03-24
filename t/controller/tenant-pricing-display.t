@@ -182,8 +182,6 @@ subtest 'pricing step renders plan cards with coming-soon styling' => sub {
     $t->get_ok($url)->status_is(200);
     $t->post_ok($url => form => {
         name => 'Pricing Test Org', billing_email => 'price@test.com',
-        billing_address => '1 Main', billing_city => 'PDX',
-        billing_state => 'OR', billing_zip => '97201', billing_country => 'US',
     })->status_is(302);
 
     $url = $t->tx->res->headers->location;

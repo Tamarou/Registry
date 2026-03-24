@@ -1,6 +1,6 @@
 % extends 'layouts/workflow';
 % title 'Organization Profile';
-% stash description => "Let's set up your organization. This information will be used for billing and to create your custom Registry subdomain.";
+% stash description => "Tell us about your organization. This creates your subdomain and public program page.";
 
 <section data-component="container">
 
@@ -25,7 +25,7 @@
       </div>
 
       <div>
-        <label>Your Registry Subdomain</label>
+        <label>Your Subdomain</label>
         <div id="subdomain-preview" data-component="subdomain-preview">
           <article data-component="card">
             <div>
@@ -46,93 +46,16 @@
                   rows="3"><%= stash('description') // '' %></textarea>
         <div data-type="help">This will be displayed on your public program pages</div>
       </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Billing Information</legend>
 
       <div>
-        <label for="billing_email">Billing Email *</label>
+        <label for="billing_email">Contact Email *</label>
         <input type="email"
                id="billing_email"
                name="billing_email"
                value="<%= stash('billing_email') // '' %>"
-               placeholder="billing@yourorganization.com"
+               placeholder="you@yourorganization.com"
                required />
-        <div data-type="help">We'll send invoices and billing notifications to this email</div>
-      </div>
-
-      <div>
-        <label for="billing_phone">Phone Number</label>
-        <input type="tel"
-               id="billing_phone"
-               name="billing_phone"
-               value="<%= stash('billing_phone') // '' %>"
-               placeholder="(555) 123-4567" />
-      </div>
-
-      <div data-layout="grid">
-        <div>
-          <label for="billing_address">Street Address *</label>
-          <input type="text"
-                 id="billing_address"
-                 name="billing_address"
-                 value="<%= stash('billing_address') // '' %>"
-                 placeholder="123 Main Street"
-                 required />
-        </div>
-
-        <div>
-          <label for="billing_address2">Address Line 2</label>
-          <input type="text"
-                 id="billing_address2"
-                 name="billing_address2"
-                 value="<%= stash('billing_address2') // '' %>"
-                 placeholder="Suite 100" />
-        </div>
-      </div>
-
-      <div data-layout="grid">
-        <div>
-          <label for="billing_city">City *</label>
-          <input type="text"
-                 id="billing_city"
-                 name="billing_city"
-                 value="<%= stash('billing_city') // '' %>"
-                 placeholder="San Francisco"
-                 required />
-        </div>
-
-        <div>
-          <label for="billing_state">State/Province *</label>
-          <input type="text"
-                 id="billing_state"
-                 name="billing_state"
-                 value="<%= stash('billing_state') // '' %>"
-                 placeholder="CA"
-                 required />
-        </div>
-
-        <div>
-          <label for="billing_zip">ZIP/Postal Code *</label>
-          <input type="text"
-                 id="billing_zip"
-                 name="billing_zip"
-                 value="<%= stash('billing_zip') // '' %>"
-                 placeholder="94102"
-                 required />
-        </div>
-      </div>
-
-      <div>
-        <label for="billing_country">Country *</label>
-        <select id="billing_country" name="billing_country" required>
-          <option value="">Select Country</option>
-          <option value="US" <%= (stash('billing_country') // '') eq 'US' ? 'selected' : '' %>>United States</option>
-          <option value="CA" <%= (stash('billing_country') // '') eq 'CA' ? 'selected' : '' %>>Canada</option>
-          <option value="GB" <%= (stash('billing_country') // '') eq 'GB' ? 'selected' : '' %>>United Kingdom</option>
-          <option value="AU" <%= (stash('billing_country') // '') eq 'AU' ? 'selected' : '' %>>Australia</option>
-        </select>
+        <div data-type="help">We'll use this for account notifications and platform communications</div>
       </div>
     </fieldset>
 
@@ -151,20 +74,18 @@
   </form>
 </section>
 
-<!-- CSS moved to registry.css for proper caching and design token consistency -->
-
 <script>
 // Real-time subdomain generation
 document.addEventListener('DOMContentLoaded', function() {
   const nameInput = document.getElementById('name');
   const preview = document.querySelector('#subdomain-slug');
-  
+
   function updateSubdomainPreview(orgName) {
     if (!orgName) {
       preview.textContent = 'organization';
       return;
     }
-    
+
     // Generate slug: lowercase, replace spaces/special chars with hyphens, remove multiple hyphens
     const slug = orgName
       .toLowerCase()
@@ -173,15 +94,15 @@ document.addEventListener('DOMContentLoaded', function() {
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '')
       .substring(0, 50) || 'organization';
-    
+
     preview.textContent = slug;
   }
-  
+
   if (nameInput) {
     nameInput.addEventListener('input', function() {
       updateSubdomainPreview(this.value);
     });
-    
+
     // Update on page load if there's an existing value
     updateSubdomainPreview(nameInput.value);
   }

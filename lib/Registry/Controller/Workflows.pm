@@ -250,7 +250,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             
             # Check organization info
             push @missing_fields, 'Organization name' unless $run_data->{name} || $run_data->{organization_name};
-            push @missing_fields, 'Billing email' unless $run_data->{billing_email};
+            push @missing_fields, 'Contact email' unless $run_data->{billing_email} || $run_data->{admin_email};
             push @missing_fields, 'Admin name' unless $run_data->{admin_name};
             push @missing_fields, 'Admin email' unless $run_data->{admin_email};
             
