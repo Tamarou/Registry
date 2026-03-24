@@ -5,9 +5,8 @@ BEGIN;
 SET client_min_messages = 'warning';
 SET search_path TO registry, public;
 
--- Verify Stripe columns exist on tenants table
-SELECT stripe_customer_id, stripe_subscription_id, billing_status, trial_ends_at, subscription_started_at
-FROM tenants LIMIT 1;
+-- Stripe columns on tenants table were moved to tenant_stripe_accounts
+-- by the stripe-connect-accounts migration. Verify billing columns on profiles instead.
 
 -- Verify billing columns exist on tenant_profiles table
 SELECT billing_email, billing_phone, billing_address, organization_type
