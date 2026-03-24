@@ -355,6 +355,12 @@ class Registry :isa(Mojolicious) {
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
 
+        # Stripe Connect onboarding routes (no auth required for now)
+        my $connect = $self->routes->under('/connect');
+        $connect->get('/onboard/:tenant_id')->to('stripe_connect#onboard')->name('connect_onboard');
+        $connect->get('/return/:tenant_id')->to('stripe_connect#return_from_stripe')->name('connect_return');
+        $connect->get('/status/:tenant_id')->to('stripe_connect#status')->name('connect_status');
+
         # Route handling for root path - always use default workflow landing page
         $self->routes->get('/')->to('landing#root')->name('root_handler');
 

@@ -1,0 +1,71 @@
+%# ABOUTME: Stripe Connect onboarding and status display page.
+%# ABOUTME: Shows onboarding prompt, pending status, or connected state based on account status.
+% extends 'layouts/workflow';
+% title 'Stripe Connect';
+% my $account = stash('account');
+% my $error = stash('error') || '';
+% my $tenant_id = stash('tenant_id');
+
+<section data-component="container">
+
+  <div class="connect-status">
+    % if ($error) {
+      <div data-component="alert" data-variant="error">
+        <p><%= $error %></p>
+      </div>
+    % }
+
+    % if (!$account) {
+      <div data-component="alert" data-variant="warning">
+        <p>No Stripe account found. Please contact support.</p>
+      </div>
+    % } elsif ($account->onboarding_status eq 'complete') {
+      <div data-component="alert" data-variant="success">
+        <h3>Stripe Connected</h3>
+        <p>Your Stripe account is connected and ready to accept payments.</p>
+      </div>
+
+      <div class="connect-details">
+        <div class="info-row">
+          <label>Status:</label>
+          <span class="value">Active</span>
+        </div>
+        <div class="info-row">
+          <label>Charges:</label>
+          <span class="value"><%= $account->charges_enabled ? 'Enabled' : 'Disabled' %></span>
+        </div>
+        <div class="info-row">
+          <label>Payouts:</label>
+          <span class="value"><%= $account->payouts_enabled ? 'Enabled' : 'Disabled' %></span>
+        </div>
+      </div>
+    % } elsif ($account->onboarding_status eq 'pending') {
+      <div data-component="alert" data-variant="warning">
+        <h3>Onboarding In Progress</h3>
+        <p>Stripe is reviewing your account. This usually takes a few minutes. You'll be able to accept payments once approved.</p>
+      </div>
+
+      <a href="<%= url_for('connect_onboard', tenant_id => $tenant_id) %>"
+         class="btn btn-primary">
+        Continue Stripe Setup
+      </a>
+    % } else {
+      <div class="connect-prompt">
+        <h3>Connect Your Stripe Account</h3>
+        <p>Connect a Stripe account to start accepting payments from families. Stripe handles all payment processing securely.</p>
+
+        <ul class="connect-benefits">
+          <li>Accept credit cards, debit cards, and bank transfers</li>
+          <li>Automatic deposits to your bank account</li>
+          <li>You own your Stripe account and all payment data</li>
+          <li>PCI compliant -- no sensitive data on our servers</li>
+        </ul>
+
+        <a href="<%= url_for('connect_onboard', tenant_id => $tenant_id) %>"
+           class="btn btn-primary btn-xl">
+          Connect with Stripe
+        </a>
+      </div>
+    % }
+  </div>
+</section>
