@@ -371,9 +371,11 @@ Supporting classes:
   authenticator data structure (rpIdHash, flags, signCount, attested
   credential data)
 
-The implementation covers WebAuthn Level 2 for ES256 (P-256 ECDSA) and RS256
-algorithms. EdDSA (Ed25519) support can be added later via `CryptX` which
-already supports it.
+The implementation covers WebAuthn Level 2 for three algorithms:
+
+- **ES256** — P-256 ECDSA (most common, used by platform authenticators)
+- **RS256** — RSA with SHA-256 (legacy compatibility)
+- **EdDSA** — Ed25519 (modern authenticators, via `Crypt::PK::Ed25519`)
 
 ### New Controller (Object::Pad feature class)
 
@@ -617,10 +619,12 @@ New email templates needed (added to `Registry::Email::Template`):
 - `passkey_removed` — confirmation that a passkey was deactivated (security
   notification)
 
-## Open Questions
+## Resolved Decisions (continued)
 
-1. **Domain alias mechanics**: How are domain aliases configured and
-   provisioned? DNS CNAME verification? This affects the `canonical_domain`
-   field and WebAuthn RP ID transitions.
-2. **EdDSA timeline**: Some modern authenticators use Ed25519. `CryptX`
-   supports it. Add to initial implementation or defer?
+6. **Domain alias mechanics**: Resolved in separate spec
+   (`docs/specs/custom-domains.md`). CNAME-based, self-service, 1 domain per
+   tenant, managed via Render API.
+7. **EdDSA support**: Included in initial implementation. The WebAuthn library
+   (`Registry::Auth::WebAuthn`) supports ES256 (P-256 ECDSA), RS256, and
+   EdDSA (Ed25519) from day one. `CryptX` provides `Crypt::PK::Ed25519` for
+   signature verification. Test vectors for all three algorithms required.
