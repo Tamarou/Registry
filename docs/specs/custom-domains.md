@@ -323,10 +323,11 @@ minutes.
 - **Verified** — green, "Active"
 - **Failed** — red, shows `verification_error`, "Check now" to retry
 
-**Set as primary** button (only on verified domains):
-- Confirmation dialog: "Setting dance-stars.com as your primary domain will
-  redirect all traffic from dance-stars.tinyartempire.com. Users with existing
-  passkeys will need to re-register them. Continue?"
+**Primary domain**: With the 1-domain limit, the custom domain is
+automatically primary when verified. A confirmation is shown at add time:
+"Adding a custom domain will redirect all traffic from
+dance-stars.tinyartempire.com once verified. Users with existing passkeys
+will need to re-register them."
 
 ## Error Handling
 
@@ -433,13 +434,14 @@ No new CPAN dependencies required. Uses:
 - `Mojo::JSON` (already available) — for API request/response encoding
 - Existing email infrastructure — for verification notifications
 
-## Open Questions
+## Resolved Decisions
 
-1. **Apex domain support**: Should the DNS instructions specifically call out
-   ALIAS/ANAME/flattened CNAME for apex domains, or just mention it as a note?
-   Different registrars handle this differently.
-2. **Domain limit per tenant**: Should there be a maximum number of custom
-   domains per tenant? Unlimited for now, or cap at e.g., 10?
-3. **Domain transfer between tenants**: If a domain is registered to one tenant
-   and another tenant tries to add it, should there be a transfer flow, or
-   just "already in use"?
+1. **Apex domain support**: Bare-bones DNS instructions only. Don't enumerate
+   per-registrar differences. Just show the CNAME record needed.
+2. **Domain limit per tenant**: Capped at 1 custom domain per tenant for now.
+   Enforce in the controller — reject adds if a domain already exists. The
+   `tenant_domains` table supports multiple rows for future expansion, but
+   the UI and validation enforce the limit.
+3. **Domain transfer between tenants**: "Already in use" error. No transfer
+   flow. The existing tenant must remove the domain before another tenant can
+   add it.
