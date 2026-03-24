@@ -6,6 +6,17 @@
 
   <form method="POST" action="<%= $action %>" data-multistep="true">
 
+    <div id="subdomain-preview" data-component="subdomain-preview">
+      <article data-component="card">
+        <div>
+          <span data-component="badge" data-variant="primary">
+            <span id="subdomain-slug">organization</span>.tinyartempire.com
+          </span>
+          <p>Your families will access your programs at this URL. You can also set up a custom domain later.</p>
+        </div>
+      </article>
+    </div>
+
     <fieldset>
       <legend>Organization Information</legend>
 
@@ -22,20 +33,6 @@
                hx-target="#subdomain-preview"
                hx-include="[name='name']" />
         <div data-type="help">This will be displayed to families and used to generate your subdomain</div>
-      </div>
-
-      <div>
-        <label>Your Subdomain</label>
-        <div id="subdomain-preview" data-component="subdomain-preview">
-          <article data-component="card">
-            <div>
-              <span data-component="badge" data-variant="primary">
-                <span id="subdomain-slug">organization</span>.tinyartempire.com
-              </span>
-              <p>Your families will access your programs at this URL. You can also set up a custom domain later.</p>
-            </div>
-          </article>
-        </div>
       </div>
 
       <div>
