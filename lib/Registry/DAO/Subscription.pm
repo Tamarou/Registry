@@ -58,12 +58,6 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
         my $response = $self->_stripe_request('POST', '/customers', \%form_data);
         return unless $response;
-        
-        # Update tenant with Stripe customer ID
-        $db->query(
-            'UPDATE registry.tenants SET stripe_customer_id = ? WHERE id = ?',
-            $response->{id}, $tenant_data->{id}
-        );
 
         return $response;
     }
@@ -129,20 +123,6 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
         my $subscription = $self->_stripe_request('POST', '/subscriptions', \%form_data);
         return unless $subscription;
-        
-        # Update tenant with subscription information if tenant_id provided
-        if ($tenant_id) {
-            my $trial_ends_at = DateTime->from_epoch(epoch => $subscription->{trial_end});
-            
-            $db->query(
-                'UPDATE registry.tenants SET stripe_subscription_id = ?, billing_status = ?, trial_ends_at = ?, subscription_started_at = ? WHERE id = ?',
-                $subscription->{id},
-                'trial', 
-                $trial_ends_at->iso8601(),
-                DateTime->now->iso8601(),
-                $tenant_id
-            );
-        }
 
         return $subscription;
     }
@@ -176,21 +156,10 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
     }
 
     method update_billing_status($db, $tenant_id, $status, $subscription_data = undef) {
-        my @params = ($status);
-        my $sql = 'UPDATE registry.tenants SET billing_status = ?';
-        
-        if ($subscription_data) {
-            # Update trial end date if subscription data is provided
-            if ($subscription_data->{trial_end}) {
-                my $trial_ends_at = DateTime->from_epoch(epoch => $subscription_data->{trial_end});
-                $sql .= ', trial_ends_at = ?';
-                push @params, $trial_ends_at->iso8601();
-            }
-        }
-        
-        $sql .= ' WHERE id = ?';
-        push @params, $tenant_id;
-        return $db->query($sql, @params);
+        # Billing status columns were moved to tenant_stripe_accounts
+        # by the stripe-connect-accounts migration. This method is now a no-op
+        # for backward compatibility with webhook event handlers.
+        return 1;
     }
 
     method cancel_subscription($subscription_id, $at_period_end = 1) {
@@ -329,27 +298,17 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
     method get_tenant_billing_info($tenant_id) {
         return $db->query(
-            'SELECT t.*, tp.billing_email, tp.billing_phone, tp.billing_address 
-             FROM registry.tenants t 
-             LEFT JOIN registry.tenant_profiles tp ON t.id = tp.tenant_id 
+            'SELECT t.*, tp.billing_email, tp.billing_phone, tp.billing_address
+             FROM registry.tenants t
+             LEFT JOIN registry.tenant_profiles tp ON t.id = tp.tenant_id
              WHERE t.id = ?',
             $tenant_id
         )->hash;
     }
 
     method is_trial_expired($tenant_id) {
-        my $tenant = $self->get_tenant_billing_info($tenant_id);
-        return 0 unless $tenant->{trial_ends_at};
-        
-        # Simple string comparison for now - this is a basic implementation
-        my $now = DateTime->now->iso8601() . 'Z';
-        my $trial_end = $tenant->{trial_ends_at};
-        
-        # Convert to comparable format if needed
-        if ($trial_end =~ /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/) {
-            $trial_end = sprintf('%04d-%02d-%02dT%02d:%02d:%02dZ', $1, $2, $3, $4, $5, $6);
-        }
-        
-        return $now gt $trial_end;
+        # Trial tracking was removed with the move to Stripe Connect.
+        # Tenant billing state is now managed via TenantStripeAccount.
+        return 0;
     }
 }
