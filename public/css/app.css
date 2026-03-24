@@ -572,6 +572,15 @@ footer[data-component="workflow-navigation"] {
    6. FORMS
    ============================================================================ */
 
+/* Vertical rhythm between form fields inside fieldsets */
+section[data-component="workflow-content"] fieldset > div {
+  margin-bottom: 1.25rem;
+}
+
+section[data-component="workflow-content"] fieldset > div:last-child {
+  margin-bottom: 0;
+}
+
 /* Workflow form inputs */
 section[data-component="workflow-content"] input,
 section[data-component="workflow-content"] textarea,
@@ -686,10 +695,14 @@ section[data-component="workflow-content"] label {
 
 /* Fieldset and legend */
 fieldset {
-  margin: 0;
-  padding: var(--space-4);
+  margin: 0 0 2rem 0;
+  padding: var(--space-4) var(--space-4) var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+}
+
+fieldset:last-of-type {
+  margin-bottom: 1rem;
 }
 
 legend {
