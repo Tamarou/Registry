@@ -561,9 +561,10 @@ These are the journey tests that motivated this spec:
    (`Challenge`, `COSE`, `AuthenticatorData`). Object::Pad feature classes.
    Built on `CBOR::XS` + `CryptX`. Full unit test coverage against known
    WebAuthn test vectors before integration.
-4. **Magic links** — token generation, email sending, consumption, controller
-   routes. This unblocks all auth flows since magic links bootstrap first
-   sessions. Requires SMTP solution.
+4. **Magic links** — token generation, email sending (via existing
+   `Registry::DAO::Notification`), consumption, controller routes. Add new
+   templates to `Registry::Email::Template`. This unblocks all auth flows
+   since magic links bootstrap first sessions.
 5. **Session management** — `before_dispatch` rewrite, session writing,
    `require_auth` redirect update, logout
 6. **WebAuthn controller integration** — registration and authentication
@@ -580,7 +581,9 @@ These are the journey tests that motivated this spec:
 
 ## Resolved Decisions
 
-1. **Email delivery**: SMTP. Mail solution TBD — prerequisite for magic links.
+1. **Email delivery**: Already implemented. `Registry::DAO::Notification` +
+   `Email::Sender::Simple` handles delivery. `Registry::Email::Template`
+   handles rendering. Just need new templates for auth emails.
 2. **Passkey attestation**: Accept `none`. No hardware attestation required.
    Consumer-facing app; attestation reduces compatibility for no meaningful
    security gain.
@@ -595,14 +598,29 @@ These are the journey tests that motivated this spec:
    `Authen::WebAuthn` due to: missing discoverable credential support,
    incomplete spec validation, Mouse dependency, bus-factor-1 maintenance.
 
+### Email Infrastructure (Existing)
+
+Email delivery already exists in the codebase:
+
+- `Email::Simple` and `Email::Sender::Simple` in cpanfile
+- `Registry::DAO::Notification` — `send_email` method handles delivery
+- `Registry::Email::Template` — HTML/text email renderer with inline CSS
+
+New email templates needed (added to `Registry::Email::Template`):
+
+- `magic_link_login` — "Click to sign in" with link and expiry notice
+- `magic_link_invite` — "You've been invited to [tenant]" with link, role,
+  and expiry notice
+- `email_verification` — "Verify your email address" with link
+- `passkey_registered` — confirmation that a new passkey was added (security
+  notification)
+- `passkey_removed` — confirmation that a passkey was deactivated (security
+  notification)
+
 ## Open Questions
 
-1. **SMTP configuration**: Which SMTP service/provider? Needed before magic
-   links can be implemented. Options: self-hosted (Postfix), transactional
-   service (Postmark, SendGrid, SES), or Mojolicious plugin
-   (`Mojolicious::Plugin::Mail`).
-2. **Domain alias mechanics**: How are domain aliases configured and
-   provisioned? DNS verification? This affects the `canonical_domain` field
-   and WebAuthn RP ID transitions.
-3. **EdDSA timeline**: Some modern authenticators use Ed25519. `CryptX`
+1. **Domain alias mechanics**: How are domain aliases configured and
+   provisioned? DNS CNAME verification? This affects the `canonical_domain`
+   field and WebAuthn RP ID transitions.
+2. **EdDSA timeline**: Some modern authenticators use Ed25519. `CryptX`
    supports it. Add to initial implementation or defer?
