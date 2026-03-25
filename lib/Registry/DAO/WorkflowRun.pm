@@ -32,8 +32,8 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         # Handle JSON parsing - data might be a JSON string from database
         if (defined $data && !ref $data) {
             # It's a JSON string, parse it
-            use Mojo::JSON qw(decode_json);
-            return decode_json($data);
+            use Mojo::JSON qw(from_json);
+            return from_json($data);
         }
         return $data || {};
     }
