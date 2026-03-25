@@ -27,3 +27,6 @@ requires 'Text::Unidecode';
 requires 'Text::CSV_XS';
 requires 'IO::Socket::SSL';
 requires 'SlapbirdAPM::Agent::Mojo';
+requires 'CBOR::XS';
+requires 'CryptX';
+requires 'Crypt::URandom';
