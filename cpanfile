@@ -10,6 +10,9 @@ requires 'Lexical::SealRequireHints';
 requires 'Params::Util';
 requires 'Crypt::Passphrase::Argon2';
 requires 'Crypt::Passphrase::Bcrypt';
+requires 'CBOR::XS';           # WebAuthn attestation object and COSE key decoding
+requires 'CryptX';             # Crypt::PK::ECC (ES256), Crypt::PK::RSA (RS256), Crypt::PK::Ed25519 (EdDSA)
+requires 'Crypt::URandom';     # Cryptographic random bytes for challenges and tokens
 requires 'DBD::Pg';
 requires 'Mojo::Pg';
 requires 'Mojolicious';
