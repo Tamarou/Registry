@@ -15,10 +15,10 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $updated_at :param :reader;
     field $session_type :param :reader = 'regular';
-    field $start_date :param :reader;
-    field $end_date :param :reader;
+    field $start_date :param :reader = undef;
+    field $end_date :param :reader = undef;
     field $status :param :reader = 'draft';
-    field $capacity :param :reader;
+    field $capacity :param :reader = undef;
 
     sub table { 'sessions' }
     
