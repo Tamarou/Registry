@@ -146,7 +146,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
     method save($db) {
         return $self->update($db, {
-            data => $data,
+            data => { -json => $data },
             latest_step_id => $latest_step_id
         });
     }

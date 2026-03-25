@@ -99,3 +99,47 @@ my $dao = $test_db->db;
     is $run->data->{name},          'Test User', 'run data is updated';
 
 }
+
+{
+    # WorkflowRun::save() must correctly persist JSONB data
+    my $workflow = $dao->create(
+        Workflow => {
+            slug        => 'save-test',
+            name        => 'Save Test Workflow',
+            description => 'Tests the save method',
+        }
+    );
+
+    $workflow->add_step(
+        $dao,
+        {
+            slug        => 'landing',
+            description => 'Landing Page',
+        }
+    );
+
+    my $run = $workflow->new_run( $dao->db );
+    $run->process( $dao->db, $run->next_step( $dao->db ), { foo => 'bar' } );
+
+    # Mutate the in-memory data directly via update_data, adding a key
+    # that only save() would persist (not already in DB from process).
+    $run->update_data( $dao->db, { extra => 'via_update_data' } );
+
+    # Now use save() to persist latest_step_id along with data.
+    # Before the fix, save() silently failed because it passed a
+    # hashref to SQL::Abstract without {-json => ...} wrapping,
+    # causing SQL::Abstract to interpret hash keys as column names.
+    my @warnings;
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+    my $saved = $run->save( $dao->db );
+    is scalar @warnings, 0,
+      'save() produces no warnings (no silent JSONB encoding failure)';
+    ok $saved, 'save() returns a truthy value';
+
+    # Reload from DB and verify the full round-trip
+    my ($reloaded) = $dao->find( WorkflowRun => { id => $run->id } );
+    is $reloaded->data->{foo}, 'bar',
+      'save() preserves original process() data';
+    is $reloaded->data->{extra}, 'via_update_data',
+      'save() preserves data from update_data';
+}
