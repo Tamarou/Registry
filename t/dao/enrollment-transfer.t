@@ -244,3 +244,27 @@ subtest 'Transfer status helper methods' => sub {
     ok !$pending_enrollment->is_transfer_completed, 'Pending transfer shows not completed';
     ok $pending_enrollment->has_transfer_request, 'Pending transfer shows has request';
 };
+
+subtest 'Get available sessions for transfer' => sub {
+    # Create a future session with capacity for transfers
+    my $future_session = $dao->create(Session => {
+        name       => 'Future Transfer Session',
+        start_date => '2099-01-01',
+        end_date   => '2099-06-01',
+        capacity   => 20
+    });
+
+    # get_available_for_transfer should return sessions that:
+    # - are not the excluded session
+    # - have available capacity
+    # - start in the future
+    my $available = Registry::DAO::Session->get_available_for_transfer(
+        $dao->db, $source_session->id
+    );
+
+    ok ref $available eq 'ARRAY', 'Returns an arrayref';
+    my @matching = grep { $_->{id} eq $future_session->id } @$available;
+    is scalar @matching, 1, 'Future session with capacity appears in results';
+    is $matching[0]->{name}, 'Future Transfer Session',
+      'Session name returned correctly';
+};
