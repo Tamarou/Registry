@@ -2,7 +2,7 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
-    use Mojo::JSON qw(encode_json);
+    use Mojo::JSON qw(to_json);
     use Carp       qw( croak );
 
     field $id :param      = 0;
@@ -61,7 +61,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         # second write would overwrite the first merge.
         my $result = $db->query(
             'UPDATE workflow_runs SET data = COALESCE(data, \'{}\'::jsonb) || ?::jsonb WHERE id = ? RETURNING data',
-            encode_json($new_data), $id
+            to_json($new_data), $id
         )->expand->hash;
 
         croak "WorkflowRun id=$id not found during update_data" unless $result;
@@ -104,7 +104,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         # data updated but latest_step_id stale.
         my $result = $db->query(
             'UPDATE workflow_runs SET data = COALESCE(data, \'{}\'::jsonb) || ?::jsonb, latest_step_id = ? WHERE id = ? RETURNING data, latest_step_id',
-            encode_json(\%to_persist), $step->id, $id
+            to_json(\%to_persist), $step->id, $id
         )->expand->hash;
 
         croak "WorkflowRun id=$id not found during process" unless $result;
