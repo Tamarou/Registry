@@ -74,6 +74,11 @@ DECLARE
     s name;
 BEGIN
     FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
+        -- Skip tenants that don't have their own schema (e.g. registry-platform)
+        CONTINUE WHEN NOT EXISTS (
+            SELECT 1 FROM information_schema.schemata WHERE schema_name = s
+        );
+
         -- Make passhash optional
         EXECUTE format('ALTER TABLE %I.users ALTER COLUMN passhash DROP NOT NULL;', s);
 
