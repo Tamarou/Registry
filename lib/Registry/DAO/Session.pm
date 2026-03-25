@@ -212,24 +212,20 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
 
         my $sql = q{
-            SELECT DISTINCT
+            SELECT
                 s.id,
                 s.name,
                 s.start_date,
                 s.end_date,
                 s.capacity,
-                p.name as program_name,
-                l.name as location_name,
                 COALESCE(COUNT(e.id), 0) as current_enrollments
             FROM sessions s
-            JOIN projects p ON s.project_id = p.id
-            LEFT JOIN locations l ON s.location_id = l.id
             LEFT JOIN enrollments e ON s.id = e.session_id AND e.status IN ('active', 'pending')
             WHERE s.id != ?
-              AND (s.capacity IS NULL OR COALESCE(COUNT(e.id), 0) < s.capacity)
               AND s.start_date > NOW()
-            GROUP BY s.id, s.name, s.start_date, s.end_date, s.capacity, p.name, l.name
-            ORDER BY p.name, s.start_date
+            GROUP BY s.id, s.name, s.start_date, s.end_date, s.capacity
+            HAVING s.capacity IS NULL OR COALESCE(COUNT(e.id), 0) < s.capacity
+            ORDER BY s.name, s.start_date
         };
 
         return $db->query($sql, $exclude_session_id)->hashes->to_array;
