@@ -21,8 +21,14 @@ package Test::Registry::Fixtures {
         require Registry::DAO::Tenant;
         my $tenant = Registry::DAO::Tenant->create($db, $data);
 
-        # Automatically create the tenant schema by cloning from registry schema
-        $db->query('SELECT clone_schema(?)', $tenant->slug);
+        # Automatically create the tenant schema by cloning from registry schema.
+        # Use the raw db handle directly to ensure the query runs even in void context.
+        # Only clone when the slug is a plain SQL identifier (no hyphens) that clone_schema
+        # can use without quoting issues.
+        if ($tenant->slug =~ /^[a-z_][a-z0-9_]*$/) {
+            my $raw_db = $db isa Registry::DAO ? $db->db : $db;
+            $raw_db->query('SELECT clone_schema(?)', $tenant->slug);
+        }
 
         return $tenant;
     }

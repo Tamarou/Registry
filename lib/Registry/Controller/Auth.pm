@@ -20,7 +20,8 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         # the email matched a user.  This prevents user enumeration.
         if ($email) {
             try {
-                my $db   = $self->dao->db;
+                my $dao  = $self->dao;
+                my $db   = $dao->db;
                 my $user = Registry::DAO::User->find($db, { email => $email });
 
                 if ($user) {
@@ -44,7 +45,8 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
     method consume_magic_link {
         my $plaintext = $self->param('token') // '';
-        my $db        = $self->dao->db;
+        my $dao       = $self->dao;
+        my $db        = $dao->db;
 
         my $token = Registry::DAO::MagicLinkToken->find_by_plaintext($db, $plaintext);
 
@@ -80,7 +82,8 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
     method verify_email {
         my $plaintext = $self->param('token') // '';
-        my $db        = $self->dao->db;
+        my $dao       = $self->dao;
+        my $db        = $dao->db;
 
         my $token = Registry::DAO::MagicLinkToken->find_by_plaintext($db, $plaintext);
 
