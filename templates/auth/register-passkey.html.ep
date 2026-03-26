@@ -1,0 +1,26 @@
+%# ABOUTME: Passkey registration page with WebAuthn JavaScript for credential creation.
+%# ABOUTME: Requires an authenticated session to register a new passkey.
+% layout 'default';
+% title 'Register Passkey';
+
+<div class="card">
+    <h2>Register a Passkey</h2>
+    <p>Passkeys let you sign in securely without a password, using your
+       device's built-in authentication (fingerprint, face, PIN).</p>
+
+    <button id="register-passkey-btn" class="btn btn-primary">Register Passkey</button>
+
+    <div id="passkey-status" style="display:none;">
+        <p id="passkey-message"></p>
+    </div>
+</div>
+
+<script>
+    // WebAuthn passkey registration will be wired up in a future task
+    document.getElementById('register-passkey-btn').addEventListener('click', async function() {
+        var statusEl = document.getElementById('passkey-status');
+        var msgEl = document.getElementById('passkey-message');
+        statusEl.style.display = 'block';
+        msgEl.textContent = 'Passkey registration is not yet available.';
+    });
+</script>

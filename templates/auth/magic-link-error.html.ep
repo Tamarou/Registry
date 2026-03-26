@@ -1,0 +1,10 @@
+%# ABOUTME: Error page for invalid, expired, or already-used magic links.
+%# ABOUTME: Displays the specific error message from the controller stash.
+% layout 'default';
+% title 'Invalid Link';
+
+<div class="card">
+    <h2>Invalid Link</h2>
+    <p><%= stash('error') // 'This link is invalid or has expired.' %></p>
+    <p><a href="/auth/login">Request a new magic link</a></p>
+</div>

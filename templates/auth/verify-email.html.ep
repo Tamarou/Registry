@@ -1,0 +1,16 @@
+%# ABOUTME: Email verification result page showing success or failure.
+%# ABOUTME: Checks verified stash variable to display the appropriate message.
+% layout 'default';
+% title 'Email Verification';
+
+<div class="card">
+    % if (stash('verified')) {
+        <h2>Email Verified</h2>
+        <p>Your email address has been confirmed. You can now sign in.</p>
+        <p><a href="/auth/login">Sign in</a></p>
+    % } else {
+        <h2>Verification Failed</h2>
+        <p><%= stash('error') // 'This verification link is invalid or has expired.' %></p>
+        <p><a href="/auth/login">Back to sign in</a></p>
+    % }
+</div>

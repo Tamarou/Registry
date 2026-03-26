@@ -1,0 +1,136 @@
+# ABOUTME: Auth controller handling magic link login, email verification,
+# ABOUTME: WebAuthn passkey flows, and logout for passwordless authentication.
+use 5.42.0;
+use utf8;
+use Object::Pad;
+
+class Registry::Controller::Auth :isa(Registry::Controller) {
+    use Registry::DAO::User;
+    use Registry::DAO::MagicLinkToken;
+
+    method login {
+        $self->Mojolicious::Controller::render(template => 'auth/login');
+    }
+
+    method request_magic_link {
+        my $email = $self->param('email') // '';
+
+        # Always show the same confirmation page regardless of whether
+        # the email matched a user.  This prevents user enumeration.
+        if ($email) {
+            try {
+                my $db   = $self->dao->db;
+                my $user = Registry::DAO::User->find($db, { email => $email });
+
+                if ($user) {
+                    my ($token, $plaintext) =
+                        Registry::DAO::MagicLinkToken->generate($db, {
+                            user_id => $user->id,
+                            purpose => 'login',
+                        });
+
+                    # TODO: send the magic-link email via Registry::Email
+                    $self->app->log->info("Magic link generated for $email");
+                }
+            }
+            catch ($e) {
+                $self->app->log->warn("Error during magic link request: $e");
+            }
+        }
+
+        $self->Mojolicious::Controller::render(template => 'auth/magic-link-sent');
+    }
+
+    method consume_magic_link {
+        my $plaintext = $self->param('token') // '';
+        my $db        = $self->dao->db;
+
+        my $token = Registry::DAO::MagicLinkToken->find_by_plaintext($db, $plaintext);
+
+        unless ($token) {
+            $self->stash(error => 'This link is invalid.');
+            return $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+        }
+
+        if ($token->consumed_at) {
+            $self->stash(error => 'This link has already been used.');
+            return $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+        }
+
+        if ($token->is_expired) {
+            $self->stash(error => 'This link has expired. Please request a new one.');
+            return $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+        }
+
+        try {
+            $token->consume($db);
+
+            # Set the user session
+            $self->session(user_id => $token->user_id);
+
+            $self->redirect_to('/');
+        }
+        catch ($e) {
+            $self->app->log->warn("Error consuming magic link: $e");
+            $self->stash(error => 'This link is invalid or has expired.');
+            $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+        }
+    }
+
+    method verify_email {
+        my $plaintext = $self->param('token') // '';
+        my $db        = $self->dao->db;
+
+        my $token = Registry::DAO::MagicLinkToken->find_by_plaintext($db, $plaintext);
+
+        unless ($token && $token->purpose eq 'verify_email') {
+            $self->stash(verified => 0, error => 'This verification link is invalid.');
+            return $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+        }
+
+        if ($token->consumed_at || $token->is_expired) {
+            $self->stash(verified => 0, error => 'This verification link has expired or was already used.');
+            return $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+        }
+
+        try {
+            $token->consume($db);
+
+            # Mark the user's email as verified
+            my $user = Registry::DAO::User->find($db, { id => $token->user_id });
+            $user->update($db, { email_verified_at => \'now()' }) if $user;
+
+            $self->stash(verified => 1);
+            $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+        }
+        catch ($e) {
+            $self->app->log->warn("Error verifying email: $e");
+            $self->stash(verified => 0, error => 'Verification failed. Please try again.');
+            $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+        }
+    }
+
+    method logout {
+        $self->session(expires => 1);
+        $self->redirect_to('/');
+    }
+
+    # WebAuthn endpoints -- stubs for future implementation
+    method webauthn_register_begin {
+        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+    }
+
+    method webauthn_register_complete {
+        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+    }
+
+    method webauthn_auth_begin {
+        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+    }
+
+    method webauthn_auth_complete {
+        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+    }
+}
+
+1;

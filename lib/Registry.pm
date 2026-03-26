@@ -213,7 +213,7 @@ class Registry :isa(Mojolicious) {
                 }
 
                 # Browser clients get redirected to the login workflow
-                $c->redirect_to('/user-creation');
+                $c->redirect_to('/auth/login');
                 return 0;
             }
         );
@@ -400,6 +400,18 @@ class Registry :isa(Mojolicious) {
         $admin->post('/dashboard/process_drop_request')->to('workflows#start_workflow' => { workflow => 'admin-drop-approval' })->name('admin_dashboard_process_drop_request');
         $admin->get('/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $admin->post('/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
+
+        # Auth routes (unprotected -- no require_auth)
+        my $auth = $r->under('/auth');
+        $auth->get('/login')->to('Auth#login');
+        $auth->post('/magic/request')->to('Auth#request_magic_link');
+        $auth->get('/magic/:token')->to('Auth#consume_magic_link');
+        $auth->post('/logout')->to('Auth#logout');
+        $auth->get('/verify-email/:token')->to('Auth#verify_email');
+        $auth->post('/webauthn/register/begin')->to('Auth#webauthn_register_begin');
+        $auth->post('/webauthn/register/complete')->to('Auth#webauthn_register_complete');
+        $auth->post('/webauthn/auth/begin')->to('Auth#webauthn_auth_begin');
+        $auth->post('/webauthn/auth/complete')->to('Auth#webauthn_auth_complete');
 
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
