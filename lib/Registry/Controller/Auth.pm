@@ -1,5 +1,5 @@
 # ABOUTME: Auth controller handling magic link login, email verification,
-# ABOUTME: WebAuthn passkey flows, and logout for passwordless authentication.
+# ABOUTME: WebAuthn passkey flows, API key management, and logout for passwordless authentication.
 use 5.42.0;
 use utf8;
 use Object::Pad;
@@ -7,6 +7,7 @@ use Object::Pad;
 class Registry::Controller::Auth :isa(Registry::Controller) {
     use Registry::DAO::User;
     use Registry::DAO::MagicLinkToken;
+    use Registry::DAO::ApiKey;
 
     method login {
         $self->Mojolicious::Controller::render(template => 'auth/login');
@@ -130,6 +131,52 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
     method webauthn_auth_complete {
         $self->render(json => { error => 'Not yet implemented' }, status => 501);
+    }
+
+    method create_api_key () {
+        return unless $self->require_auth;
+
+        my $user_id = $self->session('user_id');
+        my $dao     = $self->dao;
+        my $db      = $dao->db;
+
+        my $name = $self->param('name') // 'Unnamed Key';
+
+        my ($key_obj, $plaintext) = Registry::DAO::ApiKey->generate($db, {
+            user_id => $user_id,
+            name    => $name,
+            scopes  => $self->param('scopes') // 0,
+        });
+
+        $self->render(json => {
+            id         => $key_obj->id,
+            key        => $plaintext,
+            key_prefix => $key_obj->key_prefix,
+            name       => $key_obj->name,
+            created_at => $key_obj->created_at,
+        });
+    }
+
+    method list_api_keys () {
+        return unless $self->require_auth;
+
+        my $user_id = $self->session('user_id');
+        my $dao     = $self->dao;
+        my $db      = $dao->db;
+        my $user    = Registry::DAO::User->find($db, { id => $user_id });
+
+        my @keys = map {
+            {
+                id         => $_->id,
+                key_prefix => $_->key_prefix,
+                name       => $_->name,
+                scopes     => $_->scopes,
+                last_used  => $_->last_used_at,
+                created_at => $_->created_at,
+            }
+        } $user->api_keys($db);
+
+        $self->render(json => \@keys);
     }
 }
 

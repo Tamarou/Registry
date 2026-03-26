@@ -457,6 +457,8 @@ class Registry :isa(Mojolicious) {
         $auth->post('/webauthn/register/complete')->to('Auth#webauthn_register_complete');
         $auth->post('/webauthn/auth/begin')->to('Auth#webauthn_auth_begin');
         $auth->post('/webauthn/auth/complete')->to('Auth#webauthn_auth_complete');
+        $auth->post('/api-keys')->to('Auth#create_api_key');
+        $auth->get('/api-keys')->to('Auth#list_api_keys');
 
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
