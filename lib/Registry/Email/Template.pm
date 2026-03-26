@@ -219,6 +219,158 @@ $raw_body
 END
         return ($html, $text);
     },
+
+    magic_link_login => sub {
+        my (%v) = @_;
+        my $tenant_name      = _escape_html($v{tenant_name}      // '');
+        my $magic_link_url   = _escape_html($v{magic_link_url}   // '');
+        my $expires_in_hours = _escape_html($v{expires_in_hours} // '');
+
+        my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">Sign In to $tenant_name</h2>
+<p style="color:#333333;line-height:1.6;">Click the link below to sign in to your account. This link will expire in $expires_in_hours hours.</p>
+<p style="margin:24px 0;">
+  <a href="$magic_link_url" style="background-color:#2c5f8a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign In</a>
+</p>
+<p style="color:#666666;font-size:14px;line-height:1.6;">If you did not request this sign-in link, you can safely ignore this email.</p>
+<p style="color:#666666;font-size:14px;line-height:1.6;">Or copy and paste this URL into your browser:<br>$magic_link_url</p>
+END
+
+        my $raw_tenant_name      = $v{tenant_name}      // '';
+        my $raw_magic_link_url   = $v{magic_link_url}   // '';
+        my $raw_expires_in_hours = $v{expires_in_hours} // '';
+        my $text = <<"END";
+Sign In to $raw_tenant_name
+
+Click the link below to sign in to your account. This link will expire in $raw_expires_in_hours hours.
+
+$raw_magic_link_url
+
+If you did not request this sign-in link, you can safely ignore this email.
+END
+        return ($html, $text);
+    },
+
+    magic_link_invite => sub {
+        my (%v) = @_;
+        my $tenant_name    = _escape_html($v{tenant_name}    // '');
+        my $inviter_name   = _escape_html($v{inviter_name}   // '');
+        my $role           = _escape_html($v{role}           // '');
+        my $magic_link_url = _escape_html($v{magic_link_url} // '');
+
+        my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">You've Been Invited to $tenant_name</h2>
+<p style="color:#333333;line-height:1.6;"><strong>$inviter_name</strong> has invited you to join <strong>$tenant_name</strong> as a <strong>$role</strong>.</p>
+<p style="color:#333333;line-height:1.6;">Click the link below to accept the invitation and set up your account.</p>
+<p style="margin:24px 0;">
+  <a href="$magic_link_url" style="background-color:#2c5f8a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:bold;">Accept Invitation</a>
+</p>
+<p style="color:#666666;font-size:14px;line-height:1.6;">If you were not expecting this invitation, you can safely ignore this email.</p>
+<p style="color:#666666;font-size:14px;line-height:1.6;">Or copy and paste this URL into your browser:<br>$magic_link_url</p>
+END
+
+        my $raw_tenant_name    = $v{tenant_name}    // '';
+        my $raw_inviter_name   = $v{inviter_name}   // '';
+        my $raw_role           = $v{role}           // '';
+        my $raw_magic_link_url = $v{magic_link_url} // '';
+        my $text = <<"END";
+You've Been Invited to $raw_tenant_name
+
+$raw_inviter_name has invited you to join $raw_tenant_name as a $raw_role.
+
+Click the link below to accept the invitation and set up your account.
+
+$raw_magic_link_url
+
+If you were not expecting this invitation, you can safely ignore this email.
+END
+        return ($html, $text);
+    },
+
+    email_verification => sub {
+        my (%v) = @_;
+        my $tenant_name      = _escape_html($v{tenant_name}      // '');
+        my $verification_url = _escape_html($v{verification_url} // '');
+
+        my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">Verify Your Email Address</h2>
+<p style="color:#333333;line-height:1.6;">Thank you for registering with $tenant_name. Please verify your email address by clicking the link below.</p>
+<p style="margin:24px 0;">
+  <a href="$verification_url" style="background-color:#2c5f8a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:bold;">Verify Email</a>
+</p>
+<p style="color:#666666;font-size:14px;line-height:1.6;">If you did not create an account with $tenant_name, you can safely ignore this email.</p>
+<p style="color:#666666;font-size:14px;line-height:1.6;">Or copy and paste this URL into your browser:<br>$verification_url</p>
+END
+
+        my $raw_tenant_name      = $v{tenant_name}      // '';
+        my $raw_verification_url = $v{verification_url} // '';
+        my $text = <<"END";
+Verify Your Email Address
+
+Thank you for registering with $raw_tenant_name. Please verify your email address by clicking the link below.
+
+$raw_verification_url
+
+If you did not create an account with $raw_tenant_name, you can safely ignore this email.
+END
+        return ($html, $text);
+    },
+
+    passkey_registered => sub {
+        my (%v) = @_;
+        my $tenant_name = _escape_html($v{tenant_name} // '');
+        my $device_name = _escape_html($v{device_name} // '');
+
+        my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">New Passkey Added</h2>
+<p style="color:#333333;line-height:1.6;">A new passkey has been added to your $tenant_name account.</p>
+<table cellpadding="8" cellspacing="0" style="width:100%;background-color:#f8f9fa;border-radius:4px;margin:16px 0;">
+  <tr><td style="color:#666666;width:120px;">Device:</td><td style="color:#333333;font-weight:bold;">$device_name</td></tr>
+</table>
+<p style="color:#333333;line-height:1.6;">If you did not add this passkey, please contact support immediately and secure your account.</p>
+END
+
+        my $raw_tenant_name = $v{tenant_name} // '';
+        my $raw_device_name = $v{device_name} // '';
+        my $text = <<"END";
+New Passkey Added
+
+A new passkey has been added to your $raw_tenant_name account.
+
+  Device: $raw_device_name
+
+If you did not add this passkey, please contact support immediately and secure your account.
+END
+        return ($html, $text);
+    },
+
+    passkey_removed => sub {
+        my (%v) = @_;
+        my $tenant_name = _escape_html($v{tenant_name} // '');
+        my $device_name = _escape_html($v{device_name} // '');
+
+        my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">Passkey Removed</h2>
+<p style="color:#333333;line-height:1.6;">A passkey has been removed from your $tenant_name account.</p>
+<table cellpadding="8" cellspacing="0" style="width:100%;background-color:#f8f9fa;border-radius:4px;margin:16px 0;">
+  <tr><td style="color:#666666;width:120px;">Device:</td><td style="color:#333333;font-weight:bold;">$device_name</td></tr>
+</table>
+<p style="color:#333333;line-height:1.6;">If you did not remove this passkey, please contact support immediately and secure your account.</p>
+END
+
+        my $raw_tenant_name = $v{tenant_name} // '';
+        my $raw_device_name = $v{device_name} // '';
+        my $text = <<"END";
+Passkey Removed
+
+A passkey has been removed from your $raw_tenant_name account.
+
+  Device: $raw_device_name
+
+If you did not remove this passkey, please contact support immediately and secure your account.
+END
+        return ($html, $text);
+    },
 );
 
 # Render a named template with the given variables.
