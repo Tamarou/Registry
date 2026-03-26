@@ -1,3 +1,5 @@
+# ABOUTME: DAO for tenant organizations. Manages tenant creation, schema
+# ABOUTME: isolation, user association, and domain configuration.
 use 5.42.0;
 use Object::Pad;
 
@@ -6,6 +8,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     field $name :param :reader;
     field $slug :param :reader //= lc( $name =~ s/\s+/_/gr );
     field $created_at :param :reader;
+    field $canonical_domain :param :reader = undef;
+    field $magic_link_expiry_hours :param :reader = 24;
 
     sub table { 'tenants' }
 
