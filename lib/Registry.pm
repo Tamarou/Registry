@@ -168,9 +168,54 @@ class Registry :isa(Mojolicious) {
             }
         );
 
-        # Populate current_user stash from session on every request
+        # Populate current_user stash from session or bearer token on every request
         $self->hook(
             before_dispatch => sub ($c) {
+                # 1. Bearer token auth (API keys)
+                my $auth_header = $c->req->headers->authorization // '';
+                if ($auth_header =~ /^Bearer\s+(.+)$/i) {
+                    my $token = $1;
+                    try {
+                        require Registry::DAO::ApiKey;
+                        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
+                        my $api_key = Registry::DAO::ApiKey->find_by_plaintext($dao->db, $token);
+
+                        if ($api_key && !$api_key->is_expired) {
+                            my $user = Registry::DAO::User->find($dao->db, { id => $api_key->user_id });
+                            if ($user) {
+                                $api_key->touch($dao->db);
+                                $c->stash( current_user => {
+                                    id        => $user->id,
+                                    username  => $user->username,
+                                    name      => $user->name,
+                                    email     => $user->email,
+                                    user_type => $user->user_type,
+                                    # Provide a 'role' alias for backward compatibility with
+                                    # controllers that check $user->{role}
+                                    role      => $user->user_type,
+                                    api_key   => $api_key,
+                                });
+                                return;  # Skip session check
+                            }
+                        }
+
+                        # Invalid or expired key - if API client, return 401
+                        if (   $c->req->headers->header('X-Requested-With')
+                            || ( $c->req->headers->accept // '' ) =~ m{application/json} )
+                        {
+                            $c->render(
+                                json   => { error => 'Invalid or expired API key' },
+                                status => 401
+                            );
+                            return;
+                        }
+                    }
+                    catch ($e) {
+                        $c->app->log->warn("Bearer token auth failed: $e");
+                    }
+                }
+
+                # 2. Session cookie auth (existing logic)
                 my $user_id = $c->session('user_id');
                 return unless $user_id;
 
