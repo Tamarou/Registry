@@ -145,10 +145,13 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
         my $name = $self->param('name') // 'Unnamed Key';
 
+        my $scopes_raw = $self->param('scopes') // 0;
+        $scopes_raw = 0 unless $scopes_raw =~ /\A\d+\z/;
+
         my ($key_obj, $plaintext) = Registry::DAO::ApiKey->generate($db, {
             user_id => $user_id,
             name    => $name,
-            scopes  => $self->param('scopes') // 0,
+            scopes  => int($scopes_raw),
         });
 
         $self->render(json => {

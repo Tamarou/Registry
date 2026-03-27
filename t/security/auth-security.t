@@ -6,30 +6,19 @@ use warnings;
 use utf8;
 
 use Test::More;
-use Test::Mojo;
 
 use lib qw(lib t/lib);
+use Test::Registry::Mojo;
 use Test::Registry::DB;
 
 use Registry::DAO::MagicLinkToken;
 use Registry::DAO::ApiKey;
 use Registry::DAO::User;
-use Registry::DAO::Workflow;
 use Digest::SHA qw(sha256_hex);
-use Mojo::Home;
-use YAML::XS qw(Load);
 
 my $tdb = Test::Registry::DB->new;
 my $dao = $tdb->db;
 my $db  = $dao->db;
-
-# Import workflows so route redirects resolve properly
-my $wf_dir = Mojo::Home->new->child('workflows');
-for my $file ( $wf_dir->list_tree->grep(qr/\.ya?ml$/)->each ) {
-    my $data = Load( $file->slurp );
-    next if $data->{draft};
-    Registry::DAO::Workflow->from_yaml( $dao, $file->slurp );
-}
 
 my $user = Registry::DAO::User->create($db, {
     username  => 'security_test_user',
@@ -93,7 +82,8 @@ subtest 'API key hashing - plaintext not stored in database' => sub {
 };
 
 subtest 'Magic link email enumeration prevention' => sub {
-    my $t = Test::Mojo->new('Registry');
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper(dao => sub { $dao });
 
     # Request for existing email
     $t->post_ok('/auth/magic/request' => form => {

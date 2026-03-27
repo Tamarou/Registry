@@ -26,7 +26,7 @@ class Registry :isa(Mojolicious) {
             )
         );
 
-        $self->secrets( [hostname] );
+        $self->secrets( [$ENV{MOJO_SECRET} // hostname] );
 
         # Static asset URL prefix. When STATIC_URL is set, CSS/JS/images are
         # served from an external static site (e.g. Render static service or CDN).
@@ -146,13 +146,16 @@ class Registry :isa(Mojolicious) {
         $self->helper(
             tenant => sub ($c, $explicit_tenant = undef) {
                 # Determine tenant: explicit param > header > cookie > subdomain > default
-                return $explicit_tenant if $explicit_tenant;
+                my $raw = $explicit_tenant
+                    || $c->req->headers->header('X-As-Tenant')
+                    || $c->req->cookie('as-tenant')
+                    || $self->_extract_tenant_from_subdomain($c)
+                    || 'registry';
 
-                my $header_tenant = $c->req->headers->header('X-As-Tenant');
-                my $cookie_tenant = $c->req->cookie('as-tenant');
-                my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
+                # Sanitize: tenant slugs must be safe SQL identifiers
+                return 'registry' unless $raw =~ /\A[a-z][a-z0-9_]{0,62}\z/;
 
-                return $header_tenant || $cookie_tenant || $subdomain_tenant || 'registry';
+                return $raw;
             }
         );
 
@@ -177,7 +180,7 @@ class Registry :isa(Mojolicious) {
                     my $token = $1;
                     try {
                         require Registry::DAO::ApiKey;
-                        my $dao = Registry::DAO->new( url => $ENV{DB_URL} );
+                        my $dao = $c->dao;
                         my $api_key = Registry::DAO::ApiKey->find_by_plaintext($dao->db, $token);
 
                         if ($api_key && !$api_key->is_expired) {
@@ -220,7 +223,7 @@ class Registry :isa(Mojolicious) {
                 return unless $user_id;
 
                 try {
-                    my $dao  = Registry::DAO->new( url => $ENV{DB_URL} );
+                    my $dao  = $c->dao;
                     my $user = Registry::DAO::User->find( $dao->db, { id => $user_id } );
                     $c->stash( current_user => {
                         id        => $user->id,
@@ -314,6 +317,10 @@ class Registry :isa(Mojolicious) {
 
                 # Webhook endpoints use their own authentication scheme
                 return if $c->req->url->path =~ m{^/webhooks/};
+
+                # Bearer-token-authenticated requests use key-based auth, not sessions
+                my $cu = $c->stash('current_user');
+                return if $cu && $cu->{api_key};
 
                 my $expected = $c->csrf_token;
 

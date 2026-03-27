@@ -6,17 +6,16 @@ use warnings;
 use utf8;
 
 use Test::More;
-use Test::Mojo;
 
 use lib qw(lib t/lib);
+use Test::Registry::Mojo;
 use Test::Registry::DB;
 
 my $tdb = Test::Registry::DB->new;
+my $db  = $tdb->db;
 
-system('carton', 'exec', './registry', 'workflow', 'import', 'registry') == 0
-    or diag "Warning: workflow import may have failed";
-
-my $t = Test::Mojo->new('Registry');
+my $t = Test::Registry::Mojo->new('Registry');
+$t->app->helper(dao => sub { $db });
 
 subtest 'Login page offers passkey and magic link authentication' => sub {
     $t->get_ok('/auth/login')

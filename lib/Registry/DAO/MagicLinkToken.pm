@@ -5,6 +5,7 @@ use Object::Pad;
 
 class Registry::DAO::MagicLinkToken :isa(Registry::DAO::Object) {
     use Carp qw(croak);
+    use Scalar::Util qw(blessed);
     use Crypt::URandom qw(urandom);
     use MIME::Base64 qw(encode_base64url);
     use Digest::SHA qw(sha256_hex);
@@ -59,7 +60,17 @@ class Registry::DAO::MagicLinkToken :isa(Registry::DAO::Object) {
 
         $db = $db->db if $db isa Registry::DAO;
 
-        return $self->update($db, { consumed_at => \'now()' });
+        # Atomic conditional UPDATE prevents double-consumption under concurrency
+        my $result = $db->update(
+            $self->table,
+            { consumed_at => \'now()' },
+            { id => $id, consumed_at => undef },
+            { returning => '*' }
+        )->expand->hash;
+
+        croak "Token already consumed" unless $result;
+
+        return blessed($self)->new($result->%*);
     }
 }
 

@@ -6,22 +6,19 @@ use warnings;
 use utf8;
 
 use Test::More;
-use Test::Mojo;
 
 use lib qw(lib t/lib);
+use Test::Registry::Mojo;
 use Test::Registry::DB;
 
 use Registry::DAO::User;
 use Registry::DAO::ApiKey;
 
 my $tdb = Test::Registry::DB->new;
+my $db  = $tdb->db;
 
-system('carton', 'exec', './registry', 'workflow', 'import', 'registry') == 0
-    or diag "Warning: workflow import may have failed";
-
-my $t = Test::Mojo->new('Registry');
-
-my $db = $tdb->db;
+my $t = Test::Registry::Mojo->new('Registry');
+$t->app->helper(dao => sub { $db });
 
 my $user = Registry::DAO::User->create($db->db, {
     username  => 'api_auth_user',
@@ -65,7 +62,8 @@ subtest 'Expired bearer token returns 401' => sub {
 
 subtest 'No bearer token falls through to session auth' => sub {
     # Without bearer token or session, should get redirected to login
-    my $t2 = Test::Mojo->new('Registry');
+    my $t2 = Test::Registry::Mojo->new('Registry');
+    $t2->app->helper(dao => sub { $db });
     $t2->get_ok('/admin/dashboard')
        ->status_is(302, 'Redirected without any auth');
 };

@@ -6,28 +6,17 @@ use warnings;
 use utf8;
 
 use Test::More;
-use Test::Mojo;
 
 use lib qw(lib t/lib);
+use Test::Registry::Mojo;
 use Test::Registry::DB;
 
 use Registry::DAO::User;
 use Registry::DAO::MagicLinkToken;
-use Registry::DAO::Workflow;
-use Mojo::Home;
-use YAML::XS qw(Load);
 
 my $tdb = Test::Registry::DB->new;
 my $dao = $tdb->db;
 my $db  = $dao->db;
-
-# Import workflows so route redirects resolve properly
-my $wf_dir = Mojo::Home->new->child('workflows');
-for my $file ( $wf_dir->list_tree->grep(qr/\.ya?ml$/)->each ) {
-    my $data = Load( $file->slurp );
-    next if $data->{draft};
-    Registry::DAO::Workflow->from_yaml( $dao, $file->slurp );
-}
 
 my $user = Registry::DAO::User->create($db, {
     username  => 'integration_auth_user',
@@ -38,7 +27,8 @@ my $user = Registry::DAO::User->create($db, {
 });
 
 subtest 'Full magic link login flow' => sub {
-    my $t = Test::Mojo->new('Registry');
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper(dao => sub { $dao });
 
     # Generate a token (simulating what request_magic_link does)
     my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
@@ -75,14 +65,16 @@ subtest 'Full magic link login flow' => sub {
 };
 
 subtest 'Invalid magic link token returns error' => sub {
-    my $t = Test::Mojo->new('Registry');
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper(dao => sub { $dao });
 
     $t->get_ok('/auth/magic/thisisnotavalidtoken')
       ->status_isnt(302, 'Invalid token does not redirect to success');
 };
 
 subtest 'Consumed magic link cannot be reused' => sub {
-    my $t = Test::Mojo->new('Registry');
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper(dao => sub { $dao });
 
     my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
         user_id => $user->id,
