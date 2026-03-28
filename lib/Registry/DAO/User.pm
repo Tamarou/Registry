@@ -1,3 +1,5 @@
+# ABOUTME: DAO for user accounts with profile data. Handles creation,
+# ABOUTME: password hashing, and auth relationship accessors (passkeys, tokens, API keys).
 use 5.42.0;
 use Object::Pad;
 
@@ -15,6 +17,8 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
     field $user_type :param :reader = 'parent';
     field $grade :param :reader;
     field $created_at :param;
+    field $email_verified_at :param :reader = undef;
+    field $invite_pending :param :reader = 0;
 
     sub table { 'users' }
 
@@ -25,6 +29,7 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         # Join users and user_profiles tables to get complete user data
         my $query = q{
             SELECT u.id, u.username, u.passhash, u.birth_date, u.user_type, u.grade, u.created_at,
+                   u.email_verified_at, u.invite_pending,
                    up.email, up.name
             FROM users u
             LEFT JOIN user_profiles up ON u.id = up.user_id
@@ -88,7 +93,11 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
                               grep { exists $data->{$_} } 
                               qw(email name phone data);
 
-            $user_data{passhash} = $crypt->hash_password( delete $user_data{password} );
+            if (defined $user_data{password}) {
+                $user_data{passhash} = $crypt->hash_password(delete $user_data{password});
+            } else {
+                delete $user_data{password};  # ensure no stray key sent to DB
+            }
             
             # Validate input lengths for security
             if (exists $profile_data{email} && defined $profile_data{email} && length($profile_data{email}) > 255) {
@@ -139,6 +148,21 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         );
         
         return $crypt->verify_password($password, $passhash);
+    }
+
+    method passkeys ($db) {
+        require Registry::DAO::Passkey;
+        Registry::DAO::Passkey->for_user($db, $id);
+    }
+
+    method magic_link_tokens ($db) {
+        require Registry::DAO::MagicLinkToken;
+        Registry::DAO::MagicLinkToken->find($db, { user_id => $id });
+    }
+
+    method api_keys ($db) {
+        require Registry::DAO::ApiKey;
+        Registry::DAO::ApiKey->find($db, { user_id => $id });
     }
 
 }

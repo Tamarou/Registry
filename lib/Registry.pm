@@ -26,7 +26,7 @@ class Registry :isa(Mojolicious) {
             )
         );
 
-        $self->secrets( [hostname] );
+        $self->secrets( [$ENV{MOJO_SECRET} // hostname] );
 
         # Static asset URL prefix. When STATIC_URL is set, CSS/JS/images are
         # served from an external static site (e.g. Render static service or CDN).
@@ -146,13 +146,16 @@ class Registry :isa(Mojolicious) {
         $self->helper(
             tenant => sub ($c, $explicit_tenant = undef) {
                 # Determine tenant: explicit param > header > cookie > subdomain > default
-                return $explicit_tenant if $explicit_tenant;
+                my $raw = $explicit_tenant
+                    || $c->req->headers->header('X-As-Tenant')
+                    || $c->req->cookie('as-tenant')
+                    || $self->_extract_tenant_from_subdomain($c)
+                    || 'registry';
 
-                my $header_tenant = $c->req->headers->header('X-As-Tenant');
-                my $cookie_tenant = $c->req->cookie('as-tenant');
-                my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
+                # Sanitize: tenant slugs must be safe SQL identifiers
+                return 'registry' unless $raw =~ /\A[a-z][a-z0-9_]{0,62}\z/;
 
-                return $header_tenant || $cookie_tenant || $subdomain_tenant || 'registry';
+                return $raw;
             }
         );
 
@@ -168,25 +171,76 @@ class Registry :isa(Mojolicious) {
             }
         );
 
-        # Populate current_user stash from session on every request
+        # Populate current_user stash from session or bearer token on every request
+        my $user_to_stash = sub ($user, %extra) {
+            return {
+                id        => $user->id,
+                username  => $user->username,
+                name      => $user->name,
+                email     => $user->email,
+                user_type => $user->user_type,
+                # Provide a 'role' alias for backward compatibility with
+                # controllers that check $user->{role}
+                role      => $user->user_type,
+                %extra,
+            };
+        };
+
         $self->hook(
             before_dispatch => sub ($c) {
+                # 1. Bearer token auth (API keys)
+                my $auth_header = $c->req->headers->authorization // '';
+                if ($auth_header =~ /^Bearer\s+(.+)$/i) {
+                    my $token = $1;
+                    try {
+                        require Registry::DAO::ApiKey;
+                        my $dao = $c->dao;
+                        my $api_key = Registry::DAO::ApiKey->find_by_plaintext($dao->db, $token);
+
+                        if ($api_key && !$api_key->is_expired) {
+                            my $user = Registry::DAO::User->find($dao->db, { id => $api_key->user_id });
+                            if ($user) {
+                                $api_key->touch($dao->db);
+                                $c->stash( current_user => $user_to_stash->($user, api_key => $api_key) );
+                                return;  # Skip session check
+                            }
+                        }
+
+                        # Invalid or expired key -- always reject when a Bearer
+                        # token was explicitly presented, regardless of client type.
+                        if (   $c->req->headers->header('X-Requested-With')
+                            || ( $c->req->headers->accept // '' ) =~ m{application/json} )
+                        {
+                            $c->render(
+                                json   => { error => 'Invalid or expired API key' },
+                                status => 401
+                            );
+                        }
+                        else {
+                            $c->render(
+                                text   => 'Invalid or expired API key',
+                                status => 401
+                            );
+                        }
+                        return;
+                    }
+                    catch ($e) {
+                        $c->app->log->warn("Bearer token auth failed: $e");
+                        # DB or parsing error with an explicit Bearer token --
+                        # do not fall through to session auth.
+                        $c->render(text => 'Authentication error', status => 500);
+                        return;
+                    }
+                }
+
+                # 2. Session cookie auth (existing logic)
                 my $user_id = $c->session('user_id');
                 return unless $user_id;
 
                 try {
-                    my $dao  = Registry::DAO->new( url => $ENV{DB_URL} );
+                    my $dao  = $c->dao;
                     my $user = Registry::DAO::User->find( $dao->db, { id => $user_id } );
-                    $c->stash( current_user => {
-                        id        => $user->id,
-                        username  => $user->username,
-                        name      => $user->name,
-                        email     => $user->email,
-                        user_type => $user->user_type,
-                        # Provide a 'role' alias for backward compatibility with
-                        # controllers that check $user->{role}
-                        role      => $user->user_type,
-                    } ) if $user;
+                    $c->stash( current_user => $user_to_stash->($user) ) if $user;
                 }
                 catch ($e) {
                     $c->app->log->warn("Failed to load current_user from session: $e");
@@ -213,7 +267,7 @@ class Registry :isa(Mojolicious) {
                 }
 
                 # Browser clients get redirected to the login workflow
-                $c->redirect_to('/user-creation');
+                $c->redirect_to('/auth/login');
                 return 0;
             }
         );
@@ -269,6 +323,10 @@ class Registry :isa(Mojolicious) {
 
                 # Webhook endpoints use their own authentication scheme
                 return if $c->req->url->path =~ m{^/webhooks/};
+
+                # Bearer-token-authenticated requests use key-based auth, not sessions
+                my $cu = $c->stash('current_user');
+                return if $cu && $cu->{api_key};
 
                 my $expected = $c->csrf_token;
 
@@ -400,6 +458,20 @@ class Registry :isa(Mojolicious) {
         $admin->post('/dashboard/process_drop_request')->to('workflows#start_workflow' => { workflow => 'admin-drop-approval' })->name('admin_dashboard_process_drop_request');
         $admin->get('/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $admin->post('/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
+
+        # Auth routes (unprotected -- no require_auth)
+        my $auth = $r->under('/auth');
+        $auth->get('/login')->to('Auth#login');
+        $auth->post('/magic/request')->to('Auth#request_magic_link');
+        $auth->get('/magic/:token')->to('Auth#consume_magic_link');
+        $auth->post('/logout')->to('Auth#logout');
+        $auth->get('/verify-email/:token')->to('Auth#verify_email');
+        $auth->post('/webauthn/register/begin')->to('Auth#webauthn_register_begin');
+        $auth->post('/webauthn/register/complete')->to('Auth#webauthn_register_complete');
+        $auth->post('/webauthn/auth/begin')->to('Auth#webauthn_auth_begin');
+        $auth->post('/webauthn/auth/complete')->to('Auth#webauthn_auth_complete');
+        $auth->post('/api-keys')->to('Auth#create_api_key');
+        $auth->get('/api-keys')->to('Auth#list_api_keys');
 
         # Workflow routes
         my $w = $r->any("/:workflow")->to('workflows#');
