@@ -12,6 +12,10 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     use Registry::Email::Template;
     use Email::Simple;
     use Email::Sender::Simple qw(sendmail);
+    use Registry::DAO::Passkey;
+    use Registry::Auth::WebAuthn;
+    use Registry::Auth::WebAuthn::Challenge;
+    use MIME::Base64 qw(decode_base64url);
 
     method login {
         $self->render(template => 'auth/login');
@@ -172,21 +176,195 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         $self->redirect_to('/');
     }
 
-    # WebAuthn endpoints -- stubs for future implementation
+    # Build a WebAuthn instance using the current request context to derive
+    # the relying-party ID, name, and expected origin.
+    my $build_webauthn = method {
+        my $dao    = $self->dao;
+        my $db     = $dao->db;
+        my $tenant = Registry::DAO::Tenant->find($db, { slug => $self->tenant });
+
+        my $rp_id   = ($tenant && $tenant->canonical_domain)
+                      ? $tenant->canonical_domain
+                      : $self->req->url->to_abs->host;
+        my $rp_name = ($tenant && $tenant->name) ? $tenant->name : 'Registry';
+        my $scheme  = $self->req->url->to_abs->scheme // 'https';
+        my $origin  = "$scheme://$rp_id";
+
+        return Registry::Auth::WebAuthn->new(
+            rp_id   => $rp_id,
+            rp_name => $rp_name,
+            origin  => $origin,
+        );
+    };
+
+    # Begin WebAuthn passkey registration for the authenticated user.
+    # Generates registration options and stores the challenge in the session.
     method webauthn_register_begin {
-        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+        return unless $self->require_auth;
+
+        my $user = $self->stash('current_user');
+        my $wa   = $self->$build_webauthn;
+        my $dao  = $self->dao;
+        my $db   = $dao->db;
+
+        # Retrieve existing passkeys so we can exclude them from registration
+        my @existing = Registry::DAO::Passkey->for_user($db, $user->{id});
+        my @cred_ids = map { $_->credential_id } @existing;
+
+        my $options = $wa->generate_registration_options(
+            $user->{id},
+            $user->{username},
+            $user->{name},
+            exclude_credentials => \@cred_ids,
+        );
+
+        Registry::Auth::WebAuthn::Challenge->store($self, $options->{challenge});
+
+        $self->render(json => $options);
     }
 
+    # Complete WebAuthn passkey registration for the authenticated user.
+    # Verifies the attestation response and stores the new passkey in the DB.
     method webauthn_register_complete {
-        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+        return unless $self->require_auth;
+
+        my $user = $self->stash('current_user');
+        my $body = $self->req->json;
+
+        unless ($body && $body->{response}) {
+            return $self->render(
+                json   => { error => 'Missing attestation response' },
+                status => 400,
+            );
+        }
+
+        my $expected_challenge = Registry::Auth::WebAuthn::Challenge->retrieve($self);
+        unless ($expected_challenge) {
+            return $self->render(
+                json   => { error => 'No pending registration challenge' },
+                status => 400,
+            );
+        }
+
+        my $wa = $self->$build_webauthn;
+
+        my $result = eval {
+            $wa->verify_registration_response(
+                $expected_challenge,
+                $body->{response}{clientDataJSON},
+                $body->{response}{attestationObject},
+            );
+        };
+
+        if ($@) {
+            $self->app->log->warn("WebAuthn registration verification failed: $@");
+            return $self->render(
+                json   => { error => 'Registration verification failed' },
+                status => 400,
+            );
+        }
+
+        my $dao     = $self->dao;
+        my $db      = $dao->db;
+        my $passkey = Registry::DAO::Passkey->create($db, {
+            user_id       => $user->{id},
+            credential_id => $result->{credential_id},
+            public_key    => $result->{public_key},
+            sign_count    => $result->{sign_count} // 0,
+        });
+
+        $self->render(json => {
+            id         => $passkey->id,
+            created_at => $passkey->created_at,
+        });
     }
 
+    # Begin WebAuthn authentication ceremony for the authenticated user.
+    # Generates authentication options and stores the challenge in the session.
     method webauthn_auth_begin {
-        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+        return unless $self->require_auth;
+
+        my $user    = $self->stash('current_user');
+        my $body    = $self->req->json // {};
+        my $user_id = $body->{user_id} // $user->{id};
+        my $wa      = $self->$build_webauthn;
+        my $dao     = $self->dao;
+        my $db      = $dao->db;
+
+        my @passkeys = Registry::DAO::Passkey->for_user($db, $user_id);
+        my @cred_ids = map { $_->credential_id } @passkeys;
+
+        my $options = $wa->generate_authentication_options(
+            allow_credentials => \@cred_ids,
+        );
+
+        Registry::Auth::WebAuthn::Challenge->store($self, $options->{challenge});
+
+        $self->render(json => $options);
     }
 
+    # Complete WebAuthn authentication ceremony for the authenticated user.
+    # Verifies the assertion, updates the sign count, and refreshes the session.
     method webauthn_auth_complete {
-        $self->render(json => { error => 'Not yet implemented' }, status => 501);
+        return unless $self->require_auth;
+
+        my $body = $self->req->json;
+
+        unless ($body && $body->{response}) {
+            return $self->render(
+                json   => { error => 'Missing assertion response' },
+                status => 400,
+            );
+        }
+
+        my $expected_challenge = Registry::Auth::WebAuthn::Challenge->retrieve($self);
+        unless ($expected_challenge) {
+            return $self->render(
+                json   => { error => 'No pending authentication challenge' },
+                status => 400,
+            );
+        }
+
+        my $dao = $self->dao;
+        my $db  = $dao->db;
+
+        # Look up the passkey by credential ID (raw bytes from base64url)
+        my $cred_id_bytes = decode_base64url($body->{id} // '');
+        my ($passkey) = Registry::DAO::Passkey->find($db, { credential_id => \$cred_id_bytes });
+
+        unless ($passkey) {
+            return $self->render(
+                json   => { error => 'Passkey not found' },
+                status => 400,
+            );
+        }
+
+        my $wa     = $self->$build_webauthn;
+        my $result = eval {
+            $wa->verify_authentication_response(
+                $expected_challenge,
+                $body->{response}{clientDataJSON},
+                decode_base64url($body->{response}{authenticatorData} // ''),
+                decode_base64url($body->{response}{signature} // ''),
+                $passkey->public_key,
+                $passkey->sign_count,
+            );
+        };
+
+        if ($@) {
+            $self->app->log->warn("WebAuthn authentication verification failed: $@");
+            return $self->render(
+                json   => { error => 'Authentication verification failed' },
+                status => 400,
+            );
+        }
+
+        $passkey->update_sign_count($db, $result->{sign_count});
+
+        # Refresh the session user binding
+        $self->session(user_id => $passkey->user_id);
+
+        $self->render(json => { ok => 1 });
     }
 
     method create_api_key () {
