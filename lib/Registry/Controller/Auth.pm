@@ -9,6 +9,9 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     use Registry::DAO::MagicLinkToken;
     use Registry::DAO::ApiKey;
     use Registry::DAO::Tenant;
+    use Registry::Email::Template;
+    use Email::Simple;
+    use Email::Sender::Simple qw(sendmail);
 
     method login {
         $self->render(template => 'auth/login');
@@ -36,8 +39,53 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                             expires_in => $expiry,
                         });
 
-                    # TODO: send the magic-link email via Registry::Email
-                    $self->app->log->info("Magic link generated for $email");
+                    # Build the full magic link URL from the current request base
+                    my $base_url = $self->req->url->base->to_string;
+                    $base_url =~ s{/$}{};
+                    my $magic_link_url = "$base_url/auth/magic/$plaintext";
+
+                    # Determine tenant name for the email subject and greeting
+                    my $tenant_name = $tenant ? $tenant->name : 'Registry';
+
+                    # Render the magic link email template (html + text)
+                    my $rendered = Registry::Email::Template->render(
+                        'magic_link_login',
+                        tenant_name      => $tenant_name,
+                        magic_link_url   => $magic_link_url,
+                        expires_in_hours => $expiry,
+                    );
+
+                    # Build a multipart/alternative MIME message manually
+                    my $boundary = 'registry_' . sprintf('%x', int(rand(0xFFFFFFFF)));
+                    my $mime_body = join('',
+                        "--$boundary\r\n",
+                        "Content-Type: text/plain; charset=UTF-8\r\n",
+                        "Content-Transfer-Encoding: quoted-printable\r\n",
+                        "\r\n",
+                        $rendered->{text},
+                        "\r\n",
+                        "--$boundary\r\n",
+                        "Content-Type: text/html; charset=UTF-8\r\n",
+                        "Content-Transfer-Encoding: quoted-printable\r\n",
+                        "\r\n",
+                        $rendered->{html},
+                        "\r\n",
+                        "--$boundary--\r\n",
+                    );
+
+                    my $mail = Email::Simple->create(
+                        header => [
+                            To             => $email,
+                            From           => $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com',
+                            Subject        => "Sign in to $tenant_name",
+                            'MIME-Version' => '1.0',
+                            'Content-Type' => "multipart/alternative; boundary=\"$boundary\"",
+                        ],
+                        body => $mime_body,
+                    );
+
+                    sendmail($mail);
+                    $self->app->log->info("Magic link email sent to $email");
                 }
             }
             catch ($e) {
