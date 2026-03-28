@@ -21,4 +21,7 @@ $XDG_CACHE_HOME/
 /playwright/.cache/
 .playwright-mcp/
 
+# Code review reports
+paad/
+
 # Force CI refresh
