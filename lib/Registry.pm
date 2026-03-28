@@ -172,6 +172,20 @@ class Registry :isa(Mojolicious) {
         );
 
         # Populate current_user stash from session or bearer token on every request
+        my $user_to_stash = sub ($user, %extra) {
+            return {
+                id        => $user->id,
+                username  => $user->username,
+                name      => $user->name,
+                email     => $user->email,
+                user_type => $user->user_type,
+                # Provide a 'role' alias for backward compatibility with
+                # controllers that check $user->{role}
+                role      => $user->user_type,
+                %extra,
+            };
+        };
+
         $self->hook(
             before_dispatch => sub ($c) {
                 # 1. Bearer token auth (API keys)
@@ -187,17 +201,7 @@ class Registry :isa(Mojolicious) {
                             my $user = Registry::DAO::User->find($dao->db, { id => $api_key->user_id });
                             if ($user) {
                                 $api_key->touch($dao->db);
-                                $c->stash( current_user => {
-                                    id        => $user->id,
-                                    username  => $user->username,
-                                    name      => $user->name,
-                                    email     => $user->email,
-                                    user_type => $user->user_type,
-                                    # Provide a 'role' alias for backward compatibility with
-                                    # controllers that check $user->{role}
-                                    role      => $user->user_type,
-                                    api_key   => $api_key,
-                                });
+                                $c->stash( current_user => $user_to_stash->($user, api_key => $api_key) );
                                 return;  # Skip session check
                             }
                         }
@@ -236,16 +240,7 @@ class Registry :isa(Mojolicious) {
                 try {
                     my $dao  = $c->dao;
                     my $user = Registry::DAO::User->find( $dao->db, { id => $user_id } );
-                    $c->stash( current_user => {
-                        id        => $user->id,
-                        username  => $user->username,
-                        name      => $user->name,
-                        email     => $user->email,
-                        user_type => $user->user_type,
-                        # Provide a 'role' alias for backward compatibility with
-                        # controllers that check $user->{role}
-                        role      => $user->user_type,
-                    } ) if $user;
+                    $c->stash( current_user => $user_to_stash->($user) ) if $user;
                 }
                 catch ($e) {
                     $c->app->log->warn("Failed to load current_user from session: $e");

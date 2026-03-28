@@ -157,18 +157,12 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
     method magic_link_tokens ($db) {
         require Registry::DAO::MagicLinkToken;
-        $db = $db->db if $db isa Registry::DAO;
-        my @rows = $db->select('magic_link_tokens', '*', { user_id => $id },
-            { -desc => 'created_at' })->hashes->each;
-        return map { Registry::DAO::MagicLinkToken->new(%$_) } @rows;
+        Registry::DAO::MagicLinkToken->find($db, { user_id => $id });
     }
 
     method api_keys ($db) {
         require Registry::DAO::ApiKey;
-        $db = $db->db if $db isa Registry::DAO;
-        my @rows = $db->select('api_keys', '*', { user_id => $id },
-            { -desc => 'created_at' })->hashes->each;
-        return map { Registry::DAO::ApiKey->new(%$_) } @rows;
+        Registry::DAO::ApiKey->find($db, { user_id => $id });
     }
 
 }

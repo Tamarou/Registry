@@ -144,7 +144,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     method create_api_key () {
         return unless $self->require_auth;
 
-        my $user_id = $self->session('user_id');
+        my $user_id = $self->stash('current_user')->{id};
         my $dao     = $self->dao;
         my $db      = $dao->db;
 
@@ -171,10 +171,9 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     method list_api_keys () {
         return unless $self->require_auth;
 
-        my $user_id = $self->session('user_id');
+        my $user_id = $self->stash('current_user')->{id};
         my $dao     = $self->dao;
         my $db      = $dao->db;
-        my $user    = Registry::DAO::User->find($db, { id => $user_id });
 
         my @keys = map {
             {
@@ -185,7 +184,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                 last_used  => $_->last_used_at,
                 created_at => $_->created_at,
             }
-        } $user->api_keys($db);
+        } Registry::DAO::ApiKey->find($db, { user_id => $user_id });
 
         $self->render(json => \@keys);
     }
