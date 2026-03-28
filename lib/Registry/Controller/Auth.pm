@@ -8,9 +8,10 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     use Registry::DAO::User;
     use Registry::DAO::MagicLinkToken;
     use Registry::DAO::ApiKey;
+    use Registry::DAO::Tenant;
 
     method login {
-        $self->Mojolicious::Controller::render(template => 'auth/login');
+        $self->render(template => 'auth/login');
     }
 
     method request_magic_link {
@@ -25,10 +26,14 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                 my $user = Registry::DAO::User->find($db, { email => $email });
 
                 if ($user) {
+                    my $tenant = Registry::DAO::Tenant->find($db, { slug => $self->tenant });
+                    my $expiry = $tenant ? $tenant->magic_link_expiry_hours : 24;
+
                     my ($token, $plaintext) =
                         Registry::DAO::MagicLinkToken->generate($db, {
-                            user_id => $user->id,
-                            purpose => 'login',
+                            user_id    => $user->id,
+                            purpose    => 'login',
+                            expires_in => $expiry,
                         });
 
                     # TODO: send the magic-link email via Registry::Email
@@ -40,7 +45,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             }
         }
 
-        $self->Mojolicious::Controller::render(template => 'auth/magic-link-sent');
+        $self->render(template => 'auth/magic-link-sent');
     }
 
     method consume_magic_link {
@@ -52,17 +57,17 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
         unless ($token) {
             $self->stash(error => 'This link is invalid.');
-            return $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+            return $self->render(template => 'auth/magic-link-error');
         }
 
         if ($token->consumed_at) {
             $self->stash(error => 'This link has already been used.');
-            return $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+            return $self->render(template => 'auth/magic-link-error');
         }
 
         if ($token->is_expired) {
             $self->stash(error => 'This link has expired. Please request a new one.');
-            return $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+            return $self->render(template => 'auth/magic-link-error');
         }
 
         try {
@@ -76,7 +81,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         catch ($e) {
             $self->app->log->warn("Error consuming magic link: $e");
             $self->stash(error => 'This link is invalid or has expired.');
-            $self->Mojolicious::Controller::render(template => 'auth/magic-link-error');
+            $self->render(template => 'auth/magic-link-error');
         }
     }
 
@@ -89,12 +94,12 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
         unless ($token && $token->purpose eq 'verify_email') {
             $self->stash(verified => 0, error => 'This verification link is invalid.');
-            return $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+            return $self->render(template => 'auth/verify-email');
         }
 
         if ($token->consumed_at || $token->is_expired) {
             $self->stash(verified => 0, error => 'This verification link has expired or was already used.');
-            return $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+            return $self->render(template => 'auth/verify-email');
         }
 
         try {
@@ -105,12 +110,12 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             $user->update($db, { email_verified_at => \'now()' }) if $user;
 
             $self->stash(verified => 1);
-            $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+            $self->render(template => 'auth/verify-email');
         }
         catch ($e) {
             $self->app->log->warn("Error verifying email: $e");
             $self->stash(verified => 0, error => 'Verification failed. Please try again.');
-            $self->Mojolicious::Controller::render(template => 'auth/verify-email');
+            $self->render(template => 'auth/verify-email');
         }
     }
 

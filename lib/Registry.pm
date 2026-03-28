@@ -202,7 +202,8 @@ class Registry :isa(Mojolicious) {
                             }
                         }
 
-                        # Invalid or expired key - if API client, return 401
+                        # Invalid or expired key -- always reject when a Bearer
+                        # token was explicitly presented, regardless of client type.
                         if (   $c->req->headers->header('X-Requested-With')
                             || ( $c->req->headers->accept // '' ) =~ m{application/json} )
                         {
@@ -210,11 +211,21 @@ class Registry :isa(Mojolicious) {
                                 json   => { error => 'Invalid or expired API key' },
                                 status => 401
                             );
-                            return;
                         }
+                        else {
+                            $c->render(
+                                text   => 'Invalid or expired API key',
+                                status => 401
+                            );
+                        }
+                        return;
                     }
                     catch ($e) {
                         $c->app->log->warn("Bearer token auth failed: $e");
+                        # DB or parsing error with an explicit Bearer token --
+                        # do not fall through to session auth.
+                        $c->render(text => 'Authentication error', status => 500);
+                        return;
                     }
                 }
 

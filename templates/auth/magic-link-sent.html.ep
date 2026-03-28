@@ -7,6 +7,6 @@
     <h2>Check Your Email</h2>
     <p>If an account exists for that email address, we have sent a magic link.
        Please check your email and click the link to sign in.</p>
-    <p>The link will expire in 24 hours.</p>
+    <p>The link will expire shortly.</p>
     <p><a href="/auth/login">Back to sign in</a></p>
 </div>
