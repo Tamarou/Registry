@@ -154,7 +154,7 @@ subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
     my $users_step = $run->next_step($db->db);
     $run->process($db->db, $users_step, {
         admin_name => 'Test Admin', admin_email => 'admin@test.com',
-        admin_username => 'testadmin', admin_password => 'pass1234',
+        admin_username => 'testadmin',
     });
 
     my $pricing_step = $run->next_step($db->db);
@@ -188,7 +188,7 @@ subtest 'pricing step renders plan cards with coming-soon styling' => sub {
     $t->get_ok($url)->status_is(200);
     $t->post_ok($url => form => {
         admin_name => 'Price Admin', admin_email => 'price@test.com',
-        admin_username => 'priceadmin', admin_password => 'pass1234',
+        admin_username => 'priceadmin',
     })->status_is(302);
 
     my $pricing_url = $t->tx->res->headers->location;

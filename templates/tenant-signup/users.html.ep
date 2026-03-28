@@ -32,13 +32,6 @@
                            value="<%= stash('admin_username') // '' %>" required
                            placeholder="jsmith">
                 </div>
-
-                <div class="form-field">
-                    <label for="admin_password">Password *</label>
-                    <input type="password" id="admin_password" name="admin_password"
-                           required minlength="8"
-                           placeholder="At least 8 characters">
-                </div>
             </div>
 
             <input type="hidden" name="admin_user_type" value="admin">

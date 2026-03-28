@@ -86,7 +86,6 @@ subtest 'profile data persists through workflow and appears on review step' => s
         admin_name      => 'Jane Artist',
         admin_email     => 'jane@portlandart.com',
         admin_username  => 'janeartist',
-        admin_password  => 'securepass123',
         admin_user_type => 'admin',
     })->status_is(302);
 

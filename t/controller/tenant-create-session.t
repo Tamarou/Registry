@@ -64,7 +64,6 @@ END {
             admin_name       => 'Alice',
             admin_email      => 'alice@example.com',
             admin_username   => 'Alice',
-            admin_password   => 'password',
             terms_accepted   => '1',
             # Mock payment data to satisfy workflow
             setup_intent_id  => 'seti_test_123',

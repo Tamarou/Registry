@@ -115,12 +115,27 @@
         </div>
     </section>
 
+    <section class="passkey-setup-section">
+        <h2>Secure Your Account with a Passkey</h2>
+        <p>Passkeys are the safest way to sign in — no passwords to remember or lose.</p>
+        <div class="passkey-setup-card">
+            <p>Set up a passkey now to get instant, secure access to your Registry dashboard using your device's biometrics or PIN.</p>
+            <a href="https://<%= $subdomain %>.registry.localhost/auth/passkey/register"
+               class="btn btn-primary passkey-setup-btn" target="_blank">
+                Set Up Passkey Now
+            </a>
+            <p class="passkey-alt-note">
+                You can also sign in with a magic link sent to <%= $admin_email %>
+            </p>
+        </div>
+    </section>
+
     <footer class="success-actions">
         <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary btn-large">
             Access Your Registry Dashboard →
         </a>
         <p class="login-note">
-            Use your email (<%= $admin_email %>) and the password you created during signup
+            Sign in with a passkey or magic link sent to <%= $admin_email %>
         </p>
     </footer>
 </article>
