@@ -5,6 +5,7 @@
 use 5.42.0;
 use warnings;
 use utf8;
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use Test::More;
 use Test::Mojo;
@@ -161,18 +162,23 @@ subtest 'Continue when already logged in' => sub {
     is($result->{next_step}, 'camper-info', 'Moves to next step when already logged in');
 };
 
-subtest 'Validation requires no fields for any action' => sub {
+subtest 'Validation checks for create_account but not login' => sub {
     my $step = make_step();
 
-    # Test login validation - no fields required
+    # login action requires no fields
     my $errors = $step->validate($db, { action => 'login' });
     ok(!$errors, 'No errors for login without credentials (passwordless)');
 
-    # Test create_account validation
+    # create_account requires email and username
     $errors = $step->validate($db, { action => 'create_account' });
-    ok(!$errors, 'No validation required for create account');
+    ok($errors && $errors->{errors}, 'Validation errors for create_account without fields');
 
-    # Test no action
+    $errors = $step->validate($db, {
+        action => 'create_account', email => 'a@b.com', username => 'test',
+    });
+    ok(!$errors, 'No errors for create_account with required fields');
+
+    # No action requires no fields
     $errors = $step->validate($db, {});
     ok(!$errors, 'No validation errors for empty form data');
 };

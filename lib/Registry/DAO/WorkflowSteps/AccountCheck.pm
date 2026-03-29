@@ -7,6 +7,9 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowStep) {
     use Carp qw( croak );
+    use Registry::Email::Template;
+    use Email::Simple;
+    use Email::Sender::Simple qw(sendmail);
 
     method process ($db, $form_data) {
         my $workflow = $self->workflow($db);
@@ -32,14 +35,31 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                 user_type => $form_data->{user_type} || 'parent',
             });
 
-            # Generate a magic link token for first login so the new user can
-            # authenticate without a password.
-            Registry::DAO::MagicLinkToken->generate($db, {
+            # Generate a magic link token and send the login email
+            my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
                 user_id => $user->id,
                 purpose => 'login',
             });
 
-            return { redirect => '/auth/magic-link-sent' };
+            # Send the magic link email so the user can authenticate
+            my $rendered = Registry::Email::Template->render(
+                'magic_link_login',
+                tenant_name      => 'Registry',
+                magic_link_url   => "/auth/magic/$plaintext",
+                expires_in_hours => 24,
+            );
+
+            my $mail = Email::Simple->create(
+                header => [
+                    To      => $form_data->{email},
+                    From    => $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com',
+                    Subject => 'Sign in to Registry',
+                ],
+                body => $rendered->{text},
+            );
+            sendmail($mail);
+
+            return { redirect => '/auth/magic-link-sent', user_id => $user->id };
         }
         elsif ($action eq 'continue_logged_in') {
             # User is already logged in (returning from continuation or already had session)
@@ -103,8 +123,15 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
     }
 
     method validate ($db, $form_data) {
-        # Passwordless auth - no password field required for any action.
-        # The Auth controller handles credential validation via passkeys and magic links.
+        my $action = $form_data->{action} // '';
+
+        if ($action eq 'create_account') {
+            my @errors;
+            push @errors, 'Email is required'    unless $form_data->{email};
+            push @errors, 'Username is required'  unless $form_data->{username};
+            return { errors => \@errors } if @errors;
+        }
+
         return undef;
     }
 }

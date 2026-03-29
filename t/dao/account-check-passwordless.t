@@ -3,6 +3,7 @@
 # ABOUTME: Validates redirect-based login, magic-link-based account creation, and session continuity
 use 5.42.0;
 use warnings;
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
@@ -200,12 +201,18 @@ subtest 'validate() does not require any fields for login action' => sub {
     ok !$errors, 'no validation errors for login action without any fields';
 };
 
-subtest 'validate() does not require any fields for create_account action' => sub {
+subtest 'validate() requires email and username for create_account action' => sub {
     my $step = get_step();
 
     my $errors = $step->validate($db, { action => 'create_account' });
+    ok $errors && $errors->{errors}, 'validation errors returned for empty create_account';
 
-    ok !$errors, 'no validation errors for create_account action';
+    my $valid = $step->validate($db, {
+        action   => 'create_account',
+        email    => 'test@example.com',
+        username => 'testuser',
+    });
+    ok !$valid, 'no validation errors when email and username provided';
 };
 
 subtest 'first visit with no action stays on step' => sub {

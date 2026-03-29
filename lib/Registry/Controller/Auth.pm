@@ -59,18 +59,19 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                         expires_in_hours => $expiry,
                     );
 
-                    # Build a multipart/alternative MIME message manually
-                    my $boundary = 'registry_' . sprintf('%x', int(rand(0xFFFFFFFF)));
+                    # Build a multipart/alternative MIME message manually.
+                    # Using Email::Simple with hand-rolled MIME until Email::MIME
+                    # is added as a dependency.
+                    use Crypt::URandom qw(urandom);
+                    my $boundary = 'registry_' . unpack('H*', urandom(16));
                     my $mime_body = join('',
                         "--$boundary\r\n",
                         "Content-Type: text/plain; charset=UTF-8\r\n",
-                        "Content-Transfer-Encoding: quoted-printable\r\n",
                         "\r\n",
                         $rendered->{text},
                         "\r\n",
                         "--$boundary\r\n",
                         "Content-Type: text/html; charset=UTF-8\r\n",
-                        "Content-Transfer-Encoding: quoted-printable\r\n",
                         "\r\n",
                         $rendered->{html},
                         "\r\n",
@@ -177,10 +178,10 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     }
 
     # Build a WebAuthn instance using the current request context to derive
-    # the relying-party ID, name, and expected origin.
-    my $build_webauthn = method {
-        my $dao    = $self->dao;
-        my $db     = $dao->db;
+    # the relying-party ID, name, and expected origin. Accepts an optional
+    # $db handle to avoid creating a second connection in the calling method.
+    my $build_webauthn = method ($existing_db = undef) {
+        my $db     = $existing_db // $self->dao->db;
         my $tenant = Registry::DAO::Tenant->find($db, { slug => $self->tenant });
 
         my $rp_id   = ($tenant && $tenant->canonical_domain)
@@ -203,9 +204,9 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         return unless $self->require_auth;
 
         my $user = $self->stash('current_user');
-        my $wa   = $self->$build_webauthn;
         my $dao  = $self->dao;
         my $db   = $dao->db;
+        my $wa   = $self->$build_webauthn($db);
 
         # Retrieve existing passkeys so we can exclude them from registration
         my @existing = Registry::DAO::Passkey->for_user($db, $user->{id});
@@ -246,10 +247,11 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             );
         }
 
-        my $wa = $self->$build_webauthn;
+        my $dao = $self->dao;
+        my $db  = $dao->db;
 
         my $result = eval {
-            $wa->verify_registration_response(
+            $self->$build_webauthn($db)->verify_registration_response(
                 $expected_challenge,
                 $body->{response}{clientDataJSON},
                 $body->{response}{attestationObject},
@@ -264,8 +266,6 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             );
         }
 
-        my $dao     = $self->dao;
-        my $db      = $dao->db;
         my $passkey = Registry::DAO::Passkey->create($db, {
             user_id       => $user->{id},
             credential_id => $result->{credential_id},
@@ -279,21 +279,31 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         });
     }
 
-    # Begin WebAuthn authentication ceremony for the authenticated user.
-    # Generates authentication options and stores the challenge in the session.
+    # Begin WebAuthn authentication ceremony (no auth required -- this IS login).
+    # Accepts an email to look up the user's passkeys, then generates options.
     method webauthn_auth_begin {
-        return unless $self->require_auth;
+        my $body  = $self->req->json // {};
+        my $email = $body->{email} // '';
 
-        my $user    = $self->stash('current_user');
-        my $body    = $self->req->json // {};
-        my $user_id = $body->{user_id} // $user->{id};
-        my $wa      = $self->$build_webauthn;
-        my $dao     = $self->dao;
-        my $db      = $dao->db;
+        unless ($email) {
+            return $self->render(
+                json   => { error => 'Email is required' },
+                status => 400,
+            );
+        }
 
-        my @passkeys = Registry::DAO::Passkey->for_user($db, $user_id);
-        my @cred_ids = map { $_->credential_id } @passkeys;
+        my $dao  = $self->dao;
+        my $db   = $dao->db;
+        my $user = Registry::DAO::User->find($db, { email => $email });
 
+        # Return empty allowCredentials if user not found (anti-enumeration)
+        my @cred_ids;
+        if ($user) {
+            my @passkeys = Registry::DAO::Passkey->for_user($db, $user->id);
+            @cred_ids = map { $_->credential_id } @passkeys;
+        }
+
+        my $wa      = $self->$build_webauthn($db);
         my $options = $wa->generate_authentication_options(
             allow_credentials => \@cred_ids,
         );
@@ -303,11 +313,9 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         $self->render(json => $options);
     }
 
-    # Complete WebAuthn authentication ceremony for the authenticated user.
-    # Verifies the assertion, updates the sign count, and refreshes the session.
+    # Complete WebAuthn authentication ceremony (no auth required -- this IS login).
+    # Verifies the assertion, updates the sign count, and establishes the session.
     method webauthn_auth_complete {
-        return unless $self->require_auth;
-
         my $body = $self->req->json;
 
         unless ($body && $body->{response}) {
@@ -330,7 +338,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
         # Look up the passkey by credential ID (raw bytes from base64url)
         my $cred_id_bytes = decode_base64url($body->{id} // '');
-        my ($passkey) = Registry::DAO::Passkey->find($db, { credential_id => \$cred_id_bytes });
+        my ($passkey) = Registry::DAO::Passkey->find($db, { credential_id => $cred_id_bytes });
 
         unless ($passkey) {
             return $self->render(
@@ -339,9 +347,8 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             );
         }
 
-        my $wa     = $self->$build_webauthn;
         my $result = eval {
-            $wa->verify_authentication_response(
+            $self->$build_webauthn($db)->verify_authentication_response(
                 $expected_challenge,
                 $body->{response}{clientDataJSON},
                 decode_base64url($body->{response}{authenticatorData} // ''),
@@ -361,7 +368,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
         $passkey->update_sign_count($db, $result->{sign_count});
 
-        # Refresh the session user binding
+        # Establish the session -- this is the login
         $self->session(user_id => $passkey->user_id);
 
         $self->render(json => { ok => 1 });

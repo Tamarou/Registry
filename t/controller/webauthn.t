@@ -140,9 +140,14 @@ subtest 'POST /auth/webauthn/register/complete requires authentication' => sub {
 # ---------------------------------------------------------------------------
 
 subtest 'POST /auth/webauthn/auth/begin returns authentication options' => sub {
-    $t->post_ok( '/auth/webauthn/auth/begin',
+    # auth_begin does not require prior auth -- it IS the login flow.
+    # It accepts an email to look up the user's passkeys.
+    my $t_anon = Test::Registry::Mojo->new('Registry');
+    $t_anon->app->helper( dao => sub { $db } );
+
+    $t_anon->post_ok( '/auth/webauthn/auth/begin',
         { Accept => 'application/json', 'Content-Type' => 'application/json' },
-        json => {} )
+        json => { email => $user->email } )
       ->status_is( 200, 'Returns 200 OK' )
       ->json_has( '/challenge',        'Has challenge field' )
       ->json_has( '/rpId',             'Has rpId field' )
@@ -161,28 +166,28 @@ subtest 'POST /auth/webauthn/auth/begin with known user includes their credentia
         device_name   => 'Test Device',
     } );
 
-    $t->post_ok( '/auth/webauthn/auth/begin',
+    my $t_anon = Test::Registry::Mojo->new('Registry');
+    $t_anon->app->helper( dao => sub { $db } );
+
+    $t_anon->post_ok( '/auth/webauthn/auth/begin',
         { Accept => 'application/json', 'Content-Type' => 'application/json' },
-        json => { user_id => $user->id } )
+        json => { email => $user->email } )
       ->status_is( 200 );
 
-    my $body = decode_json( $t->tx->res->body );
+    my $body = decode_json( $t_anon->tx->res->body );
     ok( scalar @{ $body->{allowCredentials} } >= 1,
         'allowCredentials includes user passkey' );
 };
 
-subtest 'POST /auth/webauthn/auth/begin requires authentication' => sub {
-    my $t2 = Test::Registry::Mojo->new('Registry');
-    $t2->app->helper( dao => sub { $db } );
+subtest 'POST /auth/webauthn/auth/begin requires email' => sub {
+    my $t_anon = Test::Registry::Mojo->new('Registry');
+    $t_anon->app->helper( dao => sub { $db } );
 
-    $t2->post_ok( '/auth/webauthn/auth/begin',
-        {   Accept              => 'application/json',
-            'Content-Type'      => 'application/json',
-            'X-Requested-With'  => 'XMLHttpRequest',
-        },
+    $t_anon->post_ok( '/auth/webauthn/auth/begin',
+        { Accept => 'application/json', 'Content-Type' => 'application/json' },
         json => {} )
-      ->status_isnt( 200, 'Returns non-200 when unauthenticated' )
-      ->status_isnt( 501, 'Endpoint is implemented (not 501)' );
+      ->status_is( 400, 'Returns 400 without email' )
+      ->json_is( '/error', 'Email is required' );
 };
 
 # ---------------------------------------------------------------------------
@@ -190,22 +195,9 @@ subtest 'POST /auth/webauthn/auth/begin requires authentication' => sub {
 # ---------------------------------------------------------------------------
 
 subtest 'POST /auth/webauthn/auth/complete with missing challenge returns 400' => sub {
-    # Use a fresh test instance with no session state (no prior auth/begin call),
-    # but with authentication injected so we reach the endpoint logic.
+    # auth_complete does not require prior auth -- it IS the login flow.
     my $t3 = Test::Registry::Mojo->new('Registry');
     $t3->app->helper( dao => sub { $db } );
-    $t3->app->hook( around_dispatch => sub ($next, $c) {
-        $c->stash( current_user => {
-            id        => $user->id,
-            username  => $user->username,
-            name      => $user->name,
-            email     => $user->email,
-            user_type => $user->user_type,
-            role      => $user->user_type,
-            api_key   => 1,
-        } );
-        $next->();
-    } );
 
     $t3->post_ok( '/auth/webauthn/auth/complete',
         { Accept => 'application/json', 'Content-Type' => 'application/json' },
