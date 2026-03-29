@@ -399,4 +399,47 @@ sub render {
     };
 }
 
+our $DEFAULT_FROM = 'noreply@registry.example.com';
+
+# Send a rendered template as a multipart/alternative email.
+# Args: $class, $to, $subject, $template_name, %template_vars
+# Uses NOTIFICATION_FROM_EMAIL env var for the sender address.
+sub send_email {
+    my ($class, %args) = @_;
+
+    require Email::Simple;
+    require Email::Sender::Simple;
+    require Crypt::URandom;
+
+    my $rendered = $class->render($args{template}, %{ $args{vars} // {} });
+
+    my $boundary = 'registry_' . unpack('H*', Crypt::URandom::urandom(16));
+    my $mime_body = join('',
+        "--$boundary\r\n",
+        "Content-Type: text/plain; charset=UTF-8\r\n",
+        "\r\n",
+        $rendered->{text},
+        "\r\n",
+        "--$boundary\r\n",
+        "Content-Type: text/html; charset=UTF-8\r\n",
+        "\r\n",
+        $rendered->{html},
+        "\r\n",
+        "--$boundary--\r\n",
+    );
+
+    my $mail = Email::Simple->create(
+        header => [
+            To             => $args{to},
+            From           => $ENV{NOTIFICATION_FROM_EMAIL} || $DEFAULT_FROM,
+            Subject        => $args{subject},
+            'MIME-Version' => '1.0',
+            'Content-Type' => "multipart/alternative; boundary=\"$boundary\"",
+        ],
+        body => $mime_body,
+    );
+
+    Email::Sender::Simple->send($mail);
+}
+
 1;

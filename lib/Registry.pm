@@ -329,7 +329,7 @@ class Registry :isa(Mojolicious) {
                 return if $cu && $cu->{api_key};
 
                 # WebAuthn endpoints have built-in origin validation via the protocol
-                return if $c->req->url->path =~ m{^/auth/webauthn/auth/};
+                return if $c->req->url->path =~ m{^/auth/webauthn/};
 
                 my $expected = $c->csrf_token;
 

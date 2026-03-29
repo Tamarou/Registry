@@ -10,8 +10,6 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     use Registry::DAO::ApiKey;
     use Registry::DAO::Tenant;
     use Registry::Email::Template;
-    use Email::Simple;
-    use Email::Sender::Simple qw(sendmail);
     use Registry::DAO::Passkey;
     use Registry::Auth::WebAuthn;
     use Registry::Auth::WebAuthn::Challenge;
@@ -51,45 +49,16 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                     # Determine tenant name for the email subject and greeting
                     my $tenant_name = $tenant ? $tenant->name : 'Registry';
 
-                    # Render the magic link email template (html + text)
-                    my $rendered = Registry::Email::Template->render(
-                        'magic_link_login',
-                        tenant_name      => $tenant_name,
-                        magic_link_url   => $magic_link_url,
-                        expires_in_hours => $expiry,
+                    Registry::Email::Template->send_email(
+                        to       => $email,
+                        subject  => "Sign in to $tenant_name",
+                        template => 'magic_link_login',
+                        vars     => {
+                            tenant_name      => $tenant_name,
+                            magic_link_url   => $magic_link_url,
+                            expires_in_hours => $expiry,
+                        },
                     );
-
-                    # Build a multipart/alternative MIME message manually.
-                    # Using Email::Simple with hand-rolled MIME until Email::MIME
-                    # is added as a dependency.
-                    use Crypt::URandom qw(urandom);
-                    my $boundary = 'registry_' . unpack('H*', urandom(16));
-                    my $mime_body = join('',
-                        "--$boundary\r\n",
-                        "Content-Type: text/plain; charset=UTF-8\r\n",
-                        "\r\n",
-                        $rendered->{text},
-                        "\r\n",
-                        "--$boundary\r\n",
-                        "Content-Type: text/html; charset=UTF-8\r\n",
-                        "\r\n",
-                        $rendered->{html},
-                        "\r\n",
-                        "--$boundary--\r\n",
-                    );
-
-                    my $mail = Email::Simple->create(
-                        header => [
-                            To             => $email,
-                            From           => $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com',
-                            Subject        => "Sign in to $tenant_name",
-                            'MIME-Version' => '1.0',
-                            'Content-Type' => "multipart/alternative; boundary=\"$boundary\"",
-                        ],
-                        body => $mime_body,
-                    );
-
-                    sendmail($mail);
                     $self->app->log->info("Magic link email sent to $email");
                 }
             }
@@ -250,16 +219,16 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         my $dao = $self->dao;
         my $db  = $dao->db;
 
-        my $result = eval {
-            $self->$build_webauthn($db)->verify_registration_response(
+        my $result;
+        try {
+            $result = $self->$build_webauthn($db)->verify_registration_response(
                 $expected_challenge,
                 $body->{response}{clientDataJSON},
                 $body->{response}{attestationObject},
             );
-        };
-
-        if ($@) {
-            $self->app->log->warn("WebAuthn registration verification failed: $@");
+        }
+        catch ($e) {
+            $self->app->log->warn("WebAuthn registration verification failed: $e");
             return $self->render(
                 json   => { error => 'Registration verification failed' },
                 status => 400,
@@ -347,8 +316,9 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             );
         }
 
-        my $result = eval {
-            $self->$build_webauthn($db)->verify_authentication_response(
+        my $result;
+        try {
+            $result = $self->$build_webauthn($db)->verify_authentication_response(
                 $expected_challenge,
                 $body->{response}{clientDataJSON},
                 decode_base64url($body->{response}{authenticatorData} // ''),
@@ -356,10 +326,9 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                 $passkey->public_key,
                 $passkey->sign_count,
             );
-        };
-
-        if ($@) {
-            $self->app->log->warn("WebAuthn authentication verification failed: $@");
+        }
+        catch ($e) {
+            $self->app->log->warn("WebAuthn authentication verification failed: $e");
             return $self->render(
                 json   => { error => 'Authentication verification failed' },
                 status => 400,

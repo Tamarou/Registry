@@ -7,9 +7,9 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowStep) {
     use Carp qw( croak );
+    use Registry::DAO::User;
+    use Registry::DAO::MagicLinkToken;
     use Registry::Email::Template;
-    use Email::Simple;
-    use Email::Sender::Simple qw(sendmail);
 
     method process ($db, $form_data) {
         my $workflow = $self->workflow($db);
@@ -25,9 +25,6 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
         }
         elsif ($action eq 'create_account') {
             # Create a new user without a password (passwordless system).
-            require Registry::DAO::User;
-            require Registry::DAO::MagicLinkToken;
-
             my $user = Registry::DAO::User->create($db, {
                 username  => $form_data->{username},
                 email     => $form_data->{email},
@@ -41,23 +38,17 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                 purpose => 'login',
             });
 
-            # Send the magic link email so the user can authenticate
-            my $rendered = Registry::Email::Template->render(
-                'magic_link_login',
-                tenant_name      => 'Registry',
-                magic_link_url   => "/auth/magic/$plaintext",
-                expires_in_hours => 24,
+            my $base_url = $form_data->{_base_url} // $ENV{BASE_URL} // '';
+            Registry::Email::Template->send_email(
+                to       => $form_data->{email},
+                subject  => 'Sign in to Registry',
+                template => 'magic_link_login',
+                vars     => {
+                    tenant_name      => 'Registry',
+                    magic_link_url   => "$base_url/auth/magic/$plaintext",
+                    expires_in_hours => 24,
+                },
             );
-
-            my $mail = Email::Simple->create(
-                header => [
-                    To      => $form_data->{email},
-                    From    => $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com',
-                    Subject => 'Sign in to Registry',
-                ],
-                body => $rendered->{text},
-            );
-            sendmail($mail);
 
             return { redirect => '/auth/magic-link-sent', user_id => $user->id };
         }
@@ -67,7 +58,6 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
 
             if ($user_id) {
                 # Verify user still exists
-                require Registry::DAO::User;
                 my $user = Registry::DAO::User->find($db, { id => $user_id });
 
                 if ($user) {
