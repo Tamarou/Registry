@@ -84,6 +84,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         );
     }
 
+    method update_canonical_domain ($db, $domain) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $self->update($db, { canonical_domain => $domain });
+    }
+
     method slug_exists :common ($db, $slug) {
         my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
         return $result->array->[0] > 0;
