@@ -39,6 +39,7 @@ my $staff_user = Registry::DAO::User->create($dao->db, {
 });
 
 my $t = Test::Registry::Mojo->new('Registry');
+$t->app->helper(dao => sub { $dao });
 
 # current_user is swapped per-subtest via this reference.
 # Using our() here allows `local` to temporarily override it within subtests.
@@ -254,6 +255,9 @@ subtest 'Remove a non-primary domain' => sub {
         status    => 'pending',
     }, { returning => '*' })->hash;
 
+    # Clear canonical_domain so the redirect hook doesn't 301 us
+    $dao->db->update('tenants', { canonical_domain => undef }, { id => $tenant->id });
+
     $t->delete_ok("/admin/domains/$extra->{id}" => $host_header)
       ->status_isnt(500, 'Remove endpoint reachable');
 
@@ -285,7 +289,8 @@ subtest 'Remove primary domain clears canonical_domain' => sub {
 
     my $primary_domain = $primary_td->domain;
 
-    $t->delete_ok("/admin/domains/@{[$primary_td->id]}" => $host_header)
+    # Use the canonical domain as Host so the redirect hook doesn't 301 us
+    $t->delete_ok("/admin/domains/@{[$primary_td->id]}" => { Host => $primary_domain })
       ->status_isnt(500, 'Remove primary domain endpoint reachable');
 
     my $t_reloaded = Registry::DAO::Tenant->find($dao->db, { id => $tenant->id });

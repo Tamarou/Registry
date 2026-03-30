@@ -9,12 +9,10 @@ class Registry::Controller::TenantDomains :isa(Registry::Controller) {
     use Registry::DAO::TenantDomain;
     use Registry::DAO::Tenant;
 
-    # Returns a Registry::DAO connected to the registry schema.
-    # tenant_domains and tenants live in the registry schema, not per-tenant schemas.
-    # The caller must keep this DAO reference alive for as long as the returned
-    # database handle is in use, otherwise Mojo::Pg garbage-collects the connection.
+    # Returns a DAO connected to the registry schema where tenant_domains
+    # and tenants live. Uses the dao helper so tests can override it.
     method _registry_dao {
-        return Registry::DAO->new(url => $ENV{DB_URL}, schema => 'registry');
+        return $self->dao('registry');
     }
 
     # GET /admin/domains — list all domains for the current tenant
