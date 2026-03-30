@@ -1,3 +1,5 @@
+# ABOUTME: Workflow step that creates a new tenant (organization) and its users
+# ABOUTME: during the tenant signup process. Uses magic link tokens for team invites.
 use 5.42.0;
 use utf8;
 
@@ -6,6 +8,7 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Workflow;
+use Registry::DAO::MagicLinkToken;
 use Registry::Utility::ErrorHandler;
 use Carp qw(carp croak);
 use Text::Unidecode qw(unidecode);
@@ -28,14 +31,15 @@ method process ( $db, $ ) {
             $user->{user_type} //= 'admin';
         }
     } else {
-        # New format: extract user data from individual fields
+        # New format: extract user data from individual fields (no password - passwordless auth)
         my $admin_user_data = {
             name => delete $profile->{admin_name},
             email => delete $profile->{admin_email},
             username => delete $profile->{admin_username},
-            password => delete $profile->{admin_password},
             user_type => delete $profile->{admin_user_type} || 'admin',
         };
+        # Remove any stray admin_password field if present (backward compat with old form submissions)
+        delete $profile->{admin_password};
         
         my $team_members = delete $profile->{team_members} || [];
         
@@ -52,9 +56,8 @@ method process ( $db, $ ) {
                     name => $member->{name},
                     email => $member->{email},
                     username => $username,
-                    password => $self->_generate_temp_password(),
                     user_type => $member->{user_type} || 'staff',
-                    invite_pending => 1,  # Mark for invitation email
+                    invite_pending => 1,  # Mark for invitation email via magic link
                 };
             }
         }
@@ -381,28 +384,19 @@ sub _trim {
     return $str;
 }
 
-method _generate_temp_password() {
-    # Generate a secure temporary password
-    my @chars = ('A'..'Z', 'a'..'z', '0'..'9', '!', '@', '#', '$', '%');
-    my $password = '';
-    for (1..12) {
-        $password .= $chars[rand @chars];
-    }
-    return $password;
-}
-
 method _send_invitation_email($db, $tenant, $user, $user_data) {
-    # TODO: Implement email invitation system
-    # For now, just log the invitation details
-    warn "Would send invitation email to: " . $user_data->{email} . 
-         " for tenant: " . $tenant->slug . 
-         " with temporary password (this should be sent via secure email)";
-         
-    # In a production system, this would:
-    # 1. Generate a secure invitation token
-    # 2. Store the token in a database table
-    # 3. Send an email with a link to set up their account
-    # 4. Allow them to set their own password via the token
+    # Generate a magic link token for the team member invite (valid for 168 hours / 7 days)
+    my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id    => $user->id,
+        purpose    => 'invite',
+        expires_in => 168,
+    });
+
+    # TODO: Send email with invite link containing $plaintext token
+    # The invite link would be: /auth/invite?token=$plaintext
+    warn "Would send invitation email to: " . $user_data->{email} .
+         " for tenant: " . $tenant->slug .
+         " with invite token (token ID: " . $token->id . ")";
 }
 
 method _format_trial_end_date($trial_ends_at) {

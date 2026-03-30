@@ -77,6 +77,5 @@ $t->post_ok("/tenant-signup/$run_id/users" => form => {
     admin_name => 'Admin User',
     admin_email => 'admin@test.org',
     admin_username => 'adminuser',
-    admin_password => 'TestPass123!',
     admin_user_type => 'admin',
 })->status_is(302, 'Form submission should redirect to next step');

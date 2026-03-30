@@ -40,3 +40,4 @@ consolidate-pricing-relationships [unified-pricing-infrastructure] 2025-09-29T16
 pricing-relationship-events [consolidate-pricing-relationships] 2025-09-29T19:55:59Z Chris Prather <chris.prather@tamarou.com> # Add event sourcing for pricing relationship audit trail
 remove-pricing-plan-relationship-fields 2025-09-29T22:27:51Z Chris Prather <chris.prather@tamarou.com> # Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans
 passwordless-auth [users schema-based-multitennancy] 2026-03-25T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Passwordless auth: passkeys, magic links, API keys
+auth-notification-types [notifications-and-preferences passwordless-auth] 2026-03-30T06:56:54Z Chris Prather <chris.prather@tamarou.com> # Add auth notification types to notification_type enum
