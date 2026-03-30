@@ -34,7 +34,7 @@ class Registry::Controller::TenantDomains :isa(Registry::Controller) {
 
     # POST /admin/domains — add a new custom domain for the current tenant
     method add {
-        my $domain_name = $self->param('domain');
+        my $domain_name = lc($self->param('domain') // '');
         my $tenant_slug = $self->tenant;
         my $dao = $self->_registry_dao;
         my $db  = $dao->db;

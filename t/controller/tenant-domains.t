@@ -258,7 +258,7 @@ subtest 'Remove a non-primary domain' => sub {
     # Clear canonical_domain so the redirect hook doesn't 301 us
     $dao->db->update('tenants', { canonical_domain => undef }, { id => $tenant->id });
 
-    $t->delete_ok("/admin/domains/$extra->{id}" => $host_header)
+    $t->post_ok("/admin/domains/$extra->{id}/remove" => $host_header)
       ->status_isnt(500, 'Remove endpoint reachable');
 
     my $gone = Registry::DAO::TenantDomain->find_by_domain($dao->db, 'to-delete.example.com');
@@ -290,7 +290,7 @@ subtest 'Remove primary domain clears canonical_domain' => sub {
     my $primary_domain = $primary_td->domain;
 
     # Use the canonical domain as Host so the redirect hook doesn't 301 us
-    $t->delete_ok("/admin/domains/@{[$primary_td->id]}" => { Host => $primary_domain })
+    $t->post_ok("/admin/domains/@{[$primary_td->id]}/remove" => { Host => $primary_domain })
       ->status_isnt(500, 'Remove primary domain endpoint reachable');
 
     my $t_reloaded = Registry::DAO::Tenant->find($dao->db, { id => $tenant->id });

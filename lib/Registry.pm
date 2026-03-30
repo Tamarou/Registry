@@ -557,7 +557,7 @@ class Registry :isa(Mojolicious) {
         $admin_only->post('/domains')->to('TenantDomains#add')->name('admin_domains_add');
         $admin_only->post('/domains/:id/verify')->to('TenantDomains#verify')->name('admin_domains_verify');
         $admin_only->post('/domains/:id/primary')->to('TenantDomains#set_primary')->name('admin_domains_primary');
-        $admin_only->delete('/domains/:id')->to('TenantDomains#remove')->name('admin_domains_remove');
+        $admin_only->post('/domains/:id/remove')->to('TenantDomains#remove')->name('admin_domains_remove');
 
         # Auth routes (unprotected -- no require_auth)
         my $auth = $r->under('/auth');
