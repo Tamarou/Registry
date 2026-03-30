@@ -1,0 +1,47 @@
+% layout 'default';
+% title 'DNS Instructions for ' . stash('domain');
+<div class="container mx-auto p-4">
+  <h1 class="text-2xl font-bold mb-4">DNS Setup Instructions</h1>
+
+  <div class="bg-blue-50 border border-blue-200 rounded p-4 mb-6">
+    <h2 class="text-lg font-semibold mb-2">Domain added: <code><%= stash('domain') %></code></h2>
+    <p>Your domain has been added. To complete setup, configure your DNS records as shown below.</p>
+  </div>
+
+  <div class="bg-yellow-50 border border-yellow-300 rounded p-4 mb-6">
+    <strong>Passkey re-registration required:</strong>
+    Users with registered passkeys must re-register their passkey credentials
+    after this domain change takes effect, as the relying party identifier (rpId)
+    will change to your new domain.
+  </div>
+
+  <div class="mb-6">
+    <h2 class="text-xl font-semibold mb-2">DNS Configuration</h2>
+    <p class="mb-2">Add a CNAME record pointing to your Render service:</p>
+    <table class="border-collapse border w-full mb-4">
+      <thead>
+        <tr class="bg-gray-100">
+          <th class="border px-3 py-2 text-left">Type</th>
+          <th class="border px-3 py-2 text-left">Name</th>
+          <th class="border px-3 py-2 text-left">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="border px-3 py-2">CNAME</td>
+          <td class="border px-3 py-2"><%= stash('domain') %></td>
+          <td class="border px-3 py-2"><%= stash('render_hostname') // 'your-service.onrender.com' %></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="text-sm text-gray-600">
+      <strong>Note for apex domains</strong> (e.g., example.com without www):
+      Use an ALIAS or ANAME record if your DNS provider supports it, since CNAME
+      records are not allowed at the zone apex.
+    </p>
+  </div>
+
+  <a href="/admin/domains" class="bg-blue-600 text-white px-4 py-2 rounded">
+    Back to Domain Management
+  </a>
+</div>
