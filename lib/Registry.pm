@@ -5,6 +5,7 @@ use Object::Pad;
 use Registry::DAO;
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
+use Registry::Job::DomainVerification;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -48,6 +49,7 @@ class Registry :isa(Mojolicious) {
 
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
+        Registry::Job::DomainVerification->register($self);
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
@@ -628,6 +630,22 @@ class Registry :isa(Mojolicious) {
             });
 
             $self->log->info("Scheduled recurring attendance check job");
+        }
+
+        # Schedule domain verification to run every 15 minutes
+        my $existing_domain_verification = $self->minion->jobs({
+            tasks => ['domain_verification'],
+            states => ['inactive', 'active']
+        })->total;
+
+        unless ($existing_domain_verification) {
+            $self->minion->enqueue('domain_verification', [], {
+                delay => 900, # Start after 15 minutes
+                attempts => 3,
+                priority => 5
+            });
+
+            $self->log->info("Scheduled recurring domain verification job");
         }
 
         # Schedule waitlist expiration check to run every 5 minutes
