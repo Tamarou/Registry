@@ -104,16 +104,28 @@ class Registry::Controller::TenantDomains :isa(Registry::Controller) {
         $self->render(template => 'admin/domains/dns_instructions');
     }
 
-    # POST /admin/domains/:id/verify — trigger DNS verification for a domain
-    method verify {
+    # Find a domain by ID and verify it belongs to the current tenant.
+    # Returns ($td, $db) on success or renders 404 and returns () on failure.
+    method _find_owned_domain {
         my $id  = $self->param('id');
         my $dao = $self->_registry_dao;
         my $db  = $dao->db;
 
         my $td = Registry::DAO::TenantDomain->find($db, { id => $id });
-        unless ($td) {
-            return $self->render(text => 'Domain not found', status => 404);
+        my $tenant = Registry::DAO::Tenant->find($db, { slug => $self->tenant });
+
+        unless ($td && $tenant && $td->tenant_id eq $tenant->id) {
+            $self->render(text => 'Domain not found', status => 404);
+            return ();
         }
+
+        return ($td, $db);
+    }
+
+    # POST /admin/domains/:id/verify — trigger DNS verification for a domain
+    method verify {
+        my ($td, $db) = $self->_find_owned_domain;
+        return unless $td;
 
         eval {
             if ($td->render_domain_id) {
@@ -139,14 +151,8 @@ class Registry::Controller::TenantDomains :isa(Registry::Controller) {
 
     # POST /admin/domains/:id/primary — make a domain the primary for the tenant
     method set_primary {
-        my $id  = $self->param('id');
-        my $dao = $self->_registry_dao;
-        my $db  = $dao->db;
-
-        my $td = Registry::DAO::TenantDomain->find($db, { id => $id });
-        unless ($td) {
-            return $self->render(text => 'Domain not found', status => 404);
-        }
+        my ($td, $db) = $self->_find_owned_domain;
+        return unless $td;
 
         $td->set_primary($db);
         $self->redirect_to('/admin/domains');
@@ -154,14 +160,8 @@ class Registry::Controller::TenantDomains :isa(Registry::Controller) {
 
     # DELETE /admin/domains/:id — remove a custom domain
     method remove {
-        my $id  = $self->param('id');
-        my $dao = $self->_registry_dao;
-        my $db  = $dao->db;
-
-        my $td = Registry::DAO::TenantDomain->find($db, { id => $id });
-        unless ($td) {
-            return $self->render(text => 'Domain not found', status => 404);
-        }
+        my ($td, $db) = $self->_find_owned_domain;
+        return unless $td;
 
         # Remove from Render if we have a render_domain_id
         if ($td->render_domain_id) {

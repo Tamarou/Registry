@@ -35,8 +35,15 @@ class Registry::Job::DomainVerification {
         for my $td (@pending) {
             next unless $td->render_domain_id;
             eval {
-                $render->verify_custom_domain($td->render_domain_id);
-                $td->mark_verified($db);
+                my $result = $render->verify_custom_domain($td->render_domain_id);
+                if ($result && ($result->{verificationStatus} // '') eq 'confirmed') {
+                    $td->mark_verified($db);
+                } else {
+                    my $err = $result
+                        ? ($result->{verificationError} // 'Verification pending')
+                        : 'Verification pending';
+                    $td->mark_failed($db, $err);
+                }
             };
             if ($@) {
                 (my $err = $@) =~ s/\s+$//;

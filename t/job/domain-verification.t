@@ -31,7 +31,7 @@ my $tenant = Test::Registry::Fixtures::create_tenant($dao, {
     sub verify_custom_domain {
         my ($self, $render_id) = @_;
         push @{ $self->{calls} }, $render_id;
-        return { verified => 1 };   # simulate success
+        return { verificationStatus => 'confirmed' };   # simulate success
     }
     sub calls { shift->{calls} }
 }
