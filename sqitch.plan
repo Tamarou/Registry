@@ -40,3 +40,5 @@ consolidate-pricing-relationships [unified-pricing-infrastructure] 2025-09-29T16
 pricing-relationship-events [consolidate-pricing-relationships] 2025-09-29T19:55:59Z Chris Prather <chris.prather@tamarou.com> # Add event sourcing for pricing relationship audit trail
 remove-pricing-plan-relationship-fields 2025-09-29T22:27:51Z Chris Prather <chris.prather@tamarou.com> # Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans
 create-default-pricing-relationships [remove-pricing-plan-relationship-fields] 2025-10-02T20:30:00Z Claude <noreply@anthropic.com> # Create missing pricing relationships for default platform pricing plans
+passwordless-auth [users schema-based-multitennancy] 2026-03-25T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Add passwordless authentication with magic links, passkeys, and API keys
+tenant-domains [notifications-and-preferences passwordless-auth] 2026-03-30T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Add tenant_domains table for custom domain management

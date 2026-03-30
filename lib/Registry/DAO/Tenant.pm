@@ -84,6 +84,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         );
     }
 
+    # Update the canonical_domain field to the given value (or undef to clear it).
+    # Called by TenantDomain when a primary domain is set, verified, or removed.
+    method update_canonical_domain ($db, $domain) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $self->update($db, { canonical_domain => $domain });
+    }
+
     method slug_exists :common ($db, $slug) {
         my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
         return $result->array->[0] > 0;
