@@ -203,6 +203,19 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Render.com Custom Domains API client, injected as a helper so tests
+        # can replace it with a mock without touching production code.
+        $self->helper(
+            render_service => sub {
+                require Registry::Service::Render;
+                state $svc = Registry::Service::Render->new(
+                    api_key    => $ENV{RENDER_API_KEY}    // '',
+                    service_id => $ENV{RENDER_SERVICE_ID} // '',
+                );
+                return $svc;
+            }
+        );
+
         # Populate current_user stash from session or bearer token on every request
         my $user_to_stash = sub ($user, %extra) {
             return {
@@ -533,6 +546,18 @@ class Registry :isa(Mojolicious) {
         $admin->post('/dashboard/process_drop_request')->to('workflows#start_workflow' => { workflow => 'admin-drop-approval' })->name('admin_dashboard_process_drop_request');
         $admin->get('/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $admin->post('/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
+
+        # Domain management routes: admin-only (staff cannot access)
+        # This is a separate under() group from $admin so that staff cannot reach
+        # these routes even though staff can reach other /admin/* routes.
+        my $admin_only = $r->under('/admin')->to(
+            cb => sub ($c) { $c->require_role('admin') }
+        );
+        $admin_only->get('/domains')->to('TenantDomains#index')->name('admin_domains');
+        $admin_only->post('/domains')->to('TenantDomains#add')->name('admin_domains_add');
+        $admin_only->post('/domains/:id/verify')->to('TenantDomains#verify')->name('admin_domains_verify');
+        $admin_only->post('/domains/:id/primary')->to('TenantDomains#set_primary')->name('admin_domains_primary');
+        $admin_only->delete('/domains/:id')->to('TenantDomains#remove')->name('admin_domains_remove');
 
         # Auth routes (unprotected -- no require_auth)
         my $auth = $r->under('/auth');

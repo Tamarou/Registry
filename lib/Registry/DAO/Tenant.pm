@@ -94,6 +94,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return $result->array->[0] > 0;
     }
     
+    method update_canonical_domain ($db, $domain) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $self->update($db, { canonical_domain => $domain });
+    }
+
     # Get all tenant schemas for background jobs
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;
