@@ -9,7 +9,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
     use Registry::DAO::MagicLinkToken;
     use Registry::DAO::ApiKey;
     use Registry::DAO::Tenant;
-    use Registry::Email::Template;
+    use Registry::DAO::Notification;
     use Registry::DAO::Passkey;
     use Registry::Auth::WebAuthn;
     use Registry::Auth::WebAuthn::Challenge;
@@ -49,16 +49,19 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                     # Determine tenant name for the email subject and greeting
                     my $tenant_name = $tenant ? $tenant->name : 'Registry';
 
-                    Registry::Email::Template->send_email(
-                        to       => $email,
+                    my $notification = Registry::DAO::Notification->create($db, {
+                        user_id  => $user->id,
+                        type     => 'magic_link_login',
+                        channel  => 'email',
                         subject  => "Sign in to $tenant_name",
-                        template => 'magic_link_login',
-                        vars     => {
+                        message  => "Magic link login for $email",
+                        metadata => {
                             tenant_name      => $tenant_name,
                             magic_link_url   => $magic_link_url,
                             expires_in_hours => $expiry,
                         },
-                    );
+                    });
+                    $notification->send($db);
                     $self->app->log->info("Magic link email sent to $email");
                 }
             }
@@ -95,8 +98,17 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         try {
             $token->consume($db);
 
-            # Set the user session
-            $self->session(user_id => $token->user_id);
+            # Set the user session with tenant context
+            $self->session(
+                user_id          => $token->user_id,
+                tenant_schema    => $self->tenant,
+                authenticated_at => time(),
+            );
+
+            # Invite tokens redirect to passkey registration
+            if ($token->purpose eq 'invite') {
+                return $self->redirect_to('/auth/register-passkey');
+            }
 
             $self->redirect_to('/');
         }
@@ -338,7 +350,11 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         $passkey->update_sign_count($db, $result->{sign_count});
 
         # Establish the session -- this is the login
-        $self->session(user_id => $passkey->user_id);
+        $self->session(
+            user_id          => $passkey->user_id,
+            tenant_schema    => $self->tenant,
+            authenticated_at => time(),
+        );
 
         $self->render(json => { ok => 1 });
     }

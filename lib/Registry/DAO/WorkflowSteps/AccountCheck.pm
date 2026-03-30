@@ -9,7 +9,7 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
     use Carp qw( croak );
     use Registry::DAO::User;
     use Registry::DAO::MagicLinkToken;
-    use Registry::Email::Template;
+    use Registry::DAO::Notification;
 
     method process ($db, $form_data) {
         my $workflow = $self->workflow($db);
@@ -39,16 +39,19 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
             });
 
             my $base_url = $form_data->{_base_url} // $ENV{BASE_URL} // '';
-            Registry::Email::Template->send_email(
-                to       => $form_data->{email},
+            my $notification = Registry::DAO::Notification->create($db, {
+                user_id  => $user->id,
+                type     => 'magic_link_login',
+                channel  => 'email',
                 subject  => 'Sign in to Registry',
-                template => 'magic_link_login',
-                vars     => {
+                message  => "Magic link login for " . $form_data->{email},
+                metadata => {
                     tenant_name      => 'Registry',
                     magic_link_url   => "$base_url/auth/magic/$plaintext",
                     expires_in_hours => 24,
                 },
-            );
+            });
+            $notification->send($db);
 
             return { redirect => '/auth/magic-link-sent', user_id => $user->id };
         }

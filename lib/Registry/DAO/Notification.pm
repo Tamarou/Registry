@@ -27,8 +27,8 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Validate type
-        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency)$/) {
-            croak "Invalid notification type: must be 'attendance_missing', 'attendance_reminder', 'general', 'message_announcement', 'message_update', or 'message_emergency'";
+        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed)$/) {
+            croak "Invalid notification type: '$type' is not a recognized notification type";
         }
         
         # Validate channel
@@ -59,6 +59,11 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         return 'message_notification' if $type eq 'message_announcement';
         return 'message_notification' if $type eq 'message_update';
         return 'message_notification' if $type eq 'message_emergency';
+        return 'magic_link_login'    if $type eq 'magic_link_login';
+        return 'magic_link_invite'   if $type eq 'magic_link_invite';
+        return 'email_verification'  if $type eq 'email_verification';
+        return 'passkey_registered'  if $type eq 'passkey_registered';
+        return 'passkey_removed'     if $type eq 'passkey_removed';
         return '';  # general and unknown types use fallback
     }
 
@@ -80,6 +85,25 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
                 name    => $name,
                 subject => $subject,
                 body    => $message,
+            );
+        }
+        if ($type eq 'magic_link_login' || $type eq 'magic_link_invite') {
+            return (
+                tenant_name      => $meta->{tenant_name}      // 'Registry',
+                magic_link_url   => $meta->{magic_link_url}   // '',
+                expires_in_hours => $meta->{expires_in_hours}  // 24,
+            );
+        }
+        if ($type eq 'email_verification') {
+            return (
+                tenant_name      => $meta->{tenant_name}      // 'Registry',
+                verification_url => $meta->{verification_url}  // '',
+            );
+        }
+        if ($type eq 'passkey_registered' || $type eq 'passkey_removed') {
+            return (
+                tenant_name => $meta->{tenant_name} // 'Registry',
+                device_name => $meta->{device_name} // 'Unknown device',
             );
         }
         return (name => $name);
