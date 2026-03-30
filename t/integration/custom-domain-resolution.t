@@ -75,4 +75,35 @@ subtest 'Redirect loop is prevented when host already matches canonical' => sub 
       ->status_isnt(301, 'No redirect loop when host equals canonical_domain');
 };
 
+subtest 'Custom domain resolves to correct tenant' => sub {
+    # Insert a verified domain for the dance_stars tenant.
+    # The domain uses a www. prefix so _extract_tenant_from_subdomain returns
+    # nothing and the custom domain lookup runs.
+    # Once the lookup resolves dance_stars (which has canonical_domain set),
+    # a request on www.dance-stars.com triggers the canonical redirect to
+    # dance-stars.com, confirming the correct tenant was resolved.
+    $dao->db->insert('tenant_domains', {
+        tenant_id  => $tenant->id,
+        domain     => 'www.dance-stars.com',
+        status     => 'verified',
+    });
+
+    $t->get_ok('/auth/login' => { Host => 'www.dance-stars.com' })
+      ->status_is(301, 'Verified custom domain resolves to tenant, triggering canonical redirect');
+};
+
+subtest 'Unverified custom domain does not resolve to tenant' => sub {
+    # An unverified domain should NOT be resolved to the tenant. Without
+    # resolution, the request falls back to the registry schema which has no
+    # canonical_domain, so no redirect occurs (200).
+    $dao->db->insert('tenant_domains', {
+        tenant_id  => $tenant->id,
+        domain     => 'www.pending-dance.com',
+        status     => 'pending',
+    });
+
+    $t->get_ok('/auth/login' => { Host => 'www.pending-dance.com' })
+      ->status_isnt(301, 'Pending domain does not resolve to tenant (no canonical redirect)');
+};
+
 done_testing();

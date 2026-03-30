@@ -151,8 +151,38 @@ class Registry :isa(Mojolicious) {
                 my $raw = $explicit_tenant
                     || $c->req->headers->header('X-As-Tenant')
                     || $c->req->cookie('as-tenant')
-                    || $self->_extract_tenant_from_subdomain($c)
-                    || 'registry';
+                    || $self->_extract_tenant_from_subdomain($c);
+
+                # Custom domain lookup: if no tenant found via subdomain/header/cookie,
+                # check whether the Host header matches a verified custom domain.
+                # Uses $c->dao('registry')->db so the lookup goes through the existing
+                # helper (respecting $ENV{DB_URL}) rather than a bare Registry::DAO->new.
+                # The per-request query is an accepted trade-off; the domain index makes
+                # it sub-millisecond.
+                unless ($raw) {
+                    my $host = lc($c->req->url->to_abs->host // '');
+                    if ($host && $host !~ /\blocalhost\b/) {
+                        try {
+                            require Registry::DAO::TenantDomain;
+                            # Keep the DAO object alive while using its db handle.
+                            # Without this, the Mojo::Pg object is garbage collected,
+                            # invalidating the database connection.
+                            my $registry_dao = $c->dao('registry');
+                            my $db = $registry_dao->db;
+                            my $td = Registry::DAO::TenantDomain->find_by_domain($db, $host);
+                            if ($td && $td->status eq 'verified') {
+                                require Registry::DAO::Tenant;
+                                my $tenant = Registry::DAO::Tenant->find($db, { id => $td->tenant_id });
+                                $raw = $tenant->slug if $tenant;
+                            }
+                        }
+                        catch ($e) {
+                            $c->app->log->warn("Custom domain lookup failed: $e");
+                        }
+                    }
+                }
+
+                $raw //= 'registry';
 
                 # Sanitize: tenant slugs must be safe SQL identifiers
                 return 'registry' unless $raw =~ /\A[a-z][a-z0-9_]{0,62}\z/;
