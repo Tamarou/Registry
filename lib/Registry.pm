@@ -149,8 +149,38 @@ class Registry :isa(Mojolicious) {
                 my $raw = $explicit_tenant
                     || $c->req->headers->header('X-As-Tenant')
                     || $c->req->cookie('as-tenant')
-                    || $self->_extract_tenant_from_subdomain($c)
-                    || 'registry';
+                    || $self->_extract_tenant_from_subdomain($c);
+
+                # Custom domain lookup: if no tenant found via subdomain/header/cookie,
+                # check whether the Host header matches a verified custom domain.
+                # Uses $c->dao('registry')->db so the lookup goes through the existing
+                # helper (respecting $ENV{DB_URL}) rather than a bare Registry::DAO->new.
+                # The per-request query is an accepted trade-off; the domain index makes
+                # it sub-millisecond.
+                unless ($raw) {
+                    my $host = lc($c->req->url->to_abs->host // '');
+                    if ($host && $host !~ /\blocalhost\b/) {
+                        try {
+                            require Registry::DAO::TenantDomain;
+                            # Keep the DAO object alive while using its db handle.
+                            # Without this, the Mojo::Pg object is garbage collected,
+                            # invalidating the database connection.
+                            my $registry_dao = $c->dao('registry');
+                            my $db = $registry_dao->db;
+                            my $td = Registry::DAO::TenantDomain->find_by_domain($db, $host);
+                            if ($td && $td->status eq 'verified') {
+                                require Registry::DAO::Tenant;
+                                my $tenant = Registry::DAO::Tenant->find($db, { id => $td->tenant_id });
+                                $raw = $tenant->slug if $tenant;
+                            }
+                        }
+                        catch ($e) {
+                            $c->app->log->warn("Custom domain lookup failed: $e");
+                        }
+                    }
+                }
+
+                $raw //= 'registry';
 
                 # Sanitize: tenant slugs must be safe SQL identifiers
                 return 'registry' unless $raw =~ /\A[a-z][a-z0-9_]{0,62}\z/;
@@ -399,6 +429,46 @@ class Registry :isa(Mojolicious) {
         $self->hook(
             before_dispatch => sub ($c) {
                 $rate_limiter->before_dispatch($c);
+            }
+        );
+
+        # Canonical domain redirect: if the tenant has a canonical domain and the
+        # request arrived on a different host, redirect with 301. The per-request
+        # DB query is an accepted trade-off (see spec); the index keeps it fast.
+        $self->hook(
+            before_dispatch => sub ($c) {
+                my $path = $c->req->url->path;
+
+                # Skip webhook, health check, and static asset paths
+                return if $path =~ m{^/(webhooks|health|assets)};
+
+                my $host = lc($c->req->url->to_abs->host // '');
+                return unless $host;
+
+                # Resolve tenant and check for canonical domain
+                my $tenant_slug = $c->tenant;
+                return if $tenant_slug eq 'registry';
+
+                try {
+                    # Look up the tenant record in the registry schema (tenants table lives there)
+                    my $dao = $c->dao('registry');
+                    my $tenant = Registry::DAO::Tenant->find($dao->db, { slug => $tenant_slug });
+                    return unless $tenant && $tenant->canonical_domain;
+
+                    my $canonical = lc($tenant->canonical_domain);
+
+                    # Skip if already on the canonical domain (prevents redirect loops)
+                    return if $host eq $canonical;
+
+                    # Build redirect URL preserving path and query
+                    my $redirect = $c->req->url->to_abs->clone;
+                    $redirect->host($canonical);
+                    $c->res->headers->location($redirect->to_string);
+                    $c->rendered(301);
+                }
+                catch ($e) {
+                    $c->app->log->warn("Canonical domain redirect failed: $e");
+                }
             }
         );
 
