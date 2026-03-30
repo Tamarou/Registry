@@ -371,6 +371,79 @@ If you did not remove this passkey, please contact support immediately and secur
 END
         return ($html, $text);
     },
+
+    domain_verified => sub {
+        my (%v) = @_;
+        my $tenant_name = _escape_html($v{tenant_name} // '');
+        my $domain      = _escape_html($v{domain}      // '');
+
+        my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">Your Custom Domain Is Active</h2>
+<p style="color:#333333;line-height:1.6;">Great news! Your custom domain has been verified and is now active for <strong>$tenant_name</strong>.</p>
+<table cellpadding="8" cellspacing="0" style="width:100%;background-color:#f8f9fa;border-radius:4px;margin:16px 0;">
+  <tr><td style="color:#666666;width:120px;">Domain:</td><td style="color:#333333;font-weight:bold;">$domain</td></tr>
+</table>
+<p style="color:#333333;line-height:1.6;">Your site is now accessible at <strong>$domain</strong>.</p>
+<div style="background-color:#fff8e1;border-left:4px solid #f59e0b;padding:12px 16px;margin:16px 0;border-radius:0 4px 4px 0;">
+  <p style="color:#333333;line-height:1.6;margin:0;"><strong>Important:</strong> Because your domain has changed, any existing passkeys registered under the previous domain will no longer work. Please re-register your passkey on the new domain to continue using passwordless sign-in.</p>
+</div>
+END
+
+        my $raw_tenant_name = $v{tenant_name} // '';
+        my $raw_domain      = $v{domain}      // '';
+        my $text = <<"END";
+Your Custom Domain Is Active
+
+Great news! Your custom domain has been verified and is now active for $raw_tenant_name.
+
+  Domain: $raw_domain
+
+Your site is now accessible at $raw_domain.
+
+Important: Because your domain has changed, any existing passkeys registered under the previous domain will no longer work. Please re-register your passkey on the new domain to continue using passwordless sign-in.
+END
+        return ($html, $text);
+    },
+
+    domain_verification_failed => sub {
+        my (%v) = @_;
+        my $tenant_name = _escape_html($v{tenant_name} // '');
+        my $domain      = _escape_html($v{domain}      // '');
+        my $error       = _escape_html($v{error}       // '');
+        my $retry_url   = _escape_html($v{retry_url}   // '');
+
+        my $html = <<"END";
+<h2 style="color:#c0392b;margin-top:0;">Domain Verification Failed</h2>
+<p style="color:#333333;line-height:1.6;">We were unable to verify your custom domain for <strong>$tenant_name</strong>.</p>
+<table cellpadding="8" cellspacing="0" style="width:100%;background-color:#fff3f3;border-radius:4px;border-left:4px solid #c0392b;margin:16px 0;">
+  <tr><td style="color:#666666;width:120px;">Domain:</td><td style="color:#333333;font-weight:bold;">$domain</td></tr>
+  <tr><td style="color:#666666;">Reason:</td><td style="color:#333333;">$error</td></tr>
+</table>
+<p style="color:#333333;line-height:1.6;">Please check your DNS settings and try again. Verification can be retried from your domain management page.</p>
+<p style="margin:24px 0;">
+  <a href="$retry_url" style="background-color:#2c5f8a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:bold;">Manage Domains</a>
+</p>
+<p style="color:#666666;font-size:14px;line-height:1.6;">Or copy and paste this URL into your browser:<br>$retry_url</p>
+END
+
+        my $raw_tenant_name = $v{tenant_name} // '';
+        my $raw_domain      = $v{domain}      // '';
+        my $raw_error       = $v{error}       // '';
+        my $raw_retry_url   = $v{retry_url}   // '';
+        my $text = <<"END";
+Domain Verification Failed
+
+We were unable to verify your custom domain for $raw_tenant_name.
+
+  Domain: $raw_domain
+  Reason: $raw_error
+
+Please check your DNS settings and try again. Verification can be retried from your domain management page.
+
+$raw_retry_url
+END
+        return ($html, $text);
+    },
 );
 
 # Render a named template with the given variables.

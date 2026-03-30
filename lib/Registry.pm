@@ -5,6 +5,7 @@ use Object::Pad;
 use Registry::DAO;
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
+use Registry::Job::DomainVerification;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -48,6 +49,7 @@ class Registry :isa(Mojolicious) {
 
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
+        Registry::Job::DomainVerification->register($self);
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
@@ -402,6 +404,46 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Canonical domain redirect: if the tenant has a canonical domain and the
+        # request arrived on a different host, redirect with 301. The per-request
+        # DB query is an accepted trade-off (see spec); the index keeps it fast.
+        $self->hook(
+            before_dispatch => sub ($c) {
+                my $path = $c->req->url->path;
+
+                # Skip webhook, health check, and static asset paths
+                return if $path =~ m{^/(webhooks|health|assets)};
+
+                my $host = lc($c->req->url->to_abs->host // '');
+                return unless $host;
+
+                # Resolve tenant and check for canonical domain
+                my $tenant_slug = $c->tenant;
+                return if $tenant_slug eq 'registry';
+
+                try {
+                    # Look up the tenant record in the registry schema (tenants table lives there)
+                    my $dao = $c->dao('registry');
+                    my $tenant = Registry::DAO::Tenant->find($dao->db, { slug => $tenant_slug });
+                    return unless $tenant && $tenant->canonical_domain;
+
+                    my $canonical = lc($tenant->canonical_domain);
+
+                    # Skip if already on the canonical domain (prevents redirect loops)
+                    return if $host eq $canonical;
+
+                    # Build redirect URL preserving path and query
+                    my $redirect = $c->req->url->to_abs->clone;
+                    $redirect->host($canonical);
+                    $c->res->headers->location($redirect->to_string);
+                    $c->rendered(301);
+                }
+                catch ($e) {
+                    $c->app->log->warn("Canonical domain redirect failed: $e");
+                }
+            }
+        );
+
         # Public school pages (no auth required)
         $self->routes->get('/school/:slug')->to('schools#show')
           ->name('show_school');
@@ -588,6 +630,22 @@ class Registry :isa(Mojolicious) {
             });
 
             $self->log->info("Scheduled recurring attendance check job");
+        }
+
+        # Schedule domain verification to run every 15 minutes
+        my $existing_domain_verification = $self->minion->jobs({
+            tasks => ['domain_verification'],
+            states => ['inactive', 'active']
+        })->total;
+
+        unless ($existing_domain_verification) {
+            $self->minion->enqueue('domain_verification', [], {
+                delay => 900, # Start after 15 minutes
+                attempts => 3,
+                priority => 5
+            });
+
+            $self->log->info("Scheduled recurring domain verification job");
         }
 
         # Schedule waitlist expiration check to run every 5 minutes
