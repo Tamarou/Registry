@@ -5,6 +5,7 @@ use Object::Pad;
 use Registry::DAO;
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
+use Registry::Job::DomainVerification;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -48,6 +49,7 @@ class Registry :isa(Mojolicious) {
 
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
+        Registry::Job::DomainVerification->register($self);
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
@@ -149,8 +151,38 @@ class Registry :isa(Mojolicious) {
                 my $raw = $explicit_tenant
                     || $c->req->headers->header('X-As-Tenant')
                     || $c->req->cookie('as-tenant')
-                    || $self->_extract_tenant_from_subdomain($c)
-                    || 'registry';
+                    || $self->_extract_tenant_from_subdomain($c);
+
+                # Custom domain lookup: if no tenant found via subdomain/header/cookie,
+                # check whether the Host header matches a verified custom domain.
+                # Uses $c->dao('registry')->db so the lookup goes through the existing
+                # helper (respecting $ENV{DB_URL}) rather than a bare Registry::DAO->new.
+                # The per-request query is an accepted trade-off; the domain index makes
+                # it sub-millisecond.
+                unless ($raw) {
+                    my $host = lc($c->req->url->to_abs->host // '');
+                    if ($host && $host !~ /\blocalhost\b/) {
+                        try {
+                            require Registry::DAO::TenantDomain;
+                            # Keep the DAO object alive while using its db handle.
+                            # Without this, the Mojo::Pg object is garbage collected,
+                            # invalidating the database connection.
+                            my $registry_dao = $c->dao('registry');
+                            my $db = $registry_dao->db;
+                            my $td = Registry::DAO::TenantDomain->find_by_domain($db, $host);
+                            if ($td && $td->status eq 'verified') {
+                                require Registry::DAO::Tenant;
+                                my $tenant = Registry::DAO::Tenant->find($db, { id => $td->tenant_id });
+                                $raw = $tenant->slug if $tenant;
+                            }
+                        }
+                        catch ($e) {
+                            $c->app->log->warn("Custom domain lookup failed: $e");
+                        }
+                    }
+                }
+
+                $raw //= 'registry';
 
                 # Sanitize: tenant slugs must be safe SQL identifiers
                 return 'registry' unless $raw =~ /\A[a-z][a-z0-9_]{0,62}\z/;
@@ -168,6 +200,19 @@ class Registry :isa(Mojolicious) {
                     url => $ENV{DB_URL},
                     schema => $tenant
                 );
+            }
+        );
+
+        # Render.com Custom Domains API client, injected as a helper so tests
+        # can replace it with a mock without touching production code.
+        $self->helper(
+            render_service => sub {
+                require Registry::Service::Render;
+                state $svc = Registry::Service::Render->new(
+                    api_key    => $ENV{RENDER_API_KEY}    // '',
+                    service_id => $ENV{RENDER_SERVICE_ID} // '',
+                );
+                return $svc;
             }
         );
 
@@ -402,6 +447,46 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Canonical domain redirect: if the tenant has a canonical domain and the
+        # request arrived on a different host, redirect with 301. The per-request
+        # DB query is an accepted trade-off (see spec); the index keeps it fast.
+        $self->hook(
+            before_dispatch => sub ($c) {
+                my $path = $c->req->url->path;
+
+                # Skip webhook, health check, and static asset paths
+                return if $path =~ m{^/(webhooks|health|assets)};
+
+                my $host = lc($c->req->url->to_abs->host // '');
+                return unless $host;
+
+                # Resolve tenant and check for canonical domain
+                my $tenant_slug = $c->tenant;
+                return if $tenant_slug eq 'registry';
+
+                try {
+                    # Look up the tenant record in the registry schema (tenants table lives there)
+                    my $dao = $c->dao('registry');
+                    my $tenant = Registry::DAO::Tenant->find($dao->db, { slug => $tenant_slug });
+                    return unless $tenant && $tenant->canonical_domain;
+
+                    my $canonical = lc($tenant->canonical_domain);
+
+                    # Skip if already on the canonical domain (prevents redirect loops)
+                    return if $host eq $canonical;
+
+                    # Build redirect URL preserving path and query
+                    my $redirect = $c->req->url->to_abs->clone;
+                    $redirect->host($canonical);
+                    $c->res->headers->location($redirect->to_string);
+                    $c->rendered(301);
+                }
+                catch ($e) {
+                    $c->app->log->warn("Canonical domain redirect failed: $e");
+                }
+            }
+        );
+
         # Public school pages (no auth required)
         $self->routes->get('/school/:slug')->to('schools#show')
           ->name('show_school');
@@ -461,6 +546,18 @@ class Registry :isa(Mojolicious) {
         $admin->post('/dashboard/process_drop_request')->to('workflows#start_workflow' => { workflow => 'admin-drop-approval' })->name('admin_dashboard_process_drop_request');
         $admin->get('/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $admin->post('/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
+
+        # Domain management routes: admin-only (staff cannot access)
+        # This is a separate under() group from $admin so that staff cannot reach
+        # these routes even though staff can reach other /admin/* routes.
+        my $admin_only = $r->under('/admin')->to(
+            cb => sub ($c) { $c->require_role('admin') }
+        );
+        $admin_only->get('/domains')->to('TenantDomains#index')->name('admin_domains');
+        $admin_only->post('/domains')->to('TenantDomains#add')->name('admin_domains_add');
+        $admin_only->post('/domains/:id/verify')->to('TenantDomains#verify')->name('admin_domains_verify');
+        $admin_only->post('/domains/:id/primary')->to('TenantDomains#set_primary')->name('admin_domains_primary');
+        $admin_only->post('/domains/:id/remove')->to('TenantDomains#remove')->name('admin_domains_remove');
 
         # Auth routes (unprotected -- no require_auth)
         my $auth = $r->under('/auth');
@@ -588,6 +685,22 @@ class Registry :isa(Mojolicious) {
             });
 
             $self->log->info("Scheduled recurring attendance check job");
+        }
+
+        # Schedule domain verification to run every 15 minutes
+        my $existing_domain_verification = $self->minion->jobs({
+            tasks => ['domain_verification'],
+            states => ['inactive', 'active']
+        })->total;
+
+        unless ($existing_domain_verification) {
+            $self->minion->enqueue('domain_verification', [], {
+                delay => 900, # Start after 15 minutes
+                attempts => 3,
+                priority => 5
+            });
+
+            $self->log->info("Scheduled recurring domain verification job");
         }
 
         # Schedule waitlist expiration check to run every 5 minutes

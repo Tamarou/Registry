@@ -1,0 +1,46 @@
+%# ABOUTME: Partial template displaying DNS record instructions after a domain is added.
+%# ABOUTME: Shows CNAME record details and notes for apex/root domains.
+<div class="dashboard-card mb-6 border-blue-200 bg-blue-50">
+    <div class="dashboard-card-header bg-blue-50 border-blue-200">
+        <h2 class="text-blue-900">DNS Setup Required</h2>
+    </div>
+    <div class="dashboard-card-content">
+        <p class="text-sm text-blue-800 mb-4">
+            To connect <strong class="font-mono"><%= $domain %></strong>, create the following
+            DNS record with your domain registrar:
+        </p>
+
+        <div class="bg-white border border-blue-200 rounded-lg p-4 mb-4 font-mono text-sm">
+            <div class="grid grid-cols-3 gap-2 text-gray-700">
+                <div>
+                    <span class="text-xs text-gray-500 uppercase tracking-wide block mb-1">Type</span>
+                    <span class="font-semibold">CNAME</span>
+                </div>
+                <div>
+                    <span class="text-xs text-gray-500 uppercase tracking-wide block mb-1">Name</span>
+                    <span class="font-semibold"><%= $domain %></span>
+                    <span class="text-gray-400 text-xs block">(or @ for root domain)</span>
+                </div>
+                <div>
+                    <span class="text-xs text-gray-500 uppercase tracking-wide block mb-1">Value</span>
+                    <span class="font-semibold">registry-app.onrender.com</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+            <p class="text-sm text-yellow-800">
+                <strong>Root/apex domains</strong> (e.g., <code>dance-stars.com</code> without
+                a subdomain) may require an <strong>ALIAS</strong> or <strong>ANAME</strong>
+                record instead of CNAME, depending on your DNS provider. Check your registrar's
+                documentation if CNAME is not available for the root domain.
+            </p>
+        </div>
+
+        <p class="text-sm text-gray-700">
+            After creating the record, click <strong>Check now</strong> next to your domain to
+            verify. DNS changes can take up to 48 hours to propagate, but typically complete
+            within minutes.
+        </p>
+    </div>
+</div>
