@@ -4,6 +4,9 @@
 const { test, expect } = require('./fixtures/base');
 const { execSync }     = require('child_process');
 
+// Run tests serially to share a single test database instance
+test.describe.configure({ mode: 'serial' });
+
 // ---------------------------------------------------------------------------
 // Helper: seed test tenant, admin user, staff user, and a magic link token
 // via the Perl helper script.  Returns the parsed JSON output.
