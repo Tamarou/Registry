@@ -563,7 +563,10 @@ class Registry :isa(Mojolicious) {
         my $auth = $r->under('/auth');
         $auth->get('/login')->to('Auth#login');
         $auth->post('/magic/request')->to('Auth#request_magic_link');
-        $auth->get('/magic/:token')->to('Auth#consume_magic_link');
+        $auth->get('/magic/poll/:token_hash')->to('Auth#magic_link_status');
+        $auth->post('/magic/poll/:token_hash/complete')->to('Auth#magic_link_complete_by_hash');
+        $auth->get('/magic/:token')->to('Auth#verify_magic_link');
+        $auth->post('/magic/:token/complete')->to('Auth#complete_magic_link');
         $auth->post('/logout')->to('Auth#logout');
         $auth->get('/verify-email/:token')->to('Auth#verify_email');
         $auth->post('/webauthn/register/begin')->to('Auth#webauthn_register_begin');
