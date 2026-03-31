@@ -43,7 +43,7 @@ CSRF token sourced from a hidden form on the same page.
 - `lib/Registry/DAO/MagicLinkToken.pm` — add `$verified_at` field, `verify()` method, modified `consume()`, `find_by_hash()` class method
 - `lib/Registry/Controller/Auth.pm` — rename `consume_magic_link` to `verify_magic_link`, add `complete_magic_link`, `magic_link_status`, `magic_link_complete_by_hash`
 - `lib/Registry.pm` — replace old route with four new routes (literal segments before placeholders)
-- `lib/Registry/Middleware/RateLimit.pm` — add `/auth/magic/poll` to `@EXCLUDED_PREFIXES`
+- `lib/Registry/Middleware/RateLimit.pm` — add `/auth/magic/poll/` to `@EXCLUDED_PREFIXES`
 - `templates/auth/magic-link-sent.html.ep` — add `token_hash` data attribute, hidden form, polling JS
 - `t/dao/magic-link-token.t` — add tests for `verify()`, `find_by_hash()`, modified `consume()`
 - `t/controller/auth.t` — update existing token test, add new endpoint tests
@@ -136,10 +136,11 @@ Register the migration in `sqitch.plan` by appending:
 magic-link-verification [passwordless-auth] 2026-03-31T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Add verified_at to magic_link_tokens for two-phase verify+consume flow
 ```
 
-Run to deploy:
+Run to deploy and verify:
 
 ```bash
 carton exec sqitch deploy
+carton exec sqitch verify
 ```
 
 Commit: "Add sqitch migration for magic-link-verification (verified_at column)"
@@ -150,6 +151,10 @@ Commit: "Add sqitch migration for magic-link-verification (verified_at column)"
 
 Add the following subtests to `t/dao/magic-link-token.t` **before** implementing
 anything. Run the suite and confirm all new subtests fail.
+
+The `$db` variable in this file is already a database handle (not a
+`Registry::DAO` wrapper), so use `$db` directly in all calls — do not write
+`$db->db`.
 
 Insert after the existing `'Purpose constraint enforced'` subtest:
 
@@ -359,7 +364,8 @@ subtest 'GET /auth/magic/:token with valid token renders confirmation page' => s
 
     $t->get_ok("/auth/magic/$plaintext")
       ->status_is(200, 'Renders confirmation page (does not redirect)')
-      ->content_like(qr/sign.?in/i, 'Confirmation page has sign-in content');
+      ->content_like(qr/sign.?in/i, 'Confirmation page has sign-in content')
+      ->content_like(qr/name="csrf_token"/, 'Confirmation page has CSRF token field');
 };
 ```
 
@@ -473,6 +479,20 @@ subtest 'GET /auth/magic/poll/:hash returns not_found for unknown hash' => sub {
       ->json_is('/status', 'not_found');
 };
 
+subtest 'GET /auth/magic/poll/:hash returns not_found for expired token' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id    => $user->id,
+        purpose    => 'login',
+        expires_in => -1,
+    });
+
+    $t->get_ok("/auth/magic/poll/" . $token_obj->token_hash)
+      ->status_is(200)
+      ->json_is('/status', 'not_found', 'Expired token reports not_found to avoid leaking existence');
+};
+
 subtest 'POST /auth/magic/poll/:hash/complete establishes session after verify' => sub {
     my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
 
@@ -484,6 +504,19 @@ subtest 'POST /auth/magic/poll/:hash/complete establishes session after verify' 
 
     $t->post_ok("/auth/magic/poll/" . $token_obj->token_hash . "/complete")
       ->status_is(302, 'Redirects after consuming via hash');
+};
+
+subtest 'POST /auth/magic/poll/:hash/complete on unverified token shows error' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    $t->post_ok("/auth/magic/poll/" . $token_obj->token_hash . "/complete")
+      ->status_is(200)
+      ->content_like(qr/Please click the magic link/i, 'Shows not-yet-verified message, not 500');
 };
 
 subtest 'POST /auth/magic/poll/:hash/complete on already-consumed returns ok JSON' => sub {
@@ -500,6 +533,25 @@ subtest 'POST /auth/magic/poll/:hash/complete on already-consumed returns ok JSO
       ->status_is(200)
       ->json_is('/ok', 1, 'Returns ok:true gracefully');
 };
+
+subtest 'magic-link-sent page has CSRF token field' => sub {
+    $t->get_ok("/auth/magic/request")
+      ->status_is(200)
+      ->content_like(qr/name="csrf_token"/, 'magic-link-sent page includes CSRF token field');
+};
+
+subtest 'magic-link-confirm page has CSRF token field' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    $t->get_ok("/auth/magic/$plaintext")
+      ->status_is(200)
+      ->content_like(qr/name="csrf_token"/, 'magic-link-confirm page includes CSRF token field');
+};
 ```
 
 Run:
@@ -513,11 +565,9 @@ subtests must still pass (they test request and logout, which are unchanged).
 
 ---
 
-### Task 5 — Controller: implement new and renamed methods (10 min)
+### Task 5a — Controller: rename consume_magic_link to verify_magic_link (5 min)
 
 Edit `lib/Registry/Controller/Auth.pm`.
-
-**Step 5a — Rename `consume_magic_link` to `verify_magic_link`.**
 
 Replace the entire `consume_magic_link` method with:
 
@@ -557,7 +607,19 @@ method verify_magic_link {
 }
 ```
 
-**Step 5b — Add `complete_magic_link` method** (after `verify_magic_link`):
+Run:
+
+```bash
+carton exec prove -lv t/controller/auth.t
+```
+
+The `verify_magic_link` tests should now pass. Commit: "Rename consume_magic_link to verify_magic_link with two-phase verify behaviour"
+
+---
+
+### Task 5b — Controller: add complete_magic_link, magic_link_status, magic_link_complete_by_hash (10 min)
+
+**Add `complete_magic_link` method** after `verify_magic_link`:
 
 ```perl
 method complete_magic_link {
@@ -597,6 +659,10 @@ method complete_magic_link {
             $self->stash(already_signed_in => 1);
             return $self->render(template => 'auth/magic-link-confirm');
         }
+        if ($e =~ /not yet verified/i) {
+            $self->stash(error => 'Please click the magic link in your email first.');
+            return $self->render(template => 'auth/magic-link-error');
+        }
         $self->app->log->warn("Error completing magic link: $e");
         $self->stash(error => 'This link is invalid or has expired.');
         $self->render(template => 'auth/magic-link-error');
@@ -604,7 +670,7 @@ method complete_magic_link {
 }
 ```
 
-**Step 5c — Add `magic_link_status` method** (after `complete_magic_link`):
+**Add `magic_link_status` method** after `complete_magic_link`:
 
 ```perl
 method magic_link_status {
@@ -631,7 +697,7 @@ method magic_link_status {
 }
 ```
 
-**Step 5d — Add `magic_link_complete_by_hash` method** (after `magic_link_status`):
+**Add `magic_link_complete_by_hash` method** after `magic_link_status`:
 
 ```perl
 method magic_link_complete_by_hash {
@@ -670,6 +736,10 @@ method magic_link_complete_by_hash {
         if ($e =~ /already consumed/i) {
             return $self->render(json => { ok => 1 });
         }
+        if ($e =~ /not yet verified/i) {
+            $self->stash(error => 'Please click the magic link in your email first.');
+            return $self->render(template => 'auth/magic-link-error');
+        }
         $self->app->log->warn("Error completing magic link by hash: $e");
         $self->stash(error => 'This link is invalid or has expired.');
         $self->render(template => 'auth/magic-link-error');
@@ -683,7 +753,7 @@ Run:
 carton exec prove -lv t/controller/auth.t
 ```
 
-All controller tests must pass. Commit: "Implement verify_magic_link, complete_magic_link, magic_link_status, magic_link_complete_by_hash"
+All controller tests must pass. Commit: "Add complete_magic_link, magic_link_status, magic_link_complete_by_hash"
 
 ---
 
@@ -717,15 +787,16 @@ Commit: "Register four magic link routes with literal poll prefix before token p
 
 ### Task 7 — Rate limiter exemption (3 min)
 
-Edit `lib/Registry/Middleware/RateLimit.pm`. Add `/auth/magic/poll` to the
-`@EXCLUDED_PREFIXES` array:
+Edit `lib/Registry/Middleware/RateLimit.pm`. Add `/auth/magic/poll/` to the
+`@EXCLUDED_PREFIXES` array. The trailing slash ensures only the poll sub-path
+is excluded, not `/auth/magic/` in general:
 
 ```perl
 our @EXCLUDED_PREFIXES = qw(
     /webhooks/
     /static/
     /public/
-    /auth/magic/poll
+    /auth/magic/poll/
 );
 ```
 
@@ -735,7 +806,7 @@ Run the full test suite to confirm nothing broke:
 carton exec prove -lr t/
 ```
 
-Commit: "Exempt /auth/magic/poll from rate limiting"
+Commit: "Exempt /auth/magic/poll/ from rate limiting"
 
 ---
 
@@ -764,6 +835,10 @@ Create `templates/auth/magic-link-confirm.html.ep`:
 </div>
 ```
 
+The Mojolicious `after_render` hook injects the `csrf_token` hidden input into
+every form on every rendered page automatically — no manual `hidden_field` call
+is needed in the template.
+
 Run:
 
 ```bash
@@ -774,7 +849,40 @@ All tests must pass. Commit: "Add magic-link-confirm template for two-phase veri
 
 ---
 
-### Task 9 — Templates: update magic-link-sent with polling JS (5 min)
+### Task 9 — Controller: pass token_hash to magic-link-sent (3 min)
+
+Edit `lib/Registry/Controller/Auth.pm`. In `request_magic_link`, after the
+block that generates the token:
+
+```perl
+my ($token, $plaintext) =
+    Registry::DAO::MagicLinkToken->generate($db, {
+        user_id    => $user->id,
+        purpose    => 'login',
+        expires_in => $expiry,
+    });
+```
+
+Add the stash call immediately after, before the closing `}` of the `if ($user)` block:
+
+```perl
+$self->stash(token_hash => $token->token_hash);
+```
+
+The stash variable must be set here so the template can embed it in the
+`#poll-target` data attribute before the JS polling loop starts.
+
+Run:
+
+```bash
+carton exec prove -lv t/controller/auth.t
+```
+
+Commit: "Pass token_hash stash to magic-link-sent before rendering"
+
+---
+
+### Task 10 — Templates: update magic-link-sent with polling JS (5 min)
 
 Replace the contents of `templates/auth/magic-link-sent.html.ep` with:
 
@@ -809,7 +917,7 @@ Replace the contents of `templates/auth/magic-link-sent.html.ep` with:
     var intervalId        = null;
 
     function csrfToken() {
-        var input = document.querySelector('#poll-form input[name="_token"]');
+        var input = document.querySelector('#poll-form input[name="csrf_token"]');
         return input ? input.value : '';
     }
 
@@ -851,7 +959,7 @@ Replace the contents of `templates/auth/magic-link-sent.html.ep` with:
 
         var csrf = document.createElement('input');
         csrf.type  = 'hidden';
-        csrf.name  = '_token';
+        csrf.name  = 'csrf_token';
         csrf.value = csrfToken();
         form.appendChild(csrf);
 
@@ -864,47 +972,9 @@ Replace the contents of `templates/auth/magic-link-sent.html.ep` with:
 </script>
 ```
 
-The `token_hash` stash variable is set by `request_magic_link` in the next
-task. For now the template renders safely even when `token_hash` is absent
-(the JS bails out on an empty hash).
-
-Run:
-
-```bash
-carton exec prove -lv t/controller/auth.t
-```
-
-Commit: "Add polling JS to magic-link-sent template"
-
----
-
-### Task 10 — Controller: pass token_hash to magic-link-sent (3 min)
-
-Edit `lib/Registry/Controller/Auth.pm`. In `request_magic_link`, the line that
-generates the token:
-
-```perl
-my ($token, $plaintext) =
-    Registry::DAO::MagicLinkToken->generate($db, {
-        user_id    => $user->id,
-        purpose    => 'login',
-        expires_in => $expiry,
-    });
-```
-
-After that block, stash the hash before rendering. Find the end of the `if ($user)` block (before the closing `}` of `try`) and add:
-
-```perl
-$self->stash(token_hash => $token->token_hash);
-```
-
-The render call at the end of `request_magic_link` already does:
-
-```perl
-$self->render(template => 'auth/magic-link-sent');
-```
-
-That is correct as-is.
+Note: the CSRF input name is `csrf_token` (matching the hidden field injected by
+the `after_render` hook), not `_token`. The `csrfToken()` helper in the JS reads
+the field by `name="csrf_token"`.
 
 Run:
 
@@ -912,7 +982,7 @@ Run:
 carton exec prove -lr t/
 ```
 
-All tests must pass. Commit: "Pass token_hash stash to magic-link-sent for polling JS"
+All tests must pass. Commit: "Add polling JS to magic-link-sent template"
 
 ---
 
@@ -1106,13 +1176,78 @@ Commit if any fixups were needed: "Fix test failures found during full suite ver
 ### Task 13 — Playwright tests (5 min)
 
 Update `t/playwright/auth-journeys.spec.js` to reflect the new two-step flow.
+The following existing tests break because they expect a direct redirect to `/`
+after visiting a magic link URL. Each must be updated to go through the confirm
+page and click "Sign In" first.
 
-Locate any existing test that navigates to `/auth/magic/` and asserts a
-redirect directly to `/`. Update those to instead assert the confirmation
-page renders (`page.waitForSelector` on the "Sign In" button), then click
-that button and assert the redirect to `/`.
+**Lines 147–153 — "valid token authenticates user and redirects to /"**
 
-Add a cross-device polling test using two browser contexts:
+The current code navigates directly to `/auth/magic/${plaintext}` and asserts
+the response URL is not under `/auth/magic/`. Under the new flow, that GET
+renders the confirm page (status 200), not a redirect. Replace those lines with:
+
+```js
+await registryPage.goto(`/auth/magic/${plaintext}`);
+// New flow: GET renders a confirmation page, not a redirect
+await registryPage.waitForSelector('button[type="submit"]');
+await registryPage.click('button[type="submit"]');
+await registryPage.waitForLoadState('networkidle');
+
+// After clicking Sign In we should be redirected away from /auth/
+expect(registryPage.url()).not.toContain('/auth/magic/');
+expect(registryPage.url()).not.toContain('/auth/login');
+```
+
+**Lines 195–196 — "valid token grants access to a protected route"**
+
+The current code navigates to the magic link URL and calls
+`waitForLoadState('networkidle')`, assuming auth is complete. Replace those two
+lines with:
+
+```js
+await registryPage.goto(`/auth/magic/${plaintext}`);
+await registryPage.waitForSelector('button[type="submit"]');
+await registryPage.click('button[type="submit"]');
+await registryPage.waitForLoadState('networkidle');
+```
+
+**Lines 226–231 — first consume in "already-consumed token shows already-used error"**
+
+The first navigation consumes the token as part of a "legitimate login" so the
+test can then re-visit the same URL. Under the new flow the token is not consumed
+by GET — it is only verified. Replace those lines with:
+
+```js
+// Verify (GET) then consume (POST) to simulate legitimate login
+await registryPage.goto(`/auth/magic/${plaintext}`);
+await registryPage.waitForSelector('button[type="submit"]');
+await registryPage.click('button[type="submit"]');
+await registryPage.waitForLoadState('networkidle');
+```
+
+Also update the assertion at line 233–234, which currently expects `'Invalid
+Link'` and `'already been used'`. Under the new flow a second GET on a consumed
+token renders the confirm page with an already-signed-in message rather than an
+error page. Change those assertions to:
+
+```js
+await expect(registryPage.locator('h2')).toContainText('already signed in', { ignoreCase: true });
+await expect(registryPage.locator('body')).not.toContainText('Invalid Link');
+```
+
+**Lines 249–250 — authenticate in "logout clears session and redirects"**
+
+The logout test authenticates by visiting the magic link URL and calling
+`waitForLoadState`. Replace those two lines with:
+
+```js
+await registryPage.goto(`/auth/magic/${plaintext}`);
+await registryPage.waitForSelector('button[type="submit"]');
+await registryPage.click('button[type="submit"]');
+await registryPage.waitForLoadState('networkidle');
+```
+
+**New cross-device polling test** — add after the existing describe blocks:
 
 ```js
 test('cross-device polling flow', async ({ browser }) => {
@@ -1134,10 +1269,7 @@ test('cross-device polling flow', async ({ browser }) => {
     const hash = await pageA.$eval('#poll-target', el => el.dataset.tokenHash);
     expect(hash).toBeTruthy();
 
-    // Step 2 — simulate clicking the magic link in Context B
-    // (In real Playwright tests we seed the token directly via the app API
-    //  or read the hash from the email sender's test transport.)
-    // Here we GET the poll status to confirm pending, then navigate to verify.
+    // Step 2 — confirm poll status is pending before the link is clicked
     const pollRes = await pageA.request.get(`/auth/magic/poll/${hash}`);
     const pollData = await pollRes.json();
     expect(pollData.status).toBe('pending');
