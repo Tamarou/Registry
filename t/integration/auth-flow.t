@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: Integration test for the full magic link flow: request a link,
-# ABOUTME: consume it, verify session is established, access protected routes.
+# ABOUTME: Integration test for the full magic link two-phase verify+consume flow.
+# ABOUTME: Covers verify-only GET, same-device complete POST, session establishment, and reuse prevention.
 use 5.42.0;
 use warnings;
 use utf8;
@@ -26,7 +26,7 @@ my $user = Registry::DAO::User->create($db, {
     password  => 'test_password',
 });
 
-subtest 'Full magic link login flow' => sub {
+subtest 'Full magic link login flow (same-device: verify then complete)' => sub {
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper(dao => sub { $dao });
 
@@ -39,9 +39,13 @@ subtest 'Full magic link login flow' => sub {
     ok($token_obj, 'Token generated successfully');
     ok($plaintext,  'Plaintext token returned');
 
-    # Consume the magic link
+    # Phase 1: verify the magic link (renders confirmation page, no session yet)
     $t->get_ok("/auth/magic/$plaintext")
-      ->status_is(302, 'Magic link redirects after consuming token');
+      ->status_is(200, 'Magic link verify renders confirmation page');
+
+    # Phase 2: complete via same-device POST (establishes session, redirects)
+    $t->post_ok("/auth/magic/$plaintext/complete")
+      ->status_is(302, 'Magic link complete redirects after consuming token');
 
     # Session should now be established - access a protected route
     # The admin dashboard requires admin role, and the user is admin type
@@ -72,7 +76,7 @@ subtest 'Invalid magic link token returns error' => sub {
       ->status_isnt(302, 'Invalid token does not redirect to success');
 };
 
-subtest 'Consumed magic link cannot be reused' => sub {
+subtest 'Consumed magic link shows already-signed-in on second use' => sub {
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper(dao => sub { $dao });
 
@@ -81,13 +85,16 @@ subtest 'Consumed magic link cannot be reused' => sub {
         purpose => 'login',
     });
 
-    # First use
+    # First use: verify then complete
     $t->get_ok("/auth/magic/$plaintext")
-      ->status_is(302, 'First use succeeds with redirect');
+      ->status_is(200, 'First GET verify renders confirmation page');
+    $t->post_ok("/auth/magic/$plaintext/complete")
+      ->status_is(302, 'First POST complete establishes session');
 
-    # Second use of the same token
+    # Second GET of the same token shows already-signed-in page (not 302)
     $t->get_ok("/auth/magic/$plaintext")
-      ->status_isnt(302, 'Second use of same token does not redirect to success');
+      ->status_is(200, 'Second GET of same token renders page, not redirect')
+      ->content_like(qr/already.*signed.?in/i, 'Shows already-signed-in message');
 };
 
 done_testing();
