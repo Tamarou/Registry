@@ -73,7 +73,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         $self->render(template => 'auth/magic-link-sent');
     }
 
-    method consume_magic_link {
+    method verify_magic_link {
         my $plaintext = $self->param('token') // '';
         my $dao       = $self->dao;
         my $db        = $dao->db;
@@ -86,7 +86,36 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         }
 
         if ($token->consumed_at) {
-            $self->stash(error => 'This link has already been used.');
+            $self->stash(already_signed_in => 1);
+            return $self->render(template => 'auth/magic-link-confirm');
+        }
+
+        if ($token->is_expired) {
+            $self->stash(error => 'This link has expired. Please request a new one.');
+            return $self->render(template => 'auth/magic-link-error');
+        }
+
+        try {
+            $token = $token->verify($db);
+        }
+        catch ($e) {
+            # Already verified is harmless -- render the confirmation page anyway
+            $self->app->log->debug("verify_magic_link: $e") if $e =~ /already verified/i;
+        }
+
+        $self->stash(plaintext => $plaintext);
+        $self->render(template => 'auth/magic-link-confirm');
+    }
+
+    method complete_magic_link {
+        my $plaintext = $self->param('token') // '';
+        my $dao       = $self->dao;
+        my $db        = $dao->db;
+
+        my $token = Registry::DAO::MagicLinkToken->find_by_plaintext($db, $plaintext);
+
+        unless ($token) {
+            $self->stash(error => 'This link is invalid.');
             return $self->render(template => 'auth/magic-link-error');
         }
 
@@ -98,14 +127,12 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         try {
             $token->consume($db);
 
-            # Set the user session with tenant context
             $self->session(
                 user_id          => $token->user_id,
                 tenant_schema    => $self->tenant,
                 authenticated_at => time(),
             );
 
-            # Invite tokens redirect to passkey registration
             if ($token->purpose eq 'invite') {
                 return $self->redirect_to('/auth/register-passkey');
             }
@@ -113,7 +140,84 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             $self->redirect_to('/');
         }
         catch ($e) {
-            $self->app->log->warn("Error consuming magic link: $e");
+            if ($e =~ /already consumed/i) {
+                $self->stash(already_signed_in => 1);
+                return $self->render(template => 'auth/magic-link-confirm');
+            }
+            if ($e =~ /not yet verified/i) {
+                $self->stash(error => 'Please click the magic link in your email first.');
+                return $self->render(template => 'auth/magic-link-error');
+            }
+            $self->app->log->warn("Error completing magic link: $e");
+            $self->stash(error => 'This link is invalid or has expired.');
+            $self->render(template => 'auth/magic-link-error');
+        }
+    }
+
+    method magic_link_status {
+        my $hash = $self->param('token_hash') // '';
+        my $dao  = $self->dao;
+        my $db   = $dao->db;
+
+        my $token = Registry::DAO::MagicLinkToken->find_by_hash($db, $hash);
+
+        unless ($token) {
+            return $self->render(json => { status => 'not_found' });
+        }
+
+        # Expired tokens report not_found to avoid leaking token existence
+        if ($token->is_expired) {
+            return $self->render(json => { status => 'not_found' });
+        }
+
+        my $status = $token->consumed_at  ? 'consumed'
+                   : $token->verified_at  ? 'verified'
+                   :                        'pending';
+
+        $self->render(json => { status => $status });
+    }
+
+    method magic_link_complete_by_hash {
+        my $hash = $self->param('token_hash') // '';
+        my $dao  = $self->dao;
+        my $db   = $dao->db;
+
+        my $token = Registry::DAO::MagicLinkToken->find_by_hash($db, $hash);
+
+        unless ($token) {
+            $self->stash(error => 'This link is invalid.');
+            return $self->render(template => 'auth/magic-link-error');
+        }
+
+        if ($token->is_expired) {
+            $self->stash(error => 'This link has expired. Please request a new one.');
+            return $self->render(template => 'auth/magic-link-error');
+        }
+
+        try {
+            $token->consume($db);
+
+            $self->session(
+                user_id          => $token->user_id,
+                tenant_schema    => $self->tenant,
+                authenticated_at => time(),
+            );
+
+            if ($token->purpose eq 'invite') {
+                return $self->redirect_to('/auth/register-passkey');
+            }
+
+            $self->redirect_to('/');
+        }
+        catch ($e) {
+            if ($e =~ /already consumed/i) {
+                return $self->render(json => { ok => 1 });
+            }
+            if ($e =~ /not yet verified/i) {
+                $self->stash(error => 'Please click the magic link in your email first.');
+                return $self->render(template => 'auth/magic-link-error');
+            }
+            $self->app->log->warn("Error completing magic link by hash: $e");
             $self->stash(error => 'This link is invalid or has expired.');
             $self->render(template => 'auth/magic-link-error');
         }
