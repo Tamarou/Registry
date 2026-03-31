@@ -349,34 +349,31 @@ test.describe('Email verification flow', () => {
 // correctly by checking the #poll-target element and the /auth/magic/poll/
 // endpoint respond as expected.
 test.describe('Cross-device polling awareness', () => {
-  test('cross-device polling flow', async ({ browser }) => {
-    // Context A: "the original browser tab" that requested the magic link
-    const ctxA = await browser.newContext();
-    const pageA = await ctxA.newPage();
+  test('magic-link-sent page has polling target with token hash', async ({ registryPage, testDB }) => {
+    // Create a user so the magic link request generates a real token
+    const ts = Date.now();
+    const email = `poll_test_${ts}@example.com`;
+    await createUserWithMagicToken(testDB, {
+      email,
+      username: `poll_test_${ts}`,
+    });
 
-    // Context B: "the email app browser" (placeholder -- not used in this shell)
-    const ctxB = await browser.newContext();
-    const pageB = await ctxB.newPage();
+    // Submit the email form to trigger magic link generation
+    await registryPage.goto('/auth/login');
+    const emailInput = registryPage.locator('input[name="email"]');
+    await emailInput.fill(email);
+    await registryPage.locator('form button[type="submit"], form input[type="submit"]').first().click();
+    await registryPage.waitForLoadState('networkidle');
 
-    // Step 1 -- request a magic link in Context A
-    await pageA.goto('/auth/login');
-    await pageA.fill('[name="email"]', 'authflow@example.com');
-    await pageA.click('[type="submit"]');
-    await pageA.waitForSelector('#poll-target');
-
-    // Step 2 -- extract the token hash embedded in the magic-link-sent page
-    const hash = await pageA.$eval('#poll-target', el => el.dataset.tokenHash);
+    // The sent page should have the poll-target element with a token hash
+    const pollTarget = registryPage.locator('#poll-target');
+    await expect(pollTarget).toBeAttached();
+    const hash = await pollTarget.getAttribute('data-token-hash');
     expect(hash).toBeTruthy();
-
-    // Step 3 -- poll the status endpoint; token has not been verified yet
-    const pollRes = await pageA.request.get(`/auth/magic/poll/${hash}`);
-    const pollData = await pollRes.json();
-    expect(pollData.status).toBe('pending');
-
-    // NOTE: Full cross-device test requires seeding the plaintext token.
-    // That is covered by the integration tests.  This Playwright test
-    // validates the UI polling mechanism wires up correctly.
-    await ctxA.close();
-    await ctxB.close();
+    expect(hash.length).toBeGreaterThan(10);
   });
+
+  // NOTE: Full cross-device scenario (Context A polls while Context B clicks
+  // the link) requires a plaintext token only available server-side. The
+  // integration tests in t/integration/auth-flow.t cover that scenario.
 });

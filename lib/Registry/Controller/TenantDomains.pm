@@ -142,8 +142,9 @@ class Registry::Controller::TenantDomains :isa(Registry::Controller) {
             }
         };
         if ($@) {
-            $self->app->log->warn("Render verify_custom_domain failed: $@");
-            $td->mark_failed($db, $@);
+            my $err = "$@";
+            $self->app->log->warn("Render verify_custom_domain failed: $err");
+            eval { $td->mark_failed($db, $err) };
         }
 
         $self->redirect_to('/admin/domains');
