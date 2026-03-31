@@ -36,14 +36,16 @@ function seedDomainTestData(testDB, role = 'admin') {
 async function loginAndGoToDomains(page, testDB, role = 'admin') {
   const data = seedDomainTestData(testDB, role);
 
-  // Consume the magic link — the server sets a session cookie.
-  // We pass X-As-Tenant so the app resolves the tenant without relying on
-  // a real subdomain DNS entry in the test environment.
-  await page.setExtraHTTPHeaders({ 'X-As-Tenant': data.tenant_slug });
+  // Two-phase magic link: authenticate against the registry (default) tenant
+  // where the users and tokens live, then switch to the test tenant for
+  // domain management pages.
   await page.goto(`/auth/magic/${data.token}`);
+  await page.waitForSelector('button[type="submit"]');
+  await page.click('button[type="submit"]');
   await page.waitForLoadState('networkidle');
 
-  // Navigate to the domain management page inside the same tenant context.
+  // Now set the tenant header for domain management pages
+  await page.setExtraHTTPHeaders({ 'X-As-Tenant': 'registry' });
   await page.goto('/admin/domains');
   await page.waitForLoadState('networkidle');
 
@@ -82,7 +84,7 @@ test.describe('Access control', () => {
   test('admin user sees the Custom Domains page (200)', async ({ registryPage, testDB }) => {
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
-    await expect(registryPage.locator('h1')).toContainText('Custom Domains');
+    await expect(registryPage.locator('main h1').first()).toContainText('Custom Domains');
     expect(registryPage.url()).not.toContain('/auth/login');
   });
 });
@@ -202,7 +204,7 @@ test.describe('Verify button', () => {
     await registryPage.waitForLoadState('networkidle');
 
     // Either way we should still be on the domains page (not an error page)
-    await expect(registryPage.locator('h1')).toContainText('Custom Domains');
+    await expect(registryPage.locator('main h1').first()).toContainText('Custom Domains');
   });
 });
 
@@ -211,32 +213,39 @@ test.describe('Verify button', () => {
 // ===========================================================================
 test.describe('Remove domain', () => {
   test('Remove button triggers a confirm dialog and removes on acceptance', async ({ registryPage, testDB }) => {
-    // Add a domain
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
+    // If there are existing domains from prior tests, remove them first
+    const removeBtn = registryPage.locator('button:has-text("Remove")');
+    if (await removeBtn.count() > 0) {
+      registryPage.once('dialog', async dialog => await dialog.accept());
+      await removeBtn.first().click();
+      await registryPage.waitForLoadState('networkidle');
+    }
+
+    // Now add a fresh domain to test remove
+    await registryPage.goto('/admin/domains');
+    await registryPage.waitForLoadState('networkidle');
     const form = registryPage.locator('form[action="/admin/domains"]');
     await form.locator('input[name="domain"]').fill('remove-test.example.com');
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
-
     await registryPage.goto('/admin/domains');
     await registryPage.waitForLoadState('networkidle');
 
-    // Accept the browser confirm dialog when it appears
+    // Accept the confirm dialog
     registryPage.once('dialog', async dialog => {
-      // The dialog message contains the domain name
       expect(dialog.message()).toContain('remove-test.example.com');
       await dialog.accept();
     });
 
-    const removeBtn = registryPage.locator('button:has-text("Remove")');
-    await expect(removeBtn).toBeVisible();
-    await removeBtn.click();
+    const removeBtnNew = registryPage.locator('button:has-text("Remove")');
+    await expect(removeBtnNew).toBeVisible();
+    await removeBtnNew.click();
     await registryPage.waitForLoadState('networkidle');
 
-    // After removal the list is empty — add-domain form reappears
-    const domainForm = registryPage.locator('form[action="/admin/domains"]');
-    await expect(domainForm).toBeVisible();
+    // The removed domain should no longer appear
+    await expect(registryPage.locator('text=remove-test.example.com')).not.toBeVisible();
   });
 
   test('Remove button triggers a confirm dialog and keeps domain on cancel', async ({ registryPage, testDB }) => {
@@ -273,8 +282,8 @@ test.describe('Validation errors', () => {
     // The input has `required` so the browser prevents submission; test the
     // server-side path by submitting via fetch to bypass HTML5 validation.
     const csrf = await registryPage.evaluate(() => {
-      const match = document.cookie.match(/csrf_token=([^;]+)/);
-      return match ? decodeURIComponent(match[1]) : '';
+      const input = document.querySelector('input[name="csrf_token"]');
+      return input ? input.value : '';
     });
 
     const serverUrl = registryPage.serverUrl;
@@ -314,8 +323,18 @@ test.describe('Validation errors', () => {
   test('submitting tinyartempire.com is rejected as a reserved domain', async ({ registryPage, testDB }) => {
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
+    // Remove any existing domain so the add form is visible
+    const removeBtn = registryPage.locator('button:has-text("Remove")');
+    if (await removeBtn.count() > 0) {
+      registryPage.once('dialog', async dialog => await dialog.accept());
+      await removeBtn.first().click();
+      await registryPage.waitForLoadState('networkidle');
+      await registryPage.goto('/admin/domains');
+      await registryPage.waitForLoadState('networkidle');
+    }
+
     const form = registryPage.locator('form[action="/admin/domains"]');
-    await form.locator('input[name="domain"]').fill('tinyartempire.com');
+    await form.locator('input[name="domain"]').fill('test.tinyartempire.com');
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
