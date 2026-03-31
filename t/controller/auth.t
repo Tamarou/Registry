@@ -53,7 +53,7 @@ subtest 'POST /auth/magic/request with unknown email (no info leak)' => sub {
     # Should show same confirmation page regardless -- anti-enumeration
 };
 
-subtest 'GET /auth/magic/:token with valid token' => sub {
+subtest 'GET /auth/magic/:token with valid token renders confirmation page' => sub {
     my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
 
     my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
@@ -62,7 +62,9 @@ subtest 'GET /auth/magic/:token with valid token' => sub {
     });
 
     $t->get_ok("/auth/magic/$plaintext")
-      ->status_is(302, 'Redirects after consuming magic link');
+      ->status_is(200, 'Renders confirmation page (does not redirect)')
+      ->content_like(qr/sign.?in/i, 'Confirmation page has sign-in content')
+      ->content_like(qr/name="csrf_token"/, 'Confirmation page has CSRF token field');
 };
 
 subtest 'GET /auth/magic/:token with expired token' => sub {
@@ -144,6 +146,187 @@ subtest 'POST /auth/magic/request does not send email for unknown address' => su
 
     my @deliveries = $transport->deliveries;
     is(scalar @deliveries, 0, 'No email sent for unknown address');
+};
+
+subtest 'GET /auth/magic/:token with consumed token shows already-signed-in' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+    my $verified = $token_obj->verify($db->db);
+    $verified->consume($db->db);
+
+    $t->get_ok("/auth/magic/$plaintext")
+      ->status_is(200)
+      ->content_like(qr/already.*signed.?in/i, 'Shows already-signed-in message');
+};
+
+subtest 'POST /auth/magic/:token/complete establishes session' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+    $token_obj->verify($db->db);
+
+    $t->post_ok("/auth/magic/$plaintext/complete")
+      ->status_is(302, 'Redirects after consuming');
+};
+
+subtest 'POST /auth/magic/:token/complete without prior verify fails' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    $t->post_ok("/auth/magic/$plaintext/complete")
+      ->status_is(200)
+      ->content_like(qr/invalid|expired/i, 'Shows error for unverified token');
+};
+
+subtest 'POST /auth/magic/:token/complete on already-consumed token shows already-signed-in' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+    my $verified = $token_obj->verify($db->db);
+    $verified->consume($db->db);
+
+    $t->post_ok("/auth/magic/$plaintext/complete")
+      ->status_is(200)
+      ->content_like(qr/already.*signed.?in/i, 'Shows already-signed-in gracefully');
+};
+
+subtest 'GET /auth/magic/poll/:hash returns pending for fresh token' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    $t->get_ok("/auth/magic/poll/" . $token_obj->token_hash)
+      ->status_is(200)
+      ->json_is('/status', 'pending');
+};
+
+subtest 'GET /auth/magic/poll/:hash returns verified after verify()' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+    $token_obj->verify($db->db);
+
+    $t->get_ok("/auth/magic/poll/" . $token_obj->token_hash)
+      ->status_is(200)
+      ->json_is('/status', 'verified');
+};
+
+subtest 'GET /auth/magic/poll/:hash returns consumed after consume()' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+    my $verified = $token_obj->verify($db->db);
+    $verified->consume($db->db);
+
+    $t->get_ok("/auth/magic/poll/" . $token_obj->token_hash)
+      ->status_is(200)
+      ->json_is('/status', 'consumed');
+};
+
+subtest 'GET /auth/magic/poll/:hash returns not_found for unknown hash' => sub {
+    $t->get_ok("/auth/magic/poll/thisisnotarealhashvalue")
+      ->status_is(200)
+      ->json_is('/status', 'not_found');
+};
+
+subtest 'GET /auth/magic/poll/:hash returns not_found for expired token' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id    => $user->id,
+        purpose    => 'login',
+        expires_in => -1,
+    });
+
+    $t->get_ok("/auth/magic/poll/" . $token_obj->token_hash)
+      ->status_is(200)
+      ->json_is('/status', 'not_found', 'Expired token reports not_found to avoid leaking existence');
+};
+
+subtest 'POST /auth/magic/poll/:hash/complete establishes session after verify' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+    $token_obj->verify($db->db);
+
+    $t->post_ok("/auth/magic/poll/" . $token_obj->token_hash . "/complete")
+      ->status_is(302, 'Redirects after consuming via hash');
+};
+
+subtest 'POST /auth/magic/poll/:hash/complete on unverified token shows error' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    $t->post_ok("/auth/magic/poll/" . $token_obj->token_hash . "/complete")
+      ->status_is(200)
+      ->content_like(qr/Please click the magic link/i, 'Shows not-yet-verified message, not 500');
+};
+
+subtest 'POST /auth/magic/poll/:hash/complete on already-consumed returns ok JSON' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+    my $verified = $token_obj->verify($db->db);
+    $verified->consume($db->db);
+
+    $t->post_ok("/auth/magic/poll/" . $token_obj->token_hash . "/complete")
+      ->status_is(200)
+      ->json_is('/ok', 1, 'Returns ok:true gracefully');
+};
+
+subtest 'magic-link-sent page has CSRF token field' => sub {
+    # POST to /auth/magic/request renders magic-link-sent; verify CSRF injected by after_render hook
+    $t->post_ok('/auth/magic/request' => form => {
+        email => 'magic_ctrl@example.com',
+    })
+    ->status_is(200)
+    ->content_like(qr/name="csrf_token"/, 'magic-link-sent page includes CSRF token field');
+};
+
+subtest 'magic-link-confirm page has CSRF token field' => sub {
+    my $user = Registry::DAO::User->find($db->db, { username => 'magic_ctrl_user' });
+
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db->db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    $t->get_ok("/auth/magic/$plaintext")
+      ->status_is(200)
+      ->content_like(qr/name="csrf_token"/, 'magic-link-confirm page includes CSRF token field');
 };
 
 done_testing();

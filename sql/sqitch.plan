@@ -42,3 +42,4 @@ remove-pricing-plan-relationship-fields 2025-09-29T22:27:51Z Chris Prather <chri
 passwordless-auth [users schema-based-multitennancy] 2026-03-25T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Passwordless auth: passkeys, magic links, API keys
 auth-notification-types [notifications-and-preferences passwordless-auth] 2026-03-30T06:56:54Z Chris Prather <chris.prather@tamarou.com> # Add auth notification types to notification_type enum
 tenant-domains [notifications-and-preferences] 2026-03-30T19:04:42Z Chris Prather <chris.prather@tamarou.com> # Custom domain management for tenants
+magic-link-verification [passwordless-auth] 2026-03-31T12:11:05Z Chris Prather <chris.prather@tamarou.com> # Add verified_at column for two-step magic link flow

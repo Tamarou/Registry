@@ -4,9 +4,80 @@
 % title 'Check Your Email';
 
 <div class="card">
-    <h2>Check Your Email</h2>
-    <p>If an account exists for that email address, we have sent a magic link.
-       Please check your email and click the link to sign in.</p>
-    <p>The link will expire shortly.</p>
-    <p><a href="/auth/login">Back to sign in</a></p>
+    <div id="poll-target" data-token-hash="<%= stash('token_hash') // '' %>">
+        <h2>Check Your Email</h2>
+        <p>If an account exists for that email address, we have sent a magic link.
+           Please check your email and click the link to sign in.</p>
+        <p>The link will expire shortly.</p>
+        <p><a href="/auth/login">Back to sign in</a></p>
+    </div>
+
+    <%# Hidden form so the after_render hook injects a CSRF token we can read from JS %>
+    <form id="poll-form" style="display:none"></form>
 </div>
+
+<script>
+(function () {
+    var target = document.getElementById('poll-target');
+    var hash = target ? target.dataset.tokenHash : '';
+    if (!hash) return;
+
+    var POLL_INTERVAL_MS  = 2000;
+    var MAX_POLL_MS       = 30 * 60 * 1000; // 30 minutes
+    var startedAt         = Date.now();
+    var intervalId        = null;
+
+    function csrfToken() {
+        var input = document.querySelector('#poll-form input[name="csrf_token"]');
+        return input ? input.value : '';
+    }
+
+    function stopPolling() {
+        if (intervalId !== null) {
+            clearInterval(intervalId);
+            intervalId = null;
+        }
+    }
+
+    function poll() {
+        if (Date.now() - startedAt > MAX_POLL_MS) {
+            stopPolling();
+            return;
+        }
+
+        fetch('/auth/magic/poll/' + hash, { credentials: 'same-origin' })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                var status = data.status;
+                if (status === 'verified') {
+                    stopPolling();
+                    complete();
+                } else if (status === 'consumed' || status === 'not_found') {
+                    stopPolling();
+                }
+                // 'pending' -- keep polling
+            })
+            .catch(function (err) {
+                console.error('Magic link poll error:', err);
+                // Continue polling on transient network errors
+            });
+    }
+
+    function complete() {
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/auth/magic/poll/' + hash + '/complete';
+
+        var csrf = document.createElement('input');
+        csrf.type  = 'hidden';
+        csrf.name  = 'csrf_token';
+        csrf.value = csrfToken();
+        form.appendChild(csrf);
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    intervalId = setInterval(poll, POLL_INTERVAL_MS);
+}());
+</script>

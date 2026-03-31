@@ -60,7 +60,9 @@ subtest 'Consume a token (single-use)' => sub {
         purpose => 'login',
     });
 
-    my $consumed = $token_obj->consume($db);
+    # login tokens require verification before consumption
+    my $verified = $token_obj->verify($db);
+    my $consumed = $verified->consume($db);
     ok($consumed->consumed_at, 'consumed_at set after consumption');
 
     # Attempting to consume again should fail
@@ -94,6 +96,97 @@ subtest 'Purpose constraint enforced' => sub {
             purpose => 'invalid_purpose',
         });
     } 'Invalid purpose rejected by database constraint';
+};
+
+subtest 'verify() sets verified_at' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    ok(!$token_obj->verified_at, 'Token not yet verified');
+    my $verified = $token_obj->verify($db);
+    ok($verified->verified_at, 'verified_at set after verify()');
+    is($verified->id, $token_obj->id, 'Same token returned');
+};
+
+subtest 'verify() is idempotent-safe: second call dies' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    my $verified = $token_obj->verify($db);
+    ok($verified->verified_at, 'First verify succeeds');
+    dies_ok { $verified->verify($db) } 'Second verify dies';
+};
+
+subtest 'verify() dies for expired token' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id    => $user->id,
+        purpose    => 'login',
+        expires_in => -1,
+    });
+
+    dies_ok { $token_obj->verify($db) } 'Cannot verify expired token';
+};
+
+subtest 'consume() requires verified_at for login tokens' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    dies_ok { $token_obj->consume($db) } 'Cannot consume unverified login token';
+
+    my $verified = $token_obj->verify($db);
+    lives_ok { $verified->consume($db) } 'Can consume verified login token';
+};
+
+subtest 'consume() requires verified_at for recovery tokens' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id => $user->id,
+        purpose => 'recovery',
+    });
+
+    dies_ok { $token_obj->consume($db) } 'Cannot consume unverified recovery token';
+
+    my $verified = $token_obj->verify($db);
+    lives_ok { $verified->consume($db) } 'Can consume verified recovery token';
+};
+
+subtest 'consume() does NOT require verified_at for invite tokens' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id => $user->id,
+        purpose => 'invite',
+    });
+
+    lives_ok { $token_obj->consume($db) } 'Can consume unverified invite token';
+};
+
+subtest 'consume() does NOT require verified_at for verify_email tokens' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id => $user->id,
+        purpose => 'verify_email',
+    });
+
+    lives_ok { $token_obj->consume($db) } 'Can consume unverified verify_email token';
+};
+
+subtest 'find_by_hash() returns correct token' => sub {
+    my ($token_obj, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+        user_id => $user->id,
+        purpose => 'login',
+    });
+
+    my $found = Registry::DAO::MagicLinkToken->find_by_hash($db, $token_obj->token_hash);
+    ok($found, 'Found token by hash');
+    is($found->id, $token_obj->id, 'Correct token returned');
+};
+
+subtest 'find_by_hash() returns undef for unknown hash' => sub {
+    my $not_found = Registry::DAO::MagicLinkToken->find_by_hash($db, 'notarealhash');
+    ok(!$not_found, 'Returns undef for unknown hash');
 };
 
 subtest 'Cascade delete with user' => sub {

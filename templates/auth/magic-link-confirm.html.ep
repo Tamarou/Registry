@@ -1,0 +1,18 @@
+%# ABOUTME: Confirmation page rendered after the magic link is verified.
+%# ABOUTME: Provides a Sign In button (same-device fallback) or already-signed-in message.
+% layout 'default';
+% title 'Confirm Sign In';
+
+<div class="card">
+% if (stash('already_signed_in')) {
+    <h2>You're already signed in</h2>
+    <p><a href="/">Go to your dashboard</a></p>
+% } else {
+    <h2>Click to sign in</h2>
+    <p>Your identity has been verified. Click the button below to complete sign-in.</p>
+    <form method="post" action="/auth/magic/<%= stash('plaintext') %>/complete">
+        <button type="submit" class="btn btn-primary">Sign In</button>
+    </form>
+% }
+    <p><a href="/auth/login">Back to sign in</a></p>
+</div>

@@ -18,6 +18,7 @@ class Registry::DAO::MagicLinkToken :isa(Registry::DAO::Object) {
     field $purpose :param :reader;
     field $expires_at :param :reader;
     field $consumed_at :param :reader = undef;
+    field $verified_at :param :reader = undef;
     field $created_at :param :reader = undef;
 
     sub table { 'magic_link_tokens' }
@@ -48,15 +49,46 @@ class Registry::DAO::MagicLinkToken :isa(Registry::DAO::Object) {
         return $class->find($db, { token_hash => $hash });
     }
 
+    # Look up a token directly by its stored hash (used by poll endpoints).
+    sub find_by_hash ($class, $db, $hash) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $class->find($db, { token_hash => $hash });
+    }
+
     method is_expired () {
         return 1 unless $expires_at;
         my $exp = DateTime::Format::Pg->parse_timestamptz($expires_at);
         return $exp < DateTime->now(time_zone => 'UTC');
     }
 
+    method verify ($db) {
+        # Fast-path checks (not authoritative -- the atomic UPDATE is the real guard)
+        croak "Token already verified" if $verified_at;
+        croak "Token has expired"      if $self->is_expired;
+
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $result = $db->update(
+            $self->table,
+            { verified_at => \'now()' },
+            { id => $id, verified_at => undef },
+            { returning => '*' }
+        )->expand->hash;
+
+        croak "Token already verified" unless $result;
+
+        return blessed($self)->new($result->%*);
+    }
+
     method consume ($db) {
         croak "Token already consumed" if $consumed_at;
-        croak "Token has expired" if $self->is_expired;
+        croak "Token has expired"      if $self->is_expired;
+
+        # login and recovery tokens must go through the verify step first.
+        # invite and verify_email tokens bypass this check.
+        if ($purpose eq 'login' || $purpose eq 'recovery') {
+            croak "Token not yet verified" unless $verified_at;
+        }
 
         $db = $db->db if $db isa Registry::DAO;
 

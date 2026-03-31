@@ -144,12 +144,15 @@ test.describe('Magic link consumption', () => {
       username: `valid_magic_user_${Date.now()}`,
     });
 
-    const response = await registryPage.goto(`/auth/magic/${plaintext}`);
+    await registryPage.goto(`/auth/magic/${plaintext}`);
+    // New flow: GET renders a confirmation page, not a redirect
+    await registryPage.waitForSelector('button[type="submit"]');
+    await registryPage.click('button[type="submit"]');
+    await registryPage.waitForLoadState('networkidle');
 
-    // The controller calls redirect_to('/') after consuming the token.
-    // Playwright follows the redirect, so we end up on the root page.
-    expect(response.url()).not.toContain('/auth/magic/');
-    expect(response.status()).toBeLessThan(400);
+    // After clicking Sign In we should be redirected away from /auth/
+    expect(registryPage.url()).not.toContain('/auth/magic/');
+    expect(registryPage.url()).not.toContain('/auth/login');
 
     // Session cookie should be set -- navigating to a public page works
     await registryPage.goto('/');
@@ -191,8 +194,10 @@ test.describe('Magic link consumption', () => {
       { cwd: '/home/perigrin/dev/Registry', encoding: 'utf8' }
     ).trim();
 
-    // Consume the magic link to establish a session
+    // Consume the magic link to establish a session via two-phase flow
     await registryPage.goto(`/auth/magic/${plaintext}`);
+    await registryPage.waitForSelector('button[type="submit"]');
+    await registryPage.click('button[type="submit"]');
     await registryPage.waitForLoadState('networkidle');
 
     // Now attempt a protected admin route -- should NOT redirect to login.
@@ -222,16 +227,18 @@ test.describe('Invalid magic links', () => {
       username: `consumed_magic_${Date.now()}`,
     });
 
-    // Consume it once (legitimate login)
+    // Verify (GET) then consume (POST) to simulate legitimate login
+    await registryPage.goto(`/auth/magic/${plaintext}`);
+    await registryPage.waitForSelector('button[type="submit"]');
+    await registryPage.click('button[type="submit"]');
+    await registryPage.waitForLoadState('networkidle');
+
+    // Attempt to reuse the same token -- GET on a consumed token shows already-signed-in
     await registryPage.goto(`/auth/magic/${plaintext}`);
     await registryPage.waitForLoadState('networkidle');
 
-    // Attempt to reuse the same token
-    await registryPage.goto(`/auth/magic/${plaintext}`);
-    await registryPage.waitForLoadState('networkidle');
-
-    await expect(registryPage.locator('h2')).toContainText('Invalid Link');
-    await expect(registryPage.locator('body')).toContainText('already been used');
+    await expect(registryPage.locator('h2')).toContainText('already signed in', { ignoreCase: true });
+    await expect(registryPage.locator('body')).not.toContainText('Invalid Link');
   });
 });
 
@@ -240,13 +247,15 @@ test.describe('Invalid magic links', () => {
 // ===========================================================================
 test.describe('Logout flow', () => {
   test('logout clears session and redirects', async ({ registryPage, testDB }) => {
-    // First authenticate via magic link
+    // First authenticate via magic link using two-phase flow
     const { plaintext } = await createUserWithMagicToken(testDB, {
       email:    `logout_user_${Date.now()}@example.com`,
       username: `logout_user_${Date.now()}`,
     });
 
     await registryPage.goto(`/auth/magic/${plaintext}`);
+    await registryPage.waitForSelector('button[type="submit"]');
+    await registryPage.click('button[type="submit"]');
     await registryPage.waitForLoadState('networkidle');
 
     // Confirm we're authenticated -- the root page loads without redirect to login
@@ -326,5 +335,48 @@ test.describe('Email verification flow', () => {
     // Second attempt
     await registryPage.goto(`/auth/verify-email/${plaintext}`);
     await expect(registryPage.locator('h2')).toContainText('Verification Failed');
+  });
+});
+
+// ===========================================================================
+// 7. Cross-device polling awareness
+// ===========================================================================
+// NOTE: The full cross-device scenario (Context A polls while Context B clicks
+// the link in a separate browser/device) requires a plaintext token that is
+// only available server-side once the email is sent.  The integration tests
+// in t/integration/auth-flow.t cover that scenario using real DAO calls.
+// This Playwright test validates that the UI polling mechanism wires up
+// correctly by checking the #poll-target element and the /auth/magic/poll/
+// endpoint respond as expected.
+test.describe('Cross-device polling awareness', () => {
+  test('cross-device polling flow', async ({ browser }) => {
+    // Context A: "the original browser tab" that requested the magic link
+    const ctxA = await browser.newContext();
+    const pageA = await ctxA.newPage();
+
+    // Context B: "the email app browser" (placeholder -- not used in this shell)
+    const ctxB = await browser.newContext();
+    const pageB = await ctxB.newPage();
+
+    // Step 1 -- request a magic link in Context A
+    await pageA.goto('/auth/login');
+    await pageA.fill('[name="email"]', 'authflow@example.com');
+    await pageA.click('[type="submit"]');
+    await pageA.waitForSelector('#poll-target');
+
+    // Step 2 -- extract the token hash embedded in the magic-link-sent page
+    const hash = await pageA.$eval('#poll-target', el => el.dataset.tokenHash);
+    expect(hash).toBeTruthy();
+
+    // Step 3 -- poll the status endpoint; token has not been verified yet
+    const pollRes = await pageA.request.get(`/auth/magic/poll/${hash}`);
+    const pollData = await pollRes.json();
+    expect(pollData.status).toBe('pending');
+
+    // NOTE: Full cross-device test requires seeding the plaintext token.
+    // That is covered by the integration tests.  This Playwright test
+    // validates the UI polling mechanism wires up correctly.
+    await ctxA.close();
+    await ctxB.close();
   });
 });
