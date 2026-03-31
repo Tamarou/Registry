@@ -63,6 +63,7 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                     });
                     $notification->send($db);
                     $self->app->log->info("Magic link email sent to $email");
+                    $self->stash(token_hash => $token->token_hash);
                 }
             }
             catch ($e) {
