@@ -21,6 +21,7 @@ our @EXCLUDED_PREFIXES = qw(
     /webhooks/
     /static/
     /public/
+    /auth/magic/poll/
 );
 
 our $AUTH_LIMIT      = 10;   # requests per window
