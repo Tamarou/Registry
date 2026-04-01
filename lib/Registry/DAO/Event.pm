@@ -293,16 +293,15 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         my $sql = q{
             SELECT
                 ev.id as event_id,
-                ev.name as event_name,
-                ev.start_time,
-                ev.end_time,
+                EXTRACT(EPOCH FROM ev.time)::bigint as start_time,
                 s.name as session_name,
                 l.name as location_name,
-                l.address as location_address,
+                l.address_info->>'address' as location_address,
                 fm.child_name,
                 ar.status as attendance_status
             FROM events ev
-            JOIN sessions s ON ev.session_id = s.id
+            JOIN session_events se ON se.event_id = ev.id
+            JOIN sessions s ON se.session_id = s.id
             JOIN enrollments e ON e.session_id = s.id
             JOIN family_members fm ON e.family_member_id = fm.id
             LEFT JOIN locations l ON ev.location_id = l.id
@@ -310,9 +309,9 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 AND ar.student_id = e.family_member_id
             WHERE fm.family_id = ?
             AND e.status IN ('active', 'pending')
-            AND ev.start_time >= ?
-            AND ev.start_time <= ?
-            ORDER BY ev.start_time ASC
+            AND ev.time >= to_timestamp(?)
+            AND ev.time <= to_timestamp(?)
+            ORDER BY ev.time ASC
         };
 
         return $db->query($sql, $parent_id, time(), $end_date)->hashes->to_array;
@@ -327,9 +326,8 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         my $sql = q{
             SELECT
                 ev.id as event_id,
-                ev.name as event_name,
-                ev.start_time,
-                ev.end_time,
+                ev.time as start_time,
+                EXTRACT(EPOCH FROM ev.time)::bigint as start_epoch,
                 ev.capacity,
                 s.name as session_name,
                 p.name as program_name,
@@ -339,14 +337,15 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
                 COUNT(DISTINCT CASE WHEN ar.status = 'present' THEN ar.id END) as present_count,
                 COUNT(DISTINCT CASE WHEN ar.status = 'absent' THEN ar.id END) as absent_count
             FROM events ev
-            JOIN sessions s ON ev.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
+            LEFT JOIN session_events se ON se.event_id = ev.id
+            LEFT JOIN sessions s ON se.session_id = s.id
+            JOIN projects p ON ev.project_id = p.id
             LEFT JOIN locations l ON ev.location_id = l.id
             LEFT JOIN enrollments e ON s.id = e.session_id AND e.status = 'active'
             LEFT JOIN attendance_records ar ON ev.id = ar.event_id
-            WHERE ev.start_time >= ? AND ev.start_time < ?
+            WHERE ev.time >= to_timestamp(?) AND ev.time < to_timestamp(?)
             GROUP BY ev.id, s.id, p.id, l.id
-            ORDER BY ev.start_time ASC
+            ORDER BY ev.time ASC
         };
 
         my $results = $db->query($sql, $start_time, $end_time)->hashes->to_array;
@@ -355,7 +354,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         for my $event (@$results) {
             if ($event->{attendance_taken} > 0) {
                 $event->{attendance_status} = 'completed';
-            } elsif ($event->{start_time} < time()) {
+            } elsif ($event->{start_epoch} < time()) {
                 $event->{attendance_status} = 'missing';
             } else {
                 $event->{attendance_status} = 'pending';
