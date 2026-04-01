@@ -108,24 +108,6 @@ my sub login_nancy () {
 
 login_nancy();
 
-# Note: The parent dashboard index (/parent/dashboard) calls several DAO methods that
-# have known SQL bugs (get_active_for_parent references s.project_id which is in metadata,
-# and get_upcoming_for_parent / get_recent_for_parent reference ev.session_id which no
-# longer exists after the data model restructure).  Those routes return 500 until the
-# underlying DAO SQL is corrected.  We test the routes that are functional and verify
-# the data model directly where the HTTP layer is broken.
-
-subtest 'Unread message count is zero for new parent' => sub {
-    # Note: GET /parent/dashboard/unread_messages_count calls
-    # ParentDashboard::unread_messages_count($c) which has the wrong
-    # Object::Pad method signature (method with explicit $c arg).
-    # Mojolicious dispatches with no second arg, causing a 500.
-    # We test the DAO method directly.
-    require Registry::DAO::Message;
-    my $count = Registry::DAO::Message->get_unread_count( $db->db, $nancy->id );
-    is( $count, 0, 'New parent has no unread messages' );
-};
-
 subtest 'Unauthenticated access to dashboard is rejected' => sub {
     # Use a fresh Test::Registry::Mojo instance with no session
     my $t2 = Test::Registry::Mojo->new('Registry');
@@ -141,6 +123,27 @@ subtest 'Unauthenticated access to upcoming events is rejected' => sub {
 
     $t2->get_ok('/parent/dashboard/upcoming_events')
        ->status_is(302, 'Unauthenticated user is redirected');
+};
+
+subtest 'Authenticated parent can load the dashboard' => sub {
+    $t->get_ok('/parent/dashboard')
+      ->status_is(200, 'Parent dashboard returns 200');
+};
+
+subtest 'Authenticated parent can load upcoming events endpoint' => sub {
+    $t->get_ok('/parent/dashboard/upcoming_events')
+      ->status_is(200, 'Upcoming events endpoint returns 200');
+};
+
+subtest 'Authenticated parent can load recent attendance endpoint' => sub {
+    $t->get_ok('/parent/dashboard/recent_attendance')
+      ->status_is(200, 'Recent attendance endpoint returns 200');
+};
+
+subtest 'Authenticated parent can load unread messages count' => sub {
+    $t->get_ok('/parent/dashboard/unread_messages_count')
+      ->status_is(200, 'Unread messages count endpoint returns 200')
+      ->json_is('/unread_count', 0, 'New parent has zero unread messages');
 };
 
 subtest 'Session is published and linked to events' => sub {
