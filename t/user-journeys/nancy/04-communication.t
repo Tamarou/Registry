@@ -1,17 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Nancy user journey: communication -- receive messages, check unread count, mark messages as read
-# ABOUTME: Tests the Message DAO send/receive/mark-read flow via DAO layer
-
-# Note: Several HTTP endpoints for messaging have pre-existing bugs that prevent
-# testing them at the HTTP layer:
-#   - GET /parent/dashboard/unread_messages_count -- Object::Pad method signature
-#     bug in ParentDashboard (method declares explicit $c but Mojolicious only passes
-#     one arg to a dispatched action).
-#   - POST /messages/:id/mark_read -- the /messages/* routes are declared after the
-#     /:workflow catch-all route in Registry.pm, so Mojolicious matches them as
-#     workflow dispatches rather than message routes.
-# These are tracked as pre-existing production issues.  The DAO methods themselves
-# are correct and are tested directly below.
+# ABOUTME: Tests the Message DAO send/receive/mark-read flow and HTTP message routes
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -151,6 +140,24 @@ subtest 'Nancy authenticates via magic link' => sub {
 
     $t->post_ok("/auth/magic/$plaintext/complete")
       ->status_is(302, 'Magic link complete redirects on success');
+};
+
+subtest 'GET /messages returns 200 for authenticated parent' => sub {
+    $t->get_ok('/messages')
+      ->status_is(200, 'Messages index returns 200');
+};
+
+subtest 'GET /messages/unread_count returns JSON for authenticated parent' => sub {
+    $t->get_ok('/messages/unread_count')
+      ->status_is(200, 'Unread count endpoint returns 200');
+};
+
+subtest 'POST /messages/:id/mark_read works for authenticated parent' => sub {
+    my $messages = Registry::DAO::Message->get_messages_for_parent( $db->db, $nancy->id );
+    my $msg_id = $messages->[0]->{id};
+
+    $t->post_ok("/messages/$msg_id/mark_read")
+      ->status_is(200, 'Mark read endpoint returns 200');
 };
 
 done_testing;
