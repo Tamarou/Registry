@@ -30,7 +30,12 @@ class Registry::Controller :isa(Mojolicious::Controller) {
     }
 
     # TODO make this smarter about Registry things like workflows and steps etc.
-    method render(%args) {
+    method render(@_raw) {
+        # Mojolicious passes an optional positional template name as the first arg
+        # when called via include/render_to_string with an odd number of arguments.
+        my ($positional_template, %args) = (@_raw % 2 ? shift(@_raw) : undef, @_raw);
+        $args{template} //= $positional_template if $positional_template;
+
         my $dao = $self->app->dao;
 
         if ( $args{workflow} ) {
