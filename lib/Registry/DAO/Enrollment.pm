@@ -318,18 +318,19 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
 
         # Active enrollments count
-        my $active_enrollments = $db->select('enrollments e', 'COUNT(*)', {
-            'e.family_member_id' => [
-                -in => $db->select('family_members', 'id', { family_id => $parent_id })
-            ],
-            'e.status' => ['active', 'pending']
-        })->array->[0] || 0;
+        my $active_enrollments = $db->query(
+            q{SELECT COUNT(*) FROM enrollments e
+              JOIN family_members fm ON e.family_member_id = fm.id
+              WHERE fm.family_id = ? AND e.status IN ('active', 'pending')},
+            $parent_id
+        )->array->[0] || 0;
 
         # Waitlist entries count
-        my $waitlist_count = $db->select('waitlist', 'COUNT(*)', {
-            parent_id => $parent_id,
-            status => ['waiting', 'offered']
-        })->array->[0] || 0;
+        my $waitlist_count = $db->query(
+            q{SELECT COUNT(*) FROM waitlist
+              WHERE parent_id = ? AND status IN ('waiting', 'offered')},
+            $parent_id
+        )->array->[0] || 0;
 
         # This month's attendance rate
         my $month_start = DateTime->now->truncate(to => 'month')->epoch;
@@ -341,7 +342,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             JOIN events ev ON ar.event_id = ev.id
             JOIN family_members fm ON ar.student_id = fm.id
             WHERE fm.family_id = ?
-            AND ar.marked_at >= ?
+            AND ar.marked_at >= to_timestamp(?)
         };
 
         my $attendance_data = $db->query($attendance_sql, $parent_id, $month_start)->hash;
@@ -372,23 +373,19 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
                 s.name as session_name,
                 s.start_date,
                 s.end_date,
-                p.name as program_name,
-                l.name as location_name,
                 fm.child_name,
-                COUNT(ev.id) as total_events,
+                COUNT(se.event_id) as total_events,
                 COUNT(ar.id) as attended_events
             FROM enrollments e
             JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
-            LEFT JOIN locations l ON s.location_id = l.id
             JOIN family_members fm ON e.family_member_id = fm.id
-            LEFT JOIN events ev ON ev.session_id = s.id
-            LEFT JOIN attendance_records ar ON ar.event_id = ev.id
+            LEFT JOIN session_events se ON se.session_id = s.id
+            LEFT JOIN attendance_records ar ON ar.event_id = se.event_id
                 AND ar.student_id = e.family_member_id
                 AND ar.status = 'present'
             WHERE fm.family_id = ?
             AND e.status IN ('active', 'pending')
-            GROUP BY e.id, s.id, p.id, l.id, fm.id
+            GROUP BY e.id, s.id, fm.id
             ORDER BY s.start_date ASC
         };
 
