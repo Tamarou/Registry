@@ -576,17 +576,6 @@ class Registry :isa(Mojolicious) {
         $auth->post('/api-keys')->to('Auth#create_api_key');
         $auth->get('/api-keys')->to('Auth#list_api_keys');
 
-        # Workflow routes
-        my $w = $r->any("/:workflow")->to('workflows#');
-        $w->get('')->to('#index')->name("workflow_index");
-        $w->post('')->to('#start_workflow')->name("workflow_start");
-        $w->get("/:run/:step")->to('#get_workflow_run_step')
-          ->name("workflow_step");
-        $w->post("/:run/:step")->to('#process_workflow_run_step')
-          ->name("workflow_process_step");
-        $w->post('/:run/callcc/:target')->to('#start_continuation')
-          ->name("workflow_callcc");
-
         # Location routes
         $r->get('/locations/:slug')->to('locations#show')
           ->name('show_location');
@@ -598,19 +587,30 @@ class Registry :isa(Mojolicious) {
         # Tenant signup validation routes
         $r->post('/tenant-signup/validate-subdomain')->to('workflows#validate_subdomain')->name('tenant_signup.validate_subdomain');
 
-        # Message routes
+        # Message routes -- must be declared before the /:workflow catch-all
         $r->get('/messages')->to('messages#index')->name('messages_index');
         $r->post('/messages')->to('messages#create')->name('messages_create');
-        $r->get('/messages/:id')->to('messages#show')->name('messages_show');
-        $r->post('/messages/:id/mark_read')->to('messages#mark_read')->name('messages_mark_read');
         $r->get('/messages/preview_recipients')->to('messages#preview_recipients')->name('messages_preview_recipients');
         $r->get('/messages/unread_count')->to('messages#unread_count')->name('messages_unread_count');
+        $r->get('/messages/:id')->to('messages#show')->name('messages_show');
+        $r->post('/messages/:id/mark_read')->to('messages#mark_read')->name('messages_mark_read');
 
-        # Waitlist routes
+        # Waitlist routes -- must be declared before the /:workflow catch-all
         $r->get('/waitlist/:id')->to('waitlist#show')->name('waitlist_show');
         $r->post('/waitlist/:id/accept')->to('waitlist#accept')->name('waitlist_accept');
         $r->post('/waitlist/:id/decline')->to('waitlist#decline')->name('waitlist_decline');
         $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
+
+        # Workflow routes -- catch-all, must be declared last among /:path routes
+        my $w = $r->any("/:workflow")->to('workflows#');
+        $w->get('')->to('#index')->name("workflow_index");
+        $w->post('')->to('#start_workflow')->name("workflow_start");
+        $w->get("/:run/:step")->to('#get_workflow_run_step')
+          ->name("workflow_step");
+        $w->post("/:run/:step")->to('#process_workflow_run_step')
+          ->name("workflow_process_step");
+        $w->post('/:run/callcc/:target')->to('#start_continuation')
+          ->name("workflow_callcc");
 
     }
 
