@@ -8,53 +8,53 @@ use Object::Pad;
 class Registry::Controller::ParentDashboard :isa(Registry::Controller) {
 
     # Main parent dashboard
-    method index ($c) {
-        my $user = $c->stash('current_user');
-        my $dao = $c->dao($c->stash('tenant'));
+    method index {
+        my $user = $self->stash('current_user');
+        my $dao = $self->dao($self->stash('tenant'));
 
         # Get all dashboard data
         my $dashboard_data = $self->_get_dashboard_data($dao->db, $user->{id});
 
         # Pass data to template
-        $c->stash(%$dashboard_data);
-        $c->render(template => 'parent_dashboard/index');
+        $self->stash(%$dashboard_data);
+        $self->render(template => 'parent_dashboard/index');
     }
 
     # Get upcoming events calendar (HTMX endpoint)
-    method upcoming_events ($c) {
-        my $user = $c->stash('current_user');
-        my $dao = $c->dao($c->stash('tenant'));
-        my $days = $c->param('days') || 7; # Default to next 7 days
+    method upcoming_events {
+        my $user = $self->stash('current_user');
+        my $dao = $self->dao($self->stash('tenant'));
+        my $days = $self->param('days') || 7; # Default to next 7 days
 
         require Registry::DAO::Event;
         my $upcoming_events = Registry::DAO::Event->get_upcoming_for_parent($dao->db, $user->{id}, $days);
 
-        $c->stash(upcoming_events => $upcoming_events);
-        $c->render(template => 'parent_dashboard/upcoming_events', layout => undef);
+        $self->stash(upcoming_events => $upcoming_events);
+        $self->render(template => 'parent_dashboard/upcoming_events', layout => undef);
     }
 
     # Get recent attendance (HTMX endpoint)
-    method recent_attendance ($c) {
-        my $user = $c->stash('current_user');
-        my $dao = $c->dao($c->stash('tenant'));
-        my $limit = $c->param('limit') || 10;
+    method recent_attendance {
+        my $user = $self->stash('current_user');
+        my $dao = $self->dao($self->stash('tenant'));
+        my $limit = $self->param('limit') || 10;
 
         require Registry::DAO::Attendance;
         my $recent_attendance = Registry::DAO::Attendance->get_recent_for_parent($dao->db, $user->{id}, $limit);
 
-        $c->stash(recent_attendance => $recent_attendance);
-        $c->render(template => 'parent_dashboard/recent_attendance', layout => undef);
+        $self->stash(recent_attendance => $recent_attendance);
+        $self->render(template => 'parent_dashboard/recent_attendance', layout => undef);
     }
 
     # Get unread messages count (HTMX endpoint)
-    method unread_messages_count ($c) {
-        my $user = $c->stash('current_user');
-        my $dao = $c->dao($c->stash('tenant'));
+    method unread_messages_count {
+        my $user = $self->stash('current_user');
+        my $dao = $self->dao($self->stash('tenant'));
 
         require Registry::DAO::Message;
         my $unread_count = Registry::DAO::Message->get_unread_count($dao->db, $user->{id});
 
-        $c->render(json => { unread_count => $unread_count });
+        $self->render(json => { unread_count => $unread_count });
     }
 
     # Private helper methods
