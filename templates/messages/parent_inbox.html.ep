@@ -80,7 +80,7 @@
                             <div class="flex items-center text-sm text-gray-500">
                                 <span>From: <%= $message->{sender_name} || 'System' %></span>
                                 <span class="mx-2">•</span>
-                                <span><%= $message->{sent_at} ? DateTime->from_epoch(epoch => $message->{sent_at})->strftime('%b %d, %Y at %I:%M %p') : 'Scheduled' %></span>
+                                <span><%= $message->{sent_at} ? do { require DateTime::Format::Pg; DateTime::Format::Pg->parse_datetime($message->{sent_at})->strftime('%b %d, %Y at %I:%M %p') } : 'Scheduled' %></span>
                             </div>
                         </div>
                         
