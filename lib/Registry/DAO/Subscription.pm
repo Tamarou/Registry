@@ -82,6 +82,8 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
             $tx = $ua->post($url, $headers, form => $data);
         } elsif ($method eq 'GET') {
             $tx = $ua->get($url, $headers);
+        } elsif ($method eq 'DELETE') {
+            $tx = $ua->delete($url, $headers, form => $data);
         }
         
         unless ($tx->success) {
