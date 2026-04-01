@@ -1,20 +1,145 @@
+#!/usr/bin/env perl
+# ABOUTME: Nancy user journey: program discovery -- browse locations, sessions, and program details
+# ABOUTME: Tests the public school page and session availability without requiring authentication
+
 use 5.42.0;
-use lib          qw(lib t/lib);
-use experimental qw(defer);
+use warnings;
+use utf8;
 
-use Test::Mojo;
-use Test::More import => [qw( done_testing ok todo )];
-defer { done_testing };
-
-use Registry::DAO;
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 
-TODO: {
-    our $TODO = "Implement Nancy's program discovery workflow";
+use Registry::DAO::User;
+use Registry::DAO::Location;
+use Registry::DAO::Project;
+use Registry::DAO::Session;
+use Registry::DAO::Event;
 
-    ok 0, 'Browse available after-school programs';
-    ok 0, 'Filter programs by age group and interests';
-    ok 0, 'View program details and requirements';
-    ok 0, 'Check program schedules and availability';
-    ok 0, 'Review program safety policies and staff credentials';
-}
+my $tdb = Test::Registry::DB->new;
+my $db  = $tdb->db;
+
+my $t = Test::Registry::Mojo->new('Registry');
+$t->app->helper( dao => sub { $db } );
+
+# Create tenant for the test school
+my $tenant = Test::Registry::Fixtures::create_tenant( $db, {
+    name => 'Nancy Discovery School',
+    slug => 'nancy_discovery',
+} );
+
+$db->schema( $tenant->slug );
+
+# Create a location (school) Nancy will browse
+my $school = Test::Registry::Fixtures::create_location( $db, {
+    name  => 'Riverside Elementary',
+    slug  => 'riverside-elementary',
+    notes => 'Home of the River Otters',
+} );
+
+# Create programs at this school
+my $art_program = Test::Registry::Fixtures::create_project( $db, {
+    name  => 'After School Arts',
+    notes => 'Creative arts for grades 1-5',
+} );
+
+my $stem_program = Test::Registry::Fixtures::create_project( $db, {
+    name  => 'STEM Explorers',
+    notes => 'Science and technology after school',
+} );
+
+# Create a teacher user so events have an assigned teacher
+my $teacher = Test::Registry::Fixtures::create_user( $db, {
+    username  => 'nancy_disc_teacher',
+    name      => 'Ms Rivera',
+    email     => 'ms.rivera@riverside.edu',
+    user_type => 'staff',
+} );
+
+# Create sessions for both programs
+my $art_session = Test::Registry::Fixtures::create_session( $db, {
+    name       => 'Spring 2025 Arts',
+    start_date => '2025-03-01',
+    end_date   => '2025-05-30',
+    status     => 'published',
+    capacity   => 20,
+} );
+
+my $stem_session = Test::Registry::Fixtures::create_session( $db, {
+    name       => 'Spring 2025 STEM',
+    start_date => '2025-03-01',
+    end_date   => '2025-05-30',
+    status     => 'published',
+    capacity   => 15,
+} );
+
+# Create events that link sessions to programs and the location
+my $art_event = Test::Registry::Fixtures::create_event( $db, {
+    location_id => $school->id,
+    project_id  => $art_program->id,
+    teacher_id  => $teacher->id,
+    capacity    => 20,
+    time        => '2025-03-05 15:00:00',
+    duration    => 90,
+} );
+
+my $stem_event = Test::Registry::Fixtures::create_event( $db, {
+    location_id => $school->id,
+    project_id  => $stem_program->id,
+    teacher_id  => $teacher->id,
+    capacity    => 15,
+    time        => '2025-03-05 16:00:00',
+    duration    => 90,
+} );
+
+# Associate events with sessions
+$art_session->add_events( $db, $art_event->id );
+$stem_session->add_events( $db, $stem_event->id );
+
+subtest 'Public school page is accessible without authentication' => sub {
+    $t->get_ok('/school/riverside-elementary')
+      ->status_is(200, 'School page returns 200');
+};
+
+subtest 'School page shows location name' => sub {
+    $t->get_ok('/school/riverside-elementary')
+      ->status_is(200)
+      ->content_like( qr/Riverside Elementary/i, 'School name appears on page' );
+};
+
+subtest 'School page shows available programs' => sub {
+    $t->get_ok('/school/riverside-elementary')
+      ->status_is(200)
+      ->content_like( qr/After School Arts/i, 'Art program listed' )
+      ->content_like( qr/STEM Explorers/i,    'STEM program listed' );
+};
+
+subtest '404 for unknown school slug' => sub {
+    $t->get_ok('/school/no-such-school')
+      ->status_is(404, 'Returns 404 for unknown school');
+};
+
+subtest 'Session data is present in the database' => sub {
+    my $found_art = Registry::DAO::Session->find( $db, { name => 'Spring 2025 Arts' } );
+    ok( $found_art,                     'Art session found in DB' );
+    is( $found_art->status, 'published', 'Art session is published' );
+
+    my $found_stem = Registry::DAO::Session->find( $db, { name => 'Spring 2025 STEM' } );
+    ok( $found_stem,                      'STEM session found in DB' );
+    is( $found_stem->status, 'published', 'STEM session is published' );
+};
+
+subtest 'Programs have events linked to school location' => sub {
+    my $art_events  = $art_session->events($db);
+    my $stem_events = $stem_session->events($db);
+
+    ok( scalar(@$art_events)  > 0, 'Art session has events' );
+    ok( scalar(@$stem_events) > 0, 'STEM session has events' );
+
+    is( $art_events->[0]->location_id,  $school->id, 'Art event at correct location' );
+    is( $stem_events->[0]->location_id, $school->id, 'STEM event at correct location' );
+};
+
+done_testing;
