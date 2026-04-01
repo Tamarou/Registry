@@ -27,9 +27,10 @@ subtest 'Test async method availability' => sub {
     ok($ua->can('get_p'), "Mojo::UserAgent has get_p method");
     ok($ua->can('post_p'), "Mojo::UserAgent has post_p method");
 
-    # Create a transaction and verify start_p returns a promise
+    # Create a transaction and verify start_p returns a promise.
+    # Catch the rejection so it doesn't fire as an unhandled promise.
     my $tx = $ua->build_tx(GET => 'http://example.com');
-    my $result = $ua->start_p($tx);
+    my $result = $ua->start_p($tx)->catch(sub {});
     isa_ok($result, 'Mojo::Promise', 'start_p returns a promise');
 };
 
