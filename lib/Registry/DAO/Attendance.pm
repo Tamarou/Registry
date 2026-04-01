@@ -202,13 +202,13 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
                 ar.id,
                 ar.status,
                 ar.marked_at,
-                ev.name as event_name,
-                ev.start_time as event_time,
+                ev.time as event_time,
                 s.name as session_name,
                 fm.child_name
             FROM attendance_records ar
             JOIN events ev ON ar.event_id = ev.id
-            JOIN sessions s ON ev.session_id = s.id
+            JOIN session_events se ON se.event_id = ev.id
+            JOIN sessions s ON se.session_id = s.id
             JOIN family_members fm ON ar.student_id = fm.id
             WHERE fm.family_id = ?
             ORDER BY ar.marked_at DESC
