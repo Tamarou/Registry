@@ -30,7 +30,11 @@ class Registry::Controller :isa(Mojolicious::Controller) {
     }
 
     # TODO make this smarter about Registry things like workflows and steps etc.
-    method render(%args) {
+    method render(@args) {
+        # Handle Mojolicious's include helper which passes a positional
+        # template name as the first argument (odd arg count).
+        unshift @args, 'template' if @args % 2;
+        my %args = @args;
         my $dao = $self->app->dao;
 
         if ( $args{workflow} ) {
