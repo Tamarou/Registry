@@ -228,9 +228,10 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     # Decline waitlist offer
     method decline_offer ($db) {
         croak "Can only decline offers with status 'offered'" unless $status eq 'offered';
-        
+        $db = $db->db if $db isa Registry::DAO;
+
         # Start transaction for consistency
-        my $tx = $db->db->begin;
+        my $tx = $db->begin;
         
         try {
             # Update status to declined and move to non-waiting position range
