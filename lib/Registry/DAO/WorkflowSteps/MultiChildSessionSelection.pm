@@ -26,6 +26,7 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         # Load children and check program type rules
         require Registry::DAO::Family;
         require Registry::DAO::ProgramType;
+        require Registry::DAO::Session;
         
         my @children;
         for my $child_id (@$selected_child_ids) {
@@ -77,11 +78,46 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                 # All children must be in the same session
                 my @unique_sessions = keys %{{ map { $_ => 1 } values %selections }};
                 if (@unique_sessions > 1) {
-                    push @errors, "All siblings must be enrolled in the same session for " . 
+                    push @errors, "All siblings must be enrolled in the same session for " .
                                   $program_type->name . " programs";
                 }
             }
-            
+
+            # Validate capacity and age eligibility for each selection
+            for my $child (@children) {
+                my $session_id = $selections{$child->id} or next;
+                my $sess = Registry::DAO::Session->find($db, { id => $session_id });
+                next unless $sess;
+
+                # Check capacity
+                if ($sess->capacity) {
+                    my $enrolled = $db->select('enrollments', 'COUNT(*)', {
+                        session_id => $session_id,
+                        status     => ['active', 'pending'],
+                    })->array->[0];
+                    if ($enrolled >= $sess->capacity) {
+                        push @errors, $sess->name . " is full. Please select a different session for " . $child->child_name;
+                    }
+                }
+
+                # Check age eligibility via program age range
+                if ($program && $program->metadata) {
+                    my $meta = ref $program->metadata eq 'HASH' ? $program->metadata : {};
+                    my $age_range = $meta->{age_range};
+                    if ($age_range && $child->can('age')) {
+                        my $child_age = $child->age;
+                        my $min = $age_range->{min};
+                        my $max = $age_range->{max};
+                        if (defined $min && $child_age < $min) {
+                            push @errors, $child->child_name . " (age $child_age) does not meet the minimum age requirement of $min";
+                        }
+                        if (defined $max && $child_age > $max) {
+                            push @errors, $child->child_name . " (age $child_age) exceeds the maximum age of $max";
+                        }
+                    }
+                }
+            }
+
             if (@errors) {
                 return {
                     stay => 1,

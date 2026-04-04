@@ -25,12 +25,23 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
         }
         elsif ($action eq 'create_account') {
             # Create a new user without a password (passwordless system).
-            my $user = Registry::DAO::User->create($db, {
-                username  => $form_data->{username},
-                email     => $form_data->{email},
-                name      => $form_data->{name},
-                user_type => $form_data->{user_type} || 'parent',
-            });
+            my $user;
+            try {
+                $user = Registry::DAO::User->create($db, {
+                    username  => $form_data->{username},
+                    email     => $form_data->{email},
+                    name      => $form_data->{name},
+                    user_type => $form_data->{user_type} || 'parent',
+                });
+            }
+            catch ($e) {
+                if ($e =~ /duplicate key|unique constraint|already exists/i) {
+                    return {
+                        errors => ['An account with that username or email already exists. Please log in instead.'],
+                    };
+                }
+                die $e;
+            }
 
             # Generate a magic link token and send the login email
             my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
