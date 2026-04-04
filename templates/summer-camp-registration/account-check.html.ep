@@ -1,5 +1,6 @@
 % layout 'workflow';
 % title 'Account Setup - Summer Camp Registration';
+% use Mojo::JSON qw(decode_json);
 
 <div class="max-w-2xl mx-auto">
   <h2 class="text-2xl font-bold mb-6">Account Setup</h2>

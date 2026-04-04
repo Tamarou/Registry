@@ -1,9 +1,10 @@
 % layout 'workflow';
 % title 'Select Children - Summer Camp Registration';
+% use Mojo::JSON qw(decode_json);
 
 <div class="max-w-4xl mx-auto">
   <h2 class="text-2xl font-bold mb-6">Select Children to Enroll</h2>
-  
+
   % my $data = eval { decode_json(stash('data_json') || '{}') } || {};
   % my $user_id = $data->{user_id};
   
