@@ -348,4 +348,41 @@ subtest 'Enrollment creation on successful payment' => sub {
     $db->query('SET session_replication_role = DEFAULT');
 };
 
+subtest 'Demo mode: agreeTerms without Stripe creates enrollments' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = undef;
+
+    my $run = $workflow->new_run($db);
+
+    # Set up run data as if coming from previous steps
+    $run->update_data($db, {
+        user_id => $parent->id,
+        selected_child_ids => [$child1->id],
+        enrollment_items => [
+            { child_id => $child1->id, session_id => $session->id },
+        ],
+        session_selections => {
+            $child1->id => $session->id,
+        },
+    });
+
+    # Get the actual payment step from database
+    my $payment_step = $workflow->get_step($db, { slug => 'payment' });
+
+    # Process with agreeTerms in demo mode (no Stripe key)
+    my $result = $payment_step->process($db, { agreeTerms => 1 });
+
+    # Should advance to complete step, not return errors
+    is $result->{next_step}, 'complete', 'Demo mode advances to complete step';
+    ok !$result->{errors}, 'No errors in demo mode' or diag explain $result->{errors};
+
+    # Verify enrollment was created
+    my $enrollment = $db->select('enrollments', '*', {
+        family_member_id => $child1->id,
+        session_id       => $session->id,
+    })->hash;
+
+    ok $enrollment, 'Enrollment created in demo mode';
+    is $enrollment->{status}, 'active', 'Enrollment status is active';
+};
+
 done_testing;

@@ -45,9 +45,9 @@ my $test_user = Registry::DAO::User->create($db, {
 
 # Create test workflow
 my $workflow = Registry::DAO::Workflow->create($db, {
-    slug        => 'summer-camp-registration-enhanced',
-    name        => 'Summer Camp Registration (Enhanced)',
-    description => 'Enhanced registration with account creation',
+    slug        => 'summer-camp-registration',
+    name        => 'Summer Camp Registration',
+    description => 'Registration workflow for summer camp programs with account creation',
     first_step  => 'landing',
 });
 

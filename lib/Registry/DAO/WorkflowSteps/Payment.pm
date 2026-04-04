@@ -18,6 +18,12 @@ method process ($db, $form_data) {
         return $self->handle_payment_callback($db, $run, $form_data);
     }
     
+    # Demo mode: when STRIPE_SECRET_KEY is not set, accept terms agreement
+    # and create enrollments directly without Stripe processing.
+    if ($form_data->{agreeTerms} && !$ENV{STRIPE_SECRET_KEY}) {
+        return $self->create_demo_enrollments($db, $run, $form_data);
+    }
+
     # Initial payment page load or form submission
     if ($form_data->{agreeTerms}) {
         return $self->create_payment($db, $run, $form_data);
@@ -170,6 +176,23 @@ method handle_payment_callback ($db, $run, $form_data) {
             data => $self->prepare_payment_data($db, $run),
         };
     }
+}
+
+method create_demo_enrollments ($db, $run, $form_data) {
+    my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
+    my $enrollment_items = $run->data->{enrollment_items} || [];
+
+    for my $item (@$enrollment_items) {
+        $db->insert('enrollments', {
+            session_id       => $item->{session_id},
+            student_id       => $user_id,
+            family_member_id => $item->{child_id},
+            status           => 'active',
+            metadata         => { -json => { enrolled_via => 'demo_mode' } },
+        });
+    }
+
+    return { next_step => 'complete' };
 }
 
 method template { 'summer-camp-registration/payment' }
