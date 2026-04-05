@@ -18,7 +18,7 @@ class TestDB {
   async setup() {
     // Start database manager process for individual test database
     this.dbManagerProcess = spawn('carton', ['exec', 'perl', 't/playwright/db_manager.pl', 'create'], {
-      cwd: '/home/perigrin/dev/Registry',
+      cwd: process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe']
     });
 
@@ -99,7 +99,7 @@ const test = base.extend({
     console.log(`Starting server with database URL: ${testDB.dbUrl} on port ${port}`);
     const serverProcess = spawn('carton', ['exec', 'morbo', './registry', '-l', serverUrl], {
       env: { ...process.env, DB_URL: testDB.dbUrl },
-      cwd: '/home/perigrin/dev/Registry',
+      cwd: process.cwd(),
       stdio: 'pipe'
     });
 

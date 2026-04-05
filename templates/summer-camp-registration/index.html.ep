@@ -1,0 +1,13 @@
+% layout 'default';
+% title 'Summer Camp Registration';
+% stash enable_background_effects => 1;
+
+<div class="landing-intro" style="padding: 2rem; max-width: 800px; margin: 0 auto;">
+    <h1>Summer Camp Registration</h1>
+
+    <p>Welcome! Ready to register for summer camp? Click below to get started.</p>
+
+    <form method="POST" action="<%= $action %>" style="margin-top: 2rem;">
+        <button type="submit" data-variant="primary" data-size="lg" class="cta-button">Begin Registration</button>
+    </form>
+</div>

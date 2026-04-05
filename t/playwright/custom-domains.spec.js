@@ -15,7 +15,7 @@ function seedDomainTestData(testDB, role = 'admin') {
   const output = execSync(
     `carton exec perl t/playwright/setup_domain_test_data.pl ${role}`,
     {
-      cwd: '/home/perigrin/dev/Registry',
+      cwd: process.cwd(),
       env: { ...process.env, DB_URL: testDB.dbUrl },
       encoding: 'utf8',
     }

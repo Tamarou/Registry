@@ -46,7 +46,7 @@ async function createUserWithMagicToken(testDB, opts = {}) {
 
   const plaintext = execSync(
     `carton exec perl -e "${script.trim().replace(/\n\s*/g, ' ')}"`,
-    { cwd: '/home/perigrin/dev/Registry', encoding: 'utf8' }
+    { cwd: process.cwd(), encoding: 'utf8' }
   ).trim();
 
   if (!plaintext) {
@@ -108,7 +108,7 @@ test.describe('Magic link request flow', () => {
       `my \\$dao = Registry::DAO->new(url => '${testDB.dbUrl}'); ` +
       `my \\$db = \\$dao->db; ` +
       `Registry::DAO::User->create(\\$db, { username => 'mlu_${ts}', email => '${email}', name => 'Magic User', user_type => 'parent' });"`,
-      { cwd: '/home/perigrin/dev/Registry', encoding: 'utf8' }
+      { cwd: process.cwd(), encoding: 'utf8' }
     );
 
     // Fill the real browser form -- this exercises the full round-trip including
@@ -191,7 +191,7 @@ test.describe('Magic link consumption', () => {
 
     const plaintext = execSync(
       `carton exec perl -e "${script.trim().replace(/\n\s*/g, ' ')}"`,
-      { cwd: '/home/perigrin/dev/Registry', encoding: 'utf8' }
+      { cwd: process.cwd(), encoding: 'utf8' }
     ).trim();
 
     // Consume the magic link to establish a session via two-phase flow
