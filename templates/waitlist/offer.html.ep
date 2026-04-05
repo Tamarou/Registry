@@ -7,7 +7,7 @@
         <div class="text-center mb-8">
             <div class="bg-green-100 p-4 rounded-lg mb-4">
                 <h1 class="text-3xl font-bold text-green-800 mb-2">🎉 Great News!</h1>
-                <p class="text-lg text-green-700">A spot has opened up for <%= $student ? $student->name : 'your child' %></p>
+                <p class="text-lg text-green-700">A spot has opened up for <%= $student ? $student->child_name : 'your child' %></p>
             </div>
         </div>
 
@@ -23,7 +23,7 @@
                 
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Student</label>
-                    <p class="mt-1 text-gray-900"><%= $student ? $student->name : 'Your child' %></p>
+                    <p class="mt-1 text-gray-900"><%= $student ? $student->child_name : 'Your child' %></p>
                 </div>
                 
                 <div>
@@ -35,8 +35,7 @@
                     <label class="block text-sm font-medium text-gray-700">Session Dates</label>
                     <p class="mt-1 text-gray-900">
                         % if ($session && $session->start_date && $session->end_date) {
-                            <%= DateTime->from_epoch(epoch => $session->start_date)->strftime('%b %d') %> - 
-                            <%= DateTime->from_epoch(epoch => $session->end_date)->strftime('%b %d, %Y') %>
+                            <%= $session->start_date %> to <%= $session->end_date %>
                         % } else {
                             Contact staff for details
                         % }

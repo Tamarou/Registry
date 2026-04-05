@@ -5,6 +5,8 @@ use Object::Pad;
 
 class Registry::Controller::Waitlist :isa(Registry::Controller) {
     use DateTime;
+    use DateTime::Format::Pg;
+    use Registry::DAO::Waitlist;
 
     # Show waitlist offer page
     method show () {
@@ -12,7 +14,8 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
         return $self->render(status => 401, text => 'Unauthorized') unless $user;
 
         my $waitlist_id = $self->param('id');
-        my $db = $self->dao->db;
+        my $dao = $self->dao;
+        my $db = $dao->db;
 
         # Get the waitlist entry
         my $waitlist_entry = Registry::DAO::Waitlist->find($db, { id => $waitlist_id });
@@ -34,8 +37,8 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
         my $student = $waitlist_entry->family_member($db) || $waitlist_entry->student($db);
 
         # Calculate time remaining
-        my $expires_at = DateTime->from_epoch(epoch => $waitlist_entry->expires_at);
-        my $now = DateTime->now;
+        my $expires_at = DateTime::Format::Pg->parse_timestamptz($waitlist_entry->expires_at);
+        my $now = DateTime->now(time_zone => 'UTC');
         my $time_remaining = $expires_at->subtract_datetime($now);
 
         $self->stash(
@@ -56,7 +59,8 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
         return $self->render(status => 401, text => 'Unauthorized') unless $user;
 
         my $waitlist_id = $self->param('id');
-        my $db = $self->dao->db;
+        my $dao = $self->dao;
+        my $db = $dao->db;
 
         # Get the waitlist entry
         my $waitlist_entry = Registry::DAO::Waitlist->find($db, { id => $waitlist_id });
@@ -75,7 +79,7 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
             my $student = $waitlist_entry->family_member($db) || $waitlist_entry->student($db);
 
             if ($self->accepts('', 'html')) {
-                $self->flash(success => "Successfully enrolled " . ($student ? $student->name : 'your child') .
+                $self->flash(success => "Successfully enrolled " . ($student ? $student->child_name : 'your child') .
                                        " in " . $session->name);
                 return $self->redirect_to('parent_dashboard');
             } else {
@@ -101,7 +105,8 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
         return $self->render(status => 401, text => 'Unauthorized') unless $user;
 
         my $waitlist_id = $self->param('id');
-        my $db = $self->dao->db;
+        my $dao = $self->dao;
+        my $db = $dao->db;
 
         # Get the waitlist entry
         my $waitlist_entry = Registry::DAO::Waitlist->find($db, { id => $waitlist_id });
@@ -120,7 +125,7 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
             my $student = $waitlist_entry->family_member($db) || $waitlist_entry->student($db);
 
             if ($self->accepts('', 'html')) {
-                $self->flash(info => "Declined offer for " . ($student ? $student->name : 'your child') .
+                $self->flash(info => "Declined offer for " . ($student ? $student->child_name : 'your child') .
                                     " in " . $session->name . ". They remain on the waitlist.");
                 return $self->redirect_to('parent_dashboard');
             } else {
@@ -146,7 +151,8 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
         my $user = $self->stash('current_user');
         return $self->render(status => 401, text => 'Unauthorized') unless $user;
 
-        my $db = $self->dao->db;
+        my $dao = $self->dao;
+        my $db = $dao->db;
 
         # Get all waitlist entries for this parent
         my $waitlist_entries = $db->select('waitlist', '*', {
