@@ -487,9 +487,7 @@ class Registry :isa(Mojolicious) {
             }
         );
 
-        # Public school pages (no auth required)
-        $self->routes->get('/school/:slug')->to('schools#show')
-          ->name('show_school');
+        # Legacy school route removed -- storefront at / replaces it
 
         # Health check endpoint (no auth required)
         $self->routes->get('/health')->to(cb => sub ($c) {
