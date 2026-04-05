@@ -24,8 +24,8 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Validate status
-        unless ($status && $status =~ /^(waiting|offered|expired|declined)$/) {
-            croak "Invalid waitlist status: must be 'waiting', 'offered', 'expired', or 'declined'";
+        unless ($status && $status =~ /^(waiting|offered|accepted|expired|declined)$/) {
+            croak "Invalid waitlist status: must be 'waiting', 'offered', 'accepted', 'expired', or 'declined'";
         }
     }
     
@@ -86,7 +86,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         my $entry = $class->new(%$next);
         
         # Calculate expiration time using SQL
-        my $expires_at = $db->query("SELECT NOW() + INTERVAL '$hours_to_respond hours'")->array->[0];
+        my $expires_at = $db->query("SELECT NOW() + ? * INTERVAL '1 hour'", $hours_to_respond)->array->[0];
         
         # Update to offered status - position irrelevant for non-waiting entries
         $entry->update($db, {
@@ -209,7 +209,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             
             # Update waitlist status and move to non-waiting position range
             $self->update($db, {
-                status => 'declined',
+                status => 'accepted',
                 position => 0  # Position irrelevant for accepted entries
             });
 
@@ -413,8 +413,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         } elsif ($status_filter eq 'declined') {
             push @where_conditions, "w.status = 'declined'";
         } elsif ($status_filter eq 'urgent') {
-            push @where_conditions, "w.status = 'offered' AND w.expires_at < ?";
-            push @params, time() + 86400; # Expiring within 24 hours
+            push @where_conditions, "w.status = 'offered' AND w.expires_at < NOW() + INTERVAL '24 hours'";
         } elsif ($status_filter ne 'all') {
             push @where_conditions, "w.status IN ('waiting', 'offered')";
         }

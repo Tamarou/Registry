@@ -159,7 +159,7 @@ subtest 'accept waitlist offer' => sub {
 
     # Verify waitlist entry status updated
     ($entry_a) = Registry::DAO::Waitlist->find($dao->db, { id => $entry_a->id });
-    is $entry_a->status, 'declined', 'Waitlist entry marked as declined (accepted convention)';
+    is $entry_a->status, 'accepted', 'Waitlist entry marked as accepted';
 };
 
 # ============================================================

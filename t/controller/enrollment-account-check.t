@@ -156,7 +156,6 @@ subtest 'Continue when already logged in' => sub {
     # Process continue action
     my $result = $step->process($db, {
         action  => 'continue_logged_in',
-        user_id => $test_user->id,
     });
 
     is($result->{next_step}, 'camper-info', 'Moves to next step when already logged in');

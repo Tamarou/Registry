@@ -31,7 +31,7 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     username  => $form_data->{username},
                     email     => $form_data->{email},
                     name      => $form_data->{name},
-                    user_type => $form_data->{user_type} || 'parent',
+                    user_type => 'parent',
                 });
             }
             catch ($e) {
@@ -68,7 +68,7 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
         }
         elsif ($action eq 'continue_logged_in') {
             # User is already logged in (returning from continuation or already had session)
-            my $user_id = $form_data->{user_id} || $run->data->{user_id};
+            my $user_id = $run->data->{user_id};
 
             if ($user_id) {
                 # Verify user still exists

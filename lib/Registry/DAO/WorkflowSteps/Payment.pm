@@ -120,42 +120,21 @@ method handle_payment_callback ($db, $run, $form_data) {
     my $result = $payment->process_payment($db, $form_data->{payment_intent_id});
     
     if ($result->{success}) {
-        # Create enrollments for each child
-        my $children = $run->data->{children} || [];
-        my $selections = $run->data->{session_selections} || {};
-        
-        for my $child (@$children) {
-            my $child_key = $child->{id} || 0;
-            my $session_id = $selections->{$child_key} || $selections->{all};
-            
-            next unless $session_id;
-            
-            # Create enrollment
-            my $enrollment_data = {
-                session_id => $session_id,
-                student_id => $run->data->{user_id},
-                family_member_id => $child->{id},
-                status => 'active',
-                payment_id => $payment->id,
-                metadata => encode_json({
-                    child_name => "$child->{first_name} $child->{last_name}",
-                    enrolled_via => 'enhanced_workflow',
-                }),
-            };
-            
-            my $enrollment = $db->insert('enrollments', $enrollment_data, { returning => '*' })->hash;
-            
-            # Link to payment item
-            $db->update('registry.payment_items', 
-                { enrollment_id => $enrollment->{id} },
-                { 
-                    payment_id => $payment->id,
-                    'metadata->child_id' => $child->{id},
-                    'metadata->session_id' => $session_id,
-                }
-            );
+        # Create enrollments from the enrollment_items stored by MultiChildSessionSelection
+        require Registry::DAO::Enrollment;
+        my $enrollment_items = $run->data->{enrollment_items} || [];
+        my $user_id = $run->data->{user_id};
+
+        for my $item (@$enrollment_items) {
+            my $enrollment = Registry::DAO::Enrollment->create($db, {
+                session_id       => $item->{session_id},
+                family_member_id => $item->{child_id},
+                parent_id        => $user_id,
+                status           => 'active',
+                payment_id       => $payment->id,
+            });
         }
-        
+
         # Payment successful, move to completion
         return { next_step => 'complete' };
     } elsif ($result->{processing}) {
@@ -182,13 +161,13 @@ method create_demo_enrollments ($db, $run, $form_data) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
     my $enrollment_items = $run->data->{enrollment_items} || [];
 
+    require Registry::DAO::Enrollment;
     for my $item (@$enrollment_items) {
-        $db->insert('enrollments', {
+        Registry::DAO::Enrollment->create($db, {
             session_id       => $item->{session_id},
-            student_id       => $user_id,
             family_member_id => $item->{child_id},
+            parent_id        => $user_id,
             status           => 'active',
-            metadata         => { -json => { enrolled_via => 'demo_mode' } },
         });
     }
 

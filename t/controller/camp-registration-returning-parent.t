@@ -138,10 +138,12 @@ subtest 'Account check - continue as logged-in returning parent' => sub {
     my $step = $run->next_step($dao->db);
     is $step->slug, 'account-check', 'Next step is account-check';
 
+    # Set user_id in run data (simulates prior auth step setting session identity)
+    $run->update_data($dao->db, { user_id => $returning_parent->id });
+
     my $step_url = workflow_process_step_url($workflow, $run, $step);
     my $next_url = $t->post_ok($step_url => form => {
         action  => 'continue_logged_in',
-        user_id => $returning_parent->id,
     })->status_is(302)
       ->tx->res->headers->location;
 

@@ -90,11 +90,12 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
             }
         }
         catch ($e) {
+            $self->app->log->error("Failed to accept waitlist offer $waitlist_id: $e");
             if ($self->accepts('', 'html')) {
-                $self->flash(error => "Failed to accept offer: $e");
+                $self->flash(error => "Failed to accept offer. Please try again or contact support.");
                 return $self->redirect_to('waitlist_show', id => $waitlist_id);
             } else {
-                return $self->render(json => { error => "Failed to accept offer: $e" }, status => 400);
+                return $self->render(json => { error => "Failed to accept offer. Please try again or contact support." }, status => 400);
             }
         }
     }
@@ -137,11 +138,12 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
             }
         }
         catch ($e) {
+            $self->app->log->error("Failed to decline waitlist offer $waitlist_id: $e");
             if ($self->accepts('', 'html')) {
-                $self->flash(error => "Failed to decline offer: $e");
+                $self->flash(error => "Failed to decline offer. Please try again or contact support.");
                 return $self->redirect_to('waitlist_show', id => $waitlist_id);
             } else {
-                return $self->render(json => { error => "Failed to decline offer: $e" }, status => 400);
+                return $self->render(json => { error => "Failed to decline offer. Please try again or contact support." }, status => 400);
             }
         }
     }
@@ -168,11 +170,25 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
             my $location = $entry->location($db);
             my $student = $entry->family_member($db) || $entry->student($db);
 
+            # Pre-compute flags so template doesn't need $db or DateTime parsing
+            my $offer_active = $entry->offer_is_active($db);
+            my $expires_display;
+            if ($entry->expires_at) {
+                try {
+                    my $dt = DateTime::Format::Pg->parse_timestamptz($entry->expires_at);
+                    $expires_display = $dt->strftime('%B %d, %Y at %I:%M %p');
+                } catch ($e) {
+                    $expires_display = $entry->expires_at;
+                }
+            }
+
             push @entries_with_data, {
-                entry => $entry,
-                session => $session,
-                location => $location,
-                student => $student
+                entry           => $entry,
+                session         => $session,
+                location        => $location,
+                student         => $student,
+                offer_active    => $offer_active,
+                expires_display => $expires_display,
             };
         }
 
