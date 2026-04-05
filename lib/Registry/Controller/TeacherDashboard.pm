@@ -5,6 +5,9 @@ use Object::Pad;
 use DateTime;
 
 class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
+    use Registry::DAO::Event;
+    use Registry::DAO::Enrollment;
+    use Registry::DAO::Attendance;
 
     method attendance {
         my $event_id = $self->param('event_id');

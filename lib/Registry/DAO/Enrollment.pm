@@ -82,27 +82,24 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     
     # Get all students enrolled for a specific event
     sub get_students_for_event($class, $db, $event_id, %opts) {
-        my $tenant = $opts{tenant} // 'public';
-        
-        my $results = $db->query(qq{
-            SELECT DISTINCT 
+        my $results = $db->query(q{
+            SELECT DISTINCT
                 fm.id as student_id,
                 fm.child_name,
                 fm.birth_date,
                 fm.grade,
-                u.name as family_name,
-                u.email as family_email
-            FROM registry.enrollments e
-            JOIN registry.sessions s ON e.session_id = s.id
-            JOIN registry.events ev ON ev.session_id = s.id
-            JOIN registry.family_members fm ON e.family_member_id = fm.id
-            JOIN registry.users u ON fm.family_id = u.id
-            WHERE ev.id = ? 
+                up.name as family_name,
+                up.email as family_email
+            FROM enrollments e
+            JOIN session_events se ON se.session_id = e.session_id
+            JOIN family_members fm ON e.family_member_id = fm.id
+            JOIN users u ON fm.family_id = u.id
+            LEFT JOIN user_profiles up ON up.user_id = u.id
+            WHERE se.event_id = ?
               AND e.status = 'active'
-              AND u.tenant = ?
             ORDER BY fm.child_name
-        }, $event_id, $tenant);
-        
+        }, $event_id);
+
         return $results->hashes->to_array;
     }
 

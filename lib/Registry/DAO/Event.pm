@@ -103,59 +103,54 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
     
     # Get events for a teacher on a specific date
     sub get_teacher_events_for_date($class, $db, $teacher_id, $date, %opts) {
-        my $tenant = $opts{tenant} // 'public';
-        
-        my $results = $db->query(qq{
-            SELECT 
+        my $results = $db->query(q{
+            SELECT
                 e.id,
-                e.metadata->>'title' as title,
-                e.metadata->>'start_time' as start_time,
-                e.metadata->>'end_time' as end_time,
+                e.time as start_time,
+                e.duration,
+                e.capacity,
                 l.name as location_name,
                 p.name as program_name,
-                COUNT(en.id) as enrolled_count,
-                e.metadata->>'capacity' as capacity
-            FROM registry.events e
-            JOIN registry.locations l ON e.location_id = l.id
-            JOIN registry.projects p ON e.project_id = p.id
-            LEFT JOIN registry.sessions s ON s.project_id = p.id
-            LEFT JOIN registry.enrollments en ON en.session_id = s.id AND en.status = 'active'
-            JOIN registry.session_teachers st ON st.teacher_id = ?
-            WHERE DATE(CAST(e.metadata->>'start_time' AS timestamp)) = ?
-            GROUP BY e.id, e.metadata, l.name, p.name
-            ORDER BY CAST(e.metadata->>'start_time' AS timestamp)
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON se.event_id = e.id
+            LEFT JOIN enrollments en ON en.session_id = se.session_id AND en.status = 'active'
+            WHERE e.teacher_id = ?
+              AND DATE(e.time) = ?
+            GROUP BY e.id, e.time, e.duration, e.capacity, l.name, p.name
+            ORDER BY e.time
         }, $teacher_id, $date);
-        
+
         return $results->hashes->to_array;
     }
-    
+
     # Get upcoming events for a teacher (next N days)
     sub get_teacher_upcoming_events($class, $db, $teacher_id, $days, %opts) {
-        my $tenant = $opts{tenant} // 'public';
         my $end_date = DateTime->today->add(days => $days)->ymd;
-        
-        my $results = $db->query(qq{
-            SELECT 
+
+        my $results = $db->query(q{
+            SELECT
                 e.id,
-                e.metadata->>'title' as title,
-                e.metadata->>'start_time' as start_time,
-                e.metadata->>'end_time' as end_time,
+                e.time as start_time,
+                e.duration,
+                e.capacity,
                 l.name as location_name,
                 p.name as program_name,
-                COUNT(en.id) as enrolled_count,
-                e.metadata->>'capacity' as capacity
-            FROM registry.events e
-            JOIN registry.locations l ON e.location_id = l.id
-            JOIN registry.projects p ON e.project_id = p.id
-            LEFT JOIN registry.sessions s ON s.project_id = p.id
-            LEFT JOIN registry.enrollments en ON en.session_id = s.id AND en.status = 'active'
-            JOIN registry.session_teachers st ON st.teacher_id = ?
-            WHERE DATE(CAST(e.metadata->>'start_time' AS timestamp)) > CURRENT_DATE
-              AND DATE(CAST(e.metadata->>'start_time' AS timestamp)) <= ?
-            GROUP BY e.id, e.metadata, l.name, p.name
-            ORDER BY CAST(e.metadata->>'start_time' AS timestamp)
+                COUNT(en.id) as enrolled_count
+            FROM events e
+            JOIN locations l ON e.location_id = l.id
+            JOIN projects p ON e.project_id = p.id
+            LEFT JOIN session_events se ON se.event_id = e.id
+            LEFT JOIN enrollments en ON en.session_id = se.session_id AND en.status = 'active'
+            WHERE e.teacher_id = ?
+              AND DATE(e.time) > CURRENT_DATE
+              AND DATE(e.time) <= ?
+            GROUP BY e.id, e.time, e.duration, e.capacity, l.name, p.name
+            ORDER BY e.time
         }, $teacher_id, $end_date);
-        
+
         return $results->hashes->to_array;
     }
     
