@@ -4,7 +4,10 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::SubmitDropRequest :isa(Registry::DAO::WorkflowStep) {
 
 
-    method process($db, $form_data, $run_data = {}) {
+    method process($db, $form_data) {
+        my $workflow = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
+        my $run_data = $run->data;
         my $user = $run_data->{user} or die "User required for drop request submission";
         my $enrollment_id = $run_data->{enrollment_id} or die "Enrollment ID required";
         my $reason = $run_data->{reason} or die "Reason required";
@@ -20,21 +23,18 @@ class Registry::DAO::WorkflowSteps::SubmitDropRequest :isa(Registry::DAO::Workfl
                 return { error => $result->{error} };
             }
 
-            # Store result data for completion page
-            my $completion_data = {
+            my $return = {
+                next_step       => 'complete',
                 success_message => $result->{message},
-                immediate_drop => $result->{immediate}
+                immediate_drop  => $result->{immediate},
             };
 
             # If there's a drop request (not immediate), store it for potential admin notification
             if ($result->{drop_request}) {
-                $completion_data->{drop_request} = $result->{drop_request};
+                $return->{drop_request} = $result->{drop_request};
             }
 
-            return {
-                next_step => 'complete',
-                data => $completion_data
-            };
+            return $return;
         }
         catch ($e) {
             return { error => "Failed to submit drop request: $e" };

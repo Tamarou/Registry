@@ -4,7 +4,10 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer :isa(Registry::DAO::WorkflowStep) {
 
 
-    method process($db, $form_data, $run_data = {}) {
+    method process($db, $form_data) {
+        my $workflow = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
+        my $run_data = $run->data;
         my $user = $run_data->{user} or die "User required for enrollment selection";
 
         # If enrollment_id is provided (e.g., from dashboard link), validate and use it
@@ -27,12 +30,10 @@ class Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer :isa(Registry::D
 
             # Store enrollment data for next steps
             return {
-                next_step => 'select-target-session',
-                data => {
-                    enrollment_id => $enrollment_id,
-                    enrollment => $enrollment,
-                    family_member => $family_member
-                }
+                next_step     => 'select-target-session',
+                enrollment_id => $enrollment_id,
+                enrollment    => $enrollment,
+                family_member => $family_member
             };
         }
 

@@ -4,7 +4,10 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::ReviewDropRequest :isa(Registry::DAO::WorkflowStep) {
 
 
-    method process($db, $form_data, $run_data = {}) {
+    method process($db, $form_data) {
+        my $workflow = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
+        my $run_data = $run->data;
         # If user confirms, proceed to submission
         if ($form_data->{confirm}) {
             return {

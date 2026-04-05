@@ -4,7 +4,10 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::SelectTargetSession :isa(Registry::DAO::WorkflowStep) {
 
 
-    method process($db, $form_data, $run_data = {}) {
+    method process($db, $form_data) {
+        my $workflow = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
+        my $run_data = $run->data;
         my $enrollment_id = $run_data->{enrollment_id} or die "Enrollment ID required";
 
         # If target_session_id is provided, validate and proceed
@@ -21,11 +24,9 @@ class Registry::DAO::WorkflowSteps::SelectTargetSession :isa(Registry::DAO::Work
 
             # Store target session data for next steps
             return {
-                next_step => 'collect-reason',
-                data => {
-                    target_session_id => $target_session_id,
-                    target_session => $target_session
-                }
+                next_step         => 'collect-reason',
+                target_session_id => $target_session_id,
+                target_session    => $target_session
             };
         }
 

@@ -4,7 +4,10 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::SubmitTransferRequest :isa(Registry::DAO::WorkflowStep) {
 
 
-    method process($db, $form_data, $run_data = {}) {
+    method process($db, $form_data) {
+        my $workflow = $self->workflow($db);
+        my $run = $workflow->latest_run($db);
+        my $run_data = $run->data;
         my $user = $run_data->{user} or die "User required for transfer request submission";
         my $enrollment_id = $run_data->{enrollment_id} or die "Enrollment ID required";
         my $target_session_id = $run_data->{target_session_id} or die "Target session ID required";
@@ -26,11 +29,9 @@ class Registry::DAO::WorkflowSteps::SubmitTransferRequest :isa(Registry::DAO::Wo
             my $transfer_request = $result->{transfer_request};
 
             return {
-                next_step => 'complete',
-                data => {
-                    transfer_request => $transfer_request,
-                    success_message => 'Transfer request submitted successfully for admin approval'
-                }
+                next_step        => 'complete',
+                transfer_request => $transfer_request,
+                success_message  => 'Transfer request submitted successfully for admin approval'
             };
         }
         catch ($e) {
