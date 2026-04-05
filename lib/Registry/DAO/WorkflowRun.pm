@@ -43,8 +43,11 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     }
 
     method completed ($db) {
+        return 0 unless $latest_step_id;
+        my $latest = $self->latest_step($db) or return 0;
         my ($workflow) = $self->workflow($db);
-        $self->latest_step($db)->slug eq $workflow->last_step($db)->slug;
+        my $last = $workflow->last_step($db) or return 0;
+        $latest->slug eq $last->slug;
     }
 
     method latest_step ($db) {

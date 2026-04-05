@@ -501,8 +501,9 @@ class Registry :isa(Mojolicious) {
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
 
-        # Route handling for root path - always use default workflow landing page
-        $self->routes->get('/')->to('landing#root')->name('root_handler');
+        # Root route dispatches to the tenant-storefront workflow
+        $self->routes->get('/')->to('workflows#index', workflow => 'tenant-storefront')->name('root_handler');
+        $self->routes->post('/')->to('workflows#start_workflow', workflow => 'tenant-storefront');
 
         my $r = $self->routes;
 

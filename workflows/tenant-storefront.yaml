@@ -1,0 +1,9 @@
+name: Tenant Storefront
+slug: tenant-storefront
+description: Public-facing landing page and program listing for a tenant
+first_step: program-listing
+steps:
+  - slug: program-listing
+    description: Browse Available Programs
+    template: tenant-storefront/program-listing
+    class: Registry::DAO::WorkflowSteps::ProgramListing
