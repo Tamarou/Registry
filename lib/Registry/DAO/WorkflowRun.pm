@@ -75,7 +75,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     # run's JSONB data column to prevent transient metadata from polluting
     # the workflow state.
     my @TRANSIENT_KEYS = qw(
-        next_step errors data _validation_errors
+        next_step errors data _validation_errors stay
         retry_count retry_delay retry_exceeded should_retry
     );
 
@@ -95,9 +95,26 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
             return $step_result;
         }
 
+        # Handle stay: persist any domain data but do NOT advance the step
+        # pointer. Return the step result so the controller can detect stay.
+        my $wants_stay = $step_result->{stay};
+
         # Strip transient control-flow keys so only domain data is persisted.
         my %to_persist = %$step_result;
         delete @to_persist{@TRANSIENT_KEYS};
+
+        if ($wants_stay) {
+            # Merge data without advancing latest_step_id
+            if (%to_persist) {
+                my $result = $db->query(
+                    'UPDATE workflow_runs SET data = COALESCE(data, \'{}\'::jsonb) || ?::jsonb WHERE id = ? RETURNING data',
+                    to_json(\%to_persist), $id
+                )->expand->hash;
+                croak "WorkflowRun id=$id not found during stay" unless $result;
+                $data = $result->{data};
+            }
+            return { stay => 1 };
+        }
 
         # Atomic merge of step data + advance latest_step_id in a single query.
         # Avoids the race where a crash between two separate UPDATEs could leave

@@ -1,0 +1,3 @@
+% layout "default";
+<h1>Child Info</h1>
+<form method="POST" action="<%= $action %>"><button>Submit</button></form>

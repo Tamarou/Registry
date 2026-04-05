@@ -1,0 +1,3 @@
+% layout "default";
+<h1>Done</h1>
+<form method="POST" action="<%= $action %>"><button>Complete</button></form>

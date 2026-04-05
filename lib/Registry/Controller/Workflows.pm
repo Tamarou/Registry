@@ -63,11 +63,65 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     method index() {
         my $dao = $self->app->dao;
         my $workflow = $self->workflow();
+        my $workflow_slug = $self->param('workflow');
+
+        # Backwards compatibility: if a {workflow}/index template exists,
+        # use the old rendering path (no auto-run).
+        my $index_template = $workflow_slug . '/index';
+        if ($self->app->renderer->template_path({ template => $index_template, format => 'html', handler => 'ep' })) {
+            return $self->render(
+                template => $index_template,
+                action   => $self->url_for('workflow_start'),
+            );
+        }
+
+        # Auto-run path: find or create a run and render the first step
+        # directly with a live run ID, enabling callcc buttons and filter
+        # forms without a separate POST step.
+        my $run = $self->_find_or_create_run($workflow);
+        my $step = $run->latest_step($dao->db) || $workflow->first_step($dao->db);
+
+        return unless $step;
+
+        my $data_json = Mojo::JSON::encode_json($run->data || {});
+        my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
+        my $template_data = $step->prepare_template_data($dao->db, $run);
+        my $workflow_progress = $self->_get_workflow_progress($run, $step);
 
         $self->render(
-            template => $self->param('workflow') . '/index',
-            action   => $self->url_for('workflow_start')
+            template => $workflow_slug . '/' . $step->slug,
+            workflow => $workflow_slug,
+            step     => $step->slug,
+            status   => 200,
+            action   => $self->url_for('workflow_process_step',
+                workflow => $workflow_slug,
+                run      => $run->id,
+                step     => $step->slug),
+            run      => $run,
+            data_json => $data_json,
+            errors_json => $errors_json,
+            workflow_progress => $workflow_progress,
+            %$template_data,
         );
+    }
+
+    method _find_or_create_run ($workflow) {
+        my $dao = $self->app->dao;
+        my $session_key = "workflow_run_${\$workflow->slug}";
+
+        # Check session for an existing run ID
+        my $run_id = $self->session->{$session_key};
+        if ($run_id) {
+            my ($run) = $dao->find(WorkflowRun => { id => $run_id });
+            if ($run && !$run->completed($dao->db)) {
+                return $run;
+            }
+        }
+
+        # Create a new run and store in session
+        my $run = $self->new_run($workflow);
+        $self->session->{$session_key} = $run->id;
+        return $run;
     }
 
     method start_workflow() {
@@ -263,7 +317,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         }
 
         my $result = $run->process( $dao->db, $step, $data );
-        
+
         # Check for validation errors from workflow steps.
         # Steps may use either '_validation_errors' or 'errors' key.
         my $validation_errors = $result->{_validation_errors} || $result->{errors};
@@ -271,6 +325,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             # Store errors in flash for retrieval on redirect
             $self->flash(validation_errors => $validation_errors);
 
+            return $self->redirect_to($self->url_for);
+        }
+
+        # Check for stay -- step wants to remain on the current page
+        if ($result->{stay}) {
             return $self->redirect_to($self->url_for);
         }
 
@@ -283,13 +342,16 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
         # if this is a continuation, redirect to the continuation
         if ( $run->has_continuation ) {
-            my ($run)      = $run->continuation( $dao->db );
-            my ($workflow) = $run->workflow( $dao->db );
-            my ($step)     = $run->next_step( $dao->db );
-            my $url        = $self->url_for(
+            my ($parent_run)  = $run->continuation( $dao->db );
+            my ($workflow)    = $parent_run->workflow( $dao->db );
+            # Use next_step if parent has one, otherwise re-render latest step
+            # (handles single-step parent workflows like the tenant storefront)
+            my ($step)        = $parent_run->next_step( $dao->db )
+                             || $parent_run->latest_step( $dao->db );
+            my $url           = $self->url_for(
                 'workflow_step',
                 workflow => $workflow->slug,
-                run      => $run->id,
+                run      => $parent_run->id,
                 step     => $step->slug,
             );
             return $self->redirect_to($url);
