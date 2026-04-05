@@ -1,0 +1,21 @@
+% layout 'default';
+% title 'Select Enrollment to Transfer';
+
+<h1>Select Enrollment to Transfer</h1>
+
+<% if ($run && $run->data->{enrollment_id}) { %>
+    <p>Enrollment selected.</p>
+    <form method="POST" action="<%= $action %>">
+        <button type="submit">Continue</button>
+    </form>
+<% } else { %>
+    <form method="POST" action="<%= $action %>">
+        <div>
+            <label for="enrollment_id">Select Enrollment</label>
+            <select id="enrollment_id" name="enrollment_id" required>
+                <option value="">-- Select an enrollment --</option>
+            </select>
+        </div>
+        <button type="submit">Continue</button>
+    </form>
+<% } %>

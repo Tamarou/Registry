@@ -1,0 +1,14 @@
+% layout 'default';
+% title 'Submitting Transfer Request';
+
+<h1>Submitting Transfer Request</h1>
+
+<p>Please wait while your request is submitted.</p>
+
+<form method="POST" action="<%= $action %>" id="auto-submit-form">
+    <button type="submit">Submit</button>
+</form>
+
+<script>
+document.getElementById('auto-submit-form').submit();
+</script>

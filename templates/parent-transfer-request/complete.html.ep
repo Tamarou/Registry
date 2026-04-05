@@ -1,0 +1,10 @@
+% layout 'default';
+% title 'Transfer Request Submitted';
+
+<h1>Transfer Request Submitted</h1>
+
+<p>Your transfer request has been submitted successfully. You will be notified once it has been reviewed.</p>
+
+<form method="POST" action="<%= $action %>">
+    <button type="submit">Done</button>
+</form>

@@ -1,0 +1,26 @@
+% layout 'default';
+% title 'Admin Decision';
+
+<h1>Admin Decision</h1>
+
+<form method="POST" action="<%= $action %>">
+    <div>
+        <label>
+            <input type="radio" name="action" value="approve" required>
+            Approve
+        </label>
+        <label>
+            <input type="radio" name="action" value="deny">
+            Deny
+        </label>
+    </div>
+    <div>
+        <label for="admin_notes">Admin Notes</label>
+        <textarea id="admin_notes" name="admin_notes" rows="4"></textarea>
+    </div>
+    <div>
+        <label for="refund_amount">Refund Amount</label>
+        <input type="number" id="refund_amount" name="refund_amount" min="0" step="0.01">
+    </div>
+    <button type="submit">Submit Decision</button>
+</form>

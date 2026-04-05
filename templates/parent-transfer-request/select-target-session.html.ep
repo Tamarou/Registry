@@ -1,0 +1,14 @@
+% layout 'default';
+% title 'Select Target Session';
+
+<h1>Select Target Session</h1>
+
+<form method="POST" action="<%= $action %>">
+    <div>
+        <label for="target_session_id">Select Session</label>
+        <select id="target_session_id" name="target_session_id" required>
+            <option value="">-- Select a session --</option>
+        </select>
+    </div>
+    <button type="submit">Continue</button>
+</form>

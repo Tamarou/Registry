@@ -1,0 +1,17 @@
+% layout 'default';
+% title 'Review Drop Request';
+
+<h1>Review Drop Request</h1>
+
+<% if ($template_data) { %>
+<dl>
+    <% for my $key (sort keys %$template_data) { %>
+    <dt><%= $key %></dt>
+    <dd><%= $template_data->{$key} %></dd>
+    <% } %>
+</dl>
+<% } %>
+
+<form method="POST" action="<%= $action %>">
+    <button type="submit">Continue</button>
+</form>

@@ -1,0 +1,12 @@
+% layout 'default';
+% title 'Reason for Transfer';
+
+<h1>Reason for Transfer</h1>
+
+<form method="POST" action="<%= $action %>">
+    <div>
+        <label for="reason">Reason</label>
+        <textarea id="reason" name="reason" rows="4" required></textarea>
+    </div>
+    <button type="submit">Continue</button>
+</form>

@@ -1,0 +1,18 @@
+% layout 'default';
+% title 'Review Transfer Request';
+
+<h1>Review Transfer Request</h1>
+
+<dl>
+    <dt>Child Name</dt>
+    <dd><%= $run ? $run->data->{child_name} : '' %></dd>
+    <dt>Reason</dt>
+    <dd><%= $run ? $run->data->{reason} : '' %></dd>
+    <dt>Target Session</dt>
+    <dd><%= $run ? $run->data->{target_session_id} : '' %></dd>
+</dl>
+
+<form method="POST" action="<%= $action %>">
+    <input type="hidden" name="confirm" value="1">
+    <button type="submit">Submit Request</button>
+</form>

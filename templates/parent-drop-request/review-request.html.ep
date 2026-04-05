@@ -1,0 +1,18 @@
+% layout 'default';
+% title 'Review Drop Request';
+
+<h1>Review Drop Request</h1>
+
+<dl>
+    <dt>Child Name</dt>
+    <dd><%= $run ? $run->data->{child_name} : '' %></dd>
+    <dt>Reason</dt>
+    <dd><%= $run ? $run->data->{reason} : '' %></dd>
+    <dt>Refund Requested</dt>
+    <dd><%= ($run && $run->data->{refund_requested}) ? 'Yes' : 'No' %></dd>
+</dl>
+
+<form method="POST" action="<%= $action %>">
+    <input type="hidden" name="confirm" value="1">
+    <button type="submit">Submit Request</button>
+</form>

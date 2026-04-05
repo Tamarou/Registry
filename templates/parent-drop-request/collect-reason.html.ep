@@ -1,0 +1,18 @@
+% layout 'default';
+% title 'Reason for Drop Request';
+
+<h1>Reason for Drop Request</h1>
+
+<form method="POST" action="<%= $action %>">
+    <div>
+        <label for="reason">Reason</label>
+        <textarea id="reason" name="reason" rows="4" required></textarea>
+    </div>
+    <div>
+        <label>
+            <input type="checkbox" name="refund_requested" value="1">
+            Request a refund
+        </label>
+    </div>
+    <button type="submit">Continue</button>
+</form>
