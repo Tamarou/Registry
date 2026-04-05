@@ -22,15 +22,11 @@ class Registry::DAO::WorkflowSteps::AdminTransferDecision :isa(Registry::DAO::Wo
             };
         }
 
-        # Decision collected successfully
+        # Decision collected successfully -- domain data at top level for persistence
         return {
-            status => 'success',
-            template_data => {
-                action => $action,
-                admin_notes => $admin_notes,
-                transfer_request_id => $data->{transfer_request_id}
-            },
-            next_step => 'process-decision'
+            next_step   => 'process-decision',
+            action      => $action,
+            admin_notes => $admin_notes,
         };
     }
 }

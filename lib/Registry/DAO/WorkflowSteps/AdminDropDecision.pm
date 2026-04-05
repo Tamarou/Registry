@@ -37,16 +37,12 @@ class Registry::DAO::WorkflowSteps::AdminDropDecision :isa(Registry::DAO::Workfl
             }
         }
 
-        # Decision collected successfully
+        # Decision collected successfully -- domain data at top level for persistence
         return {
-            status => 'success',
-            template_data => {
-                action => $action,
-                admin_notes => $admin_notes,
-                refund_amount => $refund_amount,
-                drop_request_id => $data->{drop_request_id}
-            },
-            next_step => 'process-decision'
+            next_step       => 'process-decision',
+            action          => $action,
+            admin_notes     => $admin_notes,
+            refund_amount   => $refund_amount,
         };
     }
 }

@@ -3,11 +3,14 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ReviewTransferRequest :isa(Registry::DAO::WorkflowStep) {
 
+    use Registry::DAO::Enrollment;
+    use Registry::DAO::Session;
 
     method process($db, $form_data) {
         my $workflow = $self->workflow($db);
         my $run = $workflow->latest_run($db);
         my $run_data = $run->data;
+
         # If user confirms, proceed to submission
         if ($form_data->{confirm}) {
             return {
@@ -15,13 +18,23 @@ class Registry::DAO::WorkflowSteps::ReviewTransferRequest :isa(Registry::DAO::Wo
             };
         }
 
+        # Load objects from stored IDs (not stored as objects)
+        my $enrollment = $run_data->{enrollment_id}
+            ? Registry::DAO::Enrollment->find($db, { id => $run_data->{enrollment_id} })
+            : undef;
+
+        my $target_session = $run_data->{target_session_id}
+            ? Registry::DAO::Session->find($db, { id => $run_data->{target_session_id} })
+            : undef;
+
         # Show review page with all collected data
         return {
             template_data => {
-                enrollment => $run_data->{enrollment},
-                target_session => $run_data->{target_session},
-                family_member => $run_data->{family_member},
-                reason => $run_data->{reason}
+                enrollment          => $enrollment,
+                target_session      => $target_session,
+                target_session_name => $run_data->{target_session_name},
+                child_name          => $run_data->{child_name},
+                reason              => $run_data->{reason},
             }
         };
     }
