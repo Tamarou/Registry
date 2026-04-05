@@ -13,7 +13,7 @@ class Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer :isa(Registry::D
         # If enrollment_id is provided (e.g., from dashboard link), validate and use it
         if (my $enrollment_id = $form_data->{enrollment_id} || $run_data->{enrollment_id}) {
             my $enrollment = Registry::DAO::Enrollment->find($db, { id => $enrollment_id });
-            return { error => 'Enrollment not found' } unless $enrollment;
+            return { errors => ['Enrollment not found'] } unless $enrollment;
 
             # Verify parent owns this enrollment via family member
             my $family_member = $db->select('family_members', '*', {
@@ -21,19 +21,19 @@ class Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer :isa(Registry::D
                 family_id => $user->{id}
             })->hash;
 
-            return { error => 'You do not have permission to transfer this enrollment' } unless $family_member;
+            return { errors => ['You do not have permission to transfer this enrollment'] } unless $family_member;
 
             # Check if transfer is allowed
             unless ($enrollment->can_transfer($db, $user)) {
-                return { error => 'Transfer requests are not allowed for this enrollment' };
+                return { errors => ['Transfer requests are not allowed for this enrollment'] };
             }
 
-            # Store enrollment data for next steps
+            # Store enrollment data for next steps (plain data, not objects)
             return {
                 next_step     => 'select-target-session',
                 enrollment_id => $enrollment_id,
-                enrollment    => $enrollment,
-                family_member => $family_member
+                session_id    => $enrollment->session_id,
+                child_name    => $family_member->{child_name},
             };
         }
 

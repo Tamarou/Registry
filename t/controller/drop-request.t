@@ -109,7 +109,7 @@ sub create_drop_run {
     # Seed user data in the run
     $run->update_data($dao->db, {
         user_id => $parent->id,
-        user    => { id => $parent->id, name => $parent->name },
+        user    => { id => $parent->id, name => $parent->name, role => 'parent' },
     });
 
     # Process select-enrollment with enrollment_id

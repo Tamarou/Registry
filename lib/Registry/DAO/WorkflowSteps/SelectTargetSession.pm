@@ -14,19 +14,19 @@ class Registry::DAO::WorkflowSteps::SelectTargetSession :isa(Registry::DAO::Work
         if (my $target_session_id = $form_data->{target_session_id}) {
             # Validate target session
             my $target_session = Registry::DAO::Session->find($db, { id => $target_session_id });
-            return { error => 'Target session not found' } unless $target_session;
+            return { errors => ['Target session not found'] } unless $target_session;
 
             # Check if target session has capacity
             my $enrollment_count = Registry::DAO::Enrollment->count_for_session($db, $target_session_id, ['active', 'pending']);
             if ($target_session->capacity && $enrollment_count >= $target_session->capacity) {
-                return { error => 'Target session is full' };
+                return { errors => ['Target session is full'] };
             }
 
-            # Store target session data for next steps
+            # Store target session data for next steps (plain data, not objects)
             return {
-                next_step         => 'collect-reason',
-                target_session_id => $target_session_id,
-                target_session    => $target_session
+                next_step           => 'collect-reason',
+                target_session_id   => $target_session_id,
+                target_session_name => $target_session->name,
             };
         }
 
