@@ -57,26 +57,23 @@ class Registry::Controller :isa(Mojolicious::Controller) {
             unless ( $template isa Registry::DAO::Template ) {
                 my $name = $template;
 
-                # Check if a file-based template exists first
-                my $renderer = $self->app->renderer;
-                my $file_template_exists = 0;
-                for my $template_dir (@{$renderer->paths}) {
-                    my $potential_path = File::Spec->catfile($template_dir, "$name.html.ep");
-                    if (-f $potential_path) {
-                        $file_template_exists = 1;
-                        last;
+                # DB-first: check for tenant-customized template
+                my $db_templates = $self->stash('_db_templates');
+                if ($db_templates && !exists $db_templates->{$name}) {
+                    # Lazy load: query DB on first access, cache in stash
+                    if ( $template = $self->$find_template($name) ) {
+                        $db_templates->{$name} = $template->content;
+                    } else {
+                        $db_templates->{$name} = undef; # Cache the miss
                     }
                 }
 
-                # If file template exists, prefer it over database template to preserve layout functionality
-                if ($file_template_exists) {
-                    return $self->SUPER::render( template => $name, %args );
+                if ($db_templates && $db_templates->{$name}) {
+                    return $self->SUPER::render( inline => $db_templates->{$name}, %args );
                 }
 
-                # Only use database template if no file template exists
-                unless ( $template = $self->$find_template($name) ) {
-                    return $self->SUPER::render( template => $name, %args );
-                }
+                # Fall back to filesystem template (platform default)
+                return $self->SUPER::render( template => $name, %args );
             }
             return $self->SUPER::render( inline => $template->content, %args );
         }

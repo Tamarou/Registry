@@ -356,6 +356,8 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # DB-first template resolution handled in Controller::render.
+
         # CSRF token validation for all state-changing requests.
         # Webhook endpoints use their own HMAC-based auth and are excluded.
         # Accepts token from the csrf_token form field or the X-CSRF-Token header.
@@ -420,6 +422,10 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Database-first template resolution: check the tenant's schema for a
+        # customized template before falling back to the filesystem default.
+        # This is the mechanism that enables the workflow marketplace -- tenants
+        # can customize templates without modifying platform files.
         # Inject the CSRF hidden input into every HTML form in the rendered response.
         # This covers all templates without requiring each one to be updated individually.
         # The token value comes from the session-bound csrf_token helper.
