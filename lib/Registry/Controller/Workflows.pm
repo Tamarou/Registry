@@ -328,9 +328,35 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             return $self->redirect_to($self->url_for);
         }
 
-        # Check for stay -- step wants to remain on the current page
+        # Check for stay -- step wants to remain on the current page.
+        # Render directly instead of redirecting so template_data from
+        # the step result reaches the template (redirect loses POST context).
         if ($result->{stay}) {
-            return $self->redirect_to($self->url_for);
+            my $template_data = $result->{template_data} || {};
+            my $workflow_slug = $self->param('workflow');
+            my $step_slug = $self->param('step');
+
+            my $data_json = Mojo::JSON::encode_json($run->data || {});
+            my $errors_json = Mojo::JSON::encode_json(
+                $result->{errors} || $self->flash('validation_errors') || []
+            );
+            my $workflow_progress = $self->_get_workflow_progress($run, $step);
+
+            return $self->render(
+                template          => $workflow_slug . '/' . $step_slug,
+                workflow          => $workflow_slug,
+                step              => $step_slug,
+                status            => 200,
+                action            => $self->url_for('workflow_process_step',
+                    workflow => $workflow_slug,
+                    run      => $self->param('run'),
+                    step     => $step_slug),
+                run               => $run,
+                data_json         => $data_json,
+                errors_json       => $errors_json,
+                workflow_progress => $workflow_progress,
+                %$template_data,
+            );
         }
 
         # if we're still not done, redirect to the next step

@@ -114,17 +114,18 @@ subtest 'stay: POST with stay result redirects back to same step' => sub {
         medical_info => {}, emergency_contact => { name => 'P', phone => '555' },
     });
 
-    # POST add_child action -- should stay on select-children, not advance
+    # POST add_child action -- should stay on select-children, not advance.
+    # Stay now renders directly (200) instead of redirecting (302).
     my $step_url = workflow_process_step_url($reg_workflow, $reg_run, $sel_step);
-    my $redirect = $t->post_ok($step_url => form => {
+    $t->post_ok($step_url => form => {
         action         => 'add_child',
         new_child_name => 'Another Kid',
         new_birth_date => '2019-06-15',
         new_emergency_name  => 'Parent',
         new_emergency_phone => '555-0000',
-    })->status_is(302)->tx->res->headers->location;
+    })->status_is(200);
 
-    like $redirect, qr/select-children$/, 'Stay: redirected back to select-children (not camper-info)';
+    $t->content_like(qr/children/i, 'Stay: renders select-children page (not camper-info)');
 
     # Verify the workflow is NOT completed
     ($reg_run) = $dao->find(WorkflowRun => { id => $reg_run->id });
