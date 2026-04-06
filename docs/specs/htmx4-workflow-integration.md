@@ -1,14 +1,18 @@
-# HTMX 4 Workflow Engine Integration Specification
+# HTMX 2.0 Workflow Engine Integration Specification
 
 ## Overview
 
 Upgrade the workflow engine to support HTMX-enhanced partial rendering
 with progressive enhancement. Every workflow interaction works as plain
-HTML (forms, links, redirects) without JavaScript. HTMX 4 enhances the
-experience by intercepting form submissions and swapping content
+HTML (forms, links, redirects) without JavaScript. HTMX 2.0 enhances
+the experience by intercepting form submissions and swapping content
 fragments without full page reloads. The server detects HTMX requests
 via the `HX-Request` header and returns fragments (200) instead of
 redirects (302).
+
+**Target HTMX version:** 2.0.x (latest stable). A future spec will
+cover the upgrade to HTMX 4 when it ships, including any attribute
+renames and the local plugin fork needed to support it.
 
 ## Architectural Principles
 
@@ -22,6 +26,11 @@ redirects (302).
    framework is making the request. Tenants can replace HTMX in their
    layout templates via the template editor.
 
+   **Vertical slice:** The template-editor workflow is the first
+   target. It already uses stay semantics for every action (list, edit,
+   save, revert) and never advances steps. This makes it the simplest
+   possible HTMX upgrade and proves the pattern before expanding.
+
 3. **Same template, two modes.** A single template file serves both full
    page (with layout) and fragment (without layout) responses. No
    separate partial templates needed for v1.
@@ -32,21 +41,13 @@ redirects (302).
 
 ## Components
 
-### 1. Local Fork of Mojolicious::Plugin::HTMX
+### 1. Register Mojolicious::Plugin::HTMX (CPAN)
 
-**Location:** `lib/Mojolicious/Plugin/HTMX.pm`
+**Dependency:** Already in `cpanfile` but not registered in `Registry.pm`.
 
-Fork the existing CPAN plugin into the project's `lib/` directory.
-Update to bundle HTMX 4 and adapt to HTMX 4's API changes:
+Register the existing CPAN plugin. It bundles HTMX 2.0.x and provides
+all the helpers we need out of the box:
 
-- Update bundled HTMX JS asset to 4.x
-- Update header detection for any HTMX 4 header renames
-  (`HX-Request` stays the same, but `HX-Trigger` header format changed)
-- Update response helper methods for removed/renamed headers
-  (`HX-Trigger-After-Swap` removed, use `HX-Trigger` instead)
-- Ensure `app->htmx->asset` serves the HTMX 4 script
-
-The plugin provides:
 - `$c->is_htmx_request` -- detect HTMX requests
 - `$c->htmx->req->target` -- which element is the swap target
 - `$c->htmx->res->push_url($url)` -- update browser URL
@@ -54,6 +55,9 @@ The plugin provides:
 - `$c->htmx->res->reswap($style)` -- override swap style
 - `$c->htmx->res->trigger(@events)` -- fire client events
 - `%= app->htmx->asset` -- template helper to load HTMX script
+
+No fork needed for 2.0.x. A future HTMX 4 upgrade may require a local
+fork if the upstream plugin doesn't update in time.
 
 ### 2. Workflow Controller Changes
 
@@ -236,55 +240,53 @@ For step-advance forms (where the URL should change):
 </form>
 ```
 
-### 5. HTMX 4 Attribute Migration
+### 5. HTMX Version Standardization
 
-Update existing HTMX attributes in all templates:
+The codebase currently loads three different HTMX versions:
+- `workflow.html.ep`: 1.9.10
+- `teacher.html.ep`: 1.8.4
+- `test-classless-css.html.ep`: 1.9.9
 
-| HTMX 1.x/2.x | HTMX 4 | Notes |
-|---|---|---|
-| `hx-disable` | `hx-ignore` | Skip HTMX processing |
-| `hx-disabled-elt` | `hx-disable` | Disable during request |
-| `hx-vals` | `hx-vals` | Unchanged |
-| `hx-confirm` | `hx-confirm` | Unchanged |
-| `hx-swap="outerHTML"` | `hx-swap="outerHTML"` | Unchanged |
-| `hx-trigger="load"` | `hx-trigger="load"` | Unchanged |
-| `htmx-indicator` CSS | `htmx-indicator` CSS | Unchanged |
+Replace all CDN script tags with the plugin's asset helper, which
+serves a consistent 2.0.x version. No attribute migration is needed
+from 1.9.x to 2.0.x for the attributes we currently use (hx-get,
+hx-post, hx-target, hx-swap, hx-trigger, hx-vals, hx-confirm,
+hx-include).
 
-Key behavioral change: HTMX 4 swaps ALL HTTP responses by default
-including 4xx/5xx. We need to configure per-element or globally:
-```javascript
-htmx.config.noSwap = [204, 304, '4xx', '5xx'];
-```
-Or use the new `hx-status` attribute for fine-grained control.
+**HTMX 2.0 behavioral note:** HTMX 2.0 does NOT swap non-2xx
+responses by default (unlike the planned HTMX 4 behavior). Validation
+errors should use status 200 with error content in the fragment, not
+4xx status codes. This matches our current approach.
 
 ### 6. App Startup Changes
 
 **File:** `lib/Registry.pm`
 
-Register the local HTMX plugin:
+Register the CPAN HTMX plugin:
 ```perl
 $self->plugin('Mojolicious::Plugin::HTMX');
 ```
 
-Add global HTMX config via a small inline script in the default layout
-or via the plugin's configuration:
-```html
-<script>
-htmx.config.noSwap = ['4xx', '5xx'];
-</script>
-```
+No additional HTMX configuration needed for 2.0.x. The default
+behavior (only swap 2xx responses) is correct for our use case.
 
 ## Error Handling
 
-- **HTMX request with server error:** Return a fragment with the error
-  message (not a full error page). HTMX 4 swaps error responses by
-  default, so the user sees the error in the content area. With the
-  `noSwap` config for 5xx, the content area stays unchanged and the
-  error is suppressed (or handled via `htmx:error` event).
+- **Validation errors:** Return 200 with error messages in the fragment.
+  HTMX 2.0 only swaps 2xx responses by default, so using 200 for
+  validation errors ensures they render. Templates must check both stash
+  and flash for errors (stash for HTMX fragments, flash for redirects).
 
-- **HTMX request with CSRF failure:** Return 403 with a fragment that
-  says "Session expired. Please refresh the page." The noSwap config
-  prevents swapping, but we should handle this gracefully.
+- **HTMX request with server error:** HTMX 2.0 does not swap non-2xx
+  responses. The `htmx:responseError` event fires, which can be handled
+  via a global listener to show a generic error message.
+
+- **CSRF failure:** The existing `htmx:configRequest` event listener in
+  the workflow layout injects `X-CSRF-Token` for all HTMX requests.
+  This must be preserved when switching to `%= app->htmx->asset`. If
+  CSRF fails, the 403 is not swapped (HTMX 2.0 default), so the page
+  stays unchanged. A global `htmx:responseError` handler should show
+  "Session expired. Please refresh the page."
 
 - **No JS fallback for lazy-loaded sections:** Any `hx-trigger="load"`
   section should have a `<noscript>` fallback or the data should be
@@ -294,31 +296,39 @@ htmx.config.noSwap = ['4xx', '5xx'];
 
 ## Migration Path
 
-### Phase 1: Foundation
-1. Fork `Mojolicious::Plugin::HTMX` into `lib/`
-2. Update bundled HTMX to version 4
-3. Register plugin in `Registry.pm`
-4. Update all layout templates to use `%= app->htmx->asset`
-5. Remove per-template HTMX CDN script tags
-6. Add `noSwap` config for error responses
-7. Verify existing HTMX usage still works (subdomain validation,
-   admin dashboard lazy loading)
+### Phase 1: Vertical Slice (template-editor)
+1. Register `Mojolicious::Plugin::HTMX` in `Registry.pm`
+2. Update all layout templates to use `%= app->htmx->asset`
+3. Remove per-template HTMX CDN script tags (standardize on 2.0.x)
+4. Preserve existing CSRF `htmx:configRequest` listener in layouts
+5. Verify existing HTMX usage still works (regression tests for
+   subdomain validation, admin dashboard lazy loading, domain
+   verification, drop request processing, pricing model forms)
+6. Add `is_htmx_request` check to workflow controller stay path
+7. Add `hx-post` + `hx-target` to template-editor forms
+8. Add `#workflow-content` swap target to workflow layout
+9. Test: template-editor works with and without JS
 
-### Phase 2: Workflow Engine
-1. Add `is_htmx_request` checks to `process_workflow_run_step`
-2. Fragment rendering for step advance, stay, completion, continuation
+### Phase 2: Workflow Step Advance
+1. Add `is_htmx_request` checks for step advance (non-stay) path
+2. Fragment rendering for advance, completion, continuation
 3. URL push via `htmx->res->push_url` on step changes
-4. Add `#workflow-content` swap target to workflow layout
-5. Update workflow step templates with `hx-post` + `hx-target`
+4. Server always sets `HX-Push-URL` header explicitly (advance=URL,
+   stay=false) — no client-side `hx-push-url` attributes needed
+5. Add `hx-post` progressive enhancement to registration workflow forms
+6. Test: registration workflow works with and without JS
 
-### Phase 3: Template Migration
-1. Update existing HTMX attributes for HTMX 4 compatibility
-2. Add `hx-post` progressive enhancement to workflow form templates
-3. Ensure all forms have working `method="POST" action="..."` fallbacks
-4. Test with JS disabled to verify progressive enhancement
+### Phase 3: Remaining Workflows
+1. Add `hx-post` progressive enhancement to remaining workflow forms
+2. Ensure all forms have working `method="POST" action="..."` fallbacks
+3. Test with JS disabled to verify progressive enhancement
 
 ### Phase 4: Admin Dashboard Migration
 (Separate spec -- depends on this work being complete)
+
+### Future: HTMX 4 Upgrade
+(Separate spec -- fork plugin, update attributes, handle behavioral
+changes like default swap-on-error)
 
 ## Testing Plan
 
@@ -354,6 +364,22 @@ htmx.config.noSwap = ['4xx', '5xx'];
    - Complete child workflow with HX-Request: true
    - Verify parent workflow step rendered as fragment
 
+### Regression Tests for Existing HTMX
+
+**File:** `t/controller/htmx-regression.t`
+
+Verify existing HTMX usage still works after version standardization:
+
+1. **Admin dashboard lazy loading** -- `hx-trigger="load"` sections
+   return fragments (no layout wrapper)
+2. **Subdomain validation** -- `hx-trigger="keyup changed delay:500ms"`
+   returns validation result
+3. **Domain verification** -- `hx-post` with `hx-swap="outerHTML"`
+4. **Drop request processing** -- `hx-post` with `hx-vals` and
+   `hx-confirm`
+5. **Pricing model dynamic forms** -- `hx-trigger="change"` returns
+   form sections
+
 ### Playwright Browser Tests
 
 **File:** `t/playwright/htmx-progressive-enhancement.spec.js`
@@ -382,7 +408,7 @@ htmx.config.noSwap = ['4xx', '5xx'];
 
 ## Dependencies
 
-- Local fork of `Mojolicious::Plugin::HTMX` with HTMX 4
+- `Mojolicious::Plugin::HTMX` from CPAN (already in cpanfile)
 - Existing workflow engine with stay semantics
 - Existing template infrastructure (DB-first rendering, layouts)
 
@@ -393,10 +419,16 @@ htmx.config.noSwap = ['4xx', '5xx'];
   any client framework. The server-side behavior is unchanged -- it
   checks `HX-Request` and falls back to plain HTML.
 
-- HTMX 4 uses `fetch()` instead of `XMLHttpRequest`. This is
-  transparent to the server but may affect client-side error handling
-  in custom JavaScript.
+- DB-first template rendering and HTMX fragment rendering compose
+  naturally. DB templates render via `inline =>` in Controller::render,
+  and `layout => undef` works the same for both DB and filesystem
+  templates. No special handling needed.
 
-- The `innerMorph` swap style in HTMX 4 could be useful for preserving
-  form state during re-renders (e.g., keeping cursor position in the
-  template editor textarea). This is a future enhancement.
+- Templates that use `% extends 'layouts/workflow'` override the
+  controller's layout setting. For HTMX fragments, the controller must
+  clear the `extends` directive. The simplest approach: set a stash
+  flag (`_htmx_fragment => 1`) that the layout template checks, or
+  handle this in the Controller::render override.
+
+- HTMX 4 features like `innerMorph` swap style (preserving form state
+  during re-renders) are future enhancements for the HTMX 4 upgrade.
