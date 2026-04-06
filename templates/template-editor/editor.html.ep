@@ -1,6 +1,6 @@
 % layout 'default';
 % title 'Template Editor';
-% my $view = stash('view') || 'list';
+% my $view = stash('view') // 'list';
 % my $editing_template = stash('editing_template');
 % my $flash = stash('flash');
 
@@ -16,10 +16,10 @@
       </tr>
     </thead>
     <tbody>
-      % for my $tmpl (@{$templates || []}) {
+      % for my $tmpl (@{$templates // []}) {
         <tr>
           <td><%= $tmpl->name %></td>
-          <td><%= $tmpl->updated_at || $tmpl->created_at || '' %></td>
+          <td><%= $tmpl->updated_at // $tmpl->created_at // '' %></td>
           <td>
             <form method="POST" action="<%= $action %>">
               <input type="hidden" name="action" value="edit">
