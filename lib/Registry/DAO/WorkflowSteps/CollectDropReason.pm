@@ -28,8 +28,8 @@ class Registry::DAO::WorkflowSteps::CollectDropReason :isa(Registry::DAO::Workfl
         # Show form to collect reason and refund preference
         return {
             template_data => {
-                enrollment => $run_data->{enrollment},
-                family_member => $run_data->{family_member}
+                enrollment_id => $run_data->{enrollment_id},
+                child_name    => $run_data->{child_name},
             }
         };
     }

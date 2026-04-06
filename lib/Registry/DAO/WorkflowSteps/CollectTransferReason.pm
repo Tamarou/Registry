@@ -24,8 +24,10 @@ class Registry::DAO::WorkflowSteps::CollectTransferReason :isa(Registry::DAO::Wo
         # Show form to collect reason
         return {
             template_data => {
-                enrollment => $run_data->{enrollment},
-                target_session => $run_data->{target_session}
+                enrollment_id       => $run_data->{enrollment_id},
+                child_name          => $run_data->{child_name},
+                target_session_id   => $run_data->{target_session_id},
+                target_session_name => $run_data->{target_session_name},
             }
         };
     }

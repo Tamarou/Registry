@@ -160,10 +160,10 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $status_list = join(',', map { "'$_'" } @$statuses);
+        my $placeholders = join(',', ('?') x @$statuses);
         my $result = $db->query(
-            "SELECT COUNT(*) FROM enrollments WHERE session_id = ? AND status IN ($status_list)",
-            $session_id
+            "SELECT COUNT(*) FROM enrollments WHERE session_id = ? AND status IN ($placeholders)",
+            $session_id, @$statuses
         );
         return $result->array->[0] || 0;
     }

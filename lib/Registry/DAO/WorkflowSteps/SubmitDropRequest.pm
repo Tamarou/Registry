@@ -8,19 +8,19 @@ class Registry::DAO::WorkflowSteps::SubmitDropRequest :isa(Registry::DAO::Workfl
         my $workflow = $self->workflow($db);
         my $run = $workflow->latest_run($db);
         my $run_data = $run->data;
-        my $user = $run_data->{user} or die "User required for drop request submission";
-        my $enrollment_id = $run_data->{enrollment_id} or die "Enrollment ID required";
-        my $reason = $run_data->{reason} or die "Reason required";
-        my $refund_requested = $run_data->{refund_requested} // 0;
 
         try {
-            # Use the DAO method we created earlier to submit the drop request
+            my $user = $run_data->{user} or die "User required for drop request submission";
+            my $enrollment_id = $run_data->{enrollment_id} or die "Enrollment ID required";
+            my $reason = $run_data->{reason} or die "Reason required";
+            my $refund_requested = $run_data->{refund_requested} // 0;
+
             my $result = Registry::DAO::DropRequest->request_for_enrollment(
                 $db, $enrollment_id, $user, $reason, $refund_requested
             );
 
             if ($result->{error}) {
-                return { error => $result->{error} };
+                return { errors => [$result->{error}] };
             }
 
             my $return = {
@@ -29,15 +29,15 @@ class Registry::DAO::WorkflowSteps::SubmitDropRequest :isa(Registry::DAO::Workfl
                 immediate_drop  => $result->{immediate},
             };
 
-            # If there's a drop request (not immediate), store it for potential admin notification
+            # Store drop request ID (not the object -- objects can't serialize to JSONB)
             if ($result->{drop_request}) {
-                $return->{drop_request} = $result->{drop_request};
+                $return->{drop_request_id} = $result->{drop_request}->id;
             }
 
             return $return;
         }
         catch ($e) {
-            return { error => "Failed to submit drop request: $e" };
+            return { errors => ["Failed to submit drop request. Please try again or contact support."] };
         }
     }
 }
