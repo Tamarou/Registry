@@ -1,102 +1,73 @@
 use 5.42.0;
+# ABOUTME: Test database setup for Registry tests using Test::PostgreSQL.
+# ABOUTME: Loads schema from a pre-generated dump file for fast test startup.
 use App::Sqitch ();
 use Test::PostgreSQL ();
 use DBI ();
 
 package Test::Registry::DB {
-    # Class variables for schema dump
-    our $SCHEMA_DUMP;
-    our $SCHEMA_INITIALIZED = 0;
-    
-    sub _get_or_create_schema_dump {
-        return $SCHEMA_DUMP if $SCHEMA_INITIALIZED;
-        
-        # Create template database and deploy schema once
-        my $template_db = Test::PostgreSQL->new();
-        App::Sqitch->new()->run( 'sqitch', 'deploy', '-t', $template_db->uri );
-        
-        # Dump the schema to a temporary file
-        my $dump_file = "/tmp/registry_test_schema_$$.sql";
-        my $template_uri = $template_db->uri;
-        
-        # Use pg_dump to create schema dump - try different pg_dump versions
-        my @pg_dump_commands = (
-            "pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
-            "/usr/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/17/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/16/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/15/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/14/bin/pg_dump '$template_uri' > '$dump_file' 2>/dev/null",
-        );
-        
-        my $success = 0;
-        for my $cmd (@pg_dump_commands) {
-            if (system($cmd) == 0) {
-                $success = 1;
-                last;
-            }
+    use File::Basename qw(dirname);
+    use File::Spec ();
+
+    # Path to the pre-generated schema dump (relative to repo root)
+    my $DUMP_FILE = File::Spec->catfile(
+        dirname(__FILE__), '..', '..', '..', '..', 'sql', 'test-schema.sql'
+    );
+
+    sub _find_pg_tool {
+        my ($tool) = @_;
+        for my $path (
+            $tool,
+            "/usr/bin/$tool",
+            (map { "/usr/lib/postgresql/$_/bin/$tool" } 17, 16, 15, 14),
+        ) {
+            return $path if -x $path || system("which $path >/dev/null 2>&1") == 0;
         }
-        
-        die "All pg_dump commands failed" unless $success;
-        
-        # Clean up template database
-        undef $template_db;
-        
-        $SCHEMA_DUMP = $dump_file;
-        $SCHEMA_INITIALIZED = 1;
-        
-        return $SCHEMA_DUMP;
+        return $tool; # fallback, let PATH handle it
     }
-    
-    sub _load_schema_from_dump {
-        my ($self, $dump_file) = @_;
-        
-        my $uri = $self->{pgsql}->uri;
-        
-        # Load schema from dump file - try different psql versions
-        my @psql_commands = (
-            "psql '$uri' < '$dump_file' 2>/dev/null",
-            "/usr/bin/psql '$uri' < '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/17/bin/psql '$uri' < '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/16/bin/psql '$uri' < '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/15/bin/psql '$uri' < '$dump_file' 2>/dev/null",
-            "/usr/lib/postgresql/14/bin/psql '$uri' < '$dump_file' 2>/dev/null",
-        );
-        
-        my $success = 0;
-        for my $cmd (@psql_commands) {
-            if (system($cmd) == 0) {
-                $success = 1;
-                last;
-            }
-        }
-        
-        die "All psql commands failed" unless $success;
-        
-        return 1;
+
+    sub generate_dump {
+        # Deploy schema via Sqitch into a temp DB, then pg_dump it.
+        # Called by `make test-schema` or manually when migrations change.
+        my $template_db = Test::PostgreSQL->new();
+        my $uri = $template_db->uri;
+
+        warn "Deploying schema via Sqitch...\n";
+        App::Sqitch->new()->run('sqitch', 'deploy', '-t', $uri);
+
+        my $pg_dump = _find_pg_tool('pg_dump');
+        my $out = $DUMP_FILE;
+        system("$pg_dump '$uri' > '$out' 2>/dev/null") == 0
+            or die "pg_dump failed";
+
+        warn "Schema dump written to $out\n";
+        undef $template_db;
+    }
+
+    sub _load_from_dump {
+        my ($self) = @_;
+        my $uri  = $self->{pgsql}->uri;
+        my $psql = _find_pg_tool('psql');
+        system("$psql '$uri' < '$DUMP_FILE' >/dev/null 2>&1") == 0
+            or die "psql load failed";
     }
 
     sub new {
         my $class = shift;
         my $self = bless {}, $class;
         $self->{pgsql} = Test::PostgreSQL->new();
-        
-        # Try to use schema dump for speed
-        eval {
-            my $dump_file = _get_or_create_schema_dump();
-            $self->_load_schema_from_dump($dump_file);
-        };
 
-        if ($@) {
-            # If dump loading fails, fall back to regular deployment
-            warn "Schema dump loading failed: $@";
-            warn "Falling back to regular deployment...";
-            App::Sqitch->new()->run( 'sqitch', 'deploy', '-t', $self->{pgsql}->uri );
+        if (-f $DUMP_FILE && -s $DUMP_FILE) {
+            # Fast path: load from pre-generated dump
+            $self->_load_from_dump();
+        } else {
+            # Slow path: deploy via Sqitch (first run, or dump not generated)
+            warn "No schema dump at $DUMP_FILE -- falling back to sqitch deploy\n";
+            warn "Run 'make test-schema' to generate the dump for faster tests.\n";
+            App::Sqitch->new()->run('sqitch', 'deploy', '-t', $self->{pgsql}->uri);
         }
 
-        # Fix the pricing validation trigger to handle NULL values gracefully
         $self->_fix_pricing_validation_trigger();
-        
         $ENV{DB_URL} = $self->{pgsql}->uri;
         return $self;
     }
@@ -126,15 +97,12 @@ package Test::Registry::DB {
 
     sub deploy_sqitch_changes {
         my ($self, $changes) = @_;
-        # Since we deploy the full schema in new(), individual changes are already deployed
-        # This method is now a no-op to avoid sqitch deployment conflicts
+        # Full schema already deployed in new()
         return;
     }
 
     sub cleanup_test_database {
         my $self = shift;
-        # Test::PostgreSQL automatically cleans up when the object is destroyed
-        # Just make sure the connection is closed
         if ($self->{pgsql}) {
             undef $self->{pgsql};
         }
@@ -149,14 +117,12 @@ package Test::Registry::DB {
             my $dao = Registry::DAO->new(url => $self->{pgsql}->uri);
             my $db = $dao->db;
 
-            # Update the trigger function to handle NULL values
             $db->query(q{
                 CREATE OR REPLACE FUNCTION registry.validate_pricing_resources()
                 RETURNS trigger AS $$
                 BEGIN
                     -- Validate resources if present
                     IF NEW.pricing_configuration ? 'resources' THEN
-                        -- Check that numeric values are non-negative, handling NULL values
                         IF (NEW.pricing_configuration->'resources'->>'classes_per_month') IS NOT NULL AND
                            (NEW.pricing_configuration->'resources'->>'classes_per_month')::int < 0 THEN
                             RAISE EXCEPTION 'classes_per_month must be non-negative';
@@ -199,25 +165,10 @@ package Test::Registry::DB {
         }
     }
 
-    # Clean up schema dump file (usually called at END)
-    sub cleanup_schema_dump {
-        if ($SCHEMA_DUMP && -f $SCHEMA_DUMP) {
-            unlink $SCHEMA_DUMP;
-            undef $SCHEMA_DUMP;
-            $SCHEMA_INITIALIZED = 0;
-        }
-    }
-
-    # Destructor to ensure cleanup
     sub DESTROY {
         my $self = shift;
         $self->cleanup_test_database if $self;
     }
 }
 
-# Clean up when module exits
-END {
-    Test::Registry::DB->cleanup_schema_dump;
-}
-
-1; # Return true value for module
+1;
