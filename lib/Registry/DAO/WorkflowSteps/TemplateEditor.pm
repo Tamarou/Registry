@@ -82,7 +82,7 @@ class Registry::DAO::WorkflowSteps::TemplateEditor :isa(Registry::DAO::WorkflowS
                         stay          => 1,
                         template_data => {
                             view     => 'edit',
-                            template => $refreshed,
+                            editing_template => $refreshed,
                             flash    => 'reverted',
                             %{$self->prepare_template_data($db, $run)},
                         },
@@ -110,6 +110,6 @@ class Registry::DAO::WorkflowSteps::TemplateEditor :isa(Registry::DAO::WorkflowS
             Registry::DAO::Template->new( %$_ )
         } @$rows;
 
-        return { view => 'list', templates => \@templates };
+        return { templates => \@templates };
     }
 }
