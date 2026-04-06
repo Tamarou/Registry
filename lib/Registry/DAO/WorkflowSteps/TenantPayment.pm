@@ -14,15 +14,14 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
 
-    method process($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         my $error_handler = Registry::Utility::ErrorHandler->new();
-        
+
         # Check for rate limiting
         if (my $rate_limit_error = $self->check_rate_limits($db, $run)) {
-            $error_handler->log_error($rate_limit_error, { 
-                workflow_id => $workflow->id, 
+            $error_handler->log_error($rate_limit_error, {
+                workflow_id => $self->workflow($db)->id,
                 run_id => $run->id,
                 form_data => $form_data 
             });

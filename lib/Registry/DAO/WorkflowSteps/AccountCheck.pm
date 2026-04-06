@@ -11,9 +11,8 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
     use Registry::DAO::MagicLinkToken;
     use Registry::DAO::Notification;
 
-    method process ($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process ($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
 
         # Check if user selected an action
         my $action = $form_data->{action} || '';

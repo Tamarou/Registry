@@ -9,9 +9,8 @@ use Registry::DAO::Event;  # Contains Session class
 use Registry::DAO::User;
 use Mojo::JSON qw(encode_json);
 
-method process ($db, $form_data) {
-    my $workflow = $self->workflow($db);
-    my $run = $workflow->latest_run($db);
+method process ($db, $form_data, $run = undef) {
+    $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
     
     # Handle Stripe webhook callback
     if ($form_data->{payment_intent_id}) {

@@ -7,9 +7,8 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor 
     use Registry::DAO::Notification;
     use Registry::DAO::UserPreference;
 
-    method process($db, $continuation) {
-        my ($workflow) = $self->workflow($db);
-        my ($run) = $workflow->latest_run($db);
+    method process($db, $continuation, $run = undef) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
         my $data = $run->data || {};
         my $tenant_schemas = $data->{tenant_schemas} || [];
         

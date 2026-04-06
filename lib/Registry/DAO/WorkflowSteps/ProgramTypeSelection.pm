@@ -6,9 +6,8 @@ class Registry::DAO::WorkflowSteps::ProgramTypeSelection :isa(Registry::DAO::Wor
 
 use Registry::DAO::ProgramType;
 
-method process ($db, $form_data) {
-    my $workflow = $self->workflow($db);
-    my $run = $workflow->latest_run($db);
+method process ($db, $form_data, $run = undef) {
+    $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
     
     # If form was submitted
     if ($form_data->{program_type_id}) {

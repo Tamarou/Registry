@@ -7,7 +7,7 @@ require Registry::DAO::WorkflowStep;
 
 class Registry::DAO::WorkflowSteps::ProcessAdminDropDecision :isa(Registry::DAO::WorkflowStep) {
 
-    method process ($db, $data) {
+    method process ($db, $data, $run = undef) {
         my $action = $data->{action};
         my $admin_notes = $data->{admin_notes};
         my $refund_amount = $data->{refund_amount};

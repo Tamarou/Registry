@@ -6,9 +6,8 @@ use Registry::DAO::Workflow;
 
 class Registry::DAO::WorkflowSteps::CreateSession :isa(Registry::DAO::WorkflowStep) {
 
-    method process ( $db, $ ) {
-        my ($workflow) = $self->workflow($db);
-        my ($run)      = $workflow->latest_run($db);
+    method process ( $db, $, $run = undef ) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
 
         my $data   = $run->data;
         

@@ -7,9 +7,8 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::ValidateTargetCapacity :isa(Registry::DAO::WorkflowStep) {
     use Carp qw(confess);
 
-    method process ( $db, $ ) {
-        my ($workflow) = $self->workflow($db);
-        my ($run)      = $workflow->latest_run($db);
+    method process ( $db, $, $run = undef ) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
         my $data       = $run->data;
 
         my $target_session_id = $data->{target_session_id}

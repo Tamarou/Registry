@@ -7,9 +7,8 @@ use Mojo::JSON;
 
 class Registry::DAO::WorkflowSteps::CreateLocationWithAddress :isa(Registry::DAO::WorkflowStep) {
 
-    method process ( $db, $form_data ) {
-        my ($workflow) = $self->workflow($db);
-        my $run        = $workflow->latest_run($db);
+    method process ( $db, $form_data, $run = undef ) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
         
         # Get basic location data
         my %data = (

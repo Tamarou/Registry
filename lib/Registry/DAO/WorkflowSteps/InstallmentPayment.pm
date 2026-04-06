@@ -13,9 +13,8 @@ use Registry::PriceOps::PricingPlan;
 use Mojo::JSON qw(encode_json);
 use DateTime;
 
-method process ($db, $form_data) {
-    my $workflow = $self->workflow($db);
-    my $run = $workflow->latest_run($db);
+method process ($db, $form_data, $run = undef) {
+    $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
 
     # Handle Stripe webhook callback for first payment
     if ($form_data->{payment_intent_id}) {

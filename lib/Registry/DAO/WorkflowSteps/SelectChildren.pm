@@ -7,9 +7,8 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
     use Carp qw( croak );
     use Mojo::JSON qw( decode_json encode_json );
     
-    method process ($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process ($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         
         # Get user_id from run data (set by account-check step)
         my $user_id = $run->data->{user_id};

@@ -6,9 +6,8 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ProcessWaitlistsAfterTransfer :isa(Registry::DAO::WorkflowStep) {
 
-    method process ( $db, $ ) {
-        my ($workflow) = $self->workflow($db);
-        my ($run)      = $workflow->latest_run($db);
+    method process ( $db, $, $run = undef ) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
         my $data       = $run->data;
 
         my $original_session_id = $data->{original_session_id};

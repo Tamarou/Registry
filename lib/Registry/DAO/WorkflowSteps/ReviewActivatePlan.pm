@@ -11,9 +11,8 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
     use DateTime;
     use Registry::DAO::PricingPlan;
 
-    method process ($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process ($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
 
         # Get all collected data
         my $data = $run->data || {};

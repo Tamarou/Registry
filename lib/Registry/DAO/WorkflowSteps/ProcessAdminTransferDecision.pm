@@ -7,7 +7,7 @@ require Registry::DAO::WorkflowStep;
 
 class Registry::DAO::WorkflowSteps::ProcessAdminTransferDecision :isa(Registry::DAO::WorkflowStep) {
 
-    method process ($db, $data) {
+    method process ($db, $data, $run = undef) {
         my $action = $data->{action};
         my $admin_notes = $data->{admin_notes};
         my $transfer_request_id = $data->{transfer_request_id};

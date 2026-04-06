@@ -8,9 +8,8 @@ class Registry::DAO::WorkflowSteps::CompleteDropRequest :isa(Registry::DAO::Work
     use Carp qw(confess);
     use Scalar::Util qw(blessed);
 
-    method process ( $db, $ ) {
-        my ($workflow) = $self->workflow($db);
-        my ($run)      = $workflow->latest_run($db);
+    method process ( $db, $, $run = undef ) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
         my $data       = $run->data;
 
         my $drop_request_id = $data->{drop_request_id}

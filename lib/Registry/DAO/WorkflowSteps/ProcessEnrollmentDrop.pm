@@ -8,9 +8,8 @@ class Registry::DAO::WorkflowSteps::ProcessEnrollmentDrop :isa(Registry::DAO::Wo
     use Carp qw(confess);
     use Scalar::Util qw(blessed);
 
-    method process ( $db, $ ) {
-        my ($workflow) = $self->workflow($db);
-        my ($run)      = $workflow->latest_run($db);
+    method process ( $db, $, $run = undef ) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
         my $data       = $run->data;
 
         my $enrollment_id = $data->{enrollment_id}

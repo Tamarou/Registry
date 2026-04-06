@@ -14,10 +14,8 @@ use Carp qw(carp croak);
 use Text::Unidecode qw(unidecode);
 use DateTime;
 
-method process ( $db, $ ) {
-    
-    my ($workflow) = $self->workflow($db);
-    my $run = $workflow->latest_run($db);
+method process ( $db, $, $run = undef ) {
+    $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
 
     my $profile = $run->data;
 

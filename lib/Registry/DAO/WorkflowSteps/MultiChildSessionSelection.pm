@@ -6,9 +6,8 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DAO::WorkflowStep) {
     use Carp qw( croak );
     
-    method process ($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process ($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         
         # Get selected children from run data
         my $selected_child_ids = $run->data->{selected_child_ids} || [];

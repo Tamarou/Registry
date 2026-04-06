@@ -4,9 +4,8 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer :isa(Registry::DAO::WorkflowStep) {
 
 
-    method process($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         my $run_data = $run->data;
         my $user = $run_data->{user} or die "User required for enrollment selection";
 

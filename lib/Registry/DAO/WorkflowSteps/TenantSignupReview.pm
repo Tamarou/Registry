@@ -30,10 +30,9 @@ class Registry::DAO::WorkflowSteps::TenantSignupReview :isa(Registry::DAO::Workf
         };
     }
 
-    method process($db, $form_data) {
+    method process($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         # Basic review step processing - mostly just validation
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
         
         # This step doesn't modify data, it just validates that required 
         # information is present before proceeding to the next step

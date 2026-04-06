@@ -8,7 +8,7 @@ require Registry::DAO::WorkflowStep;
 class Registry::DAO::WorkflowSteps::AdminDashboardOverview :isa(Registry::DAO::WorkflowStep) {
     use Carp qw(confess);
 
-    method process ($db, $data) {
+    method process ($db, $data, $run = undef) {
         # Get current user from data
         my $user = $data->{current_user} or confess "current_user is required for admin dashboard";
 

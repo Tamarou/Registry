@@ -9,7 +9,7 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
     use Registry::DAO::Enrollment;
     use Registry::DAO::ProgramType;
 
-    method process ($db, $form_data) {
+    method process ($db, $form_data, $run = undef) {
         # The program-listing step stays on the page. Registration
         # happens via callcc links rendered in the template.
         return { stay => 1 };

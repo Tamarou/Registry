@@ -89,7 +89,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
         $db = $db->db if $db isa Registry::DAO;
 
-        my $step_result = $step->process( $db, $new_data );
+        my $step_result = $step->process( $db, $new_data, $self );
 
         # Don't persist validation errors or advance the step pointer on
         # failure. The controller inspects these keys and redirects; the

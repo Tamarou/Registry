@@ -6,9 +6,8 @@ class Registry::DAO::WorkflowSteps::SelectProgram :isa(Registry::DAO::WorkflowSt
 
 use Registry::DAO::Project;
 
-method process ($db, $form_data) {
-    my $workflow = $self->workflow($db);
-    my $run = $workflow->latest_run($db);
+method process ($db, $form_data, $run = undef) {
+    $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
     
     # If form was submitted
     if ($form_data->{project_id}) {

@@ -8,7 +8,7 @@ require Registry::DAO::WorkflowStep;
 class Registry::DAO::WorkflowSteps::LoadTransferRequest :isa(Registry::DAO::WorkflowStep) {
     use Carp qw(confess);
 
-    method process ($db, $data) {
+    method process ($db, $data, $run = undef) {
         my $transfer_request_id = $data->{transfer_request_id}
             or confess "transfer_request_id is required for transfer request processing";
 

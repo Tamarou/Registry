@@ -13,7 +13,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
 
     use constant PLATFORM_UUID => '00000000-0000-0000-0000-000000000000';
 
-    method process($db, $form_data) {
+    method process($db, $form_data, $run = undef) {
         # Check if plan selection was submitted
         unless (exists $form_data->{selected_plan_id}) {
             # Show plan selection page (unless we're in auto-select mode for workflow testing)

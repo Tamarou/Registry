@@ -6,9 +6,8 @@ class Registry::DAO::WorkflowSteps::ChooseLocations :isa(Registry::DAO::Workflow
 
 use Registry::DAO::Location;
 
-method process ($db, $form_data) {
-    my $workflow = $self->workflow($db);
-    my $run = $workflow->latest_run($db);
+method process ($db, $form_data, $run = undef) {
+    $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
     
     # If form was submitted
     if ($form_data->{location_ids} && ref $form_data->{location_ids} eq 'ARRAY') {

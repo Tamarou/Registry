@@ -144,7 +144,7 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
         Registry::DAO::Workflow->find( $db, { id => $workflow_id } );
     }
 
-    method process ( $db, $data ) { 
+    method process ( $db, $data, $run = undef ) {
         # Always validate input
         my $validation = $self->validate($db, $data);
         if (!$validation->{valid}) {

@@ -7,9 +7,8 @@ class Registry::DAO::WorkflowSteps::CreateWorkflow :isa(Registry::DAO::WorkflowS
 use Registry::DAO::Workflow;
 use Carp qw(croak);
 
-    method process ( $db, $ ) {
-        my ($workflow) = $self->workflow($db);
-        my $run        = $workflow->latest_run($db);
+    method process ( $db, $, $run = undef ) {
+        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
         my $data       = $run->data;
 
         # Validate required fields

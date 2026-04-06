@@ -4,9 +4,8 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::SelectTargetSession :isa(Registry::DAO::WorkflowStep) {
 
 
-    method process($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         my $run_data = $run->data;
         my $enrollment_id = $run_data->{enrollment_id} or die "Enrollment ID required";
 

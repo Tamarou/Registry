@@ -11,9 +11,8 @@ use Registry::DAO::User;
 use Mojo::JSON qw(encode_json);
 use DateTime;
 
-method process ($db, $form_data) {
-    my $workflow = $self->workflow($db);
-    my $run = $workflow->latest_run($db);
+method process ($db, $form_data, $run = undef) {
+    $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
     my $data = $run->data;
     
     # If form was submitted (confirmation)

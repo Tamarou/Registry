@@ -10,9 +10,8 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
     use Carp qw( croak );
     use DateTime;
 
-    method process ($db, $form_data) {
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    method process ($db, $form_data, $run = undef) {
+        $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
 
         my $requirements = {};
         my $rules = {};

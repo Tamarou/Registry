@@ -8,7 +8,7 @@ require Registry::DAO::WorkflowStep;
 class Registry::DAO::WorkflowSteps::AdminTaskSelection :isa(Registry::DAO::WorkflowStep) {
     use Carp qw(confess);
 
-    method process ($db, $data) {
+    method process ($db, $data, $run = undef) {
         my $task_type = $data->{task_type};
         my $task_id = $data->{task_id};
 
