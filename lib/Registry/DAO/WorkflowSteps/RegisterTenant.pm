@@ -125,6 +125,13 @@ method process ( $db, $, $run = undef ) {
         ON CONFLICT (slug) DO NOTHING
     });
 
+    $db->query(qq{
+        INSERT INTO ${\$tenant->slug}.templates (id, name, slug, content, metadata, notes, created_at, updated_at)
+        SELECT id, name, slug, content, metadata, notes, created_at, updated_at
+        FROM registry.templates
+        ON CONFLICT (slug) DO NOTHING
+    });
+
     $tenant->set_primary_user( $db, $primary_user );
 
     my $tx = $db->begin;
@@ -150,7 +157,7 @@ method process ( $db, $, $run = undef ) {
         qw(user-creation session-creation event-creation location-creation project-creation
            location-management pricing-plan-creation program-creation tenant-storefront
            admin-dashboard parent-drop-request admin-drop-approval parent-transfer-request
-           admin-transfer-approval)
+           admin-transfer-approval template-editor)
     )
     {
         my $workflow =

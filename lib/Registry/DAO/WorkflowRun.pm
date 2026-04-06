@@ -116,7 +116,14 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
                 croak "WorkflowRun id=$id not found during stay" unless $result;
                 $data = $result->{data};
             }
-            return { stay => 1 };
+            # Return stay signal plus template_data so the controller can
+            # render the step directly with the step's output data.
+            my %stay_result = ( stay => 1 );
+            $stay_result{template_data} = $step_result->{template_data}
+                if $step_result->{template_data};
+            $stay_result{errors} = $step_result->{errors}
+                if $step_result->{errors};
+            return \%stay_result;
         }
 
         # Atomic merge of step data + advance latest_step_id in a single query.

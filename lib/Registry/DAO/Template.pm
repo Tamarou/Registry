@@ -15,6 +15,7 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     field $metadata :param :reader;
     field $notes :param :reader;
     field $created_at :param :reader;
+    field $updated_at :param :reader = undef;
 
     sub table { 'templates' }
 

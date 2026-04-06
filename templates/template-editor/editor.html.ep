@@ -1,0 +1,65 @@
+% layout 'default';
+% title 'Template Editor';
+% my $view = stash('view') || 'list';
+% my $editing_template = stash('editing_template');
+% my $flash = stash('flash');
+
+<h1>Template Editor</h1>
+
+% if ($view eq 'list') {
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Last Updated</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      % for my $tmpl (@{$templates || []}) {
+        <tr>
+          <td><%= $tmpl->name %></td>
+          <td><%= $tmpl->updated_at || $tmpl->created_at || '' %></td>
+          <td>
+            <form method="POST" action="<%= $action %>">
+              <input type="hidden" name="action" value="edit">
+              <input type="hidden" name="template_id" value="<%= $tmpl->id %>">
+              <button type="submit">Edit</button>
+            </form>
+          </td>
+        </tr>
+      % }
+    </tbody>
+  </table>
+% } elsif ($view eq 'edit') {
+  % if ($flash) {
+    % if ($flash eq 'saved') {
+      <p>Template saved successfully.</p>
+    % } elsif ($flash eq 'reverted') {
+      <p>Template reverted to default content.</p>
+    % }
+  % }
+
+  <h2><%= $editing_template->name %></h2>
+
+  <form method="POST" action="<%= $action %>">
+    <input type="hidden" name="action" value="save">
+    <input type="hidden" name="template_id" value="<%= $editing_template->id %>">
+    <div>
+      <label for="content">Content</label><br>
+      <textarea id="content" name="content" rows="30" cols="100"><%= $editing_template->content %></textarea>
+    </div>
+    <button type="submit">Save</button>
+  </form>
+
+  <form method="POST" action="<%= $action %>" onsubmit="return confirm('Revert to default content? Your changes will be lost.');">
+    <input type="hidden" name="action" value="revert">
+    <input type="hidden" name="template_id" value="<%= $editing_template->id %>">
+    <button type="submit">Revert to Default</button>
+  </form>
+
+  <form method="POST" action="<%= $action %>">
+    <input type="hidden" name="action" value="list">
+    <button type="submit">Back to List</button>
+  </form>
+% }

@@ -552,6 +552,9 @@ class Registry :isa(Mojolicious) {
         $admin->get('/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $admin->post('/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
 
+        $admin->get('/templates')->to('workflows#index', workflow => 'template-editor')->name('admin_templates');
+        $admin->post('/templates')->to('workflows#start_workflow', workflow => 'template-editor');
+
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach
         # these routes even though staff can reach other /admin/* routes.

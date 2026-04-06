@@ -1,0 +1,9 @@
+name: Template Editor
+slug: template-editor
+description: Admin tool for viewing and customizing tenant templates
+first_step: editor
+steps:
+  - slug: editor
+    description: Template Editor
+    template: template-editor/editor
+    class: Registry::DAO::WorkflowSteps::TemplateEditor
