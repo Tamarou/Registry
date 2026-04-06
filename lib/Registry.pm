@@ -47,6 +47,17 @@ class Registry :isa(Mojolicious) {
             Pg => $ENV{DB_URL} || 'postgresql://localhost/registry'
         });
 
+        # HTMX plugin provides is_htmx_request, htmx->res->push_url, etc.
+        $self->plugin('Mojolicious::Plugin::HTMX');
+
+        # Wrap the layout helper so templates' `% layout 'foo'` becomes a
+        # no-op when the controller sets _htmx_fragment in the stash.
+        my $original_layout = $self->renderer->helpers->{layout};
+        $self->renderer->helpers->{layout} = sub ($c, @args) {
+            return if $c->stash('_htmx_fragment');
+            $original_layout->($c, @args);
+        };
+
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
         Registry::Job::DomainVerification->register($self);

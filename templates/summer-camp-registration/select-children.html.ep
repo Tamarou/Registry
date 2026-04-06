@@ -227,7 +227,6 @@
   % }
 </div>
 
-<script src="https://unpkg.com/htmx.org@1.9.10"></script>
 <script>
   // Auto-select newly added children
   document.body.addEventListener('htmx:afterSwap', function(evt) {

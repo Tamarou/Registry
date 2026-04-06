@@ -322,9 +322,26 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # Steps may use either '_validation_errors' or 'errors' key.
         my $validation_errors = $result->{_validation_errors} || $result->{errors};
         if ($validation_errors) {
-            # Store errors in flash for retrieval on redirect
-            $self->flash(validation_errors => $validation_errors);
+            if ($self->is_htmx_request) {
+                # HTMX: re-render current step as fragment with errors
+                $self->stash(_htmx_fragment => 1);
+                my $workflow_slug = $self->param('workflow');
+                my $step_slug    = $self->param('step');
+                my $template_data = $step->prepare_template_data($dao->db, $run);
+                return $self->render(
+                    template    => $workflow_slug . '/' . $step_slug,
+                    errors_json => Mojo::JSON::encode_json($validation_errors),
+                    action      => $self->url_for('workflow_process_step',
+                        workflow => $workflow_slug,
+                        run      => $self->param('run'),
+                        step     => $step_slug),
+                    run         => $run,
+                    %$template_data,
+                );
+            }
 
+            # No JS: store errors in flash for retrieval on redirect
+            $self->flash(validation_errors => $validation_errors);
             return $self->redirect_to($self->url_for);
         }
 
@@ -341,6 +358,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
                 $result->{errors} || $self->flash('validation_errors') || []
             );
             my $workflow_progress = $self->_get_workflow_progress($run, $step);
+
+            # HTMX: render fragment (no layout), no URL push for stay
+            if ($self->is_htmx_request) {
+                $self->stash(_htmx_fragment => 1);
+            }
 
             return $self->render(
                 template          => $workflow_slug . '/' . $step_slug,
@@ -362,8 +384,29 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # if we're still not done, redirect to the next step
         if ( !$run->completed( $dao->db ) ) {
             my ($next) = $run->next_step( $dao->db );
-            my $url = $self->url_for( step => $next->slug );
-            return $self->redirect_to($url);
+            my $next_url = $self->url_for( step => $next->slug );
+
+            if ($self->is_htmx_request) {
+                # HTMX: render next step as fragment, push URL
+                $self->stash(_htmx_fragment => 1);
+                $self->htmx->res->push_url($next_url);
+                my $workflow_slug = $self->param('workflow');
+                my $template_data = $next->prepare_template_data($dao->db, $run);
+                return $self->render(
+                    template => $workflow_slug . '/' . $next->slug,
+                    workflow => $workflow_slug,
+                    step     => $next->slug,
+                    action   => $self->url_for('workflow_process_step',
+                        workflow => $workflow_slug,
+                        run      => $self->param('run'),
+                        step     => $next->slug),
+                    run      => $run,
+                    %$template_data,
+                );
+            }
+
+            # No JS: traditional redirect
+            return $self->redirect_to($next_url);
         }
 
         # if this is a continuation, redirect to the continuation
