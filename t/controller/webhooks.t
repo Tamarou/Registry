@@ -18,10 +18,14 @@ my $app = Registry->new;
 # $app->plugin('Test::Minion');
 my $t = Test::Mojo->new($app);
 
-subtest 'Stripe webhook endpoint' => sub {
-    plan tests => 6;
-    
-    # Test basic webhook endpoint exists
+subtest 'Stripe webhook rejects requests without STRIPE_WEBHOOK_SECRET' => sub {
+    plan tests => 3;
+
+    # Without STRIPE_WEBHOOK_SECRET set, the endpoint must reject all requests.
+    # This prevents forged payment confirmations when the secret is misconfigured.
+    local $ENV{STRIPE_WEBHOOK_SECRET};
+    delete $ENV{STRIPE_WEBHOOK_SECRET};
+
     my $payload = encode_json({
         id => 'evt_test123',
         type => 'customer.subscription.updated',
@@ -33,16 +37,10 @@ subtest 'Stripe webhook endpoint' => sub {
             }
         }
     });
-    
-    # Test without signature (should still work for basic testing)
+
     $t->post_ok('/webhooks/stripe', {}, $payload)
-      ->status_is(200)
-      ->content_is('OK');
-    
-    # Test with invalid JSON
-    $t->post_ok('/webhooks/stripe', {}, 'invalid json')
-      ->status_is(400)
-      ->content_like(qr/Invalid JSON/);
+      ->status_is(500)
+      ->content_like(qr/not configured/);
 };
 
 subtest 'Webhook signature verification' => sub {

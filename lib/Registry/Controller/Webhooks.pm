@@ -8,12 +8,19 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use Registry::DAO::PaymentSchedule;
 
     method stripe() {
-        # Verify webhook signature
+        # Verify webhook signature -- STRIPE_WEBHOOK_SECRET is mandatory.
+        # Without it, anyone can forge payment confirmations.
         my $payload = $self->req->body;
-        my $sig_header = $self->req->headers->header('stripe-signature');
         my $endpoint_secret = $ENV{STRIPE_WEBHOOK_SECRET};
-        
-        if ($endpoint_secret && !$self->_verify_stripe_signature($payload, $sig_header, $endpoint_secret)) {
+
+        unless ($endpoint_secret) {
+            $self->app->log->error("STRIPE_WEBHOOK_SECRET not configured -- rejecting webhook");
+            $self->render(status => 500, text => 'Webhook verification not configured');
+            return;
+        }
+
+        my $sig_header = $self->req->headers->header('stripe-signature');
+        unless ($sig_header && $self->_verify_stripe_signature($payload, $sig_header, $endpoint_secret)) {
             $self->render(status => 400, text => 'Invalid signature');
             return;
         }
@@ -56,12 +63,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     }
 
     method _verify_stripe_signature($payload, $sig_header, $endpoint_secret) {
-        return 1 unless $endpoint_secret; # Skip verification if no secret configured
-        return 0 unless $sig_header; # No signature header provided
-        
+        return 0 unless $sig_header;
+
         my @sig_elements = split /,/, $sig_header;
         my %sigs;
-        
+
         for my $element (@sig_elements) {
             my ($key, $value) = split /=/, $element, 2;
             if ($key eq 'v1') {
@@ -70,19 +76,29 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 $sigs{t} = $value;
             }
         }
-        
+
         return 0 unless $sigs{v1} && $sigs{t};
-        
+
         # Check timestamp (within 5 minutes)
         my $timestamp = $sigs{t};
         my $current_time = time();
         return 0 if abs($current_time - $timestamp) > 300;
-        
-        # Verify signature
+
+        # Verify signature using constant-time comparison to prevent timing attacks
         my $signed_payload = $timestamp . '.' . $payload;
         my $expected_sig = hmac_sha256_hex($signed_payload, $endpoint_secret);
-        
-        return $expected_sig eq $sigs{v1};
+
+        return _secure_compare($expected_sig, $sigs{v1});
+    }
+
+    sub _secure_compare ($a, $b) {
+        return 0 unless defined $a && defined $b;
+        return 0 unless length($a) == length($b);
+        my $result = 0;
+        for my $i (0 .. length($a) - 1) {
+            $result |= ord(substr($a, $i, 1)) ^ ord(substr($b, $i, 1));
+        }
+        return $result == 0;
     }
 
     method _is_installment_payment_event($event) {

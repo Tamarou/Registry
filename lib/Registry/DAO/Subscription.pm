@@ -15,7 +15,7 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
     ADJUST {
         $ua = Mojo::UserAgent->new;
-        $api_key = $ENV{STRIPE_SECRET_KEY} // 'sk_test_placeholder';
+        $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
         $api_base = 'https://api.stripe.com/v1';
     }
 

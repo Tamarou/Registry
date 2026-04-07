@@ -259,6 +259,17 @@ class Registry :isa(Mojolicious) {
 
         $self->hook(
             before_dispatch => sub ($c) {
+                # 0. HTTPS redirect in production
+                if ($self->mode eq 'production') {
+                    my $proto = $c->req->headers->header('X-Forwarded-Proto') // '';
+                    if ($proto eq 'http') {
+                        my $url = $c->req->url->to_abs;
+                        $url->scheme('https');
+                        $c->redirect_to($url);
+                        return;
+                    }
+                }
+
                 # 1. Bearer token auth (API keys)
                 my $auth_header = $c->req->headers->authorization // '';
                 if ($auth_header =~ /^Bearer\s+(.+)$/i) {
