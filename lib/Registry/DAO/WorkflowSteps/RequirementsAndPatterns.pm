@@ -9,14 +9,14 @@ class Registry::DAO::WorkflowSteps::RequirementsAndPatterns :isa(Registry::DAO::
 method process ($db, $form_data, $run = undef) {
     $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
 
-    # Only process if the form was actually submitted
-    return {} unless exists $form_data->{min_age};
+    # No form submission -- stay on this step to show the form
+    return { stay => 1 } unless exists $form_data->{min_age};
 
     my @errors;
-    my $min_age = $form_data->{min_age} || 0;
-    my $max_age = $form_data->{max_age} || 0;
+    my $min_age = length($form_data->{min_age} // '') ? $form_data->{min_age} + 0 : undef;
+    my $max_age = length($form_data->{max_age} // '') ? $form_data->{max_age} + 0 : undef;
 
-    if ($min_age && $max_age && $min_age > $max_age) {
+    if (defined $min_age && defined $max_age && $min_age > $max_age) {
         push @errors, 'Minimum age cannot be greater than maximum age';
     }
 
@@ -24,8 +24,8 @@ method process ($db, $form_data, $run = undef) {
 
     return {
         requirements => {
-            min_age              => $min_age || undef,
-            max_age              => $max_age || undef,
+            min_age              => $min_age,
+            max_age              => $max_age,
             min_grade            => $form_data->{min_grade}            || undef,
             max_grade            => $form_data->{max_grade}            || undef,
             staff_ratio          => $form_data->{staff_ratio}          || '1:10',

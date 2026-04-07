@@ -349,7 +349,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # Render directly instead of redirecting so template_data from
         # the step result reaches the template (redirect loses POST context).
         if ($result->{stay}) {
-            my $template_data = $result->{template_data} || {};
+            my $template_data = {
+                %{ $step->prepare_template_data($dao->db, $run) },
+                %{ $result->{template_data} || {} },
+            };
             my $workflow_slug = $self->param('workflow');
             my $step_slug = $self->param('step');
 
@@ -384,6 +387,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # if we're still not done, redirect to the next step
         if ( !$run->completed( $dao->db ) ) {
             my ($next) = $run->next_step( $dao->db );
+
+            unless ($next) {
+                $self->app->log->error("Workflow run " . $run->id
+                    . " is not completed but has no next step");
+                return $self->render(text => 'Workflow error', status => 500);
+            }
+
             my $next_url = $self->url_for( step => $next->slug );
 
             if ($self->is_htmx_request) {
@@ -392,15 +402,19 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
                 $self->htmx->res->push_url($next_url);
                 my $workflow_slug = $self->param('workflow');
                 my $template_data = $next->prepare_template_data($dao->db, $run);
+                my $workflow_progress = $self->_get_workflow_progress($run, $next);
                 return $self->render(
-                    template => $workflow_slug . '/' . $next->slug,
-                    workflow => $workflow_slug,
-                    step     => $next->slug,
-                    action   => $self->url_for('workflow_process_step',
+                    template          => $workflow_slug . '/' . $next->slug,
+                    workflow          => $workflow_slug,
+                    step              => $next->slug,
+                    action            => $self->url_for('workflow_process_step',
                         workflow => $workflow_slug,
                         run      => $self->param('run'),
                         step     => $next->slug),
-                    run      => $run,
+                    run               => $run,
+                    data_json         => Mojo::JSON::encode_json($run->data || {}),
+                    errors_json       => Mojo::JSON::encode_json([]),
+                    workflow_progress => $workflow_progress,
                     %$template_data,
                 );
             }

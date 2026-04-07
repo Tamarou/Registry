@@ -12,22 +12,25 @@ use Mojo::JSON qw(encode_json);
 method process ($db, $form_data, $run = undef) {
     $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
 
-    return {} unless $form_data->{confirm};
+    # No confirmation -- stay on review page
+    return { stay => 1 } unless $form_data->{confirm};
 
     my $curriculum       = $run->data->{curriculum}       || {};
     my $requirements     = $run->data->{requirements}     || {};
     my $schedule_pattern = $run->data->{schedule_pattern} || {};
 
-    my $project = Registry::DAO::Project->create($db, {
-        name              => $curriculum->{name},
-        program_type_slug => $run->data->{program_type_slug},
-        notes             => $curriculum->{description} || '',
-        metadata          => {
-            curriculum       => $curriculum,
-            requirements     => $requirements,
-            schedule_pattern => $schedule_pattern,
-        },
-    });
+    my $project = eval {
+        Registry::DAO::Project->create($db, {
+            name              => $curriculum->{name},
+            program_type_slug => $run->data->{program_type_slug},
+            notes             => $curriculum->{description} || '',
+            metadata          => {
+                curriculum       => $curriculum,
+                requirements     => $requirements,
+                schedule_pattern => $schedule_pattern,
+            },
+        });
+    };
 
     unless ($project) {
         return { errors => ['Failed to create program. Please try again.'] };
