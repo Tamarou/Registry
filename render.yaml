@@ -5,8 +5,20 @@ envVarGroups:
         fromDatabase:
           name: registry-db
           property: connectionString
-  - name: registry-static
+  - name: registry-stripe
     envVars:
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+  - name: registry-config
+    envVars:
+      - key: BASE_URL
+        value: https://tinyartempire.com
+      - key: NOTIFICATION_FROM_EMAIL
+        value: noreply@tinyartempire.com
       - key: STATIC_URL
         value: https://tinyartempire-assets.onrender.com
 
@@ -27,20 +39,16 @@ services:
     dockerfilePath: ./Dockerfile
     envVars:
       - fromGroup: registry-database
+      - fromGroup: registry-stripe
+      - fromGroup: registry-config
       - key: MOJO_MODE
         value: production
-      - key: REGISTRY_SECRET
+      - key: MOJO_SECRET
         generateValue: true
-      - key: STRIPE_PUBLIC_KEY
+      - key: RENDER_API_KEY
         sync: false
-      - key: STRIPE_SECRET_KEY
+      - key: RENDER_SERVICE_ID
         sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: EMAIL_FROM
-        value: noreply@registry-demo.onrender.com
-      - key: SUPPORT_EMAIL
-        value: support@registry-demo.onrender.com
       - key: PORT
         value: 10000
       - key: SERVICE_TYPE
@@ -60,17 +68,15 @@ services:
     dockerfilePath: ./Dockerfile
     envVars:
       - fromGroup: registry-database
+      - fromGroup: registry-stripe
+      - fromGroup: registry-config
       - key: MOJO_MODE
         value: production
-      - key: REGISTRY_SECRET
+      - key: MOJO_SECRET
         fromService:
           type: web
           name: registry-app
-          envVarKey: REGISTRY_SECRET
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: EMAIL_FROM
-        value: noreply@registry-demo.onrender.com
+          envVarKey: MOJO_SECRET
       - key: SERVICE_TYPE
         value: worker
     autoDeploy: true
@@ -84,6 +90,7 @@ services:
     schedule: "*/5 * * * *"
     envVars:
       - fromGroup: registry-database
+      - fromGroup: registry-config
       - key: MOJO_MODE
         value: production
       - key: SERVICE_TYPE
