@@ -1,14 +1,13 @@
 ---
-description: Admin dashboard workflow for managing administrative tasks and approvals
 name: Admin Dashboard
 slug: admin-dashboard
-first_step: dashboard-overview
+description: |
+  Single-step admin dashboard. Loads overview stats, program data,
+  events, waitlist, and notifications. Filter actions use stay
+  semantics. Admin tools (drop/transfer approval, template editor,
+  program creation) launch via callcc continuations.
+
 steps:
-- class: Registry::DAO::WorkflowSteps::AdminDashboardOverview
-  description: Display admin dashboard with pending tasks and continuations
-  slug: dashboard-overview
-  template: admin-dashboard/overview
-- class: Registry::DAO::WorkflowSteps::AdminTaskSelection
-  description: Allow admin to select and continue with pending tasks
-  slug: task-selection
-  template: admin-dashboard/task-selection
+  - slug: dashboard-overview
+    description: Admin dashboard with sections and callcc into admin tools
+    class: Registry::DAO::WorkflowSteps::AdminDashboardOverview

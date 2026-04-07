@@ -142,7 +142,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
     }
 
     # Get complete admin dashboard data
-    sub get_admin_dashboard_data($class, $db, $user) {
+    sub get_admin_dashboard_data($class, $db, $user = undef) {
         return {
             overview_stats => $class->get_overview_stats($db),
             program_summary => Registry::DAO::Project->get_program_overview($db, 'current'),

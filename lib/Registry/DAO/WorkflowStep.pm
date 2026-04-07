@@ -97,8 +97,10 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
         return Registry::DAO::Template->find( $db, { id => $template_id } );
     }
     
-    # Default template data preparation - can be overridden by specific step classes
-    method prepare_template_data ($db, $run) {
+    # Default template data preparation - can be overridden by specific step classes.
+    # $params is an optional hashref of query parameters from the request,
+    # allowing step classes to load section-specific data for HTMX partial updates.
+    method prepare_template_data ($db, $run, $params = {}) {
         # Most steps just need the raw run data
         return $run->data || {};
     }

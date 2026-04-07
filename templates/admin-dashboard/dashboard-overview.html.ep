@@ -1,0 +1,472 @@
+% layout 'default';
+% title 'Admin Dashboard';
+% my $step_url = url_for('workflow_step', workflow => 'admin-dashboard', run => $run->id, step => 'dashboard-overview');
+
+<div class="admin-dashboard">
+    <!-- Header -->
+    <div class="admin-header">
+        <div class="container">
+            <div class="admin-header-content">
+                <div class="admin-title-section">
+                    <h1>Admin Dashboard</h1>
+                    <p class="text-secondary mt-1">Program management and oversight</p>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="admin-actions">
+                    <button onclick="openBulkMessageModal()"
+                            class="btn btn-primary">
+                        📧 Message Parents
+                    </button>
+
+                    <div class="dropdown">
+                        <button onclick="toggleExportDropdown()"
+                                class="btn btn-success">
+                            📊 Export Data
+                        </button>
+                        <div id="export-dropdown" class="dropdown-menu hidden">
+                            <a href="/admin/dashboard/export?type=enrollments&format=csv"
+                               class="dropdown-item">Enrollments (CSV)</a>
+                            <a href="/admin/dashboard/export?type=attendance&format=csv"
+                               class="dropdown-item">Attendance (CSV)</a>
+                            <a href="/admin/dashboard/export?type=waitlist&format=csv"
+                               class="dropdown-item">Waitlist (CSV)</a>
+                            <div class="dropdown-divider"></div>
+                            <a href="/admin/dashboard/export?type=enrollments&format=json"
+                               class="dropdown-item">Enrollments (JSON)</a>
+                            <a href="/admin/dashboard/export?type=attendance&format=json"
+                               class="dropdown-item">Attendance (JSON)</a>
+                            <a href="/admin/dashboard/export?type=waitlist&format=json"
+                               class="dropdown-item">Waitlist (JSON)</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Overview Stats -->
+        <div class="stats-grid mb-8">
+            <div class="stat-card">
+                <div class="stat-content">
+                    <div class="stat-icon blue">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-details">
+                        <h3>Active Enrollments</h3>
+                        <p class="stat-value"><%= $overview_stats->{active_enrollments} %></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-content">
+                    <div class="stat-icon green">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-details">
+                        <h3>Active Programs</h3>
+                        <p class="stat-value"><%= $overview_stats->{active_programs} %></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-content">
+                    <div class="stat-icon yellow">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-details">
+                        <h3>Waitlist Entries</h3>
+                        <p class="stat-value"><%= $overview_stats->{waitlist_entries} %></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-content">
+                    <div class="stat-icon purple">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-details">
+                        <h3>Today's Events</h3>
+                        <p class="stat-value"><%= $overview_stats->{todays_events} %></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-content">
+                    <div class="stat-icon emerald">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-details">
+                        <h3>Monthly Revenue</h3>
+                        <p class="stat-value">$<%= $overview_stats->{monthly_revenue} %></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pending Requests Section -->
+        % if (($overview_stats->{pending_drop_requests} && $overview_stats->{pending_drop_requests} > 0) || ($overview_stats->{pending_transfer_requests} && $overview_stats->{pending_transfer_requests} > 0)) {
+            <div class="mb-8">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">⚠️ Pending Requests Requiring Admin Attention</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    % if ($overview_stats->{pending_drop_requests} && $overview_stats->{pending_drop_requests} > 0) {
+                        <div class="dashboard-card">
+                            <div class="dashboard-card-header">
+                                <h3>Drop Requests</h3>
+                                <span class="badge badge-red"><%= $overview_stats->{pending_drop_requests} %> pending</span>
+                            </div>
+                            <div class="dashboard-card-content">
+                                <div hx-get="<%= $step_url %>?section=pending_drop_requests&status=pending"
+                                     hx-target="this"
+                                     hx-trigger="load"
+                                     class="h-64 overflow-y-auto">
+                                    <p class="text-gray-500">Loading drop requests...</p>
+                                </div>
+                            </div>
+                            <div class="dashboard-card-footer">
+                                <a href="<%= $step_url %>?section=pending_drop_requests&status=all" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                    View All Drop Requests →
+                                </a>
+                            </div>
+                        </div>
+                    % }
+
+                    % if ($overview_stats->{pending_transfer_requests} && $overview_stats->{pending_transfer_requests} > 0) {
+                        <div class="dashboard-card">
+                            <div class="dashboard-card-header">
+                                <h3>Transfer Requests</h3>
+                                <span class="badge badge-blue"><%= $overview_stats->{pending_transfer_requests} %> pending</span>
+                            </div>
+                            <div class="dashboard-card-content">
+                                <div hx-get="<%= $step_url %>?section=pending_transfer_requests&status=pending"
+                                     hx-target="this"
+                                     hx-trigger="load"
+                                     class="h-64 overflow-y-auto">
+                                    <p class="text-gray-500">Loading transfer requests...</p>
+                                </div>
+                            </div>
+                            <div class="dashboard-card-footer">
+                                <a href="<%= $step_url %>?section=pending_transfer_requests&status=all" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                    View All Transfer Requests →
+                                </a>
+                            </div>
+                        </div>
+                    % }
+                </div>
+            </div>
+        % }
+
+        <!-- Main Content Grid -->
+        <div class="dashboard-grid">
+            <!-- Program Overview -->
+            <div class="dashboard-card dashboard-card-large">
+                <div class="dashboard-card-header">
+                    <h2>Program Overview</h2>
+                    <div class="dashboard-card-actions">
+                        <button hx-get="<%= $step_url %>?section=program_overview&range=current"
+                                hx-target="#program-overview-content">
+                            Current
+                        </button>
+                        <button hx-get="<%= $step_url %>?section=program_overview&range=upcoming"
+                                hx-target="#program-overview-content">
+                            Upcoming
+                        </button>
+                        <button hx-get="<%= $step_url %>?section=program_overview&range=all"
+                                hx-target="#program-overview-content">
+                            All
+                        </button>
+                    </div>
+                </div>
+                <div id="program-overview-content" class="dashboard-card-content">
+                    %= include 'admin-dashboard/program_overview'
+                </div>
+            </div>
+
+            <!-- Enrollment Trends Chart -->
+            <div class="dashboard-card">
+                <div class="dashboard-card-header">
+                    <h2>Enrollment Trends</h2>
+                    <div class="dashboard-card-actions">
+                        <button onclick="updateChart('week')">Week</button>
+                        <button onclick="updateChart('month')">Month</button>
+                        <button onclick="updateChart('quarter')">Quarter</button>
+                    </div>
+                </div>
+                <div class="dashboard-card-content">
+                    <canvas id="enrollment-chart" width="400" height="200"></canvas>
+                </div>
+            </div>
+
+            <!-- Today's Events -->
+            <div class="dashboard-card">
+                <div class="dashboard-card-header">
+                    <h2>Today's Events</h2>
+                    <input type="date" id="event-date" name="date" value="<%= DateTime->now->ymd %>"
+                           hx-get="<%= $step_url %>?section=todays_events"
+                           hx-target="#todays-events-content"
+                           hx-trigger="change"
+                           hx-include="this"
+                           class="form-input"
+                           style="width: auto; min-height: 32px; font-size: var(--font-size-sm);">
+                </div>
+                <div id="todays-events-content" class="dashboard-card-content">
+                    %= include 'admin-dashboard/todays_events'
+                </div>
+            </div>
+
+            <!-- Waitlist Management -->
+            <div class="dashboard-card">
+                <div class="dashboard-card-header">
+                    <h2>Waitlist Management</h2>
+                    <div class="dashboard-card-actions">
+                        <button hx-get="<%= $step_url %>?section=waitlist_management&status=urgent"
+                                hx-target="#waitlist-content"
+                                class="text-danger">
+                            Urgent
+                        </button>
+                        <button hx-get="<%= $step_url %>?section=waitlist_management&status=offered"
+                                hx-target="#waitlist-content">
+                            Offered
+                        </button>
+                        <button hx-get="<%= $step_url %>?section=waitlist_management&status=all"
+                                hx-target="#waitlist-content">
+                            All
+                        </button>
+                    </div>
+                </div>
+                <div id="waitlist-content" class="dashboard-card-content">
+                    %= include 'admin-dashboard/waitlist_management'
+                </div>
+            </div>
+
+            <!-- Recent Notifications -->
+            <div class="dashboard-card">
+                <div class="dashboard-card-header">
+                    <h2>Recent Notifications</h2>
+                    <div class="dashboard-card-actions">
+                        <button hx-get="<%= $step_url %>?section=recent_notifications&type=attendance"
+                                hx-target="#notifications-content">
+                            Attendance
+                        </button>
+                        <button hx-get="<%= $step_url %>?section=recent_notifications&type=waitlist"
+                                hx-target="#notifications-content">
+                            Waitlist
+                        </button>
+                        <button hx-get="<%= $step_url %>?section=recent_notifications&type=all"
+                                hx-target="#notifications-content">
+                            All
+                        </button>
+                    </div>
+                </div>
+                <div id="notifications-content" class="dashboard-card-content">
+                    %= include 'admin-dashboard/recent_notifications'
+                </div>
+            </div>
+        </div>
+
+        <!-- Enrollment Alerts -->
+        % if (@$enrollment_alerts) {
+            <div class="alert-grid mt-8">
+                <h3>⚠️ High Enrollment Alert</h3>
+                <div class="alert-items">
+                    % for my $alert (@$enrollment_alerts) {
+                        <div class="alert-item">
+                            <div>
+                                <span class="alert-program"><%= $alert->{program_name} %></span>
+                                <span class="alert-session">- <%= $alert->{session_name} %></span>
+                            </div>
+                            <div class="alert-metrics">
+                                <span class="alert-percentage">
+                                    <%= sprintf("%.0f", $alert->{utilization_rate}) %>% full
+                                </span>
+                                <div class="alert-count">
+                                    <%= $alert->{enrolled_count} %>/<%= $alert->{capacity} %> enrolled
+                                </div>
+                            </div>
+                        </div>
+                    % }
+                </div>
+            </div>
+        % }
+    </div>
+</div>
+
+<!-- Bulk Message Modal -->
+<div id="bulk-message-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+        <form id="bulk-message-form">
+            <div class="modal-header">
+                <h3 class="modal-title">Send Message to Parents</h3>
+            </div>
+
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="bulk-scope" class="form-label required">Send To</label>
+                    <select id="bulk-scope" name="scope" required class="form-select">
+                        <option value="">Select recipients...</option>
+                        <option value="tenant-wide">All Families</option>
+                        <optgroup label="Programs">
+                            % for my $program (@{$program_summary || []}) {
+                                <option value="program_<%= $program->{program_id} %>"><%= $program->{program_name} %></option>
+                            % }
+                        </optgroup>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="bulk-message-type" class="form-label required">Message Type</label>
+                    <select id="bulk-message-type" name="message_type" required class="form-select">
+                        <option value="announcement">📢 Announcement</option>
+                        <option value="update">📝 Update</option>
+                        <option value="emergency">🚨 Emergency</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="bulk-subject" class="form-label required">Subject</label>
+                    <input type="text" id="bulk-subject" name="subject" required maxlength="200"
+                           class="form-input"
+                           placeholder="Enter message subject...">
+                </div>
+
+                <div class="form-group">
+                    <label for="bulk-message" class="form-label required">Message</label>
+                    <textarea id="bulk-message" name="message" required rows="6"
+                              class="form-textarea"
+                              placeholder="Enter your message..."></textarea>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" onclick="closeBulkMessageModal()" class="btn btn-outline">
+                    Cancel
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    Send Message
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Chart initialization
+let enrollmentChart;
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeChart();
+});
+
+function initializeChart() {
+    const ctx = document.getElementById('enrollment-chart').getContext('2d');
+    enrollmentChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Enrollments',
+                data: [],
+                borderColor: 'rgb(59, 130, 246)',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+    
+    // Load initial data
+    updateChart('month');
+}
+
+function updateChart(period) {
+    fetch(`/admin/dashboard/enrollment_trends?period=${period}`)
+        .then(response => response.json())
+        .then(data => {
+            enrollmentChart.data.labels = data.labels;
+            enrollmentChart.data.datasets[0].data = data.data;
+            enrollmentChart.update();
+        })
+        .catch(console.error);
+}
+
+// Modal functions
+function openBulkMessageModal() {
+    document.getElementById('bulk-message-modal').classList.remove('hidden');
+}
+
+function closeBulkMessageModal() {
+    document.getElementById('bulk-message-modal').classList.add('hidden');
+    document.getElementById('bulk-message-form').reset();
+}
+
+// Export dropdown
+function toggleExportDropdown() {
+    document.getElementById('export-dropdown').classList.toggle('hidden');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    const dropdown = document.getElementById('export-dropdown');
+    const button = e.target.closest('button');
+    if (!button || !button.onclick || button.onclick.toString().indexOf('toggleExportDropdown') === -1) {
+        dropdown.classList.add('hidden');
+    }
+});
+
+// Bulk message form submission
+document.getElementById('bulk-message-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    
+    try {
+        const response = await fetch('/admin/dashboard/send_bulk_message', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(`Message sent successfully to ${result.recipients_count} recipients.`);
+            closeBulkMessageModal();
+        } else {
+            alert(`Error: ${result.error}`);
+        }
+    } catch (error) {
+        alert(`Error sending message: ${error.message}`);
+    }
+});
+
+// Auto-refresh dashboard data every 5 minutes
+setInterval(function() {
+    // Refresh key sections
+    htmx.trigger('#program-overview-content', 'refresh');
+    htmx.trigger('#todays-events-content', 'refresh');
+    htmx.trigger('#waitlist-content', 'refresh');
+}, 300000); // 5 minutes
+</script>

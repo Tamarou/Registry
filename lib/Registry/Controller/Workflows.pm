@@ -230,37 +230,54 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $dao = $self->app->dao;
         my $run = $self->run();
         my $workflow = $self->workflow();
-        
+
         # Find the step that matches the URL parameter, not just the latest step
         my $requested_step_slug = $self->param('step');
-        my $step = Registry::DAO::WorkflowStep->find($dao->db, { 
-            workflow_id => $workflow->id, 
-            slug => $requested_step_slug 
+        my $step = Registry::DAO::WorkflowStep->find($dao->db, {
+            workflow_id => $workflow->id,
+            slug => $requested_step_slug
         });
-        
+
         # Fallback to latest step if the requested step isn't found
         $step ||= $run->latest_step($dao->db) || $run->next_step($dao->db);
-        
+
         # Get data for rendering
         my $data_json = Mojo::JSON::encode_json($run->data || {});
         my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
-        
+
         # Get workflow progress data
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
-        
-        # Let the step class handle its own template data preparation (polymorphic approach)
-        my $template_data = $step->prepare_template_data($dao->db, $run);
-        
+
+        # Pass query params to prepare_template_data so step classes can
+        # load section-specific data (e.g., admin dashboard filters).
+        my $params = $self->req->params->to_hash;
+        my $template_data = $step->prepare_template_data($dao->db, $run, $params);
+
+        # HTMX: render fragment (no layout) for partial page updates
+        if ($self->is_htmx_request) {
+            $self->stash(_htmx_fragment => 1);
+        }
+
+        # If the step returned a _section key, render that section's
+        # sub-template instead of the main step template.
+        my $section = delete $template_data->{_section};
+        my $workflow_slug = $self->param('workflow');
+        my $step_slug = $self->param('step');
+        my $template = $section
+            ? $workflow_slug . '/' . $section
+            : $workflow_slug . '/' . $step_slug;
+
         return $self->render(
-            template => $self->param('workflow') . '/' . $self->param('step'),
-            workflow => $self->param('workflow'),
-            step     => $self->param('step'),
+            template => $template,
+            workflow => $workflow_slug,
+            step     => $step_slug,
             status   => 200,
             action   => $self->url_for('workflow_process_step',
-                workflow => $self->param('workflow'),
+                workflow => $workflow_slug,
                 run => $self->param('run'),
-                step => $self->param('step')),
+                step => $step_slug),
             outcome_definition_id => $step->outcome_definition_id,
+            run => $run,
             data_json => $data_json,
             errors_json => $errors_json,
             workflow_progress => $workflow_progress,
