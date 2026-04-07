@@ -1,0 +1,1 @@
+-- Revert seed-registry-storefront (no-op, stub was empty)

@@ -44,4 +44,5 @@ auth-notification-types [notifications-and-preferences passwordless-auth] 2026-0
 tenant-domains [notifications-and-preferences] 2026-03-30T19:04:42Z Chris Prather <chris.prather@tamarou.com> # Custom domain management for tenants
 magic-link-verification [passwordless-auth] 2026-03-31T12:11:05Z Chris Prather <chris.prather@tamarou.com> # Add verified_at column for two-step magic link flow
 waitlist-accepted-status [waitlist-management] 2026-04-05T01:37:21Z Chris Prather <chris.prather@tamarou.com> # Add accepted status to waitlist check constraint
-seed-registry-storefront-v2 [events-and-sessions] 2026-04-07T14:44:00Z Chris Prather <chris.prather@tamarou.com> # Seed registry tenant storefront with platform offering
+seed-registry-storefront [events-and-sessions] 2026-04-07T13:42:30Z Chris Prather <chris.prather@tamarou.com> # Seed registry tenant storefront (empty stub, deployed to production)
+seed-registry-storefront-v2 [seed-registry-storefront] 2026-04-07T14:44:00Z Chris Prather <chris.prather@tamarou.com> # Seed registry tenant storefront with actual data

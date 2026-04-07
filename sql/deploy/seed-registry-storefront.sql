@@ -1,0 +1,2 @@
+-- Deploy seed-registry-storefront (empty stub, already deployed to production)
+-- Actual seed data is in seed-registry-storefront-v2
