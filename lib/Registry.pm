@@ -168,8 +168,9 @@ class Registry :isa(Mojolicious) {
                 # Determine tenant: explicit param > header/cookie (authed only) > subdomain > default
                 # X-As-Tenant and as-tenant cookie are restricted to authenticated
                 # users to prevent unauthenticated cross-tenant access.
+                # Check both session auth and bearer token (API key) auth.
                 my $header_tenant;
-                if ($c->session('user_id')) {
+                if ($c->session('user_id') || $c->stash('current_user')) {
                     $header_tenant = $c->req->headers->header('X-As-Tenant')
                                   || $c->req->cookie('as-tenant');
                 }
