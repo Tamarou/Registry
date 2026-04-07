@@ -27,7 +27,14 @@ class Registry :isa(Mojolicious) {
             )
         );
 
-        $self->secrets( [$ENV{MOJO_SECRET} // hostname] );
+        if ($ENV{MOJO_SECRET}) {
+            $self->secrets( [$ENV{MOJO_SECRET}] );
+        } elsif ($self->mode eq 'development') {
+            $self->log->warn("MOJO_SECRET not set -- using hostname for development only");
+            $self->secrets( [hostname] );
+        } else {
+            die "MOJO_SECRET environment variable is required in production";
+        }
 
         # Static asset URL prefix. When STATIC_URL is set, CSS/JS/images are
         # served from an external static site (e.g. Render static service or CDN).
@@ -158,10 +165,17 @@ class Registry :isa(Mojolicious) {
 
         $self->helper(
             tenant => sub ($c, $explicit_tenant = undef) {
-                # Determine tenant: explicit param > header > cookie > subdomain > default
+                # Determine tenant: explicit param > header/cookie (authed only) > subdomain > default
+                # X-As-Tenant and as-tenant cookie are restricted to authenticated
+                # users to prevent unauthenticated cross-tenant access.
+                my $header_tenant;
+                if ($c->session('user_id')) {
+                    $header_tenant = $c->req->headers->header('X-As-Tenant')
+                                  || $c->req->cookie('as-tenant');
+                }
+
                 my $raw = $explicit_tenant
-                    || $c->req->headers->header('X-As-Tenant')
-                    || $c->req->cookie('as-tenant')
+                    || $header_tenant
                     || $self->_extract_tenant_from_subdomain($c);
 
                 # Custom domain lookup: if no tenant found via subdomain/header/cookie,
