@@ -64,22 +64,20 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
                 MIN(s.start_date) as earliest_start,
                 MAX(s.end_date) as latest_end
             FROM projects p
-            LEFT JOIN sessions s ON p.id = s.project_id
+            LEFT JOIN events ev ON ev.project_id = p.id
+            LEFT JOIN session_events se ON se.event_id = ev.id
+            LEFT JOIN sessions s ON s.id = se.session_id
             LEFT JOIN enrollments e ON s.id = e.session_id
             LEFT JOIN waitlist w ON s.id = w.session_id AND w.status IN ('waiting', 'offered')
-            LEFT JOIN events ev ON s.id = ev.session_id
         };
 
         my @where_conditions;
         my @params;
 
         if ($time_range eq 'current') {
-            push @where_conditions, 's.start_date <= ? AND s.end_date >= ?';
-            my $now = time();
-            push @params, $now, $now;
+            push @where_conditions, 's.start_date <= CURRENT_DATE AND s.end_date >= CURRENT_DATE';
         } elsif ($time_range eq 'upcoming') {
-            push @where_conditions, 's.start_date > ?';
-            push @params, time();
+            push @where_conditions, 's.start_date > CURRENT_DATE';
         }
 
         if (@where_conditions) {

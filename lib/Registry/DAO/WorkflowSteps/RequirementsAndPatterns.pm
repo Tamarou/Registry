@@ -42,7 +42,7 @@ method process ($db, $form_data, $run = undef) {
     };
 }
 
-method prepare_template_data ($db, $run) {
+method prepare_template_data ($db, $run, $params = {}) {
     my $requirements    = $run->data->{requirements}       || {};
     my $schedule        = $run->data->{schedule_pattern}   || {};
     my $type_config     = $run->data->{program_type_config} || {};

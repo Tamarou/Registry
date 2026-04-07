@@ -31,7 +31,7 @@ method process ($db, $form_data, $run = undef) {
     return { stay => 1 };
 }
 
-method prepare_template_data ($db, $run) {
+method prepare_template_data ($db, $run, $params = {}) {
     my $program_types = Registry::DAO::ProgramType->list($db);
     return {
         program_types => $program_types,

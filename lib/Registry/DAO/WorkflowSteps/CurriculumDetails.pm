@@ -26,7 +26,7 @@ method process ($db, $form_data, $run = undef) {
     };
 }
 
-method prepare_template_data ($db, $run) {
+method prepare_template_data ($db, $run, $params = {}) {
     my $curriculum = $run->data->{curriculum} || {};
     return {
         program_type_name   => $run->data->{program_type_name} || 'Unknown',

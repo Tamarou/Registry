@@ -434,7 +434,7 @@ method _format_trial_end_date($trial_ends_at) {
 }
 
 # Override template data preparation for RegisterTenant steps
-method prepare_template_data ($db, $run) {
+method prepare_template_data ($db, $run, $params = {}) {
     # If this is a completion step, use our specialized completion data
     my $step_slug = $self->slug || '';
     if ($step_slug eq 'complete') {

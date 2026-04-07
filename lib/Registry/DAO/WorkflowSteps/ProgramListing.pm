@@ -16,7 +16,7 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
         return { stay => 1 };
     }
 
-    method prepare_template_data ($db, $run) {
+    method prepare_template_data ($db, $run, $params = {}) {
         $db = $db->db if $db isa Registry::DAO;
 
         # Single consolidated query: sessions + events + projects + enrollment counts

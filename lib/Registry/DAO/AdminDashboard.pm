@@ -16,9 +16,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
         })->array->[0] || 0;
 
         # Total programs
-        my $active_programs = $db->select('projects', 'COUNT(*)', {
-            status => 'active'
-        })->array->[0] || 0;
+        my $active_programs = $db->select('projects', 'COUNT(*)')->array->[0] || 0;
 
         # Total waitlist entries
         my $waitlist_entries = $db->select('waitlist', 'COUNT(*)', {
@@ -26,15 +24,15 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
         })->array->[0] || 0;
 
         # Today's events
-        my $today_start = DateTime->now->truncate(to => 'day')->epoch;
-        my $today_end = DateTime->now->truncate(to => 'day')->add(days => 1)->epoch;
+        my $today_start = DateTime->now->truncate(to => 'day')->strftime('%Y-%m-%d %H:%M:%S%z');
+        my $today_end = DateTime->now->truncate(to => 'day')->add(days => 1)->strftime('%Y-%m-%d %H:%M:%S%z');
 
         my $todays_events = $db->select('events', 'COUNT(*)', {
-            start_time => { '>=' => $today_start, '<' => $today_end }
+            time => { '>=' => $today_start, '<' => $today_end }
         })->array->[0] || 0;
 
         # This month's revenue (if payment tracking is available)
-        my $month_start = DateTime->now->truncate(to => 'month')->epoch;
+        my $month_start = DateTime->now->truncate(to => 'month')->strftime('%Y-%m-%d %H:%M:%S%z');
         my $monthly_revenue = $db->select('payments', 'SUM(amount)', {
             status => 'completed',
             created_at => { '>=' => $month_start }
@@ -71,9 +69,10 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 ev.capacity,
                 (COUNT(DISTINCT e.id)::float / ev.capacity * 100) as utilization_rate
             FROM sessions s
-            JOIN projects p ON s.project_id = p.id
+            JOIN session_events se ON se.session_id = s.id
+            JOIN events ev ON ev.id = se.event_id
+            JOIN projects p ON ev.project_id = p.id
             JOIN enrollments e ON s.id = e.session_id AND e.status = 'active'
-            JOIN events ev ON s.id = ev.session_id
             WHERE s.start_date > ?
             GROUP BY p.id, s.id, ev.capacity
             HAVING COUNT(DISTINCT e.id)::float / ev.capacity > 0.9
@@ -81,7 +80,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
             LIMIT 5
         };
 
-        return $db->query($sql, time())->hashes->to_array;
+        return $db->query($sql, DateTime->now->ymd)->hashes->to_array;
     }
 
     # Get waitlist summary for admin dashboard
@@ -101,7 +100,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
             LIMIT 10
         };
 
-        return $db->query($sql, time() + 86400)->hashes->to_array;
+        return $db->query($sql, DateTime->now->add(days => 1)->strftime('%Y-%m-%d %H:%M:%S%z'))->hashes->to_array;
     }
 
     # Get enrollment trends for charts
@@ -173,8 +172,10 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 JOIN family_members fm ON e.family_member_id = fm.id
                 JOIN user_profiles up ON fm.family_id = up.user_id
                 JOIN sessions s ON e.session_id = s.id
-                JOIN projects p ON s.project_id = p.id
-                LEFT JOIN locations l ON s.location_id = l.id
+                JOIN session_events se ON se.session_id = s.id
+                JOIN events ev2 ON ev2.id = se.event_id
+                JOIN projects p ON ev2.project_id = p.id
+                LEFT JOIN locations l ON ev2.location_id = l.id
                 ORDER BY e.created_at DESC
             })->hashes->to_array;
         } elsif ($export_type eq 'attendance') {
@@ -190,7 +191,8 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                     up.name as parent_name
                 FROM attendance_records ar
                 JOIN events ev ON ar.event_id = ev.id
-                JOIN sessions s ON ev.session_id = s.id
+                JOIN session_events se ON se.event_id = ev.id
+                JOIN sessions s ON s.id = se.session_id
                 JOIN family_members fm ON ar.student_id = fm.id
                 JOIN user_profiles up ON fm.family_id = up.user_id
                 ORDER BY ar.marked_at DESC
@@ -213,7 +215,9 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 JOIN family_members fm ON w.student_id = fm.id
                 JOIN user_profiles up ON w.parent_id = up.user_id
                 JOIN sessions s ON w.session_id = s.id
-                JOIN projects p ON s.project_id = p.id
+                JOIN session_events se ON se.session_id = s.id
+                JOIN events ev2 ON ev2.id = se.event_id
+                JOIN projects p ON ev2.project_id = p.id
                 ORDER BY w.created_at DESC
             })->hashes->to_array;
         }

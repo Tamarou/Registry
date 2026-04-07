@@ -28,20 +28,32 @@ method prepare_template_data ($db, $run, $params = {}) {
 
 method _load_full_dashboard ($db) {
     require Registry::DAO::AdminDashboard;
-    my $data = eval { Registry::DAO::AdminDashboard->get_admin_dashboard_data($db) } || {};
 
-    # Add section-specific data that the initial render includes inline.
-    # Each section loads independently so one failure doesn't block the page.
-    $data->{programs}      = eval { $self->_load_section($db, 'program_overview', {})->{programs} } || [];
-    $data->{time_range}    = 'current';
-    $data->{events}        = eval { $self->_load_section($db, 'todays_events', {})->{events} } || [];
-    $data->{selected_date} = DateTime->now->ymd;
-    $data->{waitlist_data} = eval { $self->_load_section($db, 'waitlist_management', {})->{waitlist_data} } || [];
-    $data->{status_filter} = 'all';
-    $data->{notifications} = eval { $self->_load_section($db, 'recent_notifications', {})->{notifications} } || [];
-    $data->{type_filter}   = 'all';
+    # Load overview stats directly (simple aggregate queries, unlikely to fail)
+    my $overview_stats = eval { Registry::DAO::AdminDashboard->get_overview_stats($db) } || {};
 
-    return $data;
+    # Load each section independently so one failure doesn't block the page
+    my $programs      = eval { $self->_load_section($db, 'program_overview', {})->{programs} } || [];
+    my $events        = eval { $self->_load_section($db, 'todays_events', {})->{events} } || [];
+    my $waitlist_data = eval { $self->_load_section($db, 'waitlist_management', {})->{waitlist_data} } || [];
+    my $notifications = eval { $self->_load_section($db, 'recent_notifications', {})->{notifications} } || [];
+    my $enrollment_alerts = eval { Registry::DAO::AdminDashboard->get_enrollment_alerts($db) } || [];
+    my $waitlist_summary  = eval { Registry::DAO::AdminDashboard->get_waitlist_summary($db) } || [];
+
+    return {
+        overview_stats    => $overview_stats,
+        enrollment_alerts => $enrollment_alerts,
+        waitlist_summary  => $waitlist_summary,
+        programs          => $programs,
+        program_summary   => $programs,   # alias for bulk message modal
+        time_range        => 'current',
+        events            => $events,
+        selected_date     => DateTime->now->ymd,
+        waitlist_data     => $waitlist_data,
+        status_filter     => 'all',
+        notifications     => $notifications,
+        type_filter       => 'all',
+    };
 }
 
 method _load_section ($db, $section, $params) {

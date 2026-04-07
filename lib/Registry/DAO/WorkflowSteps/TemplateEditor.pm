@@ -101,7 +101,7 @@ class Registry::DAO::WorkflowSteps::TemplateEditor :isa(Registry::DAO::WorkflowS
         };
     }
 
-    method prepare_template_data ($db, $run) {
+    method prepare_template_data ($db, $run, $params = {}) {
         $db = $db->db if $db isa Registry::DAO;
 
         my $rows = $db->select('templates', '*', {}, { -asc => 'name' })->hashes;

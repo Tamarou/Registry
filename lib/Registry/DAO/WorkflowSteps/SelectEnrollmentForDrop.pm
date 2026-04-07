@@ -56,8 +56,10 @@ class Registry::DAO::WorkflowSteps::SelectEnrollmentForDrop :isa(Registry::DAO::
                 fm.child_name
             FROM enrollments e
             JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
-            LEFT JOIN locations l ON s.location_id = l.id
+            JOIN session_events se ON se.session_id = s.id
+            JOIN events ev ON ev.id = se.event_id
+            JOIN projects p ON ev.project_id = p.id
+            LEFT JOIN locations l ON ev.location_id = l.id
             JOIN family_members fm ON e.family_member_id = fm.id
             WHERE fm.family_id = ?
             AND e.status IN ('active', 'pending')

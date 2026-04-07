@@ -39,7 +39,7 @@ method process ($db, $form_data, $run = undef) {
     return { created_project_id => $project->id };
 }
 
-method prepare_template_data ($db, $run) {
+method prepare_template_data ($db, $run, $params = {}) {
     my $curriculum       = $run->data->{curriculum}       || {};
     my $requirements     = $run->data->{requirements}     || {};
     my $schedule_pattern = $run->data->{schedule_pattern} || {};

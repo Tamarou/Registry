@@ -153,7 +153,7 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
         };
     }
 
-    method prepare_template_data ($db, $run) {
+    method prepare_template_data ($db, $run, $params = {}) {
         my $data = $run->data || {};
         my $plan_basics = $data->{plan_basics} || {};
         my $pricing_model = $data->{pricing_model} || {};

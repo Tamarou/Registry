@@ -5,7 +5,7 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::TenantSignupReview :isa(Registry::DAO::WorkflowStep) {
 
     # Override template data preparation for tenant signup review steps
-    method prepare_template_data ($db, $run) {
+    method prepare_template_data ($db, $run, $params = {}) {
         my $raw_data = $run->data || {};
         
         # Structure the data for the review template
