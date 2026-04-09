@@ -140,49 +140,54 @@ my $session_draft = $dao->create(Session => {
 use Registry::DAO::Family;
 
 # ============================================================
-# Test 1: GET / returns 200 with program listing
+# Test 1: GET / returns 200 with marketing landing page
 # ============================================================
-subtest 'GET / returns 200 with program listing' => sub {
+subtest 'GET / returns 200 with marketing landing page' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # Program name appears
-    $t->content_like(qr/Potter.*Wheel Art Camp/i, 'Program name visible');
+    # Marketing hero content
+    $t->content_like(qr/Build Your Tiny Art Empire/i, 'Hero heading visible');
 
-    # Session name appears
-    $t->content_like(qr/Week 1 - Jun 1-5/, 'Session name visible');
+    # CTA button exists
+    $t->content_like(qr/Start Your Tiny Art Empire/i, 'CTA button visible');
 
-    # Register button exists
-    $t->content_like(qr/Register|Enroll/i, 'Register/Enroll button visible');
+    # Feature cards render
+    $t->content_like(qr/Enrollment Made Simple/i, 'Feature card visible');
 
     # No errors
     $t->content_unlike(qr/Internal Server Error/, 'No server error');
 };
 
 # ============================================================
-# Test 2: Only published sessions shown
+# Test 2: Landing page renders without exposing raw session data
 # ============================================================
-subtest 'only published sessions with future dates shown' => sub {
+subtest 'landing page does not expose raw session data' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # Published sessions appear
-    $t->content_like(qr/Week 1 - Jun 1-5/, 'Published session visible');
-
-    # Draft session does NOT appear
+    # The marketing landing page should not show raw session details
     $t->content_unlike(qr/Draft Session/, 'Draft session not visible');
+    $t->content_unlike(qr/spots left/, 'Raw availability data not shown');
 };
 
 # ============================================================
-# Test 3: Full session shows waitlist option
+# Test 3: Landing page has callcc form linking to correct workflow
 # ============================================================
-subtest 'full session shows waitlist or full indicator' => sub {
+subtest 'landing page has callcc form with correct workflow target' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # Full session should show some indication it's full
-    $t->content_like(qr/Week 3 - Jun 15-19/, 'Full session name visible');
-    $t->content_like(qr/Full|Waitlist|waitlist|full/i, 'Full/waitlist indicator visible');
+    # The CTA form should callcc into the registration workflow
+    my $dom = $t->tx->res->dom;
+    my $callcc_form = $dom->at('form[action*="callcc"]');
+    ok $callcc_form, 'callcc form found in landing page';
+
+    if ($callcc_form) {
+        my $action = $callcc_form->attr('action');
+        like $action, qr{/tenant-storefront/.+/callcc/},
+            'callcc action targets a registration workflow';
+    }
 };
 
 # ============================================================
