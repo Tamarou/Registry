@@ -382,7 +382,9 @@ class Registry::Controller::YourController :isa(Registry::Controller) {
 - Use semantic HTML5
 - Include ARIA labels for accessibility
 - Use HTMX attributes for dynamic behavior
-- Follow existing CSS class patterns
+- **Follow the design system** documented in [docs/design-system.md](docs/design-system.md)
+- Use design system classes (`.btn`, `.card`, `.container`, `.landing-*`) and CSS custom properties (`var(--color-primary)`, `var(--space-4)`, etc.)
+- **Never use Tailwind-style utility classes** (`bg-white`, `text-gray-900`, `rounded-lg`, etc.) -- they do not exist in our CSS
 
 ## Submitting Changes
 

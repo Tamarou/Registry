@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup, coding conventions, and contribution workflow.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup, coding conventions, and contribution workflow. See [docs/design-system.md](docs/design-system.md) for the vaporwave design system -- all templates must use design system classes and CSS custom properties, never Tailwind-style utility classes.
 
 ## Commands
 

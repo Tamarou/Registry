@@ -533,44 +533,49 @@ window.addEventListener('load', () => {
 
 ## 11. CSS File Structure & Organization
 
-The Registry design system is organized across four main CSS files:
+The Registry design system is consolidated into two CSS files:
 
 ### File Import Order
 ```html
-<!-- In templates: Import in this specific order -->
-<link rel="stylesheet" href="/css/design-system.css">
-<link rel="stylesheet" href="/css/components.css">
-<link rel="stylesheet" href="/css/structure.css">
-<link rel="stylesheet" href="/css/style.css"> <!-- Optional: Legacy support -->
+<!-- The default layout loads these automatically -->
+<link rel="stylesheet" href="/css/theme.css">
+<link rel="stylesheet" href="/css/app.css">
 ```
 
 ### File Responsibilities
 
-#### `/public/css/design-system.css`
-- Core design tokens and CSS custom properties
-- Theme definitions (light/dark)
-- Keyframe animations
-- Background effects
-- Base body/html styles
+#### `/public/css/theme.css`
+- CSS custom properties (design tokens): colors, typography, spacing, shadows, radii, transitions
+- Light and dark theme definitions (`[data-theme="dark"]`)
+- Vaporwave accent tokens and landing page aliases
+- Base reset and typography (html, body, headings, links)
+- Keyframe animations (glow-pulse, grid-move, float, spin, pulse)
+- Background effects (grid background, floating shapes, noise texture)
+- Accessibility (`.sr-only`)
+- HTMX loading state
+- Responsive animation adjustments
 
-#### `/public/css/components.css`
-- Reusable component styles (navigation, buttons, cards, forms)
-- Hero sections
-- Landing page components
-- Feature cards
-- Navigation patterns
+#### `/public/css/app.css`
+- Layout containers (`.container`, `.container-sm`, `.container-md`, `.container-lg`)
+- Landing page components (`.landing-page`, `.landing-hero`, `.landing-nav`, `.landing-features`, `.landing-feature-card`)
+- Buttons (`.btn`, `.landing-cta-button`, `[data-variant]` buttons)
+- Cards (`.card`, `.landing-feature-card`)
+- Forms (inputs, selects, textareas, labels, help text)
+- Workflow components (`[data-component="workflow-*"]`)
+- Teacher layout (`.teacher-layout`)
+- Utility classes (display, flex, text, spacing, background, border)
+- Responsive breakpoints (mobile, tablet, desktop)
 
-#### `/public/css/structure.css`
-- Extended design tokens (typography, spacing, shadows)
-- Semantic HTML element styling
-- Base element reset/normalization
-- Semantic color palette
+### Key Rule: Never Use Tailwind Classes
 
-#### `/public/css/style.css`
-- Utility classes (display, flex, grid, text, spacing)
-- Page-specific styles
-- Legacy button classes (backward compatibility)
-- Container system
+Templates must use the design system classes and CSS custom properties defined in these files. **Do not use Tailwind-style utility classes** like `bg-white`, `text-gray-900`, `rounded-lg`, etc. -- they do not exist in our CSS and will render as nothing.
+
+Instead:
+- Use `.card` instead of `bg-white rounded-lg shadow-md`
+- Use `.btn` with `data-variant` instead of `bg-green-600 text-white px-4 py-2 rounded`
+- Use `.container` instead of `container mx-auto px-4`
+- Use CSS custom properties (`var(--color-text-primary)`) for colors
+- Use `.landing-feature-card` for feature cards on landing pages
 
 ## 12. Extended Design Tokens
 
@@ -1078,9 +1083,8 @@ The design system is **fully integrated** into Registry's Mojolicious templates:
     <title><%= title %></title>
 
     <!-- Design system CSS -->
-    <link rel="stylesheet" href="/css/design-system.css">
-    <link rel="stylesheet" href="/css/components.css">
-    <link rel="stylesheet" href="/css/structure.css">
+    <link rel="stylesheet" href="/css/theme.css">
+    <link rel="stylesheet" href="/css/app.css">
 
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
