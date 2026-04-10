@@ -1,269 +1,94 @@
 % layout 'default';
-% title 'Tiny Art Empire - Streamline Your Art Teaching Business';
-% stash no_container => 1;
+% title 'Programs';
 
-% # Pull the first program's data for CTA links
-% my $prog = $programs->[0] || {};
-% my $project = $prog->{project};
-% my $sess_info = ($prog->{sessions} || [])->[0] || {};
-% my $session = $sess_info->{session};
-% my $registration_workflow = ($project && $project->metadata || {})->{registration_workflow} || 'summer-camp-registration';
+<div class="container mx-auto px-4 py-8">
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-3xl font-bold mb-8">Available Programs</h1>
 
-% content_for 'head' => begin
-  <!-- SEO Meta Tags -->
-  <meta name="description" content="Build your Tiny Art Empire. Manage enrollment, payments, scheduling, and attendance for your after-school art programs so you can get back to the studio.">
-  <meta name="keywords" content="after-school art programs, art teaching business, ceramics classes, pottery workshops, art education, enrollment management, NCECA, program management">
-  <meta name="robots" content="index, follow">
-  <meta name="language" content="en-US">
-  <link rel="canonical" href="<%= url_for('/')->to_abs %>">
+        % if (@$programs) {
+            <div class="grid gap-8">
+                % for my $prog (@$programs) {
+                    % my $project = $prog->{project};
+                    % my $program_type = $prog->{program_type};
+                    <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                        <div class="p-6">
+                            <div class="flex items-start justify-between mb-4">
+                                <div>
+                                    <h2 class="text-2xl font-bold text-gray-900"><%= $project->name %></h2>
+                                    % if ($project->notes) {
+                                        <p class="text-gray-600 mt-1"><%= $project->notes %></p>
+                                    % }
+                                </div>
+                                % if ($program_type) {
+                                    <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                                        <%= $program_type->name %>
+                                    </span>
+                                % }
+                            </div>
 
-  <!-- Open Graph / Facebook -->
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="<%= url_for('/')->to_abs %>">
-  <meta property="og:title" content="Tiny Art Empire - Streamline Your Art Teaching Business">
-  <meta property="og:description" content="You're an artist who wants to teach. Streamline the business so you can focus more time on the art.">
-  <meta property="og:image" content="<%= url_for('/images/social-preview.png')->to_abs %>">
-  <meta property="og:image:width" content="1200">
-  <meta property="og:image:height" content="630">
-  <meta property="og:site_name" content="Tiny Art Empire">
+                            <div class="space-y-4 mt-6">
+                                % for my $sess_info (@{$prog->{sessions}}) {
+                                    % my $session = $sess_info->{session};
+                                    <div class="border rounded-lg p-4 flex items-center justify-between">
+                                        <div class="flex-1">
+                                            <h3 class="font-semibold text-lg"><%= $session->name %></h3>
+                                            <div class="text-sm text-gray-600 mt-1">
+                                                <%= $session->start_date %> to <%= $session->end_date %>
+                                            </div>
+                                            % if ($sess_info->{best_price}) {
+                                                <div class="text-sm font-medium text-green-700 mt-1">
+                                                    $<%= $sess_info->{best_price} %>
+                                                </div>
+                                            % }
+                                        </div>
 
-  <!-- Twitter -->
-  <meta property="twitter:card" content="summary_large_image">
-  <meta property="twitter:url" content="<%= url_for('/')->to_abs %>">
-  <meta property="twitter:title" content="Tiny Art Empire - More Studio Time, Less Paperwork">
-  <meta property="twitter:description" content="Manage enrollment, payments, and attendance for your art programs. Built for working artists.">
-  <meta property="twitter:image" content="<%= url_for('/images/social-preview.png')->to_abs %>">
-
-  <!-- Performance optimizations -->
-  <link rel="preconnect" href="https://js.stripe.com" crossorigin>
-
-  <!-- Schema.org structured data -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Tiny Art Empire",
-    "description": "Program management software for art educators running after-school programs",
-    "url": "<%= url_for('/')->to_abs %>",
-    "applicationCategory": "BusinessApplication",
-    "operatingSystem": "Web Browser",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD",
-      "description": "Free to start, 2.5% revenue share"
-    },
-    "provider": {
-      "@type": "Organization",
-      "name": "Tamarou & Super Awesome Cool Pottery",
-      "url": "<%= url_for('/')->to_abs %>"
-    },
-    "featureList": [
-      "Online Enrollment",
-      "Payment Processing",
-      "Attendance Tracking",
-      "Schedule Management",
-      "Waitlist Management",
-      "Parent Communication"
-    ]
-  }
-  </script>
-% end
-
-<div class="landing-page" data-landing-theme="light">
-  <!-- Background Effects -->
-  <div class="landing-grid-background"></div>
-  <div class="landing-floating-shapes">
-    <div class="landing-shape landing-shape-1"></div>
-    <div class="landing-shape landing-shape-2"></div>
-  </div>
-
-  <!-- Navigation -->
-  <nav class="landing-nav">
-    <div class="landing-logo">Tiny Art Empire</div>
-    <button class="landing-theme-toggle" onclick="toggleLandingTheme()" aria-label="Toggle theme">
-      <span id="landing-theme-icon">&#x1F319;</span>
-    </button>
-  </nav>
-
-  <!-- Hero Section -->
-  <section class="landing-hero" role="banner" aria-labelledby="hero-title">
-    <h1 id="hero-title">Build Your Tiny Art Empire</h1>
-    <p class="landing-hero-subtitle">
-      You're an artist who wants to teach. Streamline the business -- enrollment,
-      payments, scheduling, attendance -- so you can focus more time on the art.
-    </p>
-    <div class="landing-cta-container">
-      % if ($project && $session) {
-        <form method="POST"
-              action="/tenant-storefront/<%= $run->id %>/callcc/<%= $registration_workflow %>">
-          <input type="hidden" name="session_id" value="<%= $session->id %>">
-          <input type="hidden" name="program_id" value="<%= $project->id %>">
-          <button type="submit" class="landing-cta-button" data-variant="success">
-            Start Your Tiny Art Empire
-          </button>
-        </form>
-      % } else {
-        <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button" data-variant="success">
-          Start Your Tiny Art Empire
-        </a>
-      % }
-    </div>
-    <p class="landing-trial-info">Free to start &#x2022; We only earn when you do &#x2022; Setup in 5 minutes</p>
-  </section>
-
-  <!-- Product Screenshot -->
-  <section style="padding: 2rem; text-align: center;">
-    <div style="max-width: 500px; margin: 0 auto;">
-      <img src="<%= static_url %>/images/product-screenshot.png"
-           alt="Tiny Art Empire signup - set up your art teaching business in minutes"
-           style="width: 100%; border-radius: 16px; box-shadow: 0 20px 60px rgba(157, 78, 221, 0.3); border: 2px solid var(--landing-glow-color);"
-           loading="lazy">
-      <p style="margin-top: 1rem; font-size: 0.95rem; color: var(--landing-text-secondary); font-style: italic;">
-        Set up your program in minutes
-      </p>
-    </div>
-  </section>
-
-  <!-- Features Section -->
-  <section id="features" class="landing-features" role="main" aria-labelledby="features-title">
-    <div class="landing-features-container">
-      <h2 id="features-title">What Tiny Art Empire Handles For You</h2>
-      <div class="landing-features-grid">
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">&#x1F4CB;</span>
-          <h3 class="landing-feature-title">Enrollment Made Simple</h3>
-          <p class="landing-feature-description">
-            Parents sign up online. You get notified. No more paper forms,
-            phone tag, or lost registrations.
-          </p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">&#x1F4B3;</span>
-          <h3 class="landing-feature-title">Get Paid On Time</h3>
-          <p class="landing-feature-description">
-            Families pay online. You get paid automatically.
-            No more chasing checks.
-          </p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">&#x2705;</span>
-          <h3 class="landing-feature-title">Know Who Shows Up</h3>
-          <p class="landing-feature-description">
-            Track attendance with a tap. Parents get notified
-            automatically. You always know who is in your classroom.
-          </p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">&#x1F4C5;</span>
-          <h3 class="landing-feature-title">Your Schedule, Organized</h3>
-          <p class="landing-feature-description">
-            Manage classes, waitlists, and capacity in one place.
-            Fill every spot without the headache.
-          </p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- Studio Time Section -->
-  <section class="landing-features" aria-labelledby="studio-title">
-    <div class="landing-features-container" style="text-align: center;">
-      <h2 id="studio-title">More Time in the Studio</h2>
-      <p style="max-width: 700px; margin: 0 auto 2rem; font-size: 1.25rem; line-height: 1.8; color: var(--landing-text-secondary);">
-        You got into teaching art because you love it. But the business side --
-        enrollment spreadsheets, payment reminders, attendance tracking -- eats
-        into your studio time. Tiny Art Empire handles all of that so you can
-        get back to making art.
-      </p>
-      <div class="landing-cta-container">
-        % if ($project && $session) {
-          <form method="POST"
-                action="/tenant-storefront/<%= $run->id %>/callcc/<%= $registration_workflow %>">
-            <input type="hidden" name="session_id" value="<%= $session->id %>">
-            <input type="hidden" name="program_id" value="<%= $project->id %>">
-            <button type="submit" class="landing-cta-button" data-variant="success">
-              Start Your Tiny Art Empire
-            </button>
-          </form>
+                                        <div class="ml-4 text-right">
+                                            % if ($sess_info->{is_full}) {
+                                                <div class="text-sm text-red-600 font-medium mb-2">Full</div>
+                                                <form method="POST"
+                                                      action="/tenant-storefront/<%= $run->id %>/callcc/<%= ($project->metadata || {})->{registration_workflow} || 'summer-camp-registration' %>">
+                                                    <input type="hidden" name="session_id" value="<%= $session->id %>">
+                                                    <input type="hidden" name="program_id" value="<%= $project->id %>">
+                                                    % if ($sess_info->{location_id}) {
+                                                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
+                                                    % }
+                                                    <button type="submit"
+                                                            class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 text-sm">
+                                                        Join Waitlist
+                                                    </button>
+                                                </form>
+                                            % } else {
+                                                % if (defined $sess_info->{available_spots}) {
+                                                    <div class="text-sm text-gray-600 mb-2">
+                                                        <%= $sess_info->{available_spots} %> spots left
+                                                    </div>
+                                                % }
+                                                <form method="POST"
+                                                      action="/tenant-storefront/<%= $run->id %>/callcc/<%= ($project->metadata || {})->{registration_workflow} || 'summer-camp-registration' %>">
+                                                    <input type="hidden" name="session_id" value="<%= $session->id %>">
+                                                    <input type="hidden" name="program_id" value="<%= $project->id %>">
+                                                    % if ($sess_info->{location_id}) {
+                                                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
+                                                    % }
+                                                    <button type="submit"
+                                                            class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                                                        Register
+                                                    </button>
+                                                </form>
+                                            % }
+                                        </div>
+                                    </div>
+                                % }
+                            </div>
+                        </div>
+                    </div>
+                % }
+            </div>
         % } else {
-          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button" data-variant="success">
-            Start Your Tiny Art Empire
-          </a>
+            <div class="bg-white rounded-lg shadow-md p-12 text-center">
+                <h2 class="text-xl text-gray-600">No programs currently available</h2>
+                <p class="text-gray-500 mt-2">Check back soon for upcoming programs!</p>
+            </div>
         % }
-      </div>
     </div>
-  </section>
-
-  <!-- Footer -->
-  <footer style="text-align: center; padding: 2rem; color: var(--landing-text-secondary); font-size: 0.875rem;">
-    <p>A <strong>Tamarou</strong> &amp; <strong>Super Awesome Cool Pottery</strong> project</p>
-  </footer>
 </div>
-
-<script>
-  // Theme toggle functionality
-  function toggleLandingTheme() {
-    const landingPage = document.querySelector('.landing-page');
-    const currentTheme = landingPage.getAttribute('data-landing-theme');
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    const icon = document.getElementById('landing-theme-icon');
-
-    // Set theme on both landing-page and body for proper CSS variable inheritance
-    landingPage.setAttribute('data-landing-theme', newTheme);
-    document.body.setAttribute('data-theme', newTheme);
-    icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
-
-    // Save preference
-    localStorage.setItem('landing-theme', newTheme);
-  }
-
-  // Load theme preference (system preference or saved override)
-  window.addEventListener('DOMContentLoaded', function() {
-    const landingPage = document.querySelector('.landing-page');
-    const icon = document.getElementById('landing-theme-icon');
-
-    // Check if user has manually set a preference, otherwise use system preference
-    const savedTheme = localStorage.getItem('landing-theme');
-    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
-
-    if (landingPage && icon) {
-      // Set theme on both landing-page and body for proper CSS variable inheritance
-      landingPage.setAttribute('data-landing-theme', theme);
-      document.body.setAttribute('data-theme', theme);
-      icon.textContent = theme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
-    }
-
-    // Listen for system theme changes (only if user hasn't manually set a preference)
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-      if (!localStorage.getItem('landing-theme')) {
-        var newTheme = e.matches ? 'dark' : 'light';
-        if (landingPage && icon) {
-          // Set theme on both landing-page and body for proper CSS variable inheritance
-          landingPage.setAttribute('data-landing-theme', newTheme);
-          document.body.setAttribute('data-theme', newTheme);
-          icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
-        }
-      }
-    });
-  });
-
-  // Add optimized parallax effect to floating shapes using requestAnimationFrame
-  var ticking = false;
-  window.addEventListener('scroll', function() {
-    if (!ticking) {
-      window.requestAnimationFrame(function() {
-        var scrolled = window.pageYOffset;
-        var shapes = document.querySelectorAll('.landing-shape');
-
-        shapes.forEach(function(shape, index) {
-          var speed = index === 0 ? 0.5 : 0.3;
-          shape.style.transform = 'translateY(' + (scrolled * speed) + 'px)';
-        });
-        ticking = false;
-      });
-      ticking = true;
-    }
-  });
-</script>

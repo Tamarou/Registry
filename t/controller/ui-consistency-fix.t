@@ -38,7 +38,7 @@ subtest 'rendered HTML consistency between pages' => sub {
       ->content_type_is('text/html;charset=UTF-8')
       ->content_like(qr/<link[^>]*href="[^"]*css\/theme\.css"/, 'Landing page links to theme.css')
       ->content_unlike(qr/<style[^>]*>/, 'Landing page has no embedded CSS')
-      ->content_like(qr/data-variant="success"/, 'Landing page uses semantic data attributes for buttons');
+      ->element_exists('h1', 'Landing page has heading');
 
     # Test tenant signup workflow endpoint (if it exists and renders properly)
     my $tx = $t->get_ok('/tenant-signup');

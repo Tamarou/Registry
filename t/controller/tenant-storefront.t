@@ -18,6 +18,7 @@ use Registry::DAO qw(Workflow);
 use Registry::DAO::User;
 use Registry::DAO::Enrollment;
 use Mojo::Home;
+use Mojo::JSON qw(encode_json);
 use YAML::XS qw(Load);
 
 # Ensure demo payment mode
@@ -140,54 +141,49 @@ my $session_draft = $dao->create(Session => {
 use Registry::DAO::Family;
 
 # ============================================================
-# Test 1: GET / returns 200 with marketing landing page
+# Test 1: GET / returns 200 with program listing
 # ============================================================
-subtest 'GET / returns 200 with marketing landing page' => sub {
+subtest 'GET / returns 200 with program listing' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # Marketing hero content
-    $t->content_like(qr/Build Your Tiny Art Empire/i, 'Hero heading visible');
+    # Program name appears
+    $t->content_like(qr/Potter.*Wheel Art Camp/i, 'Program name visible');
 
-    # CTA button exists
-    $t->content_like(qr/Start Your Tiny Art Empire/i, 'CTA button visible');
+    # Session name appears
+    $t->content_like(qr/Week 1 - Jun 1-5/, 'Session name visible');
 
-    # Feature cards render
-    $t->content_like(qr/Enrollment Made Simple/i, 'Feature card visible');
+    # Register button exists
+    $t->content_like(qr/Register|Enroll/i, 'Register/Enroll button visible');
 
     # No errors
     $t->content_unlike(qr/Internal Server Error/, 'No server error');
 };
 
 # ============================================================
-# Test 2: Landing page renders without exposing raw session data
+# Test 2: Only published sessions shown
 # ============================================================
-subtest 'landing page does not expose raw session data' => sub {
+subtest 'only published sessions with future dates shown' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # The marketing landing page should not show raw session details
+    # Published sessions appear
+    $t->content_like(qr/Week 1 - Jun 1-5/, 'Published session visible');
+
+    # Draft session does NOT appear
     $t->content_unlike(qr/Draft Session/, 'Draft session not visible');
-    $t->content_unlike(qr/spots left/, 'Raw availability data not shown');
 };
 
 # ============================================================
-# Test 3: Landing page has callcc form linking to correct workflow
+# Test 3: Full session shows waitlist option
 # ============================================================
-subtest 'landing page has callcc form with correct workflow target' => sub {
+subtest 'full session shows waitlist or full indicator' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # The CTA form should callcc into the registration workflow
-    my $dom = $t->tx->res->dom;
-    my $callcc_form = $dom->at('form[action*="callcc"]');
-    ok $callcc_form, 'callcc form found in landing page';
-
-    if ($callcc_form) {
-        my $action = $callcc_form->attr('action');
-        like $action, qr{/tenant-storefront/.+/callcc/},
-            'callcc action targets a registration workflow';
-    }
+    # Full session should show some indication it's full
+    $t->content_like(qr/Week 3 - Jun 15-19/, 'Full session name visible');
+    $t->content_like(qr/Full|Waitlist|waitlist|full/i, 'Full/waitlist indicator visible');
 };
 
 # ============================================================
@@ -217,7 +213,36 @@ subtest 'callcc Register button creates continuation to registration' => sub {
 };
 
 # ============================================================
-# Test 5: No programs shows empty state
+# Test 5: callcc target respects project metadata registration_workflow
+# ============================================================
+subtest 'callcc target uses registration_workflow from project metadata' => sub {
+    # Update the program metadata to specify a custom registration workflow
+    $dao->db->update('projects',
+        { metadata => encode_json({ age_range => { min => 5, max => 11 }, registration_workflow => 'tenant-signup' }) },
+        { id => $program->id },
+    );
+
+    $t->get_ok('/')->status_is(200);
+
+    my $dom = $t->tx->res->dom;
+    my $callcc_form = $dom->at('form[action*="callcc"]');
+    ok $callcc_form, 'callcc form found in page';
+
+    if ($callcc_form) {
+        my $action = $callcc_form->attr('action');
+        like $action, qr{/tenant-storefront/.+/callcc/tenant-signup},
+            'callcc action targets tenant-signup from project metadata';
+    }
+
+    # Restore original metadata
+    $dao->db->update('projects',
+        { metadata => encode_json({ age_range => { min => 5, max => 11 } }) },
+        { id => $program->id },
+    );
+};
+
+# ============================================================
+# Test 6: No programs shows empty state
 # ============================================================
 subtest 'no programs shows empty state message' => sub {
     # Create a fresh Test::Mojo with an empty DAO (different schema)

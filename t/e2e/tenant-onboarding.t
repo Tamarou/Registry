@@ -105,14 +105,10 @@ subtest 'storefront shows available programs' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # The storefront is a marketing landing page with a callcc CTA
-    $t->content_like(qr/Build Your Tiny Art Empire/i, 'Marketing hero visible');
-    $t->content_like(qr/Start Your Tiny Art Empire/i, 'CTA button visible');
-
-    # The callcc form links to the registration workflow
-    my $dom = $t->tx->res->dom;
-    my $callcc_form = $dom->at('form[action*="callcc"]');
-    ok $callcc_form, 'Registration callcc form present on storefront';
+    $t->content_like(qr/Potter.*Wheel Art Camp/i, 'Program visible on storefront');
+    $t->content_like(qr/Week 1/i, 'Session visible on storefront');
+    $t->content_like(qr/Register|Enroll/i, 'Registration button present');
+    $t->content_like(qr/300/, 'Price visible');
 };
 
 # ============================================================
@@ -224,13 +220,12 @@ subtest 'enrollment created and visible' => sub {
 # Phase 5: Storefront reflects updated availability
 # ============================================================
 
-subtest 'storefront renders after enrollment' => sub {
+subtest 'storefront shows updated availability' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # The marketing landing page renders without errors after enrollment
-    $t->content_like(qr/Build Your Tiny Art Empire/i, 'Storefront renders after enrollment');
-    $t->content_unlike(qr/Internal Server Error/, 'No server error');
+    # Should show 15 spots left (16 capacity - 1 enrolled)
+    $t->content_like(qr/15 spots left/i, 'Updated availability shown');
 };
 
 done_testing;
