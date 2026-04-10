@@ -242,7 +242,24 @@ subtest 'callcc target uses registration_workflow from project metadata' => sub 
 };
 
 # ============================================================
-# Test 6: No programs shows empty state
+# Test 6: Storefront uses design system classes not Tailwind
+# ============================================================
+subtest 'storefront uses design system classes not Tailwind' => sub {
+    $t->get_ok('/')
+      ->status_is(200);
+
+    # Design system classes present
+    $t->element_exists('.landing-page', 'Uses landing-page container')
+      ->element_exists('.landing-hero', 'Uses landing-hero section')
+      ->element_exists('.landing-cta-button', 'Uses landing-cta-button for CTA');
+
+    # Tailwind classes absent
+    $t->content_unlike(qr/class="[^"]*bg-white/, 'No Tailwind bg-white class')
+      ->content_unlike(qr/class="[^"]*text-gray/, 'No Tailwind text-gray class');
+};
+
+# ============================================================
+# Test 7: No programs shows empty state
 # ============================================================
 subtest 'no programs shows empty state message' => sub {
     # Create a fresh Test::Mojo with an empty DAO (different schema)

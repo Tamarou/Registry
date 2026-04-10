@@ -32,7 +32,7 @@ subtest 'semantic HTML structure is rendered correctly' => sub {
       ->element_exists('head meta[name="viewport"]', 'Viewport meta tag is present')
       ->element_exists('head title', 'Title element is present')
       ->element_exists('body', 'Body element is present')
-      ->element_exists('div.container', 'Page container is present');
+      ->element_exists('div.landing-page', 'Landing page container is present');
 };
 
 subtest 'teacher layout uses semantic HTML5 structure' => sub {
@@ -83,7 +83,7 @@ subtest 'semantic templates use proper HTML5 structure' => sub {
 subtest 'CSS architecture supports design token usage' => sub {
     $t->get_ok('/')
       ->status_is(200)
-      ->element_exists('div.container', 'Page container class is available');
+      ->element_exists('div.landing-page', 'Landing page container class is available');
 
     # Verify the consolidated CSS files exist and contain expected tokens
     $t->get_ok('/css/theme.css')

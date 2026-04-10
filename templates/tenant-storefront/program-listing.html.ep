@@ -1,94 +1,85 @@
 % layout 'default';
-% title 'Programs';
+% title stash('page_title') || 'Programs';
+% stash no_container => 1, enable_background_effects => 1;
 
-<div class="container mx-auto px-4 py-8">
-    <div class="max-w-6xl mx-auto">
-        <h1 class="text-3xl font-bold mb-8">Available Programs</h1>
+% my $registration_workflow_default = 'summer-camp-registration';
 
-        % if (@$programs) {
-            <div class="grid gap-8">
-                % for my $prog (@$programs) {
-                    % my $project = $prog->{project};
-                    % my $program_type = $prog->{program_type};
-                    <div class="bg-white rounded-lg shadow-md overflow-hidden">
-                        <div class="p-6">
-                            <div class="flex items-start justify-between mb-4">
-                                <div>
-                                    <h2 class="text-2xl font-bold text-gray-900"><%= $project->name %></h2>
-                                    % if ($project->notes) {
-                                        <p class="text-gray-600 mt-1"><%= $project->notes %></p>
-                                    % }
-                                </div>
-                                % if ($program_type) {
-                                    <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
-                                        <%= $program_type->name %>
-                                    </span>
-                                % }
-                            </div>
+<div class="landing-page">
+  <nav class="landing-nav">
+    <div class="landing-logo"><%= title %></div>
+  </nav>
 
-                            <div class="space-y-4 mt-6">
-                                % for my $sess_info (@{$prog->{sessions}}) {
-                                    % my $session = $sess_info->{session};
-                                    <div class="border rounded-lg p-4 flex items-center justify-between">
-                                        <div class="flex-1">
-                                            <h3 class="font-semibold text-lg"><%= $session->name %></h3>
-                                            <div class="text-sm text-gray-600 mt-1">
-                                                <%= $session->start_date %> to <%= $session->end_date %>
-                                            </div>
-                                            % if ($sess_info->{best_price}) {
-                                                <div class="text-sm font-medium text-green-700 mt-1">
-                                                    $<%= $sess_info->{best_price} %>
-                                                </div>
-                                            % }
-                                        </div>
+  % if (@$programs) {
+    % for my $prog (@$programs) {
+      % my $project = $prog->{project};
+      % my $program_type = $prog->{program_type};
+      % my $reg_workflow = ($project->metadata || {})->{registration_workflow} || $registration_workflow_default;
 
-                                        <div class="ml-4 text-right">
-                                            % if ($sess_info->{is_full}) {
-                                                <div class="text-sm text-red-600 font-medium mb-2">Full</div>
-                                                <form method="POST"
-                                                      action="/tenant-storefront/<%= $run->id %>/callcc/<%= ($project->metadata || {})->{registration_workflow} || 'summer-camp-registration' %>">
-                                                    <input type="hidden" name="session_id" value="<%= $session->id %>">
-                                                    <input type="hidden" name="program_id" value="<%= $project->id %>">
-                                                    % if ($sess_info->{location_id}) {
-                                                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
-                                                    % }
-                                                    <button type="submit"
-                                                            class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 text-sm">
-                                                        Join Waitlist
-                                                    </button>
-                                                </form>
-                                            % } else {
-                                                % if (defined $sess_info->{available_spots}) {
-                                                    <div class="text-sm text-gray-600 mb-2">
-                                                        <%= $sess_info->{available_spots} %> spots left
-                                                    </div>
-                                                % }
-                                                <form method="POST"
-                                                      action="/tenant-storefront/<%= $run->id %>/callcc/<%= ($project->metadata || {})->{registration_workflow} || 'summer-camp-registration' %>">
-                                                    <input type="hidden" name="session_id" value="<%= $session->id %>">
-                                                    <input type="hidden" name="program_id" value="<%= $project->id %>">
-                                                    % if ($sess_info->{location_id}) {
-                                                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
-                                                    % }
-                                                    <button type="submit"
-                                                            class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
-                                                        Register
-                                                    </button>
-                                                </form>
-                                            % }
-                                        </div>
-                                    </div>
-                                % }
-                            </div>
-                        </div>
-                    </div>
-                % }
-            </div>
-        % } else {
-            <div class="bg-white rounded-lg shadow-md p-12 text-center">
-                <h2 class="text-xl text-gray-600">No programs currently available</h2>
-                <p class="text-gray-500 mt-2">Check back soon for upcoming programs!</p>
-            </div>
+      <!-- Program hero -->
+      <section class="landing-hero">
+        <h1><%= $project->name %></h1>
+        % if ($project->notes) {
+          <p class="landing-hero-subtitle"><%= $project->notes %></p>
         % }
-    </div>
+        % if ($program_type) {
+          <p class="landing-trial-info"><%= $program_type->name %></p>
+        % }
+      </section>
+
+      <!-- Sessions -->
+      <section class="landing-features">
+        <div class="landing-features-container">
+          <h2>Available Sessions</h2>
+          <div class="landing-features-grid">
+            % for my $sess_info (@{$prog->{sessions}}) {
+              % my $session = $sess_info->{session};
+              <article class="landing-feature-card">
+                <h3 class="landing-feature-title"><%= $session->name %></h3>
+                <p class="landing-feature-description">
+                  <%= $session->start_date %> to <%= $session->end_date %>
+                </p>
+                % if ($sess_info->{best_price}) {
+                  <p class="landing-feature-subtitle">$<%= $sess_info->{best_price} %></p>
+                % }
+                <div class="landing-cta-container">
+                  % if ($sess_info->{is_full}) {
+                    <p class="landing-feature-subtitle" style="color: var(--color-warning);">Full</p>
+                    <form method="POST"
+                          action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
+                      <input type="hidden" name="session_id" value="<%= $session->id %>">
+                      <input type="hidden" name="program_id" value="<%= $project->id %>">
+                      % if ($sess_info->{location_id}) {
+                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
+                      % }
+                      <button type="submit" class="landing-cta-button">Join Waitlist</button>
+                    </form>
+                  % } else {
+                    % if (defined $sess_info->{available_spots}) {
+                      <p class="landing-feature-description">
+                        <%= $sess_info->{available_spots} %> spots left
+                      </p>
+                    % }
+                    <form method="POST"
+                          action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
+                      <input type="hidden" name="session_id" value="<%= $session->id %>">
+                      <input type="hidden" name="program_id" value="<%= $project->id %>">
+                      % if ($sess_info->{location_id}) {
+                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
+                      % }
+                      <button type="submit" class="landing-cta-button">Register</button>
+                    </form>
+                  % }
+                </div>
+              </article>
+            % }
+          </div>
+        </div>
+      </section>
+    % }
+  % } else {
+    <section class="landing-hero">
+      <h1>Coming Soon</h1>
+      <p class="landing-hero-subtitle">No programs currently available. Check back soon!</p>
+    </section>
+  % }
 </div>
