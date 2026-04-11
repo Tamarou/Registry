@@ -19,7 +19,7 @@ use Mojo::Home;
 use Mojo::File;
 use YAML::XS qw(Load);
 
-my $template_file = 'docs/copy/registry-landing-page-template.html.ep';
+my $template_file = 'templates/registry/tenant-storefront-program-listing.html.ep';
 plan skip_all => "Template file $template_file not found" unless -f $template_file;
 
 my $test_db = Test::Registry::DB->new;
@@ -41,12 +41,12 @@ for my $file (@tmpl_files) {
 
 # Seed registry-like data: project with registration_workflow metadata
 my $location = $dao->create(Location => {
-    name => 'Online', slug => 'online-reg-test',
+    name => 'Online RegLP Test', slug => 'online-reglp-test',
     address_info => { type => 'virtual' }, metadata => {},
 });
 my $teacher = $dao->create(User => { username => 'system-reg-test', user_type => 'staff' });
 my $project = $dao->create(Project => {
-    name => 'Tiny Art Empire', slug => 'tiny-art-empire-reg-test',
+    name => 'Tiny Art Empire RegLP', slug => 'tiny-art-empire-reglp',
     notes => 'Platform for art educators',
     metadata => { registration_workflow => 'tenant-signup' },
 });

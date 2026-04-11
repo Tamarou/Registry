@@ -1,8 +1,8 @@
 -- Deploy registry-landing-page-template
 -- Customize the registry tenant's storefront template for Jordan's user journey.
--- Source of truth for template content: docs/copy/registry-landing-page-template.html.ep
+-- Source of truth for template content: templates/registry/tenant-storefront-program-listing.html.ep
 
-\set template_content `cat docs/copy/registry-landing-page-template.html.ep`
+\set template_content `cat templates/registry/tenant-storefront-program-listing.html.ep`
 
 SET search_path TO registry, public;
 
