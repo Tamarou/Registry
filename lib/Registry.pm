@@ -57,6 +57,9 @@ class Registry :isa(Mojolicious) {
         # HTMX plugin provides is_htmx_request, htmx->res->push_url, etc.
         $self->plugin('Mojolicious::Plugin::HTMX');
 
+        # DB-stored templates as first-class renderer citizens
+        $self->plugin('Mojolicious::Plugin::DBTemplates');
+
         # Wrap the layout helper so templates' `% layout 'foo'` becomes a
         # no-op when the controller sets _htmx_fragment in the stash.
         my $original_layout = $self->renderer->helpers->{layout};
