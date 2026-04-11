@@ -42,7 +42,29 @@ case "${SERVICE_TYPE:-web}" in
     "web")
         echo "Starting web service..."
         deploy_schema
-        exec ./registry daemon -l "http://*:${PORT:-10000}"
+
+        # Start the server in the background
+        ./registry daemon -l "http://*:${PORT:-10000}" &
+        SERVER_PID=$!
+
+        # Wait for the server to be ready
+        echo "Waiting for server to be ready..."
+        for i in $(seq 1 30); do
+            if curl -sf "http://localhost:${PORT:-10000}/health" > /dev/null 2>&1; then
+                echo "Server is ready"
+                break
+            fi
+            sleep 1
+        done
+
+        # Run post-deploy smoke test against the live URL (non-blocking)
+        if [ -f bin/post-deploy-smoke-test.sh ] && [ -n "$BASE_URL" ]; then
+            echo "Running post-deploy smoke test..."
+            bash bin/post-deploy-smoke-test.sh || echo "Warning: Smoke test failed (non-blocking)"
+        fi
+
+        # Wait for the server process
+        wait $SERVER_PID
         ;;
     "worker")
         echo "Starting worker service..."
