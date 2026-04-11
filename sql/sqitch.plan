@@ -48,3 +48,4 @@ seed-registry-storefront [events-and-sessions] 2026-04-07T13:42:30Z Chris Prathe
 seed-registry-storefront-v2 [seed-registry-storefront] 2026-04-07T14:44:00Z Chris Prather <chris.prather@tamarou.com> # Seed registry tenant storefront with actual data
 registry-landing-page-template [seed-registry-storefront-v2] 2026-04-11T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Customize registry tenant landing page for Jordan's user journey
 fix-utf8-mojibake [registry-landing-page-template] 2026-04-11T12:00:00Z Chris Prather <chris.prather@tamarou.com> # Delete DB templates with mojibake so app reimports fixed versions
+update-registry-landing-copy [fix-utf8-mojibake] 2026-04-11T14:00:00Z Chris Prather <chris.prather@tamarou.com> # Update registry landing page copy and 3x2 card grid

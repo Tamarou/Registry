@@ -41,7 +41,7 @@
   <section class="landing-features">
     <div class="landing-features-container">
       <h2>Less paperwork. More studio time.</h2>
-      <div class="landing-features-grid">
+      <div class="landing-features-grid" style="grid-template-columns: repeat(3, 1fr);">
         <article class="landing-feature-card">
           <h3 class="landing-feature-title">Fill your classes without the hustle</h3>
           <p class="landing-feature-description">
