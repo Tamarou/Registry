@@ -38,12 +38,8 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
         my $template = $dao->find( 'Registry::DAO::Template' => { name => $name } )
                     || $dao->find( 'Registry::DAO::Template' => { slug => $slug } );
         
-        # If it exists, update the content if necessary
+        # If it exists, leave it alone -- tenants may have customized it
         if ($template) {
-            my $content = $file->slurp;
-            if ($template->content ne $content) {
-                $template = $template->update( $dao->db, { content => $content });
-            }
             return $template;
         }
         

@@ -18,6 +18,7 @@ use Registry::DAO qw(Workflow);
 use Registry::DAO::User;
 use Registry::DAO::Enrollment;
 use Mojo::Home;
+use Mojo::JSON qw(encode_json);
 use YAML::XS qw(Load);
 
 # Ensure demo payment mode
@@ -212,7 +213,53 @@ subtest 'callcc Register button creates continuation to registration' => sub {
 };
 
 # ============================================================
-# Test 5: No programs shows empty state
+# Test 5: callcc target respects project metadata registration_workflow
+# ============================================================
+subtest 'callcc target uses registration_workflow from project metadata' => sub {
+    # Update the program metadata to specify a custom registration workflow
+    $dao->db->update('projects',
+        { metadata => encode_json({ age_range => { min => 5, max => 11 }, registration_workflow => 'tenant-signup' }) },
+        { id => $program->id },
+    );
+
+    $t->get_ok('/')->status_is(200);
+
+    my $dom = $t->tx->res->dom;
+    my $callcc_form = $dom->at('form[action*="callcc"]');
+    ok $callcc_form, 'callcc form found in page';
+
+    if ($callcc_form) {
+        my $action = $callcc_form->attr('action');
+        like $action, qr{/tenant-storefront/.+/callcc/tenant-signup},
+            'callcc action targets tenant-signup from project metadata';
+    }
+
+    # Restore original metadata
+    $dao->db->update('projects',
+        { metadata => encode_json({ age_range => { min => 5, max => 11 } }) },
+        { id => $program->id },
+    );
+};
+
+# ============================================================
+# Test 6: Storefront uses design system classes not Tailwind
+# ============================================================
+subtest 'storefront uses design system classes not Tailwind' => sub {
+    $t->get_ok('/')
+      ->status_is(200);
+
+    # Design system classes present
+    $t->element_exists('.landing-page', 'Uses landing-page container')
+      ->element_exists('.landing-hero', 'Uses landing-hero section')
+      ->element_exists('.landing-cta-button', 'Uses landing-cta-button for CTA');
+
+    # Tailwind classes absent
+    $t->content_unlike(qr/class="[^"]*bg-white/, 'No Tailwind bg-white class')
+      ->content_unlike(qr/class="[^"]*text-gray/, 'No Tailwind text-gray class');
+};
+
+# ============================================================
+# Test 7: No programs shows empty state
 # ============================================================
 subtest 'no programs shows empty state message' => sub {
     # Create a fresh Test::Mojo with an empty DAO (different schema)

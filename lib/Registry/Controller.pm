@@ -8,11 +8,6 @@ class Registry::Controller :isa(Mojolicious::Controller) {
     use Carp ();
     use File::Spec ();
 
-    my $find_template = method($name) {
-        my $dao = $self->app->dao;
-        $dao->find( 'Registry::DAO::Template', { name => $name } );
-    };
-
     method log { $self->app->log }
 
 
@@ -55,26 +50,11 @@ class Registry::Controller :isa(Mojolicious::Controller) {
 
         if ( my $template = $args{template} ) {
             unless ( $template isa Registry::DAO::Template ) {
-                my $name = $template;
-
-                # DB-first: check for tenant-customized template
-                my $db_templates = $self->stash('_db_templates');
-                if ($db_templates && !exists $db_templates->{$name}) {
-                    # Lazy load: query DB on first access, cache in stash
-                    if ( $template = $self->$find_template($name) ) {
-                        $db_templates->{$name} = $template->content;
-                    } else {
-                        $db_templates->{$name} = undef; # Cache the miss
-                    }
-                }
-
-                if ($db_templates && $db_templates->{$name}) {
-                    return $self->SUPER::render( inline => $db_templates->{$name}, %args );
-                }
-
-                # Fall back to filesystem template (platform default)
-                return $self->SUPER::render( template => $name, %args );
+                # Template resolution (filesystem and DB) is handled by
+                # Mojolicious::Plugin::DBTemplates in the renderer pipeline.
+                return $self->SUPER::render( template => $template, %args );
             }
+            # Direct Template object (from step->template) -- render inline
             return $self->SUPER::render( inline => $template->content, %args );
         }
 

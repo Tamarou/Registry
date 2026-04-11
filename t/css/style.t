@@ -29,7 +29,7 @@ subtest 'utility classes are available in rendered content' => sub {
     $t->get_ok('/')
       ->status_is(200)
       ->element_exists('.landing-page', 'Landing page container class is used')
-      ->element_exists('.landing-features-container', 'Landing features container utility class works');
+      ->element_exists('.landing-hero', 'Hero section class is used');
 
     # Test that CSS contains expected utility classes
     $t->get_ok('/css/app.css')
