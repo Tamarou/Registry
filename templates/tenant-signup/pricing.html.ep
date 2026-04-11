@@ -118,7 +118,7 @@
       </div>
       <button type="submit" data-variant="primary" data-size="lg">
         Continue to Review
-        <span>→</span>
+        <span>&rarr;</span>
       </button>
     </div>
   </form>

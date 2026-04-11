@@ -43,7 +43,7 @@
                 <div class="step-content">
                     <h3>Access Your Dashboard</h3>
                     <p>Log in to your new Registry account and explore the admin dashboard</p>
-                    <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary" target="_blank">Go to Dashboard →</a>
+                    <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary" target="_blank">Go to Dashboard &rarr;</a>
                 </div>
             </article>
 
@@ -52,7 +52,7 @@
                 <div class="step-content">
                     <h3>Create Your First Program</h3>
                     <p>Set up an after-school program, summer camp, or educational activity</p>
-                    <small>Available in your dashboard under Programs → Create New</small>
+                    <small>Available in your dashboard under Programs &rarr; Create New</small>
                 </div>
             </article>
 
@@ -132,7 +132,7 @@
 
     <footer class="success-actions">
         <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary btn-large">
-            Access Your Registry Dashboard →
+            Access Your Registry Dashboard &rarr;
         </a>
         <p class="login-note">
             Sign in with a passkey or magic link sent to <%= $admin_email %>

@@ -35,6 +35,11 @@ test.describe("Jordan's landing page journey", () => {
 
     const cssLinks = await registryPage.locator('link[rel="stylesheet"][href*="theme.css"]').count();
     expect(cssLinks).toBeGreaterThan(0);
+
+    // No UTF-8 encoding issues (mojibake, replacement chars, double-encoding)
+    await expect(registryPage.locator('body')).not.toContainText('\uFFFD'); // replacement character
+    await expect(registryPage.locator('body')).not.toContainText('â€"');   // double-encoded em dash
+    await expect(registryPage.locator('body')).not.toContainText('â€™');   // double-encoded apostrophe
   });
 
   // ===========================================================================

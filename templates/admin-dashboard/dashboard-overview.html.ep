@@ -140,7 +140,7 @@
                             </div>
                             <div class="dashboard-card-footer">
                                 <a href="<%= $step_url %>?section=pending_drop_requests&status=all" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                                    View All Drop Requests →
+                                    View All Drop Requests &rarr;
                                 </a>
                             </div>
                         </div>
@@ -162,7 +162,7 @@
                             </div>
                             <div class="dashboard-card-footer">
                                 <a href="<%= $step_url %>?section=pending_transfer_requests&status=all" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                                    View All Transfer Requests →
+                                    View All Transfer Requests &rarr;
                                 </a>
                             </div>
                         </div>

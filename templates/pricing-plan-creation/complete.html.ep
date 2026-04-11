@@ -41,7 +41,7 @@
                     <h3 class="font-semibold mb-2">Assign to Customers</h3>
                     <p class="text-sm text-gray-600">Start offering this plan to your customers during enrollment.</p>
                     <a href="/pricing-plans" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
-                        View All Plans →
+                        View All Plans &rarr;
                     </a>
                 </div>
 
@@ -49,7 +49,7 @@
                     <h3 class="font-semibold mb-2">Create Another Plan</h3>
                     <p class="text-sm text-gray-600">Set up additional pricing options for different customer segments.</p>
                     <a href="/workflows/pricing-plan-creation" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
-                        Create New Plan →
+                        Create New Plan &rarr;
                     </a>
                 </div>
 
@@ -58,7 +58,7 @@
                         <h3 class="font-semibold mb-2">Edit Draft</h3>
                         <p class="text-sm text-gray-600">Continue editing this draft plan before activation.</p>
                         <a href="/pricing-plans/<%= $plan_id %>/edit" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
-                            Edit Plan →
+                            Edit Plan &rarr;
                         </a>
                     </div>
                 <% } %>
@@ -67,7 +67,7 @@
                     <h3 class="font-semibold mb-2">View Reports</h3>
                     <p class="text-sm text-gray-600">Monitor plan performance and customer adoption.</p>
                     <a href="/reports/pricing" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2 inline-block">
-                        View Reports →
+                        View Reports &rarr;
                     </a>
                 </div>
             </div>

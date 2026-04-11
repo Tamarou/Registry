@@ -73,7 +73,7 @@
             // Update theme icon if present
             const icon = document.getElementById('theme-icon');
             if (icon) {
-                icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+                icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
             }
         }
 
@@ -88,7 +88,7 @@
 
             const icon = document.getElementById('theme-icon');
             if (icon) {
-                icon.textContent = theme === 'light' ? '🌙' : '☀️';
+                icon.textContent = theme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
             }
 
             // Listen for system theme changes (only if user hasn't manually set a preference)
@@ -98,7 +98,7 @@
                     document.body.setAttribute('data-theme', newTheme);
                     const icon = document.getElementById('theme-icon');
                     if (icon) {
-                        icon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+                        icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
                     }
                 }
             });

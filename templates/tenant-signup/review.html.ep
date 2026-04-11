@@ -239,7 +239,7 @@
                     id="proceed-to-payment"
                     disabled>
                 <span class="btn-text">Complete Setup & Start Trial</span>
-                <span class="btn-arrow">→</span>
+                <span class="btn-arrow">&rarr;</span>
             </button>
             
             <div id="payment-spinner" class="htmx-indicator">
