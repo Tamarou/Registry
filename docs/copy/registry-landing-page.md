@@ -34,7 +34,7 @@ Add instructors, locations, and programs without adding chaos.
 
 ## Free to Start
 
-We take 2.5% of what you earn through the platform. That's it -- no monthly fees, no setup costs. We only make money when you do, so our entire job is helping you succeed.
+There are no monthly fees, no set up fees. We have a 2.5% revenue share, so we only make money when you do. Our entire job is to help you succeed!
 
 ## CTA Button Text
 
