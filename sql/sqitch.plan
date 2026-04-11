@@ -45,3 +45,4 @@ tenant-domains [notifications-and-preferences] 2026-03-30T19:04:42Z Chris Prathe
 magic-link-verification [passwordless-auth] 2026-03-31T12:11:05Z Chris Prather <chris.prather@tamarou.com> # Add verified_at column for two-step magic link flow
 waitlist-accepted-status [waitlist-management] 2026-04-05T01:37:21Z Chris Prather <chris.prather@tamarou.com> # Add accepted status to waitlist check constraint
 seed-registry-storefront [events-and-sessions schema-based-multitennancy] 2026-04-10T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Seed registry tenant storefront with Tiny Art Empire project and evergreen session
+registry-landing-page-template [seed-registry-storefront] 2026-04-11T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Customize registry tenant landing page for Jordan's user journey
