@@ -144,8 +144,10 @@ subtest 'Account check - create new account' => sub {
 
 # === Step 3: Select children ===
 # Pre-create child via DAO because the "stay" semantics for add_child
-# don't work at the HTTP layer (controller always advances to next step).
-# TODO: Fix "stay" behavior in WorkflowRun::process / Controller
+# don't work at the HTTP layer yet.  WorkflowRun::process now handles
+# stay correctly (#153), but the controller's stay rendering path needs
+# work to properly re-render SelectChildren with the updated children
+# list after an add_child action.
 
 my $user = Registry::DAO::User->find($dao->db, { username => 'maria.martinez' });
 my $child = Registry::DAO::Family->add_child($dao->db, $user->id, {

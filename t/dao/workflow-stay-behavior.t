@@ -61,5 +61,37 @@ subtest 'next_step => step id treated as stay (does not advance)' => sub {
     my $run_after = Registry::DAO::WorkflowRun->find($dao->db, { id => $run->id });
     is $run_after->latest_step($dao->db)->id, $step->id,
        'latest_step_id did not advance';
+};
 
+subtest 'stay result forwards rendering data from "data" key' => sub {
+    # Steps using the older next_step convention return rendering data
+    # under 'data'.  The stay return must forward this as template_data
+    # so the controller can render the step with the step's output.
+    my $step_row = $dao->db->insert('workflow_steps', {
+        workflow_id => $workflow->id,
+        slug        => 'data-forward-test',
+        description => 'Step for testing data forwarding',
+        metadata    => undef,
+        class       => 'Registry::DAO::WorkflowStep',
+    }, { returning => '*' })->expand->hash;
+
+    my $step = Registry::DAO::WorkflowStep->new(%$step_row);
+
+    my $run = Registry::DAO::WorkflowRun->create($dao->db, {
+        workflow_id    => $workflow->id,
+        latest_step_id => $step->id,
+        data           => '{}',
+    });
+
+    # Simulate a step returning next_step + data (the older convention)
+    my $result = $run->process($dao->db, $step, {
+        next_step => $step->id,
+        data      => { pricing_plans => ['plan_a', 'plan_b'] },
+    });
+
+    ok $result->{stay}, 'Result has stay signal';
+    ok $result->{template_data}, 'template_data is present in stay result';
+    is ref($result->{template_data}), 'HASH', 'template_data is a hashref';
+    is scalar @{$result->{template_data}{pricing_plans}}, 2,
+       'Rendering data forwarded from "data" key to template_data';
 };

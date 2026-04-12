@@ -121,9 +121,12 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
             }
             # Return stay signal plus template_data so the controller can
             # render the step directly with the step's output data.
+            # Steps using the older next_step convention return rendering
+            # data under 'data'; the controller expects 'template_data'.
             my %stay_result = ( stay => 1 );
             $stay_result{template_data} = $step_result->{template_data}
-                if $step_result->{template_data};
+                                       || $step_result->{data}
+                if ($step_result->{template_data} || $step_result->{data});
             $stay_result{errors} = $step_result->{errors}
                 if $step_result->{errors};
             return \%stay_result;
