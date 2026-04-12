@@ -227,7 +227,7 @@ subtest 'Accept waitlist offer' => sub {
     
     # Check waitlist status
     my $updated = Registry::DAO::Waitlist->find($db, { id => $offered->id });
-    is($updated->status, 'declined', 'Waitlist entry marked as declined');
+    is($updated->status, 'accepted', 'Waitlist entry marked as accepted');
 };
 
 subtest 'Expire old offers' => sub {

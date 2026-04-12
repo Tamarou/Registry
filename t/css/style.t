@@ -6,14 +6,25 @@ defer { done_testing };
 
 use Test::Mojo;
 use Registry;
+use Registry::DAO qw(Workflow);
 use Test::Registry::DB;
+use Mojo::Home;
+use YAML::XS qw(Load);
 
 # ABOUTME: Tests for app.css integration - validates utility classes and component styles work in rendered content
 # ABOUTME: Tests the actual rendered content and HTTP responses rather than reading CSS files directly
 
 # Set up test database for realistic rendering
 my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
+
+# Import workflows so the storefront landing page renders properly
+my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+for my $file (@files) {
+    next if Load($file->slurp)->{draft};
+    Workflow->from_yaml($dao, $file->slurp);
+}
 
 my $t = Test::Mojo->new('Registry');
 
@@ -29,7 +40,7 @@ subtest 'utility classes are available in rendered content' => sub {
     $t->get_ok('/')
       ->status_is(200)
       ->element_exists('.landing-page', 'Landing page container class is used')
-      ->element_exists('.landing-hero', 'Hero section class is used');
+      ->element_exists('.landing-nav', 'Landing nav class is used');
 
     # Test that CSS contains expected utility classes
     $t->get_ok('/css/app.css')

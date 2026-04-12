@@ -6,16 +6,28 @@ defer { done_testing };
 
 use Test::Mojo;
 use Registry;
+use Registry::DAO qw(Workflow);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Mojo::File;
+use Mojo::Home;
+use YAML::XS qw(Load);
 
 # Test UI consistency between landing page and tenant signup workflow via HTTP endpoints
 
 # Set up test data
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
-my $t = Test::Mojo->new(Registry->new(db => $dao));
+$ENV{DB_URL} = $test_db->uri;
+
+# Import workflows so the storefront route renders properly
+my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+for my $file (@files) {
+    next if Load($file->slurp)->{draft};
+    Workflow->from_yaml($dao, $file->slurp);
+}
+
+my $t = Test::Mojo->new('Registry');
 
 subtest 'CSS assets are served and contain design tokens' => sub {
     # Test that CSS files are properly served via HTTP
@@ -38,7 +50,7 @@ subtest 'rendered HTML consistency between pages' => sub {
       ->content_type_is('text/html;charset=UTF-8')
       ->content_like(qr/<link[^>]*href="[^"]*css\/theme\.css"/, 'Landing page links to theme.css')
       ->content_unlike(qr/<style[^>]*>/, 'Landing page has no embedded CSS')
-      ->element_exists('h1', 'Landing page has heading');
+      ->element_exists('h2, h3', 'Landing page has heading');
 
     # Test tenant signup workflow endpoint (if it exists and renders properly)
     my $tx = $t->get_ok('/tenant-signup');

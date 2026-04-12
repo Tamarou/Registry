@@ -70,7 +70,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
         return '00000000-0000-0000-0000-000000000000';
     }
 
-    method prepare_template_data($db, $run) {
+    method prepare_template_data($db, $run, $params = {}) {
         # Prepare data for template
         return {
             plan_types => [

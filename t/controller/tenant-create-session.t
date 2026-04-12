@@ -2,6 +2,10 @@ use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer declared_refs);
 
+# Ensure Stripe keys are unset so the TenantPayment step uses its
+# test-mode mock path instead of calling the live Stripe API.
+BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
+
 use Test::Mojo;
 use Test::More import => [qw( done_testing is note ok )];
 defer { done_testing };
@@ -92,6 +96,14 @@ END {
     # check that the user-creation workflow exists in the tenant
     ok $tenant_dao->find( Workflow => { slug => 'user-creation' } ),
       'user-creation workflow exists in tenant schema';
+
+    # Establish a session for Alice so X-As-Tenant header is respected
+    # (the tenant helper only reads X-As-Tenant for authenticated users)
+    my $alice = $dao->find( User => { username => 'Alice' } );
+    $t->get_ok('/');  # prime the session
+    $t->app->hook(before_dispatch => sub ($c) {
+        $c->session(user_id => $alice->id) unless $c->session('user_id');
+    });
 
     $t->get_ok( '/user-creation', { 'X-As-Tenant' => $tenant->slug } )
       ->status_is(200);

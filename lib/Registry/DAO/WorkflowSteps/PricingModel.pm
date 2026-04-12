@@ -133,7 +133,7 @@ class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowSte
         return $config;
     }
 
-    method prepare_template_data($db, $run) {
+    method prepare_template_data($db, $run, $params = {}) {
         my $existing_data = $run->data || {};
         my $plan_basics = $existing_data->{plan_basics} || {};
 
