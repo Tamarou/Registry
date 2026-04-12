@@ -57,10 +57,15 @@ case "${SERVICE_TYPE:-web}" in
             sleep 1
         done
 
-        # Run post-deploy smoke test against the live URL (non-blocking)
+        # Run post-deploy smoke test against the live URL
+        # Failure kills the server so Render rolls back the deploy
         if [ -f bin/post-deploy-smoke-test.sh ] && [ -n "$BASE_URL" ]; then
             echo "Running post-deploy smoke test..."
-            bash bin/post-deploy-smoke-test.sh || echo "Warning: Smoke test failed (non-blocking)"
+            if ! bash bin/post-deploy-smoke-test.sh; then
+                echo "FATAL: Smoke test failed -- killing server to trigger rollback"
+                kill $SERVER_PID
+                exit 1
+            fi
         fi
 
         # Wait for the server process
