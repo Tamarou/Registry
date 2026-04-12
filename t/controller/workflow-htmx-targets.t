@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Tests that the workflow layout has proper HTMX swap targets and script loading.
-# ABOUTME: Validates #147 (id="workflow-content") and #148 (HTMX plugin integration).
+# ABOUTME: Validates #147 (id="workflow-content") and guards HTMX script presence.
 
 use 5.42.0;
 use lib qw(lib t/lib);
@@ -30,10 +30,9 @@ subtest 'workflow layout has HTMX swap target with id' => sub {
           'workflow content section has id="workflow-content"');
 };
 
-subtest 'workflow layout loads HTMX via plugin helper' => sub {
-    # #148: The layout should use the Mojolicious::Plugin::HTMX asset
-    # helper instead of a hardcoded CDN URL, so the plugin manages
-    # version and configuration.
+subtest 'workflow layout loads HTMX script' => sub {
+    # Regression guard: HTMX must be loaded for workflow forms to work.
+    # Currently loaded via CDN; #148 tracks switching to the plugin helper.
     $t->get_ok('/tenant-signup')
       ->status_is(200)
       ->element_exists('script[src*="htmx"]', 'HTMX script is loaded');

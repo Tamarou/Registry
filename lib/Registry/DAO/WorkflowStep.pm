@@ -1,3 +1,5 @@
+# ABOUTME: DAO class for individual workflow steps with metadata, templates, and outcome definitions.
+# ABOUTME: Subclassed by step-specific classes in WorkflowSteps/ for custom process/prepare logic.
 use 5.42.0;
 use Object::Pad;
 
