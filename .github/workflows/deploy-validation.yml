@@ -1,0 +1,65 @@
+# ABOUTME: Post-deploy browser validation against the live production site.
+# ABOUTME: Runs Playwright tests after Render deploys to verify rendering and functionality.
+
+name: Deploy Validation
+
+on:
+  # Trigger after a push to main (Render auto-deploys on push)
+  push:
+    branches: [ main ]
+
+  # Allow manual trigger for ad-hoc validation
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL to validate'
+        default: 'https://tinyartempire.com'
+
+jobs:
+  validate:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps chromium
+
+    - name: Wait for Render deploy
+      run: |
+        URL="${{ github.event.inputs.url || 'https://tinyartempire.com' }}"
+        echo "Waiting for deploy to complete at $URL..."
+        # Render deploys take ~2-3 minutes after push
+        sleep 180
+        # Verify the site is up
+        for i in $(seq 1 10); do
+          if curl -sf --max-time 10 "$URL/health" > /dev/null 2>&1; then
+            echo "Site is up"
+            break
+          fi
+          echo "Attempt $i: site not ready, waiting..."
+          sleep 15
+        done
+
+    - name: Run deploy validation
+      env:
+        DEPLOY_VALIDATION_URL: ${{ github.event.inputs.url || 'https://tinyartempire.com' }}
+      run: npx playwright test --project=deploy-validation --reporter=list
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: deploy-validation-results
+        path: test-results/
+        retention-days: 7
