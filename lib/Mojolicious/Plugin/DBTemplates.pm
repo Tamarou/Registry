@@ -1,5 +1,5 @@
 # ABOUTME: Mojolicious plugin that makes DB-stored templates first-class in the renderer.
-# ABOUTME: Overrides template resolution so DB templates get full layout, helper, and stash support.
+# ABOUTME: Overrides the EP handler to serve DB templates with full layout and helper support.
 package Mojolicious::Plugin::DBTemplates;
 use Mojo::Base 'Mojolicious::Plugin', -signatures;
 use Mojo::Cache;
@@ -7,15 +7,13 @@ use Mojo::Cache;
 sub register ($self, $app, $conf = {}) {
     my $renderer = $app->renderer;
 
-    # Save original methods
-    my $orig_get_data     = $renderer->can('get_data_template');
-    my $orig_template_path = $renderer->can('template_path');
-    my $orig_warmup       = $renderer->can('warmup');
+    # Save original warmup method
+    my $orig_warmup = $renderer->can('warmup');
 
-    # Helper: look up a template in the DB
-    # No caching in the plugin -- the renderer's own cache (Mojo::Cache)
-    # handles repeat lookups within a request, and serverless environments
-    # don't benefit from cross-request caching anyway.
+    # Helper: look up a template in the DB by name (without handler extensions).
+    # Returns the template content string if found, undef otherwise.
+    # Gracefully returns undef when no DAO is available (e.g. tests without
+    # a full DB setup), making the plugin invisible in that case.
     my $db_lookup = sub ($name) {
         my $dao = eval { $app->dao };
         return undef unless $dao;
@@ -28,33 +26,45 @@ sub register ($self, $app, $conf = {}) {
         return $template ? $template->content : undef;
     };
 
-    # Override template_path: if the DB has this template, return undef
-    # to prevent the filesystem version from being used. This forces the
-    # EPL handler to fall through to get_data_template where we serve
-    # the DB content.
-    Mojo::Util::monkey_patch(ref($renderer), template_path => sub ($self, $options) {
-        my $name = $self->template_name($options);
-        if ($name && defined $db_lookup->($name)) {
-            return undef;  # DB has it -- skip filesystem
+    # Override the EP handler to check the DB before reading from the
+    # filesystem.  This avoids monkey-patching template_path (which other
+    # code relies on for existence checks) while still allowing DB
+    # templates to override their filesystem counterparts.
+    #
+    # When a DB version is found, we inject it via $options->{inline} so
+    # the EPL handler compiles and renders it through Mojo::Template.
+    # Because the Renderer's local $inline variable was captured from the
+    # stash BEFORE the handler runs, the layout/extends loop still
+    # executes afterward -- so templates with `% layout 'workflow'` work
+    # correctly.
+    my $orig_ep_handler = $renderer->handlers->{ep};
+    $renderer->add_handler(ep => sub ($renderer, $c, $output, $options) {
+        # Only intercept template-based renders (not already inline)
+        my $did_inject = 0;
+        unless (defined $options->{inline}) {
+            my $name = $renderer->template_name($options);
+            if (defined $name) {
+                my $db_content = $db_lookup->($name);
+                if (defined $db_content) {
+                    $options->{inline} = $db_content;
+                    $did_inject = 1;
+                }
+            }
         }
-        return $orig_template_path->($self, $options);
-    });
 
-    # Override get_data_template: check DATA sections first, then the DB.
-    # Content returned here goes through the full rendering pipeline --
-    # layouts, helpers, stash variables all work.
-    Mojo::Util::monkey_patch(ref($renderer), get_data_template => sub ($self, $options) {
-        my $result = $orig_get_data->($self, $options);
-        return $result if defined $result;
+        my $result = $orig_ep_handler->($renderer, $c, $output, $options);
 
-        my $name = $self->template_name($options);
-        return undef unless $name;
+        # Clean up injected inline so it does not leak into the
+        # Renderer's layout/extends loop, which reuses the same
+        # $options hash for subsequent _render_template calls.
+        delete $options->{inline} if $did_inject;
 
-        return $db_lookup->($name);
+        return $result;
     });
 
     # Override warmup: register DB templates in the handler index so
     # template_handler() can find them and assign the ep handler.
+    # Gracefully skips DB registration when no DAO is available.
     Mojo::Util::monkey_patch(ref($renderer), warmup => sub ($self) {
         $orig_warmup->($self);
 
