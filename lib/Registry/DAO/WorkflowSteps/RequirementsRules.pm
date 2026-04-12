@@ -131,7 +131,7 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
         return { next_step => $next_step ? $next_step->slug : undef };
     }
 
-    method prepare_template_data($db, $run) {
+    method prepare_template_data($db, $run, $params = {}) {
         my $existing_data = $run->data || {};
         my $plan_basics = $existing_data->{plan_basics} || {};
 

@@ -2,25 +2,22 @@ use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer declared_refs);
 
+# Ensure Stripe keys are unset so the TenantPayment step uses its
+# test-mode mock path instead of calling the live Stripe API.
+BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
+
 use Test::Mojo;
 use Test::More import => [qw( done_testing is note ok )];
 defer { done_testing };
 
-use Mojo::Home;
 use Registry::DAO;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(process_workflow);
-use YAML::XS                qw( Load );
+use Test::Registry::Helpers qw(authenticate_as import_all_workflows process_workflow);
 use Data::Dumper;
 
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
-my $workflow_dir = Mojo::Home->new->child('workflows');
-my @files        = $workflow_dir->list_tree->grep(qr/\.ya?ml$/)->each;
-for my $file (@files) {
-    next if Load( $file->slurp )->{draft};
-    Workflow->from_yaml( $dao, $file->slurp );
-}
+import_all_workflows($dao);
 
 $ENV{DB_URL} = $dao->url;
 
@@ -92,6 +89,11 @@ END {
     # check that the user-creation workflow exists in the tenant
     ok $tenant_dao->find( Workflow => { slug => 'user-creation' } ),
       'user-creation workflow exists in tenant schema';
+
+    # Establish a session for Alice so X-As-Tenant header is respected
+    # (the tenant helper only reads X-As-Tenant for authenticated users)
+    my $alice = $dao->find( User => { username => 'Alice' } );
+    authenticate_as($t, $alice);
 
     $t->get_ok( '/user-creation', { 'X-As-Tenant' => $tenant->slug } )
       ->status_is(200);

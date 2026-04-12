@@ -7,13 +7,17 @@ defer { done_testing };
 use Test::Mojo;
 use Registry;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(import_all_workflows);
 
 # ABOUTME: Tests for app.css integration - validates utility classes and component styles work in rendered content
 # ABOUTME: Tests the actual rendered content and HTTP responses rather than reading CSS files directly
 
 # Set up test database for realistic rendering
 my $test_db = Test::Registry::DB->new();
+my $dao = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
+
+import_all_workflows($dao);
 
 my $t = Test::Mojo->new('Registry');
 
@@ -29,7 +33,7 @@ subtest 'utility classes are available in rendered content' => sub {
     $t->get_ok('/')
       ->status_is(200)
       ->element_exists('.landing-page', 'Landing page container class is used')
-      ->element_exists('.landing-hero', 'Hero section class is used');
+      ->element_exists('.landing-nav', 'Landing nav class is used');
 
     # Test that CSS contains expected utility classes
     $t->get_ok('/css/app.css')

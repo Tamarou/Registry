@@ -10,7 +10,7 @@ use Mojo::Home;
 use Registry::DAO;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers qw(process_workflow);
+use Test::Registry::Helpers qw(authenticate_as process_workflow);
 use YAML::XS                qw(Load);
 
 # Set up test database using fixtures pattern
@@ -60,6 +60,11 @@ ok $location, 'created test location';
 is $location->name, 'Test Location', 'location has correct name';
 is $location->slug, 'test_location', 'location has correct slug';
 
+
+# Establish authentication so X-As-Tenant header is respected
+# (the tenant helper only reads X-As-Tenant for authenticated users)
+my $test_user = $dao->create(User => { username => 'loc_test_admin', user_type => 'admin' });
+authenticate_as($t, $test_user);
 
 # Test viewing the location with tenant context
 $t->get_ok( "/locations/" . $location->slug, { 'X-As-Tenant' => $tenant->slug } )

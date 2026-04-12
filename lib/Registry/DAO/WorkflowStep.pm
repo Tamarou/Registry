@@ -1,3 +1,5 @@
+# ABOUTME: DAO class for individual workflow steps with metadata, templates, and outcome definitions.
+# ABOUTME: Subclassed by step-specific classes in WorkflowSteps/ for custom process/prepare logic.
 use 5.42.0;
 use Object::Pad;
 
@@ -13,13 +15,13 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
 
     field $depends_on :param = undef;
 
-    # TODO: WorkflowStep class needs:
-    # - Remove = {} default
-    # - Add BUILD for JSON decoding
-    # - Handle { -json => $metadata } in create/update
-    # - Add explicit metadata() accessor
-    field $metadata :param = {};
+    # Mojo::Pg's ->expand (in Object::find/create) decodes jsonb to a
+    # hashref automatically.  ADJUST coerces NULL/undef to {} so callers
+    # always get a hashref.
+    field $metadata :param :reader = undef;
     field $class :param :reader;
+
+    ADJUST { $metadata //= {} }
 
     sub table { 'workflow_steps' }
     

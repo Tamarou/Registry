@@ -1,3 +1,5 @@
+# ABOUTME: DAO class for DB-stored templates with content, metadata, and file import.
+# ABOUTME: Used by DBTemplates plugin to serve tenant-customizable templates from the database.
 use 5.42.0;
 use Object::Pad;
 
@@ -7,15 +9,15 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     field $slug :param :reader    = lc( $name =~ s/\s+/-/gr );
     field $content :param :reader = '';
 
-    # TODO: Template class needs:
-    # - Remove :reader metadata field
-    # - Add BUILD for JSON decoding
-    # - Handle { -json => $metadata } in create
-    # - Add explicit metadata() accessor
-    field $metadata :param :reader;
+    # Mojo::Pg's ->expand (in Object::find/create) decodes jsonb to a
+    # hashref automatically.  ADJUST coerces NULL/undef to {} so callers
+    # always get a hashref.
+    field $metadata :param :reader = undef;
     field $notes :param :reader;
     field $created_at :param :reader;
     field $updated_at :param :reader = undef;
+
+    ADJUST { $metadata //= {} }
 
     sub table { 'templates' }
 

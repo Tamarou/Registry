@@ -68,7 +68,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
 
     # Provide pricing plans and org info to the template via the controller's
     # standard prepare_template_data interface
-    method prepare_template_data($db, $run) {
+    method prepare_template_data($db, $run, $params = {}) {
         return $self->prepare_pricing_data($db, $run);
     }
 

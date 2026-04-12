@@ -388,7 +388,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     method template { 'tenant-signup/payment' }
 
     # Provide data for template rendering on GET requests
-    method prepare_template_data($db, $run) {
+    method prepare_template_data($db, $run, $params = {}) {
         return $self->prepare_payment_data($db, $run);
     }
     

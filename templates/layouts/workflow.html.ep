@@ -57,7 +57,7 @@
             </div>
         % }
 
-        <section data-component="workflow-content">
+        <section id="workflow-content" data-component="workflow-content">
             <%= content %>
         </section>
 

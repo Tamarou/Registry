@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Digest::SHA qw(hmac_sha256_hex);
 use Mojo::JSON qw(encode_json);
 
 use Registry::DAO;
@@ -25,7 +26,7 @@ use Registry::DAO::ScheduledPayment;
 # Fake Stripe key so PriceOps::ScheduledPayment constructor doesn't die.
 # No actual Stripe calls are made in these tests.
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_webhook_tests';
-delete $ENV{STRIPE_WEBHOOK_SECRET};  # Skip signature verification
+local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_test_fake_for_webhook_tests';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -112,9 +113,20 @@ sub create_test_schedule ($subscription_id) {
     return $schedule;
 }
 
-# Helper to post a Stripe webhook event
+# Helper to post a Stripe webhook event with a valid signature.
+# Uses the UA directly to avoid Test::Registry::Mojo's CSRF injection,
+# which conflicts with raw JSON bodies.  Webhooks are excluded from
+# CSRF validation (see Registry.pm before_dispatch hook).
 sub post_webhook ($event) {
-    $t->post_ok('/webhooks/stripe' => json => $event);
+    my $payload   = encode_json($event);
+    my $timestamp = time();
+    my $sig       = hmac_sha256_hex("$timestamp.$payload", $ENV{STRIPE_WEBHOOK_SECRET});
+    my $header    = "t=$timestamp,v1=$sig";
+    my $tx = $t->ua->post('/webhooks/stripe' => {
+        'stripe-signature' => $header,
+        'Content-Type'     => 'application/json',
+    } => $payload);
+    return $t->tx($tx);
 }
 
 # ============================================================

@@ -123,7 +123,7 @@ class Registry::DAO::WorkflowSteps::ResourceAllocation :isa(Registry::DAO::Workf
         return { next_step => $next_step ? $next_step->slug : undef };
     }
 
-    method prepare_template_data($db, $run) {
+    method prepare_template_data($db, $run, $params = {}) {
         my $existing_data = $run->data || {};
         my $plan_basics = $existing_data->{plan_basics} || {};
         my $pricing_model = $existing_data->{pricing_model} || {};
