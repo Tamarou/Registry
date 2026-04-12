@@ -7,11 +7,8 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     field $slug :param :reader    = lc( $name =~ s/\s+/-/gr );
     field $content :param :reader = '';
 
-    # TODO: Template class needs:
-    # - Remove :reader metadata field
-    # - Add BUILD for JSON decoding
-    # - Handle { -json => $metadata } in create
-    # - Add explicit metadata() accessor
+    # Mojo::Pg's ->expand (in Object::find/create) decodes jsonb to a
+    # hashref automatically.
     field $metadata :param :reader;
     field $notes :param :reader;
     field $created_at :param :reader;

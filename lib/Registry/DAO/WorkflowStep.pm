@@ -13,13 +13,13 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
 
     field $depends_on :param = undef;
 
-    # TODO: WorkflowStep class needs:
-    # - Remove = {} default
-    # - Add BUILD for JSON decoding
-    # - Handle { -json => $metadata } in create/update
-    # - Add explicit metadata() accessor
-    field $metadata :param = {};
+    # Mojo::Pg's ->expand (in Object::find/create) decodes jsonb to a
+    # hashref automatically.  ADJUST coerces NULL/undef to {} so callers
+    # always get a hashref.
+    field $metadata :param :reader = undef;
     field $class :param :reader;
+
+    ADJUST { $metadata //= {} }
 
     sub table { 'workflow_steps' }
     
