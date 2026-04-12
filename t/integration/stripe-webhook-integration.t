@@ -26,8 +26,11 @@ subtest 'Webhook signature verification' => sub {
     
     my $webhook_controller = Registry::Controller::Webhooks->new();
     
-    # Test without endpoint secret (should fail -- STRIPE_WEBHOOK_SECRET is mandatory)
-    my $result1 = $webhook_controller->_verify_stripe_signature('payload', 'signature', undef);
+    # Test without endpoint secret (should fail -- STRIPE_WEBHOOK_SECRET is mandatory).
+    # Use a properly-formatted signature header so the failure comes from the
+    # missing secret, not from header parsing.
+    my $ts = time();
+    my $result1 = $webhook_controller->_verify_stripe_signature('payload', "t=$ts,v1=abc123", undef);
     is($result1, 0, 'Verification fails when no secret configured');
     
     # Test with missing signature components

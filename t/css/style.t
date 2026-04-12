@@ -6,10 +6,8 @@ defer { done_testing };
 
 use Test::Mojo;
 use Registry;
-use Registry::DAO qw(Workflow);
 use Test::Registry::DB;
-use Mojo::Home;
-use YAML::XS qw(Load);
+use Test::Registry::Helpers qw(import_all_workflows);
 
 # ABOUTME: Tests for app.css integration - validates utility classes and component styles work in rendered content
 # ABOUTME: Tests the actual rendered content and HTTP responses rather than reading CSS files directly
@@ -19,12 +17,7 @@ my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
 
-# Import workflows so the storefront landing page renders properly
-my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
-for my $file (@files) {
-    next if Load($file->slurp)->{draft};
-    Workflow->from_yaml($dao, $file->slurp);
-}
+import_all_workflows($dao);
 
 my $t = Test::Mojo->new('Registry');
 

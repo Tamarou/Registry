@@ -64,6 +64,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
     method _verify_stripe_signature($payload, $sig_header, $endpoint_secret) {
         return 0 unless $sig_header;
+        return 0 unless defined $endpoint_secret;
 
         my @sig_elements = split /,/, $sig_header;
         my %sigs;

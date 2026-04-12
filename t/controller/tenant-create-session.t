@@ -10,21 +10,14 @@ use Test::Mojo;
 use Test::More import => [qw( done_testing is note ok )];
 defer { done_testing };
 
-use Mojo::Home;
 use Registry::DAO;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(process_workflow);
-use YAML::XS                qw( Load );
+use Test::Registry::Helpers qw(authenticate_as import_all_workflows process_workflow);
 use Data::Dumper;
 
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
-my $workflow_dir = Mojo::Home->new->child('workflows');
-my @files        = $workflow_dir->list_tree->grep(qr/\.ya?ml$/)->each;
-for my $file (@files) {
-    next if Load( $file->slurp )->{draft};
-    Workflow->from_yaml( $dao, $file->slurp );
-}
+import_all_workflows($dao);
 
 $ENV{DB_URL} = $dao->url;
 
@@ -100,10 +93,7 @@ END {
     # Establish a session for Alice so X-As-Tenant header is respected
     # (the tenant helper only reads X-As-Tenant for authenticated users)
     my $alice = $dao->find( User => { username => 'Alice' } );
-    $t->get_ok('/');  # prime the session
-    $t->app->hook(before_dispatch => sub ($c) {
-        $c->session(user_id => $alice->id) unless $c->session('user_id');
-    });
+    authenticate_as($t, $alice);
 
     $t->get_ok( '/user-creation', { 'X-As-Tenant' => $tenant->slug } )
       ->status_is(200);

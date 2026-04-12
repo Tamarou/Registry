@@ -10,7 +10,7 @@ use Mojo::Home;
 use Registry::DAO;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers qw(process_workflow);
+use Test::Registry::Helpers qw(authenticate_as process_workflow);
 use YAML::XS                qw(Load);
 
 # Set up test database using fixtures pattern
@@ -64,10 +64,7 @@ is $location->slug, 'test_location', 'location has correct slug';
 # Establish authentication so X-As-Tenant header is respected
 # (the tenant helper only reads X-As-Tenant for authenticated users)
 my $test_user = $dao->create(User => { username => 'loc_test_admin', user_type => 'admin' });
-$t->get_ok('/');  # prime session
-$t->app->hook(before_dispatch => sub ($c) {
-    $c->session(user_id => $test_user->id) unless $c->session('user_id');
-});
+authenticate_as($t, $test_user);
 
 # Test viewing the location with tenant context
 $t->get_ok( "/locations/" . $location->slug, { 'X-As-Tenant' => $tenant->slug } )

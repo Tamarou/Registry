@@ -37,6 +37,12 @@ sub register ($self, $app, $conf = {}) {
     # stash BEFORE the handler runs, the layout/extends loop still
     # executes afterward -- so templates with `% layout 'workflow'` work
     # correctly.
+    # Track which templates are known to exist in the DB.  Populated
+    # during warmup so the EP handler can skip the DB query for templates
+    # that are only on the filesystem (the common case for layouts, partials,
+    # error pages, etc.).
+    my %db_template_names;
+
     my $orig_ep_handler = $renderer->handlers->{ep};
     $renderer->add_handler(ep => sub ($renderer, $c, $output, $options) {
         # Only intercept template-based renders (not already inline)
@@ -44,10 +50,14 @@ sub register ($self, $app, $conf = {}) {
         unless (defined $options->{inline}) {
             my $name = $renderer->template_name($options);
             if (defined $name) {
-                my $db_content = $db_lookup->($name);
-                if (defined $db_content) {
-                    $options->{inline} = $db_content;
-                    $did_inject = 1;
+                # Strip handler extensions for the index lookup
+                (my $db_name = $name) =~ s/\.\w+\.\w+$//;
+                if ($db_template_names{$db_name}) {
+                    my $db_content = $db_lookup->($name);
+                    if (defined $db_content) {
+                        $options->{inline} = $db_content;
+                        $did_inject = 1;
+                    }
                 }
             }
         }
@@ -76,11 +86,13 @@ sub register ($self, $app, $conf = {}) {
             $dao->db->select('templates', ['name'])->hashes->each;
         };
 
+        %db_template_names = ();
         for my $row (@db_templates) {
             my $key = "$row->{name}.html";
             $templates_ref->{$key} //= [];
             push @{$templates_ref->{$key}}, 'ep'
                 unless grep { $_ eq 'ep' } @{$templates_ref->{$key}};
+            $db_template_names{$row->{name}} = 1;
         }
     });
 

@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Digest::SHA qw(hmac_sha256_hex);
 use Mojo::JSON qw(encode_json);
 
 use Registry::DAO;
@@ -117,18 +118,14 @@ sub create_test_schedule ($subscription_id) {
 # which conflicts with raw JSON bodies.  Webhooks are excluded from
 # CSRF validation (see Registry.pm before_dispatch hook).
 sub post_webhook ($event) {
-    require Digest::SHA;
-    require Mojo::JSON;
-    my $payload   = Mojo::JSON::encode_json($event);
+    my $payload   = encode_json($event);
     my $timestamp = time();
-    my $sig       = Digest::SHA::hmac_sha256_hex("$timestamp.$payload", $ENV{STRIPE_WEBHOOK_SECRET});
+    my $sig       = hmac_sha256_hex("$timestamp.$payload", $ENV{STRIPE_WEBHOOK_SECRET});
     my $header    = "t=$timestamp,v1=$sig";
     my $tx = $t->ua->post('/webhooks/stripe' => {
         'stripe-signature' => $header,
         'Content-Type'     => 'application/json',
     } => $payload);
-    # Store the transaction so chained assertions (->status_is etc.) work
-    $t->{_res} = $tx->res;
     return $t->tx($tx);
 }
 

@@ -6,12 +6,10 @@ defer { done_testing };
 
 use Test::Mojo;
 use Registry;
-use Registry::DAO qw(Workflow);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw(import_all_workflows);
 use Mojo::File;
-use Mojo::Home;
-use YAML::XS qw(Load);
 
 # Test UI consistency between landing page and tenant signup workflow via HTTP endpoints
 
@@ -20,12 +18,7 @@ my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
 
-# Import workflows so the storefront route renders properly
-my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
-for my $file (@files) {
-    next if Load($file->slurp)->{draft};
-    Workflow->from_yaml($dao, $file->slurp);
-}
+import_all_workflows($dao);
 
 my $t = Test::Mojo->new('Registry');
 

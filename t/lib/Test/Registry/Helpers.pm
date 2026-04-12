@@ -9,6 +9,8 @@ package Test::Registry::Helpers {
     sub import(@) {
         no warnings;
         export_lexically(
+            authenticate_as           => __PACKAGE__->can('authenticate_as'),
+            import_all_workflows      => __PACKAGE__->can('import_all_workflows'),
             process_workflow          => __PACKAGE__->can('process_workflow'),
             workflow_process_step_url =>
               __PACKAGE__->can('workflow_process_step_url'),
@@ -60,6 +62,24 @@ package Test::Registry::Helpers {
         else {
             die "Unexpected response code: " . $req->tx->res->code;
         }
+    }
+
+    sub import_all_workflows ($dao) {
+        require Mojo::Home;
+        require YAML::XS;
+        require Registry::DAO;
+        my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
+        for my $file (@files) {
+            next if YAML::XS::Load($file->slurp)->{draft};
+            Registry::DAO::Workflow->from_yaml($dao, $file->slurp);
+        }
+    }
+
+    sub authenticate_as ($t, $user) {
+        $t->get_ok('/');  # prime the session cookie
+        $t->app->hook(before_dispatch => sub ($c) {
+            $c->session(user_id => $user->id) unless $c->session('user_id');
+        });
     }
 
     sub process_workflow ( $t, $start, $data, $headers = {}, ) {
