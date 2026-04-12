@@ -67,8 +67,8 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
         }
     );
     is $run->next_step( $dao->db )->slug, 'pricing', 'Next step is pricing';
-    # Process pricing selection - select the first available plan
-    $run->process( $dao->db, $run->next_step( $dao->db ), { selected_plan => 'basic' } );
+    # Process pricing selection - skips when no plans are configured
+    $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db )->slug, 'review', 'Next step is review';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db )->slug, 'payment', 'Next step is payment';

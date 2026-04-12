@@ -20,9 +20,14 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
             my $pricing_data = $self->prepare_pricing_data($db);
             my $pricing_plans = $pricing_data->{pricing_plans} || [];
 
-            # Auto-select only when explicitly requested AND we have plans available
-            if (exists $form_data->{__auto_select_plan} && @$pricing_plans) {
-                # Auto-select the first plan for testing purposes
+            # When no plans are configured, skip this step entirely --
+            # there is nothing for the user to select.
+            unless (@$pricing_plans) {
+                return {};
+            }
+
+            # Auto-select the first plan when explicitly requested
+            if (exists $form_data->{__auto_select_plan}) {
                 $form_data->{selected_plan_id} = $pricing_plans->[0]->{id};
                 # Continue processing with auto-selected plan
             } else {
