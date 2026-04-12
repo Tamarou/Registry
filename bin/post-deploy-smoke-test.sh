@@ -4,7 +4,8 @@
 
 set -e
 
-BASE_URL="${BASE_URL:-https://tinyartempire.com}"
+# Test the local server, not the live URL -- we're verifying this deploy, not the previous one
+BASE_URL="http://localhost:${PORT:-10000}"
 FAILURES=0
 
 check() {
@@ -56,8 +57,8 @@ check "Hero subtitle present" "$BASE_URL" "get back to making art"
 check "Problem cards section" "$BASE_URL" "Less paperwork"
 check "Feature card present" "$BASE_URL" "Fill your classes"
 
-# Alignment copy (updated version)
-check "Alignment copy" "$BASE_URL" "no monthly fees"
+# Alignment copy
+check "Alignment pricing visible" "$BASE_URL" "2.5%"
 
 # CTA button present
 check "CTA button present" "$BASE_URL" "Get Started"
