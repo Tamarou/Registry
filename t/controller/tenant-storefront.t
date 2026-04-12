@@ -150,8 +150,8 @@ subtest 'GET / returns 200 with program listing' => sub {
     # Program name appears
     $t->content_like(qr/Potter.*Wheel Art Camp/i, 'Program name visible');
 
-    # Session name appears
-    $t->content_like(qr/Week 1 - Jun 1-5/, 'Session name visible');
+    # Location name appears
+    $t->content_like(qr/Super Awesome Cool Pottery Studio/, 'Location visible');
 
     # Register button exists
     $t->content_like(qr/Register|Enroll/i, 'Register/Enroll button visible');
@@ -167,8 +167,8 @@ subtest 'only published sessions with future dates shown' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # Published sessions appear
-    $t->content_like(qr/Week 1 - Jun 1-5/, 'Published session visible');
+    # Published programs with sessions appear (dates visible)
+    $t->content_like(qr/2026-06-01/, 'Published session dates visible');
 
     # Draft session does NOT appear
     $t->content_unlike(qr/Draft Session/, 'Draft session not visible');
@@ -177,13 +177,14 @@ subtest 'only published sessions with future dates shown' => sub {
 # ============================================================
 # Test 3: Full session shows waitlist option
 # ============================================================
-subtest 'full session shows waitlist or full indicator' => sub {
+subtest 'program cards have callcc registration links' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # Full session should show some indication it's full
-    $t->content_like(qr/Week 3 - Jun 15-19/, 'Full session name visible');
-    $t->content_like(qr/Full|Waitlist|waitlist|full/i, 'Full/waitlist indicator visible');
+    # Program card has a callcc form for registration
+    my $dom = $t->tx->res->dom;
+    my @forms = $dom->find('form[action*="callcc"]')->each;
+    ok @forms >= 1, 'At least one callcc registration form found';
 };
 
 # ============================================================
@@ -193,15 +194,14 @@ subtest 'callcc Register button creates continuation to registration' => sub {
     # First GET to create a run
     $t->get_ok('/')->status_is(200);
 
-    # Find the callcc form action in the page
+    # Find a callcc form that targets summer-camp-registration
+    # (the test program has no registration_workflow metadata, so it defaults)
     my $dom = $t->tx->res->dom;
-    my $callcc_form = $dom->at('form[action*="callcc"]');
-    ok $callcc_form, 'callcc form found in page';
+    my $callcc_form = $dom->at('form[action*="callcc/summer-camp-registration"]');
+    ok $callcc_form, 'callcc form for summer-camp-registration found';
 
     if ($callcc_form) {
         my $action = $callcc_form->attr('action');
-        like $action, qr{/tenant-storefront/.+/callcc/summer-camp-registration},
-            'callcc action targets summer-camp-registration';
 
         # POST to the callcc URL
         $t->post_ok($action => form => {})->status_is(302);
@@ -250,7 +250,7 @@ subtest 'storefront uses design system classes not Tailwind' => sub {
 
     # Design system classes present
     $t->element_exists('.landing-page', 'Uses landing-page container')
-      ->element_exists('.landing-hero', 'Uses landing-hero section')
+      ->element_exists('.landing-features', 'Uses landing-features section')
       ->element_exists('.landing-cta-button', 'Uses landing-cta-button for CTA');
 
     # Tailwind classes absent

@@ -9,77 +9,115 @@
     <div class="landing-logo"><%= title %></div>
   </nav>
 
-  % if (@$programs) {
-    % for my $prog (@$programs) {
-      % my $project = $prog->{project};
-      % my $program_type = $prog->{program_type};
-      % my $reg_workflow = ($project->metadata || {})->{registration_workflow} || $registration_workflow_default;
+  <!-- Filter bar: plain form (GET) with HTMX progressive enhancement -->
+  <section class="landing-features" style="padding: var(--space-6) var(--space-4);">
+    <div class="landing-features-container">
+      <form method="GET" action="/"
+            hx-get="/" hx-target="#program-catalog" hx-select="#program-catalog"
+            hx-trigger="change from:select" hx-push-url="true"
+            style="display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: end;">
 
-      <!-- Program hero -->
-      <section class="landing-hero">
-        <h1><%= $project->name %></h1>
-        % if ($project->notes) {
-          <p class="landing-hero-subtitle"><%= $project->notes %></p>
-        % }
-        % if ($program_type) {
-          <p class="landing-trial-info"><%= $program_type->name %></p>
-        % }
-      </section>
-
-      <!-- Sessions -->
-      <section class="landing-features">
-        <div class="landing-features-container">
-          <h2>Available Sessions</h2>
-          <div class="landing-features-grid">
-            % for my $sess_info (@{$prog->{sessions}}) {
-              % my $session = $sess_info->{session};
-              <article class="landing-feature-card">
-                <h3 class="landing-feature-title"><%= $session->name %></h3>
-                <p class="landing-feature-description">
-                  <%= $session->start_date %> to <%= $session->end_date %>
-                </p>
-                % if ($sess_info->{best_price}) {
-                  <p class="landing-feature-subtitle">$<%= $sess_info->{best_price} %></p>
-                % }
-                <div class="landing-cta-container">
-                  % if ($sess_info->{is_full}) {
-                    <p class="landing-feature-subtitle" style="color: var(--color-warning);">Full</p>
-                    <form method="POST"
-                          action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
-                      <input type="hidden" name="session_id" value="<%= $session->id %>">
-                      <input type="hidden" name="program_id" value="<%= $project->id %>">
-                      % if ($sess_info->{location_id}) {
-                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
-                      % }
-                      <button type="submit" class="landing-cta-button">Join Waitlist</button>
-                    </form>
-                  % } else {
-                    % if (defined $sess_info->{available_spots}) {
-                      <p class="landing-feature-description">
-                        <%= $sess_info->{available_spots} %> spots left
-                      </p>
-                    % }
-                    <form method="POST"
-                          action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
-                      <input type="hidden" name="session_id" value="<%= $session->id %>">
-                      <input type="hidden" name="program_id" value="<%= $project->id %>">
-                      % if ($sess_info->{location_id}) {
-                        <input type="hidden" name="location_id" value="<%= $sess_info->{location_id} %>">
-                      % }
-                      <button type="submit" class="landing-cta-button">Register</button>
-                    </form>
-                  % }
-                </div>
-              </article>
-            % }
+        % if (@$filter_locations > 1) {
+          <div>
+            <label for="filter-location" style="display: block; font-size: var(--font-size-sm); color: var(--landing-text-secondary); margin-bottom: var(--space-1);">Location</label>
+            <select name="location" id="filter-location" class="form-select">
+              <option value="">All Locations</option>
+              % for my $loc (@$filter_locations) {
+                <option value="<%= $loc->{id} %>"
+                  <%= (param('location') // '') eq $loc->{id} ? 'selected' : '' %>>
+                  <%= $loc->{name} %>
+                </option>
+              % }
+            </select>
           </div>
-        </div>
+        % }
+
+        % if (@$filter_program_types > 1) {
+          <div>
+            <label for="filter-type" style="display: block; font-size: var(--font-size-sm); color: var(--landing-text-secondary); margin-bottom: var(--space-1);">Program Type</label>
+            <select name="program_type" id="filter-type" class="form-select">
+              <option value="">All Types</option>
+              % for my $pt (@$filter_program_types) {
+                <option value="<%= $pt->{slug} %>"
+                  <%= (param('program_type') // '') eq $pt->{slug} ? 'selected' : '' %>>
+                  <%= $pt->{name} %>
+                </option>
+              % }
+            </select>
+          </div>
+        % }
+
+        <noscript>
+          <button type="submit" class="btn btn-primary">Filter</button>
+        </noscript>
+      </form>
+    </div>
+  </section>
+
+  <!-- Program catalog -->
+  <div id="program-catalog">
+    % if (keys %$grouped_programs) {
+      % for my $type_slug (sort keys %$grouped_programs) {
+        % my $group = $grouped_programs->{$type_slug};
+        % my $type_name = $group->[0]{program_type} ? $group->[0]{program_type}->name : ucfirst($type_slug =~ s/-/ /gr);
+
+        <section class="landing-features">
+          <div class="landing-features-container">
+            <h2><%= $type_name %></h2>
+            <div class="landing-features-grid">
+              % for my $prog (@$group) {
+                % my $project = $prog->{project};
+                % my $reg_workflow = ($project->metadata || {})->{registration_workflow} || $registration_workflow_default;
+                % my $first_session = $prog->{sessions}[0];
+
+                <article class="landing-feature-card">
+                  <h3 class="landing-feature-title"><%= $project->name %></h3>
+
+                  % if ($first_session && $first_session->{location_name}) {
+                    <p class="landing-feature-subtitle"><%= $first_session->{location_name} %></p>
+                  % }
+
+                  % if ($first_session) {
+                    <p class="landing-feature-description">
+                      <%= $first_session->{session}->start_date %> &ndash; <%= $first_session->{session}->end_date %>
+                    </p>
+                  % }
+
+                  % if ($project->notes) {
+                    <p class="landing-feature-description"><%= $project->notes %></p>
+                  % }
+
+                  <div class="landing-cta-container" style="margin-top: var(--space-4);">
+                    % if ($first_session) {
+                      <form method="POST"
+                            action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
+                        <input type="hidden" name="session_id" value="<%= $first_session->{session}->id %>">
+                        <input type="hidden" name="program_id" value="<%= $project->id %>">
+                        % if ($first_session->{location_id}) {
+                          <input type="hidden" name="location_id" value="<%= $first_session->{location_id} %>">
+                        % }
+                        <button type="submit" class="landing-cta-button">
+                          <%= $first_session->{is_full} ? 'Join Waitlist' : 'Register' %>
+                        </button>
+                      </form>
+                    % }
+                  </div>
+                </article>
+              % }
+            </div>
+          </div>
+        </section>
+      % }
+    % } else {
+      <section class="landing-hero">
+        % if (param('location') || param('program_type')) {
+          <h1>No programs match your filters</h1>
+          <p class="landing-hero-subtitle">Try adjusting your filters or <a href="/">view all programs</a>.</p>
+        % } else {
+          <h1>Coming Soon</h1>
+          <p class="landing-hero-subtitle">No programs currently available. Check back soon!</p>
+        % }
       </section>
     % }
-  % } else {
-    <section class="landing-hero">
-      <h1>Coming Soon</h1>
-      <p class="landing-hero-subtitle">No programs currently available. Check back soon!</p>
-    </section>
-  % }
+  </div>
 </div>
