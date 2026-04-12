@@ -19,8 +19,34 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
     method prepare_template_data ($db, $run, $params = {}) {
         $db = $db->db if $db isa Registry::DAO;
 
-        # Single consolidated query: sessions + events + projects + enrollment counts
-        my $rows = $db->query(q{
+        # Build dynamic WHERE clauses from filter params
+        my @where_clauses = ("s.status = 'published'", "s.end_date >= CURRENT_DATE");
+        my @bind_values;
+
+        if (my $location = $params->{location}) {
+            push @where_clauses, "e.location_id = ?";
+            push @bind_values, $location;
+        }
+
+        if (my $program_type = $params->{program_type}) {
+            push @where_clauses, "p.program_type_slug = ?";
+            push @bind_values, $program_type;
+        }
+
+        if (my $date_from = $params->{date_from}) {
+            push @where_clauses, "s.start_date >= ?";
+            push @bind_values, $date_from;
+        }
+
+        if (my $date_to = $params->{date_to}) {
+            push @where_clauses, "s.end_date <= ?";
+            push @bind_values, $date_to;
+        }
+
+        my $where = join(' AND ', @where_clauses);
+
+        # Consolidated query: sessions + events + projects + locations + enrollment counts
+        my $rows = $db->query(qq{
             SELECT
                 s.id AS session_id,
                 s.name AS session_name,
@@ -35,6 +61,8 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 e.project_id,
                 e.location_id,
                 e.capacity AS event_capacity,
+                l.name AS location_name,
+                l.slug AS location_slug,
                 p.id AS proj_id,
                 p.name AS project_name,
                 p.slug AS project_slug,
@@ -48,16 +76,17 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
             JOIN session_events se ON se.session_id = s.id
             JOIN events e ON e.id = se.event_id
             JOIN projects p ON p.id = e.project_id
+            JOIN locations l ON l.id = e.location_id
             LEFT JOIN enrollments en ON en.session_id = s.id
-            WHERE s.status = 'published'
-              AND s.end_date >= CURRENT_DATE
+            WHERE $where
             GROUP BY s.id, s.name, s.slug, s.start_date, s.end_date, s.status,
                      s.capacity, s.metadata, s.created_at, s.updated_at,
                      e.project_id, e.location_id, e.capacity,
+                     l.name, l.slug,
                      p.id, p.name, p.slug, p.notes, p.program_type_slug, p.metadata,
                      p.created_at, p.updated_at
-            ORDER BY p.name, s.start_date
-        })->expand->hashes;
+            ORDER BY p.program_type_slug, p.name, s.start_date
+        }, @bind_values)->expand->hashes;
 
         # Load pricing plans in a single query for all sessions
         my @session_ids = map { $_->{session_id} } @$rows;
@@ -140,14 +169,48 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 pricing_plans   => $plans,
                 best_price      => $best_price,
                 location_id     => $row->{location_id},
+                location_name   => $row->{location_name},
+                location_slug   => $row->{location_slug},
             };
         }
 
         my @sorted = sort { $a->{project}->name cmp $b->{project}->name } values %programs;
 
+        # Group programs by program type for catalog display
+        my %grouped;
+        for my $prog (@sorted) {
+            my $type_slug = $prog->{project}->program_type_slug || 'other';
+            push @{$grouped{$type_slug}}, $prog;
+        }
+
+        # Collect filter options from unfiltered data (available locations and types)
+        my $filter_locations = $db->query(q{
+            SELECT DISTINCT l.id, l.name, l.slug
+            FROM locations l
+            JOIN events e ON e.location_id = l.id
+            JOIN session_events se ON se.event_id = e.id
+            JOIN sessions s ON s.id = se.session_id
+            WHERE s.status = 'published' AND s.end_date >= CURRENT_DATE
+            ORDER BY l.name
+        })->hashes;
+
+        my $filter_program_types = $db->query(q{
+            SELECT DISTINCT pt.slug, pt.name
+            FROM program_types pt
+            JOIN projects p ON p.program_type_slug = pt.slug
+            JOIN events e ON e.project_id = p.id
+            JOIN session_events se ON se.event_id = e.id
+            JOIN sessions s ON s.id = se.session_id
+            WHERE s.status = 'published' AND s.end_date >= CURRENT_DATE
+            ORDER BY pt.name
+        })->hashes;
+
         return {
-            programs => \@sorted,
-            run      => $run,
+            programs             => \@sorted,
+            grouped_programs     => \%grouped,
+            filter_locations     => $filter_locations->to_array,
+            filter_program_types => $filter_program_types->to_array,
+            run                  => $run,
         };
     }
 }
