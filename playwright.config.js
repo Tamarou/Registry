@@ -30,6 +30,16 @@ module.exports = defineConfig({
       name: 'firefox',
       use: { ...devices['Desktop Firefox'] },
     },
+    // Production deploy validation -- runs against the live site, no test DB needed
+    {
+      name: 'deploy-validation',
+      testMatch: 'deploy-validation.spec.js',
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.DEPLOY_VALIDATION_URL || 'https://tinyartempire.com',
+      },
+    },
+
     // Commented out webkit and mobile browsers to avoid missing system dependencies
     // These can be re-enabled once proper browser dependencies are installed
     // {
