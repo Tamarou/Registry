@@ -95,7 +95,7 @@ subtest 'profile data persists through workflow and appears on review step' => s
     # GET the pricing page
     $t->get_ok($pricing_url)->status_is(200);
 
-    # Submit pricing step (no plan to select since none are configured)
+    # Submit pricing step (skips when no plans are configured)
     $t->post_ok($pricing_url => form => {})
       ->status_is(302);
 
