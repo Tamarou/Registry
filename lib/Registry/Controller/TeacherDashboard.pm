@@ -8,33 +8,53 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
     use Registry::DAO::Event;
     use Registry::DAO::Enrollment;
     use Registry::DAO::Attendance;
+    use Registry::DAO::Location;
+    use Registry::DAO::Project;
 
     method attendance {
         my $event_id = $self->param('event_id');
         my $dao = $self->app->dao;
 
         # Get event details
-        my $event = Registry::DAO::Event->find($dao, { id => $event_id });
+        my $event_obj = Registry::DAO::Event->find($dao, { id => $event_id });
 
-        unless ($event) {
+        unless ($event_obj) {
             return $self->render(text => 'Event not found', status => 404);
         }
 
-        # Get enrolled students for this event - use class method
-        my $students = Registry::DAO::Enrollment->get_students_for_event($dao->db, $event_id, tenant => $self->stash('tenant'));
+        # Serialize event to a hashref for the template, including
+        # joined location and program names from related tables.
+        my $db = $dao->db;
+        my $location = $event_obj->location_id
+            ? Registry::DAO::Location->find($db, { id => $event_obj->location_id })
+            : undef;
+        my $program = $event_obj->project_id
+            ? Registry::DAO::Project->find($db, { id => $event_obj->project_id })
+            : undef;
 
-        # Get existing attendance records - use class method
-        my $attendance = Registry::DAO::Attendance->get_event_attendance($dao->db, $event_id, tenant => $self->stash('tenant'));
+        my $event = {
+            id            => $event_obj->id,
+            time          => $event_obj->time,
+            duration      => $event_obj->duration,
+            metadata      => $event_obj->metadata || {},
+            location_name => $location ? $location->name : undef,
+            program_name  => $program ? $program->name : undef,
+        };
+
+        # Get enrolled students for this event
+        my $students = Registry::DAO::Enrollment->get_students_for_event($db, $event_id, tenant => $self->stash('tenant'));
+
+        # Get existing attendance records
+        my $attendance = Registry::DAO::Attendance->get_event_attendance($db, $event_id, tenant => $self->stash('tenant'));
 
         # Create attendance lookup for template
         my %attendance_lookup = map { $_->{student_id} => $_->{status} } @$attendance;
 
         $self->render(
-            template => 'teacher/attendance',
-            event => $event,
-            students => $students,
+            template   => 'teacher/attendance',
+            event      => $event,
+            students   => $students,
             attendance => \%attendance_lookup,
-            layout => 'teacher'
         );
     }
 
@@ -104,10 +124,9 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
         );
 
         $self->render(
-            template => 'teacher/dashboard',
-            today_events => $today_events,
+            template        => 'teacher/dashboard',
+            today_events    => $today_events,
             upcoming_events => $upcoming_events,
-            layout => 'teacher'
         );
     }
 }
