@@ -109,8 +109,9 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                         %{$cont_data->{enrollment_data} || {}}
                     });
 
-                    # Mark continuation as complete
-                    # TODO: Implement proper continuation completion
+                    # Clear the continuation link so subsequent visits to
+                    # this step don't re-trigger the continuation logic.
+                    $run->update($db, { continuation_id => undef });
 
                     # Move to next step
                     my $next_step = $self->next_step($db);
