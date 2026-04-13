@@ -1,7 +1,8 @@
 %# ABOUTME: Admin template for tenant custom domain management.
 %# ABOUTME: Lists domains with status indicators, add-domain form, and DNS instructions.
-% layout 'default';
+% layout 'dashboard';
 % title 'Custom Domains';
+% stash active_nav => 'domains';
 
 <div class="container">
     <div class="admin-header">

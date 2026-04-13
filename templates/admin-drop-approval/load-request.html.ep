@@ -1,5 +1,6 @@
-% layout 'default';
+% layout 'dashboard';
 % title 'Loading Drop Request';
+% stash active_nav => 'admin';
 
 <h1>Loading Drop Request</h1>
 

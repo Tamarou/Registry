@@ -1,5 +1,6 @@
-% layout 'default';
+% layout 'dashboard';
 % title 'Admin Decision';
+% stash active_nav => 'admin';
 
 <h1>Admin Decision</h1>
 

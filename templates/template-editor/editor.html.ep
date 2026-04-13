@@ -1,5 +1,6 @@
-% layout 'default';
+% layout 'dashboard';
 % title 'Template Editor';
+% stash active_nav => 'templates';
 % my $view = stash('view') // 'list';
 % my $editing_template = stash('editing_template');
 % my $flash = stash('flash');

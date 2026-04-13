@@ -1,5 +1,6 @@
-% layout 'default';
+% layout 'dashboard';
 % title 'Admin Dashboard';
+% stash active_nav => 'admin';
 % my $step_url = url_for('workflow_step', workflow => 'admin-dashboard', run => $run->id, step => 'dashboard-overview');
 
 <div class="admin-dashboard">

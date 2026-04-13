@@ -75,10 +75,31 @@ package Test::Registry::Helpers {
         }
     }
 
+    # NOTE: This registers a permanent before_dispatch hook. Calling
+    # authenticate_as multiple times accumulates hooks, but the guards
+    # (unless session/stash already set) ensure only the first takes
+    # effect per request. This is a test-only approximation -- the
+    # stash hash is built manually and may drift from the production
+    # user_to_stash closure in Registry.pm.
     sub authenticate_as ($t, $user) {
         $t->get_ok('/');  # prime the session cookie
         $t->app->hook(before_dispatch => sub ($c) {
-            $c->session(user_id => $user->id) unless $c->session('user_id');
+            unless ($c->session('user_id')) {
+                $c->session(user_id => $user->id);
+            }
+            # Set current_user stash so require_role and templates
+            # see the user on this request (the app's own before_dispatch
+            # hook already ran and found no session).
+            unless ($c->stash('current_user')) {
+                $c->stash(current_user => {
+                    id        => $user->id,
+                    username  => $user->username,
+                    name      => $user->name,
+                    email     => $user->email,
+                    user_type => $user->user_type,
+                    role      => $user->user_type,
+                });
+            }
         });
     }
 
