@@ -1,5 +1,6 @@
-% layout 'default';
+% layout 'dashboard';
 % title 'Parent Dashboard';
+% stash active_nav => 'parent';
 
 <div class="min-h-screen bg-gray-50">
     <!-- Header -->

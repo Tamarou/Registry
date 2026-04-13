@@ -1,5 +1,6 @@
-% layout 'default';
+% layout 'dashboard';
 % title 'Review Drop Request';
+% stash active_nav => 'admin';
 
 <h1>Review Drop Request</h1>
 

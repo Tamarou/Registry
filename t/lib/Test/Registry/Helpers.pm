@@ -78,7 +78,22 @@ package Test::Registry::Helpers {
     sub authenticate_as ($t, $user) {
         $t->get_ok('/');  # prime the session cookie
         $t->app->hook(before_dispatch => sub ($c) {
-            $c->session(user_id => $user->id) unless $c->session('user_id');
+            unless ($c->session('user_id')) {
+                $c->session(user_id => $user->id);
+            }
+            # Set current_user stash so require_role and templates
+            # see the user on this request (the app's own before_dispatch
+            # hook already ran and found no session).
+            unless ($c->stash('current_user')) {
+                $c->stash(current_user => {
+                    id        => $user->id,
+                    username  => $user->username,
+                    name      => $user->name,
+                    email     => $user->email,
+                    user_type => $user->user_type,
+                    role      => $user->user_type,
+                });
+            }
         });
     }
 

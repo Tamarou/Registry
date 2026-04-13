@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title><%= title || 'Dashboard' %> - Tiny Art Empire</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="<%= static_url %>/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;500;700&family=Chelsea+Market&display=swap" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="<%= static_url %>/css/theme.css">
+    <link rel="stylesheet" href="<%= static_url %>/css/app.css">
+
+    <meta name="csrf-token" content="<%= csrf_token %>">
+    <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+    <%= content 'head' %>
+</head>
+<body data-layout="dashboard" data-theme="light">
+    <%# Role-aware navigation bar %>
+    <% my $user = stash('current_user') || {}; %>
+    <% my $role = $user->{role} || 'parent'; %>
+    <nav class="dashboard-nav">
+        <div class="dashboard-nav-brand">
+            <a href="/">TINY ART EMPIRE</a>
+        </div>
+        <div class="dashboard-nav-links">
+            <% if ($role eq 'admin' || $role eq 'staff') { %>
+                <a href="/admin/dashboard"
+                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'admin' ? ' active' : '' %>">
+                    Dashboard
+                </a>
+                <a href="/program-creation"
+                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'programs' ? ' active' : '' %>">
+                    New Program
+                </a>
+                <a href="/teacher/"
+                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'teacher' ? ' active' : '' %>">
+                    Attendance
+                </a>
+                <a href="/admin/templates"
+                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'templates' ? ' active' : '' %>">
+                    Templates
+                </a>
+            <% } %>
+            <% if ($role eq 'admin') { %>
+                <a href="/admin/domains"
+                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'domains' ? ' active' : '' %>">
+                    Domains
+                </a>
+            <% } %>
+            <% if ($role eq 'parent') { %>
+                <a href="/parent/dashboard"
+                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'parent' ? ' active' : '' %>">
+                    My Dashboard
+                </a>
+            <% } %>
+        </div>
+        <div class="dashboard-nav-user">
+            <% if ($user->{name}) { %>
+                <span class="dashboard-nav-username"><%= $user->{name} %></span>
+            <% } %>
+            <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+                <span id="theme-icon">&#x1F319;</span>
+            </button>
+        </div>
+    </nav>
+
+    <main class="dashboard-content">
+        <%= content %>
+    </main>
+
+    <script>
+        // Inject CSRF token into forms (including dynamically loaded ones)
+        function injectCsrfTokens() {
+            var token = document.querySelector('meta[name="csrf-token"]');
+            if (!token) return;
+            var tokenValue = token.getAttribute('content');
+            document.querySelectorAll('form').forEach(function(form) {
+                if (!form.querySelector('input[name="csrf_token"]')) {
+                    var input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'csrf_token';
+                    input.value = tokenValue;
+                    form.appendChild(input);
+                }
+            });
+        }
+        document.addEventListener('DOMContentLoaded', injectCsrfTokens);
+        document.addEventListener('htmx:afterSwap', injectCsrfTokens);
+
+        // Configure HTMX to include CSRF token in all requests
+        document.addEventListener('htmx:configRequest', function(event) {
+            var token = document.querySelector('meta[name="csrf-token"]');
+            if (token) {
+                event.detail.headers['X-CSRF-Token'] = token.getAttribute('content');
+            }
+        });
+    </script>
+    <script>
+        // Theme toggle functionality
+        function toggleTheme() {
+            const body = document.body;
+            const currentTheme = body.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+
+            body.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedTheme = localStorage.getItem('theme');
+            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
+
+            document.body.setAttribute('data-theme', theme);
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = theme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
+            }
+
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+                if (!localStorage.getItem('theme')) {
+                    const newTheme = e.matches ? 'dark' : 'light';
+                    document.body.setAttribute('data-theme', newTheme);
+                    const icon = document.getElementById('theme-icon');
+                    if (icon) {
+                        icon.textContent = newTheme === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
+                    }
+                }
+            });
+        });
+    </script>
+    <%= content 'javascript' %>
+</body>
+</html>

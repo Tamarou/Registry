@@ -1,5 +1,6 @@
-% layout 'teacher';
+% layout 'dashboard';
 % title 'Teacher Dashboard';
+% stash active_nav => 'teacher';
 
 <style>
     .section {
