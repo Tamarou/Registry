@@ -97,7 +97,12 @@ test.describe('Amara teacher attendance journey', () => {
     await registryPage.goto('/teacher/');
     const csrfToken = await registryPage.locator('meta[name="csrf-token"]').getAttribute('content');
 
-    // POST attendance data
+    // POST attendance data -- controller expects flat { student_id: status } hash
+    const attendanceData = {};
+    testData.student_ids.forEach((id, i) => {
+      attendanceData[id] = i === 0 ? 'present' : 'absent';
+    });
+
     const response = await registryPage.request.post(
       `/teacher/attendance/${testData.event_id}`,
       {
@@ -105,13 +110,7 @@ test.describe('Amara teacher attendance journey', () => {
           'Content-Type': 'application/json',
           'X-CSRF-Token': csrfToken,
         },
-        data: {
-          event_id: testData.event_id,
-          records: testData.student_ids.map((id, i) => ({
-            family_member_id: id,
-            status: i === 0 ? 'present' : 'absent',
-          })),
-        },
+        data: attendanceData,
       }
     );
 

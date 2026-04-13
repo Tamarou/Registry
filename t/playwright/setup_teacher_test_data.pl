@@ -100,7 +100,7 @@ for my $name (@student_names) {
 
     $db->insert('enrollments', {
         session_id       => $sess->id,
-        student_id       => $parent->id,
+        student_id       => $child->id,
         family_member_id => $child->id,
         parent_id        => $parent->id,
         status           => 'active',
