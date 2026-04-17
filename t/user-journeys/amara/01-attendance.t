@@ -129,14 +129,10 @@ subtest 'Amara sees navigation with appropriate links' => sub {
 };
 
 subtest 'Amara can view attendance page for an event' => sub {
-    # The attendance template expects event data as a hashref but the
-    # controller passes an Event object -- this is a pre-existing bug
-    # in TeacherDashboard::attendance.  The GET renders with a 500.
-    # TODO: Fix TeacherDashboard::attendance to serialize event for template
-    $t->get_ok("/teacher/attendance/${\$event->id}");
-    my $status = $t->tx->res->code;
-    ok $status == 200 || $status == 500,
-       "Attendance endpoint responds (status=$status, 500 = known template bug)";
+    $t->get_ok("/teacher/attendance/${\$event->id}")
+      ->status_is(200)
+      ->content_like(qr/Class Session|Attendance/, 'Attendance page rendered')
+      ->element_exists('attendance-form', 'Attendance form web component present');
 };
 
 subtest 'Amara can mark student attendance' => sub {
