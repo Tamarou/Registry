@@ -20,6 +20,19 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
 
     sub table { 'locations' }
 
+    # List all locations, ordered by name.
+    sub list ($class, $db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $results = $db->select(
+            $class->table,
+            '*',
+            {},
+            { order_by => 'name' }
+        )->expand->hashes;
+
+        return [ map { $class->new(%$_) } @$results ];
+    }
+
     sub create ( $class, $db, $data ) {
         for my $field (qw(address_info metadata contact_info facilities)) {
             next unless exists $data->{$field};

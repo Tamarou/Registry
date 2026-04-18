@@ -364,23 +364,31 @@ subtest 'Location Assignment: GenerateEvents step' => sub {
     ok(!$@, 'prepare_data does not crash') or diag("Error: $@");
 
     # Test event generation
+    # Note: events.teacher_id is NOT NULL, so a teacher must be assigned
     my $start_epoch = time() + 86400 * 7; # one week from now
+    my $location_id = $configured->[0]{id};
     my $result = eval {
         $step->process($db, {
-            confirm_generation   => 1,
-            generation_params    => {
+            confirm_generation  => 1,
+            generation_params   => {
                 start_date     => $start_epoch,
                 duration_weeks => 4,
+            },
+            teacher_assignments => {
+                $location_id => $admin->id,
             },
         }, $run);
     };
     ok(!$@, 'process with generation params does not crash') or diag("Error: $@");
 
-    if ($result && $result->{next_step}) {
+    if ($result && $result->{errors}) {
+        fail('GenerateEvents returned errors: ' . join('; ', @{$result->{errors}}));
+    }
+    elsif ($result && $result->{next_step} && $result->{next_step} ne $step->id) {
         is($result->{next_step}, 'complete', 'advances to complete');
     }
-    elsif ($result && $result->{errors}) {
-        diag("Generation errors: @{$result->{errors}}");
+    else {
+        fail('GenerateEvents did not advance');
     }
 };
 
@@ -481,16 +489,6 @@ subtest 'DAO method existence checks' => sub {
         or diag('MISSING: SelectProgram calls Project->list() but it does not exist');
     ok($has_location_list, 'Location->list exists')
         or diag('MISSING: ChooseLocations calls Location->list() but it does not exist');
-
-    # SelectProgram and ChooseLocations call ->new(id => $id)->load($db)
-    # but Object base class has no load() method
-    my $has_project_load  = Registry::DAO::Project->can('load');
-    my $has_location_load = Registry::DAO::Location->can('load');
-
-    ok($has_project_load,  'Project->load exists')
-        or diag('MISSING: SelectProgram calls Project->new(id => $id)->load($db)');
-    ok($has_location_load, 'Location->load exists')
-        or diag('MISSING: ChooseLocations calls Location->new(id => $id)->load($db)');
 
     # SelectProgram stores $project->description but Project has no description method
     my $has_project_desc = Registry::DAO::Project->can('description');

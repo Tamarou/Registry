@@ -12,10 +12,10 @@ method process ($db, $form_data, $run = undef) {
     # If form was submitted
     if ($form_data->{project_id}) {
         # Validate project exists
-        my $project = Registry::DAO::Project->new(
+        my $project = Registry::DAO::Project->find($db, {
             id => $form_data->{project_id}
-        )->load($db);
-        
+        });
+
         unless ($project) {
             return {
                 next_step => $self->id,

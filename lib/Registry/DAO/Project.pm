@@ -17,6 +17,23 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
 
     sub table { 'projects' }
 
+    # Description alias for the notes field, used by workflow steps that
+    # expect a description accessor (e.g. SelectProgram).
+    method description { $notes }
+
+    # List all projects, ordered by name.
+    sub list ($class, $db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $results = $db->select(
+            $class->table,
+            '*',
+            {},
+            { order_by => 'name' }
+        )->expand->hashes;
+
+        return [ map { $class->new(%$_) } @$results ];
+    }
+
     ADJUST {
         # Decode JSON metadata if it's a string
         if (defined $metadata && !ref $metadata) {
