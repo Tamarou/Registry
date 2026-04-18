@@ -8,7 +8,6 @@ use Registry::DAO::Event;
 use Registry::DAO::Session;
 use Registry::DAO::Schedule;
 use Registry::DAO::User;
-use Mojo::JSON qw(encode_json);
 use DateTime;
 
 method process ($db, $form_data, $run = undef) {

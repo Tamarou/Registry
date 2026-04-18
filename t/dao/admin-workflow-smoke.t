@@ -386,6 +386,31 @@ subtest 'Location Assignment: GenerateEvents step' => sub {
     }
     elsif ($result && $result->{next_step} && $result->{next_step} ne $step->id) {
         is($result->{next_step}, 'complete', 'advances to complete');
+
+        # Verify DB side effects: a session and four weekly events (two days
+        # per week for four weeks = 8 events) actually got written with the
+        # correct shape.
+        my $session_count = $db->query(
+            'SELECT COUNT(*) FROM sessions WHERE name LIKE ?',
+            '%Dr Phillips Elementary%'
+        )->array->[0];
+        is($session_count, 1, 'session row written');
+
+        my $event_count = $db->query(
+            'SELECT COUNT(*) FROM events WHERE location_id = ? AND teacher_id = ?',
+            $location->id, $admin->id
+        )->array->[0];
+        is($event_count, 8, '8 events written (2 days/week x 4 weeks)');
+
+        # Events should have the correct teacher, location, and project.
+        my $sample_event = $db->query(
+            'SELECT teacher_id, location_id, project_id, status FROM events
+             WHERE location_id = ? LIMIT 1',
+            $location->id
+        )->hash;
+        is($sample_event->{teacher_id},  $admin->id,    'event has teacher_id');
+        is($sample_event->{location_id}, $location->id, 'event has location_id');
+        ok($sample_event->{project_id}, 'event has project_id');
     }
     else {
         fail('GenerateEvents did not advance');
