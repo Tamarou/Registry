@@ -11,6 +11,10 @@ use Test::More import => [qw( done_testing is ok isa_ok can_ok subtest $TODO )];
 # prove then treats as a failure. Force a clean exit if all tests passed.
 END {
     if (Test::More->builder->is_passing) {
+        # Flush TAP output before bypassing cleanup so prove still sees
+        # the plan line.
+        STDOUT->flush;
+        STDERR->flush;
         require POSIX;
         POSIX::_exit(0);
     }

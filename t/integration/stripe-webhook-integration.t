@@ -7,6 +7,8 @@ use Test::More;
 # CI flakiness: see t/dao/stripe-subscription.t for rationale.
 END {
     if (Test::More->builder->is_passing) {
+        STDOUT->flush;
+        STDERR->flush;
         require POSIX;
         POSIX::_exit(0);
     }
