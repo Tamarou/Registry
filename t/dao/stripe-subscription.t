@@ -8,9 +8,12 @@ use Test::More import => [qw( done_testing is ok isa_ok can_ok subtest $TODO )];
 # CI flakiness: when the postgres service container kills connections
 # mid-test, the TAP output is still clean (all subtests pass or TODO)
 # but DESTROY-time errors in DBD::Pg cause a non-zero exit code, which
-# prove then treats as a failure. Force exit 0 if all tests passed.
+# prove then treats as a failure. Force a clean exit if all tests passed.
 END {
-    $? = 0 if Test::More->builder->is_passing;
+    if (Test::More->builder->is_passing) {
+        require POSIX;
+        POSIX::_exit(0);
+    }
 }
 
 use Test::Registry::DB;

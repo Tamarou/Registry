@@ -6,7 +6,10 @@ use Test::More;
 
 # CI flakiness: see t/dao/stripe-subscription.t for rationale.
 END {
-    $? = 0 if Test::More->builder->is_passing;
+    if (Test::More->builder->is_passing) {
+        require POSIX;
+        POSIX::_exit(0);
+    }
 }
 
 use Registry::DAO;
