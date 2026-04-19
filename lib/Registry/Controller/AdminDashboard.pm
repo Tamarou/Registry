@@ -216,52 +216,52 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
 
     # Toggle publish state on a program. Body param `status` must be one
     # of draft/published/closed (same enum as the DB CHECK constraint).
-    method set_program_status ($c = $self) {
-        my $id     = $c->stash('id');
-        my $status = $c->param('status') // '';
+    method set_program_status () {
+        my $id     = $self->stash('id');
+        my $status = $self->param('status') // '';
 
         unless (_valid_status($status)) {
-            return $c->render(
+            return $self->render(
                 json   => { error => "invalid status: $status" },
                 status => 400,
             );
         }
 
-        my $dao     = $c->dao($c->stash('tenant'));
+        my $dao = $self->dao($self->stash('tenant'));
         require Registry::DAO::Project;
         my $program = Registry::DAO::Project->find($dao->db, { id => $id });
-        return $c->render(json => { error => 'not found' }, status => 404)
+        return $self->render(json => { error => 'not found' }, status => 404)
             unless $program;
 
         $program->update($dao->db, { status => $status });
 
-        return $c->render(json => {
+        return $self->render(json => {
             id     => $id,
             status => $status,
         });
     }
 
     # Toggle publish state on a session.
-    method set_session_status ($c = $self) {
-        my $id     = $c->stash('id');
-        my $status = $c->param('status') // '';
+    method set_session_status () {
+        my $id     = $self->stash('id');
+        my $status = $self->param('status') // '';
 
         unless (_valid_status($status)) {
-            return $c->render(
+            return $self->render(
                 json   => { error => "invalid status: $status" },
                 status => 400,
             );
         }
 
-        my $dao     = $c->dao($c->stash('tenant'));
+        my $dao = $self->dao($self->stash('tenant'));
         require Registry::DAO::Session;
         my $session = Registry::DAO::Session->find($dao->db, { id => $id });
-        return $c->render(json => { error => 'not found' }, status => 404)
+        return $self->render(json => { error => 'not found' }, status => 404)
             unless $session;
 
         $session->update($dao->db, { status => $status });
 
-        return $c->render(json => {
+        return $self->render(json => {
             id     => $id,
             status => $status,
         });
