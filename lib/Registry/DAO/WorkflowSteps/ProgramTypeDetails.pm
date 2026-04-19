@@ -18,11 +18,28 @@ method process ($db, $form_data, $run = undef) {
     push @errors, 'Program type name is required'
         unless defined $form_data->{name} && length $form_data->{name};
 
+    # session_pattern is an enum -- don't trust whatever the form POSTs.
+    my %valid_pattern = map { $_ => 1 } qw(weekly daily one_time);
+    if (defined $form_data->{session_pattern}
+        && length $form_data->{session_pattern}
+        && !$valid_pattern{$form_data->{session_pattern}}) {
+        push @errors, 'Invalid session pattern';
+    }
+
+    # default_capacity must be a positive integer if supplied.
+    if (defined $form_data->{default_capacity} && length $form_data->{default_capacity}) {
+        unless ($form_data->{default_capacity} =~ /\A\d+\z/
+                && $form_data->{default_capacity} + 0 >= 1) {
+            push @errors, 'Default capacity must be a positive integer';
+        }
+    }
+
     return { errors => \@errors } if @errors;
 
     my %config;
     $config{description}     = $form_data->{description}     if defined $form_data->{description};
-    $config{session_pattern} = $form_data->{session_pattern} if defined $form_data->{session_pattern};
+    $config{session_pattern} = $form_data->{session_pattern}
+        if defined $form_data->{session_pattern} && length $form_data->{session_pattern};
     $config{default_capacity} = $form_data->{default_capacity} + 0
         if defined $form_data->{default_capacity} && length $form_data->{default_capacity};
 

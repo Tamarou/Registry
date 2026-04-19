@@ -144,6 +144,38 @@ subtest 'details step validates required fields' => sub {
     ok((grep /name/i, @{$result->{errors}}), 'error mentions name');
 };
 
+subtest 'details step rejects invalid session_pattern' => sub {
+    my $step = Registry::DAO::WorkflowStep->find($db, {
+        workflow_id => $workflow->id,
+        slug        => 'type-details',
+    });
+    my $run = $workflow->new_run($db);
+
+    my $result = $step->process($db, {
+        name            => 'Bogus',
+        session_pattern => 'something-else',
+    }, $run);
+    ok($result->{errors}, 'returns errors for invalid pattern');
+    ok((grep /session pattern/i, @{$result->{errors}}),
+       'error mentions session pattern');
+};
+
+subtest 'details step rejects non-positive default_capacity' => sub {
+    my $step = Registry::DAO::WorkflowStep->find($db, {
+        workflow_id => $workflow->id,
+        slug        => 'type-details',
+    });
+    my $run = $workflow->new_run($db);
+
+    for my $bad ('0', '-3', 'banana') {
+        my $result = $step->process($db, {
+            name             => 'Bogus',
+            default_capacity => $bad,
+        }, $run);
+        ok($result->{errors}, "rejects default_capacity=$bad");
+    }
+};
+
 subtest 'details step edits an existing program type' => sub {
     my $step = Registry::DAO::WorkflowStep->find($db, {
         workflow_id => $workflow->id,

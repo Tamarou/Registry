@@ -14,7 +14,9 @@ method process ($db, $form_data, $run = undef) {
     my $action = $form_data->{action} // '';
 
     if ($action eq 'new') {
-        # Clear any carried editing_slug and advance.
+        # Reset editing_slug to JSON null so the details step takes
+        # the create path. update_data merges via jsonb, so we can't
+        # delete the key but we can null it.
         $run->update_data($db, { editing_slug => undef });
         return { next_step => 'type-details' };
     }

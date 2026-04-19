@@ -1,5 +1,6 @@
 % layout 'workflow';
 % title 'Program type saved';
+% stash active_nav => 'program-types';
 
 <h2>Program type saved</h2>
 

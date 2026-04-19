@@ -1,5 +1,6 @@
 % layout 'workflow';
 % title 'Program Types';
+% stash active_nav => 'program-types';
 
 <h2>Program Types</h2>
 <p>Create a new program type or edit an existing one.</p>
