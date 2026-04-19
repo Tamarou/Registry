@@ -1,0 +1,62 @@
+% layout 'workflow';
+% title 'Contact Person';
+% stash active_nav => 'locations';
+
+<h2>Contact Person for <%= stash('pending_name') %></h2>
+<p>Pick an existing staff member or add a new one.</p>
+
+% if (my $errors = stash('errors')) {
+    <ul class="errors">
+        % for my $e (@$errors) {
+            <li><%= $e %></li>
+        % }
+    </ul>
+% }
+
+<form method="POST" action="<%= $action %>">
+    <fieldset>
+        <legend>Existing contact</legend>
+        <p>
+            <label>
+                <input type="radio" name="contact_mode" value="existing" checked>
+                Use an existing user
+            </label>
+        </p>
+        <p>
+            <label for="contact-id">User</label>
+            % my $candidates = stash('candidates') || [];
+            <select id="contact-id" name="contact_id">
+                % for my $u (@$candidates) {
+                    <option value="<%= $u->{id} %>">
+                        <%= $u->{name} %> (<%= $u->{email} %>)
+                    </option>
+                % }
+            </select>
+            % unless (@$candidates) {
+                <em>No existing staff users -- add one below.</em>
+            % }
+        </p>
+    </fieldset>
+
+    <fieldset>
+        <legend>New contact</legend>
+        <p>
+            <label>
+                <input type="radio" name="contact_mode" value="new">
+                Create a new user
+            </label>
+        </p>
+        <p>
+            <label for="contact-name">Name</label>
+            <input id="contact-name" name="contact_name" type="text">
+        </p>
+        <p>
+            <label for="contact-email">Email</label>
+            <input id="contact-email" name="contact_email" type="email">
+        </p>
+    </fieldset>
+
+    <p>
+        <button type="submit">Save Location</button>
+    </p>
+</form>

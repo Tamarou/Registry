@@ -1,10 +1,28 @@
-# workflows/location-management.yaml
+# ABOUTME: Workflow for managing locations -- create new locations or edit
+# ABOUTME: existing ones, and assign a user as contact person.
+
 name: Location Management
-description: Workflow for managing location information
+description: Create or edit the locations where programs are held
 slug: location-management
-first_step: location-details
+first_step: list-or-create
+
 steps:
+  - slug: list-or-create
+    description: Select an existing location to edit or create a new one
+    template: location-management/list-or-create
+    class: Registry::DAO::WorkflowSteps::LocationList
+
   - slug: location-details
-    template: location-management-location-details
-    outcome-definition: Location Details
-    class: Registry::DAO::WorkflowSteps::CreateLocationWithAddress
+    description: Location name, address, and capacity
+    template: location-management/location-details
+    class: Registry::DAO::WorkflowSteps::LocationDetails
+
+  - slug: select-contact
+    description: Assign a contact person for this location
+    template: location-management/select-contact
+    class: Registry::DAO::WorkflowSteps::LocationContact
+
+  - slug: complete
+    description: Location saved
+    template: location-management/complete
+    class: Registry::DAO::WorkflowStep

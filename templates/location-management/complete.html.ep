@@ -1,0 +1,13 @@
+% layout 'workflow';
+% title 'Location saved';
+% stash active_nav => 'locations';
+
+<h2>Location saved</h2>
+
+<p>The location has been saved.</p>
+
+<p>
+    <a href="<%= url_for('workflow_start', workflow => 'location-management') %>">
+        Back to locations
+    </a>
+</p>
