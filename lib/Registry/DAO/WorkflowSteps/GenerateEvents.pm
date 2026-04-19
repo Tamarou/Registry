@@ -8,7 +8,6 @@ use Registry::DAO::Event;
 use Registry::DAO::Session;
 use Registry::DAO::Schedule;
 use Registry::DAO::User;
-use Mojo::JSON qw(encode_json);
 use DateTime;
 
 method process ($db, $form_data, $run = undef) {
@@ -73,15 +72,15 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
             project_id => $project_data->{project_id},
             location_id => $location->{id},
             name => "$project_data->{project_name} at $location->{name}",
-            description => $project_data->{project_description},
+            notes => $project_data->{project_description},
             capacity => $location->{capacity},
-            status => 'upcoming',
-            metadata => encode_json({
+            status => 'draft',
+            metadata => {
                 program_assignment => 'generated',
                 schedule => $location->{schedule},
                 pricing_override => $location->{pricing_override},
                 notes => $location->{notes}
-            })
+            }
         });
         
         # Generate events based on pattern
@@ -125,22 +124,21 @@ method generate_events_for_session ($db, $session, $location, $params, $teacher_
             # Create event with teacher assignment if provided
             my $event_data = {
                 session_id => $session->id,
-                time => $event_date->epoch,
+                time => $event_date->iso8601,
                 duration => 60, # Default 1 hour duration
                 location_id => $location->{id},
                 project_id => $session->project_id,
-                status => 'scheduled',
-                metadata => encode_json({
+                metadata => {
                     generated_from => 'location_assignment',
                     week_number => $week + 1,
                     day_name => $day_name
-                })
+                }
             };
-            
+
             # Add teacher assignment if provided
             if ($teacher_id) {
                 $event_data->{teacher_id} = $teacher_id;
-                
+
                 # Check for conflicts if teacher assignment is specified
                 my $schedule_dao = Registry::DAO::Schedule->new();
                 my $conflicts = $schedule_dao->check_conflicts($db, $teacher_id, {
@@ -148,13 +146,10 @@ method generate_events_for_session ($db, $session, $location, $params, $teacher_
                     duration => 60,
                     location_id => $location->{id}
                 });
-                
+
                 if (@$conflicts) {
                     # For now, continue with assignment but add conflict info to metadata
-                    $event_data->{metadata} = encode_json({
-                        %{decode_json($event_data->{metadata})},
-                        teacher_conflicts => $conflicts
-                    });
+                    $event_data->{metadata}{teacher_conflicts} = $conflicts;
                 }
             }
             

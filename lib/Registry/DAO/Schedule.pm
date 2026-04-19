@@ -47,10 +47,10 @@ method check_conflicts ($db, $teacher_id, $proposed_event) {
     
     my $existing_events = $db->select('events', '*', {
         teacher_id => $teacher_id,
-        -and => [
-            \'time >= ?', $check_start->epoch,
-            \'time <= ?', $check_end->epoch
-        ]
+        time       => {
+            '>=' => \[ 'to_timestamp(?)', $check_start->epoch ],
+            '<=' => \[ 'to_timestamp(?)', $check_end->epoch ],
+        },
     })->hashes;
     
     for my $event ($existing_events->each) {
@@ -151,11 +151,15 @@ method calculate_distance ($lat1, $lon1, $lat2, $lon2) {
 }
 
 method get_travel_time_config ($db) {
-    # Check for tenant-specific configuration
-    my $config = $db->select('tenant_profiles', ['travel_time_minutes'], 
-                            {}, { limit => 1 })->hash;
-    
-    return $config->{travel_time_minutes} // 15; # Default 15 minutes
+    # Check for tenant-specific configuration. Fall back to the default
+    # when the column or table isn't present (legacy schemas, tests).
+    my $config = eval {
+        $db->select('tenant_profiles', ['travel_time_minutes'],
+                    {}, { limit => 1 })->hash;
+    };
+    return 15 if $@ || !$config; # Default 15 minutes
+
+    return $config->{travel_time_minutes} // 15;
 }
 
 method assign_teacher ($db, $event_id, $teacher_id, $options = {}) {

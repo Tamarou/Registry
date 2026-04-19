@@ -16,10 +16,10 @@ method process ($db, $form_data, $run = undef) {
         # Validate all locations exist
         my @locations;
         for my $location_id (@location_ids) {
-            my $location = Registry::DAO::Location->new(
+            my $location = Registry::DAO::Location->find($db, {
                 id => $location_id
-            )->load($db);
-            
+            });
+
             unless ($location) {
                 return {
                     next_step => $self->id,

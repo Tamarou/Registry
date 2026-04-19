@@ -21,7 +21,12 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     field $capacity :param :reader = undef;
 
     sub table { 'sessions' }
-    
+
+    # project_id and location_id are stored inside metadata (see create())
+    # because the sessions table has no dedicated columns for them.
+    method project_id  { $metadata->{project_id} }
+    method location_id { $metadata->{location_id} }
+
     ADJUST {
         # Decode JSON metadata if it's a string
         if (defined $metadata && !ref $metadata) {
