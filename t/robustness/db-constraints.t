@@ -54,7 +54,7 @@ subtest 'duplicate enrollment gives clear error' => sub {
         address_info => {}, metadata => {},
     });
 
-    my $program = $dao->create(Project => { name => 'Constraint Camp', metadata => {} });
+    my $program = $dao->create(Project => { status => 'published', name => 'Constraint Camp', metadata => {} });
     my $teacher = $dao->create(User => { username => 'constraint_teacher', user_type => 'staff' });
 
     my $session = $dao->create(Session => {

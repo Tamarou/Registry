@@ -34,7 +34,7 @@ my $location = $dao->create(Location => {
 
 my $teacher = $dao->create(User => { username => 'wl_teacher', user_type => 'staff' });
 
-my $program = $dao->create(Project => {
+my $program = $dao->create(Project => { status => 'published',
     name              => 'Waitlist Camp',
     program_type_slug => 'summer-camp',
     metadata          => {},

@@ -595,6 +595,14 @@ class Registry :isa(Mojolicious) {
         $admin->get('/templates')->to('workflows#index', workflow => 'template-editor')->name('admin_templates');
         $admin->post('/templates')->to('workflows#start_workflow', workflow => 'template-editor');
 
+        # Publish / unpublish programs and sessions.
+        $admin->post('/programs/:id/status')
+            ->to('admin_dashboard#set_program_status')
+            ->name('admin_program_status');
+        $admin->post('/sessions/:id/status')
+            ->to('admin_dashboard#set_session_status')
+            ->name('admin_session_status');
+
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach
         # these routes even though staff can reach other /admin/* routes.

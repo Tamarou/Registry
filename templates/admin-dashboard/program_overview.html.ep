@@ -1,10 +1,29 @@
 % if (@$programs) {
     <div class="space-y-4">
         % for my $program (@$programs) {
-            <div class="border border-gray-200 rounded-lg p-4">
+            <div class="border border-gray-200 rounded-lg p-4" data-program-id="<%= $program->{program_id} %>">
                 <div class="flex items-start justify-between">
                     <div class="flex-1">
-                        <h3 class="font-medium text-gray-900"><%= $program->{program_name} %></h3>
+                        <h3 class="font-medium text-gray-900">
+                            <%= $program->{program_name} %>
+                            % my $status = $program->{program_status} || 'draft';
+                            % my $badge_class = $status eq 'published' ? 'badge-green'
+                            %                 : $status eq 'closed'   ? 'badge-gray'
+                            %                                          : 'badge-yellow';
+                            <span class="badge <%= $badge_class %> ml-2"><%= ucfirst $status %></span>
+                        </h3>
+                        <form class="publish-toggle mt-2"
+                              hx-post="<%= url_for('admin_program_status', id => $program->{program_id}) %>"
+                              hx-swap="none"
+                              hx-trigger="submit">
+                            % if ($status eq 'published') {
+                                <input type="hidden" name="status" value="draft">
+                                <button type="submit" class="btn btn-sm btn-outline">Unpublish</button>
+                            % } else {
+                                <input type="hidden" name="status" value="published">
+                                <button type="submit" class="btn btn-sm btn-primary">Publish</button>
+                            % }
+                        </form>
                         <div class="mt-2 grid grid-cols-2 gap-4 text-sm">
                             <div>
                                 <span class="text-gray-600">Sessions:</span>

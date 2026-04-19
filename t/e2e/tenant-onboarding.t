@@ -64,7 +64,7 @@ subtest 'tenant has programs and sessions' => sub {
         metadata     => {},
     });
 
-    my $program = $dao->create(Project => {
+    my $program = $dao->create(Project => { status => 'published',
         name              => "Potter's Wheel Art Camp - Summer 2026",
         notes             => 'FULL Day Camp | M-F | 9am-4pm | Grades K to 5',
         program_type_slug => 'summer-camp',

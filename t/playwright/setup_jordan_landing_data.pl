@@ -47,7 +47,7 @@ my $teacher = $dao->create(User => {
     user_type => 'staff',
 });
 
-my $project = $dao->create(Project => {
+my $project = $dao->create(Project => { status => 'published',
     name     => 'Tiny Art Empire Platform',
     slug     => 'tae-jordan-test',
     notes    => 'Platform for art educators',

@@ -40,6 +40,10 @@ package Test::Registry::Fixtures {
     
     sub create_project ($db, $data) {
         require Registry::DAO::Project;
+        # Default fixtures to 'published' so tests that simulate an
+        # already-live program don't have to set status explicitly.
+        # Tests that want a draft program can still pass status => 'draft'.
+        $data->{status} //= 'published';
         Registry::DAO::Project->create($db, $data);
     }
     

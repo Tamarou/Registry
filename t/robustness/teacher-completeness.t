@@ -31,7 +31,7 @@ my $location = $dao->create(Location => {
     address_info => { city => 'Orlando' }, metadata => {},
 });
 
-my $program = $dao->create(Project => {
+my $program = $dao->create(Project => { status => 'published',
     name => 'Teacher Complete Camp', metadata => {},
 });
 
