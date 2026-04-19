@@ -24,6 +24,35 @@
                                 <button type="submit" class="btn btn-sm btn-primary">Publish</button>
                             % }
                         </form>
+
+                        % if (my $sessions = $program->{sessions}) {
+                            % if (@$sessions) {
+                                <ul class="program-sessions mt-3 ml-4 space-y-1">
+                                    % for my $sess (@$sessions) {
+                                        % my $sess_status = $sess->{status} || 'draft';
+                                        % my $sess_badge = $sess_status eq 'published' ? 'badge-green'
+                                        %                : $sess_status eq 'closed'    ? 'badge-gray'
+                                        %                                               : 'badge-yellow';
+                                        <li class="flex items-center gap-2" data-session-id="<%= $sess->{id} %>">
+                                            <span class="text-sm text-gray-700"><%= $sess->{name} %></span>
+                                            <span class="badge <%= $sess_badge %>"><%= ucfirst $sess_status %></span>
+                                            <form class="publish-toggle-session inline"
+                                                  hx-post="<%= url_for('admin_session_status', id => $sess->{id}) %>"
+                                                  hx-swap="none"
+                                                  hx-trigger="submit">
+                                                % if ($sess_status eq 'published') {
+                                                    <input type="hidden" name="status" value="draft">
+                                                    <button type="submit" class="btn btn-sm btn-outline">Unpublish</button>
+                                                % } else {
+                                                    <input type="hidden" name="status" value="published">
+                                                    <button type="submit" class="btn btn-sm btn-primary">Publish</button>
+                                                % }
+                                            </form>
+                                        </li>
+                                    % }
+                                </ul>
+                            % }
+                        % }
                         <div class="mt-2 grid grid-cols-2 gap-4 text-sm">
                             <div>
                                 <span class="text-gray-600">Sessions:</span>

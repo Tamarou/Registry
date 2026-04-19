@@ -24,8 +24,34 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
 
     # project_id and location_id are stored inside metadata (see create())
     # because the sessions table has no dedicated columns for them.
-    method project_id  { $metadata->{project_id} }
-    method location_id { $metadata->{location_id} }
+    # When metadata is empty (e.g. a Session created directly and linked
+    # to a program via a separate Event row), fall back to the
+    # session_events -> events join.
+    method project_id ($db = undef) {
+        return $metadata->{project_id} if $metadata->{project_id};
+        return undef unless $db && $id;
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->query(
+            q{SELECT e.project_id FROM session_events se
+              JOIN events e ON e.id = se.event_id
+              WHERE se.session_id = ? LIMIT 1},
+            $id,
+        )->hash;
+        return $row ? $row->{project_id} : undef;
+    }
+
+    method location_id ($db = undef) {
+        return $metadata->{location_id} if $metadata->{location_id};
+        return undef unless $db && $id;
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->query(
+            q{SELECT e.location_id FROM session_events se
+              JOIN events e ON e.id = se.event_id
+              WHERE se.session_id = ? LIMIT 1},
+            $id,
+        )->hash;
+        return $row ? $row->{location_id} : undef;
+    }
 
     ADJUST {
         # Decode JSON metadata if it's a string

@@ -73,9 +73,28 @@ subtest 'non-existent program returns 404' => sub {
 };
 
 subtest 'session publish toggle' => sub {
+    # Session must belong to a published program before it can be
+    # published itself -- create the program, a linking event, then
+    # the session.
+    require Registry::DAO::Location;
+    require Registry::DAO::Event;
+    my $location = Registry::DAO::Location->create($dao->db, {
+        name => 'Session Toggle Location', address_info => {},
+    });
+    my $published_program = Registry::DAO::Project->create($dao->db, {
+        name => 'Parent Program', status => 'published',
+    });
     my $session = Registry::DAO::Session->create($dao->db, {
         name   => 'Draft Session',
         status => 'draft',
+    });
+    Registry::DAO::Event->create($dao->db, {
+        session_id  => $session->id,
+        time        => '2099-07-04 09:00:00',
+        duration    => 60,
+        location_id => $location->id,
+        project_id  => $published_program->id,
+        teacher_id  => $admin->id,
     });
 
     $t->post_ok("/admin/sessions/@{[ $session->id ]}/status" => form => {
@@ -84,6 +103,38 @@ subtest 'session publish toggle' => sub {
 
     my $refreshed = Registry::DAO::Session->find($dao->db, { id => $session->id });
     is( $refreshed->status, 'published', 'session is published' );
+};
+
+subtest 'cannot publish a session under a draft program' => sub {
+    require Registry::DAO::Location;
+    require Registry::DAO::Event;
+    my $location = Registry::DAO::Location->create($dao->db, {
+        name => 'Draft Parent Location', address_info => {},
+    });
+    my $draft_program = Registry::DAO::Project->create($dao->db, {
+        name => 'Not-Yet-Public Program', status => 'draft',
+    });
+    my $session = Registry::DAO::Session->create($dao->db, {
+        name   => 'Orphaned Session',
+        status => 'draft',
+    });
+    Registry::DAO::Event->create($dao->db, {
+        session_id  => $session->id,
+        time        => '2099-08-04 09:00:00',
+        duration    => 60,
+        location_id => $location->id,
+        project_id  => $draft_program->id,
+        teacher_id  => $admin->id,
+    });
+
+    $t->post_ok("/admin/sessions/@{[ $session->id ]}/status" => form => {
+        status => 'published',
+    })->status_is(409, 'returns 409 Conflict')
+      ->content_like(qr/parent program must be published/i,
+                     'error message names the reason');
+
+    my $refreshed = Registry::DAO::Session->find($dao->db, { id => $session->id });
+    is( $refreshed->status, 'draft', 'session remains draft' );
 };
 
 subtest 'unauthenticated users cannot toggle status' => sub {
