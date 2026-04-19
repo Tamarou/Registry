@@ -49,7 +49,7 @@ my $location = $dao->create(Location => {
     metadata => {},
 });
 
-my $program = $dao->create(Project => {
+my $program = $dao->create(Project => { status => 'published',
     name => 'Admin Drop Camp', program_type_slug => 'summer-camp', metadata => {},
 });
 

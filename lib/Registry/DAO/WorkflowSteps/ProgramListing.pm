@@ -19,8 +19,13 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
     method prepare_template_data ($db, $run, $params = {}) {
         $db = $db->db if $db isa Registry::DAO;
 
-        # Build dynamic WHERE clauses from filter params
-        my @where_clauses = ("s.status = 'published'", "s.end_date >= CURRENT_DATE");
+        # Build dynamic WHERE clauses from filter params. Parents only
+        # see published sessions under published programs.
+        my @where_clauses = (
+            "s.status = 'published'",
+            "p.status = 'published'",
+            "s.end_date >= CURRENT_DATE",
+        );
         my @bind_values;
 
         if (my $location = $params->{location}) {
@@ -183,14 +188,17 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
             push @{$grouped{$type_slug}}, $prog;
         }
 
-        # Collect filter options from unfiltered data (available locations and types)
+        # Collect filter options from unfiltered data (available locations and types).
+        # Same publish gating as the main query: program and session both published.
         my $filter_locations = $db->query(q{
             SELECT DISTINCT l.id, l.name, l.slug
             FROM locations l
             JOIN events e ON e.location_id = l.id
+            JOIN projects p ON p.id = e.project_id
             JOIN session_events se ON se.event_id = e.id
             JOIN sessions s ON s.id = se.session_id
-            WHERE s.status = 'published' AND s.end_date >= CURRENT_DATE
+            WHERE s.status = 'published' AND p.status = 'published'
+              AND s.end_date >= CURRENT_DATE
             ORDER BY l.name
         })->hashes;
 
@@ -201,7 +209,8 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
             JOIN events e ON e.project_id = p.id
             JOIN session_events se ON se.event_id = e.id
             JOIN sessions s ON s.id = se.session_id
-            WHERE s.status = 'published' AND s.end_date >= CURRENT_DATE
+            WHERE s.status = 'published' AND p.status = 'published'
+              AND s.end_date >= CURRENT_DATE
             ORDER BY pt.name
         })->hashes;
 

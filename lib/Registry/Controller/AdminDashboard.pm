@@ -213,4 +213,63 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
 
         return ('tenant-wide', undef); # Default fallback
     }
+
+    # Toggle publish state on a program. Body param `status` must be one
+    # of draft/published/closed (same enum as the DB CHECK constraint).
+    method set_program_status ($c = $self) {
+        my $id     = $c->stash('id');
+        my $status = $c->param('status') // '';
+
+        unless (_valid_status($status)) {
+            return $c->render(
+                json   => { error => "invalid status: $status" },
+                status => 400,
+            );
+        }
+
+        my $dao     = $c->dao($c->stash('tenant'));
+        require Registry::DAO::Project;
+        my $program = Registry::DAO::Project->find($dao->db, { id => $id });
+        return $c->render(json => { error => 'not found' }, status => 404)
+            unless $program;
+
+        $program->update($dao->db, { status => $status });
+
+        return $c->render(json => {
+            id     => $id,
+            status => $status,
+        });
+    }
+
+    # Toggle publish state on a session.
+    method set_session_status ($c = $self) {
+        my $id     = $c->stash('id');
+        my $status = $c->param('status') // '';
+
+        unless (_valid_status($status)) {
+            return $c->render(
+                json   => { error => "invalid status: $status" },
+                status => 400,
+            );
+        }
+
+        my $dao     = $c->dao($c->stash('tenant'));
+        require Registry::DAO::Session;
+        my $session = Registry::DAO::Session->find($dao->db, { id => $id });
+        return $c->render(json => { error => 'not found' }, status => 404)
+            unless $session;
+
+        $session->update($dao->db, { status => $status });
+
+        return $c->render(json => {
+            id     => $id,
+            status => $status,
+        });
+    }
+
+    sub _valid_status ($status) {
+        return $status eq 'draft'
+            || $status eq 'published'
+            || $status eq 'closed';
+    }
 }

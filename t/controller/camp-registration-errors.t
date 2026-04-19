@@ -54,7 +54,7 @@ my $location = $dao->create(Location => {
     metadata     => {},
 });
 
-my $program = $dao->create(Project => {
+my $program = $dao->create(Project => { status => 'published',
     name              => 'Summer Camp Errors Test',
     program_type_slug => 'summer-camp',
     metadata          => { age_range => { min => 5, max => 11 } },

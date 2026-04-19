@@ -56,7 +56,7 @@ my $loc_sunset = $dao->create(Location => {
 my $teacher = $dao->create(User => { username => 'filter-teacher', user_type => 'staff' });
 
 # After-school program at Lincoln
-my $prog_lincoln = $dao->create(Project => {
+my $prog_lincoln = $dao->create(Project => { status => 'published',
     name              => 'Art at Lincoln',
     slug              => 'art-lincoln-filter',
     notes             => 'After-school art program at Lincoln Elementary',
@@ -86,7 +86,7 @@ my $evt_lincoln = $dao->create(Event => {
 $sess_lincoln->add_events($dao->db, $evt_lincoln->id);
 
 # After-school program at Sunset
-my $prog_sunset = $dao->create(Project => {
+my $prog_sunset = $dao->create(Project => { status => 'published',
     name              => 'Pottery at Sunset',
     slug              => 'pottery-sunset-filter',
     notes             => 'After-school pottery at Sunset Middle School',
@@ -116,7 +116,7 @@ my $evt_sunset = $dao->create(Event => {
 $sess_sunset->add_events($dao->db, $evt_sunset->id);
 
 # Summer camp (different program type, at Lincoln)
-my $prog_camp = $dao->create(Project => {
+my $prog_camp = $dao->create(Project => { status => 'published',
     name              => 'Summer Art Camp',
     slug              => 'summer-camp-filter',
     notes             => 'Week-long summer art camp',

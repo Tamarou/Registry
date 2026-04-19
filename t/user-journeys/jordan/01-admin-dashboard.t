@@ -49,7 +49,7 @@ my $teacher = $dao->create(User => {
     user_type => 'staff',
 });
 
-my $program = $dao->create(Project => {
+my $program = $dao->create(Project => { status => 'published',
     name              => 'Summer Art Camp',
     program_type_slug => 'summer-camp',
     metadata          => { description => 'Creative art exploration for kids' },

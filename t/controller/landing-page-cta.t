@@ -49,7 +49,7 @@ my $location = $db->create(Location => {
     metadata     => {},
 });
 
-my $program = $db->create(Project => {
+my $program = $db->create(Project => { status => 'published',
     name              => 'Art Camp CTA Test',
     notes             => 'Test program for CTA tests',
     program_type_slug => undef,

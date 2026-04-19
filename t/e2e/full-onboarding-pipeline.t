@@ -130,6 +130,7 @@ subtest 'admin creates location, program, session, events, pricing' => sub {
         name              => "Potter's Wheel Art Camp - Summer 2026",
         notes             => 'FULL Day Camp | M-F | 9am-4pm | Grades K to 5',
         program_type_slug => 'summer-camp',
+        status            => 'published',
         metadata          => { age_range => { min => 5, max => 11 } },
     });
     ok $program, 'Program created';

@@ -45,7 +45,7 @@ my $location = $dao->create(Location => {
     address_info => { type => 'virtual' }, metadata => {},
 });
 my $teacher = $dao->create(User => { username => 'system-reg-test', user_type => 'staff' });
-my $project = $dao->create(Project => {
+my $project = $dao->create(Project => { status => 'published',
     name => 'Tiny Art Empire RegLP', slug => 'tiny-art-empire-reglp',
     notes => 'Platform for art educators',
     metadata => { registration_workflow => 'tenant-signup' },
