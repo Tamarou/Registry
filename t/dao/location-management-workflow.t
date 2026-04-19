@@ -5,6 +5,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use experimental 'keyword_any';
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::Workflow;
@@ -128,7 +129,7 @@ subtest 'details step validates required fields' => sub {
 
     my $result = $step->process($db, { name => '' }, $run);
     ok($result->{errors}, 'returns errors when name missing');
-    ok((grep /name/i, @{$result->{errors}}), 'error mentions name');
+    ok((any { /name/i } @{$result->{errors}}), 'error mentions name');
 };
 
 subtest 'details step stores form data in run data for next step' => sub {
@@ -229,6 +230,26 @@ subtest 'contact step creates a new user inline when asked' => sub {
     ok($new_user, 'new user created inline');
     is($created_loc->contact_person_id, $new_user->id,
        'location links to the newly-created user');
+};
+
+subtest 'contact step surfaces friendly error when email already exists' => sub {
+    my $step = Registry::DAO::WorkflowStep->find($db, {
+        workflow_id => $workflow->id, slug => 'select-contact',
+    });
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        location_pending => { name => 'Studio D', slug => 'studio_d',
+                              address_info => {}, capacity => 5 },
+    });
+
+    my $result = $step->process($db, {
+        contact_mode  => 'new',
+        contact_name  => 'Another Person',
+        contact_email => $existing_user->email,
+    }, $run);
+    ok($result->{errors}, 'rejects duplicate email');
+    ok((any { /already exists/i } @{$result->{errors}}),
+       'error mentions existing user');
 };
 
 subtest 'contact step rejects new-user without required fields' => sub {

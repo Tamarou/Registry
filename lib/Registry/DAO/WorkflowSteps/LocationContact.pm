@@ -35,21 +35,46 @@ method process ($db, $form_data, $run = undef) {
         push @errors, 'Contact email is required' unless length $email;
 
         unless (@errors) {
-            my $username = lc($email =~ s/[^a-z0-9_]+/_/gir);
-            my $user = eval {
-                Registry::DAO::User->create($db, {
-                    name      => $name,
-                    username  => $username,
-                    email     => $email,
-                    user_type => 'staff',
-                    password  => '',
-                });
-            };
-            if (my $e = $@) {
-                push @errors, "Failed to create contact user: $e";
+            # Pre-check: if a user already has this email, point Victoria
+            # at the existing-user picker instead of hitting the DB
+            # unique-constraint error.
+            my $raw = $db isa Registry::DAO ? $db->db : $db;
+            my $existing = $raw->query(
+                q{SELECT u.id FROM users u
+                  JOIN user_profiles up ON up.user_id = u.id
+                  WHERE up.email = ? LIMIT 1},
+                $email,
+            )->hash;
+
+            if ($existing) {
+                push @errors,
+                  "A user with email $email already exists. "
+                  . "Pick them from the existing-contact list instead.";
             }
             else {
-                $contact_id = $user->id;
+                my $username = lc($email =~ s/[^a-z0-9_]+/_/gr);
+                my $user = eval {
+                    Registry::DAO::User->create($db, {
+                        name      => $name,
+                        username  => $username,
+                        email     => $email,
+                        user_type => 'staff',
+                    });
+                };
+                if (my $e = $@) {
+                    my $msg = "$e";
+                    if ($msg =~ /duplicate key|unique constraint|already exists/i) {
+                        push @errors,
+                          "A user with that email or username already exists. "
+                          . "Pick them from the existing-contact list instead.";
+                    }
+                    else {
+                        push @errors, "Failed to create contact user: $msg";
+                    }
+                }
+                else {
+                    $contact_id = $user->id;
+                }
             }
         }
     }
