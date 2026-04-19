@@ -12,6 +12,7 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
     field $program_type_slug :param :reader;
     field $metadata :param :reader = {};
     field $notes :param :reader = '';
+    field $status :param :reader = 'draft';
     field $created_at :param :reader;
     field $updated_at :param :reader;
 

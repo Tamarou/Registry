@@ -28,6 +28,14 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
 
+# The seeded DB template for tenant-storefront/program-listing renders a
+# marketing landing page that doesn't list programs. This controller test
+# asserts on the default filesystem template's program listing view, so
+# drop the DB override here.
+$dao->db->query(
+    q{DELETE FROM templates WHERE name = 'tenant-storefront/program-listing'}
+);
+
 # Import all workflows from YAML
 my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {
