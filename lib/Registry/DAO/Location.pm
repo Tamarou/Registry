@@ -12,6 +12,7 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     field $notes :param :reader = undef;
     field $capacity :param :reader = undef;
     field $contact_info :param :reader = {};
+    field $contact_person_id :param :reader = undef;
     field $facilities :param :reader = {};
     field $latitude :param :reader = undef;
     field $longitude :param :reader = undef;

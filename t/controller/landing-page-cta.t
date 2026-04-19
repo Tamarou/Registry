@@ -22,6 +22,14 @@ use YAML::XS qw(Load);
 my $t_db = Test::Registry::DB->new;
 my $db = $t_db->db;
 
+# The seeded DB template for tenant-storefront/program-listing is a
+# marketing landing page that doesn't render program names in the body.
+# This test asserts program names appear, so fall back to the default
+# filesystem template.
+$db->db->query(
+    q{DELETE FROM templates WHERE name = 'tenant-storefront/program-listing'}
+);
+
 # Import workflows
 my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {

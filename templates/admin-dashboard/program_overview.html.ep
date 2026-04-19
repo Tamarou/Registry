@@ -25,9 +25,14 @@
                         </div>
                         
                         % if ($program->{earliest_start} && $program->{latest_end}) {
+                            % # earliest_start/latest_end come from s.start_date / s.end_date (date strings)
+                            % use DateTime::Format::Strptime;
+                            % my $parser = DateTime::Format::Strptime->new(pattern => '%Y-%m-%d');
+                            % my $start = $parser->parse_datetime($program->{earliest_start});
+                            % my $end   = $parser->parse_datetime($program->{latest_end});
                             <div class="mt-2 text-xs text-gray-500">
-                                <%= DateTime->from_epoch(epoch => $program->{earliest_start})->strftime('%b %d') %> - 
-                                <%= DateTime->from_epoch(epoch => $program->{latest_end})->strftime('%b %d, %Y') %>
+                                <%= $start ? $start->strftime('%b %d') : $program->{earliest_start} %> -
+                                <%= $end   ? $end->strftime('%b %d, %Y') : $program->{latest_end} %>
                             </div>
                         % }
                     </div>

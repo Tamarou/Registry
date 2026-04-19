@@ -33,6 +33,14 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
 
+# Seeded DB templates (from registry-landing-page-template) override the
+# default filesystem storefront with a marketing landing page that doesn't
+# list programs. This test checks the program-listing view, so remove the
+# override and let the default template render the created fixtures.
+$dao->db->query(
+    q{DELETE FROM templates WHERE name = 'tenant-storefront/program-listing'}
+);
+
 # Import all workflows
 my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {
