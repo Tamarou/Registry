@@ -90,4 +90,61 @@ subtest 'admin dashboard shows unpublish button for published program' => sub {
       ->content_like(qr/>Unpublish</, 'button labelled Unpublish');
 };
 
+subtest 'program card lists sessions with publish toggles' => sub {
+    # Add a draft session to the existing published program.
+    my $draft_session = $dao->create(Session => {
+        name       => 'Draft UI Child Session',
+        start_date => $today,
+        end_date   => $next_year,
+        status     => 'draft',
+        capacity   => 10,
+    });
+
+    # Link it via an event (use a different hour so the unique
+    # (project_id, location_id, time) constraint is satisfied).
+    my $new_event = $dao->create(Event => {
+        session_id  => $draft_session->id,
+        time        => '2099-09-05 16:00:00',
+        duration    => 60,
+        location_id => $location->id,
+        project_id  => $program->id,
+        teacher_id  => $admin->id,
+    });
+    ok($new_event, 'new event created');
+
+    # Confirm session_events link was made -- Event->create writes this
+    # via a separate insert.
+    my $link_count = $dao->db->query(
+        'SELECT COUNT(*) FROM session_events WHERE session_id = ?',
+        $draft_session->id,
+    )->array->[0];
+    is($link_count, 1, 'session_events link created for new session');
+
+    $t->get_ok('/admin/dashboard')
+      ->status_is(200)
+      ->content_like(qr/Draft UI Child Session/,
+                     'session listed on program card')
+      ->content_like(
+            qr/hx-post="\/admin\/sessions\/\Q@{[ $draft_session->id ]}\E\/status"/,
+            'session publish form targets session endpoint')
+      ->content_like(qr{name="status" value="published"},
+                     'draft session offers Publish action');
+
+    # Flip the session to published and re-check.
+    $draft_session->update($dao->db, { status => 'published' });
+
+    # Fetch the dashboard, find the session's form, and verify its
+    # hidden status field targets 'draft' (i.e. the button unpublishes).
+    $t->get_ok('/admin/dashboard')
+      ->status_is(200);
+
+    my $session_id = $draft_session->id;
+    my $body       = $t->tx->res->body;
+    like(
+        $body,
+        qr{hx-post="/admin/sessions/\Q$session_id\E/status"(?:[^<]|<(?!/form))*?<input type="hidden" name="status" value="draft">}s,
+        'published session form posts status=draft (Unpublish)',
+    );
+};
+
 done_testing();

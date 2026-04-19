@@ -120,6 +120,41 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
             }
         }
 
+        # Load sessions per program so the admin dashboard can render
+        # per-session publish toggles.
+        if (@$results) {
+            my @program_ids = map { $_->{program_id} } @$results;
+            my $placeholders = join(',', ('?') x @program_ids);
+            my $session_rows = $db->query(qq{
+                SELECT DISTINCT
+                    s.id, s.name, s.slug, s.status,
+                    s.start_date, s.end_date, s.capacity,
+                    e.project_id
+                FROM sessions s
+                JOIN session_events se ON se.session_id = s.id
+                JOIN events e ON e.id = se.event_id
+                WHERE e.project_id IN ($placeholders)
+                ORDER BY s.start_date, s.name
+            }, @program_ids)->hashes->to_array;
+
+            my %by_program;
+            for my $row (@$session_rows) {
+                push @{$by_program{$row->{project_id}}}, {
+                    id         => $row->{id},
+                    name       => $row->{name},
+                    slug       => $row->{slug},
+                    status     => $row->{status},
+                    start_date => $row->{start_date},
+                    end_date   => $row->{end_date},
+                    capacity   => $row->{capacity},
+                };
+            }
+
+            for my $program (@$results) {
+                $program->{sessions} = $by_program{$program->{program_id}} || [];
+            }
+        }
+
         return $results;
     }
 
