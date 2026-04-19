@@ -1,0 +1,49 @@
+% layout 'workflow';
+% title stash('editing') ? 'Edit Program Type' : 'New Program Type';
+
+<h2><%= stash('editing') ? 'Edit Program Type' : 'New Program Type' %></h2>
+
+% if (my $errors = stash('errors')) {
+    <ul class="errors">
+        % for my $e (@$errors) {
+            <li><%= $e %></li>
+        % }
+    </ul>
+% }
+
+<form method="POST" action="<%= $action %>">
+    <p>
+        <label for="pt-name">Name</label>
+        <input id="pt-name" name="name" type="text" required
+               value="<%= stash('name') // '' %>">
+    </p>
+
+    <p>
+        <label for="pt-description">Description</label>
+        <textarea id="pt-description" name="description" rows="3"
+                  ><%= stash('description') // '' %></textarea>
+    </p>
+
+    <p>
+        <label for="pt-pattern">Session pattern</label>
+        <select id="pt-pattern" name="session_pattern">
+            % my $current = stash('session_pattern') // '';
+            <option value=""         <%= $current eq ''        ? 'selected' : '' %>>-- select --</option>
+            <option value="weekly"   <%= $current eq 'weekly'  ? 'selected' : '' %>>Weekly (e.g. after-school)</option>
+            <option value="daily"    <%= $current eq 'daily'   ? 'selected' : '' %>>Daily (e.g. summer camp)</option>
+            <option value="one_time" <%= $current eq 'one_time'? 'selected' : '' %>>One-time (e.g. workshop)</option>
+        </select>
+    </p>
+
+    <p>
+        <label for="pt-capacity">Default capacity</label>
+        <input id="pt-capacity" name="default_capacity" type="number" min="1"
+               value="<%= stash('default_capacity') // '' %>">
+    </p>
+
+    <p>
+        <button type="submit">
+            <%= stash('editing') ? 'Update Program Type' : 'Create Program Type' %>
+        </button>
+    </p>
+</form>

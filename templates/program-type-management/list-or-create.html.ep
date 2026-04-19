@@ -1,0 +1,31 @@
+% layout 'workflow';
+% title 'Program Types';
+
+<h2>Program Types</h2>
+<p>Create a new program type or edit an existing one.</p>
+
+% my $types = stash('program_types') || [];
+% if (@$types) {
+    <ul class="program-type-list">
+        % for my $type (@$types) {
+            <li>
+                <strong><%= $type->name %></strong>
+                % if ($type->config->{description}) {
+                    -- <%= $type->config->{description} %>
+                % }
+                <form method="POST" action="<%= $action %>" style="display:inline">
+                    <input type="hidden" name="action" value="edit">
+                    <input type="hidden" name="slug"   value="<%= $type->slug %>">
+                    <button type="submit">Edit</button>
+                </form>
+            </li>
+        % }
+    </ul>
+% } else {
+    <p><em>No program types yet.</em></p>
+% }
+
+<form method="POST" action="<%= $action %>">
+    <input type="hidden" name="action" value="new">
+    <button type="submit">Create New Program Type</button>
+</form>

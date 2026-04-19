@@ -1,0 +1,23 @@
+# ABOUTME: Workflow for managing program types -- create new types or edit
+# ABOUTME: existing ones. Part of the admin program setup orchestrator.
+
+name: Program Type Management
+description: Create or edit the program types that programs can be associated with
+slug: program-type-management
+first_step: list-or-create
+
+steps:
+  - slug: list-or-create
+    description: Select an existing program type to edit or create a new one
+    template: program-type-management/list-or-create
+    class: Registry::DAO::WorkflowSteps::ProgramTypeList
+
+  - slug: type-details
+    description: Program type details
+    template: program-type-management/type-details
+    class: Registry::DAO::WorkflowSteps::ProgramTypeDetails
+
+  - slug: complete
+    description: Program type saved
+    template: program-type-management/complete
+    class: Registry::DAO::WorkflowStep
