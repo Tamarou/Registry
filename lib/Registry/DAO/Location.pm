@@ -35,14 +35,26 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     }
 
     sub create ( $class, $db, $data ) {
+        _wrap_json_fields($data);
+        $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
+        $class->SUPER::create( $db, $data );
+    }
+
+    method update ($db, $data) {
+        _wrap_json_fields($data);
+        $self->SUPER::update($db, $data);
+    }
+
+    # JSONB columns must be wrapped with { -json => ... } so Mojo::Pg's
+    # SQL::Abstract serialises the hash/array rather than trying to
+    # interpret it as column-operator-value pairs.
+    sub _wrap_json_fields ($data) {
         for my $field (qw(address_info metadata contact_info facilities)) {
             next unless exists $data->{$field};
             if (ref $data->{$field} eq 'HASH' || ref $data->{$field} eq 'ARRAY') {
                 $data->{$field} = { -json => $data->{$field} };
             }
         }
-        $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
-        $class->SUPER::create( $db, $data );
     }
 
     sub validate_address( $class, $addr ) {

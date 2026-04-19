@@ -1,0 +1,33 @@
+% layout 'workflow';
+% title 'Locations';
+% stash active_nav => 'locations';
+
+<h2>Locations</h2>
+<p>Create a new location or edit an existing one.</p>
+
+% my $locations = stash('locations') || [];
+% if (@$locations) {
+    <ul class="location-list">
+        % for my $loc (@$locations) {
+            <li>
+                <strong><%= $loc->name %></strong>
+                % my $addr = $loc->address_info // {};
+                % if ($addr->{city}) {
+                    -- <%= $addr->{city} %><%= $addr->{state} ? ', ' . $addr->{state} : '' %>
+                % }
+                <form method="POST" action="<%= $action %>" style="display:inline">
+                    <input type="hidden" name="action" value="edit">
+                    <input type="hidden" name="id"     value="<%= $loc->id %>">
+                    <button type="submit">Edit</button>
+                </form>
+            </li>
+        % }
+    </ul>
+% } else {
+    <p><em>No locations yet.</em></p>
+% }
+
+<form method="POST" action="<%= $action %>">
+    <input type="hidden" name="action" value="new">
+    <button type="submit">Create New Location</button>
+</form>

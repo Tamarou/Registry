@@ -1,37 +1,55 @@
 % layout 'workflow';
-% title 'Location Details';
+% title stash('editing') ? 'Edit Location' : 'New Location';
+% stash active_nav => 'locations';
 
-%= form_for $action => begin
-  <div class="form-group">
-    %= label_for name => 'Location Name'
-    %= text_field 'name', class => 'form-control'
-  </div>
+<h2><%= stash('editing') ? 'Edit Location' : 'New Location' %></h2>
 
-  <fieldset>
-    <legend>Address</legend>
+% if (my $errors = stash('errors')) {
+    <ul class="errors">
+        % for my $e (@$errors) {
+            <li><%= $e %></li>
+        % }
+    </ul>
+% }
 
-    <div class="form-group">
-      %= label_for 'address_info.street_address' => 'Street Address'
-      %= text_field 'address_info.street_address', class => 'form-control'
-    </div>
+<form method="POST" action="<%= $action %>">
+    <p>
+        <label for="loc-name">Name</label>
+        <input id="loc-name" name="name" type="text" required
+               value="<%= stash('name') // '' %>">
+    </p>
 
-    <div class="form-group">
-      %= label_for 'address_info.city' => 'City'
-      %= text_field 'address_info.city', class => 'form-control'
-    </div>
+    <fieldset>
+        <legend>Address</legend>
+        <p>
+            <label for="loc-street">Street</label>
+            <input id="loc-street" name="street_address" type="text"
+                   value="<%= stash('street_address') // '' %>">
+        </p>
+        <p>
+            <label for="loc-city">City</label>
+            <input id="loc-city" name="city" type="text"
+                   value="<%= stash('city') // '' %>">
+        </p>
+        <p>
+            <label for="loc-state">State</label>
+            <input id="loc-state" name="state" type="text"
+                   value="<%= stash('state') // '' %>">
+        </p>
+        <p>
+            <label for="loc-zip">Postal code</label>
+            <input id="loc-zip" name="postal_code" type="text"
+                   value="<%= stash('postal_code') // '' %>">
+        </p>
+    </fieldset>
 
-    <div class="form-group">
-      %= label_for 'address_info.state' => 'State'
-      %= text_field 'address_info.state', class => 'form-control'
-    </div>
+    <p>
+        <label for="loc-capacity">Capacity</label>
+        <input id="loc-capacity" name="capacity" type="number" min="1"
+               value="<%= stash('capacity') // '' %>">
+    </p>
 
-    <div class="form-group">
-      %= label_for 'address_info.postal_code' => 'Postal Code'
-      %= text_field 'address_info.postal_code', class => 'form-control'
-    </div>
-  </fieldset>
-
-  <div class="form-actions">
-    %= submit_button 'Save', class => 'btn btn-primary'
-  </div>
-% end
+    <p>
+        <button type="submit">Continue</button>
+    </p>
+</form>
