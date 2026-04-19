@@ -259,6 +259,23 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         return $self->render(json => { error => 'not found' }, status => 404)
             unless $session;
 
+        # Publishing a session requires its parent program to be published
+        # first (spec rule: program publishes before any sessions).
+        if ($status eq 'published') {
+            require Registry::DAO::Project;
+            my $project_id = $session->project_id($dao->db);
+            my $program    = $project_id
+                ? Registry::DAO::Project->find($dao->db, { id => $project_id })
+                : undef;
+
+            unless ($program && $program->status eq 'published') {
+                return $self->render(
+                    json   => { error => 'parent program must be published first' },
+                    status => 409,
+                );
+            }
+        }
+
         $session->update($dao->db, { status => $status });
 
         return $self->render(json => {

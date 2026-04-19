@@ -42,10 +42,10 @@
                                                   hx-trigger="submit">
                                                 % if ($sess_status eq 'published') {
                                                     <input type="hidden" name="status" value="draft">
-                                                    <button type="submit" class="btn btn-xs btn-outline">Unpublish</button>
+                                                    <button type="submit" class="btn btn-sm btn-outline">Unpublish</button>
                                                 % } else {
                                                     <input type="hidden" name="status" value="published">
-                                                    <button type="submit" class="btn btn-xs btn-primary">Publish</button>
+                                                    <button type="submit" class="btn btn-sm btn-primary">Publish</button>
                                                 % }
                                             </form>
                                         </li>

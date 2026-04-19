@@ -125,6 +125,8 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
         if (@$results) {
             my @program_ids = map { $_->{program_id} } @$results;
             my $placeholders = join(',', ('?') x @program_ids);
+            # DISTINCT because session_events produces multiple rows per
+            # (session, program) when a session has more than one event.
             my $session_rows = $db->query(qq{
                 SELECT DISTINCT
                     s.id, s.name, s.slug, s.status,
