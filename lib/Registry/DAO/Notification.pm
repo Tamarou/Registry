@@ -7,6 +7,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Email::Simple;
     use Email::Sender::Simple qw(sendmail);
+    use Email::Sender::Transport::SMTP;
     use Registry::Email::Template;
     
     field $id :param :reader;
@@ -158,8 +159,14 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
                 body => $self->_build_mime_body($boundary, $rendered->{text}, $rendered->{html}),
             );
 
-            # Send email
-            sendmail($email);
+            # Send email. In production we route through Postmark's SMTP
+            # relay; tests set EMAIL_SENDER_TRANSPORT=Test and bypass this.
+            if (my $transport = _postmark_transport()) {
+                sendmail($email, { transport => $transport });
+            }
+            else {
+                sendmail($email);
+            }
 
             # Mark as sent
             $self->update($db, { sent_at => \'now()' });
@@ -388,6 +395,26 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         push @params, $limit;
 
         return $db->query($sql, @params)->hashes->to_array;
+    }
+
+    # Build an SMTP transport pointed at Postmark when POSTMARK_SERVER_TOKEN
+    # is present in the environment. Returns undef otherwise (including when
+    # EMAIL_SENDER_TRANSPORT=Test is set, so tests fall back to the default
+    # Email::Sender::Simple auto-discovery path and pick up the Test
+    # transport unchanged).
+    sub _postmark_transport () {
+        return undef if ($ENV{EMAIL_SENDER_TRANSPORT} // '') eq 'Test';
+
+        my $token = $ENV{POSTMARK_SERVER_TOKEN};
+        return undef unless defined $token && length $token;
+
+        return Email::Sender::Transport::SMTP->new({
+            host          => 'smtp.postmarkapp.com',
+            port          => 587,
+            sasl_username => $token,
+            sasl_password => $token,
+            ssl           => 'starttls',
+        });
     }
 
 }
