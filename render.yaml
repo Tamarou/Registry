@@ -21,6 +21,11 @@ envVarGroups:
         value: noreply@tinyartempire.com
       - key: STATIC_URL
         value: https://tinyartempire-assets.onrender.com
+      # Postmark server token. Set in the Render dashboard, not committed
+      # here. Registry::DAO::Notification routes email through Postmark's
+      # SMTP relay when this is present.
+      - key: POSTMARK_SERVER_TOKEN
+        sync: false
 
 
 databases:

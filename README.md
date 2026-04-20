@@ -121,7 +121,11 @@ Registry is production-ready with the following features implemented:
 
 #### Production Checklist
 - [ ] Set environment variables: `DATABASE_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`
-- [ ] Configure email delivery: `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`
+- [ ] Configure email delivery: set `POSTMARK_SERVER_TOKEN` in the
+      Render dashboard (sync: false in render.yaml). Notifications route
+      through Postmark's SMTP relay when this is present; the address in
+      `NOTIFICATION_FROM_EMAIL` must match a verified sender signature
+      in your Postmark account.
 - [ ] Set up SSL certificates for HTTPS
 - [ ] Configure backup strategy for PostgreSQL database
 - [ ] Set up monitoring and alerting for application health
