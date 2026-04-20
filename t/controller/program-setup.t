@@ -78,4 +78,36 @@ subtest 'callcc into program-type-management suspends orchestrator' => sub {
       ->content_like(qr/Program Types/i, 'landed inside sub-workflow');
 };
 
+subtest 'counts update when admin returns to overview after setup' => sub {
+    # Capture the starting count of program types (test DB comes with
+    # seed data, so the count isn't guaranteed to be zero).
+    my $start_count = $dao->db->query('SELECT COUNT(*) FROM program_types')->array->[0];
+
+    # Walk the sub-workflow to completion: callcc -> list -> new -> details.
+    my $body = $t->get_ok('/program-setup')->tx->res->body;
+    my ($callcc) = $body =~ m{action="([^"]*callcc/program-type-management[^"]*)"};
+    $t->post_ok($callcc => form => {});
+    my ($list_action) = $t->tx->res->body =~ m{action="([^"]*list-or-create[^"]*)"};
+    $t->post_ok($list_action => form => { action => 'new' });
+    my ($details_action) = $t->tx->res->body =~ m{action="([^"]*type-details[^"]*)"};
+    $t->post_ok($details_action => form => {
+        name             => 'Return-Path Type',
+        description      => 'Created via orchestrator',
+        session_pattern  => 'weekly',
+        default_capacity => 10,
+    })->status_is(200);
+
+    # Confirm the new type landed in the DB.
+    my $end_count = $dao->db->query('SELECT COUNT(*) FROM program_types')->array->[0];
+    is($end_count, $start_count + 1, 'one new program type created');
+
+    # Manually come back to the orchestrator (simulating Victoria using
+    # the nav link or a bookmark). The overview should reflect the new
+    # count for program types.
+    $t->get_ok('/program-setup')
+      ->status_is(200)
+      ->content_like(qr/Program Types.*\(\Q$end_count\E\)/s,
+                     'overview shows updated program type count');
+};
+
 done_testing();

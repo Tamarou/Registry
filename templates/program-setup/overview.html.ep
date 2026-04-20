@@ -14,7 +14,7 @@
 
   <ul class="setup-checklist">
     % for my $item (@$checklist) {
-      <li data-status="<%= $item->{status} %>">
+      <li data-key="<%= $item->{key} %>" data-status="<%= $item->{status} %>">
         <h3>
           % if ($item->{status} eq 'done') {
             <span class="status-badge done" aria-label="Done">&#10004;</span>

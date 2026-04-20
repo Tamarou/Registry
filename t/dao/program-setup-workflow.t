@@ -121,4 +121,35 @@ subtest 'each checklist item exposes a callcc target' => sub {
     }
 };
 
+subtest 'every callcc target resolves to a real workflow' => sub {
+    # Import the real workflow YAMLs so we can verify the orchestrator's
+    # hardcoded sub-workflow slugs actually exist. If any slug is renamed
+    # without updating the orchestrator, this fails in CI instead of
+    # silently producing a dead button in the UI.
+    use Mojo::Home;
+    use YAML::XS qw(Load);
+
+    my @files = Mojo::Home->new->child('workflows')
+        ->list_tree->grep(qr/\.ya?ml$/)->each;
+    for my $file (@files) {
+        next if Load($file->slurp)->{draft};
+        Registry::DAO::Workflow->from_yaml($dao, $file->slurp);
+    }
+
+    my $step = Registry::DAO::WorkflowStep->find($db, {
+        workflow_id => $workflow->id, slug => 'overview',
+    });
+    my $run  = $workflow->new_run($db);
+    my $data = $step->prepare_template_data($db, $run);
+
+    for my $item (@{$data->{checklist}}) {
+        my $wf = Registry::DAO::Workflow->find($db, {
+            slug => $item->{callcc_target},
+        });
+        ok($wf, "callcc target '$item->{callcc_target}' exists")
+            or diag("orchestrator item '$item->{key}' references a "
+                  . "non-existent workflow '$item->{callcc_target}'");
+    }
+};
+
 done_testing();
