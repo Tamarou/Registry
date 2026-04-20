@@ -10,13 +10,19 @@ use Test::More;
 use_ok 'Registry::DAO::Notification';
 
 subtest 'no token -> no custom transport' => sub {
+    local $ENV{EMAIL_SENDER_TRANSPORT};
     local $ENV{POSTMARK_SERVER_TOKEN};
+    delete $ENV{EMAIL_SENDER_TRANSPORT};
     delete $ENV{POSTMARK_SERVER_TOKEN};
     my $transport = Registry::DAO::Notification::_postmark_transport();
     ok(!defined $transport, 'returns undef without token');
 };
 
 subtest 'token -> SMTP transport pointed at Postmark' => sub {
+    # CI sets EMAIL_SENDER_TRANSPORT=Test at the workflow level; clear
+    # it here so we exercise the production branch.
+    local $ENV{EMAIL_SENDER_TRANSPORT};
+    delete $ENV{EMAIL_SENDER_TRANSPORT};
     local $ENV{POSTMARK_SERVER_TOKEN} = 'test-token-xyz';
     my $transport = Registry::DAO::Notification::_postmark_transport();
 
