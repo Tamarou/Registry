@@ -1,0 +1,53 @@
+% layout 'dashboard';
+% title 'Program Setup';
+% stash active_nav => 'program-setup';
+
+<div class="container">
+  <header>
+    <h1>Program Setup</h1>
+    <p>
+      Work through each item below to get a program live. Items can be
+      done in any order, and you can come back any time.
+    </p>
+    <p><strong><%= $total_done %> / <%= $total_items %></strong> complete</p>
+  </header>
+
+  <ul class="setup-checklist">
+    % for my $item (@$checklist) {
+      <li data-status="<%= $item->{status} %>">
+        <h3>
+          % if ($item->{status} eq 'done') {
+            <span class="status-badge done" aria-label="Done">&#10004;</span>
+          % } else {
+            <span class="status-badge todo" aria-label="To do">&#9711;</span>
+          % }
+          <%= $item->{label} %>
+          % if ($item->{count}) {
+            <small>(<%= $item->{count} %>)</small>
+          % }
+        </h3>
+        <p><%= $item->{description} %></p>
+
+        <form method="POST"
+              action="<%= url_for('workflow_callcc', workflow => 'program-setup', run => $run->id, target => $item->{callcc_target}) %>">
+          <button type="submit">
+            % if ($item->{status} eq 'done') {
+              Manage <%= $item->{label} %>
+            % } else {
+              Set up <%= $item->{label} %>
+            % }
+          </button>
+        </form>
+      </li>
+    % }
+  </ul>
+
+  % if ($ready_to_publish) {
+    <section class="ready-to-publish">
+      <h2>Ready to publish</h2>
+      <p>All setup pieces are in place. Head to the dashboard to publish
+         programs and sessions for parents to see.</p>
+      <p><a href="/admin/dashboard">Go to Admin Dashboard</a></p>
+    </section>
+  % }
+</div>
