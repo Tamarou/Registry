@@ -30,3 +30,14 @@ Local dev:
 Production (Render):
 
     psql "$PROD_DB_URL" -f sql/seed/sacp-tenant.sql
+
+Safe to re-run on either. Run from a trusted shell (Render shell /
+deploy job / your admin laptop), not a developer's CI environment.
+
+### Data currency
+
+This script captures SACP's offerings as of 2026-04-20, scraped from
+superawesomecool.com. It's a one-time bootstrap, not a source of
+truth -- once Victoria starts authoring programs through the admin
+dashboard, the dashboard wins. Don't treat this file as canonical
+data or try to keep it in sync with the site.

@@ -83,7 +83,7 @@ subtest 'seed script is idempotent' => sub {
     my $type_count = $db->query(
         "SELECT COUNT(*) FROM sacp.program_types"
     )->array->[0];
-    cmp_ok($type_count, '>=', 5, 'program types still present, not duplicated');
+    is($type_count, 7, 'program types still present, not duplicated');
 };
 
 done_testing();
