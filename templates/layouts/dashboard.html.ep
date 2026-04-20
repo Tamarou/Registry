@@ -33,6 +33,10 @@
                    class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'admin' ? ' active' : '' %>">
                     Dashboard
                 </a>
+                <a href="/program-setup"
+                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'program-setup' ? ' active' : '' %>">
+                    Setup
+                </a>
                 <a href="/program-creation"
                    class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'programs' ? ' active' : '' %>">
                     New Program

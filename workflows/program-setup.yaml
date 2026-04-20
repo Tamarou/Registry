@@ -1,0 +1,13 @@
+# ABOUTME: Orchestrator workflow that walks admins through the full
+# ABOUTME: program setup flow -- types, locations, programs, sessions, pricing.
+
+name: Program Setup
+description: Guided setup for getting a program live -- program types, locations, the program itself, sessions, and pricing
+slug: program-setup
+first_step: overview
+
+steps:
+  - slug: overview
+    description: Setup checklist with callcc into each sub-workflow
+    template: program-setup/overview
+    class: Registry::DAO::WorkflowSteps::ProgramSetupOverview
