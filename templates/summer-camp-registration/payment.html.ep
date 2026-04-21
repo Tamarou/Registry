@@ -4,6 +4,12 @@
 <% my $step_data = stash('step_data') || {}; %>
 <% my $show_stripe = $step_data->{show_stripe_form}; %>
 <% my $processing = $step_data->{processing}; %>
+<% my $retry = $step_data->{retry}; %>
+%
+% # Server-side errors arrive via the controller's errors_json stash
+% # (populated from $result->{errors} or the validation_errors flash).
+% use Mojo::JSON qw(decode_json);
+% my $server_errors = decode_json(stash('errors_json') || '[]');
 
 <div class="max-w-4xl mx-auto p-6">
     <!-- Loading overlay -->
@@ -58,6 +64,23 @@
 
     <h1 class="text-3xl font-bold mb-6">Payment Information</h1>
 
+    <% if (@$server_errors) { %>
+        <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6" role="alert">
+            <h3 class="font-semibold mb-1">
+                <% if ($retry) { %>
+                    Your payment didn't go through -- please try a different card.
+                <% } else { %>
+                    We couldn't process your payment.
+                <% } %>
+            </h3>
+            <ul class="list-disc list-inside text-sm">
+                <% for my $err (@$server_errors) { %>
+                    <li><%= $err %></li>
+                <% } %>
+            </ul>
+        </div>
+    <% } %>
+
     <% if ($processing) { %>
         <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6">
             <p class="text-blue-800">
@@ -93,7 +116,9 @@
     <% if ($show_stripe) { %>
         <!-- Stripe Payment Form -->
         <form id="payment-form" class="bg-white shadow rounded-lg p-6">
-            <h2 class="text-2xl font-semibold mb-4">Payment Details</h2>
+            <h2 class="text-2xl font-semibold mb-4">
+                <%= $retry ? 'Try a Different Card' : 'Payment Details' %>
+            </h2>
             
             <div id="payment-element" class="mb-6">
                 <!-- Stripe Elements will be inserted here -->
@@ -102,7 +127,7 @@
             <div id="payment-message" class="hidden text-red-600 mb-4"></div>
             
             <div class="flex justify-between">
-                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+                <a href="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'session-selection') %>" 
                    class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
                     Back
                 </a>
@@ -176,7 +201,7 @@
         </script>
     <% } else { %>
         <!-- Initial Agreement Form -->
-        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>"
+        <form method="POST" action="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'payment') %>"
               class="bg-white shadow rounded-lg p-6">
             <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
             
@@ -195,7 +220,7 @@
             </div>
             
             <div class="flex justify-between">
-                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+                <a href="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'session-selection') %>" 
                    class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
                     Back
                 </a>

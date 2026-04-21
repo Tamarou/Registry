@@ -11,12 +11,19 @@ use Mojo::JSON qw(encode_json);
 
 method process ($db, $form_data, $run = undef) {
     $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
-    
+
     # Handle Stripe webhook callback
     if ($form_data->{payment_intent_id}) {
         return $self->handle_payment_callback($db, $run, $form_data);
     }
-    
+
+    # Any non-callback interaction (new terms agreement, page view via
+    # process) means the user moved past a prior retry. Clear stale
+    # state so an unrelated navigation can't resurrect a dead intent.
+    if ($run->data->{payment_retry_state}) {
+        $run->update_data($db, { payment_retry_state => undef });
+    }
+
     # Demo mode: when STRIPE_SECRET_KEY is not set, accept terms agreement
     # and create enrollments directly without Stripe processing.
     if ($form_data->{agreeTerms} && !$ENV{STRIPE_SECRET_KEY}) {
@@ -27,9 +34,9 @@ method process ($db, $form_data, $run = undef) {
     if ($form_data->{agreeTerms}) {
         return $self->create_payment($db, $run, $form_data);
     }
-    
+
     # Just show the payment page
-    return { 
+    return {
         next_step => $self->id,
         data => $self->prepare_payment_data($db, $run)
     };
@@ -41,13 +48,28 @@ method prepare_payment_data ($db, $run) {
         children => $run->data->{children} || [],
         session_selections => $run->data->{session_selections} || {},
     };
-    
+
     my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
-    
+
     return {
         total => $payment_info->{total},
         items => $payment_info->{items},
         stripe_publishable_key => $ENV{STRIPE_PUBLISHABLE_KEY},
+    };
+}
+
+# Surface the summary data (and any pending retry state) the template
+# needs. Without this override, stash('step_data') is empty on re-entry
+# after a flash-redirect, which is how the no-JS error path works.
+method prepare_template_data ($db, $run, $params = {}) {
+    my $step_data  = $self->prepare_payment_data($db, $run);
+    my $retry_state = $run->data->{payment_retry_state} || {};
+
+    return {
+        step_data => {
+            %$step_data,
+            %$retry_state,
+        },
     };
 }
 
@@ -112,12 +134,13 @@ method create_payment ($db, $run, $form_data) {
 
 method handle_payment_callback ($db, $run, $form_data) {
     my $payment_id = $run->data->{payment_id} or die "No payment_id in workflow data";
-    
-    my $payment = Registry::DAO::Payment->new(id => $payment_id)->load($db);
-    
+
+    my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
+    die "Payment $payment_id not found" unless $payment;
+
     # Process the payment
     my $result = $payment->process_payment($db, $form_data->{payment_intent_id});
-    
+
     if ($result->{success}) {
         # Create enrollments from the enrollment_items stored by MultiChildSessionSelection
         require Registry::DAO::Enrollment;
@@ -134,7 +157,9 @@ method handle_payment_callback ($db, $run, $form_data) {
             });
         }
 
-        # Payment successful, move to completion
+        # Payment successful, clear any lingering retry state and
+        # move to completion.
+        $run->update_data($db, { payment_retry_state => undef });
         return { next_step => 'complete' };
     } elsif ($result->{processing}) {
         # Payment still processing
@@ -147,11 +172,50 @@ method handle_payment_callback ($db, $run, $form_data) {
             }
         };
     } else {
-        # Payment failed
+        # Payment failed. Re-issue a fresh Stripe PaymentIntent so the
+        # parent can retry with a different card immediately instead of
+        # being dumped back at the terms-agreement page. The Payment
+        # record is reused so we don't orphan it.
+        my $user = Registry::DAO::User->find($db, { id => $run->data->{user_id} });
+        my $retry_intent;
+        try {
+            $retry_intent = $payment->create_payment_intent($db, {
+                description   => 'Program Enrollment (retry)',
+                receipt_email => $user ? $user->email : undef,
+            });
+        }
+        catch ($retry_err) {
+            # Couldn't even create a retry intent -- surface both
+            # failures and drop back to the non-retry state. Also
+            # clear any stale retry state.
+            $run->update_data($db, { payment_retry_state => undef });
+            return {
+                next_step => $self->id,
+                errors    => [
+                    $result->{error},
+                    "Retry unavailable: $retry_err",
+                ],
+                data => $self->prepare_payment_data($db, $run),
+            };
+        }
+
+        # Persist retry state so prepare_template_data can surface it
+        # on the subsequent GET (flash-redirect path).
+        my %retry_state = (
+            payment_id       => $payment->id,
+            client_secret    => $retry_intent->{client_secret},
+            show_stripe_form => 1,
+            retry            => 1,
+        );
+        $run->update_data($db, { payment_retry_state => \%retry_state });
+
         return {
             next_step => $self->id,
-            errors => [$result->{error}],
-            data => $self->prepare_payment_data($db, $run),
+            errors    => [$result->{error}],
+            data      => {
+                %{$self->prepare_payment_data($db, $run)},
+                %retry_state,
+            },
         };
     }
 }
