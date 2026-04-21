@@ -5,7 +5,11 @@
 <% my $show_stripe = $step_data->{show_stripe_form}; %>
 <% my $processing = $step_data->{processing}; %>
 <% my $retry = $step_data->{retry}; %>
-<% my $server_errors = stash('errors') || []; %>
+%
+% # Server-side errors arrive via the controller's errors_json stash
+% # (populated from $result->{errors} or the validation_errors flash).
+% use Mojo::JSON qw(decode_json);
+% my $server_errors = decode_json(stash('errors_json') || '[]');
 
 <div class="max-w-4xl mx-auto p-6">
     <!-- Loading overlay -->
@@ -123,7 +127,7 @@
             <div id="payment-message" class="hidden text-red-600 mb-4"></div>
             
             <div class="flex justify-between">
-                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+                <a href="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'session-selection') %>" 
                    class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
                     Back
                 </a>
@@ -197,7 +201,7 @@
         </script>
     <% } else { %>
         <!-- Initial Agreement Form -->
-        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'payment') %>"
+        <form method="POST" action="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'payment') %>"
               class="bg-white shadow rounded-lg p-6">
             <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
             
@@ -216,7 +220,7 @@
             </div>
             
             <div class="flex justify-between">
-                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>" 
+                <a href="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'session-selection') %>" 
                    class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
                     Back
                 </a>

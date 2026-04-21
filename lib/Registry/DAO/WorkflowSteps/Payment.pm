@@ -11,12 +11,19 @@ use Mojo::JSON qw(encode_json);
 
 method process ($db, $form_data, $run = undef) {
     $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
-    
+
     # Handle Stripe webhook callback
     if ($form_data->{payment_intent_id}) {
         return $self->handle_payment_callback($db, $run, $form_data);
     }
-    
+
+    # Any non-callback interaction (new terms agreement, page view via
+    # process) means the user moved past a prior retry. Clear stale
+    # state so an unrelated navigation can't resurrect a dead intent.
+    if ($run->data->{payment_retry_state}) {
+        $run->update_data($db, { payment_retry_state => undef });
+    }
+
     # Demo mode: when STRIPE_SECRET_KEY is not set, accept terms agreement
     # and create enrollments directly without Stripe processing.
     if ($form_data->{agreeTerms} && !$ENV{STRIPE_SECRET_KEY}) {
@@ -27,9 +34,9 @@ method process ($db, $form_data, $run = undef) {
     if ($form_data->{agreeTerms}) {
         return $self->create_payment($db, $run, $form_data);
     }
-    
+
     # Just show the payment page
-    return { 
+    return {
         next_step => $self->id,
         data => $self->prepare_payment_data($db, $run)
     };
@@ -170,14 +177,14 @@ method handle_payment_callback ($db, $run, $form_data) {
         # being dumped back at the terms-agreement page. The Payment
         # record is reused so we don't orphan it.
         my $user = Registry::DAO::User->find($db, { id => $run->data->{user_id} });
-        my $retry_intent = eval {
-            $payment->create_payment_intent($db, {
+        my $retry_intent;
+        try {
+            $retry_intent = $payment->create_payment_intent($db, {
                 description   => 'Program Enrollment (retry)',
                 receipt_email => $user ? $user->email : undef,
             });
-        };
-
-        if (my $retry_err = $@) {
+        }
+        catch ($retry_err) {
             # Couldn't even create a retry intent -- surface both
             # failures and drop back to the non-retry state. Also
             # clear any stale retry state.
