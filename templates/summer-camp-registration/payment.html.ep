@@ -4,6 +4,8 @@
 <% my $step_data = stash('step_data') || {}; %>
 <% my $show_stripe = $step_data->{show_stripe_form}; %>
 <% my $processing = $step_data->{processing}; %>
+<% my $retry = $step_data->{retry}; %>
+<% my $server_errors = stash('errors') || []; %>
 
 <div class="max-w-4xl mx-auto p-6">
     <!-- Loading overlay -->
@@ -58,6 +60,23 @@
 
     <h1 class="text-3xl font-bold mb-6">Payment Information</h1>
 
+    <% if (@$server_errors) { %>
+        <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6" role="alert">
+            <h3 class="font-semibold mb-1">
+                <% if ($retry) { %>
+                    Your payment didn't go through -- please try a different card.
+                <% } else { %>
+                    We couldn't process your payment.
+                <% } %>
+            </h3>
+            <ul class="list-disc list-inside text-sm">
+                <% for my $err (@$server_errors) { %>
+                    <li><%= $err %></li>
+                <% } %>
+            </ul>
+        </div>
+    <% } %>
+
     <% if ($processing) { %>
         <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6">
             <p class="text-blue-800">
@@ -93,7 +112,9 @@
     <% if ($show_stripe) { %>
         <!-- Stripe Payment Form -->
         <form id="payment-form" class="bg-white shadow rounded-lg p-6">
-            <h2 class="text-2xl font-semibold mb-4">Payment Details</h2>
+            <h2 class="text-2xl font-semibold mb-4">
+                <%= $retry ? 'Try a Different Card' : 'Payment Details' %>
+            </h2>
             
             <div id="payment-element" class="mb-6">
                 <!-- Stripe Elements will be inserted here -->
