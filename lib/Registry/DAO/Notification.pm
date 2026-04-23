@@ -28,7 +28,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Validate type
-        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed)$/) {
+        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed|enrollment_confirmation)$/) {
             croak "Invalid notification type: '$type' is not a recognized notification type";
         }
         
@@ -65,6 +65,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         return 'email_verification'  if $type eq 'email_verification';
         return 'passkey_registered'  if $type eq 'passkey_registered';
         return 'passkey_removed'     if $type eq 'passkey_removed';
+        return 'enrollment_confirmation' if $type eq 'enrollment_confirmation';
         return '';  # general and unknown types use fallback
     }
 
@@ -105,6 +106,14 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
             return (
                 tenant_name => $meta->{tenant_name} // 'Registry',
                 device_name => $meta->{device_name} // 'Unknown device',
+            );
+        }
+        if ($type eq 'enrollment_confirmation') {
+            return (
+                name       => $name,
+                event      => $meta->{event_name}    // '',
+                start_date => $meta->{start_date}    // '',
+                location   => $meta->{location_name} // '',
             );
         }
         return (name => $name);
