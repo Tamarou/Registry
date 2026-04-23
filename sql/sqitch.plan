@@ -50,3 +50,4 @@ registry-landing-page-template [seed-registry-storefront-v2] 2026-04-11T00:00:00
 fix-utf8-mojibake [registry-landing-page-template] 2026-04-11T12:00:00Z Chris Prather <chris.prather@tamarou.com> # Delete DB templates with mojibake so app reimports fixed versions
 update-registry-landing-copy [fix-utf8-mojibake] 2026-04-11T14:00:00Z Chris Prather <chris.prather@tamarou.com> # Update registry landing page copy and 3x2 card grid
 program-publish-status [summer-camp-module tenant-domains] 2026-04-19T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Add status to projects and contact_person_id to locations for admin program setup
+enrollment-confirmation-notification-type [auth-notification-types] 2026-04-23T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Add enrollment_confirmation notification type

@@ -7,6 +7,8 @@ class Registry::DAO::WorkflowSteps::Payment :isa(Registry::DAO::WorkflowStep) {
 use Registry::DAO::Payment;
 use Registry::DAO::Event;  # Contains Session class
 use Registry::DAO::User;
+use Registry::DAO::Location;
+use Registry::DAO::Notification;
 use Mojo::JSON qw(encode_json);
 
 method process ($db, $form_data, $run = undef) {
@@ -157,6 +159,10 @@ method handle_payment_callback ($db, $run, $form_data) {
             });
         }
 
+        $self->queue_enrollment_confirmations(
+            $db, $user_id, $enrollment_items,
+        );
+
         # Payment successful, clear any lingering retry state and
         # move to completion.
         $run->update_data($db, { payment_retry_state => undef });
@@ -234,7 +240,46 @@ method create_demo_enrollments ($db, $run, $form_data) {
         });
     }
 
+    $self->queue_enrollment_confirmations($db, $user_id, $enrollment_items);
+
     return { next_step => 'complete' };
+}
+
+# Queue one enrollment_confirmation notification per enrollment so the
+# parent receives a receipt/confirmation email. The worker picks these
+# up via the existing Notification sender pipeline, which routes through
+# Postmark in production (see Registry::DAO::Notification).
+method queue_enrollment_confirmations ($db, $user_id, $enrollment_items) {
+    for my $item (@$enrollment_items) {
+        my $session_id = $item->{session_id} or next;
+        my $session = Registry::DAO::Session->find($db, { id => $session_id });
+        next unless $session;
+
+        # Pull the first associated event to surface program/location.
+        my ($event) = $session->events($db);
+
+        my $location_name;
+        if ($event && (my $location_id = $event->location_id)) {
+            if (my $location = Registry::DAO::Location->find($db, { id => $location_id })) {
+                $location_name = $location->name;
+            }
+        }
+
+        Registry::DAO::Notification->create($db, {
+            user_id  => $user_id,
+            type     => 'enrollment_confirmation',
+            channel  => 'email',
+            subject  => 'Enrollment confirmed: ' . $session->name,
+            message  => 'Your enrollment has been confirmed.',
+            metadata => {
+                session_id    => $session_id,
+                event_name    => $session->name,
+                start_date    => $session->start_date,
+                location_name => $location_name,
+                child_id      => $item->{child_id},
+            },
+        });
+    }
 }
 
 method template { 'summer-camp-registration/payment' }
