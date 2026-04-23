@@ -7,7 +7,6 @@ class Registry::DAO::WorkflowSteps::Payment :isa(Registry::DAO::WorkflowStep) {
 use Registry::DAO::Payment;
 use Registry::DAO::Event;  # Contains Session class
 use Registry::DAO::User;
-use Registry::DAO::Project;
 use Registry::DAO::Location;
 use Registry::DAO::Notification;
 use Mojo::JSON qw(encode_json);
@@ -160,7 +159,7 @@ method handle_payment_callback ($db, $run, $form_data) {
             });
         }
 
-        $self->_queue_enrollment_confirmations(
+        $self->queue_enrollment_confirmations(
             $db, $user_id, $enrollment_items,
         );
 
@@ -241,7 +240,7 @@ method create_demo_enrollments ($db, $run, $form_data) {
         });
     }
 
-    $self->_queue_enrollment_confirmations($db, $user_id, $enrollment_items);
+    $self->queue_enrollment_confirmations($db, $user_id, $enrollment_items);
 
     return { next_step => 'complete' };
 }
@@ -250,7 +249,7 @@ method create_demo_enrollments ($db, $run, $form_data) {
 # parent receives a receipt/confirmation email. The worker picks these
 # up via the existing Notification sender pipeline, which routes through
 # Postmark in production (see Registry::DAO::Notification).
-method _queue_enrollment_confirmations ($db, $user_id, $enrollment_items) {
+method queue_enrollment_confirmations ($db, $user_id, $enrollment_items) {
     for my $item (@$enrollment_items) {
         my $session_id = $item->{session_id} or next;
         my $session = Registry::DAO::Session->find($db, { id => $session_id });
@@ -259,18 +258,10 @@ method _queue_enrollment_confirmations ($db, $user_id, $enrollment_items) {
         # Pull the first associated event to surface program/location.
         my ($event) = $session->events($db);
 
-        my $project_name;
         my $location_name;
-        if ($event) {
-            if (my $project_id = $event->project_id) {
-                if (my $project = Registry::DAO::Project->find($db, { id => $project_id })) {
-                    $project_name = $project->name;
-                }
-            }
-            if (my $location_id = $event->location_id) {
-                if (my $location = Registry::DAO::Location->find($db, { id => $location_id })) {
-                    $location_name = $location->name;
-                }
+        if ($event && (my $location_id = $event->location_id)) {
+            if (my $location = Registry::DAO::Location->find($db, { id => $location_id })) {
+                $location_name = $location->name;
             }
         }
 
@@ -278,13 +269,12 @@ method _queue_enrollment_confirmations ($db, $user_id, $enrollment_items) {
             user_id  => $user_id,
             type     => 'enrollment_confirmation',
             channel  => 'email',
-            subject  => 'Enrollment confirmed',
+            subject  => 'Enrollment confirmed: ' . $session->name,
             message  => 'Your enrollment has been confirmed.',
             metadata => {
                 session_id    => $session_id,
                 event_name    => $session->name,
                 start_date    => $session->start_date,
-                project_name  => $project_name,
                 location_name => $location_name,
                 child_id      => $item->{child_id},
             },

@@ -132,7 +132,7 @@ subtest 'demo mode (no Stripe key) queues a confirmation' => sub {
 };
 
 subtest 'helper queues one notification per enrollment item' => sub {
-    # _queue_enrollment_confirmations is called by both the demo and
+    # queue_enrollment_confirmations is called by both the demo and
     # Stripe success paths. Exercise it directly with multiple items
     # to confirm one-notification-per-item behavior without needing to
     # thread real Payment / Enrollment rows through.
@@ -154,7 +154,7 @@ subtest 'helper queues one notification per enrollment item' => sub {
 
     my $before = confirmation_count($db, $parent->id);
 
-    $step->_queue_enrollment_confirmations(
+    $step->queue_enrollment_confirmations(
         $db, $parent->id,
         [
             { session_id => $session->id,  child_id => $child->id },
