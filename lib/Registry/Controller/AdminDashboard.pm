@@ -11,84 +11,84 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     use JSON qw(encode_json);
 
     # Main admin dashboard
-    method index ($c) {
-        my $user = $c->stash('current_user');
-        my $dao = $c->dao($c->stash('tenant'));
+    method index () {
+        my $user = $self->stash('current_user');
+        my $dao = $self->dao($self->stash('tenant'));
 
         # Get all dashboard data
         require Registry::DAO::AdminDashboard;
         my $dashboard_data = Registry::DAO::AdminDashboard->get_admin_dashboard_data($dao->db, $user);
 
         # Pass data to template
-        $c->stash(%$dashboard_data);
-        $c->render(template => 'admin_dashboard/index');
+        $self->stash(%$dashboard_data);
+        $self->render(template => 'admin_dashboard/index');
     }
 
     # Program overview data (HTMX endpoint)
-    method program_overview ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $time_range = $c->param('range') || 'current'; # current, upcoming, all
+    method program_overview () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $time_range = $self->param('range') || 'current'; # current, upcoming, all
 
         require Registry::DAO::Project;
         my $programs = Registry::DAO::Project->get_program_overview($dao->db, $time_range);
 
-        $c->stash(programs => $programs, time_range => $time_range);
-        $c->render(template => 'admin_dashboard/program_overview', layout => undef);
+        $self->stash(programs => $programs, time_range => $time_range);
+        $self->render(template => 'admin_dashboard/program_overview', layout => undef);
     }
 
     # Today's events with attendance (HTMX endpoint)
-    method todays_events ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $date = $c->param('date') || DateTime->now->ymd; # YYYY-MM-DD format
+    method todays_events () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $date = $self->param('date') || DateTime->now->ymd; # YYYY-MM-DD format
 
         require Registry::DAO::Event;
         my $events = Registry::DAO::Event->get_events_for_date($dao->db, $date);
 
-        $c->stash(events => $events, selected_date => $date);
-        $c->render(template => 'admin_dashboard/todays_events', layout => undef);
+        $self->stash(events => $events, selected_date => $date);
+        $self->render(template => 'admin_dashboard/todays_events', layout => undef);
     }
 
     # Waitlist management data (HTMX endpoint)
-    method waitlist_management ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $status_filter = $c->param('status') || 'all'; # all, waiting, offered, urgent
+    method waitlist_management () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $status_filter = $self->param('status') || 'all'; # all, waiting, offered, urgent
 
         require Registry::DAO::Waitlist;
         my $waitlist_data = Registry::DAO::Waitlist->get_waitlist_management_data($dao->db, $status_filter);
 
-        $c->stash(waitlist_data => $waitlist_data, status_filter => $status_filter);
-        $c->render(template => 'admin_dashboard/waitlist_management', layout => undef);
+        $self->stash(waitlist_data => $waitlist_data, status_filter => $status_filter);
+        $self->render(template => 'admin_dashboard/waitlist_management', layout => undef);
     }
 
     # Recent notifications (HTMX endpoint)
-    method recent_notifications ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $limit = $c->param('limit') || 10;
-        my $type_filter = $c->param('type') || 'all'; # all, attendance, waitlist, message
+    method recent_notifications () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $limit = $self->param('limit') || 10;
+        my $type_filter = $self->param('type') || 'all'; # all, attendance, waitlist, message
 
         require Registry::DAO::Notification;
         my $notifications = Registry::DAO::Notification->get_recent_for_admin($dao->db, $limit, $type_filter);
 
-        $c->stash(notifications => $notifications, type_filter => $type_filter);
-        $c->render(template => 'admin_dashboard/recent_notifications', layout => undef);
+        $self->stash(notifications => $notifications, type_filter => $type_filter);
+        $self->render(template => 'admin_dashboard/recent_notifications', layout => undef);
     }
 
     # Enrollment trends data for charts (JSON endpoint)
-    method enrollment_trends ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $period = $c->param('period') || 'month'; # week, month, quarter
+    method enrollment_trends () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $period = $self->param('period') || 'month'; # week, month, quarter
 
         require Registry::DAO::AdminDashboard;
         my $trends_data = Registry::DAO::AdminDashboard->get_enrollment_trends($dao->db, $period);
 
-        $c->render(json => $trends_data);
+        $self->render(json => $trends_data);
     }
 
     # Export data
-    method export_data ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $export_type = $c->param('type') || 'enrollments'; # enrollments, attendance, waitlist
-        my $format = $c->param('format') || 'csv'; # csv, json
+    method export_data () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $export_type = $self->param('type') || 'enrollments'; # enrollments, attendance, waitlist
+        my $format = $self->param('format') || 'csv'; # csv, json
 
         try {
             require Registry::DAO::AdminDashboard;
@@ -99,16 +99,16 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             my $use_streaming = $record_count > 1000; # Stream for datasets > 1000 records
 
             # Set content disposition header for downloads
-            $c->res->headers->content_disposition("attachment; filename=\"${export_type}.${format}\"");
+            $self->res->headers->content_disposition("attachment; filename=\"${export_type}.${format}\"");
 
             # For streaming large datasets, set appropriate headers
             if ($use_streaming && $format eq 'csv') {
-                $c->res->headers->content_type('text/csv; charset=utf-8');
-                $c->res->headers->transfer_encoding('chunked');
+                $self->res->headers->content_type('text/csv; charset=utf-8');
+                $self->res->headers->transfer_encoding('chunked');
             }
 
             # Use format-based rendering with streaming support
-            $c->respond_to(
+            $self->respond_to(
                 json => { json => $data },
                 csv  => {
                     csv => $data,
@@ -123,44 +123,44 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             );
         }
         catch ($e) {
-            $c->flash(error => "Export failed: $e");
-            return $c->redirect_to('admin_dashboard');
+            $self->flash(error => "Export failed: $e");
+            return $self->redirect_to('admin_dashboard');
         }
     }
 
     # Drop request management (HTMX endpoint)
-    method pending_drop_requests ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $status_filter = $c->param('status') || 'pending'; # pending, approved, denied, all
+    method pending_drop_requests () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $status_filter = $self->param('status') || 'pending'; # pending, approved, denied, all
 
         my $drop_requests = Registry::DAO::DropRequest->get_detailed_requests($dao->db, $status_filter);
 
-        $c->stash(drop_requests => $drop_requests, status_filter => $status_filter);
-        $c->render(template => 'admin_dashboard/pending_drop_requests', layout => undef);
+        $self->stash(drop_requests => $drop_requests, status_filter => $status_filter);
+        $self->render(template => 'admin_dashboard/pending_drop_requests', layout => undef);
     }
 
     # Get pending transfer requests (HTMX endpoint)
-    method pending_transfer_requests ($c) {
-        my $dao = $c->dao($c->stash('tenant'));
-        my $status_filter = $c->param('status') || 'pending';
+    method pending_transfer_requests () {
+        my $dao = $self->dao($self->stash('tenant'));
+        my $status_filter = $self->param('status') || 'pending';
 
         my $transfer_requests = Registry::DAO::TransferRequest->get_detailed_requests($dao->db, $status_filter);
 
-        $c->stash(transfer_requests => $transfer_requests, status_filter => $status_filter);
-        $c->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
+        $self->stash(transfer_requests => $transfer_requests, status_filter => $status_filter);
+        $self->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
     }
 
     # Quick action: Send bulk message
-    method send_bulk_message ($c) {
-        my $user = $c->stash('current_user');
-        my $dao = $c->dao($c->stash('tenant'));
-        my $recipient_scope = $c->param('scope'); # program_id, session_id, tenant-wide
-        my $subject = $c->param('subject');
-        my $message = $c->param('message');
-        my $message_type = $c->param('message_type') || 'announcement';
+    method send_bulk_message () {
+        my $user = $self->stash('current_user');
+        my $dao = $self->dao($self->stash('tenant'));
+        my $recipient_scope = $self->param('scope'); # program_id, session_id, tenant-wide
+        my $subject = $self->param('subject');
+        my $message = $self->param('message');
+        my $message_type = $self->param('message_type') || 'announcement';
 
         unless ($subject && $message && $recipient_scope) {
-            return $c->render(json => { error => 'Subject, message, and scope are required' }, status => 400);
+            return $self->render(json => { error => 'Subject, message, and scope are required' }, status => 400);
         }
 
         try {
@@ -173,7 +173,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             my $recipients = Registry::DAO::Message->get_recipients_for_scope($dao->db, $scope, $scope_id);
 
             unless (@$recipients) {
-                return $c->render(json => { error => 'No recipients found for selected scope' }, status => 400);
+                return $self->render(json => { error => 'No recipients found for selected scope' }, status => 400);
             }
 
             my @recipient_ids = map { $_->{id} } @$recipients;
@@ -188,14 +188,14 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
                 scope_id => $scope_id
             }, \@recipient_ids, send_now => 1);
 
-            return $c->render(json => {
+            return $self->render(json => {
                 success => 1,
                 message_id => $sent_message->id,
                 recipients_count => scalar(@recipient_ids)
             });
         }
         catch ($e) {
-            return $c->render(json => { error => "Failed to send message: $e" }, status => 500);
+            return $self->render(json => { error => "Failed to send message: $e" }, status => 500);
         }
     }
 
