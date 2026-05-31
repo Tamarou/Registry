@@ -166,11 +166,11 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
                 l.name as location_name,
                 -- Family member details
                 fm.child_name,
-                -- Parent details
-                u.name as parent_name,
-                u.email as parent_email,
+                -- Parent details (name/email live in user_profiles)
+                up.name as parent_name,
+                up.email as parent_email,
                 -- Admin details (if processed)
-                au.name as admin_name,
+                aup.name as admin_name,
                 -- Request timing
                 EXTRACT(EPOCH FROM dr.created_at) as created_at_epoch,
                 EXTRACT(EPOCH FROM dr.processed_at) as processed_at_epoch,
@@ -178,11 +178,21 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
             FROM drop_requests dr
             JOIN enrollments e ON dr.enrollment_id = e.id
             JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
-            LEFT JOIN locations l ON s.location_id = l.id
+            -- sessions carry no project_id/location_id columns; resolve them
+            -- from metadata, falling back to the linked event (see
+            -- Registry::DAO::Session->project_id).
+            LEFT JOIN LATERAL (
+                SELECT ev.project_id, ev.location_id
+                FROM session_events se JOIN events ev ON ev.id = se.event_id
+                WHERE se.session_id = s.id LIMIT 1
+            ) sev ON true
+            JOIN projects p ON p.id = COALESCE((s.metadata->>'project_id')::uuid, sev.project_id)
+            LEFT JOIN locations l ON l.id = COALESCE((s.metadata->>'location_id')::uuid, sev.location_id)
             LEFT JOIN family_members fm ON e.family_member_id = fm.id
             JOIN users u ON fm.family_id = u.id
+            LEFT JOIN user_profiles up ON up.user_id = u.id
             LEFT JOIN users au ON dr.processed_by = au.id
+            LEFT JOIN user_profiles aup ON aup.user_id = au.id
         };
 
         my @where_conditions;

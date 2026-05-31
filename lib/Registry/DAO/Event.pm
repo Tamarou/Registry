@@ -314,14 +314,16 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
 
     # Get events for a specific date with attendance status (for admin dashboard)
     sub get_events_for_date($class, $db, $date) {
-        my $date_obj = DateTime->from_ymd(split /-/, $date);
+        my ($year, $month, $day) = split /-/, $date;
+        my $date_obj = DateTime->new(year => $year, month => $month, day => $day);
         my $start_time = $date_obj->epoch;
         my $end_time = $date_obj->add(days => 1)->epoch;
 
         my $sql = q{
             SELECT
                 ev.id as event_id,
-                ev.time as start_time,
+                EXTRACT(EPOCH FROM ev.time)::bigint as start_time,
+                (EXTRACT(EPOCH FROM ev.time) + ev.duration * 60)::bigint as end_time,
                 EXTRACT(EPOCH FROM ev.time)::bigint as start_epoch,
                 ev.capacity,
                 s.name as session_name,

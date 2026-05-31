@@ -177,11 +177,11 @@ class Registry::DAO::TransferRequest :isa(Registry::DAO::Object) {
                 tl.name as to_location_name,
                 -- Student details
                 fm.child_name,
-                -- Parent details
-                u.name as parent_name,
-                u.email as parent_email,
+                -- Parent details (name/email live in user_profiles)
+                up.name as parent_name,
+                up.email as parent_email,
                 -- Admin details (if processed)
-                au.name as admin_name,
+                aup.name as admin_name,
                 -- Request timing
                 EXTRACT(EPOCH FROM tr.created_at) as created_at_epoch,
                 EXTRACT(EPOCH FROM tr.processed_at) as processed_at_epoch,
@@ -190,13 +190,28 @@ class Registry::DAO::TransferRequest :isa(Registry::DAO::Object) {
             JOIN enrollments e ON tr.enrollment_id = e.id
             JOIN sessions fs ON e.session_id = fs.id
             JOIN sessions ts ON tr.target_session_id = ts.id
-            JOIN projects fp ON fs.project_id = fp.id
-            JOIN projects tp ON ts.project_id = tp.id
-            LEFT JOIN locations fl ON fs.location_id = fl.id
-            LEFT JOIN locations tl ON ts.location_id = tl.id
+            -- sessions carry no project_id/location_id columns; resolve them
+            -- from metadata, falling back to the linked event (see
+            -- Registry::DAO::Session->project_id).
+            LEFT JOIN LATERAL (
+                SELECT ev.project_id, ev.location_id
+                FROM session_events se JOIN events ev ON ev.id = se.event_id
+                WHERE se.session_id = fs.id LIMIT 1
+            ) fsev ON true
+            LEFT JOIN LATERAL (
+                SELECT ev.project_id, ev.location_id
+                FROM session_events se JOIN events ev ON ev.id = se.event_id
+                WHERE se.session_id = ts.id LIMIT 1
+            ) tsev ON true
+            JOIN projects fp ON fp.id = COALESCE((fs.metadata->>'project_id')::uuid, fsev.project_id)
+            JOIN projects tp ON tp.id = COALESCE((ts.metadata->>'project_id')::uuid, tsev.project_id)
+            LEFT JOIN locations fl ON fl.id = COALESCE((fs.metadata->>'location_id')::uuid, fsev.location_id)
+            LEFT JOIN locations tl ON tl.id = COALESCE((ts.metadata->>'location_id')::uuid, tsev.location_id)
             JOIN family_members fm ON e.family_member_id = fm.id
             JOIN users u ON fm.family_id = u.id
+            LEFT JOIN user_profiles up ON up.user_id = u.id
             LEFT JOIN users au ON tr.processed_by = au.id
+            LEFT JOIN user_profiles aup ON aup.user_id = au.id
             $where_clause
             ORDER BY tr.created_at DESC
         };
