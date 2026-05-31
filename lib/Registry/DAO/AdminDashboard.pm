@@ -123,7 +123,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
 
         my $sql = qq{
             SELECT
-                TO_CHAR(DATE_TRUNC('day', TO_TIMESTAMP(e.created_at)), '$format') as period,
+                TO_CHAR(DATE_TRUNC('day', e.created_at), '$format') as period,
                 COUNT(*) as enrollments
             FROM enrollments e
             WHERE e.created_at >= ?
@@ -131,7 +131,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
             ORDER BY period
         };
 
-        my $results = $db->query($sql, $start_date->epoch)->hashes->to_array;
+        my $results = $db->query($sql, $start_date->ymd)->hashes->to_array;
 
         return {
             labels => [map { $_->{period} } @$results],

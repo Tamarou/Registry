@@ -133,6 +133,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $dao = $self->dao($self->stash('tenant'));
         my $status_filter = $self->param('status') || 'pending'; # pending, approved, denied, all
 
+        require Registry::DAO::DropRequest;
         my $drop_requests = Registry::DAO::DropRequest->get_detailed_requests($dao->db, $status_filter);
 
         $self->stash(drop_requests => $drop_requests, status_filter => $status_filter);
@@ -144,6 +145,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $dao = $self->dao($self->stash('tenant'));
         my $status_filter = $self->param('status') || 'pending';
 
+        require Registry::DAO::TransferRequest;
         my $transfer_requests = Registry::DAO::TransferRequest->get_detailed_requests($dao->db, $status_filter);
 
         $self->stash(transfer_requests => $transfer_requests, status_filter => $status_filter);

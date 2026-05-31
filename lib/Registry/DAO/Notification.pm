@@ -376,8 +376,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
                 n.channel,
                 n.subject,
                 n.message,
-                n.sent_at,
-                n.delivered_at,
+                EXTRACT(EPOCH FROM n.sent_at)::bigint as sent_at,
                 n.metadata,
                 up.name as recipient_name,
                 up.email as recipient_email

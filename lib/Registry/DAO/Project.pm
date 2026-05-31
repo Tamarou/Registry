@@ -79,8 +79,8 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
                 COUNT(DISTINCT CASE WHEN e.status = 'active' THEN e.id END) as active_enrollments,
                 COUNT(DISTINCT w.id) as waitlist_count,
                 SUM(ev.capacity) as total_capacity,
-                MIN(s.start_date) as earliest_start,
-                MAX(s.end_date) as latest_end
+                EXTRACT(EPOCH FROM MIN(s.start_date))::bigint as earliest_start,
+                EXTRACT(EPOCH FROM MAX(s.end_date))::bigint as latest_end
             FROM projects p
             LEFT JOIN events ev ON ev.project_id = p.id
             LEFT JOIN session_events se ON se.event_id = ev.id
