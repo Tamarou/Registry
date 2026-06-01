@@ -425,4 +425,54 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         });
     }
 
+    # Queue exactly one enrollment_confirmation notification for a (user,
+    # session, child) tuple. Idempotent: if one already exists it is left
+    # alone, so the parent-return callback and the payment_intent.succeeded
+    # webhook can both call this without producing duplicate emails.
+    sub ensure_enrollment_confirmation ( $class, $db, $args ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my ( $user_id, $session_id, $child_id ) =
+            @{$args}{qw( user_id session_id child_id )};
+        return unless $user_id && $session_id;
+
+        my $exists = $db->query(
+            q{SELECT 1 FROM notifications
+               WHERE user_id = ? AND type = 'enrollment_confirmation'
+                 AND metadata->>'session_id' = ?
+                 AND metadata->>'child_id' IS NOT DISTINCT FROM ?
+               LIMIT 1},
+            $user_id, $session_id, $child_id
+        )->rows;
+        return if $exists;
+
+        require Registry::DAO::Session;
+        my $session = Registry::DAO::Session->find( $db, { id => $session_id } )
+            or return;
+
+        my ($event) = $session->events($db);
+        my $location_name;
+        if ( $event && ( my $location_id = $event->location_id ) ) {
+            require Registry::DAO::Location;
+            if ( my $location = Registry::DAO::Location->find( $db, { id => $location_id } ) ) {
+                $location_name = $location->name;
+            }
+        }
+
+        $class->create( $db, {
+            user_id  => $user_id,
+            type     => 'enrollment_confirmation',
+            channel  => 'email',
+            subject  => 'Enrollment confirmed: ' . $session->name,
+            message  => 'Your enrollment has been confirmed.',
+            metadata => {
+                session_id    => $session_id,
+                event_name    => $session->name,
+                start_date    => $session->start_date,
+                location_name => $location_name,
+                child_id      => $child_id,
+            },
+        });
+    }
+
 }

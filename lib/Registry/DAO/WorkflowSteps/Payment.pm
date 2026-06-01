@@ -97,6 +97,12 @@ method create_payment ($db, $run, $form_data) {
             workflow_id => $run->workflow_id,
             workflow_run_id => $run->id,
             enrollment_data => $enrollment_data,
+            # Snapshot what finalization needs so the payment_intent.succeeded
+            # webhook can complete the enrollment without the workflow run:
+            # the resolved (session, child) pairs and the tenant schema they
+            # belong to.
+            enrollment_items => $run->data->{enrollment_items} || [],
+            tenant_slug => $run->data->{__tenant_slug},
         }
     });
     
@@ -144,24 +150,12 @@ method handle_payment_callback ($db, $run, $form_data) {
     my $result = $payment->process_payment($db, $form_data->{payment_intent_id});
 
     if ($result->{success}) {
-        # Create enrollments from the enrollment_items stored by MultiChildSessionSelection
-        require Registry::DAO::Enrollment;
-        my $enrollment_items = $run->data->{enrollment_items} || [];
-        my $user_id = $run->data->{user_id};
-
-        for my $item (@$enrollment_items) {
-            my $enrollment = Registry::DAO::Enrollment->create($db, {
-                session_id       => $item->{session_id},
-                family_member_id => $item->{child_id},
-                parent_id        => $user_id,
-                status           => 'active',
-                payment_id       => $payment->id,
-            });
-        }
-
-        $self->queue_enrollment_confirmations(
-            $db, $user_id, $enrollment_items,
-        );
+        # Idempotently create enrollments and queue confirmation emails. The
+        # same finalizer runs from the payment_intent.succeeded webhook, so a
+        # card finalized off-site (3DS/redirect) and the parent returning to
+        # this page can both fire without producing duplicate enrollments or
+        # emails.
+        $payment->finalize_enrollment($db);
 
         # Payment successful, clear any lingering retry state and
         # move to completion.
@@ -231,6 +225,7 @@ method create_demo_enrollments ($db, $run, $form_data) {
     my $enrollment_items = $run->data->{enrollment_items} || [];
 
     require Registry::DAO::Enrollment;
+    require Registry::DAO::Notification;
     for my $item (@$enrollment_items) {
         Registry::DAO::Enrollment->create($db, {
             session_id       => $item->{session_id},
@@ -238,48 +233,14 @@ method create_demo_enrollments ($db, $run, $form_data) {
             parent_id        => $user_id,
             status           => 'active',
         });
-    }
-
-    $self->queue_enrollment_confirmations($db, $user_id, $enrollment_items);
-
-    return { next_step => 'complete' };
-}
-
-# Queue one enrollment_confirmation notification per enrollment so the
-# parent receives a receipt/confirmation email. The worker picks these
-# up via the existing Notification sender pipeline, which routes through
-# Postmark in production (see Registry::DAO::Notification).
-method queue_enrollment_confirmations ($db, $user_id, $enrollment_items) {
-    for my $item (@$enrollment_items) {
-        my $session_id = $item->{session_id} or next;
-        my $session = Registry::DAO::Session->find($db, { id => $session_id });
-        next unless $session;
-
-        # Pull the first associated event to surface program/location.
-        my ($event) = $session->events($db);
-
-        my $location_name;
-        if ($event && (my $location_id = $event->location_id)) {
-            if (my $location = Registry::DAO::Location->find($db, { id => $location_id })) {
-                $location_name = $location->name;
-            }
-        }
-
-        Registry::DAO::Notification->create($db, {
-            user_id  => $user_id,
-            type     => 'enrollment_confirmation',
-            channel  => 'email',
-            subject  => 'Enrollment confirmed: ' . $session->name,
-            message  => 'Your enrollment has been confirmed.',
-            metadata => {
-                session_id    => $session_id,
-                event_name    => $session->name,
-                start_date    => $session->start_date,
-                location_name => $location_name,
-                child_id      => $item->{child_id},
-            },
+        Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
+            user_id    => $user_id,
+            session_id => $item->{session_id},
+            child_id   => $item->{child_id},
         });
     }
+
+    return { next_step => 'complete' };
 }
 
 method template { 'summer-camp-registration/payment' }

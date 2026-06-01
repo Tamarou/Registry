@@ -131,39 +131,49 @@ subtest 'demo mode (no Stripe key) queues a confirmation' => sub {
     is($after, $before + 1, 'one enrollment_confirmation queued');
 };
 
-subtest 'helper queues one notification per enrollment item' => sub {
-    # queue_enrollment_confirmations is called by both the demo and
-    # Stripe success paths. Exercise it directly with multiple items
-    # to confirm one-notification-per-item behavior without needing to
-    # thread real Payment / Enrollment rows through.
-    my $session2 = Registry::DAO::Session->create($db, {
-        name       => 'Fall Art Session 2',
-        start_date => '2099-10-01',
-        end_date   => '2099-12-15',
-        status     => 'published',
-        capacity   => 15,
-    });
-    Registry::DAO::Event->create($db, {
-        session_id  => $session2->id,
-        time        => '2099-10-05 15:00:00',
-        duration    => 60,
-        location_id => $location->id,
-        project_id  => $project->id,
-        teacher_id  => $teacher->id,
-    });
+subtest 'ensure_enrollment_confirmation is one-per-item and idempotent' => sub {
+    # Notification->ensure_enrollment_confirmation is the shared queuer used by
+    # the demo, parent-return, and webhook finalization paths. Exercise it
+    # directly: one notification per new (session, child) item, and repeat
+    # calls add nothing (the dual-path idempotency #205 relies on).
+    my @fresh;
+    for my $n (2, 3) {
+        my $s = Registry::DAO::Session->create($db, {
+            name       => "Fall Art Session $n",
+            start_date => '2099-10-01',
+            end_date   => '2099-12-15',
+            status     => 'published',
+            capacity   => 15,
+        });
+        Registry::DAO::Event->create($db, {
+            session_id  => $s->id,
+            time        => "2099-10-05 1$n:00:00",
+            duration    => 60,
+            location_id => $location->id,
+            project_id  => $project->id,
+            teacher_id  => $teacher->id,
+        });
+        push @fresh, $s->id;
+    }
 
     my $before = confirmation_count($db, $parent->id);
 
-    $step->queue_enrollment_confirmations(
-        $db, $parent->id,
-        [
-            { session_id => $session->id,  child_id => $child->id },
-            { session_id => $session2->id, child_id => $child->id },
-        ],
-    );
+    for my $sid (@fresh) {
+        Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
+            user_id => $parent->id, session_id => $sid, child_id => $child->id,
+        });
+    }
+    is(confirmation_count($db, $parent->id), $before + 2,
+        'one notification per new enrollment item');
 
-    my $after = confirmation_count($db, $parent->id);
-    is($after, $before + 2, 'two notifications for two enrollment items');
+    # Calling again for the same items must not create duplicates.
+    for my $sid (@fresh) {
+        Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
+            user_id => $parent->id, session_id => $sid, child_id => $child->id,
+        });
+    }
+    is(confirmation_count($db, $parent->id), $before + 2,
+        'repeat calls are idempotent');
 };
 
 subtest 'confirmation carries session and location details' => sub {
