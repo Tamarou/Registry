@@ -38,6 +38,23 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Process the event
         my $dao = $self->app->dao;
 
+        # Deduplicate by Stripe event id. Stripe may deliver the same event more
+        # than once; claim it atomically so a redelivery is acknowledged with
+        # 200 but never processed twice. On a processing failure below we release
+        # the claim so Stripe's retry can reprocess the event.
+        my $event_id = $event->{id};
+        my $claimed = $dao->db->query(
+            q{INSERT INTO registry.webhook_events (stripe_event_id, event_type)
+              VALUES (?, ?) ON CONFLICT (stripe_event_id) DO NOTHING},
+            $event_id, $event->{type}
+        )->rows;
+
+        unless ($claimed) {
+            $self->app->log->info("Duplicate Stripe webhook event $event_id ignored");
+            $self->render(status => 200, text => 'OK (duplicate)');
+            return;
+        }
+
         try {
             # Determine if this is an installment payment or tenant billing event
             if ($self->_is_installment_payment_event($event)) {
@@ -54,11 +71,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             }
         }
         catch ($e) {
+            # Release the claim so Stripe's retry can reprocess this event.
+            $dao->db->delete('registry.webhook_events', { stripe_event_id => $event_id });
             $self->app->log->error("Webhook processing failed: $e");
             $self->render(status => 500, text => 'Webhook processing failed');
             return;
         }
-        
+
         $self->render(status => 200, text => 'OK');
     }
 
