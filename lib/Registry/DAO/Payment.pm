@@ -153,6 +153,40 @@ field $_stripe_client = undef;
         }
     }
     
+    # Idempotently create the paid enrollments and queue their confirmation
+    # emails. Safe to call from both the parent-return callback and the
+    # payment_intent.succeeded webhook; the caller passes a $db connected to the
+    # tenant schema the enrollments live in. Enrollment items and the tenant are
+    # snapshotted into metadata at create_payment time.
+    method finalize_enrollment ($db) {
+        my $items =
+            ( ref $metadata eq 'HASH' && ref $metadata->{enrollment_items} eq 'ARRAY' )
+            ? $metadata->{enrollment_items}
+            : [];
+        return unless @$items;
+
+        require Registry::DAO::Enrollment;
+        require Registry::DAO::Notification;
+
+        for my $item (@$items) {
+            my $session_id = $item->{session_id} or next;
+
+            Registry::DAO::Enrollment->create_for_payment($db, {
+                session_id       => $session_id,
+                family_member_id => $item->{child_id},
+                parent_id        => $user_id,
+                status           => 'active',
+                payment_id       => $id,
+            });
+
+            Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
+                user_id    => $user_id,
+                session_id => $session_id,
+                child_id   => $item->{child_id},
+            });
+        }
+    }
+
     method add_line_item ($db, $args) {
         $db = $db->db if $db isa Registry::DAO;
         

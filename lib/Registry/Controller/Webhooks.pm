@@ -56,8 +56,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
 
         try {
+            # One-time program payment finalized by Stripe (e.g. 3DS/redirect
+            # cards confirmed off-site). Idempotent with the parent-return path.
+            if ($event->{type} eq 'payment_intent.succeeded') {
+                $self->_process_payment_intent_succeeded($dao, $event);
+            }
             # Determine if this is an installment payment or tenant billing event
-            if ($self->_is_installment_payment_event($event)) {
+            elsif ($self->_is_installment_payment_event($event)) {
                 $self->_process_installment_payment_event($dao->db, $event);
             } else {
                 # Handle tenant billing events (existing logic)
@@ -79,6 +84,37 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
 
         $self->render(status => 200, text => 'OK');
+    }
+
+    # Finalize a one-time program payment when Stripe confirms the intent. This
+    # is the safety net for cards finalized off-site (3DS / redirect) where the
+    # parent may never return to the success page. finalize_enrollment is
+    # idempotent, so this is safe alongside the parent-return callback.
+    method _process_payment_intent_succeeded ($dao, $event) {
+        my $intent     = $event->{data}{object} // {};
+        my $payment_id = $intent->{metadata}{payment_id};
+        return unless $payment_id;    # not a Registry one-time payment
+
+        require Registry::DAO::Payment;
+        my $payment = Registry::DAO::Payment->find($dao->db, { id => $payment_id });
+        return unless $payment;
+
+        # Mark the payment completed (payments live in registry.payments).
+        unless (($payment->status // '') eq 'completed') {
+            $payment->update($dao->db, {
+                status                   => 'completed',
+                stripe_payment_intent_id => $intent->{id},
+            });
+        }
+
+        # Enrollments live in the tenant schema the registration ran under;
+        # finalize there. The tenant slug was snapshotted onto the payment.
+        my $slug = $payment->metadata->{tenant_slug};
+        my $fdb  = ($slug && $slug ne 'registry')
+            ? $dao->connect_schema($slug)->db
+            : $dao->db;
+
+        $payment->finalize_enrollment($fdb);
     }
 
     method _verify_stripe_signature($payload, $sig_header, $endpoint_secret) {

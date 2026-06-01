@@ -66,6 +66,26 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         $class->SUPER::create( $db, $data );
     }
 
+    # Idempotent insert for the paid finalization paths (parent-return callback
+    # and the payment_intent.succeeded webhook). Relies on the
+    # enrollments_payment_dedup unique index: a duplicate (same session,
+    # student, payment) is silently skipped, so calling this twice for the same
+    # payment is safe.
+    sub create_for_payment ( $class, $db, $data ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        $data->{status}       //= 'active';
+        $data->{student_type} //= 'family_member';
+        if ( $data->{student_type} eq 'family_member' && $data->{family_member_id} ) {
+            $data->{student_id} //= $data->{family_member_id};
+        }
+        if ( exists $data->{metadata} && ref $data->{metadata} eq 'HASH' ) {
+            $data->{metadata} = { -json => $data->{metadata} };
+        }
+
+        $db->insert( $class->table, $data, { on_conflict => undef } );
+    }
+
     method update ( $db, $data, $filter = { id => $self->id } ) {
         # Encode metadata as JSON if it's a hashref
         if (exists $data->{metadata} && ref $data->{metadata} eq 'HASH') {
