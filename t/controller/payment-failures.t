@@ -200,18 +200,18 @@ subtest 'duplicate webhook does not double-process' => sub {
         payment_schedule_id => $schedule->{id},
     }, { -asc => 'installment_number' })->hashes;
 
-    # NOTE: The system lacks event-ID deduplication. The second delivery marks
-    # the next pending payment as completed. This is a known limitation.
-    # Tracking here so we know when it's fixed.
+    # Event-ID deduplication: the duplicate delivery is acknowledged with 200
+    # but not processed again, so exactly one installment stays completed.
     my $completed_count = grep { $_->{status} eq 'completed' } @$payments_after_second;
 
-    TODO: {
-        local $TODO = 'Webhook handler lacks event-ID deduplication';
-        is $completed_count, 1, 'Only one payment completed after duplicate delivery';
-    }
+    is $completed_count, 1, 'Only one payment completed after duplicate delivery';
+    is $payments_after_second->[1]{status}, 'pending',
+        'Second installment remains pending after duplicate delivery';
 
-    # What actually happens: two payments get completed
-    ok $completed_count >= 1, 'At least one payment completed (system processes webhook)';
+    # The event is recorded exactly once in webhook_events (the dedup ledger).
+    my $event_rows = $dao->db->select('registry.webhook_events', '*',
+        { stripe_event_id => 'evt_paid_dup_1' })->hashes;
+    is scalar(@$event_rows), 1, 'Event recorded once in webhook_events';
 };
 
 # ============================================================
