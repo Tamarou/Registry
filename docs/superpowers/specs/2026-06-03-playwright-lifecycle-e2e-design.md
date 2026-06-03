@@ -108,7 +108,7 @@ own project (runs against production).
 
 | Spec | Fix |
 |------|-----|
-| `all-workflows-visual` | **Distinct from collision fixes:** references non-existent slugs (`session-creation`, `user-registration`, `event-creation`, `payment-processing`). Rewrite with real slugs or delete. |
+| `all-workflows-visual` | **Distinct from collision fixes:** references non-existent slugs (`user-registration` -> use `user-creation`; `payment-processing` -> no equivalent; `session-creation` and `event-creation` do exist) **and** uses the wrong URL prefix `/workflow/:slug` instead of `/:slug` per the `any('/:workflow')` catch-all (`lib/Registry.pm:661`). Rewrite with real slugs and correct URLs, or delete. |
 | `custom-domains` | Run-unique domain names; self-contained remove/re-add; robust pre-test cleanup. |
 | `tenant-signup` | Run-unique org names/subdomains; drop empty-table assumptions. |
 | `admin-dashboard`, `jordan-admin-dashboard` | Unique seeded ids; log in fresh per test rather than one shared token. |
