@@ -8,11 +8,17 @@ use DBI ();
 package Test::Registry::DB {
     use File::Basename qw(dirname);
     use File::Spec ();
+    use Scalar::Util ();
 
     # Path to the pre-generated schema dump (relative to repo root)
     my $DUMP_FILE = File::Spec->catfile(
         dirname(__FILE__), '..', '..', '..', '..', 'sql', 'test-schema.sql'
     );
+
+    # Live instances, tracked weakly so the END block below can stop their
+    # ephemeral postgres servers deterministically -- before global
+    # destruction -- and keep teardown noise out of the process exit code.
+    my @LIVE_INSTANCES;
 
     sub _find_pg_tool {
         my ($tool) = @_;
@@ -69,6 +75,10 @@ package Test::Registry::DB {
 
         $self->_fix_pricing_validation_trigger();
         $ENV{DB_URL} = $self->{pgsql}->uri;
+
+        push @LIVE_INSTANCES, $self;
+        Scalar::Util::weaken( $LIVE_INSTANCES[-1] );
+
         return $self;
     }
 
@@ -104,7 +114,40 @@ package Test::Registry::DB {
     sub cleanup_test_database {
         my $self = shift;
         if ($self->{pgsql}) {
+            # Silence DBD::Pg destructors before stopping the server, so cached
+            # statement/connection handles destroyed afterwards don't print
+            # "terminating connection due to administrator command" noise.
+            _neutralize_dbi_handles();
+            # Stopping the server reaps the postmaster; localize $? so a
+            # non-zero reap status cannot leak into the process exit code,
+            # which prove would treat as a failed test file. See issue #186.
+            local $?;
             undef $self->{pgsql};
+        }
+    }
+
+    # Mark every open DBI connection InactiveDestroy so DBD::Pg's destructors
+    # never execute against an about-to-stop server and emit "terminating
+    # connection due to administrator command" -- noise that dirties the exit
+    # code. See issue #186.
+    sub _neutralize_dbi_handles {
+        DBI->visit_handles(sub {
+            my $h = shift;
+            $h->{InactiveDestroy} = 1 if ( $h->{Type} // '' ) eq 'db';
+            return 1;
+        });
+    }
+
+    # Deterministic teardown at process exit. This runs before global
+    # destruction, so we control the order: first silence the DBI handles,
+    # then stop each ephemeral server under local $?. Without this, teardown
+    # noise dirties the exit code and prove fails an otherwise-passing test
+    # file -- the root cause behind #186.
+    END {
+        local $?;
+        _neutralize_dbi_handles();
+        for my $instance ( grep { defined } @LIVE_INSTANCES ) {
+            $instance->cleanup_test_database;
         }
     }
 

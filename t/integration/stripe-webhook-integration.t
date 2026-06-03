@@ -4,10 +4,6 @@ use 5.42.0;
 use lib qw(lib t/lib);
 use Test::More;
 
-# Skip in CI: see t/dao/stripe-subscription.t for rationale. #186.
-plan skip_all => 'flaky in CI postgres container; see #186'
-    if $ENV{CI} || $ENV{GITHUB_ACTIONS};
-
 use Registry::DAO;
 use Registry::Controller::Webhooks;
 use Test::Registry::DB;
