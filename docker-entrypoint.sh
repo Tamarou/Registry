@@ -13,7 +13,10 @@ deploy_schema() {
     local target="${SQITCH_TARGET:-$DB_URL}"
     target="${target/#postgresql:/db:pg:}"
     if [ -n "$target" ]; then
-        echo "Using sqitch target: ${target%%@*}@****"
+        # Log the target with the password masked. The previous form
+        # (${target%%@*}@****) kept everything *before* the @, leaking
+        # user:password into the deploy logs. Mask just the password.
+        echo "Using sqitch target: $(echo "$target" | sed -E 's#(://[^:/@]+):[^@]*@#\1:****@#')"
         if sqitch deploy "$target"; then
             echo "Database schema deployed successfully"
         else
