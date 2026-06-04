@@ -123,8 +123,12 @@ test.describe('Add domain flow', () => {
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
-    // dns_instructions template renders "DNS Setup Required"
-    await expect(registryPage.locator('h2')).toContainText('DNS Setup Required');
+    // dns_instructions template renders a "DNS Setup Required" heading. Scope to
+    // that heading specifically -- the page has more than one h2, so a bare
+    // locator('h2') is a strict-mode violation.
+    await expect(
+      registryPage.getByRole('heading', { name: /DNS Setup Required/ })
+    ).toBeVisible();
 
     // CNAME target is shown
     await expect(registryPage.locator('body')).toContainText('registry-app.onrender.com');
