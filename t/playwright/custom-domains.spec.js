@@ -7,6 +7,13 @@ const { execSync }     = require('child_process');
 // Run tests serially to share a single test database instance
 test.describe.configure({ mode: 'serial' });
 
+// Custom domains are GLOBALLY unique, so every add-domain test must use a name no
+// other test (including the same test under a different browser sharing the DB)
+// will reuse -- otherwise the second add hits "This domain is already registered".
+function uniqueDomain(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.example.com`;
+}
+
 // ---------------------------------------------------------------------------
 // Helper: seed test tenant, admin user, staff user, and a magic link token
 // via the Perl helper script.  Returns the parsed JSON output.
@@ -118,8 +125,9 @@ test.describe('Add domain flow', () => {
   test('submitting a valid domain shows DNS setup instructions', async ({ registryPage, testDB }) => {
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
+    const domain = uniqueDomain('e2e-test');
     const form = registryPage.locator('form[action="/admin/domains"]');
-    await form.locator('input[name="domain"]').fill('e2e-test-domain.example.com');
+    await form.locator('input[name="domain"]').fill(domain);
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
@@ -134,14 +142,14 @@ test.describe('Add domain flow', () => {
     await expect(registryPage.locator('body')).toContainText('registry-app.onrender.com');
 
     // The submitted domain name appears in the instructions
-    await expect(registryPage.locator('body')).toContainText('e2e-test-domain.example.com');
+    await expect(registryPage.locator('body')).toContainText(domain);
   });
 
   test('DNS instructions include passkey re-registration warning', async ({ registryPage, testDB }) => {
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
     const form = registryPage.locator('form[action="/admin/domains"]');
-    await form.locator('input[name="domain"]').fill('passkey-warn-test.example.com');
+    await form.locator('input[name="domain"]').fill(uniqueDomain('passkey-warn'));
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
@@ -164,7 +172,7 @@ test.describe('Status indicators', () => {
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
     const form = registryPage.locator('form[action="/admin/domains"]');
-    await form.locator('input[name="domain"]').fill('status-test.example.com');
+    await form.locator('input[name="domain"]').fill(uniqueDomain('status-test'));
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
@@ -188,7 +196,7 @@ test.describe('Verify button', () => {
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
     const form = registryPage.locator('form[action="/admin/domains"]');
-    await form.locator('input[name="domain"]').fill('verify-btn-test.example.com');
+    await form.locator('input[name="domain"]').fill(uniqueDomain('verify-btn'));
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
@@ -228,8 +236,9 @@ test.describe('Remove domain', () => {
     // Now add a fresh domain to test remove
     await registryPage.goto('/admin/domains');
     await registryPage.waitForLoadState('networkidle');
+    const domain = uniqueDomain('remove-test');
     const form = registryPage.locator('form[action="/admin/domains"]');
-    await form.locator('input[name="domain"]').fill('remove-test.example.com');
+    await form.locator('input[name="domain"]').fill(domain);
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
     await registryPage.goto('/admin/domains');
@@ -237,7 +246,7 @@ test.describe('Remove domain', () => {
 
     // Accept the confirm dialog
     registryPage.once('dialog', async dialog => {
-      expect(dialog.message()).toContain('remove-test.example.com');
+      expect(dialog.message()).toContain(domain);
       await dialog.accept();
     });
 
@@ -247,14 +256,15 @@ test.describe('Remove domain', () => {
     await registryPage.waitForLoadState('networkidle');
 
     // The removed domain should no longer appear
-    await expect(registryPage.locator('text=remove-test.example.com')).not.toBeVisible();
+    await expect(registryPage.locator(`text=${domain}`)).not.toBeVisible();
   });
 
   test('Remove button triggers a confirm dialog and keeps domain on cancel', async ({ registryPage, testDB }) => {
     await loginAndGoToDomains(registryPage, testDB, 'admin');
 
+    const domain = uniqueDomain('keep-this-domain');
     const form = registryPage.locator('form[action="/admin/domains"]');
-    await form.locator('input[name="domain"]').fill('keep-this-domain.example.com');
+    await form.locator('input[name="domain"]').fill(domain);
     await form.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
@@ -270,7 +280,7 @@ test.describe('Remove domain', () => {
     await removeBtn.click();
 
     // Domain row should still be present
-    await expect(registryPage.locator('body')).toContainText('keep-this-domain.example.com');
+    await expect(registryPage.locator('body')).toContainText(domain);
   });
 });
 
