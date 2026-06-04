@@ -33,6 +33,11 @@ open STDOUT, '>&', $orig or die $!;
 
 print JSON::PP->new->encode({ url => $db->uri, pid => $$, status => 'ready' }), "\n";
 
+# Exit cleanly on SIGTERM so END/DESTROY run and Test::PostgreSQL removes its
+# data dir (teardown SIGTERMs this process). Without this, SIGTERM would skip
+# cleanup and leak a postgres data directory.
+$SIG{TERM} = sub { exit 0 };
+
 # Stay alive so the DB persists for the whole run.
 while ( my $line = <STDIN> ) {
     chomp $line;

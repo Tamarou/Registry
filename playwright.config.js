@@ -23,12 +23,9 @@ module.exports = defineConfig({
     video: 'retain-on-failure',
   },
 
-  webServer: {
-    command: 'bash t/playwright/start-test-server.sh',
-    url: 'http://127.0.0.1:3001/health',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-  },
+  // No webServer here: Playwright starts webServer BEFORE globalSetup, but our
+  // server needs the DB that globalSetup provisions. globalSetup starts both the
+  // DB and the server itself, in order.
 
   projects: [
     {

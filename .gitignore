@@ -28,3 +28,6 @@ paad/
 
 # Playwright shared DB dotfiles (written by global-setup.js, cleaned by global-teardown.js)
 t/playwright/.shared-db-*
+
+# stray smoke-test artifact
+/smoke-test.png
