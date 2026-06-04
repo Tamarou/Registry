@@ -260,7 +260,20 @@ class Registry::DAO::Message :isa(Registry::DAO::Object) {
     
     # Get recent messages for parent (moved from ParentDashboard controller)
     sub get_recent_for_parent($class, $db, $parent_id, $limit = 5) {
-        return $class->get_messages_for_parent($db, $parent_id, limit => $limit);
+        $db = $db->db if $db isa Registry::DAO;
+        my $messages = $class->get_messages_for_parent($db, $parent_id, limit => $limit);
+
+        # The dashboard template renders sent_at via DateTime->from_epoch, which
+        # needs a numeric epoch. get_messages_for_parent returns the raw Postgres
+        # timestamp string (the inbox view parses that form), so convert here.
+        for my $message (@$messages) {
+            next unless $message->{sent_at};
+            $message->{sent_at} =
+                $db->query('SELECT EXTRACT(EPOCH FROM ?::timestamptz)::bigint',
+                    $message->{sent_at})->array->[0];
+        }
+
+        return $messages;
     }
 
     # Get unread message count for a parent

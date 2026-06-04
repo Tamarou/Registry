@@ -1,0 +1,93 @@
+# ABOUTME: GitHub Actions workflow for Playwright end-to-end browser tests.
+# ABOUTME: Runs the suite against a shared Test::PostgreSQL DB + server started by globalSetup.
+
+name: Playwright
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.42'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev postgresql-client build-essential libssl-dev libz-dev
+
+    - name: Install cpanm and Carton
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+
+    - name: Cache Perl dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/perl5
+        key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
+        restore-keys: |
+          ${{ runner.os }}-perl-
+
+    - name: Install Perl dependencies
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        carton install --deployment
+
+    - name: Install Node dependencies
+      run: npm install
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps chromium firefox
+
+    # The harness provisions its own ephemeral Postgres via Test::PostgreSQL
+    # (globalSetup), so no service container is needed. Confirm Test::PostgreSQL
+    # can start on the runner before running the suite; fail fast with a clear
+    # message if the postgres binaries are unavailable.
+    - name: Verify Test::PostgreSQL can start
+      run: |
+        export PATH="$HOME/perl5/bin:$PATH"
+        carton exec perl -MTest::PostgreSQL -e 'my $pg = Test::PostgreSQL->new; print "Test::PostgreSQL OK: ", $pg->uri, "\n"'
+
+    # No STRIPE_SECRET_KEY: registration's free path stays in demo/decision-step
+    # mode and no Stripe calls are made.
+    - name: Run Playwright tests
+      env:
+        EMAIL_SENDER_TRANSPORT: Test
+      run: |
+        export PATH="$HOME/perl5/bin:$PATH"
+        npx playwright test --project=chromium --project=firefox
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 14
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-test-results
+        path: test-results/
+        retention-days: 14

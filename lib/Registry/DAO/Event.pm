@@ -289,6 +289,7 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
             SELECT
                 ev.id as event_id,
                 EXTRACT(EPOCH FROM ev.time)::bigint as start_time,
+                (EXTRACT(EPOCH FROM ev.time) + ev.duration * 60)::bigint as end_time,
                 s.name as session_name,
                 l.name as location_name,
                 l.address_info->>'address' as location_address,

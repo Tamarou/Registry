@@ -22,6 +22,35 @@ function seedAdminData(testDB) {
   return JSON.parse(output);
 }
 
+// Mint a fresh single-use magic link token for the given user.
+// Magic link tokens are single-use; call this right before each loginWithToken.
+// Perl sigils must be escaped with \\$ so the shell does not consume them.
+function freshToken(testDB, userId) {
+  const script = `
+    use lib qw(lib t/lib);
+    use Registry::DAO;
+    use Registry::DAO::MagicLinkToken;
+    my \\$dao = Registry::DAO->new(url => '${testDB.dbUrl}');
+    my \\$db  = \\$dao->db;
+    my (undef, \\$pt) = Registry::DAO::MagicLinkToken->generate(\\$db, {
+        user_id    => '${userId}',
+        purpose    => 'login',
+        expires_in => 24,
+    });
+    print \\$pt;
+  `;
+
+  const plaintext = execSync(
+    `carton exec perl -e "${script.trim().replace(/\n\s*/g, ' ')}"`,
+    { cwd: process.cwd(), encoding: 'utf8' }
+  ).trim();
+
+  if (!plaintext) {
+    throw new Error('freshToken: empty output from Perl helper');
+  }
+  return plaintext;
+}
+
 async function loginWithToken(page, token) {
   await page.goto(`/auth/magic/${token}`);
   await page.waitForSelector('button[type="submit"]');
@@ -39,23 +68,23 @@ test.describe('Jordan admin dashboard journey', () => {
     testData = seedAdminData(testDB);
   });
 
-  test('Jordan logs in via magic link', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.token);
+  test('Jordan logs in via magic link', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
     // Should redirect to home or dashboard after login
     await expect(registryPage).toHaveURL(/\//);
   });
 
-  test('Jordan navigates to admin dashboard', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.token);
+  test('Jordan navigates to admin dashboard', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
     await registryPage.goto('/admin/dashboard');
 
     // Dashboard renders with navigation
     await expect(registryPage.locator('nav.dashboard-nav')).toBeVisible();
-    await expect(registryPage.locator('text=Admin Dashboard')).toBeVisible();
+    await expect(registryPage).toHaveTitle(/Admin Dashboard/);
   });
 
-  test('Jordan sees navigation with admin tools', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.token);
+  test('Jordan sees navigation with admin tools', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
     await registryPage.goto('/admin/dashboard');
 
     // Check nav links exist
@@ -66,8 +95,8 @@ test.describe('Jordan admin dashboard journey', () => {
     await expect(nav.locator('a[href="/teacher/"]')).toBeVisible();
   });
 
-  test('Jordan can navigate to program creation', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.token);
+  test('Jordan can navigate to program creation', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
     await registryPage.goto('/admin/dashboard');
 
     // Click program creation link
@@ -78,8 +107,8 @@ test.describe('Jordan admin dashboard journey', () => {
     await expect(registryPage).toHaveURL(/program-creation/);
   });
 
-  test('Jordan can navigate to template editor', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.token);
+  test('Jordan can navigate to template editor', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
     await registryPage.goto('/admin/dashboard');
 
     await registryPage.locator('nav.dashboard-nav a[href="/admin/templates"]').click();
@@ -88,8 +117,8 @@ test.describe('Jordan admin dashboard journey', () => {
     await expect(registryPage).toHaveURL(/admin\/templates/);
   });
 
-  test('Jordan can export enrollment data', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.token);
+  test('Jordan can export enrollment data', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
 
     // Request CSV export directly
     const response = await registryPage.request.get('/admin/dashboard/export?type=enrollments&format=csv');

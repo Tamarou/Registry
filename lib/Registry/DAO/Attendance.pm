@@ -201,8 +201,8 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
             SELECT
                 ar.id,
                 ar.status,
-                ar.marked_at,
-                ev.time as event_time,
+                EXTRACT(EPOCH FROM ar.marked_at)::bigint as marked_at,
+                EXTRACT(EPOCH FROM ev.time)::bigint as event_time,
                 s.name as session_name,
                 fm.child_name
             FROM attendance_records ar

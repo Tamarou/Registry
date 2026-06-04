@@ -108,6 +108,11 @@ sub check ($self, $key, $limit) {
 # Mojolicious before_dispatch hook handler.
 # Attach via: $app->hook(before_dispatch => \&Registry::Middleware::RateLimit::before_dispatch);
 sub before_dispatch ($class_or_self, $c) {
+    # Bypass entirely in E2E/test environments, where many requests share one
+    # client IP against a single long-lived app instance and would otherwise trip
+    # the per-IP limit. Production never sets this, so limiting stays on there.
+    return if $ENV{REGISTRY_RATE_LIMIT_DISABLED};
+
     my $path = $c->req->url->path->to_string;
 
     return if $class_or_self->_is_excluded($path);

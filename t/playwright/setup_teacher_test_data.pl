@@ -26,7 +26,7 @@ my $db_url = $ENV{DB_URL}
 my $dao = Registry::DAO->new(url => $db_url);
 my $db  = $dao->db;
 
-my $ts = time();
+my $ts = time() . '_' . $$;
 
 # Teacher user
 my $teacher = Registry::DAO::User->create($db, {
@@ -44,21 +44,21 @@ my (undef, $teacher_token) = Registry::DAO::MagicLinkToken->generate($db, {
 
 # Location, program, session with today's event
 my $loc = Registry::DAO::Location->create($db, {
-    name         => 'Art Studio',
+    name         => "Art Studio $ts",
     slug         => "art-studio-$ts",
     address_info => { street => '200 Creative Way', city => 'Orlando', state => 'FL' },
     metadata     => {},
 });
 
 my $prog = Registry::DAO::Project->create($db, {
-    name              => 'Painting Basics',
+    name              => "Painting Basics $ts",
     program_type_slug => 'afterschool',
     metadata          => {},
 });
 
 my $today = DateTime->now->ymd;
 my $sess = Registry::DAO::Session->create($db, {
-    name       => "Today's Painting Class",
+    name       => "Today's Painting Class $ts",
     start_date => $today,
     end_date   => $today,
     status     => 'published',
@@ -108,11 +108,15 @@ for my $name (@student_names) {
     });
 }
 
+# attendance_records.student_id references users, so the mark-attendance API
+# test must use user IDs.  Return the parent user's ID (a valid users.id)
+# alongside the family_member IDs so the spec can choose the right one.
 print encode_json({
-    teacher_token => $teacher_token,
-    teacher_id    => $teacher->id,
-    event_id      => $evt->id,
-    session_id    => $sess->id,
-    student_ids   => \@student_ids,
+    teacher_token    => $teacher_token,
+    teacher_id       => $teacher->id,
+    event_id         => $evt->id,
+    session_id       => $sess->id,
+    student_ids      => \@student_ids,
+    parent_user_id   => $parent->id,
 });
 print "\n";

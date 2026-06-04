@@ -25,3 +25,12 @@ $XDG_CACHE_HOME/
 paad/
 
 # Force CI refresh
+
+# Playwright shared DB dotfiles (written by global-setup.js, cleaned by global-teardown.js)
+t/playwright/.shared-db-*
+
+# stray smoke-test artifact
+/smoke-test.png
+
+# stale pixel-snapshot baselines (pixel snapshots dropped)
+t/playwright/*-snapshots/
