@@ -45,11 +45,18 @@ prose route lists.
 - **Publishing is an API POST, not a UI button**: `POST /admin/programs/:id/status`
   and `POST /admin/sessions/:id/status` (`lib/Registry.pm:599,602`); a program must
   be published before its session. Tests drive these via `page.request.post(...)`.
-- **Free registration uses demo mode**: `Payment.pm:31` creates enrollments directly
-  when `agreeTerms` is set **and `STRIPE_SECRET_KEY` is absent**; otherwise
-  (`Payment.pm:36`) it calls Stripe regardless of total. There is no `total == 0`
-  short-circuit. Therefore the free path works in CI **iff the Playwright job has no
-  `STRIPE_SECRET_KEY` set**. No `Payment.pm` change is required for the gate.
+- **Decision steps are custom step classes, not declarative if/else.** A step's
+  `process()` can return `next_step => '<slug>'` to branch, overriding the default
+  linear `depends_on` chain (see `Registry::DAO::WorkflowSteps::AdminDropDecision`
+  returning `next_step => 'process-decision'`; routing handled in
+  `WorkflowRun.pm`). This is the idiomatic way to make payment optional.
+- **Payment is currently env-coupled, which is the smell we fix.** `Payment.pm:31`
+  creates enrollments directly when `agreeTerms` is set **and `STRIPE_SECRET_KEY` is
+  absent**; otherwise (`Payment.pm:36`) it calls Stripe regardless of total. That
+  conflates "does this program require payment?" (a pricing/workflow concern) with
+  "is Stripe configured?" (an environment concern). The design replaces this with a
+  decision step (below); `STRIPE_SECRET_KEY` then means only "is Stripe reachable
+  (test vs live)," never "is payment required."
 - `db_manager.pl` imports only `tenant-signup.yml`; a full `workflow import` is
   required for any other workflow to resolve.
 
@@ -155,13 +162,14 @@ storefront (both program and session `status='published'`, future end date).
 
 ### Leg 2 — Nancy registers a child (free path)
 
-`summer-camp-registration`: landing -> account-check (create account, magic link) ->
+Registration workflow: landing -> account-check (create account, magic link) ->
 select-children (**verify the HTMX add-a-child path is handled by the workflow
 controller** — a Phase 1 prerequisite check) -> camper-info -> session-selection
-(Morgan's published session) -> payment (`agreeTerms`, **no `STRIPE_SECRET_KEY` ->
-demo enrollment, no Stripe**) -> complete. Assert an `enrollments` row,
-`status='active'`, linking the child to Morgan's session; confirmation notification
-queued.
+(Morgan's published session) -> **payment-required decision step** -> [free path]
+complete. Because Morgan's session is priced at $0, the decision step routes around
+`payment` to a free-enrollment/`complete` path (no Stripe). Assert an `enrollments`
+row, `status='active'`, linking the child to Morgan's session; confirmation
+notification queued.
 
 ### Leg 3 — Amara runs the session (attendance)
 
@@ -181,8 +189,16 @@ attendance(event_id, student=child, marked_by=Amara)
 
 ### Phase 2 prerequisites (verify/fix before the journey can pass)
 
-1. **No Stripe key in the Playwright CI job** (demo path). Confirmed sufficient by
-   `Payment.pm:31`; no code change required for the gate.
+1. **Payment-required decision step (small app change, TDD).** Add a custom decision
+   step class before `payment` in the registration workflow that computes the
+   enrollment total (`Registry::DAO::Payment->calculate_enrollment_total`) and
+   returns `next_step => 'payment'` when total > 0, or routes to a free-enrollment
+   path (creates the enrollment, no charge) when total == 0. Wire it into the
+   registration workflow YAML. This decouples payment from `STRIPE_SECRET_KEY`; the
+   env var no longer decides whether payment happens. The legacy
+   `!$ENV{STRIPE_SECRET_KEY}` branch in `Payment.pm:31` becomes dead for this path
+   and should be removed as cleanup. `STRIPE_SECRET_KEY` continues to select Stripe
+   test-vs-live only.
 2. **HTMX add-a-child** (`SelectChildren.pm` returns `htmx_response => 1`): confirm
    `Registry::Controller::Workflows` handles that response so a child added inline
    actually appears. If not, use the full-page path or fix the controller. Verify
@@ -196,7 +212,8 @@ attendance(event_id, student=child, marked_by=Amara)
 
 - The three-leg journey passes in CI on the shared harness.
 - Asserted DB state proves the Morgan -> Nancy -> Amara linkage.
-- No Stripe interaction on the free path.
+- The free path is taken because the decision step sees a $0 total (pricing-driven),
+  not because of any `STRIPE_SECRET_KEY` setting; no Stripe interaction occurs.
 
 ---
 
@@ -210,8 +227,8 @@ Tracked as its own design doc, not implemented here.
   (test mode, `4242`, redirect + webhook); assert paid enrollment + confirmation
   email. **Hard dependencies not present today**: Stripe test-mode keys in CI and a
   webhook-delivery mechanism (Stripe CLI forwarding or a stubbed webhook endpoint).
-  If a genuine `total == 0` skip with a live key is wanted, that is a real
-  `Payment.pm` change scoped here.
+  (The $0-vs-paid decision is already handled by the Phase 2 decision step, so the
+  paid variant only adds the Stripe-charge branch and its assertions.)
 
 ## Risks
 
