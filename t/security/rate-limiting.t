@@ -39,6 +39,20 @@ subtest 'Auth endpoint rate limiting' => sub {
       ->header_like('Retry-After', qr/^\d+$/, '429 response includes Retry-After header');
 };
 
+subtest 'Rate limiting is bypassed when REGISTRY_RATE_LIMIT_DISABLED is set' => sub {
+    # E2E/Playwright runs use one long-lived app instance and one client IP, so
+    # the per-IP auth limit would trip across tests. The harness sets this env to
+    # disable rate limiting. Production never sets it, so limiting stays on there.
+    local $ENV{REGISTRY_RATE_LIMIT_DISABLED} = 1;
+    my $t  = Test::Mojo->new('Registry');
+    my $ip = '10.0.0.99';
+
+    for my $i ( 1 .. 15 ) {
+        $t->get_ok( '/login', { 'X-Forwarded-For' => $ip } )
+          ->status_isnt( 429, "Request $i not rate-limited when disabled" );
+    }
+};
+
 subtest 'Webhook endpoints are excluded from rate limiting' => sub {
     my $t = Test::Mojo->new('Registry');
 
