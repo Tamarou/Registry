@@ -31,3 +31,6 @@ t/playwright/.shared-db-*
 
 # stray smoke-test artifact
 /smoke-test.png
+
+# stale pixel-snapshot baselines (pixel snapshots dropped)
+t/playwright/*-snapshots/
