@@ -5,7 +5,7 @@ const { test, expect } = require('./fixtures/base');
 
 test.describe('Component Integration Tests', () => {
   test('workflow-progress component renders and functions correctly', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     const progressComponent = registryPage.locator('workflow-progress');
     await expect(progressComponent).toBeAttached();
@@ -26,7 +26,7 @@ test.describe('Component Integration Tests', () => {
   });
 
   test('HTMX form submissions work correctly in workflows', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Look for HTMX-enabled forms
     const htmxForm = registryPage.locator('form[hx-post], form[hx-get]');
@@ -65,7 +65,7 @@ test.describe('Component Integration Tests', () => {
   });
 
   test('workflow step navigation preserves layout', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Take screenshot of initial step
     await expect(registryPage).toHaveScreenshot('step-initial.png');
@@ -100,7 +100,7 @@ test.describe('Component Integration Tests', () => {
   });
 
   test('error states display correctly in workflow context', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Try to trigger validation errors by submitting empty required forms
     const forms = registryPage.locator('form');
@@ -131,7 +131,7 @@ test.describe('Component Integration Tests', () => {
   });
 
   test('loading states work correctly during HTMX requests', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Look for elements that might show loading states
     const loadingElements = registryPage.locator('[hx-indicator], .loading, .spinner');
@@ -165,7 +165,7 @@ test.describe('Component Integration Tests', () => {
   });
 
   test('accessibility features work in workflow layouts', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Check basic accessibility attributes
     const hasSkipLink = await registryPage.locator('a[href*="#main"], a[href*="#content"]').count() > 0;

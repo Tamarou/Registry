@@ -6,7 +6,7 @@ const { test, expect } = require('./fixtures/base');
 test.describe('Workflow Layout Visual Tests', () => {
   test('workflow pages render with complete HTML structure', async ({ registryPage }) => {
     // Navigate to tenant signup workflow (matches the Issue #60 scenario)
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Verify complete HTML structure (would have failed before Issue #60 fix)
     await registryPage.expectWorkflowLayout();
@@ -16,7 +16,7 @@ test.describe('Workflow Layout Visual Tests', () => {
   });
 
   test('UTF-8 and emoji rendering works correctly', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Check that emojis render properly (Issue #60 specific problem)
     await registryPage.expectUTF8Rendering();
@@ -31,7 +31,7 @@ test.describe('Workflow Layout Visual Tests', () => {
   });
 
   test('workflow progress indicator displays correctly', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Check that workflow progress component is present and functional
     const progressComponent = registryPage.locator('workflow-progress');
@@ -47,7 +47,7 @@ test.describe('Workflow Layout Visual Tests', () => {
   });
 
   test('CSS styling loads and applies correctly', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Wait for CSS to load
     await registryPage.waitForLoadState('networkidle');
@@ -64,7 +64,7 @@ test.describe('Workflow Layout Visual Tests', () => {
   });
 
   test('HTMX interactions work in workflow context', async ({ registryPage }) => {
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Look for any HTMX-enabled forms or buttons
     const htmxElements = registryPage.locator('[hx-get], [hx-post], [hx-target]');
@@ -85,7 +85,7 @@ test.describe('Workflow Layout Visual Tests', () => {
   test('mobile responsive layout works correctly', async ({ registryPage }) => {
     // Set mobile viewport
     await registryPage.setViewportSize({ width: 375, height: 667 });
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Verify layout adapts to mobile
     await registryPage.expectWorkflowLayout();
@@ -100,7 +100,7 @@ test.describe('Workflow Layout Visual Tests', () => {
 
   test('workflow navigation between steps works visually', async ({ registryPage }) => {
     // Start workflow
-    await registryPage.goto('/workflow/tenant-signup');
+    await registryPage.goto('/tenant-signup');
 
     // Take screenshot of initial state
     await expect(registryPage).toHaveScreenshot('workflow-step-1.png');
