@@ -30,22 +30,20 @@ function seedDomainTestData(testDB, role = 'admin') {
 
 // ---------------------------------------------------------------------------
 // Helper: authenticate via magic link and navigate to /admin/domains.
-// The Host header is set to test_domain_tenant.localhost so the application
-// resolves the correct tenant via subdomain detection.
+// Uses the unique tenant slug returned by the seed script so each test
+// operates on a fresh, domain-free tenant and they do not share domain state.
 // ---------------------------------------------------------------------------
 async function loginAndGoToDomains(page, testDB, role = 'admin') {
   const data = seedDomainTestData(testDB, role);
 
-  // Two-phase magic link: authenticate against the registry (default) tenant
-  // where the users and tokens live, then switch to the test tenant for
-  // domain management pages.
+  // Authenticate via magic link (token is always fresh from the seed script)
   await page.goto(`/auth/magic/${data.token}`);
   await page.waitForSelector('button[type="submit"]');
   await page.click('button[type="submit"]');
   await page.waitForLoadState('networkidle');
 
-  // Now set the tenant header for domain management pages
-  await page.setExtraHTTPHeaders({ 'X-As-Tenant': 'registry' });
+  // Switch to the unique per-call tenant for domain management
+  await page.setExtraHTTPHeaders({ 'X-As-Tenant': data.tenant_slug });
   await page.goto('/admin/domains');
   await page.waitForLoadState('networkidle');
 
@@ -58,8 +56,8 @@ async function loginAndGoToDomains(page, testDB, role = 'admin') {
 test.describe('Access control', () => {
   test('unauthenticated request redirects to login', async ({ registryPage, testDB }) => {
     // Seed tenant so the app can resolve it, but do not authenticate.
-    seedDomainTestData(testDB, 'admin');
-    await registryPage.setExtraHTTPHeaders({ 'X-As-Tenant': 'test_domain_tenant' });
+    const data = seedDomainTestData(testDB, 'admin');
+    await registryPage.setExtraHTTPHeaders({ 'X-As-Tenant': data.tenant_slug });
 
     const response = await registryPage.goto('/admin/domains');
     await registryPage.waitForLoadState('networkidle');
@@ -286,13 +284,12 @@ test.describe('Validation errors', () => {
       return input ? input.value : '';
     });
 
-    const serverUrl = registryPage.serverUrl;
     const status = await registryPage.evaluate(
-      async ({ serverUrl, csrf }) => {
+      async ({ csrf }) => {
         const fd = new FormData();
         fd.append('domain', '');
         fd.append('csrf_token', csrf);
-        const resp = await fetch(serverUrl + '/admin/domains', {
+        const resp = await fetch('/admin/domains', {
           method: 'POST',
           body: fd,
           credentials: 'include',
@@ -300,7 +297,7 @@ test.describe('Validation errors', () => {
         });
         return resp.status;
       },
-      { serverUrl, csrf }
+      { csrf }
     );
 
     // 422 Unprocessable Entity for validation failure

@@ -32,21 +32,25 @@ my $dao = Registry::DAO->new(url => $db_url);
 my $db  = $dao->db;
 
 # ---------------------------------------------------------------------------
-# Tenant: test_domain_tenant
+# Tenant: unique per invocation so each test starts with a fresh, domain-free
+# tenant.  clone_schema provisions the full DB schema for the new tenant slug.
 # ---------------------------------------------------------------------------
-my $tenant_slug = 'test_domain_tenant';
+my $ts = time() . '_' . $$;
+my $tenant_slug = "dt_$ts";  # short prefix; PostgreSQL schema names have limits
 my $tenant = Registry::DAO::Tenant->find($db, { slug => $tenant_slug });
 unless ($tenant) {
     $tenant = Registry::DAO::Tenant->create($db, {
-        name => 'Test Domain Tenant',
+        name => "Domain Test $ts",
         slug => $tenant_slug,
     });
+    # Provision the full schema so the app can resolve current_user inside it.
+    $db->query('SELECT clone_schema(?)', $tenant_slug);
+    # copy_user is called after users are created (see below)
 }
 
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
-my $ts = time();
 
 # Admin user — always created so the spec can switch between roles
 my $admin_email    = "domain_admin_${ts}\@example.com";
@@ -100,6 +104,11 @@ unless ($existing_staff_link) {
         is_primary => 0,
     });
 }
+
+# Copy both users into the tenant schema so the app can resolve current_user
+# when requests arrive with X-As-Tenant pointing at this tenant's schema.
+$db->query('SELECT copy_user(?, ?)', $tenant_slug, $admin_user->id);
+$db->query('SELECT copy_user(?, ?)', $tenant_slug, $staff_user->id);
 
 # ---------------------------------------------------------------------------
 # Magic link token for the requested role

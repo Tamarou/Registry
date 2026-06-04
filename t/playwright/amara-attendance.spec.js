@@ -22,6 +22,35 @@ function seedTeacherData(testDB) {
   return JSON.parse(output);
 }
 
+// Mint a fresh single-use magic link token for the given user.
+// Magic link tokens are single-use; call this right before each loginWithToken.
+// Perl sigils must be escaped with \\$ so the shell does not consume them.
+function freshToken(testDB, userId) {
+  const script = `
+    use lib qw(lib t/lib);
+    use Registry::DAO;
+    use Registry::DAO::MagicLinkToken;
+    my \\$dao = Registry::DAO->new(url => '${testDB.dbUrl}');
+    my \\$db  = \\$dao->db;
+    my (undef, \\$pt) = Registry::DAO::MagicLinkToken->generate(\\$db, {
+        user_id    => '${userId}',
+        purpose    => 'login',
+        expires_in => 24,
+    });
+    print \\$pt;
+  `;
+
+  const plaintext = execSync(
+    `carton exec perl -e "${script.trim().replace(/\n\s*/g, ' ')}"`,
+    { cwd: process.cwd(), encoding: 'utf8' }
+  ).trim();
+
+  if (!plaintext) {
+    throw new Error('freshToken: empty output from Perl helper');
+  }
+  return plaintext;
+}
+
 async function loginWithToken(page, token) {
   await page.goto(`/auth/magic/${token}`);
   await page.waitForSelector('button[type="submit"]');
@@ -39,22 +68,22 @@ test.describe('Amara teacher attendance journey', () => {
     testData = seedTeacherData(testDB);
   });
 
-  test('Amara logs in via magic link', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.teacher_token);
+  test('Amara logs in via magic link', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
     await expect(registryPage).toHaveURL(/\//);
   });
 
-  test('Amara sees the teacher dashboard', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.teacher_token);
+  test('Amara sees the teacher dashboard', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
     await registryPage.goto('/teacher/');
 
-    // Dashboard renders with navigation
+    // Dashboard renders with navigation and teacher-specific content
     await expect(registryPage.locator('nav.dashboard-nav')).toBeVisible();
-    await expect(registryPage.locator('text=Teacher Dashboard')).toBeVisible();
+    await expect(registryPage).toHaveTitle(/Teacher Dashboard/);
   });
 
-  test('Amara sees navigation with staff links', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.teacher_token);
+  test('Amara sees navigation with staff links', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
     await registryPage.goto('/teacher/');
 
     const nav = registryPage.locator('nav.dashboard-nav');
@@ -65,15 +94,15 @@ test.describe('Amara teacher attendance journey', () => {
     await expect(nav.locator('a[href="/admin/domains"]')).toHaveCount(0);
   });
 
-  test('Amara can view attendance page for her event', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.teacher_token);
+  test('Amara can view attendance page for her event', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
     await registryPage.goto(`/teacher/attendance/${testData.event_id}`);
 
-    await expect(registryPage.locator('text=Attendance')).toBeVisible();
+    await expect(registryPage).toHaveTitle(/Take Attendance/);
   });
 
-  test('Amara can navigate from dashboard to attendance', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.teacher_token);
+  test('Amara can navigate from dashboard to attendance', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
     await registryPage.goto('/teacher/');
 
     // Find an attendance link (if today's events are shown)
@@ -90,18 +119,19 @@ test.describe('Amara teacher attendance journey', () => {
     }
   });
 
-  test('Amara can mark attendance via the API', async ({ registryPage }) => {
-    await loginWithToken(registryPage, testData.teacher_token);
+  test('Amara can mark attendance via the API', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
 
     // Get CSRF token from a page load
     await registryPage.goto('/teacher/');
     const csrfToken = await registryPage.locator('meta[name="csrf-token"]').getAttribute('content');
 
-    // POST attendance data -- controller expects flat { student_id: status } hash
-    const attendanceData = {};
-    testData.student_ids.forEach((id, i) => {
-      attendanceData[id] = i === 0 ? 'present' : 'absent';
-    });
+    // POST attendance data -- controller expects flat { student_id: status } hash.
+    // attendance_records.student_id has a FK to users, so we use parent_user_id
+    // (a real users.id) rather than family_member IDs from student_ids.
+    const attendanceData = {
+      [testData.parent_user_id]: 'present',
+    };
 
     const response = await registryPage.request.post(
       `/teacher/attendance/${testData.event_id}`,

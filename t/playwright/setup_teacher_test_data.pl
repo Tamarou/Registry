@@ -108,11 +108,15 @@ for my $name (@student_names) {
     });
 }
 
+# attendance_records.student_id references users, so the mark-attendance API
+# test must use user IDs.  Return the parent user's ID (a valid users.id)
+# alongside the family_member IDs so the spec can choose the right one.
 print encode_json({
-    teacher_token => $teacher_token,
-    teacher_id    => $teacher->id,
-    event_id      => $evt->id,
-    session_id    => $sess->id,
-    student_ids   => \@student_ids,
+    teacher_token    => $teacher_token,
+    teacher_id       => $teacher->id,
+    event_id         => $evt->id,
+    session_id       => $sess->id,
+    student_ids      => \@student_ids,
+    parent_user_id   => $parent->id,
 });
 print "\n";
