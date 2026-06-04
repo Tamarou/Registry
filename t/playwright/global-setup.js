@@ -36,6 +36,7 @@ module.exports = async () => {
   const db = spawn('carton', ['exec', 'perl', 't/playwright/shared_db.pl'], {
     cwd: process.cwd(),
     stdio: ['pipe', 'pipe', 'inherit'],
+    detached: true, // own process group so teardown can group-kill grandchildren
   });
   const info = await new Promise((resolve, reject) => {
     let buf = '';
@@ -52,6 +53,9 @@ module.exports = async () => {
   });
   fs.writeFileSync(URL_FILE, info.url);
 
+  // Helper to SIGTERM a process group (negative pid) and ignore if already gone.
+  const killGroup = (pid) => { try { process.kill(-pid, 'SIGTERM'); } catch (e) {} };
+
   // 2) Start the server against that DB. Use `daemon` (single process, no file
   // watching) rather than morbo so writes during the run (traces, videos, the
   // .shared-db-* dotfiles) cannot trigger a mid-test app restart.
@@ -66,13 +70,26 @@ module.exports = async () => {
       REGISTRY_RATE_LIMIT_DISABLED: '1',
     },
     stdio: ['ignore', 'inherit', 'inherit'],
+    detached: true, // own process group so teardown can group-kill grandchildren
   });
 
-  // 3) Wait until it serves /health.
-  await waitForHealth(120000);
+  // 3) Wait until it serves /health. If the server fails to boot, globalTeardown
+  // will NOT run (Playwright only tears down after a successful setup), so we must
+  // clean up both children here before rethrowing -- otherwise we leak Postgres.
+  try {
+    await new Promise((resolve, reject) => {
+      server.on('error', reject); // spawn failure (e.g. binary missing) -> fail fast
+      waitForHealth(120000).then(resolve, reject);
+    });
+  } catch (e) {
+    killGroup(server.pid);
+    killGroup(db.pid);
+    throw e;
+  }
 
-  // carton exec's into the target, so db.pid is the perl process and server.pid
-  // is morbo -- SIGTERM to each (in teardown) is sufficient.
+  // db.pid / server.pid are the process-group leaders (detached spawns); teardown
+  // group-kills them so the underlying perl/daemon (grandchildren of carton exec)
+  // are reached regardless of whether carton execs or forks.
   fs.writeFileSync(PID_FILE, JSON.stringify({ db: db.pid, server: server.pid }));
   db.unref();
   server.unref();

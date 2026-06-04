@@ -144,7 +144,9 @@ test.describe('Amara teacher attendance journey', () => {
       }
     );
 
-    // Attendance marking should succeed
-    expect([200, 201, 302]).toContain(response.status());
+    // Attendance marking should genuinely succeed -- 200/201, NOT a 3xx redirect
+    // (a redirect would mean an auth/session failure that we must catch, not pass).
+    expect(response.ok()).toBeTruthy();
+    expect([200, 201]).toContain(response.status());
   });
 });
