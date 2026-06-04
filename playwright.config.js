@@ -5,20 +5,29 @@ const { defineConfig, devices } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './t/playwright',
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
   reporter: [
     ['html'],
     ['junit', { outputFile: 'test-results/junit.xml' }],
     ['list']
   ],
+  globalSetup: require.resolve('./t/playwright/global-setup.js'),
+  globalTeardown: require.resolve('./t/playwright/global-teardown.js'),
   use: {
-    baseURL: 'http://localhost:3001',
+    baseURL: 'http://127.0.0.1:3001',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+  },
+
+  webServer: {
+    command: 'bash t/playwright/start-test-server.sh',
+    url: 'http://127.0.0.1:3001/health',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120 * 1000,
   },
 
   projects: [
@@ -39,28 +48,5 @@ module.exports = defineConfig({
         baseURL: process.env.DEPLOY_VALIDATION_URL || 'https://tinyartempire.com',
       },
     },
-
-    // Commented out webkit and mobile browsers to avoid missing system dependencies
-    // These can be re-enabled once proper browser dependencies are installed
-    // {
-    //   name: 'webkit',
-    //   use: { ...devices['Desktop Safari'] },
-    // },
-    // {
-    //   name: 'mobile-chrome',
-    //   use: { ...devices['Pixel 5'] },
-    // },
-    // {
-    //   name: 'mobile-safari',
-    //   use: { ...devices['iPhone 12'] },
-    // },
   ],
-
-  // webServer configuration disabled for now - tests will manage their own database setup
-  // webServer: {
-  //   command: 'make dev-server',
-  //   port: 3001,
-  //   reuseExistingServer: true,
-  //   timeout: 120 * 1000,
-  // },
 });
