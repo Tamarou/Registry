@@ -53,6 +53,7 @@
 use 5.42.0;
 use strict;
 use warnings;
+use FindBin ();
 use lib qw(lib t/lib);
 use Test::Registry::DB;
 use JSON::PP;
@@ -60,15 +61,23 @@ use IO::Handle;
 
 STDOUT->autoflush(1);
 
-# Build the DB (schema is loaded from sql/test-schema.sql by Test::Registry::DB).
-# Suppress the loader's chatter so STDOUT carries only our JSON line.
+# Anchor to repo root so ./registry and workflows/ resolve no matter the cwd.
+chdir "$FindBin::RealBin/../.." or die "chdir repo root: $!";
+
+# Build the DB. Test::Registry::DB loads the schema from sql/test-schema.sql and
+# sets $ENV{DB_URL} to this DB -- which the CLI imports below inherit.
+# Suppress the loader/import chatter so STDOUT carries only our JSON line.
 open my $orig, '>&', STDOUT or die $!;
 open STDOUT, '>', '/dev/null' or die $!;
-my $db  = Test::Registry::DB->new;
-my $dao = $db->db;
-# Import every workflow and template, exactly as production boot does.
-$dao->import_workflows( [ glob('workflows/*.yml workflows/*.yaml') ] );
-$dao->import_templates if $dao->can('import_templates');
+my $db = Test::Registry::DB->new;
+
+# Import all workflows AND templates exactly as production boot does. Templates
+# live on the app (Registry::import_templates at lib/Registry.pm:694), not the
+# DAO, so drive both through the CLI under the same perl/@INC.
+for my $kind (qw(workflow template)) {
+    system( $^X, '-Ilib', './registry', $kind, 'import', 'registry' ) == 0
+        or warn "$kind import failed (\$?=$?)\n";
+}
 open STDOUT, '>&', $orig or die $!;
 
 print JSON::PP->new->encode({ url => $db->uri, pid => $$, status => 'ready' }), "\n";
@@ -81,15 +90,10 @@ while ( my $line = <STDIN> ) {
 # Test::PostgreSQL tears down on exit.
 ```
 
-- [ ] **Step 2: Verify it boots and reports a URL**
+- [ ] **Step 2: Verify it boots, imports, and reports a URL**
 
 Run: `cd /home/perigrin/dev/Registry && echo SHUTDOWN | carton exec perl t/playwright/shared_db.pl`
-Expected: a single JSON line like `{"url":"postgresql://...","pid":12345,"status":"ready"}`, then clean exit.
-
-> Note: `import_workflows`/`import_templates` are the real DAO entry points; if the
-> exact method names differ, fall back to shelling `DB_URL=<url> carton exec
-> ./registry workflow import registry` and `template import registry`. Confirm
-> against `lib/Registry/DAO.pm` and `bin`/`registry` before settling.
+Expected: a single JSON line like `{"url":"postgresql://...","pid":12345,"status":"ready"}`, then clean exit. (Verified: `import_workflows` exists on both `Registry::DAO:107` and `Registry:673`; `import_templates` only on `Registry:694` — hence the CLI for both.)
 
 - [ ] **Step 3: Commit**
 
@@ -123,9 +127,9 @@ module.exports = async () => {
     cwd: process.cwd(),
     stdio: ['pipe', 'pipe', 'inherit'],
   });
-  // Keep the helper alive past setup; detach our handles after capturing the URL.
-  proc.unref();
 
+  // Do NOT unref() before the JSON arrives -- the event loop must stay alive to
+  // receive stdout. unref() only after we have the URL.
   const info = await new Promise((resolve, reject) => {
     let buf = '';
     const timer = setTimeout(() => reject(new Error('shared_db.pl timeout')), 120000);
@@ -142,8 +146,11 @@ module.exports = async () => {
   });
 
   fs.writeFileSync(URL_FILE, info.url);
-  fs.writeFileSync(PID_FILE, String(info.pid));
-  console.log(`[playwright] shared DB ready (pid ${info.pid})`);
+  // Record BOTH pids: the inner perl ($$, for a clean Test::PostgreSQL teardown)
+  // and the carton wrapper (proc.pid). Teardown kills both.
+  fs.writeFileSync(PID_FILE, JSON.stringify({ perl: info.pid, carton: proc.pid }));
+  proc.unref();
+  console.log(`[playwright] shared DB ready (perl ${info.pid}, carton ${proc.pid})`);
 };
 ```
 
@@ -160,8 +167,9 @@ const PID_FILE = path.join(DIR, '.shared-db-pid');
 
 module.exports = async () => {
   try {
-    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8'), 10);
-    process.kill(pid, 'SIGTERM'); // triggers Test::PostgreSQL cleanup
+    const { perl, carton } = JSON.parse(fs.readFileSync(PID_FILE, 'utf8'));
+    try { process.kill(perl, 'SIGTERM'); } catch (e) {}   // clean Test::PostgreSQL teardown
+    try { process.kill(carton, 'SIGTERM'); } catch (e) {} // reap the wrapper
   } catch (e) { /* already gone */ }
   for (const f of [URL_FILE, PID_FILE]) { try { fs.unlinkSync(f); } catch (e) {} }
 };
@@ -182,10 +190,14 @@ exec carton exec morbo ./registry -l http://127.0.0.1:3001
 
 Then: `chmod +x t/playwright/start-test-server.sh`
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Ignore the runtime dotfiles**
+
+Append to `.gitignore`: `t/playwright/.shared-db-*`
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add t/playwright/global-setup.js t/playwright/global-teardown.js t/playwright/start-test-server.sh
+git add t/playwright/global-setup.js t/playwright/global-teardown.js t/playwright/start-test-server.sh .gitignore
 git commit -m "Add Playwright global setup/teardown and shared server wrapper"
 ```
 
@@ -272,6 +284,14 @@ const test = base.test.extend({
       await base.expect(page.locator('head meta[charset]')).toBeAttached();
       await base.expect(page.locator('script[src*="htmx"]')).toBeAttached();
     };
+    // Kept because workflow-layout-visual.spec.js:22 and all-workflows-visual.spec.js:32
+    // call it. Port the existing implementation verbatim from the old base.js.
+    page.expectUTF8Rendering = async () => {
+      const emojis = await page.locator(
+        'text=/[\\u{1F600}-\\u{1F64F}]|[\\u{1F300}-\\u{1F5FF}]|[\\u{1F680}-\\u{1F6FF}]|[\\u{1F1E0}-\\u{1F1FF}]/u'
+      ).all();
+      for (const e of emojis) { await base.expect(e).toBeVisible(); }
+    };
     page.expectHTMXResponse = async (trigger, expected) => {
       await page.locator(trigger).click();
       await base.expect(page.locator(expected)).toBeVisible({ timeout: 5000 });
@@ -283,9 +303,12 @@ const test = base.test.extend({
 module.exports = { test, expect: base.expect };
 ```
 
-> Confirm the exact workflow URL shape (`/:slug` vs `/:slug/:run/:step`) against
-> `lib/Registry.pm:661` and `Registry::Controller::Workflows` before finalizing
-> `workflowUrl`/`workflowRunStepUrl`.
+> Verified: no spec currently calls `workflowUrl`/`workflowRunStepUrl` (only
+> `expectUTF8Rendering`), so changing their shape from `/workflow/:slug` to `/:slug`
+> is low risk. Still, before committing, run
+> `grep -rn "workflowUrl\|workflowRunStepUrl" t/playwright/*.spec.js` and confirm
+> the result is empty (or update any inline callers to the `/:workflow` form per
+> `lib/Registry.pm:661`).
 
 - [ ] **Step 2: Commit**
 
@@ -300,11 +323,13 @@ git commit -m "Slim Playwright fixtures to the shared-server model"
 
 **Files:** none (verification)
 
-- [ ] **Step 1: Run the smoke test**
+- [ ] **Step 1: Run the smoke test and auth-journeys**
 
-Run: `cd /home/perigrin/dev/Registry && npx playwright test smoke-test.spec.js --workers=1 --project=chromium`
+Run: `cd /home/perigrin/dev/Registry && npx playwright test smoke-test auth-journeys --workers=1 --project=chromium`
 Expected: PASS. The run should start ONE server + ONE DB (see the
-`[playwright] shared DB ready` line), not one per test.
+`[playwright] shared DB ready` line), not one per test. (`auth-journeys` is included
+because it passes `testDB.dbUrl` to an inline Perl seeder, exercising that the shared
+DB URL is propagated correctly — a defect the bare smoke test would not catch.)
 
 - [ ] **Step 2: If it fails**, debug the harness wiring (globalSetup URL handoff,
   server wrapper port, `/health` readiness) before proceeding. Do not migrate specs
@@ -343,15 +368,24 @@ git commit -am "Adjust robust specs for the shared-server fixtures"
 
 - [ ] **Step 1:** Replace the slug list `['tenant-signup','session-creation','user-registration','event-creation','payment-processing']` with slugs that exist (`tenant-signup`, `session-creation`, `event-creation`, `user-creation`) and change navigation from `/workflow/${slug}` to `/${slug}` (the `any('/:workflow')` route). If a workflow needs prior data to render, either seed it in `shared_db.pl` or drop it from the list.
 
-- [ ] **Step 2: Run**
+- [ ] **Step 2: Generate snapshot baselines (first run only)**
+
+Any `toHaveScreenshot` assertions have no committed baseline (the old random-port
+fixtures never produced stable ones), so the first run must create them:
+Run: `npx playwright test all-workflows-visual workflow-layout-visual --workers=1 --project=chromium --update-snapshots`
+Then commit the generated `*-snapshots/` directories. (Decide with the team whether
+pixel snapshots are wanted at all; if not, replace `toHaveScreenshot` with
+structural assertions and skip baselines.)
+
+- [ ] **Step 3: Run for real**
 
 Run: `npx playwright test all-workflows-visual --workers=1 --project=chromium`
-Expected: PASS (no 404s).
+Expected: PASS (no 404s, snapshots match).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git commit -am "Fix all-workflows-visual slugs and workflow URL prefix"
+git add -A && git commit -m "Fix all-workflows-visual slugs and workflow URL prefix; add snapshot baselines"
 ```
 
 ---
@@ -386,7 +420,10 @@ git commit -am "Make Playwright seed scripts emit run-unique data and today-date
 
 ## Task 9: Refactor the fragile specs for shared-DB safety
 
-Do these one spec at a time; run each with `--workers=1 --project=chromium` after.
+**Strictly one spec at a time** — for each bullet: edit the spec (and its seed
+script), run *only that spec* with `--workers=1 --project=chromium`, confirm green,
+then commit. Do not edit the next until the current is green, because these specs
+mutate shared-DB state and a half-finished one can corrupt state for the next.
 
 - [ ] **custom-domains**: replace hardcoded domain names with run-unique names; make
   remove/re-add self-contained; robust pre-test cleanup. Run; commit.
@@ -424,17 +461,23 @@ Expected: PASS for all non-`deploy-validation` specs on both browsers.
 - Create: `.github/workflows/playwright.yml` (from `.disabled`, rewritten)
 - Delete: `.github/workflows/playwright.yml.disabled`
 
+> Do **Task 12 (delete `db_manager.pl`) before this task** so the first CI run on the
+> new workflow sees no obsolete machinery.
+
 - [ ] **Step 1:** Write `.github/workflows/playwright.yml`:
   - Trigger: `pull_request` to `main` (and `push` to `main`).
-  - Steps: checkout; setup-perl 5.42; setup-node 18; install Perl deps (carton);
-    `npm install`; `npx playwright install --with-deps`; run
+  - Steps: checkout; `setup-perl` **5.42** (match the main CI job; confirm
+    `shogo82148/actions-setup-perl@v1` resolves 5.42 on `ubuntu-latest`);
+    `setup-node` 18; **`carton install --deployment` only** (do NOT also run
+    `cpanm --installdeps .` — it shadows carton's local::lib, a bug in the old
+    disabled file); `npm install`; `npx playwright install --with-deps`; run
     `npx playwright test --project=chromium --project=firefox`.
   - **No `STRIPE_SECRET_KEY`.** Set `EMAIL_SENDER_TRANSPORT=Test`.
-  - The shared DB is created by `globalSetup` (Test::PostgreSQL on the runner), so no
-    Postgres service container is needed; ensure the runner has Postgres server
-    binaries (GitHub `ubuntu-latest` provides them). If `Test::PostgreSQL` proves
-    unreliable on the runner, fall back to a `postgres:17` service container and have
-    `shared_db.pl` target it via `DB_URL`.
+  - The shared DB is created by `globalSetup` via `Test::PostgreSQL`. **No Postgres
+    service container is needed** and this is already proven: the main CI `test` job
+    runs `prove -lr t/`, which uses `Test::Registry::DB` -> `Test::PostgreSQL` on
+    `ubuntu-latest` and passes. If it ever regresses, fall back to a `postgres:17`
+    service container and point `shared_db.pl` at it via `DB_URL`.
   - Upload `playwright-report/` and `test-results/` on failure.
 
 - [ ] **Step 2:** `git rm .github/workflows/playwright.yml.disabled`.
