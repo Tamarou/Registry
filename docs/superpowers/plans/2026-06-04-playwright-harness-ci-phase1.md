@@ -271,8 +271,10 @@ const base = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
 
+// __dirname here is t/playwright/fixtures/; the dotfile is written by
+// global-setup.js to t/playwright/ (one level up).
 const dbUrl = () =>
-  fs.readFileSync(path.join(__dirname, '.shared-db-url'), 'utf8').trim();
+  fs.readFileSync(path.join(__dirname, '..', '.shared-db-url'), 'utf8').trim();
 
 const test = base.test.extend({
   testDB: async ({}, use) => { await use({ dbUrl: dbUrl() }); },
@@ -343,20 +345,29 @@ git commit -am "Fix shared-harness wiring so smoke test passes"
 
 ---
 
-## Task 6: Migrate the robust specs (no/low change)
+## Task 6: Migrate the robust specs (low change)
 
-**Files:** none expected (verification), small fixes if needed.
+**Files:**
+- Modify: `t/playwright/workflow-layout-visual.spec.js`, `t/playwright/component-integration.spec.js`
 
-- [ ] **Step 1: Run them serially**
+- [ ] **Step 1: Fix the `/workflow/` URL prefix.** Both of these specs hardcode
+  `goto('/workflow/tenant-signup')` (e.g. `workflow-layout-visual.spec.js` lines
+  9,19,34,50,67,88,103; `component-integration.spec.js` lines 8,29,68,103,134,168).
+  The real route is `any('/:workflow')` (`lib/Registry.pm:661`), so replace every
+  `/workflow/<slug>` with `/<slug>`. (`smoke-test`, `auth-journeys`,
+  `jordan-landing-journey` need no change.)
+
+- [ ] **Step 2: Run them serially**
 
 Run: `npx playwright test smoke-test auth-journeys workflow-layout-visual component-integration jordan-landing-journey --workers=1 --project=chromium`
-Expected: PASS. `auth-journeys` already uses timestamped emails; the visual specs
-are read-only. Fix any `page.goto` assumptions broken by removing the override.
+Expected: PASS. `auth-journeys` uses timestamped emails; the visual specs are
+read-only. For any `toHaveScreenshot` in these specs, generate baselines first with
+`--update-snapshots` (see Task 7 Step 2).
 
-- [ ] **Step 2: Commit any fixes**
+- [ ] **Step 3: Commit**
 
 ```bash
-git commit -am "Adjust robust specs for the shared-server fixtures"
+git commit -am "Fix /workflow URL prefix in visual + component specs for shared harness"
 ```
 
 ---
@@ -473,11 +484,15 @@ Expected: PASS for all non-`deploy-validation` specs on both browsers.
     disabled file); `npm install`; `npx playwright install --with-deps`; run
     `npx playwright test --project=chromium --project=firefox`.
   - **No `STRIPE_SECRET_KEY`.** Set `EMAIL_SENDER_TRANSPORT=Test`.
-  - The shared DB is created by `globalSetup` via `Test::PostgreSQL`. **No Postgres
-    service container is needed** and this is already proven: the main CI `test` job
-    runs `prove -lr t/`, which uses `Test::Registry::DB` -> `Test::PostgreSQL` on
-    `ubuntu-latest` and passes. If it ever regresses, fall back to a `postgres:17`
-    service container and point `shared_db.pl` at it via `DB_URL`.
+  - The shared DB is created by `globalSetup` via `Test::PostgreSQL`, which needs
+    `initdb`/`pg_ctl` on the runner. **Before** `npx playwright test`, add a
+    verification step:
+    `carton exec perl -MTest::PostgreSQL -e 'my $pg = Test::PostgreSQL->new; print $pg->uri, "\n"'`
+    — if this fails, `Test::PostgreSQL` can't start on the runner.
+    Fallback (only if the verification fails): declare a `postgres:14` service
+    container (match the main CI job's version) and point `shared_db.pl` at it via
+    `DB_URL`/`PG*` env instead of spawning `Test::PostgreSQL`. Do not assume the
+    no-container path works without the verification step proving it.
   - Upload `playwright-report/` and `test-results/` on failure.
 
 - [ ] **Step 2:** `git rm .github/workflows/playwright.yml.disabled`.
