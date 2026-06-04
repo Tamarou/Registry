@@ -29,18 +29,18 @@ my $db_url = $ENV{DB_URL}
 my $dao = Registry::DAO->new(url => $db_url);
 my $db  = $dao->db;
 
-my $ts = time();
+my $ts = time() . '_' . $$;
 
 # Location and program
 my $loc = Registry::DAO::Location->create($db, {
-    name         => 'Drop Test Studio',
+    name         => "Drop Test Studio $ts",
     slug         => "drop-studio-$ts",
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
     metadata     => {},
 });
 
 my $prog = Registry::DAO::Project->create($db, {
-    name              => 'Drop Test Camp',
+    name              => "Drop Test Camp $ts",
     program_type_slug => 'summer-camp',
     metadata          => {},
 });
@@ -53,7 +53,7 @@ my $teacher = Registry::DAO::User->create($db, {
 });
 
 my $sess = Registry::DAO::Session->create($db, {
-    name       => 'Drop Test Week 1',
+    name       => "Drop Test Week 1 $ts",
     start_date => '2026-06-01',
     end_date   => '2026-06-05',
     status     => 'published',
@@ -75,7 +75,7 @@ $sess->add_events($db, $evt->id);
 
 # Target session for transfer tests
 my $target_sess = Registry::DAO::Session->create($db, {
-    name       => 'Drop Test Week 2',
+    name       => "Drop Test Week 2 $ts",
     start_date => '2026-06-08',
     end_date   => '2026-06-12',
     status     => 'published',

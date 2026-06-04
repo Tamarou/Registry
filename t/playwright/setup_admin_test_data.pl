@@ -27,7 +27,7 @@ my $db_url = $ENV{DB_URL}
 my $dao = Registry::DAO->new(url => $db_url);
 my $db  = $dao->db;
 
-my $ts = time();
+my $ts = time() . '_' . $$;
 
 # Admin user
 my $admin = Registry::DAO::User->create($db, {
@@ -45,20 +45,20 @@ my (undef, $token) = Registry::DAO::MagicLinkToken->generate($db, {
 
 # Location, program, session, event
 my $loc = Registry::DAO::Location->create($db, {
-    name         => 'Admin Studio',
+    name         => "Admin Studio $ts",
     slug         => "admin-studio-$ts",
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
     metadata     => {},
 });
 
 my $prog = Registry::DAO::Project->create($db, {
-    name              => 'Admin Camp',
+    name              => "Admin Camp $ts",
     program_type_slug => 'summer-camp',
     metadata          => {},
 });
 
 my $sess = Registry::DAO::Session->create($db, {
-    name       => 'Admin Week 1',
+    name       => "Admin Week 1 $ts",
     start_date => '2026-06-01',
     end_date   => '2026-06-05',
     status     => 'published',

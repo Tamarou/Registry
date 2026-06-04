@@ -30,7 +30,10 @@ my $db_url = $ENV{DB_URL}
 my $dao = Registry::DAO->new(url => $db_url);
 my $db  = $dao->db;
 
-my $ts = time();
+# Unique per invocation (pid differs per seed run) so repeated runs against the
+# shared E2E database don't collide on unique constraints. Specs reference
+# entities by the ids returned below, not by name.
+my $ts = time() . '_' . $$;
 
 # ---------------------------------------------------------------------------
 # Tenant
@@ -48,7 +51,7 @@ unless ($tenant) {
 # Location
 # ---------------------------------------------------------------------------
 my $location = $dao->create( Location => {
-    name => 'Super Awesome Cool Pottery Studio',
+    name => "Super Awesome Cool Pottery Studio $ts",
     slug => "sacp-studio-$ts",
     address_info => {
         street_address => '930 Hoffner Ave',
@@ -71,7 +74,7 @@ die "summer-camp program type not found; run sqitch deploy first\n" unless $prog
 # Program (Project)
 # ---------------------------------------------------------------------------
 my $program = $dao->create( Project => {
-    name  => "Potter's Wheel Art Camp - Summer 2026",
+    name  => "Potter's Wheel Art Camp - Summer 2026 $ts",
     notes => 'FULL Day Camp | M-F | 9am-4pm | Grades K to 5',
     program_type_slug => 'summer-camp',
     metadata => {
@@ -105,7 +108,7 @@ my @session_configs = (
 my %sessions;
 for my $cfg (@session_configs) {
     my $session = Registry::DAO::Session->create($db, {
-        name       => $cfg->{name},
+        name       => "$cfg->{name} ($ts)",
         start_date => $cfg->{start},
         end_date   => $cfg->{end},
         status     => 'published',
