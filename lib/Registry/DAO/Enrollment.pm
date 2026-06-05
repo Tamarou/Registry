@@ -86,6 +86,30 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         $db->insert( $class->table, $data, { on_conflict => undef } );
     }
 
+    # Enroll a list of children into sessions with no payment: create each active
+    # enrollment and queue its confirmation email. Shared by the free-enrollment
+    # workflow step and the Payment step's demo path. $items is an arrayref of
+    # { child_id => ..., session_id => ... }. Returns the number enrolled.
+    sub enroll_children ( $class, $db, $parent_id, $items ) {
+        require Registry::DAO::Notification;
+        my $count = 0;
+        for my $item (@$items) {
+            $class->create( $db, {
+                session_id       => $item->{session_id},
+                family_member_id => $item->{child_id},
+                parent_id        => $parent_id,
+                status           => 'active',
+            } );
+            Registry::DAO::Notification->ensure_enrollment_confirmation( $db, {
+                user_id    => $parent_id,
+                session_id => $item->{session_id},
+                child_id   => $item->{child_id},
+            } );
+            $count++;
+        }
+        return $count;
+    }
+
     method update ( $db, $data, $filter = { id => $self->id } ) {
         # Encode metadata as JSON if it's a hashref
         if (exists $data->{metadata} && ref $data->{metadata} eq 'HASH') {
