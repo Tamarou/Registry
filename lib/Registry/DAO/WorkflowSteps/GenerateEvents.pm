@@ -82,7 +82,22 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
                 notes => $location->{notes}
             }
         });
-        
+
+        # Link a pricing plan to the new session from the per-location override,
+        # so the session is actually priced and appears on the storefront. An
+        # override of 0 produces a free, registerable session. Without this the
+        # override is collected but dropped and the session has no price (#218).
+        my $override = $location->{pricing_override};
+        if ( defined $override && $override ne '' ) {
+            require Registry::DAO::PricingPlan;
+            Registry::DAO::PricingPlan->create($db, {
+                session_id => $session->id,
+                plan_name  => 'Standard',
+                plan_type  => 'standard',
+                amount     => $override + 0,
+            });
+        }
+
         # Generate events based on pattern
         my @events = $self->generate_events_for_session(
             $db, $session, $location, $params, $teacher_id
