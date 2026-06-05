@@ -222,23 +222,11 @@ method handle_payment_callback ($db, $run, $form_data) {
 
 method create_demo_enrollments ($db, $run, $form_data) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
-    my $enrollment_items = $run->data->{enrollment_items} || [];
 
     require Registry::DAO::Enrollment;
-    require Registry::DAO::Notification;
-    for my $item (@$enrollment_items) {
-        Registry::DAO::Enrollment->create($db, {
-            session_id       => $item->{session_id},
-            family_member_id => $item->{child_id},
-            parent_id        => $user_id,
-            status           => 'active',
-        });
-        Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
-            user_id    => $user_id,
-            session_id => $item->{session_id},
-            child_id   => $item->{child_id},
-        });
-    }
+    Registry::DAO::Enrollment->enroll_children(
+        $db, $user_id, $run->data->{enrollment_items} || []
+    );
 
     return { next_step => 'complete' };
 }
