@@ -26,14 +26,20 @@ method process ($db, $form_data, $run = undef) {
         $run->update_data($db, { payment_retry_state => undef });
     }
 
-    # Demo mode: when STRIPE_SECRET_KEY is not set, accept terms agreement
-    # and create enrollments directly without Stripe processing.
-    if ($form_data->{agreeTerms} && !$ENV{STRIPE_SECRET_KEY}) {
-        return $self->create_demo_enrollments($db, $run, $form_data);
-    }
-
-    # Initial payment page load or form submission
     if ($form_data->{agreeTerms}) {
+        my $info = Registry::DAO::Payment->calculate_enrollment_total($db, {
+            children           => $run->data->{children}           || [],
+            session_selections => $run->data->{session_selections} || {},
+        });
+
+        # Whether payment is taken is a function of the program's pricing, not
+        # the environment. A $0 total enrolls without the gateway regardless of
+        # whether Stripe is configured. Demo/dev (no Stripe key) also skips it.
+        # Anything with a balance due goes through Stripe.
+        if (($info->{total} // 0) == 0 || !$ENV{STRIPE_SECRET_KEY}) {
+            return $self->create_demo_enrollments($db, $run, $form_data);
+        }
+
         return $self->create_payment($db, $run, $form_data);
     }
 
