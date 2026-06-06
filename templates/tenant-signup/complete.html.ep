@@ -131,9 +131,11 @@
     </section>
 
     <footer class="success-actions">
-        <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary btn-large">
-            Access Your Registry Dashboard &rarr;
-        </a>
+        <form method="POST" action="<%= $action %>">
+            <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary btn-large">
+                Access Your Registry Dashboard &rarr;
+            </a>
+        </form>
         <p class="login-note">
             Sign in with a passkey or magic link sent to <%= $admin_email %>
         </p>

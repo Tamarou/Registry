@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowS
 
 use Registry::DAO::Workflow;
 use Registry::DAO::MagicLinkToken;
+use Registry::DAO::Tenant;
 use Registry::Utility::ErrorHandler;
 use Carp qw(carp croak);
 use Text::Unidecode qw(unidecode);
@@ -66,33 +67,13 @@ method process ( $db, $, $run = undef ) {
         $profile->{slug} = $self->_generate_subdomain_slug($db, $profile->{name});
     }
 
-    # Validate required billing fields (skip for backward compatibility)
-    if (!exists $run->data->{users}) {
-        $self->_validate_billing_info($profile);
-    }
-
     # Validate that subscription was set up successfully (skip for backward compatibility)
     my $subscription_data = $run->data->{subscription};
     my $has_subscription = $subscription_data && $subscription_data->{stripe_subscription_id};
-    
-    # Debug output for test troubleshooting
-    
+
     # For backward compatibility, only require subscription if not using old 'users' format
-    # Also skip if tenant was already created by TenantPayment step (test mode)
-    my $tenant_already_created = exists $run->data->{tenant_created} && $run->data->{tenant_created};
-    if (!$has_subscription && !exists $run->data->{users} && !$tenant_already_created) {
+    if (!$has_subscription && !exists $run->data->{users}) {
         croak 'Payment setup must be completed before creating tenant';
-    }
-    
-    # If tenant was already created by TenantPayment, just return success
-    if ($tenant_already_created) {
-        return {
-            tenant => $run->data->{tenant},
-            organization_name => $run->data->{organization_name},
-            subdomain => $run->data->{subdomain},
-            admin_email => $run->data->{admin_email},
-            success_timestamp => DateTime->now->iso8601()
-        };
     }
 
     # first we wanna create the Registry user account for our tenant
@@ -102,11 +83,24 @@ method process ( $db, $, $run = undef ) {
         croak 'Could not create primary user';
     }
 
+    # Resolve all users to objects (find existing or build list for provision)
+    my @user_objects;
+    for my $data ( $user_data->@* ) {
+        my $user = Registry::DAO::User->find( $db, { username => $data->{username} } )
+            // Registry::DAO::User->find_or_create( $db, $data );
+        push @user_objects, $user if $user;
+    }
+
     # Include subscription data in tenant creation (if available)
     if ($has_subscription) {
         $profile->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
         $profile->{billing_status} = 'trial';
-        $profile->{trial_ends_at} = $subscription_data->{trial_ends_at};
+        # Convert Unix timestamp to ISO8601 if needed (Stripe returns epoch integers)
+        my $trial_ends_at = $subscription_data->{trial_ends_at};
+        if ($trial_ends_at && $trial_ends_at =~ /^\d+$/) {
+            $trial_ends_at = DateTime->from_epoch(epoch => $trial_ends_at)->iso8601();
+        }
+        $profile->{trial_ends_at} = $trial_ends_at;
         $profile->{subscription_started_at} = DateTime->now->iso8601();
     } else {
         # Backward compatibility: set defaults for testing
@@ -114,101 +108,19 @@ method process ( $db, $, $run = undef ) {
         $profile->{subscription_started_at} = DateTime->now->iso8601();
     }
 
-    my $tenant = Registry::DAO::Tenant->create( $db, $profile );
-    $db->query( 'SELECT clone_schema(?)', $tenant->slug );
-
-    # Copy seed data that clone_schema doesn't include (it copies structure, not rows)
-    $db->query(qq{
-        INSERT INTO ${\$tenant->slug}.program_types (slug, name, config, created_at, updated_at)
-        SELECT slug, name, config, created_at, updated_at
-        FROM registry.program_types
-        ON CONFLICT (slug) DO NOTHING
+    my $tenant = Registry::DAO::Tenant->provision($db, {
+        %$profile,
+        users => \@user_objects,
     });
 
-    $db->query(qq{
-        INSERT INTO ${\$tenant->slug}.templates (id, name, slug, content, metadata, notes, created_at, updated_at)
-        SELECT id, name, slug, content, metadata, notes, created_at, updated_at
-        FROM registry.templates
-        ON CONFLICT (slug) DO NOTHING
-    });
-
-    $tenant->set_primary_user( $db, $primary_user );
-
-    my $tx = $db->begin;
+    # Send invitation emails for team members marked invite_pending
     for my $data ( $user_data->@* ) {
-        if ( my $user = Registry::DAO::User->find( $db, { username => $data->{username} } ) ) {
-            $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
-                $tenant->slug, $user->id );
-        }
-        else {
-            my $tenant_user = Registry::DAO::User->create( $tenant->dao($db)->db, $data );
-            
-            # Send invitation email for non-admin users
-            if ($data->{invite_pending} && $data->{email}) {
-                $self->_send_invitation_email($db, $tenant, $tenant_user, $data);
-            }
+        next unless $data->{invite_pending} && $data->{email};
+        my $tenant_user = $tenant->dao($db)->find(User => { username => $data->{username} });
+        if ($tenant_user) {
+            $self->_send_invitation_email($db, $tenant, $tenant_user, $data);
         }
     }
-
-    # NOTE: Previously we were getting a problem where workflows were missing their first step
-    # after being copied to tenant schemas. To fix this, we'll directly copy the workflows using
-    # the copy_workflow function instead of relying on the schema clone
-    for my $slug (
-        qw(user-creation session-creation event-creation location-creation project-creation
-           location-management pricing-plan-creation program-creation tenant-storefront
-           admin-dashboard parent-drop-request admin-drop-approval parent-transfer-request
-           admin-transfer-approval template-editor)
-    )
-    {
-        my $workflow =
-            Registry::DAO::Workflow->find( $db, { slug => $slug } );
-            
-        # Skip if workflow not found (this helps with testing)
-        next unless $workflow;
-            
-        # Use the improved copy_workflow function to ensure first_step is preserved
-        $db->query(
-            'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
-            $tenant->slug, $workflow->id );
-            
-        # Verify first_step exists in tenant schema
-        my $tenant_dao = $tenant->dao($db);
-        my $tenant_workflow = $tenant_dao->find(Workflow => { slug => $slug });
-        
-        if ($tenant_workflow) {
-            my $first_step_slug = $tenant_workflow->first_step_slug($tenant_dao->db);
-            my $first_step = $tenant_workflow->first_step($tenant_dao->db);
-            
-            # If first_step value exists but the step doesn't, create it
-            if ($first_step_slug && !$first_step) {
-                Registry::DAO::WorkflowStep->create(
-                    $tenant_dao->db,
-                    {
-                        workflow_id => $tenant_workflow->id,
-                        slug => $first_step_slug,
-                        description => "Auto-created first step by tenant registration",
-                        class => 'Registry::DAO::WorkflowStep'
-                    }
-                );
-            }
-        }
-    }
-    
-    # Copy outcome definitions
-    my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
-    for my $def (@outcome_defs) {
-        # Create in tenant schema directly
-        Registry::DAO::OutcomeDefinition->create(
-            $tenant->dao($db)->db,
-            {
-                id => $def->id,  # Use same ID to maintain relationships
-                name => $def->name,
-                schema => $def->schema
-            }
-        );
-    }
-    
-    $tx->commit;
 
     if ( $run->has_continuation ) {
         my ($continuation) = $run->continuation($db);

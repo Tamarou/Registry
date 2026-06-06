@@ -51,15 +51,15 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             # Another special case for testing: if we detect we're in test mode (no Stripe keys configured),
             # create a mock subscription directly
             if (!$ENV{STRIPE_PUBLISHABLE_KEY} && !$ENV{STRIPE_SECRET_KEY}) {
-                
+
                 # Mock successful subscription for testing
                 my $mock_subscription = {
                     id => 'sub_test_' . time(),
                     status => 'trialing',
                     trial_end => time() + (30 * 24 * 60 * 60), # 30 days from now
                 };
-                
-                # Store subscription info in workflow data
+
+                # Store subscription info in workflow data so RegisterTenant can pick it up
                 $run->update_data($db, {
                     subscription => {
                         stripe_subscription_id => $mock_subscription->{id},
@@ -67,17 +67,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                         status => $mock_subscription->{status}
                     }
                 });
-                
-                
-                # For testing, create the tenant directly instead of delegating to RegisterTenant step
-                my $tenant_result = $self->create_tenant_directly($db, $run);
-                
-                # Payment successful, move to completion
-                return { 
-                    next_step => 'complete',
-                    tenant_created => 1,
-                    %$tenant_result
-                };
+
+                # Advance to complete; RegisterTenant will handle provisioning
+                return { next_step => 'complete' };
             }
             
             return $self->create_setup_intent($db, $run, $form_data);
@@ -296,8 +288,8 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 status => 'trialing',
                 trial_end => time() + (30 * 24 * 60 * 60), # 30 days from now
             };
-            
-            # Store subscription info in workflow data
+
+            # Store subscription info in workflow data so RegisterTenant can pick it up
             $run->update_data($db, {
                 subscription => {
                     stripe_subscription_id => $mock_subscription->{id},
@@ -305,24 +297,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                     status => $mock_subscription->{status}
                 }
             });
-            
 
-            # For testing, create the tenant directly instead of delegating to RegisterTenant step
-            my $tenant_result = eval { $self->create_tenant_directly($db, $run) };
-            if ($@) {
-                return {
-                    next_step => $self->id,
-                    errors => ["Failed to create tenant: $@"],
-                    data => $self->prepare_payment_data($db, $run)
-                };
-            }
-
-            # Payment successful, move to completion
-            return {
-                next_step => 'complete',
-                tenant_created => 1,
-                %$tenant_result
-            };
+            # Advance to complete; RegisterTenant will handle provisioning
+            return { next_step => 'complete' };
         }
         
         # For non-test modes, validate the setup_intent_id matches what was stored
@@ -390,118 +367,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # Provide data for template rendering on GET requests
     method prepare_template_data($db, $run, $params = {}) {
         return $self->prepare_payment_data($db, $run);
-    }
-    
-    # For testing mode, create tenant directly (duplicates RegisterTenant logic)
-    method create_tenant_directly($db, $run) {
-
-        my $profile = $run->data;
-
-        # Preserve tenant name before any modifications
-        my $tenant_name = $profile->{name};
-
-        # Handle backward compatibility for old 'users' format (same logic as RegisterTenant)
-        my $user_data;
-        if (exists $profile->{users} && ref $profile->{users} eq 'ARRAY') {
-            # Old format: { users => [{username => '...', password => '...'}, ...] }
-            $user_data = $profile->{users};  # Don't delete, keep for RegisterTenant compatibility
-            # Set default user_type for backward compatibility
-            for my $user (@$user_data) {
-                $user->{user_type} //= 'admin';
-            }
-        } else {
-            # New format: extract user data from individual fields
-            my $admin_user_data = {
-                name => $profile->{admin_name},
-                email => $profile->{admin_email},
-                username => $profile->{admin_username},
-                password => $profile->{admin_password},
-                user_type => $profile->{admin_user_type} || 'admin',
-            };
-
-            $user_data = [$admin_user_data];
-        }
-        
-        
-        # Create the Registry user account for our tenant
-        my $primary_user = Registry::DAO::User->find_or_create($db, $user_data->[0]);
-        unless ($primary_user) {
-            croak 'Could not create primary user';
-        }
-        
-        
-        # Generate subdomain slug from organization name (PostgreSQL schema compatible)
-        my $slug = lc($tenant_name || 'test_tenant');
-        $slug =~ s/[^a-z0-9\s_]//g;  # Remove special characters (allow underscores)
-        $slug =~ s/\s+/_/g;          # Replace spaces with underscores
-        $slug =~ s/_+/_/g;           # Remove multiple consecutive underscores
-        $slug =~ s/^_|_$//g;         # Remove leading/trailing underscores
-        $slug = substr($slug, 0, 50); # Limit length
-        $slug = $slug || 'tenant';   # Fallback if empty
-        
-        # Create clean tenant data with only fields that belong in the tenant table
-        my $tenant_data = {
-            name => $tenant_name,
-            slug => $slug,
-        };
-        
-        # Include subscription data in tenant creation
-        my $subscription_data = $run->data->{subscription};
-        if ($subscription_data) {
-            $tenant_data->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
-            $tenant_data->{billing_status} = 'trial';
-            
-            # Convert Unix timestamp to PostgreSQL timestamp format
-            if ($subscription_data->{trial_ends_at}) {
-                my $trial_end_dt = DateTime->from_epoch(epoch => $subscription_data->{trial_ends_at});
-                $tenant_data->{trial_ends_at} = $trial_end_dt->iso8601();
-            }
-            
-            $tenant_data->{subscription_started_at} = DateTime->now->iso8601();
-        }
-        
-        
-        my $tenant = Registry::DAO::Tenant->create($db, $tenant_data);
-        $db->query('SELECT clone_schema(?)', $tenant->slug);
-
-        $tenant->set_primary_user($db, $primary_user);
-        
-        
-        # Copy all users to tenant schema and copy workflows
-        my $tx = $db->begin;
-        
-        # Copy all users in the users array (like RegisterTenant does)
-        # Create tenant DAO once for reuse
-        my $tenant_dao = Registry::DAO->new( url => $ENV{DB_URL}, schema => $tenant->slug );
-        
-        for my $data ( $user_data->@* ) {
-            if ( my $user = Registry::DAO::User->find( $db, { username => $data->{username} } ) ) {
-                $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
-                    $tenant->slug, $user->id );
-            }
-            else {
-                # User doesn't exist in main schema, create directly in tenant schema  
-                Registry::DAO::User->create( $tenant_dao->db, $data );
-            }
-        }
-        
-        # Copy essential workflows to tenant schema
-        for my $slug (qw(user-creation session-creation)) {
-            my $workflow = Registry::DAO::Workflow->find($db, { slug => $slug });
-            if ($workflow) {
-                $db->query('SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $tenant->slug, $workflow->id);
-            }
-        }
-
-        $tx->commit;
-        
-        
-        return {
-            tenant => $tenant->id,
-            organization_name => $profile->{name},
-            subdomain => $tenant->slug,
-            admin_email => $user_data->[0]->{email} || $user_data->[0]->{username},
-        };
     }
 
     # Retry logic for failed attempts
