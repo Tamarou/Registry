@@ -199,9 +199,13 @@ test.describe('Tenant signup workflow', () => {
   // ===========================================================================
   test('completing payment creates a tenant with a provisioned schema', async ({ registryPage, testDB }) => {
     const { spawnSync } = require('child_process');
-    const orgName = 'E2E Verification Studio';
-    // Slug normalization: provision replaces hyphens with underscores and lowercases
-    const expectedSlug = 'e2e_verification_studio';
+    // Unique per run: CI runs chromium AND firefox against the SAME shared DB,
+    // so a fixed slug collides on tenants_slug_key. The suffix keeps each run's
+    // tenant distinct.
+    const suffix = `${Date.now()}`;
+    const orgName = `E2E Verify ${suffix}`;
+    // Slug normalization: lowercased, spaces/hyphens -> underscores.
+    const expectedSlug = `e2e_verify_${suffix}`;
 
     // Clear session cookies so this test always gets a fresh workflow run
     // (prior serial tests may have left an incomplete run in the session).

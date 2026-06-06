@@ -15,6 +15,10 @@ use Test::Registry::Fixtures;
 # Include the base Controller.pm (one directory up from Controller/).
 my @files = ( path('lib/Registry/Controller.pm'),
               path('lib/Registry/Controller')->list_tree->grep(sub { /\.pm$/ })->each );
+# Webhooks is intentionally registry-scoped: Stripe webhooks carry no tenant
+# context (the tenant is resolved from the event payload) and the dedup table is
+# registry-qualified, so it uses app->dao. Exempt it from the guard.
+@files = grep { $_ !~ /Webhooks\.pm$/ } @files;
 my @offenders;
 for my $f (@files) {
     for my $line ( split /\n/, $f->slurp ) {
