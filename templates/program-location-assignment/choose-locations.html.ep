@@ -23,7 +23,7 @@
                                 <% if ($location->capacity) { %>
                                     • Capacity: <%= $location->capacity %> participants<br>
                                 <% } %>
-                                <% if ($location->metadata && $location->metadata->{facilities}) { %>
+                                <% if ($location->metadata && ref $location->metadata->{facilities} eq 'ARRAY') { %>
                                     • Facilities: <%= join(', ', @{$location->metadata->{facilities}}) %><br>
                                 <% } %>
                             </div>
