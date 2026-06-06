@@ -105,7 +105,9 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # provision: single canonical path for creating a fully-provisioned tenant.
     # Creates the tenant row, clones the schema, copies seed data, copies all
     # workflows from registry (except tenant-signup), copies users, and copies
-    # OutcomeDefinitions.  Returns the created Tenant object.
+    # OutcomeDefinitions.  The entire operation runs inside a single transaction
+    # so a failure partway through does not leave orphaned rows or a half-cloned
+    # schema.  Returns the created Tenant object.
     #
     # $data must contain: name (required), slug (optional), users (arrayref of
     # Registry::DAO::User objects or hashrefs with {id}).
@@ -131,8 +133,19 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         my %tenant_data = map { $_ => $data->{$_} }
                           grep { exists $TENANT_COLUMNS{$_} } keys %$data;
 
+        # Begin the transaction before any writes so that tenant row creation,
+        # schema cloning, and all subsequent copies are atomic.  Postgres allows
+        # CREATE SCHEMA (issued inside clone_schema) within a transaction.
+        my $tx = $db->begin;
+
         my $tenant = $class->create($db, \%tenant_data);
         $db->query('SELECT clone_schema(?)', $tenant->slug);
+
+        # clone_schema changes the connection's search_path to the new schema
+        # when run inside a transaction.  Reset it to registry so subsequent
+        # queries (User->find, set_primary_user, etc.) resolve against the
+        # correct schema.
+        $db->query('SET search_path = registry, public');
 
         # Copy seed data that clone_schema does not include (structure only, no rows)
         $db->query(qq{
@@ -147,11 +160,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # here would conflict with copy_workflow's template inserts because both
         # the tenant schema and copy_workflow use the same unique-constrained name
         # column, and copy_workflow does not use ON CONFLICT.
-
-        # Keep the tenant DAO object alive in a variable; Mojo::Pg GCs otherwise.
-        my $tenant_dao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $tenant->slug);
-
-        my $tx = $db->begin;
 
         # Set the first user as primary
         if (@$users) {
@@ -176,17 +184,24 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                 $tenant->slug, $wf->{id});
         }
 
-        # Copy OutcomeDefinitions into the tenant schema
+        # Copy OutcomeDefinitions into the tenant schema.  We temporarily switch
+        # the search_path on $db (the in-transaction handle) so that the unqualified
+        # 'outcome_definitions' table resolves to the tenant schema.  After the
+        # inserts, we reset back to registry so later queries remain correct.
         my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
-        for my $def (@outcome_defs) {
-            Registry::DAO::OutcomeDefinition->create(
-                $tenant_dao->db,
-                {
-                    id     => $def->id,
-                    name   => $def->name,
-                    schema => $def->schema,
-                }
-            );
+        if (@outcome_defs) {
+            $db->query("SET search_path = ${\$tenant->slug}, public");
+            for my $def (@outcome_defs) {
+                Registry::DAO::OutcomeDefinition->create(
+                    $db,
+                    {
+                        id     => $def->id,
+                        name   => $def->name,
+                        schema => $def->schema,
+                    }
+                );
+            }
+            $db->query('SET search_path = registry, public');
         }
 
         $tx->commit;
