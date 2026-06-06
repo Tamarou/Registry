@@ -13,7 +13,7 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
 
     method attendance {
         my $event_id = $self->param('event_id');
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
 
         # Get event details
         my $event_obj = Registry::DAO::Event->find($dao, { id => $event_id });
@@ -61,7 +61,7 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
     method mark_attendance {
         my $event_id = $self->param('event_id');
         my $attendance_data = $self->req->json;
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
 
         unless ($attendance_data && ref $attendance_data eq 'HASH') {
             return $self->render(json => { error => 'Invalid attendance data' }, status => 400);
@@ -105,7 +105,7 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
     method dashboard {
         my $current_user = $self->stash('current_user');
         my $user_id      = $current_user ? $current_user->{id} : $self->session('user_id');
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
 
         # Get today's events for this teacher - use class method
         my $today_events = Registry::DAO::Event->get_teacher_events_for_date(

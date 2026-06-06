@@ -36,7 +36,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
         
         # Process the event
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
 
         # Deduplicate by Stripe event id. Stripe may deliver the same event more
         # than once; claim it atomically so a redelivery is acknowledged with
@@ -174,7 +174,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return 0 unless $subscription_id;
 
         # Look for payment schedule with this subscription ID
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $schedules = Registry::DAO::PaymentSchedule->find_by_stripe_subscription_id(
             $dao->db, $subscription_id
         );

@@ -15,7 +15,7 @@ class Registry::Controller :isa(Mojolicious::Controller) {
         return $slug if $slug isa Registry::DAO::Workflow;
         Carp::confess "Missing workflow parameter" unless $slug;
 
-        my $dao      = $self->app->dao;
+        my $dao      = $self->dao;
         my $workflow = $dao->find( Workflow => { slug => $slug } );
         unless ($workflow) {
             Carp::confess sprintf 'Workflow %s not found in tenant %s', $slug,
@@ -30,7 +30,7 @@ class Registry::Controller :isa(Mojolicious::Controller) {
         # template name as the first argument (odd arg count).
         unshift @args, 'template' if @args % 2;
         my %args = @args;
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
 
         if ( $args{workflow} ) {
             if ( my $workflow = $self->workflow( $args{workflow} ) ) {
