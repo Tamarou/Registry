@@ -26,8 +26,9 @@
   `registry` just as `app->dao` did, and the dedup writes are already explicitly
   `registry.webhook_events`. The migration is for consistency + the guard, not a behavior
   change.
-- `lib/Registry/DAO/Tenant.pm` — add `provision` class method (clone_schema + program_types/templates + copy_user + copy all workflows).
-- `lib/Registry/DAO/WorkflowSteps/RegisterTenant.pm` — delegate provisioning mechanics to `Tenant->provision`.
+- `lib/Registry/DAO/Tenant.pm` — add `provision` class method (clone_schema + program_types/templates + copy_user + copy all workflows + outcome definitions, in a tx).
+- `lib/Registry/DAO/WorkflowSteps/RegisterTenant.pm` — delegate provisioning to `Tenant->provision`; remove the now-dead `tenant_already_created` short-circuit (the only single provisioning path).
+- `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm` — **consolidation:** delete `create_tenant_directly`; the two test-mode branches (no-Stripe-keys at ~line 53; `seti_test` at ~line 287) keep storing the mock subscription but stop creating the tenant — they just `return { next_step => 'complete' }`, letting `RegisterTenant` provision via `Tenant->provision`. This removes the duplicate, impoverished tenant-creation path (begins the PriceOps #23 cleanup, with the maintainer's approval).
 - `t/dao/dao-accessor-contract.t` — new: accessor contract + controller guard.
 - `t/dao/tenant-provision.t` — new: provisioning helper copies all non-`tenant-signup` workflows.
 - `t/playwright/tmp-subdomain-spike.spec.js` — throwaway spike (Task 0; deleted after).
@@ -338,32 +339,50 @@ Expected: PASS (all four needed/excluded workflow assertions + user copy).
 - [ ] **Step 5: Delegate `RegisterTenant` provisioning to the helper**
 
 In `lib/Registry/DAO/WorkflowSteps/RegisterTenant.pm`, replace the inline provisioning
-mechanics — `clone_schema`, the program_types/templates inserts, the user-copy loop, the
-hardcoded `copy_workflow` loop, AND the outcome-definition copy loop (the whole block
-roughly lines 117–211, ending at `$tx->commit`) — with a single call to
-`Registry::DAO::Tenant->provision`, passing the profile-derived name/slug and the resolved
-user list. `provision` now owns all of that, including outcome definitions and the
-transaction. Keep RegisterTenant's billing / profile / invitation-email and
-continuation-handling logic intact — only the schema-provisioning mechanics move.
+mechanics — tenant create + `clone_schema`, program_types/templates inserts, user-copy
+loop, hardcoded `copy_workflow` loop, AND the outcome-definition copy loop (the block from
+`Registry::DAO::Tenant->create` at line 117 through `$tx->commit` at line ~211) — with a
+single `Registry::DAO::Tenant->provision($db, { name => ..., slug => $profile->{slug},
+users => $user_data })` call. Let `provision` own tenant creation + all schema mechanics +
+the transaction. After it returns, set billing fields on the tenant row via
+`$tenant->update($db, { ... })` if `$has_subscription` (stripe_subscription_id,
+billing_status, trial_ends_at, subscription_started_at). Keep RegisterTenant's
+billing-field derivation, invitation emails (for `invite_pending` users), and
+continuation-handling intact.
 
-Subtlety: RegisterTenant currently creates the tenant itself (line 117) before cloning.
-`provision` also creates the tenant. Pick one owner: simplest is to let `provision` create
-the tenant and have RegisterTenant use the returned object. If RegisterTenant must set
-billing fields on the tenant row, do so via `$tenant->update(...)` after `provision`
-returns. Keep exactly one tenant-creation path.
+Also **remove the now-dead `tenant_already_created` short-circuit** (lines ~81–96) — no
+path sets `tenant_created` anymore (see Step 5b). One provisioning path only.
 
-- [ ] **Step 6: Run tenant-signup coverage**
+- [ ] **Step 5b: Consolidate TenantPayment onto the single path**
 
-Run: `carton exec prove -lr t/dao/ t/controller/` and `npx playwright test tenant-signup --workers=1 --project=chromium --reporter=list`
-Expected: PASS except pre-existing #227. RegisterTenant still provisions a working tenant,
-now with all workflows.
+In `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`:
+- **Delete** the `create_tenant_directly` method (~lines 396–505).
+- In the no-Stripe-keys branch (~lines 53–84): keep the `$run->update_data({ subscription
+  => {...} })` mock-subscription store; delete the `create_tenant_directly` call and the
+  `tenant_result` spread; `return { next_step => 'complete' }`.
+- In the `seti_test` branch of `handle_setup_completion` (~lines 287–326): same — keep the
+  mock-subscription store; delete the `create_tenant_directly` eval; `return { next_step
+  => 'complete' }`.
+
+The mock subscription carries `stripe_subscription_id`, so RegisterTenant's
+`$has_subscription` check passes and its main path provisions via `Tenant->provision`.
+
+- [ ] **Step 6: Run tenant-signup + the previously-regressed spec**
+
+Run: `carton exec prove -lv t/controller/tenant-create-session.t` (must now exit 0 — this
+is the spec the DAO change regressed; consolidation fixes it), then
+`carton exec prove -lr t/dao/ t/controller/` and
+`npx playwright test tenant-signup --workers=1 --project=chromium --reporter=list`.
+Expected: PASS except pre-existing #227, `landing-page-cta.t`, and `tenant-storefront.t`
+(the latter two are pre-existing storefront/program-listing failures, verified to fail on
+clean main independent of this work — do NOT try to fix them here).
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add lib/Registry/DAO/Tenant.pm lib/Registry/DAO/WorkflowSteps/RegisterTenant.pm \
-        t/dao/tenant-provision.t
-git commit -m "Add Tenant->provision (copies all workflows); RegisterTenant delegates to it"
+        lib/Registry/DAO/WorkflowSteps/TenantPayment.pm t/dao/tenant-provision.t
+git commit -m "Add Tenant->provision (all workflows); route RegisterTenant + signup through it; drop create_tenant_directly"
 ```
 
 ---
