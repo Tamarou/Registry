@@ -5,229 +5,239 @@ ABOUTME: Foundation work that unblocks the Morgan -> Nancy -> Amara lifecycle E2
 
 - Status: Draft (pending review)
 - Date: 2026-06-06
-- Related: #224 (lifecycle E2E), #41 (hyphen slugs), #173 (per-tenant DB templates), #154 (pricing_plans in tenant schema)
+- Related: #224 (lifecycle E2E), #41 (hyphen slugs), #173 (per-tenant DB templates),
+  #154 (pricing_plans in tenant schema), #23/#76 (PriceOps — platform billing)
 
 ## 1. Problem
 
-Registry is multi-tenant by Postgres schema: each tenant's data lives in a schema
-named for its slug, and `Registry::DAO->new(schema => $slug)` scopes the connection's
-`search_path` to `[$slug, public]`. Most controllers honor this via
+Registry is multi-tenant by Postgres schema: each tenant's data lives in a schema named
+for its slug, and `Registry::DAO->new(schema => $slug)` scopes the connection's
+`search_path` to `[$slug, public]`. Controllers are meant to honor this via
 `$self->dao($self->stash('tenant'))`.
 
-The **Workflows controller does not**. Every data-access site in
-`lib/Registry/Controller/Workflows.pm` (8 of them) uses `$self->app->dao`, which
-resolves to the registry-default schema regardless of request context. Because nearly
-every meaningful action in Registry is a workflow (program creation, location
-assignment, registration, the storefront itself), this means **workflow-created data
-always lands in the `registry` schema**, never in the acting tenant's schema.
+The **Workflows controller does not.** Every data-access site in
+`lib/Registry/Controller/Workflows.pm` (13 of them) uses `$self->app->dao`, which
+resolves to the registry-default schema **regardless of request context**. Because nearly
+every meaningful action in Registry is a workflow, workflow-created data always lands in
+`registry`, never in the acting tenant's schema.
 
-Concretely, this was discovered while building the lifecycle E2E (#224): Morgan, an
-admin of tenant `lifecycle_<ts>`, creates a program and it lands in `registry`. His
-tenant schema (which the seed never even provisions) stays empty. The tenant storefront,
-parent registration, and attendance all then have to operate against `registry` to find
-the data — which is incorrect and blocks a faithful multi-tenant journey.
+This was proven, not assumed. A controller built with an authenticated request carrying
+`X-As-Tenant: <tenant>` resolves as follows:
+
+```
+$c->tenant                          -> <tenant>     (request tenant)
+$c->dao->current_tenant   (context) -> <tenant>     (tenant schema)   CORRECT
+$c->app->dao->current_tenant (app)  -> registry     (drops context)   WRONG
+```
+
+So `$self->tenant` already does the right thing; `$self->app->dao` throws the request
+context away. The root cause is having **two ways to get a DAO** — one context-aware
+(`$self->dao`) and one context-dropping (`$self->app->dao`) that silently falls back to
+`registry`. Simply swapping the Workflows call sites would fix today's symptom while
+leaving the footgun loaded for the next caller.
 
 ## 2. Goals / Non-goals
 
 **Goals**
+- A single DAO accessor that is context-aware and cannot silently resolve to `registry`.
 - Workflows execute against the acting tenant's schema, app-wide.
-- A tenant provisioned through the real signup flow can run the full operator journey
-  (program creation, location assignment, storefront, registration) entirely within its
-  own schema.
+- A provisioned tenant can run the full operator journey (program creation, location
+  assignment, storefront, registration) entirely within its own schema.
 - Tenant context is carried by subdomain (`<slug>.host`), the production mechanism, for
   both authenticated and unauthenticated requests.
-- The Playwright harness never receives live Stripe credentials.
-- All existing tests remain green (100% pass requirement).
+- All existing tests remain green (100% pass requirement), modulo the pre-existing,
+  separately-tracked failure #227.
 
 **Non-goals (this sub-project)**
-- The lifecycle E2E itself (Nancy registration, Amara attendance, unified spec) —
-  that is Sub-project B, which depends on this.
-- Full resolution of #41 (human-named tenants with hyphenated subdomains and
-  underscore schema-name mapping). We defer it with a hostname-safe seed slug and call
-  it out as the production follow-up.
-- Per-tenant DB templates (#173) and pricing-plan tenant-schema cleanup (#154) beyond
+- The lifecycle E2E itself (Nancy registration, Amara attendance, unified spec) — that is
+  Sub-project B, which depends on this.
+- **Platform subscription billing / `TenantPayment` / PriceOps (#23, #76).** The platform
+  is itself a tenant and a platform subscription is just a program priced through the same
+  PriceOps engine; `TenantPayment`'s bespoke `create_tenant_directly` + env-mock path is
+  the anomaly PriceOps unification will dissolve. This foundation does not touch it and
+  does not drive the payment-bearing signup workflow.
+- Full resolution of #41 (human-named tenants: hyphenated subdomains <-> underscore
+  schema-name mapping). Deferred with a hostname-safe seed slug.
+- Per-tenant DB templates (#173) and pricing_plans tenant-schema cleanup (#154) beyond
   what this journey needs.
 
 **Assumptions**
 - Registry is **pre-alpha with no production tenant data** (per CLAUDE.md). This is what
-  makes the app-wide `app->dao -> _dao` switch safe: there is no tenant whose data is
-  currently stranded in the `registry` schema and would be orphaned when its requests
-  begin routing to its own schema. If that ceases to be true before this ships, a data
-  migration (move per-tenant rows out of `registry` into their tenant schemas) becomes a
-  prerequisite and must be specced separately. No backwards-compatibility burden is
-  assumed otherwise.
+  makes the app-wide schema-routing change safe: no tenant's data is currently stranded in
+  `registry` to be orphaned when its requests begin routing to its own schema. If that
+  stops holding before this ships, a data migration becomes a prerequisite and is specced
+  separately.
 
 ## 3. Decisions (settled with the requester)
 
 1. **Full app-wide tenant isolation**, not a narrowly scoped patch.
-2. **Provision via the real `tenant-signup` workflow**, not by calling provisioning
-   primitives directly. This also gives the lifecycle a genuine signup leg.
-3. **Tenant context = subdomain via `*.localhost`** in tests, matching production
+2. **Collapse the two DAO paths into one** context-aware accessor; the context-dropping
+   path is removed so the bug cannot recur.
+3. **Provision the test tenant via primitives** (`clone_schema` + `copy_workflow` +
+   `copy_user`) — *not* by driving the payment-bearing `tenant-signup` workflow, which
+   would entangle this with PriceOps (#23).
+4. **Tenant context = subdomain via `*.localhost`** in tests, matching production
    subdomain resolution.
 
 ## 4. Design
 
-### 4.1 Workflows controller becomes tenant-aware
+### 4.1 One DAO accessor, no silent registry fallback
 
-Replace `$self->app->dao` in `Workflows.pm` with a tenant-resolved dao. The tenant is
-already available via the `tenant` helper (`$self->tenant`), which resolves
-explicit-param > X-As-Tenant (authed) > subdomain > `registry` default. A single
-private accessor keeps the sites consistent:
+There must be exactly one way to obtain a DAO. It infers the tenant from a real request;
+absent a request it **requires an explicit tenant** rather than defaulting to `registry`.
+
+The `dao` helper (`lib/Registry.pm`) becomes:
 
 ```perl
-method _dao { $self->dao( $self->tenant ) }
+dao => sub ($c, $tenant = undef) {
+    if ( !defined $tenant ) {
+        # Infer the tenant only from a real request. With no request context
+        # (app/job/command), refuse to guess -- the caller must name a schema.
+        die "dao() requires an explicit tenant outside request context"
+            unless $c->tx;
+        $tenant = $c->tenant;
+    }
+    return Registry::DAO->new( url => $ENV{DB_URL}, schema => $tenant );
+}
 ```
 
-All eight `app->dao` call sites switch to `$self->_dao`. Because `$self->tenant`
-defaults to `registry` when no context is present, **existing registry-context requests
-are unaffected**; only requests carrying tenant context route elsewhere.
+Effects:
+- `$self->dao` in a controller mid-request -> infers tenant (may legitimately be
+  `registry` for unauthenticated public requests). **The one true path.**
+- `$self->app->dao` (no request, no explicit tenant) -> **dies loudly** instead of
+  silently returning `registry`. The footgun is gone.
+- `$app->dao('registry')` / `$app->dao($slug)` -> works; explicit and intentional.
 
-**Chicken-and-egg exception — `tenant-signup`.** The signup workflow creates the tenant
-and its schema in its final `RegisterTenant` step, so its run must execute in `registry`
-until that point. `tenant-signup` is therefore pinned to the `registry` schema for the
-whole run (the new schema does not exist while the run is in flight; `RegisterTenant`
-writes the new schema explicitly via its own tenant-scoped dao, which it already does).
-Detection is by workflow slug (`tenant-signup`), kept in one guard in `_dao`.
+Call-site migration (all of them, this is the "app-wide" part):
+- **Controllers** (`Workflows.pm` x13, `TeacherDashboard.pm` x3, `Webhooks.pm` x2,
+  `Controller.pm` base x2): `$self->app->dao` -> `$self->dao`. The existing explicit
+  `$c->dao('registry')` lookups (e.g. custom-domain) stay as-is.
+- **Jobs / commands / plugin** (`Job/WorkflowExecutor`, `Job/WaitlistExpiration`,
+  `Command/workflow_job`, `Command/template`, `Command/schema`,
+  `Mojolicious/Plugin/DBTemplates`): pass an explicit tenant. Registry-global operations
+  (importing workflow/template *definitions*) name `registry`; per-tenant jobs name the
+  tenant they are processing (these already iterate `get_all_tenant_schemas`).
 
-### 4.2 Workflow definitions and runs live in the tenant schema
+**Chicken-and-egg note.** With provisioning done by primitives (3.3), no workflow needs a
+special registry pin: the only workflow that must run in `registry` is `tenant-signup`,
+which is out of scope here and already starts from the registry storefront (no tenant
+context), so `$self->dao` resolves it to `registry` naturally.
+
+### 4.2 Copy all workflows on provisioning (kill list drift)
 
 `clone_schema($slug)` clones table structure (including `workflows`, `workflow_steps`,
-`workflow_runs`). `RegisterTenant` then `copy_workflow`s a **hardcoded list** of workflow
-definitions into the new schema. That list has already drifted — it silently lacks
-`program-location-assignment` — and adding the two workflows this journey needs
-(`program-location-assignment`, `summer-camp-registration`) to the same hardcoded list
-just defers the next drift.
+`workflow_runs`). Tenant provisioning then copies workflow *definitions* into the new
+schema. The current `RegisterTenant` copy step uses a **hardcoded list** that has already
+drifted (it silently lacks `program-location-assignment`).
 
-**Fix the root cause:** copy *every* workflow that exists in the `registry` schema into
-the new tenant schema, derived from the `workflows` table rather than a literal list, so
-the set cannot drift again. (`tenant-signup` is the one workflow that should *not* be
-copied — a tenant never re-runs tenant onboarding inside its own schema; it is excluded
-explicitly.) This subsumes the original "add two workflows" fix.
-
-Workflow runs are created and read through the tenant-scoped dao (4.1), so they live in
-the tenant schema alongside the data they touch.
+Fix the root cause: copy **every** workflow that exists in `registry` into the tenant
+schema, derived from the `workflows` table rather than a literal list, excluding only
+`tenant-signup` (a tenant never re-runs onboarding inside its own schema). This is
+implemented in a reusable provisioning helper (4.4) so both the production path and the
+test seed share one definition of "a fully provisioned tenant."
 
 ### 4.3 Tenant context by subdomain
 
-Production resolves tenant from `<slug>.example.com` via
-`_extract_tenant_from_subdomain`, which rejects bare IPs (hence `127.0.0.1` falls back to
-`registry` today). In tests we drive the browser at `http://<slug>.localhost:3001/`;
-Chromium resolves `*.localhost` to loopback, and the server extracts `<slug>` from the
-Host header. The `localhost` host short-circuits the custom-domain DB lookup, which is
-correct.
+Production resolves tenant from `<slug>.example.com` via `_extract_tenant_from_subdomain`,
+which rejects bare IPs (hence `127.0.0.1` falls back to `registry` today). In tests we
+drive the browser at `http://<slug>.localhost:3001/`; Chromium resolves `*.localhost` to
+loopback and the server extracts `<slug>` from the Host header. The `localhost` host
+short-circuits the custom-domain DB lookup, which is correct.
 
 **Slug constraint.** Tenant slugs permit `[a-z][a-z0-9_]*` (underscores, not hyphens —
-#41). Underscores are not valid DNS hostname characters and Chromium may reject them.
-The signup flow generates a subdomain slug from the org name; to stay hostname-safe
-without taking on #41, the lifecycle seed uses an **all-alphanumeric org name** that
-yields a slug like `lifecycleNNN` (lowercase letters + digits only). #41 remains the
-real fix for human-named tenants (hyphenated subdomain -> underscore schema-name
-mapping) and is referenced, not solved, here.
+#41). Underscores are not valid DNS hostname characters and Chromium may reject them. To
+stay hostname-safe without taking on #41, the lifecycle seed uses an **all-alphanumeric**
+slug (lowercase letters + digits, e.g. `lifecycleNNN`). #41 remains the real fix for
+human-named tenants and is referenced, not solved, here.
 
-**Validation spike (first task, gating).** The subdomain mechanism is plausible but
-unproven in this harness: Chromium must resolve `<slug>.localhost:3001` to loopback,
-send the slug in the Host header, and accept the slug as a valid hostname. Before any
-other work, a throwaway spike proves the full path end-to-end — navigate
-`http://<slug>.localhost:3001/` and assert the server resolved tenant `<slug>` (e.g. a
-debug route echoing `$c->tenant`). If the spike fails, fall back to the **hybrid**
-mechanism: `X-As-Tenant` header for authenticated requests (Morgan's operator journey)
-and subdomain only for the unauthenticated storefront. The design proceeds on subdomain;
-the hybrid is the defined contingency, not a redesign.
+**Validation spike (first task, gating).** Before any other work, a throwaway spike proves
+the full path end-to-end: navigate `http://<slug>.localhost:3001/` and assert the server
+resolved tenant `<slug>`. If it fails, fall back to the **hybrid** mechanism — `X-As-Tenant`
+header for authenticated requests, subdomain only for the unauthenticated storefront. The
+design proceeds on subdomain; the hybrid is the defined contingency, not a redesign.
 
-### 4.4 Tenant signup completion by price, not env
+### 4.4 Provisioning via primitives (a shared helper)
 
-`TenantPayment` currently auto-completes the signup by detecting the *absence* of Stripe
-keys ("test mode") and minting a mock subscription. That is the exact pattern the
-codebase has been deliberately removing: #219/#222 moved registration payment off
-env-detection and onto **price** ("drive payment-or-not by pricing, not env"). Relying on
-env-absence for tenant signup would swim against that current and couple our test to a
-deprecated path.
+`RegisterTenant` already provisions a tenant by calling `clone_schema`, `copy_user`, and
+`copy_workflow`. Extract that core into a reusable, PriceOps-free helper —
+`Registry::DAO::Tenant->provision($db, %args)` (exact home TBD in planning) — that:
+clones the schema, copies seed `program_types`/`templates`, copies the given users, and
+copies **all** registry workflows except `tenant-signup` (4.2).
 
-**Apply the #222 treatment to `TenantPayment`:** when the selected tenant plan's
-recurring amount is **$0** (the Solo / free-to-start tier), the step completes the signup
-without invoking Stripe at all — by price, regardless of whether keys are present. The
-lifecycle seed selects the free Solo plan at the pricing step, so signup completes
-deterministically and provisions the schema. This removes the env dependency, mirrors the
-established registration-payment pattern, and is real product behavior (a $0 plan should
-never hit a card).
+- **Production:** `RegisterTenant` calls the helper instead of its inline, drifting logic.
+  (It keeps its own billing/profile handling; only the provisioning mechanics move.)
+- **Tests:** the lifecycle seed calls the same helper directly to provision Morgan's
+  tenant — no payment workflow, no Stripe, no PriceOps.
 
-**Stripe key safety (still required, now defense-in-depth).** Independent of the above,
-`t/playwright/global-setup.js` clears `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` from
-the server environment so a developer's **live** key can never reach the harness. With
-the price-based completion this is a safety belt rather than the mechanism the test
-depends on. No new mock code is introduced; the existing env-keyed mock branch can be
-retired or left dormant as the maintainer prefers.
+This gives one definition of "provisioned tenant" shared by prod and tests, and removes
+the `TenantPayment::create_tenant_directly` duplication from the critical path (its
+eventual removal is PriceOps work, #23).
 
 ### 4.5 Existing-test fallout
 
-Once `app->dao` no longer forces `registry`, any workflow-driving test that implicitly
-relied on registry-context data must be checked. This is the highest-uncertainty part of
-the work, so it is bounded explicitly rather than left open.
+The DAO-accessor change touches controllers, jobs, commands, and a plugin, so fallout is
+bounded explicitly rather than left open.
 
 **Target set (run all; each must stay green or be fixed):**
-
 - Playwright workflow specs: `tenant-signup`, `jordan-landing-journey`,
   `jordan-admin-dashboard`, `amara-attendance`, `waitlist-flow`, `camp-registration`,
   `parent-dashboard`, `admin-dashboard`, `morgan-program-setup`, `all-workflows-visual`,
   `workflow-layout-visual`, `component-integration`.
-- DAO/controller tests that drive workflows: everything under `t/dao/` and
-  `t/controller/` (run as suites).
+- `t/controller/` and `t/dao/` (run as suites) — these exercise Workflows,
+  TeacherDashboard, Webhooks, the commands, and the jobs.
 
-**Expected outcome and done-criteria.** The hypothesis is that nearly all are unaffected:
-they issue requests without tenant context, so `$self->tenant` still resolves to
-`registry` and behavior is unchanged. Done means: the full Playwright suite and
-`t/dao/` + `t/controller/` are green, **except** the pre-existing, separately-tracked
-failure #227 (`program-listing-filters.t`), which this work neither fixes nor worsens.
-Any spec that genuinely depends on the old `app->dao` behavior is converted into a named
-sub-task (explicitly route it to the tenant it means, or assert registry default), not a
-silent edit. If the count of genuinely-affected specs exceeds ~3, stop and re-scope with
-the maintainer before grinding through them.
+**Done-criteria.** The Playwright suite and `t/controller/` + `t/dao/` are green, except
+the pre-existing, separately-tracked #227 (`program-listing-filters.t`), which this work
+neither fixes nor worsens. The hypothesis: most are unaffected (no request context -> they
+were already registry, and `$self->dao` still resolves registry there). Any caller that
+genuinely depended on `app->dao`'s silent registry now fails loudly and is fixed by naming
+the schema explicitly — a desirable forcing function. If genuinely-affected specs exceed
+~3, stop and re-scope with the maintainer.
 
 ## 5. Testing strategy
 
 - TDD at the integration layer using the existing Playwright harness (one Test::PostgreSQL
-  DB + one daemon), which already imports workflows/templates from disk per run.
+  DB + one daemon), which imports workflows/templates from disk per run.
 - New/extended coverage:
-  - A focused test that a tenant provisioned via `tenant-signup` has
-    `program-location-assignment` and `summer-camp-registration` in its schema.
-  - Morgan's existing program-setup spec re-pointed at his tenant subdomain, asserting
-    the project/session/events land in the **tenant** schema (not registry).
-  - global-setup asserted to start the server without Stripe keys.
-- Full `t/dao/` and the Playwright suite run as the regression gate. Pre-existing failure
-  #227 (`program-listing-filters.t`) is tracked separately and not introduced here.
+  - A unit test asserting `dao()` dies without request context and without an explicit
+    tenant, and resolves the request tenant within a request (the collapse contract).
+  - A provisioning-helper test asserting a provisioned tenant's schema contains all
+    non-`tenant-signup` workflows (guards against list drift forever).
+  - The subdomain spike, then Morgan's program-setup spec re-pointed at his tenant
+    subdomain, asserting project/session/events land in the **tenant** schema.
+- Full `t/dao/`, `t/controller/`, and the Playwright suite are the regression gate.
 
 ## 6. Risks and mitigations
 
 | Risk | Mitigation |
 | --- | --- |
-| App-wide `_dao` change breaks existing workflow specs | Bounded target set (§4.5) with explicit done-criteria; registry default limits blast radius; re-scope trigger if >~3 specs genuinely affected. |
-| `tenant-signup` run misrouted to a not-yet-existent schema | Pin `tenant-signup` to registry by slug in `_dao`; `RegisterTenant` keeps writing the new schema via its own dao. |
-| Subdomain context unproven in harness (Chromium / `*.localhost` / slug) | Gating validation spike before any other work (§4.3); hybrid `X-As-Tenant`+subdomain fallback defined. |
-| Live Stripe key reaches harness | Signup completes by price ($0 plan), not env; global-setup also clears Stripe env vars as defense-in-depth (§4.4). |
-| Hardcoded `copy_workflow` list drifts again | Copy all registry workflows (excluding `tenant-signup`) from the `workflows` table; a provisioning test guards the set (§4.2). |
-| Existing tenant data stranded in `registry` orphaned by the switch | Pre-alpha assumption stated (§2); if it stops holding, a data migration becomes a prerequisite. |
+| DAO-accessor change breaks callers across controllers/jobs/commands | Bounded target set (4.5) with done-criteria; fail-loud surfaces every real dependency; re-scope trigger at >~3 affected specs. |
+| Subdomain context unproven in harness (Chromium / `*.localhost` / slug) | Gating spike (4.3); hybrid `X-As-Tenant`+subdomain fallback defined. |
+| Provisioning helper diverges from `RegisterTenant` behavior | Single shared helper used by both prod and tests; copies all workflows from the table. |
+| Existing tenant data stranded in `registry` orphaned by the switch | Pre-alpha assumption stated (2); migration becomes a prerequisite if it stops holding. |
+| Scope creep into PriceOps via `tenant-signup` | Provision via primitives; `TenantPayment`/signup explicitly out of scope (2, 4.4). |
 
 ## 7. Sequencing
 
-0. **Subdomain validation spike** (§4.3) — gating. Prove `<slug>.localhost:3001`
-   resolves and the server reads the tenant, or switch to the hybrid fallback. Nothing
-   else starts until the context mechanism is settled.
-1. global-setup Stripe-key clearing (independent, low risk, safety fix).
-2. `RegisterTenant` copies all registry workflows (excluding `tenant-signup`) from the
-   `workflows` table; provisioning test asserts the needed workflows land in-tenant.
-3. `TenantPayment` completes a $0 plan by price (§4.4); test the free-plan signup path.
-4. `Workflows.pm` `_dao` change + `tenant-signup` registry pin.
-5. Run the bounded regression target set (§4.5); fix genuine fallout or re-scope.
-6. Hand off to Sub-project B (lifecycle E2E in-tenant).
+0. **Subdomain validation spike** (4.3) — gating. Prove `<slug>.localhost:3001` resolves
+   to the tenant, or switch to the hybrid fallback. Nothing else starts until settled.
+1. **Collapse the DAO accessor** (4.1): `dao` helper requires explicit tenant outside
+   request context; unit-test the contract.
+2. **Migrate call sites** (4.1): controllers -> `$self->dao`; jobs/commands/plugin ->
+   explicit tenant. Run `t/controller/` + `t/dao/` after.
+3. **Provisioning helper** (4.4) + copy-all-workflows (4.2); `RegisterTenant` delegates to
+   it; provisioning test.
+4. Run the bounded regression target set (4.5); fix genuine fallout or re-scope.
+5. Hand off to Sub-project B (lifecycle E2E in-tenant: seed uses the provisioning helper,
+   Morgan drives his journey via his subdomain).
 
 ## 8. Open questions
 
-- Should `tenant-signup` be the only registry-pinned workflow, or are there others that
-  legitimately operate cross-tenant (e.g. platform admin)? Current evidence says only
-  `tenant-signup`; to be confirmed during the fallout pass (§4.5).
-- Copying *all* registry workflows into each tenant (§4.2) is the anti-drift fix, but it
-  also copies workflows a given tenant may never use. Acceptable (definitions are cheap,
-  cloned structure already exists); revisit only if the copy becomes a provisioning-time
-  cost.
-- Does retiring `TenantPayment`'s env-keyed mock branch (§4.4) affect any existing
-  tenant-signup test that depended on it? Checked as part of the §4.5 target set.
+- Are there controller `app->dao` sites that genuinely want `registry` (not the request
+  tenant)? Evidence says workflow data should follow the tenant; confirmed per-site during
+  migration (step 2), converting any true registry-intent to an explicit `dao('registry')`.
+- Best home for the provisioning helper (`Registry::DAO::Tenant->provision` vs a dedicated
+  provisioning module). Settled in planning.
+- `workflows#index` 500s on an unknown workflow slug (`$workflow->slug` on undef,
+  `Workflows.pm:110`) — a robustness gap found during verification. File separately; not
+  part of this foundation.
