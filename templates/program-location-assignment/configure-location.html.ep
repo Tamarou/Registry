@@ -65,8 +65,10 @@
                                                    value="<%= $template_name %>"
                                                    class="mr-2">
                                             <span class="font-medium"><%= $template_name %></span>
-                                            <% if ($template->{description}) { %>
+                                            <% if (ref $template eq 'HASH' && $template->{description}) { %>
                                                 <span class="text-gray-500 ml-2">(<%= $template->{description} %>)</span>
+                                            <% } elsif (!ref $template) { %>
+                                                <span class="text-gray-500 ml-2">(<%= $template %>)</span>
                                             <% } %>
                                         </label>
                                     <% } %>

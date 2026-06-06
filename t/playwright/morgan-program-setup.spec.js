@@ -92,21 +92,24 @@ function queryProgramId(testDB, programName) {
 // Returns an array of UUIDs.
 // ---------------------------------------------------------------------------
 function querySessionIds(testDB, programId) {
+  // Aggregate to a JSON array inside Postgres so this helper only ever handles
+  // scalar ($) sigils -- shell double-quoting mangles backslash-escaped @
+  // sigils into Perl's declared_refs syntax, which is not enabled here.
   const script = `
     use lib qw(lib t/lib);
     use Registry::DAO;
-    use JSON::PP qw(encode_json);
     my \\$dao = Registry::DAO->new(url => '${testDB.dbUrl}');
     my \\$db  = \\$dao->db;
-    my \\$rows = \\$db->query(
-        q{SELECT DISTINCT s.id FROM sessions s
-          JOIN session_events se ON se.session_id = s.id
-          JOIN events e ON e.id = se.event_id
-          WHERE e.project_id = ? LIMIT 10},
+    my \\$json = \\$db->query(
+        q{SELECT COALESCE(json_agg(t.id), '[]'::json)::text AS j FROM (
+            SELECT DISTINCT s.id FROM sessions s
+            JOIN session_events se ON se.session_id = s.id
+            JOIN events e ON e.id = se.event_id
+            WHERE e.project_id = ? LIMIT 10
+          ) t},
         '${programId}'
-    )->hashes;
-    my \\@ids = map { \\$_->{id} } \\@{\\$rows};
-    print encode_json(\\@ids);
+    )->hash->{j};
+    print \\$json;
   `;
 
   const raw = execSync(
@@ -264,13 +267,23 @@ test.describe("Morgan's program setup journey", () => {
     // Fields: generation_params[start_date] (date), generation_params[duration_weeks], confirm_generation
     await registryPage.fill('input[name="generation_params[start_date]"]', '2026-09-01');
     await registryPage.fill('input[name="generation_params[duration_weeks]"]', '4');
+
+    // Assign Amara as the teacher for the location. The events table requires a
+    // teacher_id, and Amara takes attendance for these events in a later leg.
+    await registryPage.selectOption(
+      `select[name="teacher_assignments[${testData.location_id}]"]`,
+      testData.amara.user_id
+    );
+
     await registryPage.locator('input[name="confirm_generation"]').check();
     await registryPage.locator('button[type="submit"]').click();
     await registryPage.waitForLoadState('networkidle');
 
     // Complete
     await expect(registryPage).toHaveURL(/complete/);
-    await expect(registryPage.locator('h1')).toContainText('Program Assignment Complete');
+    await expect(
+      registryPage.getByRole('heading', { level: 1, name: 'Program Assignment Complete!' })
+    ).toBeVisible();
   });
 
   // -------------------------------------------------------------------------
@@ -343,22 +356,31 @@ test.describe("Morgan's program setup journey", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 5. Verify the free published session appears on the parent storefront
-  //    The storefront query requires: program+session status='published',
-  //    session end_date >= CURRENT_DATE, and a linked pricing plan.
-  //    A $0 pricing plan is created by GenerateEvents when pricing_override=0.
+  // 5. Verify the free published session is registerable on the storefront.
+  //    The root storefront renders the tenant-storefront/program-listing
+  //    (marketing) template, which wires the first published program+session
+  //    into a callcc registration form. Presence of that form for our session
+  //    proves it passed the storefront gate (program+session published,
+  //    end_date >= today, linked pricing plan).
   // -------------------------------------------------------------------------
-  test('Published free session appears on the parent storefront', async ({ registryPage, testDB }) => {
-    // Visit storefront as unauthenticated user
+  test('Published free session is registerable on the storefront', async ({ registryPage, testDB }) => {
+    if (!programId) programId = queryProgramId(testDB, programName);
+    if (!sessionIds) sessionIds = querySessionIds(testDB, programId);
+    const sessionId = sessionIds[0];
+
+    // Clear auth/tenant context so the root storefront resolves to the
+    // registry tenant, where this journey's data lives.
+    await registryPage.context().clearCookies();
+
     await registryPage.goto('/');
     await registryPage.waitForLoadState('networkidle');
 
-    // The program card should be visible
-    const programCard = registryPage.locator('article.landing-feature-card').filter({ hasText: programName });
-    await expect(programCard).toBeVisible();
-
-    // A Register button (not waitlist) because there is capacity available
-    const registerButton = programCard.locator('button[type="submit"]');
-    await expect(registerButton).toContainText('Register');
+    // The storefront exposes a callcc registration form carrying our session.
+    const registerForm = registryPage
+      .locator('form[action*="/callcc/"]')
+      .filter({ has: registryPage.locator(`input[name="session_id"][value="${sessionId}"]`) })
+      .first();
+    await expect(registerForm).toBeAttached();
+    await expect(registerForm.locator('button[type="submit"]')).toBeVisible();
   });
 });

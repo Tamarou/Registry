@@ -76,7 +76,7 @@
                                     <option value="">-- Select Teacher (Optional) --</option>
                                     <% for my $teacher (@$available_teachers) { %>
                                         <option value="<%= $teacher->id %>">
-                                            <%= $teacher->first_name %> <%= $teacher->last_name %>
+                                            <%= $teacher->name %>
                                         </option>
                                     <% } %>
                                 </select>

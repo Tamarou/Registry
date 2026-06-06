@@ -60,9 +60,48 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         }
         
         $query .= ' LIMIT 1';
-        
+
         my $data = $db->query($query, @bind_params)->hash;
         return $data ? $class->new( $data->%* ) : ();
+    }
+
+    # Like find, but returns every matching user as an arrayref of objects.
+    # find() is hard-capped at LIMIT 1, so callers that need a collection
+    # (e.g. listing staff for teacher assignment) use this instead.
+    sub list ( $class, $db, $filter = {}, $order = { -desc => 'u.created_at' } ) {
+        $db = $db->db if $db isa Registry::DAO;
+        delete $filter->{password};
+
+        my $query = q{
+            SELECT u.id, u.username, u.passhash, u.birth_date, u.user_type, u.grade, u.created_at,
+                   u.email_verified_at, u.invite_pending,
+                   up.email, up.name
+            FROM users u
+            LEFT JOIN user_profiles up ON u.id = up.user_id
+        };
+
+        my @where_clauses = ();
+        my @bind_params   = ();
+        for my $key ( keys %$filter ) {
+            if ( $key eq 'email' || $key eq 'name' ) {
+                push @where_clauses, "up.$key = ?";
+            } else {
+                push @where_clauses, "u.$key = ?";
+            }
+            push @bind_params, $filter->{$key};
+        }
+
+        if (@where_clauses) {
+            $query .= ' WHERE ' . join( ' AND ', @where_clauses );
+        }
+
+        if ( ref $order eq 'HASH' && exists $order->{-desc} ) {
+            my $col = $order->{-desc};
+            $col = "u.$col" unless $col =~ /\./;
+            $query .= " ORDER BY $col DESC";
+        }
+
+        return [ map { $class->new( $_->%* ) } $db->query( $query, @bind_params )->hashes->@* ];
     }
 
     sub create ( $class, $db, $data //= carp "must provide data" ) {
