@@ -8,7 +8,7 @@
         <h2 class="text-2xl font-semibold mb-4">Configure Location Details for <%= stash('step_data')->{project_name} %></h2>
         <p class="text-gray-600 mb-6">Set specific capacity, schedule, and pricing for each selected location.</p>
 
-        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'configure-location') %>">
+        <form method="POST" action="<%= $action %>">
             <% my $selected_locations = stash('step_data')->{selected_locations} || []; %>
             <% my $standard_times = stash('step_data')->{standard_times} || {}; %>
             <% my $program_type_config = stash('step_data')->{program_type_config} || {}; %>
@@ -102,7 +102,7 @@
             </div>
 
             <div class="mt-8 flex justify-between">
-                <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'choose-locations') %>"
+                <a href="<%= url_for('workflow_step', workflow => $workflow, run => $run->id, step => 'choose-locations') %>"
                    class="bg-gray-300 text-gray-700 px-6 py-2 rounded hover:bg-gray-400">
                     Back
                 </a>
