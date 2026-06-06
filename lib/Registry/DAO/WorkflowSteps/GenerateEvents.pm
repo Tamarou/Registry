@@ -13,7 +13,11 @@ use DateTime;
 method process ($db, $form_data, $run = undef) {
     $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
     my $data = $run->data;
-    
+
+    # Bracketed field names (generation_params[start_date],
+    # teacher_assignments[<id>]) arrive flat.
+    $form_data = $self->expand_form_params($form_data);
+
     # If form was submitted (confirmation)
     if ($form_data->{confirm_generation}) {
         my $generation_params = $form_data->{generation_params};
@@ -117,7 +121,9 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
 
 method generate_events_for_session ($db, $session, $location, $params, $teacher_id = undef) {
     my @events;
-    my $start_date = DateTime->from_epoch(epoch => $params->{start_date});
+    # The generate-events form submits an ISO date (YYYY-MM-DD); accept an
+    # epoch too for programmatic callers.
+    my $start_date = $self->parse_start_date($params->{start_date});
     my $duration_weeks = $params->{duration_weeks};
     my $schedule = $location->{schedule};
     
@@ -177,6 +183,15 @@ method generate_events_for_session ($db, $session, $location, $params, $teacher_
     return @events;
 }
 
+method parse_start_date ($value) {
+    # Epoch seconds
+    return DateTime->from_epoch(epoch => $value) if $value =~ /\A\d+\z/;
+
+    # ISO date YYYY-MM-DD
+    my ($y, $mo, $d) = split /-/, $value;
+    return DateTime->new(year => $y, month => $mo, day => $d);
+}
+
 method day_name_to_offset ($day_name) {
     my %day_offsets = (
         monday => 0,
@@ -191,14 +206,20 @@ method day_name_to_offset ($day_name) {
     return $day_offsets{lc($day_name)};
 }
 
+# Render contract: templates read stash('step_data'), so wrap prepare_data
+# under that key for the controller's GET render path.
+method prepare_template_data ($db, $run, $params = {}) {
+    return { step_data => $self->prepare_data($db) };
+}
+
 method prepare_data ($db) {
     my $workflow = $self->workflow($db);
     my $run = $workflow->latest_run($db);
     my $data = $run->data;
-    
-    # Get available teachers for assignment
-    my $teachers = Registry::DAO::User->find($db, { user_type => 'staff' });
-    
+
+    # Get available teachers for assignment (all staff users)
+    my $teachers = Registry::DAO::User->list($db, { user_type => 'staff' });
+
     return {
         project_name => $data->{project_name},
         configured_locations => $data->{configured_locations},

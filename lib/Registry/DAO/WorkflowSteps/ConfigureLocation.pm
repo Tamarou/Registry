@@ -9,7 +9,10 @@ use Registry::DAO::ProgramType;
 method process ($db, $form_data, $run = undef) {
     $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
     my $data = $run->data;
-    
+
+    # Bracketed field names (location_configs[<id>][capacity]) arrive flat.
+    $form_data = $self->expand_form_params($form_data);
+
     # If form was submitted
     if ($form_data->{location_configs}) {
         my $location_configs = $form_data->{location_configs};
@@ -30,7 +33,7 @@ method process ($db, $form_data, $run = undef) {
             }
             
             # Apply program type defaults if not overridden
-            my $program_type_config = $data->{project_metadata}->{program_type_config} || {};
+            my $program_type_config = $data->{program_type_config} || {};
             my $standard_times = $program_type_config->{standard_times} || {};
             
             push @configured_locations, {
@@ -56,13 +59,19 @@ method process ($db, $form_data, $run = undef) {
     };
 }
 
+# Render contract: templates read stash('step_data'), so wrap prepare_data
+# under that key for the controller's GET render path.
+method prepare_template_data ($db, $run, $params = {}) {
+    return { step_data => $self->prepare_data($db) };
+}
+
 method prepare_data ($db) {
     my $workflow = $self->workflow($db);
     my $run = $workflow->latest_run($db);
     my $data = $run->data;
-    
+
     # Get program type defaults
-    my $program_type_config = $data->{project_metadata}->{program_type_config} || {};
+    my $program_type_config = $data->{program_type_config} || {};
     my $standard_times = $program_type_config->{standard_times} || {};
     
     return {

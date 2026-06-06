@@ -107,6 +107,31 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
         return $run->data || {};
     }
 
+    # Re-nest Rails-style bracketed form field names into a hashref. Mojo's
+    # param->to_hash delivers fields like "a[b][c]" as flat string keys; steps
+    # with per-row form data (e.g. location_configs[<id>][capacity]) need them
+    # nested. Non-bracketed keys pass through unchanged.
+    method expand_form_params ($form_data) {
+        my %out;
+        for my $key ( sort keys %$form_data ) {
+            my $val = $form_data->{$key};
+            if ( my ($head, $brackets) = $key =~ /\A([^\[]+)((?:\[[^\]]*\])+)\z/ ) {
+                my @path = ( $head, $brackets =~ /\[([^\]]*)\]/g );
+                my $ref = \%out;
+                while ( @path > 1 ) {
+                    my $p = shift @path;
+                    $ref->{$p} = {} unless ref $ref->{$p} eq 'HASH';
+                    $ref = $ref->{$p};
+                }
+                $ref->{ $path[0] } = $val;
+            }
+            else {
+                $out{$key} = $val;
+            }
+        }
+        return \%out;
+    }
+
     method as_hash ($db) {
         # Create a base hash with only the fields that exist
         my $json = {};
