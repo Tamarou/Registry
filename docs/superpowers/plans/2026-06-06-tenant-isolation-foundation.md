@@ -14,11 +14,18 @@
 
 ## File map
 
-- `lib/Registry.pm` — `dao` helper (make default `$c->tenant` explicit; no behavior change for callers).
+- `lib/Registry.pm` — `dao` helper: **leave unchanged.** It already resolves
+  `$tenant = $c->tenant($tenant)` (sanitizes, handles explicit overrides, defaults to
+  `registry` without a request). It is the correct single accessor; the collapse is done
+  by migrating controllers off `app->dao`, not by editing the helper.
 - `lib/Registry/Controller.pm` — base: `app->dao` ×2 → `$self->dao`.
 - `lib/Registry/Controller/Workflows.pm` — `app->dao` ×13 → `$self->dao`.
 - `lib/Registry/Controller/TeacherDashboard.pm` — `app->dao` ×3 → `$self->dao`.
-- `lib/Registry/Controller/Webhooks.pm` — `app->dao` ×2 → `$self->dao` (behavior-preserving; no request tenant).
+- `lib/Registry/Controller/Webhooks.pm` — `app->dao` ×2 (lines 39, 177) → `$self->dao`.
+  Behavior-preserving: a Stripe webhook carries no tenant context, so `$self->dao` resolves
+  `registry` just as `app->dao` did, and the dedup writes are already explicitly
+  `registry.webhook_events`. The migration is for consistency + the guard, not a behavior
+  change.
 - `lib/Registry/DAO/Tenant.pm` — add `provision` class method (clone_schema + program_types/templates + copy_user + copy all workflows).
 - `lib/Registry/DAO/WorkflowSteps/RegisterTenant.pm` — delegate provisioning mechanics to `Tenant->provision`.
 - `t/dao/dao-accessor-contract.t` — new: accessor contract + controller guard.
@@ -82,7 +89,6 @@ git commit -m "Spike: confirm subdomain (<slug>.localhost) tenant resolution in 
 ## Task 1: Collapse the DAO accessor onto `$self->dao`
 
 **Files:**
-- Modify: `lib/Registry.pm:224` (make the default explicit)
 - Modify: `lib/Registry/Controller.pm:18,33`
 - Modify: `lib/Registry/Controller/Workflows.pm` (lines 10,15,20,64,109,128,230,289,465,477,490,523,627)
 - Modify: `lib/Registry/Controller/TeacherDashboard.pm:16,64,108`
@@ -105,16 +111,16 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 
 # --- Guard: no controller may use app->dao (the context-dropping footgun) ---
+# Check line-by-line, skipping comments, to avoid false positives from a comment
+# that mentions the old pattern. Include the base Controller.pm (one level up).
+my @files = ( path('lib/Registry/Controller.pm'),
+              path('lib/Registry/Controller')->list_tree->grep(sub { /\.pm$/ })->each );
 my @offenders;
-for my $f ( path('lib/Registry/Controller')->list_tree->each ) {
-    next unless $f =~ /\.pm$/;
-    my $src = $f->slurp;
-    push @offenders, "$f" if $src =~ /app->dao/;
-}
-# Controller.pm base lives one level up:
-{
-    my $src = path('lib/Registry/Controller.pm')->slurp;
-    push @offenders, 'lib/Registry/Controller.pm' if $src =~ /app->dao/;
+for my $f (@files) {
+    for my $line ( split /\n/, $f->slurp ) {
+        next if $line =~ /^\s*#/;            # skip full-line comments
+        push @offenders, "$f" if $line =~ /\bapp->dao\b/;
+    }
 }
 is "@offenders", '', 'no controller uses app->dao (use $self->dao)';
 
@@ -142,25 +148,7 @@ is $bare->dao->current_tenant, 'registry', '$self->dao -> registry without conte
 Run: `carton exec prove -lv t/dao/dao-accessor-contract.t`
 Expected: FAIL — the guard lists `Workflows.pm`, `TeacherDashboard.pm`, `Webhooks.pm`, `Controller.pm`.
 
-- [ ] **Step 3: Make the `dao` helper default explicit (no behavior change)**
-
-In `lib/Registry.pm`, change the helper signature so the default is visible and self-documenting:
-
-```perl
-dao => sub ( $c, $tenant = $c->tenant ) {
-    # Single DAO accessor. $c->tenant is the request tenant, or 'registry'
-    # when there is no request (jobs/commands/plugin). Controllers must reach
-    # this via $self->dao, never $self->app->dao (which drops request context).
-    return Registry::DAO->new(
-        url    => $ENV{DB_URL},
-        schema => $tenant,
-    );
-}
-```
-
-(If the body already constructs the DAO differently, keep that body; only the signature default and comment change.)
-
-- [ ] **Step 4: Migrate controller call sites**
+- [ ] **Step 3: Migrate controller call sites**
 
 In each listed controller, replace `$self->app->dao` with `$self->dao`. These are all the
 read-the-current-tenant DAO acquisitions. Leave any existing explicit `$self->dao('registry')`
@@ -175,24 +163,27 @@ for f in lib/Registry/Controller.pm \
 done
 ```
 
-Then visually confirm no semantic surprise (e.g. a site that truly wanted registry — none expected; Webhooks has no request tenant so resolves registry either way).
+Then visually scan each migrated method: confirm no site truly wanted registry (none
+expected; Webhooks has no request tenant so resolves registry either way), and that
+methods which capture `my $dao = $self->dao` once and reuse it across many lines are
+synchronous controller actions where the tenant cannot change mid-method (they are).
 
-- [ ] **Step 5: Run the contract test; expect PASS**
+- [ ] **Step 4: Run the contract test; expect PASS**
 
 Run: `carton exec prove -lv t/dao/dao-accessor-contract.t`
 Expected: PASS (guard clean, both contract assertions green).
 
-- [ ] **Step 6: Run controller + dao suites**
+- [ ] **Step 5: Run controller + dao suites**
 
 Run: `carton exec prove -lr t/controller/ t/dao/`
 Expected: PASS except the pre-existing #227 `program-listing-filters.t` (unchanged). If any
 other spec fails, diagnose per spec §4.5 (convert genuine registry-intent to explicit
 `dao('registry')`); if >~3 specs fail, STOP and surface to the maintainer.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add lib/Registry.pm lib/Registry/Controller.pm lib/Registry/Controller/Workflows.pm \
+git add lib/Registry/Controller.pm lib/Registry/Controller/Workflows.pm \
         lib/Registry/Controller/TeacherDashboard.pm lib/Registry/Controller/Webhooks.pm \
         t/dao/dao-accessor-contract.t
 git commit -m "Collapse DAO access to context-aware \$self->dao; guard controllers against app->dao"
@@ -281,6 +272,8 @@ sub provision ( $class, $db, $args ) {
     } );
     my $slug = $tenant->slug;
 
+    # clone_schema/copy_user/copy_workflow accept named-arg call syntax
+    # (their params are named); this matches t/controller/location.t and RegisterTenant.
     $db->query( 'SELECT clone_schema(dest_schema => ?)', $slug );
 
     # Seed rows clone_schema does not copy.
@@ -295,6 +288,9 @@ sub provision ( $class, $db, $args ) {
         ON CONFLICT (slug) DO NOTHING
     });
 
+    # All schema-writing work in one transaction so a failure leaves no half-tenant.
+    my $tx = $db->begin;
+
     # Copy users (accept user objects or hashrefs with an id).
     for my $u ( @{ $args->{users} || [] } ) {
         my $uid = ref $u && $u->can('id') ? $u->id : $u->{id};
@@ -305,20 +301,34 @@ sub provision ( $class, $db, $args ) {
     }
 
     # Copy ALL workflow definitions except tenant-signup (no list to drift).
-    my $rows = $db->select( 'workflows', [ 'id', 'slug' ] )->hashes;
+    # Source the table from registry explicitly so this does not depend on the
+    # passed-in handle's search_path.
+    my $rows = $db->select( 'registry.workflows', [ 'id', 'slug' ] )->hashes;
     for my $w ( $rows->each ) {
         next if $w->{slug} eq 'tenant-signup';
         $db->query( 'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
             $slug, $w->{id} );
     }
 
+    # Copy outcome definitions (RegisterTenant did this inline; preserve it here so
+    # delegation does not silently drop them). Same id keeps step->definition links.
+    my $tenant_dao = Registry::DAO->new( url => $ENV{DB_URL}, schema => $slug );
+    for my $def ( Registry::DAO::OutcomeDefinition->find($db) ) {
+        Registry::DAO::OutcomeDefinition->create( $tenant_dao->db, {
+            id     => $def->id,
+            name   => $def->name,
+            schema => $def->schema,
+        } );
+    }
+
+    $tx->commit;
     return $tenant;
 }
 ```
 
-Note: confirm the `copy_user`/`copy_workflow`/`clone_schema` argument styles against the
-running DB functions (named args used elsewhere: `dest_schema => ?`). Adjust if the SQL
-function signatures differ.
+Note: add `use Registry::DAO::OutcomeDefinition;` (and confirm `Registry::DAO` /
+`Registry::DAO::User` are available) at the top of `Tenant.pm` if not already imported.
+`OutcomeDefinition->find($db)` returns a list in list context (per the base `Object->find`).
 
 - [ ] **Step 4: Run the provisioning test; expect PASS**
 
@@ -327,14 +337,20 @@ Expected: PASS (all four needed/excluded workflow assertions + user copy).
 
 - [ ] **Step 5: Delegate `RegisterTenant` provisioning to the helper**
 
-In `lib/Registry/DAO/WorkflowSteps/RegisterTenant.pm`, replace the inline
-`clone_schema` + program_types/templates inserts + hardcoded `copy_workflow` loop
-(roughly lines 117–200) with a call to `Registry::DAO::Tenant->provision`, passing the
-profile-derived name/slug and the resolved user list. Keep RegisterTenant's billing /
-profile / invitation-email logic intact — only the schema-provisioning mechanics move.
-(If profile shape makes a clean extraction awkward, pass the already-created users and
-have `provision` accept a pre-created tenant via an optional `tenant => $tenant` arg —
-decide during implementation, keeping one provisioning definition.)
+In `lib/Registry/DAO/WorkflowSteps/RegisterTenant.pm`, replace the inline provisioning
+mechanics — `clone_schema`, the program_types/templates inserts, the user-copy loop, the
+hardcoded `copy_workflow` loop, AND the outcome-definition copy loop (the whole block
+roughly lines 117–211, ending at `$tx->commit`) — with a single call to
+`Registry::DAO::Tenant->provision`, passing the profile-derived name/slug and the resolved
+user list. `provision` now owns all of that, including outcome definitions and the
+transaction. Keep RegisterTenant's billing / profile / invitation-email and
+continuation-handling logic intact — only the schema-provisioning mechanics move.
+
+Subtlety: RegisterTenant currently creates the tenant itself (line 117) before cloning.
+`provision` also creates the tenant. Pick one owner: simplest is to let `provision` create
+the tenant and have RegisterTenant use the returned object. If RegisterTenant must set
+billing fields on the tenant row, do so via `$tenant->update(...)` after `provision`
+returns. Keep exactly one tenant-creation path.
 
 - [ ] **Step 6: Run tenant-signup coverage**
 
