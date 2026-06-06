@@ -81,47 +81,48 @@ leaving the footgun loaded for the next caller.
 
 ## 4. Design
 
-### 4.1 One DAO accessor, no silent registry fallback
+### 4.1 One DAO accessor: always context-aware
 
-There must be exactly one way to obtain a DAO. It infers the tenant from a real request;
-absent a request it **requires an explicit tenant** rather than defaulting to `registry`.
-
-The `dao` helper (`lib/Registry.pm`) becomes:
+There is exactly one way to obtain a DAO — the `dao` helper, which resolves the tenant
+from context via `$c->tenant`:
 
 ```perl
-dao => sub ($c, $tenant = undef) {
-    if ( !defined $tenant ) {
-        # Infer the tenant only from a real request. With no request context
-        # (app/job/command), refuse to guess -- the caller must name a schema.
-        die "dao() requires an explicit tenant outside request context"
-            unless $c->tx;
-        $tenant = $c->tenant;
-    }
+dao => sub ( $c, $tenant = $c->tenant ) {
     return Registry::DAO->new( url => $ENV{DB_URL}, schema => $tenant );
 }
 ```
 
-Effects:
-- `$self->dao` in a controller mid-request -> infers tenant (may legitimately be
-  `registry` for unauthenticated public requests). **The one true path.**
-- `$self->app->dao` (no request, no explicit tenant) -> **dies loudly** instead of
-  silently returning `registry`. The footgun is gone.
-- `$app->dao('registry')` / `$app->dao($slug)` -> works; explicit and intentional.
+`$c->tenant` returns the request's tenant when there is a request, and `registry` when
+there is not. That default is **correct and intended** for contextless callers:
 
-Call-site migration (all of them, this is the "app-wide" part):
-- **Controllers** (`Workflows.pm` x13, `TeacherDashboard.pm` x3, `Webhooks.pm` x2,
-  `Controller.pm` base x2): `$self->app->dao` -> `$self->dao`. The existing explicit
-  `$c->dao('registry')` lookups (e.g. custom-domain) stay as-is.
-- **Jobs / commands / plugin** (`Job/WorkflowExecutor`, `Job/WaitlistExpiration`,
-  `Command/workflow_job`, `Command/template`, `Command/schema`,
-  `Mojolicious/Plugin/DBTemplates`): pass an explicit tenant. Registry-global operations
-  (importing workflow/template *definitions*) name `registry`; per-tenant jobs name the
-  tenant they are processing (these already iterate `get_all_tenant_schemas`).
+- **Controllers mid-request** -> `$self->dao` resolves the acting tenant (or `registry`
+  for unauthenticated public requests). The one true path.
+- **Jobs / commands / plugin** (no request) -> `$app->dao` resolves `registry`, which is
+  exactly what they want: workflow/template *definition* imports and the DBTemplates
+  plugin operate on `registry`; per-tenant jobs already name their tenant explicitly
+  (`$app->dao($slug)`, iterating `get_all_tenant_schemas`).
+
+So the registry default stays. The bug was never the default — it was that **controllers
+had a second, context-dropping path**: `$self->app->dao` hops to the app and silently
+abandons the controller's request tenant. Having two accessors (`$self->dao` vs
+`$self->app->dao`) is what reopens the bug.
+
+**Collapse to one path:**
+
+1. Migrate every controller `$self->app->dao` -> `$self->dao` (`Workflows.pm` x13,
+   `TeacherDashboard.pm` x3, `Webhooks.pm` x2, `Controller.pm` base x2). Existing explicit
+   `$self->dao('registry')` lookups (e.g. custom-domain) stay as-is — explicit intent is
+   fine.
+2. Non-controller callers are unchanged: `$app->dao` -> `registry` is their intended
+   behavior.
+3. **Guard against recurrence** with a test that fails if `app->dao` appears anywhere
+   under `lib/Registry/Controller/`. Controllers have request context; they must use
+   `$self->dao`. This makes "two accessors in a controller" structurally impossible going
+   forward, without forbidding the legitimate contextless `app->dao` jobs rely on.
 
 **Chicken-and-egg note.** With provisioning done by primitives (3.3), no workflow needs a
-special registry pin: the only workflow that must run in `registry` is `tenant-signup`,
-which is out of scope here and already starts from the registry storefront (no tenant
-context), so `$self->dao` resolves it to `registry` naturally.
+special registry pin: `tenant-signup` (out of scope) starts from the registry storefront
+with no tenant context, so `$self->dao` resolves it to `registry` naturally.
 
 ### 4.2 Copy all workflows on provisioning (kill list drift)
 
@@ -188,19 +189,23 @@ bounded explicitly rather than left open.
 
 **Done-criteria.** The Playwright suite and `t/controller/` + `t/dao/` are green, except
 the pre-existing, separately-tracked #227 (`program-listing-filters.t`), which this work
-neither fixes nor worsens. The hypothesis: most are unaffected (no request context -> they
-were already registry, and `$self->dao` still resolves registry there). Any caller that
-genuinely depended on `app->dao`'s silent registry now fails loudly and is fixed by naming
-the schema explicitly — a desirable forcing function. If genuinely-affected specs exceed
-~3, stop and re-scope with the maintainer.
+neither fixes nor worsens. The hypothesis: most are unaffected — non-controller callers
+keep their registry default unchanged, and the migrated controllers now resolve the acting
+tenant (which for context-free or registry-tenant requests is still `registry`). The
+specs most likely to *change* behavior are those that drive a workflow as an authenticated
+tenant user and previously found their data in `registry`; each is run and any genuine
+fallout fixed. If genuinely-affected specs exceed ~3, stop and re-scope with the
+maintainer.
 
 ## 5. Testing strategy
 
 - TDD at the integration layer using the existing Playwright harness (one Test::PostgreSQL
   DB + one daemon), which imports workflows/templates from disk per run.
 - New/extended coverage:
-  - A unit test asserting `dao()` dies without request context and without an explicit
-    tenant, and resolves the request tenant within a request (the collapse contract).
+  - A guard test asserting `app->dao` appears nowhere under `lib/Registry/Controller/`
+    (the collapse is enforced, not just done once).
+  - A unit test asserting `$self->dao` resolves the request tenant within a request and
+    `registry` without one (the accessor contract).
   - A provisioning-helper test asserting a provisioned tenant's schema contains all
     non-`tenant-signup` workflows (guards against list drift forever).
   - The subdomain spike, then Morgan's program-setup spec re-pointed at his tenant
@@ -211,7 +216,7 @@ the schema explicitly — a desirable forcing function. If genuinely-affected sp
 
 | Risk | Mitigation |
 | --- | --- |
-| DAO-accessor change breaks callers across controllers/jobs/commands | Bounded target set (4.5) with done-criteria; fail-loud surfaces every real dependency; re-scope trigger at >~3 affected specs. |
+| Controller dao migration breaks a spec that relied on registry-resident data | Bounded target set (4.5) with done-criteria; non-controller registry default unchanged; re-scope trigger at >~3 affected specs. |
 | Subdomain context unproven in harness (Chromium / `*.localhost` / slug) | Gating spike (4.3); hybrid `X-As-Tenant`+subdomain fallback defined. |
 | Provisioning helper diverges from `RegisterTenant` behavior | Single shared helper used by both prod and tests; copies all workflows from the table. |
 | Existing tenant data stranded in `registry` orphaned by the switch | Pre-alpha assumption stated (2); migration becomes a prerequisite if it stops holding. |
@@ -221,10 +226,10 @@ the schema explicitly — a desirable forcing function. If genuinely-affected sp
 
 0. **Subdomain validation spike** (4.3) — gating. Prove `<slug>.localhost:3001` resolves
    to the tenant, or switch to the hybrid fallback. Nothing else starts until settled.
-1. **Collapse the DAO accessor** (4.1): `dao` helper requires explicit tenant outside
-   request context; unit-test the contract.
-2. **Migrate call sites** (4.1): controllers -> `$self->dao`; jobs/commands/plugin ->
-   explicit tenant. Run `t/controller/` + `t/dao/` after.
+1. **Migrate controllers to `$self->dao`** (4.1): replace every `$self->app->dao` in
+   `lib/Registry/Controller/`; add the guard test that keeps `app->dao` out of
+   controllers; unit-test the accessor contract. Non-controller callers unchanged.
+2. Run `t/controller/` + `t/dao/` after the migration.
 3. **Provisioning helper** (4.4) + copy-all-workflows (4.2); `RegisterTenant` delegates to
    it; provisioning test.
 4. Run the bounded regression target set (4.5); fix genuine fallout or re-scope.
