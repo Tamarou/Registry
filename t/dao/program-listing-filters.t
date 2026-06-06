@@ -15,6 +15,7 @@ use Registry::DAO::ProgramType;
 use Registry::DAO::WorkflowSteps::ProgramListing;
 use Mojo::Home;
 use YAML::XS qw(Load);
+use DateTime;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -115,6 +116,11 @@ my $evt_sunset = $dao->create(Event => {
 });
 $sess_sunset->add_events($dao->db, $evt_sunset->id);
 
+# Compute future dates relative to today so this test remains valid over time
+my $today      = DateTime->now;
+my $camp_start = $today->clone->add(days => 30)->ymd;
+my $camp_end   = $today->clone->add(days => 37)->ymd;
+
 # Summer camp (different program type, at Lincoln)
 my $prog_camp = $dao->create(Project => { status => 'published',
     name              => 'Summer Art Camp',
@@ -127,15 +133,15 @@ my $prog_camp = $dao->create(Project => { status => 'published',
 my $sess_camp = $dao->create(Session => {
     name       => 'Week 1 - June',
     slug       => 'week1-june-filter',
-    start_date => '2026-06-01',
-    end_date   => '2026-06-05',
+    start_date => $camp_start,
+    end_date   => $camp_end,
     status     => 'published',
     capacity   => 16,
     metadata   => {},
 });
 
 my $evt_camp = $dao->create(Event => {
-    time        => '2026-06-01 09:00:00',
+    time        => "$camp_start 09:00:00",
     duration    => 420,
     location_id => $loc_lincoln->id,
     project_id  => $prog_camp->id,

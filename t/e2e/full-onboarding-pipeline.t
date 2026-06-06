@@ -29,6 +29,7 @@ use Registry::DAO::Enrollment;
 use Registry::DAO::WorkflowSteps::RegisterTenant;
 use Mojo::Home;
 use YAML::XS qw(Load);
+use DateTime;
 
 # Ensure demo payment mode
 delete $ENV{STRIPE_SECRET_KEY};
@@ -135,11 +136,16 @@ subtest 'admin creates location, program, session, events, pricing' => sub {
     });
     ok $program, 'Program created';
 
+    # Compute future dates relative to today so this test remains valid over time
+    my $today        = DateTime->now;
+    my $future_start = $today->clone->add(days => 30)->ymd;
+    my $future_end   = $today->clone->add(days => 37)->ymd;
+
     # Create session
     my $session = Registry::DAO::Session->create($db, {
         name       => 'Week 1 - Jun 1-5',
-        start_date => '2026-06-01',
-        end_date   => '2026-06-05',
+        start_date => $future_start,
+        end_date   => $future_end,
         status     => 'published',
         capacity   => 16,
         metadata   => {},
@@ -148,7 +154,7 @@ subtest 'admin creates location, program, session, events, pricing' => sub {
 
     # Create event and link to session
     my $event = Registry::DAO::Event->create($db, {
-        time        => '2026-06-01 09:00:00',
+        time        => "$future_start 09:00:00",
         duration    => 420,
         location_id => $location->id,
         project_id  => $program->id,

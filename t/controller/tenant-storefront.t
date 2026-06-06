@@ -20,6 +20,7 @@ use Registry::DAO::Enrollment;
 use Mojo::Home;
 use Mojo::JSON qw(encode_json);
 use YAML::XS qw(Load);
+use DateTime;
 
 # Ensure demo payment mode
 delete $ENV{STRIPE_SECRET_KEY};
@@ -64,18 +65,25 @@ my $program = $dao->create(Project => { status => 'published',
 
 my $teacher = $dao->create(User => { username => 'sf_teacher', user_type => 'staff' });
 
+# Compute future dates relative to today so this test remains valid over time
+my $today        = DateTime->now;
+my $future_start = $today->clone->add(days => 30)->ymd;
+my $future_end   = $today->clone->add(days => 37)->ymd;
+my $full_start   = $today->clone->add(days => 45)->ymd;
+my $full_end     = $today->clone->add(days => 52)->ymd;
+
 # Open session with capacity
 my $session1 = $dao->create(Session => {
-    name       => 'Week 1 - Jun 1-5',
-    start_date => '2026-06-01',
-    end_date   => '2026-06-05',
+    name       => 'Week 1 - Open',
+    start_date => $future_start,
+    end_date   => $future_end,
     status     => 'published',
     capacity   => 16,
     metadata   => {},
 });
 
 my $event1 = $dao->create(Event => {
-    time        => '2026-06-01 09:00:00',
+    time        => "$future_start 09:00:00",
     duration    => 420,
     location_id => $location->id,
     project_id  => $program->id,
@@ -94,16 +102,16 @@ $dao->create(PricingPlan => {
 
 # Full session (capacity 2, filled)
 my $session_full = $dao->create(Session => {
-    name       => 'Week 3 - Jun 15-19',
-    start_date => '2026-06-15',
-    end_date   => '2026-06-19',
+    name       => 'Week 3 - Full',
+    start_date => $full_start,
+    end_date   => $full_end,
     status     => 'published',
     capacity   => 2,
     metadata   => {},
 });
 
 my $event_full = $dao->create(Event => {
-    time        => '2026-06-15 09:00:00',
+    time        => "$full_start 09:00:00",
     duration    => 420,
     location_id => $location->id,
     project_id  => $program->id,
@@ -176,7 +184,7 @@ subtest 'only published sessions with future dates shown' => sub {
       ->status_is(200);
 
     # Published programs with sessions appear (dates visible)
-    $t->content_like(qr/2026-06-01/, 'Published session dates visible');
+    $t->content_like(qr/\Q$future_start\E/, 'Published session dates visible');
 
     # Draft session does NOT appear
     $t->content_unlike(qr/Draft Session/, 'Draft session not visible');
