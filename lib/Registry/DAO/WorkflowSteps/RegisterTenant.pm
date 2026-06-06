@@ -1,5 +1,5 @@
-# ABOUTME: Workflow step that creates a new tenant (organization) and its users
-# ABOUTME: during the tenant signup process. Uses magic link tokens for team invites.
+# ABOUTME: Display-only 'complete' step for the tenant-signup workflow.
+# ABOUTME: Provisioning happens at payment-time in TenantPayment; this step confirms success.
 use 5.42.0;
 use utf8;
 
@@ -8,411 +8,37 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Workflow;
-use Registry::DAO::MagicLinkToken;
-use Registry::Utility::ErrorHandler;
-use Carp qw(carp croak);
-use Text::Unidecode qw(unidecode);
+use Carp qw(croak);
 use DateTime;
 
+# process: the tenant was already provisioned by TenantPayment during the
+# payment POST.  This step is display-only: it reads the stored tenant info
+# from run data and returns it for the completion template.  If tenant info
+# is missing (unexpected), it raises an error so the bug is visible.
 method process ( $db, $, $run = undef ) {
     $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
 
-    my $profile = $run->data;
+    my $data = $run->data;
 
-    # Handle backward compatibility for old 'users' format
-    my $user_data;
-    if (exists $profile->{users} && ref $profile->{users} eq 'ARRAY') {
-        # Old format: { users => [{username => '...', password => '...'}, ...] }
-        $user_data = delete $profile->{users};
-        # Set default user_type for backward compatibility
-        for my $user (@$user_data) {
-            $user->{user_type} //= 'admin';
-        }
-    } else {
-        # New format: extract user data from individual fields (no password - passwordless auth)
-        my $admin_user_data = {
-            name => delete $profile->{admin_name},
-            email => delete $profile->{admin_email},
-            username => delete $profile->{admin_username},
-            user_type => delete $profile->{admin_user_type} || 'admin',
-        };
-        # Remove any stray admin_password field if present (backward compat with old form submissions)
-        delete $profile->{admin_password};
-        
-        my $team_members = delete $profile->{team_members} || [];
-        
-        # Convert to expected format for backward compatibility
-        $user_data = [$admin_user_data];
-        for my $member (@$team_members) {
-            if ($member->{name} && $member->{email}) {
-                # Generate a username from the email
-                my $username = $member->{email};
-                $username =~ s/@.*$//;  # Remove domain
-                $username =~ s/[^a-zA-Z0-9]//g;  # Remove special characters
-                
-                push @$user_data, {
-                    name => $member->{name},
-                    email => $member->{email},
-                    username => $username,
-                    user_type => $member->{user_type} || 'staff',
-                    invite_pending => 1,  # Mark for invitation email via magic link
-                };
-            }
-        }
-    }
-
-    # Generate subdomain slug from organization name
-    if ($profile->{name} && !$profile->{slug}) {
-        $profile->{slug} = $self->_generate_subdomain_slug($db, $profile->{name});
-    }
-
-    # Validate required billing fields (skip for backward compatibility)
-    if (!exists $run->data->{users}) {
-        $self->_validate_billing_info($profile);
-    }
-
-    # Validate that subscription was set up successfully (skip for backward compatibility)
-    my $subscription_data = $run->data->{subscription};
-    my $has_subscription = $subscription_data && $subscription_data->{stripe_subscription_id};
-    
-    # Debug output for test troubleshooting
-    
-    # For backward compatibility, only require subscription if not using old 'users' format
-    # Also skip if tenant was already created by TenantPayment step (test mode)
-    my $tenant_already_created = exists $run->data->{tenant_created} && $run->data->{tenant_created};
-    if (!$has_subscription && !exists $run->data->{users} && !$tenant_already_created) {
-        croak 'Payment setup must be completed before creating tenant';
-    }
-    
-    # If tenant was already created by TenantPayment, just return success
-    if ($tenant_already_created) {
-        return {
-            tenant => $run->data->{tenant},
-            organization_name => $run->data->{organization_name},
-            subdomain => $run->data->{subdomain},
-            admin_email => $run->data->{admin_email},
-            success_timestamp => DateTime->now->iso8601()
-        };
-    }
-
-    # first we wanna create the Registry user account for our tenant
-    my $primary_user =
-        Registry::DAO::User->find_or_create( $db, $user_data->[0] );
-    unless ($primary_user) {
-        croak 'Could not create primary user';
-    }
-
-    # Include subscription data in tenant creation (if available)
-    if ($has_subscription) {
-        $profile->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
-        $profile->{billing_status} = 'trial';
-        $profile->{trial_ends_at} = $subscription_data->{trial_ends_at};
-        $profile->{subscription_started_at} = DateTime->now->iso8601();
-    } else {
-        # Backward compatibility: set defaults for testing
-        $profile->{billing_status} = 'test';
-        $profile->{subscription_started_at} = DateTime->now->iso8601();
-    }
-
-    my $tenant = Registry::DAO::Tenant->create( $db, $profile );
-    $db->query( 'SELECT clone_schema(?)', $tenant->slug );
-
-    # Copy seed data that clone_schema doesn't include (it copies structure, not rows)
-    $db->query(qq{
-        INSERT INTO ${\$tenant->slug}.program_types (slug, name, config, created_at, updated_at)
-        SELECT slug, name, config, created_at, updated_at
-        FROM registry.program_types
-        ON CONFLICT (slug) DO NOTHING
-    });
-
-    $db->query(qq{
-        INSERT INTO ${\$tenant->slug}.templates (id, name, slug, content, metadata, notes, created_at, updated_at)
-        SELECT id, name, slug, content, metadata, notes, created_at, updated_at
-        FROM registry.templates
-        ON CONFLICT (slug) DO NOTHING
-    });
-
-    $tenant->set_primary_user( $db, $primary_user );
-
-    my $tx = $db->begin;
-    for my $data ( $user_data->@* ) {
-        if ( my $user = Registry::DAO::User->find( $db, { username => $data->{username} } ) ) {
-            $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
-                $tenant->slug, $user->id );
-        }
-        else {
-            my $tenant_user = Registry::DAO::User->create( $tenant->dao($db)->db, $data );
-            
-            # Send invitation email for non-admin users
-            if ($data->{invite_pending} && $data->{email}) {
-                $self->_send_invitation_email($db, $tenant, $tenant_user, $data);
-            }
-        }
-    }
-
-    # NOTE: Previously we were getting a problem where workflows were missing their first step
-    # after being copied to tenant schemas. To fix this, we'll directly copy the workflows using
-    # the copy_workflow function instead of relying on the schema clone
-    for my $slug (
-        qw(user-creation session-creation event-creation location-creation project-creation
-           location-management pricing-plan-creation program-creation tenant-storefront
-           admin-dashboard parent-drop-request admin-drop-approval parent-transfer-request
-           admin-transfer-approval template-editor)
-    )
-    {
-        my $workflow =
-            Registry::DAO::Workflow->find( $db, { slug => $slug } );
-            
-        # Skip if workflow not found (this helps with testing)
-        next unless $workflow;
-            
-        # Use the improved copy_workflow function to ensure first_step is preserved
-        $db->query(
-            'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
-            $tenant->slug, $workflow->id );
-            
-        # Verify first_step exists in tenant schema
-        my $tenant_dao = $tenant->dao($db);
-        my $tenant_workflow = $tenant_dao->find(Workflow => { slug => $slug });
-        
-        if ($tenant_workflow) {
-            my $first_step_slug = $tenant_workflow->first_step_slug($tenant_dao->db);
-            my $first_step = $tenant_workflow->first_step($tenant_dao->db);
-            
-            # If first_step value exists but the step doesn't, create it
-            if ($first_step_slug && !$first_step) {
-                Registry::DAO::WorkflowStep->create(
-                    $tenant_dao->db,
-                    {
-                        workflow_id => $tenant_workflow->id,
-                        slug => $first_step_slug,
-                        description => "Auto-created first step by tenant registration",
-                        class => 'Registry::DAO::WorkflowStep'
-                    }
-                );
-            }
-        }
-    }
-    
-    # Copy outcome definitions
-    my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
-    for my $def (@outcome_defs) {
-        # Create in tenant schema directly
-        Registry::DAO::OutcomeDefinition->create(
-            $tenant->dao($db)->db,
-            {
-                id => $def->id,  # Use same ID to maintain relationships
-                name => $def->name,
-                schema => $def->schema
-            }
-        );
-    }
-    
-    $tx->commit;
+    croak 'Tenant was not provisioned before the complete step'
+        unless $data->{tenant};
 
     if ( $run->has_continuation ) {
         my ($continuation) = $run->continuation($db);
         my $tenants = $continuation->data->{tenants} // [];
-        push $tenants->@*, $tenant->id;
+        push $tenants->@*, $data->{tenant};
         $continuation->update_data( $db, { tenants => $tenants } );
     }
 
-    # Store success data for completion template
-    my $success_data = {
-        tenant => $tenant->id,
-        organization_name => $profile->{name},
-        subdomain => $tenant->slug,
-        admin_email => $user_data->[0]->{email} || $user_data->[0]->{username},
-        trial_end_date => $has_subscription ? $self->_format_trial_end_date($subscription_data->{trial_ends_at}) : 'N/A',
-        success_timestamp => DateTime->now->iso8601()
+    my $subscription_data = $data->{subscription} || {};
+    return {
+        tenant            => $data->{tenant},
+        organization_name => $data->{organization_name},
+        subdomain         => $data->{subdomain},
+        admin_email       => $data->{admin_email},
+        trial_end_date    => $self->_format_trial_end_date($subscription_data->{trial_ends_at}),
+        success_timestamp => $data->{success_timestamp} || DateTime->now->iso8601(),
     };
-
-    # return the data to be stored in the workflow run
-    return $success_data;
-}
-
-method _generate_subdomain_slug($db, $name) {
-    my $error_handler = Registry::Utility::ErrorHandler->new();
-    
-    # Validate name input
-    unless ($name && length($name) > 0) {
-        my $error = $error_handler->handle_validation_error(
-            'organization_name',
-            'Organization name is required to generate subdomain'
-        );
-        croak $error->{user_message};
-    }
-    
-    # Generate slug: lowercase, replace spaces/special chars with hyphens, remove multiple hyphens
-    my $slug = lc($name);
-    $slug = unidecode($slug);  # Convert unicode to ASCII
-    $slug =~ s/[^a-z0-9\s-]//g;  # Remove special characters
-    $slug =~ s/\s+/-/g;  # Replace spaces with hyphens
-    $slug =~ s/-+/-/g;   # Remove multiple consecutive hyphens
-    $slug =~ s/^-|-$//g; # Remove leading/trailing hyphens
-    $slug = substr($slug, 0, 50);  # Limit length
-    $slug = 'organization' if !$slug;  # Fallback if empty
-    
-    # Ensure uniqueness by checking existing tenants with better suggestions
-    my $original_slug = $slug;
-    my $counter = 1;
-    my @suggestions = ();
-    
-    while ($self->_slug_exists($db, $slug)) {
-        $slug = "${original_slug}-${counter}";
-        push @suggestions, $slug if $counter <= 3;  # Suggest first 3 alternatives
-        $counter++;
-        last if $counter > 999;  # Prevent infinite loop
-    }
-    
-    # If we had to modify the slug, log the conflict for potential user notification
-    if ($counter > 1) {
-        my $conflict_error = $error_handler->handle_conflict_error(
-            'subdomain', 
-            'already_exists', 
-            {
-                attempted => $original_slug,
-                chosen => $slug,
-                suggested_alternatives => [@suggestions]
-            }
-        );
-        
-        # Log but don't throw - we resolved the conflict automatically
-        $error_handler->log_error($conflict_error, {
-            context => 'tenant_registration',
-            auto_resolved => 1
-        });
-    }
-    
-    return $slug;
-}
-
-method _slug_exists($db, $slug) {
-    my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
-    return $result->array->[0] > 0;
-}
-
-method _validate_billing_info($profile) {
-    my $error_handler = Registry::Utility::ErrorHandler->new();
-    my @required_fields = qw(name billing_email billing_address billing_city billing_state billing_zip billing_country);
-    my @missing = ();
-    my @validation_errors = ();
-    
-    # Check for missing required fields
-    for my $field (@required_fields) {
-        if (!$profile->{$field} || !length(_trim($profile->{$field}))) {
-            push @missing, $field;
-        }
-    }
-    
-    if (@missing) {
-        my $missing_str = join(', ', map { ucfirst($_) =~ s/_/ /gr } @missing);
-        my $error = $error_handler->handle_validation_error(
-            'billing_info',
-            "Missing required billing information: $missing_str",
-            \@missing
-        );
-        push @validation_errors, $error;
-    }
-    
-    # Validate email format with more specific error
-    if ($profile->{billing_email}) {
-        my $email = _trim($profile->{billing_email});
-        if ($email !~ /\A[^@\s]+@[^@\s]+\.[^@\s]+\z/) {
-            my $error = $error_handler->handle_validation_error(
-                'billing_email',
-                "Invalid email format: '$email'. Please enter a valid email address.",
-                $email
-            );
-            push @validation_errors, $error;
-        }
-    }
-    
-    # Validate billing address length and format
-    if ($profile->{billing_address} && length($profile->{billing_address}) < 5) {
-        my $error = $error_handler->handle_validation_error(
-            'billing_address',
-            "Billing address is too short. Please provide a complete address."
-        );
-        push @validation_errors, $error;
-    }
-    
-    # Validate ZIP code format (basic validation)
-    if ($profile->{billing_zip}) {
-        my $zip = _trim($profile->{billing_zip});
-        if ($zip !~ /^\d{5}(-\d{4})?$/ && $zip !~ /^[A-Z]\d[A-Z] \d[A-Z]\d$/) {  # US or Canadian postal code
-            my $error = $error_handler->handle_validation_error(
-                'billing_zip',
-                "Invalid ZIP/postal code format: '$zip'",
-                $zip
-            );
-            push @validation_errors, $error;
-        }
-    }
-    
-    # Check for duplicate organizations (by email)
-    if ($profile->{billing_email}) {
-        my $existing_count = $self->_check_duplicate_organization($profile->{billing_email});
-        if ($existing_count > 0) {
-            my $error = $error_handler->handle_conflict_error(
-                'organization',
-                'duplicate_email',
-                {
-                    email => $profile->{billing_email},
-                    existing_count => $existing_count
-                }
-            );
-            push @validation_errors, $error;
-        }
-    }
-    
-    # If there are validation errors, collect them and throw
-    if (@validation_errors) {
-        my $messages = join('; ', map { $_->{user_message} } @validation_errors);
-        
-        # Log validation errors for monitoring
-        $error_handler->log_error({
-            type => 'validation_failure',
-            errors => \@validation_errors,
-            profile_data => {
-                name => $profile->{name},
-                billing_email => $profile->{billing_email}
-            }
-        });
-        
-        croak $messages;
-    }
-    
-    return 1;
-}
-
-method _check_duplicate_organization($email) {
-    # This would check for existing organizations with the same billing email
-    # For now, return 0 (no duplicates found)
-    # In production, this would query the database for existing tenants
-    return 0;
-}
-
-sub _trim {
-    my $str = shift;
-    return '' unless defined $str;
-    $str =~ s/^\s+|\s+$//g;
-    return $str;
-}
-
-method _send_invitation_email($db, $tenant, $user, $user_data) {
-    # Generate a magic link token for the team member invite (valid for 168 hours / 7 days)
-    my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
-        user_id    => $user->id,
-        purpose    => 'invite',
-        expires_in => 168,
-    });
-
-    # TODO: Send email with invite link containing $plaintext token
-    # The invite link would be: /auth/invite?token=$plaintext
-    warn "Would send invitation email to: " . $user_data->{email} .
-         " for tenant: " . $tenant->slug .
-         " with invite token (token ID: " . $token->id . ")";
 }
 
 method _format_trial_end_date($trial_ends_at) {
@@ -447,23 +73,21 @@ method prepare_template_data ($db, $run, $params = {}) {
 
 method prepare_completion_data($db, $run) {
     my $raw_data = $run->data || {};
-    
-    # Generate trial end date (30 days from now)
-    my $trial_end = DateTime->now->add(days => 30);
-    my $trial_end_date = $trial_end->strftime('%B %d, %Y');
-    
-    # Generate subdomain from organization name
-    my $org_name = $raw_data->{name} || $raw_data->{organization_name} || 'organization';
-    my $subdomain = $self->_generate_subdomain_slug($db, $org_name);
-    
-    # Structure the data for the completion template
+
+    # Prefer the stored trial end date from subscription data; fall back to 30 days.
+    my $subscription_data = $raw_data->{subscription} || {};
+    my $trial_end_date = $self->_format_trial_end_date($subscription_data->{trial_ends_at});
+    unless ($trial_end_date && $trial_end_date ne 'N/A') {
+        $trial_end_date = DateTime->now->add(days => 30)->strftime('%B %d, %Y');
+    }
+
     return {
-        organization_name => $org_name,
-        subdomain => $subdomain,
-        admin_email => $raw_data->{admin_email},
-        admin_name => $raw_data->{admin_name},
-        trial_end_date => $trial_end_date,
-        billing_email => $raw_data->{billing_email},
+        organization_name => $raw_data->{organization_name} || $raw_data->{name} || 'organization',
+        subdomain         => $raw_data->{subdomain},
+        admin_email       => $raw_data->{admin_email},
+        admin_name        => $raw_data->{admin_name},
+        trial_end_date    => $trial_end_date,
+        billing_email     => $raw_data->{billing_email},
     };
 }
 

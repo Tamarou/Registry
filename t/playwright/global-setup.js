@@ -61,14 +61,22 @@ module.exports = async () => {
   // .shared-db-* dotfiles) cannot trigger a mid-test app restart.
   const server = spawn('carton', ['exec', './registry', 'daemon', '-l', `http://127.0.0.1:${PORT}`], {
     cwd: process.cwd(),
-    env: {
-      ...process.env,
-      DB_URL: info.url,
-      EMAIL_SENDER_TRANSPORT: 'Test',
-      // One client IP + one long-lived instance would trip the per-IP auth limit
-      // across tests; disable it for the E2E server.
-      REGISTRY_RATE_LIMIT_DISABLED: '1',
-    },
+    env: (() => {
+      const env = {
+        ...process.env,
+        DB_URL: info.url,
+        EMAIL_SENDER_TRANSPORT: 'Test',
+        // One client IP + one long-lived instance would trip the per-IP auth limit
+        // across tests; disable it for the E2E server.
+        REGISTRY_RATE_LIMIT_DISABLED: '1',
+      };
+      // Unset Stripe keys so payment steps take the test-mode (no-Stripe) mock
+      // path instead of attempting real Stripe API calls, which would fail or
+      // produce side-effects in CI / local development.
+      delete env.STRIPE_SECRET_KEY;
+      delete env.STRIPE_PUBLISHABLE_KEY;
+      return env;
+    })(),
     stdio: ['ignore', 'inherit', 'inherit'],
     detached: true, // own process group so teardown can group-kill grandchildren
   });

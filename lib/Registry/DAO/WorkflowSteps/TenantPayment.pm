@@ -1,4 +1,7 @@
+# ABOUTME: Workflow step that handles payment/subscription setup for new tenants.
+# ABOUTME: Provisions the tenant via Tenant->provision at payment-completion time.
 use 5.42.0;
+use utf8;
 
 use Object::Pad;
 
@@ -6,6 +9,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Registry::DAO::Subscription;
     use Registry::DAO::User;
     use Registry::DAO::Tenant;
+    use Registry::DAO::MagicLinkToken;
     use Registry::DAO::Workflow;
     use Registry::DAO;
     use Registry::Utility::ErrorHandler;
@@ -48,36 +52,21 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         # Handle payment method collection
         if ($form_data->{collect_payment_method}) {
             
-            # Another special case for testing: if we detect we're in test mode (no Stripe keys configured),
-            # create a mock subscription directly
+            # No Stripe keys configured: provision directly without payment.
+            # This handles the test/dev path where no Stripe keys are set.
             if (!$ENV{STRIPE_PUBLISHABLE_KEY} && !$ENV{STRIPE_SECRET_KEY}) {
-                
-                # Mock successful subscription for testing
+
+                # Build a mock subscription record so the run data is consistent
                 my $mock_subscription = {
-                    id => 'sub_test_' . time(),
+                    stripe_subscription_id => 'sub_test_' . time(),
+                    trial_ends_at => time() + (30 * 24 * 60 * 60), # 30 days from now
                     status => 'trialing',
-                    trial_end => time() + (30 * 24 * 60 * 60), # 30 days from now
                 };
-                
-                # Store subscription info in workflow data
-                $run->update_data($db, {
-                    subscription => {
-                        stripe_subscription_id => $mock_subscription->{id},
-                        trial_ends_at => $mock_subscription->{trial_end},
-                        status => $mock_subscription->{status}
-                    }
-                });
-                
-                
-                # For testing, create the tenant directly instead of delegating to RegisterTenant step
-                my $tenant_result = $self->create_tenant_directly($db, $run);
-                
-                # Payment successful, move to completion
-                return { 
-                    next_step => 'complete',
-                    tenant_created => 1,
-                    %$tenant_result
-                };
+
+                $run->update_data($db, { subscription => $mock_subscription });
+
+                my $result = $self->_provision_tenant($db, $run);
+                return { next_step => 'complete', tenant_created => 1, %$result };
             }
             
             return $self->create_setup_intent($db, $run, $form_data);
@@ -288,41 +277,18 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
         my $setup_data = $run->data->{payment_setup} || {};
 
-        # Test mode: skip Stripe validation if setup_intent_id starts with 'seti_test'
+        # Test mode: setup_intent_id starts with 'seti_test' — skip Stripe validation.
         if ($form_data->{setup_intent_id} && $form_data->{setup_intent_id} =~ /^seti_test/) {
-            # Mock successful subscription for testing
             my $mock_subscription = {
-                id => 'sub_test_' . time(),
+                stripe_subscription_id => 'sub_test_' . time(),
+                trial_ends_at => time() + (30 * 24 * 60 * 60), # 30 days from now
                 status => 'trialing',
-                trial_end => time() + (30 * 24 * 60 * 60), # 30 days from now
             };
-            
-            # Store subscription info in workflow data
-            $run->update_data($db, {
-                subscription => {
-                    stripe_subscription_id => $mock_subscription->{id},
-                    trial_ends_at => $mock_subscription->{trial_end},
-                    status => $mock_subscription->{status}
-                }
-            });
-            
 
-            # For testing, create the tenant directly instead of delegating to RegisterTenant step
-            my $tenant_result = eval { $self->create_tenant_directly($db, $run) };
-            if ($@) {
-                return {
-                    next_step => $self->id,
-                    errors => ["Failed to create tenant: $@"],
-                    data => $self->prepare_payment_data($db, $run)
-                };
-            }
+            $run->update_data($db, { subscription => $mock_subscription });
 
-            # Payment successful, move to completion
-            return {
-                next_step => 'complete',
-                tenant_created => 1,
-                %$tenant_result
-            };
+            my $result = $self->_provision_tenant($db, $run);
+            return { next_step => 'complete', tenant_created => 1, %$result };
         }
         
         # For non-test modes, validate the setup_intent_id matches what was stored
@@ -381,8 +347,122 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             }
         });
 
-        # Payment successful, move to completion
-        return { next_step => 'complete' };
+        # Payment successful — provision the tenant and move to completion.
+        my $result = $self->_provision_tenant($db, $run);
+        return { next_step => 'complete', tenant_created => 1, %$result };
+    }
+
+    # _provision_tenant: builds the user list from run data, calls Tenant->provision,
+    # sends invitation emails for invite_pending team members, stores tenant info in
+    # run data, and returns a result hash with tenant/organization_name/subdomain/
+    # admin_email keys.  This is the single provisioning path for all completion
+    # scenarios (no-Stripe mock, seti_test mock, real-Stripe).
+    method _provision_tenant($db, $run) {
+        my $data = $run->data;
+        my $profile = $data->{profile} || {};
+        my $subscription_data = $data->{subscription} || {};
+
+        # Resolve user list — support both the old 'users' array format and the
+        # new admin_*/team_members format stored across workflow steps.
+        my @user_data;
+        if (exists $data->{users} && ref $data->{users} eq 'ARRAY') {
+            # Old format: flat users array stored directly in run data
+            @user_data = @{ $data->{users} };
+            for my $u (@user_data) { $u->{user_type} //= 'admin' }
+        } else {
+            # New format: admin_* fields plus optional team_members
+            my $admin = {
+                name      => $data->{admin_name},
+                email     => $data->{admin_email},
+                username  => $data->{admin_username},
+                user_type => $data->{admin_user_type} || 'admin',
+            };
+            my $team = $data->{team_members} || [];
+            @user_data = ($admin);
+            for my $member (@$team) {
+                next unless $member->{name} && $member->{email};
+                my $username = $member->{email} =~ s/@.*$//r =~ s/[^a-zA-Z0-9]//gr;
+                push @user_data, {
+                    name          => $member->{name},
+                    email         => $member->{email},
+                    username      => $username,
+                    user_type     => $member->{user_type} || 'staff',
+                    invite_pending => 1,
+                };
+            }
+        }
+
+        # Resolve user objects: find existing or create
+        my @user_objects;
+        for my $ud (@user_data) {
+            my $user = Registry::DAO::User->find($db, { username => $ud->{username} })
+                    // Registry::DAO::User->find_or_create($db, $ud);
+            push @user_objects, $user if $user;
+        }
+
+        # Merge subscription billing data into the provision call
+        my $org_name = $profile->{name} || $data->{name} || 'Organization';
+        my $slug     = $profile->{slug} || $data->{slug};
+
+        my %provision_data = (
+            name  => $org_name,
+            users => \@user_objects,
+        );
+        $provision_data{slug} = $slug if $slug;
+
+        if ($subscription_data->{stripe_subscription_id}) {
+            $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
+            $provision_data{billing_status}          = 'trial';
+            my $trial_ends_at = $subscription_data->{trial_ends_at};
+            if ($trial_ends_at && $trial_ends_at =~ /^\d+$/) {
+                $trial_ends_at = DateTime->from_epoch(epoch => $trial_ends_at)->iso8601();
+            }
+            $provision_data{trial_ends_at}           = $trial_ends_at;
+            $provision_data{subscription_started_at} = DateTime->now->iso8601();
+        } else {
+            $provision_data{billing_status}          = 'test';
+            $provision_data{subscription_started_at} = DateTime->now->iso8601();
+        }
+
+        my $tenant = Registry::DAO::Tenant->provision($db, \%provision_data);
+
+        # Send invitation emails for team members marked invite_pending
+        for my $ud (@user_data) {
+            next unless $ud->{invite_pending} && $ud->{email};
+            my $tenant_user = $tenant->dao($db)->find(User => { username => $ud->{username} });
+            if ($tenant_user) {
+                $self->_send_invitation_email($db, $tenant, $tenant_user, $ud);
+            }
+        }
+
+        my $admin_email = $user_data[0]->{email} || $user_data[0]->{username};
+        my $result = {
+            tenant            => $tenant->id,
+            organization_name => $org_name,
+            subdomain         => $tenant->slug,
+            admin_email       => $admin_email,
+            success_timestamp => DateTime->now->iso8601(),
+        };
+
+        $run->update_data($db, $result);
+
+        return $result;
+    }
+
+    # _send_invitation_email: generates a magic link token for a team member invite
+    # and logs the would-be email (actual delivery is a TODO).
+    method _send_invitation_email($db, $tenant, $user, $user_data) {
+        my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
+            user_id    => $user->id,
+            purpose    => 'invite',
+            expires_in => 168,
+        });
+
+        # TODO: Send email with invite link containing $plaintext token
+        # The invite link would be: /auth/invite?token=$plaintext
+        warn "Would send invitation email to: " . $user_data->{email} .
+             " for tenant: " . $tenant->slug .
+             " with invite token (token ID: " . $token->id . ")";
     }
 
     method template { 'tenant-signup/payment' }
@@ -390,118 +470,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # Provide data for template rendering on GET requests
     method prepare_template_data($db, $run, $params = {}) {
         return $self->prepare_payment_data($db, $run);
-    }
-    
-    # For testing mode, create tenant directly (duplicates RegisterTenant logic)
-    method create_tenant_directly($db, $run) {
-
-        my $profile = $run->data;
-
-        # Preserve tenant name before any modifications
-        my $tenant_name = $profile->{name};
-
-        # Handle backward compatibility for old 'users' format (same logic as RegisterTenant)
-        my $user_data;
-        if (exists $profile->{users} && ref $profile->{users} eq 'ARRAY') {
-            # Old format: { users => [{username => '...', password => '...'}, ...] }
-            $user_data = $profile->{users};  # Don't delete, keep for RegisterTenant compatibility
-            # Set default user_type for backward compatibility
-            for my $user (@$user_data) {
-                $user->{user_type} //= 'admin';
-            }
-        } else {
-            # New format: extract user data from individual fields
-            my $admin_user_data = {
-                name => $profile->{admin_name},
-                email => $profile->{admin_email},
-                username => $profile->{admin_username},
-                password => $profile->{admin_password},
-                user_type => $profile->{admin_user_type} || 'admin',
-            };
-
-            $user_data = [$admin_user_data];
-        }
-        
-        
-        # Create the Registry user account for our tenant
-        my $primary_user = Registry::DAO::User->find_or_create($db, $user_data->[0]);
-        unless ($primary_user) {
-            croak 'Could not create primary user';
-        }
-        
-        
-        # Generate subdomain slug from organization name (PostgreSQL schema compatible)
-        my $slug = lc($tenant_name || 'test_tenant');
-        $slug =~ s/[^a-z0-9\s_]//g;  # Remove special characters (allow underscores)
-        $slug =~ s/\s+/_/g;          # Replace spaces with underscores
-        $slug =~ s/_+/_/g;           # Remove multiple consecutive underscores
-        $slug =~ s/^_|_$//g;         # Remove leading/trailing underscores
-        $slug = substr($slug, 0, 50); # Limit length
-        $slug = $slug || 'tenant';   # Fallback if empty
-        
-        # Create clean tenant data with only fields that belong in the tenant table
-        my $tenant_data = {
-            name => $tenant_name,
-            slug => $slug,
-        };
-        
-        # Include subscription data in tenant creation
-        my $subscription_data = $run->data->{subscription};
-        if ($subscription_data) {
-            $tenant_data->{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
-            $tenant_data->{billing_status} = 'trial';
-            
-            # Convert Unix timestamp to PostgreSQL timestamp format
-            if ($subscription_data->{trial_ends_at}) {
-                my $trial_end_dt = DateTime->from_epoch(epoch => $subscription_data->{trial_ends_at});
-                $tenant_data->{trial_ends_at} = $trial_end_dt->iso8601();
-            }
-            
-            $tenant_data->{subscription_started_at} = DateTime->now->iso8601();
-        }
-        
-        
-        my $tenant = Registry::DAO::Tenant->create($db, $tenant_data);
-        $db->query('SELECT clone_schema(?)', $tenant->slug);
-
-        $tenant->set_primary_user($db, $primary_user);
-        
-        
-        # Copy all users to tenant schema and copy workflows
-        my $tx = $db->begin;
-        
-        # Copy all users in the users array (like RegisterTenant does)
-        # Create tenant DAO once for reuse
-        my $tenant_dao = Registry::DAO->new( url => $ENV{DB_URL}, schema => $tenant->slug );
-        
-        for my $data ( $user_data->@* ) {
-            if ( my $user = Registry::DAO::User->find( $db, { username => $data->{username} } ) ) {
-                $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
-                    $tenant->slug, $user->id );
-            }
-            else {
-                # User doesn't exist in main schema, create directly in tenant schema  
-                Registry::DAO::User->create( $tenant_dao->db, $data );
-            }
-        }
-        
-        # Copy essential workflows to tenant schema
-        for my $slug (qw(user-creation session-creation)) {
-            my $workflow = Registry::DAO::Workflow->find($db, { slug => $slug });
-            if ($workflow) {
-                $db->query('SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $tenant->slug, $workflow->id);
-            }
-        }
-
-        $tx->commit;
-        
-        
-        return {
-            tenant => $tenant->id,
-            organization_name => $profile->{name},
-            subdomain => $tenant->slug,
-            admin_email => $user_data->[0]->{email} || $user_data->[0]->{username},
-        };
     }
 
     # Retry logic for failed attempts

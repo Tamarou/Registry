@@ -7,17 +7,17 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     use DateTime;
 
     method workflow ( $slug = $self->param('workflow') ) {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         return $dao->find( Workflow => { slug => $slug } );
     }
 
     method run ( $id = $self->param('run') ) {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         ( $dao->find( WorkflowRun => { id => $id } ) )[0];
     }
 
     method new_run ( $workflow, $config //= {} ) {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         confess "Missing workflow parameter" unless $workflow;
         
         # Make sure the workflow has all necessary steps before creating a run
@@ -61,7 +61,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method index() {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $workflow = $self->workflow();
         my $workflow_slug = $self->param('workflow');
 
@@ -106,7 +106,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method _find_or_create_run ($workflow) {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $session_key = "workflow_run_${\$workflow->slug}";
 
         # Check session for an existing run ID
@@ -125,7 +125,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method start_workflow() {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $workflow = $self->workflow();
         
         # Now try to start the run with auto-repair in the new_run method
@@ -227,7 +227,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method get_workflow_run_step {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $run = $self->run();
         my $workflow = $self->workflow();
 
@@ -286,7 +286,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method process_workflow_run_step {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
 
         my ($run) = $dao->find(
             WorkflowRun => {
@@ -462,7 +462,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     method get_outcome_definition {
         my $id = $self->param('id');
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         
         my $definition = Registry::DAO::OutcomeDefinition->find($dao->db, { id => $id });
         
@@ -474,7 +474,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
     
     method validate_outcome {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $json = $self->req->json;
         
         my $outcome_id = $json->{outcome_definition_id};
@@ -487,7 +487,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
     
     method validate_subdomain {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $name = $self->param('name');
         
         unless ($name) {
@@ -520,7 +520,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     }
 
     method _get_workflow_progress($run, $current_step) {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $workflow = $run->workflow($dao->db);
         
         # Get all workflow steps in order
@@ -624,7 +624,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     
 
     method start_continuation {
-        my $dao = $self->app->dao;
+        my $dao = $self->dao;
         my $workflow = $dao->find(
             Workflow => {
                 slug => $self->param('target')
