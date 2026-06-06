@@ -48,6 +48,15 @@ the data — which is incorrect and blocks a faithful multi-tenant journey.
 - Per-tenant DB templates (#173) and pricing-plan tenant-schema cleanup (#154) beyond
   what this journey needs.
 
+**Assumptions**
+- Registry is **pre-alpha with no production tenant data** (per CLAUDE.md). This is what
+  makes the app-wide `app->dao -> _dao` switch safe: there is no tenant whose data is
+  currently stranded in the `registry` schema and would be orphaned when its requests
+  begin routing to its own schema. If that ceases to be true before this ships, a data
+  migration (move per-tenant rows out of `registry` into their tenant schemas) becomes a
+  prerequisite and must be specced separately. No backwards-compatibility burden is
+  assumed otherwise.
+
 ## 3. Decisions (settled with the requester)
 
 1. **Full app-wide tenant isolation**, not a narrowly scoped patch.
@@ -83,12 +92,17 @@ Detection is by workflow slug (`tenant-signup`), kept in one guard in `_dao`.
 ### 4.2 Workflow definitions and runs live in the tenant schema
 
 `clone_schema($slug)` clones table structure (including `workflows`, `workflow_steps`,
-`workflow_runs`). `RegisterTenant` then `copy_workflow`s a fixed list of workflow
-definitions into the new schema. That list is missing `program-location-assignment` and
-the storefront registration workflow, so they are added:
+`workflow_runs`). `RegisterTenant` then `copy_workflow`s a **hardcoded list** of workflow
+definitions into the new schema. That list has already drifted — it silently lacks
+`program-location-assignment` — and adding the two workflows this journey needs
+(`program-location-assignment`, `summer-camp-registration`) to the same hardcoded list
+just defers the next drift.
 
-- Add `program-location-assignment` and `summer-camp-registration` to the
-  `RegisterTenant` copy list (the operator and parent both need them in-tenant).
+**Fix the root cause:** copy *every* workflow that exists in the `registry` schema into
+the new tenant schema, derived from the `workflows` table rather than a literal list, so
+the set cannot drift again. (`tenant-signup` is the one workflow that should *not* be
+copied — a tenant never re-runs tenant onboarding inside its own schema; it is excluded
+explicitly.) This subsumes the original "add two workflows" fix.
 
 Workflow runs are created and read through the tenant-scoped dao (4.1), so they live in
 the tenant schema alongside the data they touch.
@@ -110,26 +124,64 @@ yields a slug like `lifecycleNNN` (lowercase letters + digits only). #41 remains
 real fix for human-named tenants (hyphenated subdomain -> underscore schema-name
 mapping) and is referenced, not solved, here.
 
-### 4.4 Harness Stripe safety
+**Validation spike (first task, gating).** The subdomain mechanism is plausible but
+unproven in this harness: Chromium must resolve `<slug>.localhost:3001` to loopback,
+send the slug in the Host header, and accept the slug as a valid hostname. Before any
+other work, a throwaway spike proves the full path end-to-end — navigate
+`http://<slug>.localhost:3001/` and assert the server resolved tenant `<slug>` (e.g. a
+debug route echoing `$c->tenant`). If the spike fails, fall back to the **hybrid**
+mechanism: `X-As-Tenant` header for authenticated requests (Morgan's operator journey)
+and subdomain only for the unauthenticated storefront. The design proceeds on subdomain;
+the hybrid is the defined contingency, not a redesign.
 
-`TenantPayment` already has a test-mode branch: when no Stripe keys are configured it
-creates a mock subscription and advances to `complete` (`RegisterTenant`). The harness
-currently inherits the developer's shell environment, which may include a **live**
-`STRIPE_SECRET_KEY`. `t/playwright/global-setup.js` will explicitly clear
-`STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` from the server's environment so signup
-takes the mock path and no live key ever reaches the harness. (This pre-existing
-test-mode branch is used as-is; no new mock code is introduced.)
+### 4.4 Tenant signup completion by price, not env
+
+`TenantPayment` currently auto-completes the signup by detecting the *absence* of Stripe
+keys ("test mode") and minting a mock subscription. That is the exact pattern the
+codebase has been deliberately removing: #219/#222 moved registration payment off
+env-detection and onto **price** ("drive payment-or-not by pricing, not env"). Relying on
+env-absence for tenant signup would swim against that current and couple our test to a
+deprecated path.
+
+**Apply the #222 treatment to `TenantPayment`:** when the selected tenant plan's
+recurring amount is **$0** (the Solo / free-to-start tier), the step completes the signup
+without invoking Stripe at all — by price, regardless of whether keys are present. The
+lifecycle seed selects the free Solo plan at the pricing step, so signup completes
+deterministically and provisions the schema. This removes the env dependency, mirrors the
+established registration-payment pattern, and is real product behavior (a $0 plan should
+never hit a card).
+
+**Stripe key safety (still required, now defense-in-depth).** Independent of the above,
+`t/playwright/global-setup.js` clears `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` from
+the server environment so a developer's **live** key can never reach the harness. With
+the price-based completion this is a safety belt rather than the mechanism the test
+depends on. No new mock code is introduced; the existing env-keyed mock branch can be
+retired or left dormant as the maintainer prefers.
 
 ### 4.5 Existing-test fallout
 
 Once `app->dao` no longer forces `registry`, any workflow-driving test that implicitly
-relied on registry-context data must be checked. Affected suites likely include the
-Playwright specs that drive workflows (`tenant-signup`, `jordan-*`, `amara-attendance`,
-`waitlist-flow`, `camp-registration`, `parent-dashboard`, `admin-dashboard`) and any DAO
-tests exercising the Workflows controller. The expectation is that most are unaffected
-(they run without tenant context, so still resolve to `registry`), but each is run and
-any genuine fallout fixed. This is the highest-uncertainty part of the work and is
-treated as its own verification pass.
+relied on registry-context data must be checked. This is the highest-uncertainty part of
+the work, so it is bounded explicitly rather than left open.
+
+**Target set (run all; each must stay green or be fixed):**
+
+- Playwright workflow specs: `tenant-signup`, `jordan-landing-journey`,
+  `jordan-admin-dashboard`, `amara-attendance`, `waitlist-flow`, `camp-registration`,
+  `parent-dashboard`, `admin-dashboard`, `morgan-program-setup`, `all-workflows-visual`,
+  `workflow-layout-visual`, `component-integration`.
+- DAO/controller tests that drive workflows: everything under `t/dao/` and
+  `t/controller/` (run as suites).
+
+**Expected outcome and done-criteria.** The hypothesis is that nearly all are unaffected:
+they issue requests without tenant context, so `$self->tenant` still resolves to
+`registry` and behavior is unchanged. Done means: the full Playwright suite and
+`t/dao/` + `t/controller/` are green, **except** the pre-existing, separately-tracked
+failure #227 (`program-listing-filters.t`), which this work neither fixes nor worsens.
+Any spec that genuinely depends on the old `app->dao` behavior is converted into a named
+sub-task (explicitly route it to the tenant it means, or assert registry default), not a
+silent edit. If the count of genuinely-affected specs exceeds ~3, stop and re-scope with
+the maintainer before grinding through them.
 
 ## 5. Testing strategy
 
@@ -148,26 +200,34 @@ treated as its own verification pass.
 
 | Risk | Mitigation |
 | --- | --- |
-| App-wide `_dao` change breaks existing workflow specs | Run every workflow spec; fix genuine fallout in a dedicated pass; registry default limits blast radius. |
+| App-wide `_dao` change breaks existing workflow specs | Bounded target set (§4.5) with explicit done-criteria; registry default limits blast radius; re-scope trigger if >~3 specs genuinely affected. |
 | `tenant-signup` run misrouted to a not-yet-existent schema | Pin `tenant-signup` to registry by slug in `_dao`; `RegisterTenant` keeps writing the new schema via its own dao. |
-| Chromium rejects underscore/non-DNS slug hostnames | Seed uses all-alphanumeric slug; #41 deferred and referenced. |
-| Live Stripe key reaches harness | global-setup clears Stripe env vars; verified by test. |
-| `copy_workflow` list drift (missing workflows in tenant) | Add the two needed workflows; a provisioning test guards the set. |
+| Subdomain context unproven in harness (Chromium / `*.localhost` / slug) | Gating validation spike before any other work (§4.3); hybrid `X-As-Tenant`+subdomain fallback defined. |
+| Live Stripe key reaches harness | Signup completes by price ($0 plan), not env; global-setup also clears Stripe env vars as defense-in-depth (§4.4). |
+| Hardcoded `copy_workflow` list drifts again | Copy all registry workflows (excluding `tenant-signup`) from the `workflows` table; a provisioning test guards the set (§4.2). |
+| Existing tenant data stranded in `registry` orphaned by the switch | Pre-alpha assumption stated (§2); if it stops holding, a data migration becomes a prerequisite. |
 
 ## 7. Sequencing
 
-1. global-setup Stripe-key clearing (independent, low risk, also a safety fix).
-2. Add `program-location-assignment` + `summer-camp-registration` to `RegisterTenant`
-   copy list; provisioning test.
-3. `Workflows.pm` `_dao` change + `tenant-signup` registry pin.
-4. Run full regression; fix fallout (the big unknown).
-5. Hand off to Sub-project B (lifecycle E2E in-tenant).
+0. **Subdomain validation spike** (§4.3) — gating. Prove `<slug>.localhost:3001`
+   resolves and the server reads the tenant, or switch to the hybrid fallback. Nothing
+   else starts until the context mechanism is settled.
+1. global-setup Stripe-key clearing (independent, low risk, safety fix).
+2. `RegisterTenant` copies all registry workflows (excluding `tenant-signup`) from the
+   `workflows` table; provisioning test asserts the needed workflows land in-tenant.
+3. `TenantPayment` completes a $0 plan by price (§4.4); test the free-plan signup path.
+4. `Workflows.pm` `_dao` change + `tenant-signup` registry pin.
+5. Run the bounded regression target set (§4.5); fix genuine fallout or re-scope.
+6. Hand off to Sub-project B (lifecycle E2E in-tenant).
 
 ## 8. Open questions
 
 - Should `tenant-signup` be the only registry-pinned workflow, or are there others that
   legitimately operate cross-tenant (e.g. platform admin)? Current evidence says only
-  `tenant-signup`; to be confirmed during the fallout pass.
-- Is `summer-camp-registration` the correct registration workflow for Morgan's program,
-  or should the program's `registration_workflow` metadata point elsewhere? Resolved in
-  Sub-project B when wiring Nancy's registration.
+  `tenant-signup`; to be confirmed during the fallout pass (§4.5).
+- Copying *all* registry workflows into each tenant (§4.2) is the anti-drift fix, but it
+  also copies workflows a given tenant may never use. Acceptable (definitions are cheap,
+  cloned structure already exists); revisit only if the copy becomes a provisioning-time
+  cost.
+- Does retiring `TenantPayment`'s env-keyed mock branch (§4.4) affect any existing
+  tenant-signup test that depended on it? Checked as part of the §4.5 target set.
