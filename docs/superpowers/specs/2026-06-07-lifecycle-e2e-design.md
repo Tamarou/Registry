@@ -62,6 +62,12 @@ prevents the cross-browser `tenants_slug_key` collision we hit in #231 (chromium
 share one DB). **Hard rule:** the spec captures the actual provisioned slug from
 `registry.tenants` after Leg 0 — it never derives the slug in JS.
 
+**Per-run uniqueness covers every identity, not just the slug.** Because chromium and
+firefox run against the same DB, *every* persona record created during a run must carry the
+per-run suffix or it collides on the second browser (exactly as the slug did in #231):
+Morgan's org/email, Amara's invite email, Nancy's email/username, and the child's name. Use
+one run-scoped suffix (e.g. the Leg 0 timestamp) for all of them.
+
 **Minimal Perl helpers** (in the spec or a small `lifecycle_helpers.pl`), all tenant-aware:
 - `freshToken(userId, schema)` — mint a single-use magic-link **login** token. **Hard
   requirement:** it connects via `Registry::DAO->new(url => $dbUrl, schema => $tenantSlug)`
@@ -82,8 +88,10 @@ token must live in the tenant schema.
 
 ### Leg 0 — Morgan signs up (registry storefront → her tenant exists)
 - Drive `tenant-signup` to completion at the platform root: profile (org name → slug),
-  **users step inviting Amara as staff** (`invite_pending`), pricing (free Solo), review,
-  payment (POST → `Tenant->provision` at payment-time).
+  **users step inviting Amara as staff** (`invite_pending`), pricing step (select the free
+  plan, or it auto-skips when no subscription plans are configured — `TenantPayment` falls
+  back to the Solo $0 plan either way, so signup completes regardless), review, payment
+  (POST → `Tenant->provision` at payment-time).
 - Assert: a `registry.tenants` row for the slug exists, and `<slug>.workflows` is populated
   (schema provisioned). **Capture for later legs:** the slug; Morgan's user id
   (`SELECT id FROM <slug>.users WHERE user_type='admin'`); Amara's user id
@@ -105,11 +113,16 @@ token must live in the tenant schema.
   Amara as the teacher** (→ satisfies #225 NOT-NULL), future dates.
 - **Publish** program then session via `POST /admin/programs/:id/status` and
   `/admin/sessions/:id/status`.
-- Assert: the free, published session is registerable on Morgan's own storefront. In her
-  tenant there is exactly one program, so the storefront marketing template's
-  `$programs->[0]` IS hers (the contamination that broke #228's registry-schema assertion
-  does not arise in an isolated tenant). Assert via the storefront predicate + a rendered
-  callcc registration form for her session.
+- Assert: the free, published session is registerable on Morgan's own storefront. On a
+  tenant subdomain, `/` renders the **disk catalog** template
+  (`templates/tenant-storefront/program-listing.html.ep`: `grouped_programs` →
+  `article.landing-feature-card` per program, each with a `Register` callcc form posting to
+  `/tenant-storefront/<run>/callcc/<reg_workflow>`). This is the filesystem fallback because
+  #229 leaves the tenant's DB copy of that template unusable — it is *not* the registry
+  marketing landing, and not `$programs->[0]` logic. Assert: Morgan's program card is
+  present and carries a `Register` callcc form for her session (capture its hidden
+  `session_id`). The `reg_workflow` the form targets is `summer-camp-registration` (the
+  template's default), which provision copied into the tenant — this settles Leg 2's target.
 
 ### Leg 2 — Nancy registers as a new parent (`<slug>.localhost` storefront)
 - First verify (build-time gate) that the `tenant-storefront/program-listing` render
@@ -132,6 +145,11 @@ token must live in the tenant schema.
   teacher. (Her account is already usable as a `teacher_id`; formal invite acceptance /
   passkey is out of scope and tested elsewhere.)
 - Her teacher dashboard (in Morgan's tenant) shows her assigned event.
+- **Roster-linkage gate (where Legs 1–3 meet):** Amara's attendance roster for the event is
+  populated only if Nancy's Leg 2 enrollment ties to the session whose event Amara was
+  assigned in Leg 1. Verify the chain enrollment → session → event(teacher = Amara) before
+  asserting; if the roster is empty, that mismatch is the bug to fix/surface, not a missing
+  attendance API.
 - Open the event's attendance page; mark Nancy's child present.
 - Assert: an attendance record for the child on that event exists in Morgan's schema.
 
@@ -160,8 +178,10 @@ maintainer agrees a flow is out of this spec's scope.
 | Amara `login`-token verify→consume on the subdomain works via `loginWithToken` | Drive GET+POST explicitly | — |
 | **Tenant-scoped registration**: does registration create Nancy+child+enrollment in Morgan's schema? | Fix/route the workflow (real bug) | — (core to the lifecycle; do not seed around) |
 | Storefront callcc actually targets a registration workflow present in the tenant | Add the slug / fix the template (#229-adjacent) | — |
-| **Location creation** in-tenant misbehaves | Fix if cheap | Seed the location into the tenant |
-| Cross-browser slug collision (#231 class) | Per-run unique suffix | — |
+| **Location creation** in-tenant misbehaves; confirm slug (`location-creation` vs `location-management`) | Fix if cheap | Seed the location into the tenant |
+| Cross-browser collision (#231 class) on any per-run identity (slug, Morgan/Amara/Nancy emails, child) | Per-run unique suffix on ALL of them | — |
+| **Email-verification gating**: does login or enrollment require `email_verified_at`? Passwordless signup leaves users unverified; `freshToken` bypasses the email but not a gate. | Set `email_verified_at` in the helper, or drive verification | — |
+| **Roster linkage**: Nancy's enrollment must reach the event Amara teaches (Leg 1↔2↔3 seam) | Fix the enrollment→event chain (real bug) | — |
 
 ### Resolved-by-foundation (do not re-litigate)
 A spec review initially flagged several "blockers" that were artifacts of reading
