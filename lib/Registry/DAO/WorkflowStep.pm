@@ -115,6 +115,10 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     # When all keys in a nested sub-hash are non-negative integers the sub-hash
     # is converted to an arrayref sorted by index (matching PHP/Rails convention
     # for fields like team_members[0][name], team_members[1][name]).
+    #
+    # IMPORTANT: a form field that must remain a MAP (hash) must use non-numeric
+    # keys such as UUIDs or slugs, because any sub-hash whose keys are all
+    # non-negative integers is unconditionally converted to an arrayref.
     method expand_form_params ($form_data) {
         my %out;
         for my $key ( sort keys %$form_data ) {
@@ -140,6 +144,7 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     }
 
     # Recursively convert hashrefs with all-numeric keys to sorted arrayrefs.
+    # Numeric indices are ordering hints only; gaps are compacted (sparse [0],[2] becomes a 2-element array).
     method _arrayify_numeric_hashes ($node) {
         return unless ref $node eq 'HASH';
         for my $k ( keys %$node ) {
