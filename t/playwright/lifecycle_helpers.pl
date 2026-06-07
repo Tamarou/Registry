@@ -26,4 +26,12 @@ elsif ($cmd eq 'query-json') {
     )->hash->{j};
     print $json;
 }
+elsif ($cmd eq 'exec-sql') {
+    # exec-sql <schema> <sql-with-?-placeholders> <bind...>
+    # Runs SQL at top level (supports data-modifying statements); prints 'ok'.
+    my ($schema, $sql, @bind) = @args;
+    my $dao = Registry::DAO->new(url => $url, schema => $schema); # keep alive
+    $dao->db->query($sql, @bind);
+    print 'ok';
+}
 else { die "unknown command: $cmd\n" }

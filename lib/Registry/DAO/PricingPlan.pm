@@ -66,11 +66,10 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         $data->{pricing_configuration} //= { -json => {} };
         $data->{metadata} //= { -json => {} };
 
-        # Use registry schema for unified pricing plans when not in tenant context
-        my $schema = 'registry'; # Always use registry schema
-        my $table = ($schema && $schema ne 'registry')
-            ? 'pricing_plans'
-            : 'registry.pricing_plans';
+        # Use unqualified table name so the connection's search_path determines
+        # the schema.  This allows both the registry schema and tenant schemas
+        # to store pricing plans in their own pricing_plans table.
+        my $table = 'pricing_plans';
 
         $db = $db->db if $db isa Registry::DAO;
 
@@ -84,10 +83,10 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         }
     }
     
-    # Override find to handle registry schema
+    # Override find to use the unqualified table name so the connection's
+    # search_path determines the schema (registry or tenant).
     sub find ($class, $db, $filter = {}, $order = { -desc => 'created_at' }) {
-        # Always use registry schema for now
-        my $table = 'registry.pricing_plans';
+        my $table = 'pricing_plans';
 
         $db = $db->db if $db isa Registry::DAO;
         my $c = $db->select($table, '*', $filter, $order)
@@ -123,13 +122,9 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         $class->create($db, $data);
     }
     
-    # Get all pricing plans for a session
+    # Get all pricing plans for a session using the connection's search_path.
     sub get_pricing_plans ($class, $db, $session_id) {
-        # Determine schema context before extracting database object
-        my $schema = 'registry'; # Always use registry schema
-        my $table = ($schema && $schema ne 'registry')
-            ? 'pricing_plans'
-            : 'registry.pricing_plans';
+        my $table = 'pricing_plans';
 
         $db = $db->db if $db isa Registry::DAO;
         my $results = $db->select($table, undef, { session_id => $session_id })->hashes;
