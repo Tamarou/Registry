@@ -53,18 +53,30 @@ the server's `_extract_tenant_from_subdomain` reads `<slug>` from the Host heade
 `$self->dao` (foundation) routes to that schema. Registry-level steps (Morgan's signup at
 the platform storefront) use the bare `127.0.0.1:3001` / default host → `registry`.
 
-**Hostname-safe, unique slug.** Morgan signs up with an all-alphanumeric org name plus a
-per-run numeric suffix (e.g. `Lifecycle Arts 1780000000`). The signup slug generator
-lowercases and collapses separators; with no hyphens the result is a valid DNS label and
-sidesteps #230. The suffix prevents the cross-browser `tenants_slug_key` collision we hit
-in #231 (chromium + firefox share one DB). The spec captures the actual provisioned slug
-from the DB rather than assuming the exact transform.
+**Hostname-safe, unique slug — always read from the DB.** Morgan signs up with an
+all-alphanumeric org name plus a per-run numeric suffix (e.g. `Lifecycle Arts 1780000000`).
+`Tenant->provision` normalizes the slug to underscores (lowercase, separators → `_`), which
+**is** a valid subdomain label and passes the `tenant` helper's `[a-z][a-z0-9_]+` sanitizer
+(#230 only bites human-named hyphen slugs, which the alphanumeric name avoids). The suffix
+prevents the cross-browser `tenants_slug_key` collision we hit in #231 (chromium + firefox
+share one DB). **Hard rule:** the spec captures the actual provisioned slug from
+`registry.tenants` after Leg 0 — it never derives the slug in JS.
 
 **Minimal Perl helpers** (in the spec or a small `lifecycle_helpers.pl`), all tenant-aware:
-- `freshToken(userId, schema)` — mint a single-use magic-link login token in the right
-  schema (tenant users live in the tenant schema).
+- `freshToken(userId, schema)` — mint a single-use magic-link **login** token. **Hard
+  requirement:** it connects via `Registry::DAO->new(url => $dbUrl, schema => $tenantSlug)`
+  and writes to `<slug>.magic_link_tokens`. The token's FK references `<slug>.users`, and the
+  auth controller resolves it via `$self->dao` (the subdomain's tenant schema), so a
+  registry-schema token (the pattern in the old `setup_teacher_test_data.pl`) would be
+  unresolvable on the subdomain and must never be used. Always `purpose => 'login'` (see
+  Leg 3 on why not `invite`).
 - DB assertion helpers — query a given schema for tenant/session/enrollment/attendance
   rows (JSON-aggregated in SQL to avoid `@`-sigil shell-escaping pitfalls, per #228).
+
+**Login mechanics.** Login tokens require verify-then-consume; the existing `loginWithToken`
+helper (GET `/auth/magic/<token>` → click submit POST) already drives both steps, so it is
+reused as-is. The GET resolves the token via the subdomain's tenant dao — another reason the
+token must live in the tenant schema.
 
 ## 4. The legs (data flow)
 
@@ -73,7 +85,15 @@ from the DB rather than assuming the exact transform.
   **users step inviting Amara as staff** (`invite_pending`), pricing (free Solo), review,
   payment (POST → `Tenant->provision` at payment-time).
 - Assert: a `registry.tenants` row for the slug exists, and `<slug>.workflows` is populated
-  (schema provisioned). Capture the slug for later legs.
+  (schema provisioned). **Capture for later legs:** the slug; Morgan's user id
+  (`SELECT id FROM <slug>.users WHERE user_type='admin'`); Amara's user id
+  (`WHERE user_type='staff'`). `freshToken` needs these UUIDs, which the signup completion
+  page does not emit.
+- Provisioning copies **every** registry workflow except `tenant-signup` into Morgan's
+  schema (foundation `Tenant->provision`), so `program-creation`, `location-creation`,
+  `program-location-assignment`, `admin-dashboard`, `tenant-storefront`, and
+  `summer-camp-registration` are all present for the later legs — this is verified, not
+  assumed (it is the anti-drift design of provision).
 
 ### Leg 1 — Morgan operates her tenant (`<slug>.localhost`, authenticated)
 - Log in via magic link (token minted for Morgan; she is the tenant's primary user).
@@ -92,16 +112,26 @@ from the DB rather than assuming the exact transform.
   callcc registration form for her session.
 
 ### Leg 2 — Nancy registers as a new parent (`<slug>.localhost` storefront)
-- Unauthenticated, Nancy discovers the free session and enters registration.
+- First verify (build-time gate) that the `tenant-storefront/program-listing` render
+  exposes a callcc registration form, and capture the registration workflow slug it targets
+  (presumed `summer-camp-registration`, which provision copied into the tenant). The
+  callcc runs the target via the subdomain's tenant dao, so it executes in Morgan's schema.
+- Unauthenticated, Nancy discovers the free session and enters that registration workflow.
 - Through account-check / new-parent: create Nancy's account, add her child, register the
   child into Morgan's session; free total → free-enroll at the standard `payment` step
   (#222, no branching).
-- Assert: Nancy (parent) + child + an active enrollment for the session exist in Morgan's
-  schema.
+- Assert: Nancy (parent) row, her child (`<slug>.family_members`), and an active enrollment
+  for the session all exist **in Morgan's schema** (`<slug>`), not in `registry` — this
+  proves registration is tenant-scoped end to end.
 
 ### Leg 3 — Amara takes attendance (`<slug>.localhost`)
-- Amara accepts her invite / logs in via magic link; her teacher dashboard (in Morgan's
-  tenant) shows her assigned event.
+- Amara logs in with a **freshly-minted `login` token** (via `loginWithToken`), NOT her
+  signup `invite` token. The auth controller redirects `invite`-purpose tokens to
+  `/auth/register-passkey` (Auth.pm), which would derail the test into a WebAuthn ceremony;
+  the signup invite's only job was to create Amara's account so Morgan could assign her as
+  teacher. (Her account is already usable as a `teacher_id`; formal invite acceptance /
+  passkey is out of scope and tested elsewhere.)
+- Her teacher dashboard (in Morgan's tenant) shows her assigned event.
 - Open the event's attendance page; mark Nancy's child present.
 - Assert: an attendance record for the child on that event exists in Morgan's schema.
 
@@ -126,12 +156,28 @@ maintainer agrees a flow is out of this spec's scope.
 
 | Unknown | If it fails | Fallback (only with agreement) |
 | --- | --- | --- |
-| Invite **acceptance**: can an `invite_pending` Amara log in / appear on the teacher dashboard before accepting? | Add an accept-invite step | Mint Amara a tenant login token directly |
-| **Tenant-scoped auth tokens**: are magic tokens for tenant users resolvable on the subdomain? | Fix token/schema resolution | Generate tokens in tenant schema explicitly |
+| **Tenant-scoped auth tokens**: are magic tokens for tenant users resolvable on the subdomain? (Confirmed mechanic: token must live in `<slug>.magic_link_tokens`; resolved by `freshToken`'s hard requirement in §3.) | Fix token/schema resolution | — (handled by design) |
+| Amara `login`-token verify→consume on the subdomain works via `loginWithToken` | Drive GET+POST explicitly | — |
 | **Tenant-scoped registration**: does registration create Nancy+child+enrollment in Morgan's schema? | Fix/route the workflow (real bug) | — (core to the lifecycle; do not seed around) |
+| Storefront callcc actually targets a registration workflow present in the tenant | Add the slug / fix the template (#229-adjacent) | — |
 | **Location creation** in-tenant misbehaves | Fix if cheap | Seed the location into the tenant |
-| Slug not hostname-safe / not routable (#230) | Constrain org name to alphanumeric | — |
 | Cross-browser slug collision (#231 class) | Per-run unique suffix | — |
+
+### Resolved-by-foundation (do not re-litigate)
+A spec review initially flagged several "blockers" that were artifacts of reading
+pre-foundation code; verified resolved on current `main`:
+- Workflow-copy completeness — `Tenant->provision` copies all registry workflows except
+  `tenant-signup` (the deleted `create_tenant_directly` only copied two).
+- `program-location-assignment` present in the tenant — provision copies it.
+- generate-events date handling — `GenerateEvents.parse_start_date` accepts the ISO date the
+  form submits (fixed in #228); no 1970-epoch trap.
+- Underscore slug is hostname-safe and routes (provision normalizes; sanitizer accepts `_`).
+
+### File-don't-fix (surfaced by review, not on the lifecycle path)
+- `RegisterTenant._send_invitation_email` mints the invite token against the registry db
+  while the invited user lives in the tenant schema — a cross-schema/FK hazard. The
+  lifecycle does not use the invite token (Amara uses a `login` token), so it is not
+  blocking; file it as a standalone bug.
 
 Production bugs blocking the journey get fixed (with TDD/tests as the foundation work did);
 tangential ones get filed (as #225/#226/#229/#230 were).
