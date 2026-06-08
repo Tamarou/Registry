@@ -244,6 +244,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # If the authenticated user is not yet recorded in this run's data,
         # store them now so that the account-check step can render the
         # "already logged in" branch.
+        #
+        # This mutates run data on a GET. It is safe: idempotent (guarded by
+        # !$run->data->{user_id}), scoped to the account-check step, and merely
+        # records the already-authenticated session user — no external effect.
         if ($step && $step->slug eq 'account-check') {
             my $current_user = $self->stash('current_user');
             if ($current_user && !$run->data->{user_id}) {

@@ -10,22 +10,6 @@ sub register ($self, $app, $conf = {}) {
     # Save original warmup method
     my $orig_warmup = $renderer->can('warmup');
 
-    # Helper: look up a template in the DB by name (without handler extensions).
-    # Returns the template content string if found, undef otherwise.
-    # Gracefully returns undef when no DAO is available (e.g. tests without
-    # a full DB setup), making the plugin invisible in that case.
-    my $db_lookup = sub ($name) {
-        my $dao = eval { $app->dao };
-        return undef unless $dao;
-
-        # Strip handler extensions to get the DB template name
-        # e.g. "tenant-storefront/program-listing.html.ep" -> "tenant-storefront/program-listing"
-        (my $db_name = $name) =~ s/\.\w+\.\w+$//;
-
-        my $template = eval { $dao->find('Registry::DAO::Template', { name => $db_name }) };
-        return $template ? $template->content : undef;
-    };
-
     # Override the EP handler to check the DB before reading from the
     # filesystem.  This avoids monkey-patching template_path (which other
     # code relies on for existence checks) while still allowing DB
@@ -41,6 +25,13 @@ sub register ($self, $app, $conf = {}) {
     # during warmup so the EP handler can skip the DB query for templates
     # that are only on the filesystem (the common case for layouts, partials,
     # error pages, etc.).
+    #
+    # NOTE: this index is built from the REGISTRY schema (warmup uses the
+    # app-level DAO), while per-request lookup uses $c->dao (the tenant). A DB
+    # template whose name exists ONLY in a tenant schema would be skipped by the
+    # gate below and never served. That is fine today (template names are
+    # registry-defined); if tenant-authored templates with novel names ship
+    # later, make this index tenant-aware.
     my %db_template_names;
 
     # Request-context-aware DB lookup: uses $c->dao so the template is fetched
