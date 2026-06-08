@@ -26,11 +26,12 @@ knowing the platform base domain(s) to tell a subdomain from the apex.
 
 ## Fix
 
-### 1. Configurable base domains
-New env `REGISTRY_BASE_DOMAINS`: comma-separated platform domains under which wildcard tenant
-subdomains are served. Default `localhost` (dev/tests). Production sets `tinyartempire.com`
-(the list accommodates future bases — staging, additional apexes — without code change).
-Parsed once; lowercased; empty entries ignored.
+### 1. Configurable base domains (with a production-correct default)
+Base domains default to `tinyartempire.com,localhost` in code, so **production is fixed by
+merging alone** — no env var to set or forget. `REGISTRY_BASE_DOMAINS` (comma-separated)
+overrides the default for other environments (e.g. staging, additional apexes). Lowercased;
+empty entries ignored. `localhost` stays in the default so the `<slug>.localhost` test
+convention keeps working.
 
 ### 2. Base-domain-aware `_extract_tenant_from_subdomain`
 Replace "first label of anything" with base-relative extraction:
@@ -62,9 +63,9 @@ per-request custom-domain query. Positive results may be cached in-process to bo
 (only cache "exists"; never cache "missing", so a newly-provisioned schema is picked up).
 
 ### 4. Deploy
-Set `REGISTRY_BASE_DOMAINS=tinyartempire.com` in the Render web service env. The code default
-`localhost` keeps the test suite green without env changes. (Deploy is a manual step recorded
-in the PR; restoring prod requires both the code AND this env value.)
+Merge and redeploy — that's it. `tinyartempire.com` is the built-in default, so no env var
+is required to restore production. Only set `REGISTRY_BASE_DOMAINS` if additional base
+domains (e.g. a staging apex) need to serve wildcard subdomains.
 
 ## Testing
 

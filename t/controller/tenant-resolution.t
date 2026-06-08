@@ -57,6 +57,16 @@ subtest 'defensive fallback: resolved slug with no schema -> registry' => sub {
         'subdomain for a non-existent schema falls back to registry (no 500)';
 };
 
+subtest 'config default: prod base works with no env var set' => sub {
+    # Without REGISTRY_BASE_DOMAINS, the default must already cover the platform
+    # apex so production is fixed by merging alone (no env var step to forget).
+    local $ENV{REGISTRY_BASE_DOMAINS};
+    delete $ENV{REGISTRY_BASE_DOMAINS};
+    is tenant_for('tinyartempire.com'), 'registry', 'apex -> registry by default';
+    is tenant_for('acme.tinyartempire.com'), 'acme', '<slug>.<base> -> slug by default';
+    is tenant_for('acme.localhost'), 'acme', '<slug>.localhost still works by default';
+};
+
 subtest 'integration: apex host renders, does not 500 (the prod regression)' => sub {
     # GET / on the platform apex must render the registry storefront, not 500
     # with "relation \"workflows\" does not exist".

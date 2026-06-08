@@ -836,14 +836,16 @@ class Registry :isa(Mojolicious) {
         }
     }
 
-    # Platform base domains under which wildcard tenant subdomains are served,
-    # from REGISTRY_BASE_DOMAINS (comma-separated). Defaults to 'localhost' for
-    # dev/tests; production sets e.g. 'tinyartempire.com'. The list lets us tell a
-    # tenant subdomain (<slug>.<base>) from the platform apex (<base> itself) and
-    # from custom domains (under no base) -- without it the apex domain's own
-    # label is wrongly taken as a tenant slug.
+    # Platform base domains under which wildcard tenant subdomains are served.
+    # Defaults to the platform's own domains so production works with no extra
+    # configuration; REGISTRY_BASE_DOMAINS (comma-separated) overrides the default
+    # for other environments (e.g. staging). The list lets us tell a tenant
+    # subdomain (<slug>.<base>) from the platform apex (<base> itself) and from
+    # custom domains (under no base) -- without it the apex domain's own label is
+    # wrongly taken as a tenant slug. 'localhost' is included so the test
+    # convention <slug>.localhost keeps working.
     method _base_domains {
-        my $raw = $ENV{REGISTRY_BASE_DOMAINS} // 'localhost';
+        my $raw = $ENV{REGISTRY_BASE_DOMAINS} // 'tinyartempire.com,localhost';
         return grep { length } map { s/^\s+|\s+$//gr } map { lc } split /,/, $raw;
     }
 
