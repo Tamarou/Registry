@@ -52,8 +52,8 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             # Process session selections
             my %selections;  # child_id => session_id
             my @errors;
-            
-            # Collect selections from form
+
+            # Collect selections from form; template emits session_for_<child_id>
             for my $key (keys %$form_data) {
                 if ($key =~ /^session_for_(.+)$/) {
                     my $child_id = $1;
@@ -142,6 +142,85 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         }
     }
     
+    method prepare_template_data ($db, $run, $params = {}) {
+        require Registry::DAO::Family;
+        require Registry::DAO::Session;
+
+        my $selected_child_ids = $run->data->{selected_child_ids} || [];
+        my $location_id = $run->data->{location_id};
+        my $program_id  = $run->data->{program_id};
+
+        # Expand child IDs into the flat-hash format the template expects.
+        my @children;
+        for my $child_id (@$selected_child_ids) {
+            my $child = Registry::DAO::FamilyMember->find($db, { id => $child_id });
+            next unless $child;
+            # Compute age as integer years from birth_date (ISO string).
+            my $age = $child->age // 0;
+            push @children, {
+                id         => $child->id,
+                first_name => $child->child_name,
+                last_name  => '',
+                age        => $age,
+            };
+        }
+
+        # Query published sessions that belong to this program+location.
+        my @available_sessions;
+        if ($program_id && $location_id) {
+            my $sql = q{
+                SELECT DISTINCT s.*
+                FROM sessions s
+                JOIN session_events se ON se.session_id = s.id
+                JOIN events e ON e.id = se.event_id
+                WHERE e.location_id = ?
+                  AND e.project_id  = ?
+                  AND s.status      = 'published'
+                  AND s.end_date    >= CURRENT_DATE
+                ORDER BY s.start_date
+            };
+            my $rows = $db->query($sql, $location_id, $program_id)->hashes;
+            for my $row (@$rows) {
+                my $sess = Registry::DAO::Session->new(%$row);
+                my $enrolled = $db->query(
+                    q{SELECT COUNT(*) FROM enrollments
+                      WHERE session_id = ? AND status IN ('active','pending')},
+                    $sess->id
+                )->array->[0] || 0;
+                push @available_sessions, $sess
+                    unless ($sess->capacity && $enrolled >= $sess->capacity);
+            }
+        } elsif ($program_id) {
+            # No location filter — find any published session for this program.
+            my $sql = q{
+                SELECT DISTINCT s.*
+                FROM sessions s
+                JOIN session_events se ON se.session_id = s.id
+                JOIN events e ON e.id = se.event_id
+                WHERE e.project_id = ?
+                  AND s.status     = 'published'
+                  AND s.end_date   >= CURRENT_DATE
+                ORDER BY s.start_date
+            };
+            my $rows = $db->query($sql, $program_id)->hashes;
+            for my $row (@$rows) {
+                my $sess = Registry::DAO::Session->new(%$row);
+                my $enrolled = $db->query(
+                    q{SELECT COUNT(*) FROM enrollments
+                      WHERE session_id = ? AND status IN ('active','pending')},
+                    $sess->id
+                )->array->[0] || 0;
+                push @available_sessions, $sess
+                    unless ($sess->capacity && $enrolled >= $sess->capacity);
+            }
+        }
+
+        return {
+            children           => \@children,
+            available_sessions => \@available_sessions,
+        };
+    }
+
     method validate ($db, $form_data) {
         my $action = $form_data->{action} || '';
         

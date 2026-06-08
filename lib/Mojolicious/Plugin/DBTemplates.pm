@@ -43,6 +43,17 @@ sub register ($self, $app, $conf = {}) {
     # error pages, etc.).
     my %db_template_names;
 
+    # Request-context-aware DB lookup: uses $c->dao so the template is fetched
+    # from the CURRENT TENANT's schema, not the app-level (registry) schema.
+    my $c_db_lookup = sub ($c, $name) {
+        my $dao = eval { $c->dao };
+        return undef unless $dao;
+
+        (my $db_name = $name) =~ s/\.\w+\.\w+$//;
+        my $template = eval { $dao->find('Registry::DAO::Template', { name => $db_name }) };
+        return $template ? $template->content : undef;
+    };
+
     my $orig_ep_handler = $renderer->handlers->{ep};
     $renderer->add_handler(ep => sub ($renderer, $c, $output, $options) {
         # Only intercept template-based renders (not already inline)
@@ -53,7 +64,9 @@ sub register ($self, $app, $conf = {}) {
                 # Strip handler extensions for the index lookup
                 (my $db_name = $name) =~ s/\.\w+\.\w+$//;
                 if ($db_template_names{$db_name}) {
-                    my $db_content = $db_lookup->($name);
+                    # Use the request-context DAO so the tenant's own DB
+                    # templates shadow the registry's, not the other way round.
+                    my $db_content = $c_db_lookup->($c, $name);
                     if (defined $db_content) {
                         $options->{inline} = $db_content;
                         $did_inject = 1;

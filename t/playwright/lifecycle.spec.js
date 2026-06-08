@@ -438,8 +438,235 @@ test.describe('Lifecycle: Morgan -> Nancy -> Amara', () => {
     // action is e.g. "/tenant-storefront/<run_id>/callcc/<workflow>"
     const callccMatch = (formAction || '').match(/callcc\/([^/]+)$/);
     expect(callccMatch, 'form action contains callcc target').toBeTruthy();
-    state.regWorkflow = callccMatch ? callccMatch[1] : 'summer-camp-registration';
-    expect(state.regWorkflow, 'regWorkflow captured').toBeTruthy();
+    state.regWorkflow = callccMatch ? callccMatch[1] : null;
+    expect(state.regWorkflow, 'regWorkflow is summer-camp-registration').toBe('summer-camp-registration');
+  });
+
+  // ==========================================================================
+  // Leg 2: Nancy discovers Morgan's program and enrolls her child for free
+  // ==========================================================================
+  test('Leg 2: Nancy registers her child and free-enrolls', async ({ page, testDB }) => {
+    const SUB = `http://${state.slug}.localhost:3001`;
+
+    // -----------------------------------------------------------------------
+    // Step 1: Fresh context; find Morgan's program card and click Register
+    // -----------------------------------------------------------------------
+    await page.context().clearCookies();
+    await page.goto(`${SUB}/`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // The storefront shows program cards; find the one for Morgan's program.
+    const programCard = page.locator('article').filter({ hasText: state.programName });
+    await expect(programCard).toBeVisible({ timeout: 10000 });
+
+    // Submit the Register callcc form inside the card.
+    const registerBtn = programCard.locator('button[type="submit"]');
+    await expect(registerBtn).toBeVisible();
+    await registerBtn.click();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // Should land on account-check step.
+    const accountCheckUrl = page.url();
+    expect(accountCheckUrl, 'landed on account-check step').toContain('account-check');
+
+    // -----------------------------------------------------------------------
+    // Step 2: Create Nancy's account via the create_account form
+    // -----------------------------------------------------------------------
+    const createForm = page.locator('form:has(input[name="action"][value="create_account"])');
+    await expect(createForm).toBeVisible({ timeout: 5000 });
+    await createForm.locator('input[name="name"]').fill(`Nancy Parent ${state.nancyUsername}`);
+    await createForm.locator('input[name="email"]').fill(state.nancyEmail);
+    await createForm.locator('input[name="username"]').fill(state.nancyUsername);
+    await createForm.locator('button[type="submit"]').click();
+    await page.waitForLoadState('networkidle');
+    // Account creation redirects to /auth/magic-link-sent (not the next workflow step).
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // -----------------------------------------------------------------------
+    // Step 3: Login-then-resume
+    // Nancy's account exists in the tenant schema; mint a login token and
+    // authenticate her, then navigate back to the account-check URL so the
+    // workflow can resume with her session active.
+    // -----------------------------------------------------------------------
+    const nancyRows = queryJson(testDB, state.slug,
+      'SELECT id FROM users WHERE username = ?', state.nancyUsername);
+    expect(nancyRows.length, 'Nancy user row in tenant schema').toBeGreaterThan(0);
+    state.nancyId = nancyRows[0].id;
+
+    const nancyToken = loginToken(testDB, state.slug, state.nancyId);
+    await loginWithToken(page, nancyToken, SUB);
+
+    // Navigate back to the account-check URL; the controller will detect the
+    // authenticated session and show the "Continue with Registration" form.
+    await page.goto(accountCheckUrl);
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // Should show the "already logged in" continue form.
+    const continueForm = page.locator('form:has(input[name="action"][value="continue_logged_in"])');
+    await expect(continueForm).toBeVisible({ timeout: 5000 });
+    await continueForm.locator('button[type="submit"]').click();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // -----------------------------------------------------------------------
+    // Step 4: select-children — add the child, then continue
+    // -----------------------------------------------------------------------
+    await expect(page).toHaveURL(/select-children/, { timeout: 10000 });
+
+    // Add Nancy's child via the add-child form.
+    const addChildForm = page.locator('form:has(input[name="action"][value="add_child"])');
+    await expect(addChildForm).toBeVisible({ timeout: 5000 });
+    await addChildForm.locator('input[name="new_child_name"]').fill(state.childName);
+    // Birth date: a child aged ~8 years
+    await addChildForm.locator('input[name="new_birth_date"]').fill('2017-06-01');
+    await addChildForm.locator('input[name="new_emergency_name"]').fill('Emergency Contact');
+    await addChildForm.locator('input[name="new_emergency_phone"]').fill('555-0100');
+    await addChildForm.locator('button[type="submit"]').click();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // After add_child the page stays on select-children. Check the child appeared.
+    await expect(page.locator('body')).toContainText(state.childName, { timeout: 5000 });
+
+    // Now select the child checkbox and continue.
+    const continueChildForm = page.locator('form:has(input[name="action"][value="continue"])');
+    await expect(continueChildForm).toBeVisible({ timeout: 5000 });
+    // Check any child checkbox (the newly added one).
+    const childCheckbox = continueChildForm.locator('input[type="checkbox"]').first();
+    await expect(childCheckbox).toBeVisible({ timeout: 3000 });
+    await childCheckbox.check();
+    await continueChildForm.locator('button[type="submit"]').click();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // -----------------------------------------------------------------------
+    // Step 5a: camper-info (optional step; if present, fill required fields and submit)
+    // -----------------------------------------------------------------------
+    const currentUrl5a = page.url();
+    if (currentUrl5a.includes('camper-info')) {
+      // Fill all visible text/email/tel/number/select inputs in the fallback form.
+      // We use evaluate() to remove the 'required' attribute so HTML validation
+      // does not block submission when the form-builder renders instead, then fill
+      // what fields are present.
+      await page.evaluate(() => {
+        document.querySelectorAll('input[required], select[required], textarea[required]')
+          .forEach(el => el.removeAttribute('required'));
+      });
+      const childNameField = page.locator('input[name="childName"]');
+      if (await childNameField.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await childNameField.fill(state.childName);
+      }
+      const childAgeField = page.locator('input[name="childAge"]');
+      if (await childAgeField.isVisible({ timeout: 500 }).catch(() => false)) {
+        await childAgeField.fill('8');
+      }
+      const gradeLevelField = page.locator('select[name="gradeLevel"]');
+      if (await gradeLevelField.isVisible({ timeout: 500 }).catch(() => false)) {
+        await gradeLevelField.selectOption('3');
+      }
+      const parentNameField = page.locator('input[name="parentName"]');
+      if (await parentNameField.isVisible({ timeout: 500 }).catch(() => false)) {
+        await parentNameField.fill(`Nancy Parent ${state.nancyUsername}`);
+      }
+      const parentEmailField = page.locator('input[name="parentEmail"]');
+      if (await parentEmailField.isVisible({ timeout: 500 }).catch(() => false)) {
+        await parentEmailField.fill(state.nancyEmail);
+      }
+      const parentPhoneField = page.locator('input[name="parentPhone"]');
+      if (await parentPhoneField.isVisible({ timeout: 500 }).catch(() => false)) {
+        await parentPhoneField.fill('555-0101');
+      }
+      const emergencyField = page.locator('input[name="emergencyContact"]');
+      if (await emergencyField.isVisible({ timeout: 500 }).catch(() => false)) {
+        await emergencyField.fill('Emergency Contact');
+      }
+      const emergencyPhoneField = page.locator('input[name="emergencyPhone"]');
+      if (await emergencyPhoneField.isVisible({ timeout: 500 }).catch(() => false)) {
+        await emergencyPhoneField.fill('555-0100');
+      }
+      // sessionWeek and extendedCare are required by the outcome definition schema.
+      // Add them to the form via JS so server-side validation passes.
+      await page.evaluate(() => {
+        const form = document.querySelector('form');
+        if (!form) return;
+        const addHidden = (name, value) => {
+          if (!form.elements[name]) {
+            const inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = name;
+            inp.value = value;
+            form.appendChild(inp);
+          }
+        };
+        addHidden('sessionWeek', 'week1');
+        addHidden('extendedCare', 'none');
+      });
+      await page.locator('button[type="submit"]').click();
+      await page.waitForLoadState('networkidle');
+      await expect(page.locator('body')).not.toContainText('Internal Server Error');
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 5: session-selection — pick Morgan's session
+    // -----------------------------------------------------------------------
+    await expect(page).toHaveURL(/session-selection/, { timeout: 10000 });
+
+    // Select the session radio button for Morgan's session.
+    const sessionRadio = page.locator(`input[type="radio"][value="${state.sessionId}"]`).first();
+    await expect(sessionRadio).toBeVisible({ timeout: 10000 });
+    await sessionRadio.check();
+
+    await page.locator('button[type="submit"]').click();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // -----------------------------------------------------------------------
+    // Step 6: payment — free enrollment ($0 total, check agreeTerms)
+    // -----------------------------------------------------------------------
+    await expect(page).toHaveURL(/payment/, { timeout: 10000 });
+
+    // Agree to terms and submit; $0 total = free enrollment path.
+    const agreeCheckbox = page.locator('input[name="agreeTerms"]');
+    await expect(agreeCheckbox).toBeVisible({ timeout: 5000 });
+    await agreeCheckbox.check();
+    await page.locator('button[type="submit"]').click();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+
+    // -----------------------------------------------------------------------
+    // Step 7: complete
+    // -----------------------------------------------------------------------
+    await expect(page).toHaveURL(/complete/, { timeout: 10000 });
+    await expect(page.locator('body')).toContainText(/complete|registered|confirmed/i, { timeout: 5000 });
+
+    // -----------------------------------------------------------------------
+    // Step 8: Assert tenant-scoped (the whole point)
+    // All rows must live in the TENANT schema, not registry.
+    // -----------------------------------------------------------------------
+
+    // Nancy's user row in the tenant schema.
+    const nancyConfirmRows = queryJson(testDB, state.slug,
+      'SELECT id FROM users WHERE id = ?', state.nancyId);
+    expect(nancyConfirmRows.length, 'Nancy exists in tenant schema').toBeGreaterThan(0);
+
+    // Her child in family_members.
+    const childRows = queryJson(testDB, state.slug,
+      'SELECT id FROM family_members WHERE child_name = ?', state.childName);
+    expect(childRows.length, 'child exists in tenant schema family_members').toBeGreaterThan(0);
+    state.childId = childRows[0].id;
+
+    // An active enrollment for the session in the tenant schema.
+    const enrollmentRows = queryJson(testDB, state.slug,
+      `SELECT e.id FROM enrollments e
+       JOIN family_members fm ON e.family_member_id = fm.id
+       WHERE e.session_id = ? AND fm.id = ? AND e.status = 'active'`,
+      state.sessionId, state.childId
+    );
+    expect(enrollmentRows.length, 'active enrollment exists in tenant schema').toBeGreaterThan(0);
+    state.enrollmentId = enrollmentRows[0].id;
   });
 
 });

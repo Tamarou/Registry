@@ -17,6 +17,7 @@ use Test::Registry::Helpers qw(
     workflow_url
     workflow_run_step_url
     workflow_process_step_url
+    authenticate_as
 );
 
 use Registry::DAO qw(Workflow);
@@ -114,7 +115,10 @@ my $run = $workflow->latest_run($dao->db);
 ok $run, 'Workflow run exists';
 
 # === Step 2: Account check - create new account ===
-subtest 'Account check - create new account' => sub {
+# create_account creates the user and redirects to /auth/magic-link-sent
+# so the parent can receive the magic link email. The workflow pointer stays
+# at account-check; after login the parent submits continue_logged_in to advance.
+subtest 'Account check - create new account redirects to magic-link-sent' => sub {
     my $step = $run->next_step($dao->db);
     is $step->slug, 'account-check', 'Next step is account-check';
 
@@ -128,7 +132,7 @@ subtest 'Account check - create new account' => sub {
       ->tx->res->headers->location;
 
     ok $next_url, 'Redirected after account creation';
-    like $next_url, qr/select-children$/, 'Redirected to select-children step';
+    like $next_url, qr{magic-link-sent}, 'Redirected to magic-link-sent page';
 
     # Verify user was created in DB
     my $user = Registry::DAO::User->find($dao->db, { username => 'maria.martinez' });
@@ -137,9 +141,32 @@ subtest 'Account check - create new account' => sub {
     is $user->user_type, 'parent', 'User type is parent';
     ok !$user->passhash, 'No password hash (passwordless)';
 
-    # Verify user_id stored in run data
+    # Verify user_id stored in run data (persisted via stay path)
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     is $run->data->{user_id}, $user->id, 'user_id stored in workflow run data';
+};
+
+# Simulate the parent receiving the magic link and logging in.
+my $created_user = Registry::DAO::User->find($dao->db, { username => 'maria.martinez' });
+authenticate_as($t, $created_user);
+
+# === Step 2b: Account check - continue_logged_in after magic-link login ===
+subtest 'Account check - continue_logged_in advances to select-children' => sub {
+    # The workflow run pointer is still at account-check (stay path did not advance).
+    my $step = $run->next_step($dao->db);
+    is $step->slug, 'account-check', 'Next step is still account-check';
+
+    my $step_url = workflow_process_step_url($workflow, $run, $step);
+    my $next_url = $t->post_ok($step_url => form => {
+        action  => 'continue_logged_in',
+        user_id => $created_user->id,
+    })->status_is(302)
+      ->tx->res->headers->location;
+
+    ok $next_url, 'Redirected after continue_logged_in';
+    like $next_url, qr/select-children$/, 'Redirected to select-children step';
+
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
 };
 
 # === Step 3: Select children ===

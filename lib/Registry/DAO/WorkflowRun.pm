@@ -78,7 +78,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     # run's JSONB data column to prevent transient metadata from polluting
     # the workflow state.
     my @TRANSIENT_KEYS = qw(
-        next_step errors data _validation_errors stay
+        next_step errors data _validation_errors stay redirect
         retry_count retry_delay retry_exceeded should_retry
     );
 
@@ -100,9 +100,12 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
         # Handle stay: persist any domain data but do NOT advance the step
         # pointer. Return the step result so the controller can detect stay.
-        # Detect both explicit `stay => 1` and the older convention of
-        # returning `next_step => $self->id` (step wants to re-render itself).
+        # Detect both explicit `stay => 1`, a redirect signal (step requests an
+        # external redirect without advancing the workflow pointer), and the older
+        # convention of returning `next_step => $self->id` (step wants to
+        # re-render itself).
         my $wants_stay = $step_result->{stay}
+            || $step_result->{redirect}
             || (defined $step_result->{next_step} && $step_result->{next_step} eq $step->id);
 
         # Strip transient control-flow keys so only domain data is persisted.
@@ -124,6 +127,8 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
             # Steps using the older next_step convention return rendering
             # data under 'data'; the controller expects 'template_data'.
             my %stay_result = ( stay => 1 );
+            $stay_result{redirect} = $step_result->{redirect}
+                if $step_result->{redirect};
             $stay_result{template_data} = $step_result->{template_data}
                                        || $step_result->{data}
                 if ($step_result->{template_data} || $step_result->{data});

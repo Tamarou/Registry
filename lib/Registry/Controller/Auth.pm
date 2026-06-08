@@ -19,6 +19,12 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         $self->render(template => 'auth/login');
     }
 
+    # GET /auth/magic-link-sent — confirmation page shown after account creation
+    # sends a magic login link. Accessible without authentication.
+    method magic_link_sent {
+        $self->render(template => 'auth/magic-link-sent');
+    }
+
     method request_magic_link {
         my $email = $self->param('email') // '';
 

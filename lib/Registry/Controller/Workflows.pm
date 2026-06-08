@@ -241,6 +241,27 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # Fallback to latest step if the requested step isn't found
         $step ||= $run->latest_step($dao->db) || $run->next_step($dao->db);
 
+        # If the authenticated user is not yet recorded in this run's data,
+        # store them now so that the account-check step can render the
+        # "already logged in" branch.
+        if ($step && $step->slug eq 'account-check') {
+            my $current_user = $self->stash('current_user');
+            if ($current_user && !$run->data->{user_id}) {
+                my $uid  = ref $current_user ? $current_user->{id} : undef;
+                my $name = ref $current_user ? ($current_user->{name} || '') : '';
+                my $email = ref $current_user ? ($current_user->{email} || '') : '';
+                if ($uid) {
+                    $dao->db->query(
+                        q{UPDATE workflow_runs SET data = COALESCE(data,'{}') || ?::jsonb WHERE id = ?},
+                        Mojo::JSON::encode_json({ user_id => $uid, user_name => $name, user_email => $email }),
+                        $run->id,
+                    );
+                    # Reload run so $run->data is fresh for template rendering.
+                    ($run) = $dao->find(WorkflowRun => { id => $run->id });
+                }
+            }
+        }
+
         # Get data for rendering
         my $data_json = Mojo::JSON::encode_json($run->data || {});
         my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
@@ -360,6 +381,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             # No JS: store errors in flash for retrieval on redirect
             $self->flash(validation_errors => $validation_errors);
             return $self->redirect_to($self->url_for);
+        }
+
+        # Step requested an external redirect (e.g. to /auth/magic-link-sent
+        # after account creation). The workflow pointer stays on the current
+        # step so the user can resume after authenticating.
+        if ($result->{redirect}) {
+            return $self->redirect_to($result->{redirect});
         }
 
         # Check for stay -- step wants to remain on the current page.

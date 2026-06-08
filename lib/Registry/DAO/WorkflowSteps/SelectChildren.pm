@@ -54,8 +54,8 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
             try {
                 require Registry::DAO::Family;
                 my $child = Registry::DAO::Family->add_child($db, $user_id, $child_data);
-                
-                # If HTMX request, return just the new child row
+
+                # If HTMX request (header or body field), return just the new child row
                 if ($form_data->{'HX-Request'}) {
                     return {
                         htmx_response => 1,
@@ -69,8 +69,8 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
                     errors => ["Failed to add child: $e"]
                 };
             }
-            
-            # Stay on page after adding child
+
+            # Stay on page after adding child so the new child appears in the list.
             return { stay => 1 };
         }
         elsif ($action eq 'continue') {

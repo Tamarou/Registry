@@ -53,12 +53,12 @@
     <div id="form-container">
         <h1 class="text-3xl font-bold mb-6">Select Sessions for Your Children</h1>
     
-    <form action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'session-selection') %>"
+    <form action="<%= $action %>"
           method="POST" class="space-y-6">
-        
-        <% my $children = $run->data->{children} || []; %>
-        <% my $program_type_id = $run->data->{program_type_id}; %>
-        <% my $program_type = $program_type_id ? Registry::DAO::ProgramType->new(id => $program_type_id)->load($db) : undef; %>
+        <input type="hidden" name="action" value="select_sessions">
+
+        <% my $children = stash('children') || $run->data->{children} || []; %>
+        <% my $program_type = undef; %>
         
         <% if ($program_type && $program_type->same_session_for_siblings && @$children > 1) { %>
             <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6">
@@ -77,24 +77,16 @@
                 </div>
                 
                 <div class="mt-4 space-y-3">
-                    <% for my $session (@$available_sessions) { %>
-                        <% my $spots_left = $session->capacity - $session->enrolled_count; %>
-                        <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer <%= $spots_left < @$children ? 'opacity-50 cursor-not-allowed' : '' %>">
-                            <input type="radio" 
-                                   name="session_all" 
+                    <% for my $session (@{ stash('available_sessions') || [] }) { %>
+                        <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
+                            <input type="radio"
+                                   name="session_all"
                                    value="<%= $session->id %>"
-                                   <%= $spots_left < @$children ? 'disabled' : '' %>
                                    class="mr-2">
                             <span class="font-medium"><%= $session->name %></span>
                             <div class="text-sm text-gray-600 mt-1">
-                                <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
-                                <%= $spots_left >= @$children ? "$spots_left spots available" : "Not enough spots for all children" %>
+                                <%= $session->start_date %> &ndash; <%= $session->end_date %>
                             </div>
-                            <% if (my $pricing = $session->primary_pricing_plan) { %>
-                                <div class="text-sm font-medium text-green-600 mt-1">
-                                    $<%= $pricing->base_price %> per child
-                                </div>
-                            <% } %>
                         </label>
                     <% } %>
                 </div>
@@ -103,37 +95,21 @@
             <% for my $child (@$children) { %>
                 <div class="bg-white shadow rounded-lg p-6">
                     <h2 class="text-xl font-semibold mb-4">
-                        Select Session for <%= $child->{first_name} %> <%= $child->{last_name} %>
+                        Select Session for <%= $child->{first_name} %>
                         <span class="text-gray-500 text-base">(Age <%= $child->{age} %>)</span>
                     </h2>
-                    
+
                     <div class="space-y-3">
-                        <% for my $session (@$available_sessions) { %>
-                            <% my $spots_left = $session->capacity - $session->enrolled_count; %>
-                            <% my $age_appropriate = ($child->{age} >= $session->min_age && $child->{age} <= $session->max_age); %>
-                            
-                            <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer <%= (!$age_appropriate || $spots_left <= 0) ? 'opacity-50 cursor-not-allowed' : '' %>">
-                                <input type="radio" 
-                                       name="session_<%= $child->{id} || $loop->index %>" 
+                        <% for my $session (@{ stash('available_sessions') || [] }) { %>
+                            <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
+                                <input type="radio"
+                                       name="session_for_<%= $child->{id} %>"
                                        value="<%= $session->id %>"
-                                       <%= (!$age_appropriate || $spots_left <= 0) ? 'disabled' : '' %>
                                        class="mr-2">
                                 <span class="font-medium"><%= $session->name %></span>
                                 <div class="text-sm text-gray-600 mt-1">
-                                    <%= $session->start_date->strftime('%B %d') %> - <%= $session->end_date->strftime('%B %d, %Y') %><br>
-                                    <% if (!$age_appropriate) { %>
-                                        <span class="text-red-600">Age range: <%= $session->min_age %>-<%= $session->max_age %> years</span>
-                                    <% } elsif ($spots_left <= 0) { %>
-                                        <span class="text-red-600">Full - Waitlist available</span>
-                                    <% } else { %>
-                                        <%= $spots_left %> spots available
-                                    <% } %>
+                                    <%= $session->start_date %> &ndash; <%= $session->end_date %>
                                 </div>
-                                <% if (my $pricing = $session->primary_pricing_plan) { %>
-                                    <div class="text-sm font-medium text-green-600 mt-1">
-                                        $<%= $pricing->base_price %>
-                                    </div>
-                                <% } %>
                             </label>
                         <% } %>
                     </div>
@@ -142,7 +118,7 @@
         <% } %>
         
         <div class="flex justify-between">
-            <a href="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'select-children') %>" 
+            <a href="<%= url_for('workflow_step', workflow => $workflow, run => $run->id, step => 'select-children') %>"
                class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
                 Back
             </a>
