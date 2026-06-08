@@ -178,9 +178,18 @@ class Registry :isa(Mojolicious) {
                                   || $c->req->cookie('as-tenant');
                 }
 
+                my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
                 my $raw = $explicit_tenant
                     || $header_tenant
-                    || $self->_extract_tenant_from_subdomain($c);
+                    || $subdomain_tenant;
+
+                # Whether $raw came from the (heuristic) subdomain path -- the
+                # only path the defensive schema check guards (explicit param,
+                # X-As-Tenant, and verified custom domains are deliberate or
+                # already validated).
+                my $from_subdomain = !$explicit_tenant
+                    && !$header_tenant
+                    && defined $subdomain_tenant;
 
                 # Custom domain lookup: if no tenant found via subdomain/header/cookie,
                 # check whether the Host header matches a verified custom domain.
@@ -218,12 +227,15 @@ class Registry :isa(Mojolicious) {
 
                 return $raw if $raw eq 'registry';
 
-                # Defensive fallback: if the resolved tenant has no Postgres
-                # schema, degrade to the registry/platform site instead of
-                # letting a "relation does not exist" 500 escape. Cache positive
+                # Defensive fallback (subdomain path only): if a subdomain-resolved
+                # tenant has no Postgres schema, degrade to the registry/platform
+                # site instead of letting a "relation does not exist" 500 escape.
+                # Explicit param / X-As-Tenant / verified custom domains are
+                # deliberate and not second-guessed here. Cache positive
                 # (schema-exists) results per process to bound the catalog query
                 # to once per valid tenant; never cache a miss, so a freshly
                 # provisioned schema is picked up on its next request.
+                return $raw unless $from_subdomain;
                 state %schema_exists;
                 unless ( $schema_exists{$raw} ) {
                     my $found = eval {
