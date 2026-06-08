@@ -216,6 +216,33 @@ class Registry :isa(Mojolicious) {
                 # Sanitize: tenant slugs must be safe SQL identifiers
                 return 'registry' unless $raw =~ /\A[a-z][a-z0-9_]{0,62}\z/;
 
+                return $raw if $raw eq 'registry';
+
+                # Defensive fallback: if the resolved tenant has no Postgres
+                # schema, degrade to the registry/platform site instead of
+                # letting a "relation does not exist" 500 escape. Cache positive
+                # (schema-exists) results per process to bound the catalog query
+                # to once per valid tenant; never cache a miss, so a freshly
+                # provisioned schema is picked up on its next request.
+                state %schema_exists;
+                unless ( $schema_exists{$raw} ) {
+                    my $found = eval {
+                        my $registry_dao = $c->dao('registry');
+                        $registry_dao->db->query(
+                            'SELECT 1 FROM information_schema.schemata WHERE schema_name = ?',
+                            $raw
+                        )->rows;
+                    };
+                    if ($found) {
+                        $schema_exists{$raw} = 1;
+                    }
+                    else {
+                        $c->app->log->warn(
+                            "tenant '$raw' resolved but has no schema; serving registry");
+                        return 'registry';
+                    }
+                }
+
                 return $raw;
             }
         );
@@ -797,18 +824,36 @@ class Registry :isa(Mojolicious) {
         }
     }
 
+    # Platform base domains under which wildcard tenant subdomains are served,
+    # from REGISTRY_BASE_DOMAINS (comma-separated). Defaults to 'localhost' for
+    # dev/tests; production sets e.g. 'tinyartempire.com'. The list lets us tell a
+    # tenant subdomain (<slug>.<base>) from the platform apex (<base> itself) and
+    # from custom domains (under no base) -- without it the apex domain's own
+    # label is wrongly taken as a tenant slug.
+    method _base_domains {
+        my $raw = $ENV{REGISTRY_BASE_DOMAINS} // 'localhost';
+        return grep { length } map { s/^\s+|\s+$//gr } map { lc } split /,/, $raw;
+    }
+
     method _extract_tenant_from_subdomain ($c) {
-        my $host = $c->req->headers->host || '';
+        my $host = lc( $c->req->headers->host || '' );
         # Remove port if present
         $host =~ s/:\d+$//;
 
         # Don't extract tenant from IP addresses
         return if $host =~ /^\d+\.\d+\.\d+\.\d+$/;
 
-        # Extract tenant from subdomain: tenant.example.com -> tenant
-        if ($host =~ /^([^.]+)\./) {
-            my $subdomain = $1;
-            return $subdomain unless $subdomain eq 'www';
+        # A tenant subdomain is exactly one label under a known base domain:
+        # <slug>.<base> -> slug. The bare apex (<base>) has no subdomain, and a
+        # host under no configured base is a custom domain (resolved elsewhere).
+        for my $base ( $self->_base_domains ) {
+            next unless length $base;
+            return if $host eq $base;                       # apex: no subdomain
+            if ( $host =~ /\A([^.]+)\.\Q$base\E\z/ ) {
+                my $subdomain = $1;
+                return $subdomain unless $subdomain eq 'www';
+                return;
+            }
         }
         return;
     }
