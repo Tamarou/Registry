@@ -669,4 +669,94 @@ test.describe('Lifecycle: Morgan -> Nancy -> Amara', () => {
     state.enrollmentId = enrollmentRows[0].id;
   });
 
+  // ==========================================================================
+  // Leg 3: Amara logs in, navigates to her event, and marks Nancy's child present
+  // ==========================================================================
+  test('Leg 3: Amara marks attendance for Nancy\'s child', async ({ page, testDB }) => {
+    const SUB = `http://${state.slug}.localhost:3001`;
+
+    // -----------------------------------------------------------------------
+    // Roster-linkage gate: verify the Leg 1->2->3 seam before any UI work.
+    // The event must have Amara as teacher, and Nancy's child must be enrolled
+    // in the session whose event we are about to open.
+    // -----------------------------------------------------------------------
+    const teacherRows = queryJson(testDB, state.slug,
+      'SELECT teacher_id FROM events WHERE id = ?', state.eventId);
+    expect(teacherRows.length, 'event row exists in tenant schema').toBeGreaterThan(0);
+    expect(teacherRows[0].teacher_id, 'event.teacher_id equals amaraId').toBe(state.amaraId);
+
+    const enrolledRows = queryJson(testDB, state.slug,
+      `SELECT e.id FROM enrollments e
+       JOIN session_events se ON se.session_id = e.session_id
+       WHERE e.family_member_id = ? AND se.event_id = ? AND e.status = 'active'`,
+      state.childId, state.eventId
+    );
+    expect(enrolledRows.length, 'Nancy\'s child is actively enrolled in the event\'s session').toBeGreaterThan(0);
+
+    // -----------------------------------------------------------------------
+    // Step 1: Amara logs in on the tenant subdomain.
+    // Magic-link login redirects to '/'; navigate to the teacher dashboard
+    // explicitly after to confirm the session is live.
+    // -----------------------------------------------------------------------
+    const amaraToken = loginToken(testDB, state.slug, state.amaraId);
+    await loginWithToken(page, amaraToken, SUB);
+    await page.goto(`${SUB}/teacher/`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+    await expect(page.locator('body')).not.toContainText('An Error Occurred');
+    await expect(page).toHaveTitle(/Teacher Dashboard/);
+
+    // -----------------------------------------------------------------------
+    // Step 2: Navigate directly to the attendance page for the event.
+    // The event is tomorrow (upcoming, not today), so the dashboard does not
+    // render a direct link in the Today's Events list. We navigate by URL.
+    // -----------------------------------------------------------------------
+    await page.goto(`${SUB}/teacher/attendance/${state.eventId}`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('body')).not.toContainText('Internal Server Error');
+    await expect(page).toHaveTitle(/Take Attendance/);
+
+    // The attendance page should list Nancy's child.
+    await expect(page.locator('body')).toContainText(state.childName, { timeout: 5000 });
+
+    // -----------------------------------------------------------------------
+    // Step 3: Mark Nancy's child present via the attendance API.
+    // The POST body is a flat JSON object: { [student_id]: status }.
+    // attendance_records.student_id is the family_members.id (state.childId).
+    // -----------------------------------------------------------------------
+    const csrfToken = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+    expect(csrfToken, 'CSRF token present on attendance page').toBeTruthy();
+
+    const attendanceData = { [state.childId]: 'present' };
+
+    const response = await page.request.post(
+      `${SUB}/teacher/attendance/${state.eventId}`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
+        },
+        data: attendanceData,
+      }
+    );
+
+    // A redirect would indicate an auth/session failure; assert a real 200/201.
+    expect(response.ok(), 'attendance POST response ok').toBeTruthy();
+    expect([200, 201], 'attendance POST returns 200 or 201').toContain(response.status());
+
+    const body = await response.json();
+    expect(body.success, 'response body has success=1').toBeTruthy();
+
+    // -----------------------------------------------------------------------
+    // Step 4: Assert the attendance record lives in the TENANT schema.
+    // -----------------------------------------------------------------------
+    const attendanceRows = queryJson(testDB, state.slug,
+      `SELECT id, status FROM attendance_records
+       WHERE event_id = ? AND student_id = ?`,
+      state.eventId, state.childId
+    );
+    expect(attendanceRows.length, 'attendance record exists in tenant schema').toBeGreaterThan(0);
+    expect(attendanceRows[0].status, 'attendance status is present').toBe('present');
+  });
+
 });
