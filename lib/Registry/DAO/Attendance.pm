@@ -162,7 +162,12 @@ class Registry::DAO::Attendance :isa(Registry::DAO::Object) {
         Registry::DAO::Event->find($db, { id => $event_id });
     }
     
+    # student_id is polymorphic: for multi-child enrollments it holds a
+    # family_members.id (with family_member_id also set); otherwise a users.id.
+    # Resolve against the right table so this never returns undef for a
+    # family-member student.
     method student ($db) {
+        return $self->family_member($db) if $family_member_id;
         require Registry::DAO;
         Registry::DAO::User->find($db, { id => $student_id });
     }
