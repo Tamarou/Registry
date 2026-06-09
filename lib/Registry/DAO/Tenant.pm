@@ -184,6 +184,31 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                 $tenant->slug, $wf->{id});
         }
 
+        # The registry schema holds a DB template named 'tenant-storefront/program-listing'
+        # containing the REGISTRY marketing page ("Your art deserves a real business").
+        # copy_workflow copied it into the tenant schema because the program-listing
+        # workflow step's template_id pointed to it.  DBTemplates resolves DB templates
+        # before the filesystem, so tenants would serve the marketing page instead of
+        # the program catalog (templates/tenant-storefront/program-listing.html.ep).
+        # Fix: NULL the step's template_id and delete the template from the tenant
+        # schema so DBTemplates falls back to the correct filesystem catalog.
+        # (refs #173 #229)
+        my $ts = $tenant->slug;
+        $db->query(qq{
+            UPDATE ${ts}.workflow_steps ws
+               SET template_id = NULL
+              FROM ${ts}.workflows wf, ${ts}.templates tpl
+             WHERE wf.slug = 'tenant-storefront'
+               AND ws.workflow_id = wf.id
+               AND ws.slug = 'program-listing'
+               AND ws.template_id = tpl.id
+               AND tpl.name = 'tenant-storefront/program-listing'
+        });
+        $db->query(qq{
+            DELETE FROM ${ts}.templates
+             WHERE name = 'tenant-storefront/program-listing'
+        });
+
         # Copy OutcomeDefinitions into the tenant schema.  We temporarily switch
         # the search_path on $db (the in-transaction handle) so that the unqualified
         # 'outcome_definitions' table resolves to the tenant schema.  After the

@@ -16,6 +16,7 @@ use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
+    authenticate_as
 );
 
 use Registry::DAO qw(Workflow);
@@ -137,7 +138,7 @@ subtest 'parent completes full registration' => sub {
     $t->post_ok(workflow_url($reg_wf) => form => {})->status_is(302);
     my $run = $reg_wf->latest_run($dao->db);
 
-    # Account check - create account
+    # Account check - create account (redirects to magic-link-sent; does not advance)
     my $step = $run->next_step($dao->db);
     is $step->slug, 'account-check', 'At account-check';
 
@@ -148,9 +149,18 @@ subtest 'parent completes full registration' => sub {
         name     => 'Nancy Martinez',
     })->status_is(302);
 
-    # Pre-create child (stay semantics workaround)
     my $user = Registry::DAO::User->find($dao->db, { username => 'nancy.martinez' });
     ok $user, 'Parent account created';
+
+    # Simulate magic-link login and advance via continue_logged_in
+    authenticate_as($t, $user);
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
+    $step = $run->next_step($dao->db);  # still account-check
+    $t->post_ok(workflow_process_step_url($reg_wf, $run, $step) => form => {
+        action => 'continue_logged_in',
+    })->status_is(302);
+
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
 
     my $child = Registry::DAO::Family->add_child($dao->db, $user->id, {
         child_name        => 'Liam Martinez',

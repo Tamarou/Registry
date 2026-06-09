@@ -17,6 +17,7 @@ use Test::Registry::Helpers qw(
     workflow_url
     workflow_run_step_url
     workflow_process_step_url
+    authenticate_as
 );
 
 use Registry::DAO qw(Workflow);
@@ -100,7 +101,7 @@ subtest 'Start workflow and advance to select-children' => sub {
     my $run = $workflow->latest_run($dao->db);
     ok $run, 'Workflow run created';
 
-    # Account check - create account
+    # Account check - create account (redirects to magic-link-sent; does not advance)
     my $step = $run->next_step($dao->db);
     $t->post_ok(workflow_process_step_url($workflow, $run, $step) => form => {
         action   => 'create_account',
@@ -112,6 +113,17 @@ subtest 'Start workflow and advance to select-children' => sub {
     # Pre-create child (workaround for stay semantics)
     my $user = Registry::DAO::User->find($dao->db, { username => 'resume.parent' });
     ok $user, 'Parent user created';
+
+    # Simulate magic-link login so continue_logged_in can advance the workflow
+    authenticate_as($t, $user);
+
+    # Account check - continue_logged_in advances to select-children
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
+    $step = $run->next_step($dao->db);  # still account-check
+    $t->post_ok(workflow_process_step_url($workflow, $run, $step) => form => {
+        action => 'continue_logged_in',
+    })->status_is(302);
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
 
     Registry::DAO::Family->add_child($dao->db, $user->id, {
         child_name => 'Olivia Resume',

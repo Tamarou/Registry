@@ -66,9 +66,11 @@ ok !$result->{error}, 'session generated without error'
     or diag $result->{error};
 ok $result->{session_id}, 'a session was created';
 
-# Pricing plans live in the registry schema (Registry::DAO::PricingPlan::create).
+# Pricing plans live in the tenant's own schema: PricingPlan::create uses the
+# unqualified table so the connection's search_path (here: test_gen_pricing)
+# determines where the plan is written, alongside its session.
 my $plan = $db->query(
-    'SELECT * FROM registry.pricing_plans WHERE session_id = ?', $result->{session_id}
+    'SELECT * FROM pricing_plans WHERE session_id = ?', $result->{session_id}
 )->hash;
 
 ok $plan, 'a PricingPlan is linked to the generated session';

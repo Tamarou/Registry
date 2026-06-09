@@ -657,6 +657,7 @@ class Registry :isa(Mojolicious) {
         # Auth routes (unprotected -- no require_auth)
         my $auth = $r->under('/auth');
         $auth->get('/login')->to('Auth#login');
+        $auth->get('/magic-link-sent')->to('Auth#magic_link_sent');
         $auth->post('/magic/request')->to('Auth#request_magic_link');
         $auth->get('/magic/poll/:token_hash')->to('Auth#magic_link_status');
         $auth->post('/magic/poll/:token_hash/complete')->to('Auth#magic_link_complete_by_hash');

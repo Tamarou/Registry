@@ -111,6 +111,14 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     # param->to_hash delivers fields like "a[b][c]" as flat string keys; steps
     # with per-row form data (e.g. location_configs[<id>][capacity]) need them
     # nested. Non-bracketed keys pass through unchanged.
+    #
+    # When all keys in a nested sub-hash are non-negative integers the sub-hash
+    # is converted to an arrayref sorted by index (matching PHP/Rails convention
+    # for fields like team_members[0][name], team_members[1][name]).
+    #
+    # IMPORTANT: a form field that must remain a MAP (hash) must use non-numeric
+    # keys such as UUIDs or slugs, because any sub-hash whose keys are all
+    # non-negative integers is unconditionally converted to an arrayref.
     method expand_form_params ($form_data) {
         my %out;
         for my $key ( sort keys %$form_data ) {
@@ -129,7 +137,25 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
                 $out{$key} = $val;
             }
         }
+        # Post-process: convert any hash whose keys are all non-negative integers
+        # into a sorted arrayref so callers receive a proper list structure.
+        $self->_arrayify_numeric_hashes( \%out );
         return \%out;
+    }
+
+    # Recursively convert hashrefs with all-numeric keys to sorted arrayrefs.
+    # Numeric indices are ordering hints only; gaps are compacted (sparse [0],[2] becomes a 2-element array).
+    method _arrayify_numeric_hashes ($node) {
+        return unless ref $node eq 'HASH';
+        for my $k ( keys %$node ) {
+            if ( ref $node->{$k} eq 'HASH' ) {
+                $self->_arrayify_numeric_hashes( $node->{$k} );
+                my @keys = keys %{ $node->{$k} };
+                if ( @keys && !grep { /\D/ } @keys ) {
+                    $node->{$k} = [ map { $node->{$k}{$_} } sort { $a <=> $b } @keys ];
+                }
+            }
+        }
     }
 
     method as_hash ($db) {
@@ -174,12 +200,16 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     }
 
     method process ( $db, $data, $run = undef ) {
+        # Expand Rails-style bracketed param names (e.g. team_members[0][name])
+        # into nested hashrefs so run data contains proper structures.
+        $data = $self->expand_form_params($data);
+
         # Always validate input
         my $validation = $self->validate($db, $data);
         if (!$validation->{valid}) {
             return { _validation_errors => $validation->{errors} };
         }
-        
+
         # Default implementation - simple passthrough
         return $data;
     }

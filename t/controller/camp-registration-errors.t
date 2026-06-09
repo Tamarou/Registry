@@ -16,6 +16,7 @@ use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
+    authenticate_as
 );
 
 use Registry::DAO qw(Workflow);
@@ -200,7 +201,7 @@ sub advance_to_session_selection ($username, $email, $child_name, $birth_date, $
 
     my $run = $workflow->latest_run($dao->db);
 
-    # Account check - create account
+    # Account check - create account (redirects to magic-link-sent; does not advance)
     my $step = $run->next_step($dao->db);
     my $step_url = workflow_process_step_url($workflow, $run, $step);
     $t->post_ok($step_url => form => {
@@ -210,6 +211,18 @@ sub advance_to_session_selection ($username, $email, $child_name, $birth_date, $
 
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     my $user = Registry::DAO::User->find($dao->db, { username => $username });
+
+    # Simulate magic-link login so continue_logged_in can see an authenticated session
+    authenticate_as($t, $user);
+
+    # Account check - continue_logged_in (advances to select-children)
+    $step = $run->next_step($dao->db);   # still account-check
+    $step_url = workflow_process_step_url($workflow, $run, $step);
+    $t->post_ok($step_url => form => {
+        action => 'continue_logged_in',
+    })->status_is(302);
+
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
 
     # Set program_id in run data (normally set by storefront/landing page)
     $run->update_data($dao->db, { program_id => $program->id });

@@ -14,8 +14,7 @@
       <h3 class="text-xl font-semibold mb-4">Your Children</h3>
       
       % use Registry::DAO::Family;
-      % my $dao = app->dao;
-      % my $children = Registry::DAO::Family->list_children($dao->db, $user_id);
+      % my $children = Registry::DAO::Family->list_children($self->dao->db, $user_id);
       
       % if (@$children) {
         <form method="post" action="<%= $action %>" id="children-form">
@@ -71,14 +70,10 @@
     <div class="border-t pt-8">
       <h3 class="text-xl font-semibold mb-4">Add a New Child</h3>
       
-      <form method="post" 
-            action="<%= $action %>" 
-            hx-post="<%= $action %>"
-            hx-target="#children-list"
-            hx-swap="beforeend"
+      <form method="post"
+            action="<%= $action %>"
             class="space-y-4">
         <input type="hidden" name="action" value="add_child">
-        <input type="hidden" name="HX-Request" value="true">
         
         <div class="grid md:grid-cols-2 gap-4">
           <div>

@@ -14,6 +14,7 @@ use Test::Registry::Helpers qw(
     workflow_url
     workflow_run_step_url
     workflow_process_step_url
+    authenticate_as
 );
 
 use Registry::DAO qw(Workflow);
@@ -93,7 +94,8 @@ subtest 'stay: POST with stay result redirects back to same step' => sub {
 
     my $reg_run = $reg_workflow->latest_run($dao->db);
 
-    # Advance through account-check
+    # Advance through account-check: create_account redirects to magic-link-sent,
+    # then continue_logged_in advances to select-children.
     my $acct_step = $reg_run->next_step($dao->db);
     $t->post_ok(workflow_process_step_url($reg_workflow, $reg_run, $acct_step) => form => {
         action => 'create_account',
@@ -102,12 +104,21 @@ subtest 'stay: POST with stay result redirects back to same step' => sub {
         name => 'Stay Test',
     })->status_is(302);
 
+    my $user = Registry::DAO::User->find($dao->db, { username => 'stay_test_user' });
+    ok $user, 'User created by create_account';
+
+    # Simulate login so continue_logged_in works
+    authenticate_as($t, $user);
+
+    ($reg_run) = $dao->find(WorkflowRun => { id => $reg_run->id });
+    $acct_step = $reg_run->next_step($dao->db);  # still account-check
+    $t->post_ok(workflow_process_step_url($reg_workflow, $reg_run, $acct_step) => form => {
+        action => 'continue_logged_in',
+    })->status_is(302);
+
     ($reg_run) = $dao->find(WorkflowRun => { id => $reg_run->id });
     my $sel_step = $reg_run->next_step($dao->db);
     is $sel_step->slug, 'select-children', 'At select-children step';
-
-    # Create a child for the user
-    my $user = Registry::DAO::User->find($dao->db, { username => 'stay_test_user' });
     require Registry::DAO::Family;
     Registry::DAO::Family->add_child($dao->db, $user->id, {
         child_name => 'Stay Kid', birth_date => '2018-01-01', grade => '2',
