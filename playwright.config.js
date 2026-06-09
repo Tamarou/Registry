@@ -30,10 +30,15 @@ module.exports = defineConfig({
   projects: [
     {
       name: 'chromium',
+      // deploy-validation runs against the LIVE production site and belongs only
+      // to its own project / the deploy-validation workflow -- never the PR e2e
+      // gate, or every PR goes red whenever prod is unhealthy.
+      testIgnore: 'deploy-validation.spec.js',
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'firefox',
+      testIgnore: 'deploy-validation.spec.js',
       use: { ...devices['Desktop Firefox'] },
     },
     // Production deploy validation -- runs against the live site, no test DB needed
