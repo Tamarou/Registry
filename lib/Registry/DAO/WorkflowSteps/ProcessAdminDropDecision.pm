@@ -4,6 +4,7 @@ use 5.42.0;
 use Object::Pad;
 
 require Registry::DAO::WorkflowStep;
+require Registry::DAO::Workflow;
 
 class Registry::DAO::WorkflowSteps::ProcessAdminDropDecision :isa(Registry::DAO::WorkflowStep) {
 
@@ -26,9 +27,10 @@ class Registry::DAO::WorkflowSteps::ProcessAdminDropDecision :isa(Registry::DAO:
 
         # Start the drop-request-processing workflow
         require Registry::Utility::WorkflowProcessor;
-        my $processor = Registry::Utility::WorkflowProcessor->new($db);
+        my $processor = Registry::WorkflowProcessor->new(dao => $db);
 
-        my $workflow_run = $processor->new_run('drop-request-processing', $processing_data);
+        my $workflow_obj = Registry::DAO::Workflow->find($db, { slug => 'drop-request-processing' });
+        my $workflow_run = $processor->new_run($workflow_obj, $processing_data);
 
         return {
             status => 'success',

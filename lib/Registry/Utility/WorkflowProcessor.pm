@@ -7,7 +7,7 @@ class Registry::WorkflowProcessor {
     field $dao :param;
 
     method new_run ( $workflow, $data //= {} ) {
-        my $run  = $workflow->new_run($dao);
+        my $run  = $workflow->new_run($dao, { data => $data });
         my $step = $workflow->first_step($dao);
         $run->process( $dao, $step, $data );
         return $run;

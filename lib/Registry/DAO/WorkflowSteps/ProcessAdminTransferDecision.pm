@@ -4,6 +4,7 @@ use 5.42.0;
 use Object::Pad;
 
 require Registry::DAO::WorkflowStep;
+require Registry::DAO::Workflow;
 
 class Registry::DAO::WorkflowSteps::ProcessAdminTransferDecision :isa(Registry::DAO::WorkflowStep) {
 
@@ -24,9 +25,10 @@ class Registry::DAO::WorkflowSteps::ProcessAdminTransferDecision :isa(Registry::
 
         # Start the transfer-request-processing workflow
         require Registry::Utility::WorkflowProcessor;
-        my $processor = Registry::Utility::WorkflowProcessor->new($db);
+        my $processor = Registry::WorkflowProcessor->new(dao => $db);
 
-        my $workflow_run = $processor->new_run('transfer-request-processing', $processing_data);
+        my $workflow_obj = Registry::DAO::Workflow->find($db, { slug => 'transfer-request-processing' });
+        my $workflow_run = $processor->new_run($workflow_obj, $processing_data);
 
         return {
             status => 'success',
