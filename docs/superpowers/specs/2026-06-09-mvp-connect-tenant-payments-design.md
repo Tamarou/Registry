@@ -43,14 +43,47 @@ default false`, `stripe_details_submitted boolean default false`. SACP's Standar
 onboarded manually in Stripe and these fields set (a documented ops step, not a UI flow). An
 `account.updated` Connect webhook refreshes the readiness booleans.
 
-### 2. Payment data → the tenant schema
-`Payment`, `PaymentSchedule`, `ScheduledPayment`, `BillingPeriod`, `PricingRelationship`,
-`PricingRelationshipEvent` stop hardcoding `registry.*` and use the unqualified table so the
-connection's `search_path` (tenant) governs — the generalization of the PricingPlan fix
-(#231/#235). The tables already exist per-tenant via `clone_schema`. **The
-`payments_user_id_fkey` then resolves naturally**: payer and payment are co-located in the
-tenant schema (no FK drop needed). A migration relocates any existing registry-resident
-rows if required; a data-isolation test asserts tenant payments stay in the tenant schema.
+### 2. Payment data → the tenant schema (only the three tenant-scoped DAOs)
+**Audit result (verified against code — do NOT blanket-unqualify):**
+- **Tenant-scoped → unqualify:** `Payment`, `PaymentSchedule`, `ScheduledPayment`. These hold
+  enrollment payment records owned by the tenant.
+- **Platform-scoped → KEEP `registry.`-qualified:** `PricingRelationship`,
+  `PricingRelationshipEvent`, `BillingPeriod`. Their FKs reference `registry.users` /
+  `registry.tenants` / `registry.pricing_relationships`; they model the platform↔tenant
+  subscription and the 2.5% revenue-share, and are used by `WorkflowSteps/PricingPlanSelection`
+  in **tenant-signup** (registry context). Unqualifying them would break platform subscription
+  billing — a regression worse than the bug. They are explicitly out of scope.
+
+Unqualify `Payment`/`PaymentSchedule`/`ScheduledPayment` to use the unqualified table so the
+connection's `search_path` (tenant) governs — the PricingPlan fix (#231/#235) generalized.
+**The audit must cover raw SQL inside methods, not just `sub table`** — e.g.
+`PaymentSchedule::cancel_with_pending_payments` and `PriceOps::ScheduledPayment` hardcode
+`registry.scheduled_payments`/`registry.payment_schedules` in inline SQL. Grep
+`registry\.(payments|payment_schedules|scheduled_payments)` across `lib/` and convert each.
+
+**Tables may not exist in existing tenant schemas.** `clone_schema` copies registry's tables
+*at provisioning time*; tenants provisioned before the payment migrations lack `payments` /
+`payment_schedules` / `scheduled_payments`. The migration must **backfill** them per existing
+tenant (`CREATE TABLE IF NOT EXISTS <slug>.payments (LIKE registry.payments INCLUDING ALL)`
+with FKs rewritten to the tenant schema), using the per-tenant loop pattern from
+`enrollment-payment-dedup.sql`. (Newly-provisioned tenants get them via clone.)
+
+With payments in the tenant schema, **`payments_user_id_fkey` resolves naturally** (payer and
+payment co-located). A data-isolation test asserts tenant payments stay in the tenant schema.
+
+**`enrollments.payment_id` FK must be repointed (HIGH).** Today it is
+`REFERENCES registry.payments(id)` (`add-payment-to-enrollments.sql`). Once payments live in
+the tenant schema this cross-schema FK breaks. Migration: drop it and re-add **unqualified**
+(`REFERENCES payments(id)`, resolves via search_path) for the registry template AND every
+tenant schema (same per-tenant loop).
+
+**Platform revenue-share aggregation (deferred dependency).**
+`PriceOps::PricingRelationships._get_usage_data` computes the platform's billing by querying
+`FROM registry.payments` **across all tenants**. Once payments move to tenant schemas this
+cross-tenant query no longer sees them. Under the Connect model the 2.5% is collected at
+charge time via `application_fee_amount`, so this manual computation likely becomes reporting
+rather than fee-collection — but it must be redesigned (cross-schema aggregation, or driven
+from Stripe application-fee records) and is a noted dependency, not silently left broken.
 
 `registry.webhook_events` (global Stripe-event dedup) stays in registry.
 
@@ -60,18 +93,29 @@ In the enrollment Payment step (`WorkflowSteps/Payment.pm` `create_payment`):
 - **Readiness gate:** if the tenant has no connected account, or `charges_enabled` /
   `details_submitted` is false, **refuse paid enrollment** with a clear, user-facing error
   (we cannot legally charge). Free enrollment ($0) is unaffected.
-- Create the PaymentIntent as a **destination charge**: `transfer_data[destination] =
-  <acct>`, `application_fee_amount = round(0.025 × total_cents)`. Tuition settles to the
-  tenant's balance; Stripe fees come off the tenant's account (Standard default); Registry
-  collects the 2.5%. Continue snapshotting `metadata.tenant_slug` (already done) and
-  `metadata.payment_id`.
+- Create the PaymentIntent as a **destination charge**: `transfer_data[destination] = <acct>`,
+  `application_fee_amount = round(0.025 × total_cents)`, **and `on_behalf_of = <acct>`**.
+  `on_behalf_of` is what actually makes the **tenant the settlement merchant and bearer of the
+  Stripe processing fee** (the decided model) — without it the *platform* would absorb the
+  Stripe fee and merely recoup via the application fee. Tuition settles to the tenant's
+  balance; Registry collects the 2.5%. Continue snapshotting `metadata.tenant_slug` (already
+  done) and `metadata.payment_id`.
 
-### 4. Webhook → tenant-scoped finalization
-`payment_intent.succeeded` handling: resolve the tenant from `metadata.tenant_slug` (already
-snapshotted) — corroborated by the Connect event's `account` field — `connect_schema($slug)`,
-find the payment **in the tenant schema**, mark it completed, and finalize the enrollment
-there (enrollment finalization already runs in-tenant). Add an `account.updated` handler to
-refresh the tenant readiness booleans (§1).
+### 4. Webhook → tenant-scoped finalization (explicit rewrite — HIGH)
+`_process_payment_intent_succeeded` currently does `Payment->find($dao->db, ...)` on the
+**registry** connection and only later `connect_schema`s for `finalize_enrollment`. After the
+move, the payment lives in the tenant schema, so that `find` returns `undef` and the handler
+**silently returns without finalizing** (and the dedup claim means Stripe won't retry). It
+must be rewritten to do everything on the tenant connection:
+1. Read `metadata.tenant_slug` from the event (corroborate with the Connect `account` field).
+2. `my $tdb = $dao->connect_schema($slug)->db;`
+3. `Payment->find($tdb, { id => $payment_id })` — find the payment **in the tenant schema**.
+4. Mark it completed on `$tdb`.
+5. `finalize_enrollment($tdb)`.
+If `tenant_slug` is missing or the payment isn't found, log and return 500 so Stripe retries
+(don't swallow). Add an `account.updated` handler to refresh the tenant readiness booleans
+(§1). Destination-charge `payment_intent.succeeded` events arrive on the **platform** webhook
+(not the connected account's), and `metadata` is preserved — confirm during implementation.
 
 ### 5. Test coverage (the gap that hid #237)
 End-to-end paid enrollment in a tenant, **Stripe test mode + a test connected account** (never
@@ -97,6 +141,10 @@ the live `sk_live`):
 | Charging without a ready merchant account | Readiness gate (§3) refuses paid enrollment unless `charges_enabled` + `details_submitted`; free unaffected. |
 | Live Stripe key in tests | Tests use a Stripe **test** key + test connected account; CI strips `STRIPE_SECRET_KEY` (already done for the harness). |
 | Relocating existing registry-resident payment rows | Migration handles existing rows; pre-alpha means little/no real paid data to move — confirm before deploy. |
+| Unqualifying a platform-scoped DAO breaks tenant-signup / revenue-share billing | Only the 3 tenant-scoped DAOs move; the 3 platform-scoped pricing/billing DAOs stay `registry.`-qualified (§2, verified by FK targets + callers). |
+| `enrollments.payment_id` FK / webhook payment lookup break on the move | Explicit FK-repoint migration (§2) and webhook rewrite to the tenant connection (§4). |
+| Existing tenant schemas lack the payment tables | Backfill migration per existing tenant (§2). |
+| Stripe fee borne by platform instead of tenant | Set `on_behalf_of=<acct>` on the PaymentIntent (§3). |
 | Webhook can't resolve tenant | `metadata.tenant_slug` is snapshotted at charge creation; the Connect `account` field corroborates; fall back to logging + 500 so Stripe retries (existing pattern). |
 | Mixed account types later (Standard vs Express) | Accepted; charge-routing code is identical across types. |
 
@@ -109,11 +157,20 @@ the payment/webhook tests (`payment-workflow-step`, `installment-webhook-process
 the platform-subscription billing path (tenant-signup) — verify explicitly, since that path
 also uses some of these DAOs.
 
-## Open questions (resolve during planning)
+## Resolved by spec review (do not re-litigate)
+- **DAO classification (was the big open question):** `Payment`/`PaymentSchedule`/
+  `ScheduledPayment` are tenant-scoped (move); `PricingRelationship`/`PricingRelationshipEvent`/
+  `BillingPeriod` are platform-scoped (stay `registry.`). Verified via their FK targets and
+  the tenant-signup `PricingPlanSelection` caller. §2.
+- Payment tables are NOT guaranteed present in existing tenant schemas → backfill migration
+  required. §2.
+- `enrollments.payment_id` FK and the webhook payment lookup both break on the move and have
+  explicit migration/rewrite steps. §2/§4.
+- Fee semantics require `on_behalf_of` to make the tenant bear the Stripe fee. §3.
 
-- Do any of the billing DAOs serve a genuinely platform-level (registry) purpose that must
-  NOT move to tenant scope (e.g. the tenant-signup subscription/`PricingRelationship` used by
-  `PricingPlanSelection`)? Audit each of the six per-caller before unqualifying; some may be
-  platform-scoped and stay registry-qualified.
+## Open questions (resolve during planning)
 - Exact `application_fee_amount` rounding + currency handling.
 - Whether installment/scheduled payments are in SACP's launch scope or one-time only.
+- Redesign of `PriceOps::PricingRelationships._get_usage_data` (cross-tenant payment
+  aggregation) once payments are tenant-scoped — likely superseded by Connect `application_fee`
+  collection; confirm it doesn't silently under-report platform revenue in the interim.
