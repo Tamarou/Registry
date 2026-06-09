@@ -16,26 +16,59 @@ class Registry::Job::ProcessWaitlist {
     sub perform ($class, $job, $session_id = undef, $enrollment_id = undef) {
         my $app = $job->app;
         my $log = $app->log;
-        
+
         try {
             my $dao = $app->dao;
-            
+
             if ($session_id) {
-                # Process specific session waitlist
+                # NOTE: session_id/enrollment_id callers must supply a tenant-scoped
+                # dao (via $app->dao->connect_schema($slug)) so the unqualified table
+                # references in process_session_waitlist resolve to the correct tenant
+                # schema.  There are currently no enqueue callers that pass these args;
+                # if you add one, thread the tenant slug and call connect_schema here.
                 $class->process_session_waitlist($dao, $session_id, $log);
             } elsif ($enrollment_id) {
-                # Process waitlist due to enrollment cancellation
+                # See NOTE above re: tenant-scoped dao requirement.
                 $class->process_enrollment_cancellation($dao, $enrollment_id, $log);
             } else {
-                # Process all sessions with cancellations in last hour
-                $class->process_recent_cancellations($dao, $log);
+                # Global sweep: iterate every tenant schema so cancellations in any
+                # tenant are processed.  Tenant data lives in per-tenant schemas, not
+                # in registry, so a registry-scoped dao would find nothing.
+                $class->process_all_tenant_cancellations($dao, $log);
             }
-            
+
             $job->finish('Waitlist processing completed successfully');
         }
         catch ($e) {
             $log->error("ProcessWaitlist job failed: $e");
             $job->fail("Waitlist processing failed: $e");
+        }
+    }
+
+    # Iterate every tenant schema and run process_recent_cancellations for each.
+    # The registry schema itself is skipped because tenant enrollment data lives
+    # in per-tenant schemas, not in registry.  Per-tenant failures are caught and
+    # logged so one broken tenant does not abort the sweep for the others.
+    sub process_all_tenant_cancellations ($class, $dao, $log) {
+        require Registry::DAO::Tenant;
+
+        my $tenants = Registry::DAO::Tenant->get_all_tenant_schemas($dao->db);
+
+        for my $tenant (@$tenants) {
+            my $slug = $tenant->{slug};
+
+            # Enrollment data lives in each tenant's own schema, not in registry.
+            next if $slug eq 'registry';
+
+            try {
+                $log->info("Processing waitlist cancellations for tenant: $slug");
+                my $tenant_dao = $dao->connect_schema($slug);
+                $class->process_recent_cancellations($tenant_dao, $log);
+            }
+            catch ($e) {
+                $log->error("ProcessWaitlist failed for tenant $slug: $e");
+                # Continue to the next tenant rather than aborting the sweep.
+            }
         }
     }
     
