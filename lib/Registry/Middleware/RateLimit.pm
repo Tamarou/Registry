@@ -7,13 +7,20 @@ package Registry::Middleware::RateLimit;
 
 # --- Configuration constants ---
 
-# Credential-sensitive route patterns (login, password reset) - tighter limit.
-# Only paths where brute-forcing credentials is a meaningful threat belong here.
-# Signup/registration flows require many sequential requests per legitimate user
-# and should use the general (higher) limit instead.
+# Credential-sensitive route patterns - tighter limit.
+# Only paths where brute-forcing credentials or issuing auth tokens is a
+# meaningful threat belong here.  Signup/registration flows require many
+# sequential requests per legitimate user and should use the general (higher)
+# limit instead.
+#
+# "magic/request" matches /auth/magic/request (the magic-link token-issuance
+# endpoint) precisely.  The _limit_for_path regex anchors on path segments so
+# it does NOT match /auth/magic/poll/ (which is already in @EXCLUDED_PREFIXES)
+# or other /auth/magic/... routes.
 our @AUTH_PATHS = qw(
     login
     password
+    magic/request
 );
 
 # Route prefixes that bypass rate limiting entirely
@@ -40,14 +47,24 @@ sub new ($class, %args) {
 }
 
 # Returns the rate-limit key for a request context.
-# Uses authenticated user ID when available, otherwise falls back to IP.
+# Uses the TCP connection peer address ($c->tx->remote_address) as the key.
+#
+# Trust model: Mojolicious populates remote_address from X-Forwarded-For only
+# when reverse-proxy mode is enabled (MOJO_REVERSE_PROXY=1 or
+# $app->config->{hypnotoad}{proxy} = 1).  In that mode Mojolicious trusts the
+# first hop's XFF header because the connection peer is a known trusted proxy.
+# Reading the raw X-Forwarded-For header here instead would let any client
+# rotate the header to obtain a fresh counter on every request, defeating the
+# per-IP auth limit entirely.
+#
+# DEPLOYMENT NOTE: Registry runs behind Render's HTTP proxy.  MOJO_REVERSE_PROXY
+# must be set to 1 in the production environment so that remote_address resolves
+# to the real client IP rather than the proxy IP.  Without it every client will
+# share the proxy's address as the key, which would allow only a small number of
+# requests before the limit trips for all users simultaneously.  See render.yaml
+# and the app startup block for where to add this env var.
 sub _request_key ($class_or_self, $c) {
-    my $ip = $c->req->headers->header('X-Forwarded-For')
-          // $c->tx->remote_address
-          // '127.0.0.1';
-    # Take only the first IP in case of a list ("client, proxy1, proxy2")
-    $ip =~ s/,.*$//;
-    $ip =~ s/\s+//g;
+    my $ip = $c->tx->remote_address // '127.0.0.1';
     return $ip;
 }
 
@@ -120,7 +137,14 @@ sub before_dispatch ($class_or_self, $c) {
     my $key   = $class_or_self->_request_key($c);
     my $limit = $class_or_self->_limit_for_path($path);
 
-    my %result = $class_or_self->check($key, $limit);
+    # Scope the counter by limit class so ordinary browsing (general limit)
+    # does not consume the much smaller auth budget.  With a single shared
+    # counter per IP, a user who viewed a dozen pages would be rejected on
+    # their first login attempt because the combined count already exceeded
+    # the auth limit.
+    my $class = $limit == $AUTH_LIMIT ? 'auth' : 'general';
+
+    my %result = $class_or_self->check("$class:$key", $limit);
 
     unless ($result{allowed}) {
         my $retry_after = $result{retry_after};

@@ -58,6 +58,13 @@ services:
         value: 10000
       - key: SERVICE_TYPE
         value: web
+      # Render terminates TLS and proxies to the app. Enable Mojolicious
+      # reverse-proxy mode so tx->remote_address reflects the real client IP
+      # (from Render's trusted X-Forwarded-For) instead of the proxy address.
+      # The rate limiter keys on remote_address, so this is required for the
+      # per-client limit to apply per user rather than collectively.
+      - key: MOJO_REVERSE_PROXY
+        value: 1
     healthCheckPath: /health
     autoDeploy: true
     disk:
