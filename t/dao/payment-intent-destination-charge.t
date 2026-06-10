@@ -4,7 +4,6 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
-use Test::MockObject;
 use Test::Registry::DB;
 use Registry::DAO;
 use Registry::DAO::Tenant;
@@ -141,12 +140,12 @@ subtest 'platform payment without tenant_slug -> no connect params' => sub {
 
 # ---- (c) retry path: handle_payment_callback failure re-issues same connect params ----
 subtest 'retry intent carries same connect params as original' => sub {
-    # Build a real Payment with tenant_slug in metadata, then mock process_payment
-    # to return a failure (avoiding the save() call in the real method) so that
-    # handle_payment_callback reaches the retry branch. Intercept
-    # create_payment_intent to capture what params the retry intent receives.
-    # This proves that the derive-inside design routes the retry correctly even
-    # without any connect params being passed by the caller.
+    # Build a real Payment with tenant_slug in metadata. Leave
+    # Registry::DAO::Payment::find REAL so the payment (and its metadata) is
+    # reloaded from the DB and round-trips through the jsonb -> ADJUST decode
+    # path before _connect_params reads tenant_slug. Stub only the
+    # processing/network edges so handle_payment_callback reaches the retry
+    # branch without touching the real Stripe API.
 
     # Create a minimal workflow + run in the tenant schema for handle_payment_callback.
     my $workflow = Registry::DAO::Workflow->create($tenant_db, {
@@ -154,7 +153,7 @@ subtest 'retry intent carries same connect params as original' => sub {
         slug        => "dc-retry-workflow-$$",
         description => 'Retry path test workflow',
     });
-    my $pay_step_row = Registry::DAO::WorkflowStep->create($tenant_db, {
+    Registry::DAO::WorkflowStep->create($tenant_db, {
         workflow_id => $workflow->id,
         slug        => 'payment',
         class       => 'Registry::DAO::WorkflowSteps::Payment',
@@ -180,19 +179,14 @@ subtest 'retry intent carries same connect params as original' => sub {
 
     my $step = $workflow->get_step($tenant_db, { slug => 'payment' });
 
-    # Build a mock Payment that wraps the real payment for process_payment only;
-    # create_payment_intent is left as the real method so we can verify its params.
-    my $mock = Test::MockObject->new;
-    $mock->set_always('id',             $real_payment->id);
-    $mock->set_always('process_payment', { success => 0, error => 'Card declined' });
-    $mock->mock('finalize_enrollment',  sub { });
-    # Delegate create_payment_intent to the real object so _connect_params runs.
-    $mock->mock('create_payment_intent', sub { shift; $real_payment->create_payment_intent(@_) });
-
     my $retry_captured;
     {
         no warnings qw(redefine once);
-        local *Registry::DAO::Payment::find = sub { $mock };
+        # Leave Registry::DAO::Payment::find REAL so the payment (and its
+        # metadata) is reloaded from the DB and round-trips through the
+        # jsonb -> ADJUST decode path before _connect_params reads tenant_slug.
+        local *Registry::DAO::Payment::process_payment =
+            sub { { success => 0, error => 'Card declined' } };
         local *Registry::Service::Stripe::create_payment_intent = sub {
             my ($self, $params) = @_;
             $retry_captured = $params;

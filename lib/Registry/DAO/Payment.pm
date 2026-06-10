@@ -84,8 +84,9 @@ field $_stripe_client = undef;
             'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
             $slug
         )->hash;
-        my $acct = $row && $row->{stripe_connect_account_id};
-        return unless $acct;
+        return () unless $row;
+        my $acct = $row->{stripe_connect_account_id};
+        return () unless $acct;
 
         return (
             'transfer_data[destination]' => $acct,
