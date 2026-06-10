@@ -15,6 +15,19 @@ SET search_path TO registry, public;
 -- Payment / PaymentSchedule / ScheduledPayment DAOs so they resolve via the
 -- tenant search_path rather than the hard-coded registry. schema.
 --
+-- CAUTION: The forward migration requires that every payer (user_id) for
+-- payments being moved into a tenant schema is already resident in that
+-- tenant's users table.  This mirrors the revert script's limitation in
+-- reverse: registry.payments.user_id references registry.users, and
+-- <tenant>.payments.user_id references <tenant>.users.  If a payment's
+-- payer exists only in registry.users and was never copied into the tenant
+-- schema via copy_user, the row-move INSERT will fail the tenant FK.
+-- The pre-flight check in the loop below detects this condition up-front
+-- and raises a diagnosable exception BEFORE any rows are moved, listing
+-- the offending payment IDs and user IDs.  Resolve by running:
+--   SELECT copy_user(dest_schema => '<slug>', user_id => '<id>');
+-- for each offending user, then re-run the migration.
+--
 -- KEY INVARIANT: A freshly provisioned tenant already has all four payment tables
 -- AND a tenant-local enrollments.payment_id FK because clone_schema copies every
 -- registry table and re-binds FK definitions to the destination schema at
@@ -45,10 +58,51 @@ DECLARE
     fk_confrelid   oid;
     moved_payments integer;
     moved_items    integer;
+    bad_ids        text;
 BEGIN
     FOR s IN SELECT slug FROM registry.tenants LOOP
         -- Skip if the tenant schema does not actually exist yet.
         CONTINUE WHEN to_regnamespace(quote_ident(s)) IS NULL;
+
+        -- ------------------------------------------------------------------
+        -- Pre-flight: Verify all payers for this tenant's payments are
+        -- resident in the tenant schema.
+        --
+        -- registry.payments rows whose metadata->>'tenant_slug' = s will be
+        -- INSERT-ed into <s>.payments, which has a user_id FK referencing
+        -- <s>.users.  If the payer exists only in registry.users (never
+        -- copied into the tenant schema via copy_user), the INSERT will
+        -- abort mid-loop with an opaque FK violation.  We detect this here,
+        -- before any rows move, and raise a named exception with enough
+        -- detail to resolve the problem without guessing.
+        -- ------------------------------------------------------------------
+
+        EXECUTE format(
+            $sql$
+            SELECT string_agg(
+                       format('payment_id=%%s user_id=%%s', p.id, p.user_id),
+                       '; '
+                   )
+            FROM registry.payments p
+            WHERE p.metadata->>'tenant_slug' = %L
+              AND NOT EXISTS (
+                  SELECT 1 FROM %I.users u
+                  WHERE u.id = p.user_id
+              )
+            $sql$,
+            s, s
+        ) INTO bad_ids;
+
+        IF bad_ids IS NOT NULL THEN
+            RAISE EXCEPTION
+                'tenant-scoped-payments pre-flight FAILED for tenant "%": '
+                'the following payments have payers that do not exist in '
+                '%.users: [%].  '
+                'Hint: run  SELECT copy_user(dest_schema => ''%'', user_id => ''<id>'');  '
+                'for each offending user_id listed above, then re-deploy.',
+                s, s, bad_ids, s
+            USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
 
         -- ------------------------------------------------------------------
         -- Phase 1: Conditionally drop enrollments.payment_id FK.
@@ -238,6 +292,16 @@ BEGIN
         -- FK was already tenant-local (fresh clones), we still re-add it to
         -- keep the constraint name canonical (enrollments_payment_id_fkey).
         -- DROP first if it already exists (fresh-clone case).
+        --
+        -- NOTE: The plan's spec wording says "skip when already tenant-local",
+        -- but we deliberately do an unconditional DROP IF EXISTS + re-ADD
+        -- instead.  The unconditional form is MORE robust: it is idempotent
+        -- on re-runs, heals constraint-name drift that could arise from manual
+        -- interventions, and is safe because clone_schema (see
+        -- fix-clone-schema-identifier-quoting.sql) guarantees the canonical
+        -- constraint name enrollments_payment_id_fkey for all freshly
+        -- provisioned tenants.  Skipping would save one no-op DDL round-trip
+        -- at the cost of masking drift silently.
         -- ------------------------------------------------------------------
 
         -- For fresh-clone tenants the FK was never dropped; drop it now so we

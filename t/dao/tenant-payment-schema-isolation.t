@@ -75,6 +75,22 @@ subtest 'enrollments.payment_id FK references tenant payments table' => sub {
     is $row->{ref_table},  'payments', 'FK references payments table';
 };
 
+# Create a parent directly in the tenant schema so their user row does NOT
+# exist in registry.users.  copy_user preserves ids, so a provision-copied
+# user would satisfy the registry FK and mask the bug.  Creating a user on
+# the tenant connection works today (no Task 4 dependency), so this assertion
+# lives outside the TODO block.
+my $tenant_dao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $slug);
+my $tenant_db  = $tenant_dao->db;
+
+my $parent = Registry::DAO::User->create($tenant_db, {
+    username  => "pay_iso_parent_$$",
+    email     => "pay_iso_parent_$$\@test.example",
+    name      => 'PayIso Parent',
+    user_type => 'parent',
+});
+ok $parent, 'parent user created only in tenant schema';
+
 # ---- behavioral block (#237 repro) ------------------------------------------
 # Task 4 unqualifies the Payment DAO so inserts resolve via the tenant
 # search_path.  Until then, Payment->create writes to registry.payments whose
@@ -84,20 +100,6 @@ subtest 'enrollments.payment_id FK references tenant payments table' => sub {
 our $TODO;
 TODO: {
     local $TODO = 'Task 4 unqualifies the Payment DAO';
-
-    # Create a parent directly in the tenant schema so their user row does NOT
-    # exist in registry.users.  copy_user preserves ids, so a provision-copied
-    # user would satisfy the registry FK and mask the bug.
-    my $tenant_dao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $slug);
-    my $tenant_db  = $tenant_dao->db;
-
-    my $parent = Registry::DAO::User->create($tenant_db, {
-        username  => "pay_iso_parent_$$",
-        email     => "pay_iso_parent_$$\@test.example",
-        name      => 'PayIso Parent',
-        user_type => 'parent',
-    });
-    ok $parent, 'parent user created only in tenant schema';
 
     # Attempt to create a payment.  With the DAO still writing registry.payments
     # and the parent existing only in the tenant schema, the user_id FK will
@@ -128,8 +130,7 @@ TODO: {
     } else {
         # Diagnose the FK violation so the error is visible in test output.
         note "Payment->create failed (expected until Task 4): $err";
-        # Force four failures so the TODO count is stable.
-        ok 0, 'payment created successfully in tenant schema';
+        # Force the two remaining failures so the TODO count is stable.
         ok 0, 'payment row found in tenant schema';
         ok 0, 'payment row NOT in registry.payments';
     }
