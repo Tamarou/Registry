@@ -574,10 +574,25 @@ class Registry :isa(Mojolicious) {
 
         # Legacy school route removed -- storefront at / replaces it
 
-        # Health check endpoint (no auth required)
+        # Health check / readiness probe endpoint (no auth required).
+        # Performs a trivial SELECT 1 against the registry DB so that the probe
+        # reflects actual database reachability, not just process liveness.
+        # Returns HTTP 200 on success, HTTP 503 when the DB is unavailable.
         $self->routes->get('/health')->to(cb => sub ($c) {
-            # Simple health check - just verify app is responding
-            $c->render(json => { status => 'ok', timestamp => time() });
+            my $ts = time();
+            eval {
+                $c->dao('registry')->db->query('SELECT 1');
+            };
+            if ($@) {
+                my $err = $@;
+                $c->app->log->error("Health check DB probe failed: $err");
+                $c->render(
+                    json   => { status => 'error', db => 'down', timestamp => $ts },
+                    status => 503,
+                );
+                return;
+            }
+            $c->render(json => { status => 'ok', db => 'ok', timestamp => $ts });
         })->name('health_check');
 
         # Webhook routes (no auth required)
