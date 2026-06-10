@@ -26,5 +26,9 @@ ok !$updated->stripe_connect_ready, 'not ready until details_submitted';
 my $ready = $updated->update($db, { stripe_details_submitted => 1 });
 ok $ready->stripe_connect_ready, 'ready with account + charges_enabled + details_submitted';
 
+my $no_acct = $ready->update($db, { stripe_connect_account_id => undef });
+ok !$no_acct->stripe_connect_ready,
+    'not ready without a connected account even when both flags set';
+
 $t->cleanup_test_database;
 done_testing;
