@@ -98,11 +98,12 @@ my $session = Registry::DAO::Session->create($tdb, {
     metadata   => {},
 });
 $session->add_events($tdb, $event->id);
+my $PLAN_AMOUNT = 150.00;
 Registry::DAO::PricingPlan->create($tdb, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 150.00,
+    amount     => $PLAN_AMOUNT,
 });
 
 # Parent + child in the tenant schema
@@ -248,9 +249,12 @@ subtest 'Stripe params carry correct destination-charge and metadata keys' => su
     is $captured_params->{'on_behalf_of'}, 'acct_e2e',
         'on_behalf_of is the tenant account id';
 
-    # Application fee: 2.5% of $150 = 375 cents (150 * 100 = 15000; 15000 * 2.5 / 100 = 375)
-    my $expected_fee = Registry::DAO::Payment::application_fee_cents(15_000);
-    is $expected_fee, 375, 'expected fee sanity check: 2.5% of 15000 cents = 375';
+    # Application fee derives from the fixture amount so the two cannot
+    # drift; the round-half-up boundary itself is unit-tested in
+    # t/dao/payment-intent-destination-charge.t.
+    my $expected_fee = Registry::DAO::Payment::application_fee_cents(
+        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT));
+    is $expected_fee, 375, 'expected fee sanity check: 2.5% of $150.00 = 375 cents';
     is $captured_params->{'application_fee_amount'}, $expected_fee,
         'application_fee_amount matches expected 2.5% fee';
 
