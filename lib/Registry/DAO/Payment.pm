@@ -87,16 +87,27 @@ field $_stripe_client = undef;
         # Create payment intent with Stripe
         my $intent;
         try {
+            # Stripe's API is form-encoded; nested hashes must be flattened to
+            # bracket notation (metadata[key]=value). Mojo's form generator
+            # would otherwise turn a nested hashref into a bogus multipart
+            # upload and the metadata would never reach Stripe. Metadata
+            # values must be strings, so refs (e.g. enrollment_items) are
+            # snapshotted only in the DB metadata column, not sent to Stripe.
+            my %stripe_metadata = (
+                user_id    => $user_id,
+                payment_id => $self->id,
+                ( ref $metadata eq 'HASH'
+                    ? ( map { $_ => $metadata->{$_} }
+                        grep { defined $metadata->{$_} && !ref $metadata->{$_} }
+                        keys %$metadata )
+                    : () ),
+            );
             $intent = $self->stripe_client->create_payment_intent({
-                amount => _to_cents($amount), # Convert to cents
-                currency => $currency,
-                description => $description,
+                amount        => _to_cents($amount),
+                currency      => $currency,
+                description   => $description,
                 receipt_email => $receipt_email,
-                metadata => {
-                    user_id => $user_id,
-                    payment_id => $self->id,
-                    %{$metadata},
-                },
+                map { ( "metadata[$_]" => $stripe_metadata{$_} ) } sort keys %stripe_metadata,
             });
         }
         catch ($e) {
@@ -332,16 +343,24 @@ field $_stripe_client = undef;
         my $description = $args->{description} // 'Registry Program Enrollment';
         my $receipt_email = $args->{receipt_email};
         
+        # Flatten metadata to bracket notation for the same reason as the
+        # synchronous path: Mojo's form generator cannot serialize nested
+        # hashrefs, and Stripe metadata values must be plain strings.
+        my %stripe_metadata_async = (
+            user_id    => $user_id,
+            payment_id => $self->id,
+            ( ref $metadata eq 'HASH'
+                ? ( map { $_ => $metadata->{$_} }
+                    grep { defined $metadata->{$_} && !ref $metadata->{$_} }
+                    keys %$metadata )
+                : () ),
+        );
         return $self->stripe_client->create_payment_intent_async({
-            amount => _to_cents($amount), # Convert to cents
-            currency => $currency,
-            description => $description,
+            amount        => _to_cents($amount),
+            currency      => $currency,
+            description   => $description,
             receipt_email => $receipt_email,
-            metadata => {
-                user_id => $user_id,
-                payment_id => $self->id,
-                %{$metadata},
-            },
+            map { ( "metadata[$_]" => $stripe_metadata_async{$_} ) } sort keys %stripe_metadata_async,
         })->then(sub ($intent) {
             # Update payment record with Stripe intent ID
             $stripe_payment_intent_id = $intent->{id};
