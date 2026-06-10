@@ -34,7 +34,7 @@ field $_stripe_client = undef;
         }
     }
     
-    sub table { 'registry.payments' }
+    sub table { 'payments' }
 
     # Convert a dollar amount to integer cents for Stripe API calls.
     sub _to_cents ($dollars) { int($dollars * 100) }
@@ -232,12 +232,12 @@ field $_stripe_client = undef;
             metadata => encode_json($args->{metadata} // {}),
         };
         
-        $db->insert('registry.payment_items', $item);
+        $db->insert('payment_items', $item);
     }
     
     method line_items ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        my $items = $db->select('registry.payment_items', '*', { payment_id => $self->id })->hashes;
+        my $items = $db->select('payment_items', '*', { payment_id => $self->id })->hashes;
         
         # Decode metadata for each item
         for my $item (@$items) {
@@ -286,7 +286,7 @@ field $_stripe_client = undef;
     sub for_user ($class, $db, $user_id) {
         $db = $db->db if $db isa Registry::DAO;
         my $payments = $db->select(
-            'registry.payments',
+            'payments',
             '*',
             { user_id => $user_id },
             { order_by => { -desc => 'created_at' } }

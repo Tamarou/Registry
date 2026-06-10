@@ -342,9 +342,11 @@ subtest 'Stripe handles payment processing - webhook simulation' => sub {
 };
 
 subtest 'Database constraints for simplified schema' => sub {
-    # Test database-level constraints for simplified schema
+    # Test database-level constraints for simplified schema.
+    # Use the tenant-scoped $db so the unqualified table name resolves
+    # to the tenant schema where $schedule lives.
     eval {
-        $db->insert('registry.scheduled_payments', {
+        $db->insert('scheduled_payments', {
             payment_schedule_id => $schedule->id,
             installment_number => 0,  # Should fail: must be > 0
             amount => 100.00,
@@ -353,7 +355,7 @@ subtest 'Database constraints for simplified schema' => sub {
     ok $@, 'Database rejects installment_number <= 0';
 
     eval {
-        $db->insert('registry.scheduled_payments', {
+        $db->insert('scheduled_payments', {
             payment_schedule_id => $schedule->id,
             installment_number => 1,
             amount => -50.00,  # Should fail: must be positive
@@ -362,7 +364,7 @@ subtest 'Database constraints for simplified schema' => sub {
     ok $@, 'Database rejects negative amount';
 
     # Test new status constraints work
-    my $test_payment_id = $db->insert('registry.scheduled_payments', {
+    my $test_payment_id = $db->insert('scheduled_payments', {
         payment_schedule_id => $schedule->id,
         installment_number => 5,
         amount => 50.00,

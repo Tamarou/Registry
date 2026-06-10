@@ -175,18 +175,19 @@ subtest 'Webhook payment status updates' => sub {
     # Test direct status updates that would happen from webhook processing
     my $payment = $scheduled_payment_1;
 
-    # Simulate webhook updating payment to paid
-    $db->update('registry.scheduled_payments',
+    # Simulate webhook updating payment to paid.
+    # Use unqualified table names so search_path resolves to the tenant schema.
+    $db->update('scheduled_payments',
         { status => 'completed', paid_at => \"NOW()" },
         { id => $payment->id }
     );
 
-    my $updated_payment = $db->select('registry.scheduled_payments', '*', { id => $payment->id })->hash;
+    my $updated_payment = $db->select('scheduled_payments', '*', { id => $payment->id })->hash;
     is $updated_payment->{status}, 'completed', 'Payment can be marked as completed';
     ok defined $updated_payment->{paid_at}, 'Payment timestamp is recorded';
 
     # Verify schedule remains active
-    my $schedule = $db->select('registry.payment_schedules', '*', { id => $payment_schedule->id })->hash;
+    my $schedule = $db->select('payment_schedules', '*', { id => $payment_schedule->id })->hash;
     is $schedule->{status}, 'active', 'Payment schedule remains active after payment';
 };
 
@@ -196,8 +197,9 @@ subtest 'Webhook payment failure handling' => sub {
     # Test payment failure updates from webhook processing
     my $payment = $scheduled_payment_2;
 
-    # Simulate webhook updating payment to failed
-    $db->update('registry.scheduled_payments',
+    # Simulate webhook updating payment to failed.
+    # Use unqualified table names so search_path resolves to the tenant schema.
+    $db->update('scheduled_payments',
         {
             status => 'failed',
             failed_at => \"NOW()",
@@ -206,7 +208,7 @@ subtest 'Webhook payment failure handling' => sub {
         { id => $payment->id }
     );
 
-    my $failed_payment = $db->select('registry.scheduled_payments', '*', { id => $payment->id })->hash;
+    my $failed_payment = $db->select('scheduled_payments', '*', { id => $payment->id })->hash;
     is $failed_payment->{status}, 'failed', 'Payment marked as failed';
     ok defined $failed_payment->{failed_at}, 'Failure timestamp recorded';
     is $failed_payment->{failure_reason}, 'card_declined', 'Failure reason recorded';
@@ -255,8 +257,9 @@ subtest 'Payment schedule cancellation' => sub {
     # Verify schedule marked as cancelled
     is $cancellation_schedule->status, 'cancelled', 'Payment schedule marked as cancelled';
 
-    # Verify pending payments cancelled
-    my $cancelled_payment = $db->select('registry.scheduled_payments', '*', { id => $pending_payment->id })->hash;
+    # Verify pending payments cancelled.
+    # Use unqualified table name so search_path resolves to the tenant schema.
+    my $cancelled_payment = $db->select('scheduled_payments', '*', { id => $pending_payment->id })->hash;
     is $cancelled_payment->{status}, 'cancelled', 'Pending payments marked as cancelled';
 
     # Verify the operation was atomic

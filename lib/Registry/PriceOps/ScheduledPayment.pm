@@ -89,7 +89,7 @@ method mark_payment_completed ($db, $scheduled_payment_dao, $metadata = {}) {
 
         # Lock the payment schedule row to prevent concurrent completion
         my $schedule_result = $db->query(
-            'SELECT * FROM registry.payment_schedules WHERE id = ? FOR UPDATE',
+            'SELECT * FROM payment_schedules WHERE id = ? FOR UPDATE',
             $scheduled_payment_dao->payment_schedule_id
         )->hash;
 
@@ -110,7 +110,7 @@ method mark_payment_completed ($db, $scheduled_payment_dao, $metadata = {}) {
 
         # Count remaining pending payments (within the same transaction)
         my $remaining_count = $db->query(
-            'SELECT COUNT(*) FROM registry.scheduled_payments WHERE payment_schedule_id = ? AND status = ?',
+            'SELECT COUNT(*) FROM scheduled_payments WHERE payment_schedule_id = ? AND status = ?',
             $scheduled_payment_dao->payment_schedule_id,
             'pending'
         )->hash->{count};
@@ -119,7 +119,7 @@ method mark_payment_completed ($db, $scheduled_payment_dao, $metadata = {}) {
         if ($remaining_count == 0) {
             # Update schedule status atomically
             $db->query(
-                'UPDATE registry.payment_schedules SET status = ?, updated_at = NOW() WHERE id = ? AND status != ?',
+                'UPDATE payment_schedules SET status = ?, updated_at = NOW() WHERE id = ? AND status != ?',
                 'completed',
                 $scheduled_payment_dao->payment_schedule_id,
                 'completed'

@@ -18,7 +18,7 @@ field $status :param :reader = 'active';
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 
-sub table { 'registry.payment_schedules' }
+sub table { 'payment_schedules' }
 
 # Simple query methods for relationships
 method scheduled_payments ($db) {
@@ -65,7 +65,7 @@ method cancel_with_pending_payments ($db) {
         $self->update_status($db, 'cancelled');
 
         # Cancel all pending scheduled payments
-        $db->update('registry.scheduled_payments',
+        $db->update('scheduled_payments',
             { status => 'cancelled', updated_at => \'NOW()' },
             { payment_schedule_id => $self->id, status => 'pending' }
         );

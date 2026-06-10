@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Tests that each tenant schema has its own payment tables with tenant-local FKs.
-# ABOUTME: Structural invariant tests, migration move/guard logic, and #237 behavioral repro (TODO until Task 4).
+# ABOUTME: Structural invariant tests, migration move/guard logic, and the #237 behavioral repro.
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer);
@@ -78,9 +78,7 @@ subtest 'enrollments.payment_id FK references tenant payments table' => sub {
 
 # Create a parent directly in the tenant schema so their user row does NOT
 # exist in registry.users.  copy_user preserves ids, so a provision-copied
-# user would satisfy the registry FK and mask the bug.  Creating a user on
-# the tenant connection works today (no Task 4 dependency), so this assertion
-# lives outside the TODO block.
+# user would satisfy a registry-side FK and mask a schema-isolation bug.
 my $tenant_dao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $slug);
 my $tenant_db  = $tenant_dao->db;
 
@@ -216,46 +214,23 @@ subtest 'migration schedule-guard: blocks move when scheduled_payments reference
 };
 
 # ---- behavioral block (#237 repro) ------------------------------------------
-# Task 4 unqualifies the Payment DAO so inserts resolve via the tenant
-# search_path.  Until then, Payment->create writes to registry.payments whose
-# user_id FK targets registry.users.  A parent that lives only in the tenant
-# schema trips that FK and the insert fails.
+# Payment DAO uses unqualified table names so inserts resolve via the tenant
+# search_path.  A parent that lives only in the tenant schema satisfies the
+# tenant FK (not registry.users), and the payment lands in the tenant schema.
 
-our $TODO;
-TODO: {
-    local $TODO = 'Task 4 unqualifies the Payment DAO';
+my $payment = Registry::DAO::Payment->create($tenant_db, {
+    user_id => $parent->id,
+    amount  => '50.00',
+});
+ok $payment, 'payment created successfully in tenant schema';
 
-    # Attempt to create a payment.  With the DAO still writing registry.payments
-    # and the parent existing only in the tenant schema, the user_id FK will
-    # fire and the insert should fail -- that is the #237 repro.  Once Task 4
-    # unqualifies the table, the insert resolves to <tenant>.payments whose
-    # user_id references <tenant>.users, and this block turns green.
-    my $payment = eval {
-        Registry::DAO::Payment->create($tenant_db, {
-            user_id => $parent->id,
-            amount  => '50.00',
-        });
-    };
-    my $err = $@;
+# Verify the row landed in the tenant schema, NOT registry.payments.
+my $in_tenant = $tenant_db->select(
+    'payments', ['id'], { id => $payment->id }
+)->hash;
+ok $in_tenant, 'payment row found in tenant schema';
 
-    ok $payment, 'payment created successfully in tenant schema';
-
-    if ($payment) {
-        # Verify the row landed in the tenant schema, NOT registry.payments.
-        my $in_tenant = $tenant_db->select(
-            'payments', ['id'], { id => $payment->id }
-        )->hash;
-        ok $in_tenant, 'payment row found in tenant schema';
-
-        my $in_registry = $db->select(
-            'registry.payments', ['id'], { id => $payment->id }
-        )->hash;
-        ok !$in_registry, 'payment row NOT in registry.payments';
-    } else {
-        # Diagnose the FK violation so the error is visible in test output.
-        note "Payment->create failed (expected until Task 4): $err";
-        # Force the two remaining failures so the TODO count is stable.
-        ok 0, 'payment row found in tenant schema';
-        ok 0, 'payment row NOT in registry.payments';
-    }
-}
+my $in_registry = $db->select(
+    'registry.payments', ['id'], { id => $payment->id }
+)->hash;
+ok !$in_registry, 'payment row NOT in registry.payments';

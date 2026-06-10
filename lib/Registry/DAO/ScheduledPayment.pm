@@ -19,7 +19,7 @@ field $failure_reason :param :reader = undef;
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 
-sub table { 'registry.scheduled_payments' }
+sub table { 'scheduled_payments' }
 
 # Simple relationship methods
 method payment_schedule ($db) {
