@@ -147,9 +147,17 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # correct schema.
         $db->query('SET search_path = registry, public');
 
+        # Quote the slug as a PostgreSQL identifier once and reuse throughout.
+        # quote_identifier wraps the name in double-quotes, which is valid in
+        # both "schema".table and SET search_path = "schema", public contexts.
+        # This handles slugs that are PostgreSQL reserved words (e.g. "user",
+        # "order") that would otherwise cause syntax errors when interpolated
+        # unquoted into DDL or SET statements.
+        my $schema = $db->dbh->quote_identifier($tenant->slug);
+
         # Copy seed data that clone_schema does not include (structure only, no rows)
         $db->query(qq{
-            INSERT INTO ${\$tenant->slug}.program_types (slug, name, config, created_at, updated_at)
+            INSERT INTO ${schema}.program_types (slug, name, config, created_at, updated_at)
             SELECT slug, name, config, created_at, updated_at
             FROM registry.program_types
             ON CONFLICT (slug) DO NOTHING
@@ -193,11 +201,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # Fix: NULL the step's template_id and delete the template from the tenant
         # schema so DBTemplates falls back to the correct filesystem catalog.
         # (refs #173 #229)
-        my $ts = $tenant->slug;
         $db->query(qq{
-            UPDATE ${ts}.workflow_steps ws
+            UPDATE ${schema}.workflow_steps ws
                SET template_id = NULL
-              FROM ${ts}.workflows wf, ${ts}.templates tpl
+              FROM ${schema}.workflows wf, ${schema}.templates tpl
              WHERE wf.slug = 'tenant-storefront'
                AND ws.workflow_id = wf.id
                AND ws.slug = 'program-listing'
@@ -205,7 +212,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                AND tpl.name = 'tenant-storefront/program-listing'
         });
         $db->query(qq{
-            DELETE FROM ${ts}.templates
+            DELETE FROM ${schema}.templates
              WHERE name = 'tenant-storefront/program-listing'
         });
 
@@ -215,7 +222,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # inserts, we reset back to registry so later queries remain correct.
         my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
         if (@outcome_defs) {
-            $db->query("SET search_path = ${\$tenant->slug}, public");
+            $db->query("SET search_path = ${schema}, public");
             for my $def (@outcome_defs) {
                 Registry::DAO::OutcomeDefinition->create(
                     $db,

@@ -318,7 +318,7 @@ BEGIN
         AND table_type = 'BASE TABLE'
 
   LOOP
-    buffer := dest_schema || '.' || quote_ident(object);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     EXECUTE 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
 
     FOR column_, default_ IN
@@ -404,7 +404,7 @@ BEGIN
         AND tbl.relnamespace = (SELECT oid FROM pg_namespace where nspname = quote_ident(source_schema) )
 
   LOOP
-    buffer := dest_schema || '.' || quote_ident(rec.trigger_table);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(rec.trigger_table);
     EXECUTE 'CREATE TRIGGER ' || rec.trigger_name || ' ' || rec.action_timing
             || ' ' || rec.trigger_event || ' ON ' || buffer || ' FOR EACH '
             || rec.trigger_level || ' ' || replace(rec.action_statement, source_schema_dot, '');
@@ -419,7 +419,7 @@ BEGIN
   WHERE table_schema = quote_ident(source_schema)
 
   LOOP
-    buffer := dest_schema || '.' || quote_ident(object);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     SELECT replace(view_definition, source_schema_dot, '') INTO v_def
     FROM information_schema.views
     WHERE table_schema = quote_ident(source_schema)
@@ -449,7 +449,7 @@ BEGIN
 -- Check that source_schema exists
   PERFORM nspname
   FROM pg_namespace
-  WHERE nspname = quote_ident(source_schema);
+  WHERE nspname = source_schema;
   IF NOT FOUND
   THEN
     RAISE NOTICE 'source schema % does not exist!', source_schema;
@@ -459,10 +459,10 @@ BEGIN
 -- Check that dest_schema exists
   PERFORM nspname
   FROM pg_namespace
-  WHERE nspname = quote_ident(source_schema);
+  WHERE nspname = dest_schema;
   IF NOT FOUND
   THEN
-    RAISE NOTICE 'dest schema % does not exist!', source_schema;
+    RAISE NOTICE 'dest schema % does not exist!', dest_schema;
     RETURN ;
   END IF;
 
@@ -495,16 +495,19 @@ BEGIN
     -- Check that source_schema exists
     PERFORM nspname
     FROM pg_namespace
-    WHERE nspname = quote_ident(source_schema);
+    WHERE nspname = source_schema;
     IF NOT FOUND THEN
         RAISE NOTICE 'Source schema % does not exist!', source_schema;
         RETURN;
     END IF;
 
-    -- Check that dest_schema exists
+    -- Check that dest_schema exists.  Compare against the plain nspname value,
+    -- not quote_ident(dest_schema): nspname stores the unquoted schema name
+    -- ('user', not '"user"'), so wrapping in quote_ident causes the lookup to
+    -- fail for reserved-word schema names.
     PERFORM nspname
     FROM pg_namespace
-    WHERE nspname = quote_ident(dest_schema);
+    WHERE nspname = dest_schema;
     IF NOT FOUND THEN
         RAISE NOTICE 'Destination schema % does not exist!', dest_schema;
         RETURN;
