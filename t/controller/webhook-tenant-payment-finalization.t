@@ -122,7 +122,6 @@ ok !$in_registry, 'tenant payment not visible in registry schema (pre-condition)
 # ---------------------------------------------------------------------------
 
 my $mock_log = Test::MockObject->new;
-$mock_log->set_always('info',  undef);
 $mock_log->set_always('error', undef);
 $mock_log->set_always('warn',  undef);
 $mock_log->set_always('debug', undef);
@@ -275,7 +274,8 @@ subtest 'account.updated syncs charges_enabled/details_submitted to tenant' => s
 
     my $row2 = $db->select('registry.tenants', ['stripe_charges_enabled', 'stripe_details_submitted'],
         { stripe_connect_account_id => 'acct_wh_test' })->hash;
-    is $row2->{stripe_charges_enabled}, 0, 'charges_enabled mirrored back to 0';
+    is $row2->{stripe_charges_enabled},   0, 'charges_enabled mirrored back to 0';
+    is $row2->{stripe_details_submitted}, 1, 'details_submitted preserved on the off-flip';
 };
 
 subtest 'account.updated with unknown account logs but does not die' => sub {
@@ -293,7 +293,7 @@ subtest 'account.updated with unknown account logs but does not die' => sub {
     eval { $wh->_process_account_updated($dao, $evt) };
     $died = 1 if $@;
     ok !$died, 'unknown acct_id does not die';
-    ok grep { /unknown connected account/i } @log_messages,
+    ok scalar(grep { /unknown connected account/i } @log_messages),
         'unknown account logged via app->log->info';
 };
 
