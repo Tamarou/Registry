@@ -72,7 +72,7 @@
                 </li>
                 <li class="flex items-start">
                     <span class="flex-shrink-0 w-1.5 h-1.5 bg-blue-400 rounded-full mt-2 mr-3"></span>
-                    <span>If you accept, you'll need to complete payment within 48 hours to secure the spot.</span>
+                    <span>If you accept, you'll need to complete payment within <%= $response_window_hours %> hours to secure the spot.</span>
                 </li>
                 <li class="flex items-start">
                     <span class="flex-shrink-0 w-1.5 h-1.5 bg-blue-400 rounded-full mt-2 mr-3"></span>
@@ -89,7 +89,7 @@
         <div class="flex flex-col sm:flex-row gap-4 justify-center">
             <form action="/waitlist/<%= $waitlist_entry->id %>/accept" method="POST" class="flex-1 sm:flex-initial">
                 <button type="submit" 
-                        onclick="return confirm('Are you sure you want to accept this offer? You will need to complete payment within 48 hours.')"
+                        onclick="return confirm('Are you sure you want to accept this offer? You will need to complete payment within <%= $response_window_hours %> hours.')"
                         class="w-full sm:w-auto bg-green-600 text-white px-8 py-3 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 font-medium text-lg">
                     ✓ Accept Offer
                 </button>
