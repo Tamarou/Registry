@@ -13,6 +13,9 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
     field $canonical_domain :param :reader = undef;
     field $magic_link_expiry_hours :param :reader = 24;
+    field $stripe_connect_account_id :param :reader = undef;
+    field $stripe_charges_enabled    :param :reader = 0;
+    field $stripe_details_submitted  :param :reader = 0;
 
     sub table { 'tenants' }
 
@@ -92,6 +95,14 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return $self->update($db, { canonical_domain => $domain });
     }
 
+    # A tenant can take paid enrollment only when its connected account exists
+    # and Stripe reports it ready to take charges with onboarding complete.
+    method stripe_connect_ready {
+        return $stripe_connect_account_id
+            && $stripe_charges_enabled
+            && $stripe_details_submitted ? 1 : 0;
+    }
+
     method slug_exists :common ($db, $slug) {
         my $result = $db->query('SELECT COUNT(*) FROM registry.tenants WHERE slug = ?', $slug);
         return $result->array->[0] > 0;
@@ -129,6 +140,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             name slug canonical_domain stripe_subscription_id
             billing_status trial_ends_at subscription_started_at
             magic_link_expiry_hours
+            stripe_connect_account_id stripe_charges_enabled stripe_details_submitted
         );
         my %tenant_data = map { $_ => $data->{$_} }
                           grep { exists $TENANT_COLUMNS{$_} } keys %$data;
