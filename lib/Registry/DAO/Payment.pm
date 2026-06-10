@@ -39,6 +39,23 @@ field $_stripe_client = undef;
     # Convert a dollar amount to integer cents for Stripe API calls.
     sub _to_cents ($dollars) { int($dollars * 100) }
 
+    # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
+    # Stripe metadata values must be plain strings, so refs are dropped; the DB
+    # metadata column keeps the full structure. Sorted for deterministic param
+    # order (no API significance; keeps tests and request logs stable).
+    sub _stripe_metadata_params ($user_id, $payment_id, $metadata) {
+        my %m = (
+            user_id    => $user_id,
+            payment_id => $payment_id,
+            ( ref $metadata eq 'HASH'
+                ? ( map { $_ => $metadata->{$_} }
+                    grep { defined $metadata->{$_} && !ref $metadata->{$_} }
+                    keys %$metadata )
+                : () ),
+        );
+        return map { ( "metadata[$_]" => $m{$_} ) } sort keys %m;
+    }
+
     sub create ($class, $db, $data) {
         # Handle JSON encoding for metadata
         if (exists $data->{metadata} && ref $data->{metadata}) {
@@ -93,21 +110,12 @@ field $_stripe_client = undef;
             # upload and the metadata would never reach Stripe. Metadata
             # values must be strings, so refs (e.g. enrollment_items) are
             # snapshotted only in the DB metadata column, not sent to Stripe.
-            my %stripe_metadata = (
-                user_id    => $user_id,
-                payment_id => $self->id,
-                ( ref $metadata eq 'HASH'
-                    ? ( map { $_ => $metadata->{$_} }
-                        grep { defined $metadata->{$_} && !ref $metadata->{$_} }
-                        keys %$metadata )
-                    : () ),
-            );
             $intent = $self->stripe_client->create_payment_intent({
                 amount        => _to_cents($amount),
                 currency      => $currency,
                 description   => $description,
                 receipt_email => $receipt_email,
-                map { ( "metadata[$_]" => $stripe_metadata{$_} ) } sort keys %stripe_metadata,
+                _stripe_metadata_params($user_id, $self->id, $metadata),
             });
         }
         catch ($e) {
@@ -343,28 +351,18 @@ field $_stripe_client = undef;
         my $description = $args->{description} // 'Registry Program Enrollment';
         my $receipt_email = $args->{receipt_email};
         
-        # Flatten metadata to bracket notation for the same reason as the
-        # synchronous path: Mojo's form generator cannot serialize nested
-        # hashrefs, and Stripe metadata values must be plain strings.
-        my %stripe_metadata_async = (
-            user_id    => $user_id,
-            payment_id => $self->id,
-            ( ref $metadata eq 'HASH'
-                ? ( map { $_ => $metadata->{$_} }
-                    grep { defined $metadata->{$_} && !ref $metadata->{$_} }
-                    keys %$metadata )
-                : () ),
-        );
         return $self->stripe_client->create_payment_intent_async({
             amount        => _to_cents($amount),
             currency      => $currency,
             description   => $description,
             receipt_email => $receipt_email,
-            map { ( "metadata[$_]" => $stripe_metadata_async{$_} ) } sort keys %stripe_metadata_async,
+            _stripe_metadata_params($user_id, $self->id, $metadata),
         })->then(sub ($intent) {
             # Update payment record with Stripe intent ID
             $stripe_payment_intent_id = $intent->{id};
-            $self->save($db);
+            $self->update($db, {
+                stripe_payment_intent_id => $stripe_payment_intent_id
+            });
             return $intent;
         })->catch(sub ($error) {
             $error_message = $error;
