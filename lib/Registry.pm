@@ -245,10 +245,23 @@ class Registry :isa(Mojolicious) {
                             $raw
                         )->rows;
                     };
+                    my $eval_err = $@;
+
                     if ($found) {
+                        # Query succeeded and found the schema -- cache the hit.
                         $schema_exists{$raw} = 1;
                     }
+                    elsif ($eval_err) {
+                        # The eval threw: a DB or infrastructure error, not a
+                        # schema miss.  Log distinctly at ERROR so operators can
+                        # tell "tenant schema genuinely absent" from "DB is down".
+                        # Resilience is preserved either way (serve registry).
+                        $c->app->log->error(
+                            "schema-existence check failed for tenant '$raw': $eval_err; serving registry");
+                        return 'registry';
+                    }
                     else {
+                        # Query succeeded but returned 0 rows: schema genuinely absent.
                         $c->app->log->warn(
                             "tenant '$raw' resolved but has no schema; serving registry");
                         return 'registry';
@@ -369,6 +382,38 @@ class Registry :isa(Mojolicious) {
                 catch ($e) {
                     $c->app->log->warn("Failed to load current_user from session: $e");
                 }
+            }
+        );
+
+        # Wire per-request log correlation context so every JSON log line carries
+        # request_id, user_id, and tenant_id for distributed tracing / log analysis.
+        # Registered after the user-loading hook above so current_user is known.
+        # set_context replaces context each request, so stale context cannot leak
+        # across requests even if after_dispatch is skipped on error.
+        $self->hook(
+            before_dispatch => sub ($c) {
+                $c->app->log->set_context({
+                    request_id => $c->req->request_id,
+                    user_id    => $c->session('user_id'),
+                    tenant_id  => $c->tenant,
+                }) if $c->app->log->can('set_context');
+            }
+        );
+
+        $self->hook(
+            after_dispatch => sub ($c) {
+                # Emit a structured access log line while context is still set,
+                # so every request produces at least one line carrying request_id,
+                # user_id, and tenant_id for correlation in log analysis tools.
+                $c->app->log->debug(
+                    sprintf '%s %s %s',
+                        $c->req->method,
+                        $c->req->url->path,
+                        $c->res->code // 0,
+                ) if $c->app->log->can('set_context');
+
+                $c->app->log->clear_context()
+                    if $c->app->log->can('clear_context');
             }
         );
 
@@ -574,10 +619,25 @@ class Registry :isa(Mojolicious) {
 
         # Legacy school route removed -- storefront at / replaces it
 
-        # Health check endpoint (no auth required)
+        # Health check / readiness probe endpoint (no auth required).
+        # Performs a trivial SELECT 1 against the registry DB so that the probe
+        # reflects actual database reachability, not just process liveness.
+        # Returns HTTP 200 on success, HTTP 503 when the DB is unavailable.
         $self->routes->get('/health')->to(cb => sub ($c) {
-            # Simple health check - just verify app is responding
-            $c->render(json => { status => 'ok', timestamp => time() });
+            my $ts = time();
+            eval {
+                $c->dao('registry')->db->query('SELECT 1');
+            };
+            if ($@) {
+                my $err = $@;
+                $c->app->log->error("Health check DB probe failed: $err");
+                $c->render(
+                    json   => { status => 'error', db => 'down', timestamp => $ts },
+                    status => 503,
+                );
+                return;
+            }
+            $c->render(json => { status => 'ok', db => 'ok', timestamp => $ts });
         })->name('health_check');
 
         # Webhook routes (no auth required)
