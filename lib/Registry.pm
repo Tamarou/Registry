@@ -245,10 +245,26 @@ class Registry :isa(Mojolicious) {
                             $raw
                         )->rows;
                     };
+                    my $eval_err = $@;
+
                     if ($found) {
+                        # Query succeeded and found the schema -- cache the hit.
+                        # set_context replaces context each request, so stale
+                        # context cannot leak across requests even if after_dispatch
+                        # is skipped on error.
                         $schema_exists{$raw} = 1;
                     }
+                    elsif ($eval_err) {
+                        # The eval threw: a DB or infrastructure error, not a
+                        # schema miss.  Log distinctly at ERROR so operators can
+                        # tell "tenant schema genuinely absent" from "DB is down".
+                        # Resilience is preserved either way (serve registry).
+                        $c->app->log->error(
+                            "schema-existence check failed for tenant '$raw': $eval_err; serving registry");
+                        return 'registry';
+                    }
                     else {
+                        # Query succeeded but returned 0 rows: schema genuinely absent.
                         $c->app->log->warn(
                             "tenant '$raw' resolved but has no schema; serving registry");
                         return 'registry';
