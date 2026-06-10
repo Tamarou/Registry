@@ -249,9 +249,6 @@ class Registry :isa(Mojolicious) {
 
                     if ($found) {
                         # Query succeeded and found the schema -- cache the hit.
-                        # set_context replaces context each request, so stale
-                        # context cannot leak across requests even if after_dispatch
-                        # is skipped on error.
                         $schema_exists{$raw} = 1;
                     }
                     elsif ($eval_err) {
