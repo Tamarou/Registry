@@ -111,7 +111,9 @@ my $deploy_sql      = $deploy_sql_path->slurp;
 
 # Strip the sqitch header (BEGIN/COMMIT wrapper); keep only the DO block.
 # The file structure is: preamble SET lines, then DO $$ ... $$ LANGUAGE plpgsql;
-( my $do_block = $deploy_sql ) =~ s{\A.*?(DO\b)}{$1}s;
+# Anchor on DO at the start of a line so a "do" inside the comment preamble
+# can never be mistaken for the block opener.
+( my $do_block = $deploy_sql ) =~ s{\A.*?^(DO\b)}{$1}ms;
 $do_block =~ s/\s*COMMIT;\s*\z//s;
 
 subtest 'migration move-logic: rows land in tenant schema' => sub {
