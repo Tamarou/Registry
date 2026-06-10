@@ -388,6 +388,38 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Wire per-request log correlation context so every JSON log line carries
+        # request_id, user_id, and tenant_id for distributed tracing / log analysis.
+        # Registered after the user-loading hook above so current_user is known.
+        # set_context replaces context each request, so stale context cannot leak
+        # across requests even if after_dispatch is skipped on error.
+        $self->hook(
+            before_dispatch => sub ($c) {
+                $c->app->log->set_context({
+                    request_id => $c->req->request_id,
+                    user_id    => $c->session('user_id'),
+                    tenant_id  => $c->tenant,
+                }) if $c->app->log->can('set_context');
+            }
+        );
+
+        $self->hook(
+            after_dispatch => sub ($c) {
+                # Emit a structured access log line while context is still set,
+                # so every request produces at least one line carrying request_id,
+                # user_id, and tenant_id for correlation in log analysis tools.
+                $c->app->log->debug(
+                    sprintf '%s %s %s',
+                        $c->req->method,
+                        $c->req->url->path,
+                        $c->res->code // 0,
+                ) if $c->app->log->can('set_context');
+
+                $c->app->log->clear_context()
+                    if $c->app->log->can('clear_context');
+            }
+        );
+
         # Helper: require an authenticated session.
         # Redirects browsers to login; sends 401 JSON to API clients.
         # Returns true if authenticated, false (and terminates dispatch) otherwise.
