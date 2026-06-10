@@ -16,23 +16,56 @@ class Registry::Job::WaitlistExpiration {
     sub perform ($class, $job, $specific_waitlist_id = undef) {
         my $app = $job->app;
         my $log = $app->log;
-        
+
         try {
             my $dao = $app->dao;
-            
+
             if ($specific_waitlist_id) {
-                # Expire specific waitlist entry
+                # NOTE: the specific_waitlist_id caller must supply a tenant-scoped
+                # dao (via $app->dao->connect_schema($slug)) so the unqualified table
+                # references in expire_specific_entry resolve to the correct tenant
+                # schema.  There are currently no enqueue callers that pass this arg;
+                # if you add one, thread the tenant slug and call connect_schema here.
                 $class->expire_specific_entry($dao, $specific_waitlist_id, $log);
             } else {
-                # Expire all old offers and process next in line
-                $class->expire_all_old_offers($dao, $log);
+                # Global sweep: iterate every tenant schema so expired offers in any
+                # tenant are reaped.  Tenant data lives in per-tenant schemas, not in
+                # registry, so a registry-scoped dao would find nothing.
+                $class->expire_all_tenant_offers($dao, $log);
             }
-            
+
             $job->finish('Waitlist expiration processing completed successfully');
         }
         catch ($e) {
             $log->error("WaitlistExpiration job failed: $e");
             $job->fail("Waitlist expiration failed: $e");
+        }
+    }
+
+    # Iterate every tenant schema and run expire_all_old_offers for each.
+    # The registry schema itself is skipped because tenant waitlist data lives
+    # in per-tenant schemas, not in registry.  Per-tenant failures are caught and
+    # logged so one broken tenant does not abort the sweep for the others.
+    sub expire_all_tenant_offers ($class, $dao, $log) {
+        require Registry::DAO::Tenant;
+
+        my $tenants = Registry::DAO::Tenant->get_all_tenant_schemas($dao->db);
+
+        for my $tenant (@$tenants) {
+            my $slug = $tenant->{slug};
+
+            # Waitlist data lives in each tenant's own schema, not in registry.
+            next if $slug eq 'registry';
+
+            try {
+                $log->info("Processing waitlist expirations for tenant: $slug");
+                my $tenant_dao = $dao->connect_schema($slug);
+                $class->expire_all_old_offers($tenant_dao, $log);
+            }
+            catch ($e) {
+                $log->error("WaitlistExpiration failed for tenant $slug: $e");
+                # Continue to the next tenant rather than aborting the sweep.
+            }
         }
     }
     
@@ -176,7 +209,10 @@ Program Details:
         }
     }
     
-    # Schedule expiration job for a specific waitlist entry
+    # Schedule expiration job for a specific waitlist entry.
+    # NOTE: any future caller must also arrange tenant context - the
+    # specific_waitlist_id branch in perform requires a tenant-scoped dao
+    # (connect_schema($slug)); thread the tenant slug alongside the entry id.
     sub schedule_expiration ($class, $app, $waitlist_entry) {
         return unless $waitlist_entry->expires_at;
         
