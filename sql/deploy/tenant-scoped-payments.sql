@@ -15,6 +15,9 @@ SET search_path TO registry, public;
 -- Payment / PaymentSchedule / ScheduledPayment DAOs so they resolve via the
 -- tenant search_path rather than the hard-coded registry. schema.
 --
+-- This script is idempotent: re-running it after a revert (and re-deploying)
+-- is a supported path and produces no double-move errors.
+--
 -- CAUTION: The forward migration requires that every payer (user_id) for
 -- payments being moved into a tenant schema is already resident in that
 -- tenant's users table.  This mirrors the revert script's limitation in
@@ -28,6 +31,17 @@ SET search_path TO registry, public;
 --   SELECT copy_user(dest_schema => '<slug>', user_id => '<id>');
 -- for each offending user, then re-run the migration.
 --
+-- CAUTION (schedules): payment_schedules / scheduled_payments rows are
+-- GUARDED but NOT auto-moved.  registry.scheduled_payments.payment_id
+-- references registry.payments(id) with no ON DELETE clause, so deleting a
+-- moved payment would throw an FK violation mid-migration for any tenant with
+-- linked schedule rows.  Auto-moving would require cross-schema enrollment
+-- joins to derive tenant attribution (no per-row tenant_slug metadata exists
+-- on these tables), and the InstallmentPayment code path is wired into no
+-- production workflow today, so any such rows indicate manual data and need
+-- human investigation.  The pre-flight raises a loud exception listing the
+-- offending IDs rather than silently corrupting state.
+--
 -- KEY INVARIANT: A freshly provisioned tenant already has all four payment tables
 -- AND a tenant-local enrollments.payment_id FK because clone_schema copies every
 -- registry table and re-binds FK definitions to the destination schema at
@@ -38,6 +52,10 @@ SET search_path TO registry, public;
 --
 -- Per-tenant operation order (STRICT -- must not be changed):
 --
+--   Phase 0: Pre-flight guard.  Abort with a diagnosable exception if any
+--            registry.scheduled_payments or registry.payment_schedules row
+--            references a payment that would be moved for this tenant.
+--
 --   Phase 1: Discover and conditionally DROP the enrollments.payment_id FK.
 --            Must happen before any row movement because the DELETE from
 --            registry.payments is blocked by the FK referencing it.
@@ -46,6 +64,8 @@ SET search_path TO registry, public;
 --            registry.payments / registry.payment_items into the tenant schema.
 --            Payments (parent) are moved before payment_items (child) so the
 --            tenant payment_items FK is satisfied on insert.
+--            payment_schedules / scheduled_payments rows are preserved in
+--            registry (see CAUTION above) and are not moved.
 --
 --   Phase 3: ADD the new enrollments.payment_id FK referencing the tenant's
 --            own payments table.
@@ -105,6 +125,50 @@ BEGIN
         END IF;
 
         -- ------------------------------------------------------------------
+        -- Pre-flight (schedules): Guard against scheduled_payments or
+        -- payment_schedules rows that reference a payment about to be moved.
+        --
+        -- registry.scheduled_payments.payment_id REFERENCES registry.payments(id)
+        -- with no ON DELETE clause.  Deleting the registry.payments row after the
+        -- move would trip this FK.  These rows are NOT auto-moved because:
+        --   1. Neither payment_schedules nor scheduled_payments carries a
+        --      tenant_slug; deriving attribution requires cross-schema enrollment
+        --      joins that are fragile and untestable here.
+        --   2. The InstallmentPayment workflow step is wired into no production
+        --      workflow, so any such rows were created manually and need human
+        --      review.
+        -- The guard makes the problem loud and diagnosable rather than allowing
+        -- the migration to corrupt state silently.
+        -- ------------------------------------------------------------------
+
+        EXECUTE format(
+            $sql$
+            SELECT string_agg(
+                       format('scheduled_payment_id=%%s payment_id=%%s', sp.id, sp.payment_id),
+                       '; '
+                   )
+            FROM registry.scheduled_payments sp
+            WHERE sp.payment_id IN (
+                SELECT id FROM registry.payments
+                WHERE metadata->>'tenant_slug' = %L
+            )
+            $sql$,
+            s
+        ) INTO bad_ids;
+
+        IF bad_ids IS NOT NULL THEN
+            RAISE EXCEPTION
+                'tenant-scoped-payments pre-flight FAILED for tenant "%": '
+                'the following registry.scheduled_payments rows reference '
+                'payments that would be moved: [%].  '
+                'These rows have no per-row tenant attribution and cannot be '
+                'auto-migrated.  Manually investigate and remove or relocate '
+                'them, then re-deploy.',
+                s, bad_ids
+            USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+
+        -- ------------------------------------------------------------------
         -- Phase 1: Conditionally drop enrollments.payment_id FK.
         --
         -- For tenants provisioned before the payment migrations, the FK may
@@ -141,7 +205,7 @@ BEGIN
           AND att.attname    = 'payment_id';
 
         IF fk_conname IS NOT NULL
-           AND fk_confrelid = 'registry.payments'::regclass THEN
+           AND fk_confrelid = to_regclass('registry.payments') THEN
             -- Drop the cross-schema FK so the row move can proceed.
             EXECUTE format(
                 'ALTER TABLE %I.enrollments DROP CONSTRAINT %I',
@@ -222,6 +286,7 @@ BEGIN
         -- Move the tenant's payment rows into the tenant schema (INSERT only -- no
         -- DELETE yet).  The enrollments FK was dropped in Phase 1, so the subsequent
         -- DELETE from registry.payments will succeed.
+        -- Column list intentionally mirrored in deploy/revert; keep in sync.
         EXECUTE format(
             $sql$
             INSERT INTO %I.payments
@@ -245,6 +310,7 @@ BEGIN
         -- ON DELETE CASCADE referencing registry.payments.  If we deleted payments
         -- first, the cascade would remove the registry items before we could copy
         -- them.
+        -- Column list intentionally mirrored in deploy/revert; keep in sync.
         EXECUTE format(
             $sql$
             INSERT INTO %I.payment_items

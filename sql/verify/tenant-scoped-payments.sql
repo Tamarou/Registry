@@ -56,6 +56,18 @@ BEGIN
                 s, fk_ref_schema;
         END IF;
     END LOOP;
+
+    -- Verify no registry.payments rows still belong to a provisioned tenant.
+    -- A non-empty result means the migration applied partially (rows moved to the
+    -- tenant schema but the registry originals were not deleted), or the migration
+    -- was never applied and the verify is catching that.
+    IF EXISTS (
+        SELECT 1 FROM registry.payments p
+        JOIN registry.tenants t ON t.slug = p.metadata->>'tenant_slug'
+        WHERE to_regnamespace(quote_ident(t.slug)) IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'tenant-scoped-payments: registry.payments still holds rows belonging to a provisioned tenant';
+    END IF;
 END
 $$ LANGUAGE plpgsql;
 

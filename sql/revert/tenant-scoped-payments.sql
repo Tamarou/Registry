@@ -70,6 +70,7 @@ BEGIN
             -- ------------------------------------------------------------------
 
             -- Insert payments into registry (without deleting from tenant yet).
+            -- Column list intentionally mirrored in deploy/revert; keep in sync.
             EXECUTE format(
                 $sql$
                 INSERT INTO registry.payments
@@ -86,6 +87,7 @@ BEGIN
             );
 
             -- Insert payment_items into registry (payment rows now present).
+            -- Column list intentionally mirrored in deploy/revert; keep in sync.
             EXECUTE format(
                 $sql$
                 INSERT INTO registry.payment_items
