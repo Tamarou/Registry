@@ -137,7 +137,14 @@ sub before_dispatch ($class_or_self, $c) {
     my $key   = $class_or_self->_request_key($c);
     my $limit = $class_or_self->_limit_for_path($path);
 
-    my %result = $class_or_self->check($key, $limit);
+    # Scope the counter by limit class so ordinary browsing (general limit)
+    # does not consume the much smaller auth budget.  With a single shared
+    # counter per IP, a user who viewed a dozen pages would be rejected on
+    # their first login attempt because the combined count already exceeded
+    # the auth limit.
+    my $class = $limit == $AUTH_LIMIT ? 'auth' : 'general';
+
+    my %result = $class_or_self->check("$class:$key", $limit);
 
     unless ($result{allowed}) {
         my $retry_after = $result{retry_after};
