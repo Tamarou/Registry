@@ -18,6 +18,8 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
 
+    use constant REVENUE_SHARE_PERCENT => 2.5;
+
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         my $error_handler = Registry::Utility::ErrorHandler->new();
@@ -118,8 +120,8 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 monthly_amount => 0,
                 currency => 'usd',
                 trial_days => 0,
-                revenue_share_percent => 2.5,
-                description => '2.5% of processed revenue. No monthly fee.',
+                revenue_share_percent => REVENUE_SHARE_PERCENT,
+                description => REVENUE_SHARE_PERCENT . '% of processed revenue. No monthly fee.',
                 features => [
                     'Unlimited student enrollments',
                     'Attendance tracking and reporting',
