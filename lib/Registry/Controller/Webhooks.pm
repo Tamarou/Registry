@@ -61,6 +61,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             if ($event->{type} eq 'payment_intent.succeeded') {
                 $self->_process_payment_intent_succeeded($dao, $event);
             }
+            # Mirror connected account capability changes to the tenant row so
+            # the paid-enrollment readiness gate reflects Stripe's current view.
+            elsif ($event->{type} eq 'account.updated') {
+                $self->_process_account_updated($dao, $event);
+            }
             # Determine if this is an installment payment or tenant billing event
             elsif ($self->_is_installment_payment_event($event)) {
                 $self->_process_installment_payment_event($dao->db, $event);
@@ -93,28 +98,53 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     method _process_payment_intent_succeeded ($dao, $event) {
         my $intent     = $event->{data}{object} // {};
         my $payment_id = $intent->{metadata}{payment_id};
-        return unless $payment_id;    # not a Registry one-time payment
+        return unless $payment_id;    # not a Registry one-time payment -- ignore
+
+        # The tenant is resolved from our own snapshotted metadata. The Connect
+        # `account` field is absent on destination-charge payment_intent events
+        # (they are platform events), so metadata is the source of truth.
+        my $slug = $intent->{metadata}{tenant_slug};
+
+        # The payment row lives in the schema the registration ran under. A
+        # one-time payment without a tenant slug is a registry-schema payment
+        # (platform/test); anything else must resolve, or we fail loudly so
+        # Stripe retries rather than silently dropping a paid enrollment.
+        my $tdao = ($slug && $slug ne 'registry') ? $dao->connect_schema($slug) : $dao;
+        my $tdb  = $tdao->db;
 
         require Registry::DAO::Payment;
-        my $payment = Registry::DAO::Payment->find($dao->db, { id => $payment_id });
-        return unless $payment;
+        my $payment = Registry::DAO::Payment->find($tdb, { id => $payment_id });
+        die "payment_intent.succeeded: payment $payment_id not found"
+          . ($slug ? " in tenant schema '$slug'" : ' in registry schema') . "\n"
+            unless $payment;
 
-        # Mark the payment completed (payments live in registry.payments).
         unless (($payment->status // '') eq 'completed') {
-            $payment->update($dao->db, {
+            $payment->update($tdb, {
                 status                   => 'completed',
                 stripe_payment_intent_id => $intent->{id},
             });
         }
 
-        # Enrollments live in the tenant schema the registration ran under;
-        # finalize there. The tenant slug was snapshotted onto the payment.
-        my $slug = $payment->metadata->{tenant_slug};
-        my $fdb  = ($slug && $slug ne 'registry')
-            ? $dao->connect_schema($slug)->db
-            : $dao->db;
+        $payment->finalize_enrollment($tdb);
+    }
 
-        $payment->finalize_enrollment($fdb);
+    # Connect sends account.updated when a connected account's capabilities
+    # change. Mirror charges_enabled/details_submitted onto the tenant so the
+    # paid-enrollment readiness gate reflects Stripe's current view.
+    method _process_account_updated ($dao, $event) {
+        my $account = $event->{data}{object} // {};
+        my $acct_id = $account->{id} or return;
+
+        my $updated = $dao->db->query(
+            q{UPDATE registry.tenants
+              SET stripe_charges_enabled = ?, stripe_details_submitted = ?
+              WHERE stripe_connect_account_id = ?},
+            ($account->{charges_enabled}   ? 1 : 0),
+            ($account->{details_submitted} ? 1 : 0),
+            $acct_id,
+        )->rows;
+        $self->app->log->info("account.updated for unknown connected account $acct_id")
+            unless $updated;
     }
 
     method _verify_stripe_signature($payload, $sig_header, $endpoint_secret) {
