@@ -365,7 +365,7 @@ method create_enrollments ($db, $run, $payment) {
         push @enrollments, $enrollment;
 
         # Link to payment item
-        $db->update('registry.payment_items',
+        $db->update('payment_items',
             { enrollment_id => $enrollment->{id} },
             {
                 payment_id => $payment->id,

@@ -144,7 +144,7 @@ my $failed_payment = Registry::DAO::ScheduledPayment->create($db, {
 
 subtest 'Admin dashboard payment schedule data operations' => sub {
     # Test the data operations that would be used by admin dashboard
-    my $active_schedules = $db->select('registry.payment_schedules', '*', { status => 'active' })->hashes;
+    my $active_schedules = $db->select('payment_schedules', '*', { status => 'active' })->hashes;
     ok @$active_schedules > 0, 'Can find active payment schedules';
 
     my $schedule = $active_schedules->[0];
@@ -154,11 +154,11 @@ subtest 'Admin dashboard payment schedule data operations' => sub {
     is $schedule->{installment_count}, 3, 'Schedule has correct installment count';
 
     # Test finding by enrollment (for enrollment detail pages)
-    my $enrollment_schedules = $db->select('registry.payment_schedules', '*', { enrollment_id => $enrollment->{id} })->hashes;
+    my $enrollment_schedules = $db->select('payment_schedules', '*', { enrollment_id => $enrollment->{id} })->hashes;
     ok @$enrollment_schedules > 0, 'Can find schedules by enrollment';
 
     # Test scheduled payments retrieval for dashboard display
-    my $scheduled_payments = $db->select('registry.scheduled_payments', '*', { payment_schedule_id => $schedule->{id} })->hashes;
+    my $scheduled_payments = $db->select('scheduled_payments', '*', { payment_schedule_id => $schedule->{id} })->hashes;
     is scalar @$scheduled_payments, 3, 'Has expected number of scheduled payments';
 
     # Verify payment status distribution for admin reports
@@ -215,7 +215,7 @@ subtest 'Admin dashboard payment schedule management' => sub {
     is $test_schedule->status, 'cancelled', 'Schedule is cancelled';
 
     # Verify pending payments were also cancelled
-    my $cancelled_payments = $db->select('registry.scheduled_payments', '*', { payment_schedule_id => $test_schedule->id })->hashes;
+    my $cancelled_payments = $db->select('scheduled_payments', '*', { payment_schedule_id => $test_schedule->id })->hashes;
     for my $payment (@$cancelled_payments) {
         is $payment->{status}, 'cancelled', 'Pending payment was cancelled';
     }
@@ -223,7 +223,7 @@ subtest 'Admin dashboard payment schedule management' => sub {
 
 subtest 'Admin dashboard reporting data' => sub {
     # Test data aggregation operations for admin reports
-    my $all_schedules = $db->select('registry.payment_schedules', '*')->hashes;
+    my $all_schedules = $db->select('payment_schedules', '*')->hashes;
     ok @$all_schedules >= 2, 'Multiple schedules exist for reporting';
 
     # Calculate totals (what admin dashboard would show)
@@ -242,7 +242,7 @@ subtest 'Admin dashboard reporting data' => sub {
     ok $cancelled_count > 0, 'Has cancelled schedules for reporting';
 
     # Test payment failure reporting
-    my $all_payments = $db->select('registry.scheduled_payments', '*')->hashes;
+    my $all_payments = $db->select('scheduled_payments', '*')->hashes;
     my $failed_payments = [grep { $_->{status} eq 'failed' } @$all_payments];
 
     ok @$failed_payments > 0, 'Has failed payments for admin attention';
@@ -254,7 +254,7 @@ subtest 'Admin dashboard reporting data' => sub {
 
 subtest 'Admin dashboard Stripe integration data' => sub {
     # Test Stripe subscription ID tracking for admin dashboard
-    my $stripe_schedules = $db->select('registry.payment_schedules', '*', { stripe_subscription_id => 'sub_admin_dashboard_test' })->hashes;
+    my $stripe_schedules = $db->select('payment_schedules', '*', { stripe_subscription_id => 'sub_admin_dashboard_test' })->hashes;
     ok @$stripe_schedules > 0, 'Can find schedules by Stripe subscription ID';
 
     my $schedule = $stripe_schedules->[0];

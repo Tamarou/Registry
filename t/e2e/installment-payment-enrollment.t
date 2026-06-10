@@ -125,13 +125,15 @@ subtest 'End-to-end scheduled payment management' => sub {
     ok $payment, 'Scheduled payment created';
     is $payment->status, 'pending', 'Payment starts as pending';
 
-    # Test status updates that would happen via webhooks
-    $db->update('registry.scheduled_payments',
+    # Test status updates that would happen via webhooks.
+    # Unqualified table name so search_path resolves to the tenant schema
+    # where the DAO created the row.
+    $db->update('scheduled_payments',
         { status => 'failed', failed_at => \'NOW()', failure_reason => 'card_declined' },
         { id => $payment->id }
     );
 
-    my $updated_payment = $db->select('registry.scheduled_payments', '*', { id => $payment->id })->hash;
+    my $updated_payment = $db->select('scheduled_payments', '*', { id => $payment->id })->hash;
     is $updated_payment->{status}, 'failed', 'Payment can be marked as failed';
     is $updated_payment->{failure_reason}, 'card_declined', 'Failure reason is stored';
 };
