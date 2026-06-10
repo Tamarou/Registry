@@ -40,14 +40,24 @@ sub new ($class, %args) {
 }
 
 # Returns the rate-limit key for a request context.
-# Uses authenticated user ID when available, otherwise falls back to IP.
+# Uses the TCP connection peer address ($c->tx->remote_address) as the key.
+#
+# Trust model: Mojolicious populates remote_address from X-Forwarded-For only
+# when reverse-proxy mode is enabled (MOJO_REVERSE_PROXY=1 or
+# $app->config->{hypnotoad}{proxy} = 1).  In that mode Mojolicious trusts the
+# first hop's XFF header because the connection peer is a known trusted proxy.
+# Reading the raw X-Forwarded-For header here instead would let any client
+# rotate the header to obtain a fresh counter on every request, defeating the
+# per-IP auth limit entirely.
+#
+# DEPLOYMENT NOTE: Registry runs behind Render's HTTP proxy.  MOJO_REVERSE_PROXY
+# must be set to 1 in the production environment so that remote_address resolves
+# to the real client IP rather than the proxy IP.  Without it every client will
+# share the proxy's address as the key, which would allow only a small number of
+# requests before the limit trips for all users simultaneously.  See render.yaml
+# and the app startup block for where to add this env var.
 sub _request_key ($class_or_self, $c) {
-    my $ip = $c->req->headers->header('X-Forwarded-For')
-          // $c->tx->remote_address
-          // '127.0.0.1';
-    # Take only the first IP in case of a list ("client, proxy1, proxy2")
-    $ip =~ s/,.*$//;
-    $ip =~ s/\s+//g;
+    my $ip = $c->tx->remote_address // '127.0.0.1';
     return $ip;
 }
 

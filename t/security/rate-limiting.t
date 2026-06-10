@@ -106,20 +106,31 @@ subtest '429 response body is well-formed' => sub {
       ->json_like('/error', qr/rate limit/i, 'Error message mentions rate limit');
 };
 
-subtest 'Different IPs have independent counters' => sub {
-    my $t = Test::Mojo->new('Registry');
+subtest 'Each app instance has an independent counter store' => sub {
+    # Rate-limit counters are stored per-instance (in-memory on each
+    # Registry/RateLimit object).  A fresh Test::Mojo->new('Registry') call
+    # creates a new app instance with an empty counter, so requests in the
+    # new instance are not affected by prior requests in a different instance.
+    #
+    # The per-peer-address isolation property (different clients have independent
+    # counters) is validated at the unit level in t/security/rate-limit-xff-spoof.t
+    # using controlled peer-address stubs, since Test::Mojo connections all share
+    # the same loopback peer address and cannot simulate separate clients at
+    # the integration layer.
 
-    my $ip_a = '10.0.0.5';
-    my $ip_b = '10.0.0.6';
+    my $t_a = Test::Mojo->new('Registry');
 
-    # Exhaust limit for ip_a
+    # Exhaust the general limit on instance_a
     for my $i (1..101) {
-        $t->get_ok('/health', { 'X-Forwarded-For' => $ip_a });
+        $t_a->get_ok('/health');
     }
+    $t_a->get_ok('/health')
+        ->status_is(429, 'instance_a is now rate-limited');
 
-    # ip_b should still be allowed (fresh counter)
-    $t->get_ok('/health', { 'X-Forwarded-For' => $ip_b })
-      ->status_isnt(429, 'Different IP not affected by other IP rate limit');
+    # A fresh instance starts with an empty counter store
+    my $t_b = Test::Mojo->new('Registry');
+    $t_b->get_ok('/health')
+        ->status_isnt(429, 'fresh app instance has an independent (empty) counter');
 };
 
 subtest 'Static asset paths are excluded from rate limiting' => sub {
