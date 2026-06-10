@@ -182,11 +182,19 @@ field $_stripe_client = undef;
                 payment_id       => $id,
             });
 
-            Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
-                user_id    => $user_id,
-                session_id => $session_id,
-                child_id   => $item->{child_id},
-            });
+            # Confirmation email is best-effort: a failure must not abort
+            # enrollment of remaining items. Enrollment creation above is
+            # the critical step; the email can be retried or re-sent later.
+            try {
+                Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
+                    user_id    => $user_id,
+                    session_id => $session_id,
+                    child_id   => $item->{child_id},
+                });
+            }
+            catch ($e) {
+                warn "finalize_enrollment: enrollment confirmation failed for session $session_id (payment $id): $e";
+            }
         }
     }
 
