@@ -7,13 +7,20 @@ package Registry::Middleware::RateLimit;
 
 # --- Configuration constants ---
 
-# Credential-sensitive route patterns (login, password reset) - tighter limit.
-# Only paths where brute-forcing credentials is a meaningful threat belong here.
-# Signup/registration flows require many sequential requests per legitimate user
-# and should use the general (higher) limit instead.
+# Credential-sensitive route patterns - tighter limit.
+# Only paths where brute-forcing credentials or issuing auth tokens is a
+# meaningful threat belong here.  Signup/registration flows require many
+# sequential requests per legitimate user and should use the general (higher)
+# limit instead.
+#
+# "magic/request" matches /auth/magic/request (the magic-link token-issuance
+# endpoint) precisely.  The _limit_for_path regex anchors on path segments so
+# it does NOT match /auth/magic/poll/ (which is already in @EXCLUDED_PREFIXES)
+# or other /auth/magic/... routes.
 our @AUTH_PATHS = qw(
     login
     password
+    magic/request
 );
 
 # Route prefixes that bypass rate limiting entirely
