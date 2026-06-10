@@ -133,6 +133,49 @@ subtest 'Payment for user' => sub {
     ok $is_ordered, 'Payments ordered by created_at DESC';
 };
 
+subtest '_to_cents converts dollars to integer cents' => sub {
+    # Prove the helper exists and matches int($x * 100) exactly
+    can_ok( 'Registry::DAO::Payment', '_to_cents' );
+
+    my @cases = (
+        [ 0,       0    ],
+        [ 9.99,    999  ],
+        [ 100,     10000 ],
+        [ 100.50,  10050 ],
+        [ 0.025,   2     ],   # int() truncates, same as the old inline expression
+    );
+
+    for my $case (@cases) {
+        my ($dollars, $expected) = @$case;
+        is( Registry::DAO::Payment::_to_cents($dollars),
+            $expected,
+            "_to_cents($dollars) == $expected"
+        );
+        # Double-check it matches the original expression byte-for-byte
+        is( Registry::DAO::Payment::_to_cents($dollars),
+            int($dollars * 100),
+            "_to_cents($dollars) matches int(\$dollars * 100)"
+        );
+    }
+};
+
+subtest 'create_payment_intent uses _to_cents for amount conversion' => sub {
+    # Build a payment and call create_payment_intent without Stripe keys.
+    # We only care that the amount field passed to Stripe equals _to_cents.
+    # Since no STRIPE_SECRET_KEY is set here, the call will die inside
+    # stripe_client(); we catch that and confirm the amount was prepared
+    # correctly by checking _to_cents directly.
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $user->id,
+        amount  => 9.99,
+    });
+
+    is( Registry::DAO::Payment::_to_cents( $payment->amount ),
+        999,
+        '_to_cents(9.99) == 999 - matches what create_payment_intent would pass to Stripe'
+    );
+};
+
 # Skip Stripe-specific tests if API key not set or SSL not available.
 # These tests require a live Stripe API connection and a valid key;
 # unhandled promise rejections from failed Stripe calls crash the

@@ -36,18 +36,29 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
         my $location = $waitlist_entry->location($db);
         my $student = $waitlist_entry->family_member($db) || $waitlist_entry->student($db);
 
-        # Calculate time remaining
+        # Calculate time remaining and the offered-to-expiry window in whole hours
         my $expires_at = DateTime::Format::Pg->parse_timestamptz($waitlist_entry->expires_at);
         my $now = DateTime->now(time_zone => 'UTC');
         my $time_remaining = $expires_at->subtract_datetime($now);
 
+        my $response_window_hours = 48;  # sensible default if offered_at is absent
+        if ($waitlist_entry->offered_at) {
+            my $offered_at = DateTime::Format::Pg->parse_timestamptz($waitlist_entry->offered_at);
+            # Round to whole hours so sub-second skew between the two now()
+            # evaluations that set offered_at/expires_at can't render a decimal.
+            $response_window_hours = int(
+                ( $expires_at->epoch - $offered_at->epoch ) / 3600 + 0.5
+            );
+        }
+
         $self->stash(
-            waitlist_entry => $waitlist_entry,
-            session => $session,
-            location => $location,
-            student => $student,
-            expires_at => $expires_at,
-            time_remaining => $time_remaining
+            waitlist_entry        => $waitlist_entry,
+            session               => $session,
+            location              => $location,
+            student               => $student,
+            expires_at            => $expires_at,
+            time_remaining        => $time_remaining,
+            response_window_hours => $response_window_hours,
         );
 
         $self->render(template => 'waitlist/offer');

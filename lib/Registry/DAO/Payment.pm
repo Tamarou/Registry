@@ -35,7 +35,10 @@ field $_stripe_client = undef;
     }
     
     sub table { 'registry.payments' }
-    
+
+    # Convert a dollar amount to integer cents for Stripe API calls.
+    sub _to_cents ($dollars) { int($dollars * 100) }
+
     sub create ($class, $db, $data) {
         # Handle JSON encoding for metadata
         if (exists $data->{metadata} && ref $data->{metadata}) {
@@ -85,7 +88,7 @@ field $_stripe_client = undef;
         my $intent;
         try {
             $intent = $self->stripe_client->create_payment_intent({
-                amount => int($amount * 100), # Convert to cents
+                amount => _to_cents($amount), # Convert to cents
                 currency => $currency,
                 description => $description,
                 receipt_email => $receipt_email,
@@ -228,7 +231,7 @@ field $_stripe_client = undef;
         try {
             $refund = $self->stripe_client->create_refund({
                 payment_intent => $stripe_payment_intent_id,
-                amount => int($refund_amount * 100),
+                amount => _to_cents($refund_amount),
                 reason => $reason,
             });
         }
@@ -322,7 +325,7 @@ field $_stripe_client = undef;
         my $receipt_email = $args->{receipt_email};
         
         return $self->stripe_client->create_payment_intent_async({
-            amount => int($amount * 100), # Convert to cents
+            amount => _to_cents($amount), # Convert to cents
             currency => $currency,
             description => $description,
             receipt_email => $receipt_email,
@@ -386,7 +389,7 @@ field $_stripe_client = undef;
         
         return $self->stripe_client->create_refund_async({
             payment_intent => $stripe_payment_intent_id,
-            amount => int($refund_amount * 100),
+            amount => _to_cents($refund_amount),
             reason => $reason,
         })->then(sub ($refund) {
             # Update payment status
