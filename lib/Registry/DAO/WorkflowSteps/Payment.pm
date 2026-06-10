@@ -107,6 +107,7 @@ method create_payment ($db, $run, $form_data) {
     # as Tenant::slug_exists).
     my $tenant_slug = $run->data->{__tenant_slug};
     if ($payment_info->{total} > 0) {
+        # tenants has no jsonb columns; plain ->hash is sufficient (no ->expand).
         my $row = $tenant_slug
             ? $db->query('SELECT * FROM registry.tenants WHERE slug = ?', $tenant_slug)->hash
             : undef;
