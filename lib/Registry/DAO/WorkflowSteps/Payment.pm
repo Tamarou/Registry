@@ -9,6 +9,7 @@ use Registry::DAO::Event;  # Contains Session class
 use Registry::DAO::User;
 use Registry::DAO::Location;
 use Registry::DAO::Notification;
+use Registry::DAO::Tenant;
 use Mojo::JSON qw(encode_json);
 
 method process ($db, $form_data, $run = undef) {
@@ -94,7 +95,32 @@ method create_payment ($db, $run, $form_data) {
     };
     
     my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
-    
+
+    # Paid enrollment requires a ready Stripe Connect account: tuition must
+    # settle into the tenant's own account (Registry is not the merchant of
+    # record). Free enrollment has no charge and is exempt.
+    #
+    # Tenant rows are platform data living ONLY in registry.tenants. $db here
+    # is tenant-scoped, and clone_schema gives every tenant schema an empty
+    # shadow `tenants` table, so an unqualified Tenant->find would always
+    # return undef -- the lookup must be registry-qualified (same convention
+    # as Tenant::slug_exists).
+    my $tenant_slug = $run->data->{__tenant_slug};
+    if ($payment_info->{total} > 0) {
+        my $row = $tenant_slug
+            ? $db->query('SELECT * FROM registry.tenants WHERE slug = ?', $tenant_slug)->hash
+            : undef;
+        my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
+        unless ($tenant && $tenant->stripe_connect_ready) {
+            return {
+                next_step => $self->id,
+                errors    => ['Online payment is not yet available for this organization. '
+                            . 'Please contact the program organizer to complete enrollment.'],
+                data      => $self->prepare_payment_data($db, $run),
+            };
+        }
+    }
+
     # Create payment record
     my $payment = Registry::DAO::Payment->create($db, {
         user_id => $user_id,
