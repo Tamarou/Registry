@@ -8,6 +8,8 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 use Registry::Service::Stripe;
 use Mojo::JSON qw(encode_json decode_json);
 
+use constant REVENUE_SHARE_PERCENT => 2.5;
+
 field $id :param :reader = undef;
 field $user_id :param :reader = undef;
 field $amount :param :reader = 0;
@@ -39,6 +41,12 @@ field $_stripe_client = undef;
     # Convert a dollar amount to integer cents for Stripe API calls.
     sub _to_cents ($dollars) { int($dollars * 100) }
 
+    # Platform revenue share, collected at charge time as a Stripe application
+    # fee on the destination charge. Integer cents, rounded half-up.
+    sub application_fee_cents ($amount_cents) {
+        return int($amount_cents * REVENUE_SHARE_PERCENT / 100 + 0.5);
+    }
+
     # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
     # Stripe metadata values must be plain strings, so refs are dropped; the DB
     # metadata column keeps the full structure. Sorted for deterministic param
@@ -54,6 +62,36 @@ field $_stripe_client = undef;
                 : () ),
         );
         return map { ( "metadata[$_]" => $m{$_} ) } sort keys %m;
+    }
+
+    # Derive Stripe Connect destination-charge params from a tenant slug and
+    # amount. Tenant payments are destination charges: tuition settles into the
+    # tenant's connected account, the platform keeps the application fee, and
+    # on_behalf_of makes the tenant the settlement merchant (bearer of Stripe's
+    # processing fee). Derived from the payment's own metadata so every intent
+    # for this payment -- including retries -- routes the same way.
+    # Platform/registry payments (no tenant_slug) are unchanged. The Task 5 gate
+    # guarantees readiness before any tenant intent is created, so routing on
+    # account presence (not re-checking readiness booleans) keeps this method
+    # total. tenants has no jsonb columns; plain ->hash is sufficient.
+    sub _connect_params ($db, $metadata, $amount) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $meta = ref $metadata eq 'HASH' ? $metadata : {};
+        my $slug = $meta->{tenant_slug};
+        return unless $slug && $slug ne 'registry';
+
+        my $row = $db->query(
+            'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
+            $slug
+        )->hash;
+        my $acct = $row && $row->{stripe_connect_account_id};
+        return unless $acct;
+
+        return (
+            'transfer_data[destination]' => $acct,
+            on_behalf_of                 => $acct,
+            application_fee_amount       => application_fee_cents(_to_cents($amount)),
+        );
     }
 
     sub create ($class, $db, $data) {
@@ -116,6 +154,7 @@ field $_stripe_client = undef;
                 description   => $description,
                 receipt_email => $receipt_email,
                 _stripe_metadata_params($user_id, $self->id, $metadata),
+                _connect_params($db, $metadata, $amount),
             });
         }
         catch ($e) {
@@ -357,6 +396,7 @@ field $_stripe_client = undef;
             description   => $description,
             receipt_email => $receipt_email,
             _stripe_metadata_params($user_id, $self->id, $metadata),
+            _connect_params($db, $metadata, $amount),
         })->then(sub ($intent) {
             # Update payment record with Stripe intent ID
             $stripe_payment_intent_id = $intent->{id};

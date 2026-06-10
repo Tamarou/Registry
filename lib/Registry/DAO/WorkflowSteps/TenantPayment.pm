@@ -17,8 +17,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Carp qw(croak);
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
+    use Registry::DAO::Payment ();
 
-    use constant REVENUE_SHARE_PERCENT => 2.5;
+    use constant REVENUE_SHARE_PERCENT => Registry::DAO::Payment::REVENUE_SHARE_PERCENT;
 
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
