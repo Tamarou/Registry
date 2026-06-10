@@ -28,7 +28,12 @@ enrollment.
 
 Once both readiness flags are true in Stripe, record the account ID in the
 Registry database. Replace `acct_XXXX` with SACP's actual account ID and
-`<sacp-slug>` with the value in `registry.tenants.slug` for SACP.
+`<sacp-slug>` with the value in `registry.tenants.slug` for SACP. Find the
+slug first if unsure:
+
+```sql
+SELECT slug, name FROM registry.tenants WHERE name ILIKE '%sacp%';
+```
 
 ```sql
 UPDATE registry.tenants
@@ -90,8 +95,8 @@ per-tenant payment tables and will abort loudly on two pre-flight conditions:
 rows in `registry.payments` (pre-alpha). Confirm actual counts with perigrin by
 querying the production DB against the spec risk table before deploying.
 
-```bash
-# Query before deploy — should return 0 or a small number to review
+```sql
+-- Query before deploy -- should return 0 or a small number to review
 SELECT metadata->>'tenant_slug' AS tenant, COUNT(*)
 FROM registry.payments
 WHERE metadata->>'tenant_slug' IS NOT NULL
@@ -113,7 +118,8 @@ The deploy applies `tenant-stripe-connect` (adds Connect columns to
 into every existing tenant schema, repoints `enrollments.payment_id` FKs
 tenant-locally, and moves any registry-resident tenant payment rows).
 
-**Post-deploy smoke check:**
+**Post-deploy smoke check** (`<hostname>` is the tenant's domain;
+`$DATABASE_URL` must already be exported in the shell):
 
 ```bash
 # Health endpoint must return green
@@ -130,7 +136,16 @@ Then run one test-mode paid enrollment on a test tenant (see step 5).
 ## 5. Live validation (test mode before going live)
 
 Use Stripe **test** keys and a Stripe test connected account for this step.
-Do not use live keys.
+Do not use live keys. Set the environment for the app under test:
+
+```bash
+export STRIPE_SECRET_KEY=sk_test_...      # test secret key
+export STRIPE_WEBHOOK_SECRET=whsec_...    # the test endpoint's signing secret
+```
+
+Note: the application refuses an `sk_live_` key unless `MOJO_MODE=production`
+(a safety guard in `Registry::DAO::Payment`), so a test run with a live key
+aborts by design.
 
 1. Configure a test tenant with `stripe_connect_account_id` set to a Stripe
    test connected account ID (e.g. `acct_test_XXXX`).

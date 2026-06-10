@@ -224,13 +224,16 @@ sub _get_usage_data ($db, $relationship, $period) {
 
     my $usage_data = {};
 
-    # Tenant enrollment payments now live in per-tenant schemas;
-    # registry.payments holds only platform-scoped rows, so this
-    # aggregation no longer sees tenant revenue. That is deliberate for
-    # now: the 2.5% share is collected at charge time via the Stripe
-    # application fee on destination charges, so computing it here as
-    # well would double-collect. Redesign as reporting driven from
-    # Stripe application-fee records is tracked in the Connect epic.
+    # This aggregation path is interim and non-functional: tenant
+    # enrollment payments live in per-tenant schemas (registry.payments
+    # holds only platform-scoped rows), and the tenant_id predicate in the
+    # queries below does not exist on the payments table at all -- the
+    # branch would raise if executed and is not covered by tests. It is
+    # deliberately left unfixed: the 2.5% platform share is already
+    # collected at charge time via the Stripe application fee on
+    # destination charges, so recomputing it here would double-collect.
+    # Redesign as reporting driven from Stripe application-fee records is
+    # tracked in the Connect epic (issue #263).
 
     # Get customer payments if needed
     if ($config->{applies_to} && $config->{applies_to} eq 'customer_payments') {
