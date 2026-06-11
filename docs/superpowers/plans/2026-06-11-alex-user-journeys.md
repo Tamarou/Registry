@@ -150,7 +150,7 @@ post_signed_webhook($t, {
 # for the seeded 2% plan, mirroring the orphaned default-relationships migration.
 my $plan_id = $db->query(q{
     SELECT id FROM registry.pricing_plans
-    WHERE pricing_model_type = 'percentage' AND target_type = 'tenant' LIMIT 1
+    WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant' LIMIT 1
 })->hash->{id};
 $db->query(q{
     INSERT INTO registry.pricing_relationships (provider_id, consumer_id, pricing_plan_id, status)
@@ -158,7 +158,7 @@ $db->query(q{
 }, $consumer_id, $plan_id);
 ```
 
-  (Verify the exact column list and whether `consumer_id` may be the platform UUID/NULL for an offer-to-all relationship by reading the orphaned migration and `PricingPlanSelection::prepare_pricing_data` — adapt the INSERT to what the listing query actually matches.) Then walk `tenant-signup` from the start over HTTP with **minimal form data** (same walk shape as Leg 1, registry-context dao pinned via the helper):
+  (Verify the exact column list against the orphaned migration and `PricingPlanSelection::prepare_pricing_data`. `consumer_id` is a NOT NULL FK to `registry.users(id)` — the test dump ships a `system` user whose id works directly; the listing query never filters on consumer_id.) Then walk `tenant-signup` from the start over HTTP with **minimal form data** (same walk shape as Leg 1, registry-context dao pinned via the helper):
   - POST `/tenant-signup` → profile: submit minimal data but ALWAYS include `name` (`_provision_tenant` falls back to a generic 'Organization' tenant name without it, which would muddy the later assertions); RECORD what each step requires vs accepts empty — this feeds the friction inventory → users (minimal admin fields, `admin_user_type => 'admin'` to avoid the invite-warn) → pricing: GET the page, assert the seeded plan renders, select it with `selected_plan_id => $plan_id` (radio `name="selected_plan_id"`, `templates/tenant-signup/pricing.html.ep:99`; consumed via `exists $form_data->{selected_plan_id}` in `PricingPlanSelection::process`) → review → payment: POST `collect_payment_method => 1, setup_intent_id => 'seti_test_journey'` → complete.
   - **Assertions:**
     1. Run data carries `selected_pricing_plan`; the provisioned tenant row has `stripe_subscription_id` (`sub_test_…`), `billing_status` = `trial`, `trial_ends_at` set.
