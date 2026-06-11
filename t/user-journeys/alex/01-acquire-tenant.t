@@ -1,0 +1,262 @@
+#!/usr/bin/env perl
+# ABOUTME: Alex (platform owner) journey: the signup funnel produces a working,
+# ABOUTME: billable tenant.  Stage 1 walks the full funnel over HTTP with realistic data.
+
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+
+use 5.42.0;
+use utf8;
+use warnings;
+use lib qw(lib t/lib);
+use experimental qw(defer);
+use Test::More import => [qw( done_testing diag is like ok subtest BAIL_OUT )];
+defer { done_testing };
+
+use Test::Registry::Mojo;
+use Test::Registry::DB;
+
+use Registry::DAO;
+use Registry::DAO::Workflow;
+use Registry::DAO::WorkflowRun;
+
+# ---------------------------------------------------------------------------
+# Database setup
+# ---------------------------------------------------------------------------
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;    # registry-schema DAO
+my $db      = $dao->db;
+$ENV{DB_URL} = $test_db->uri;
+
+# ---------------------------------------------------------------------------
+# Import the tenant-signup workflow into the registry schema.
+# ---------------------------------------------------------------------------
+$dao->import_workflows(['workflows/tenant-signup.yml']);
+
+my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
+ok $signup_wf, 'tenant-signup workflow present in registry schema';
+
+# ---------------------------------------------------------------------------
+# Fixture: seed the platform pricing relationship.
+#
+# Fresh test databases have ZERO pricing relationships (issue #268):
+# sql/deploy/create-default-pricing-relationships.sql is orphaned from
+# sqitch.plan, so PricingPlanSelection::prepare_pricing_data finds no plans,
+# renders no radio buttons, and silently skips the pricing step without any
+# visible error.  Without seeding here, the leg would walk right past pricing
+# without ever selecting a plan, leaving the assertions in this file vacuous.
+#
+# The INSERT mirrors the orphaned migration (sql/deploy/create-default-
+# pricing-relationships.sql:63-80) with one difference: consumer_id uses the
+# 'system' user that ships in the test dump instead of a dynamically-created
+# platform_admin.  The listing query in PricingPlanSelection never filters on
+# consumer_id, so any valid user id satisfies the NOT NULL FK constraint.
+# ---------------------------------------------------------------------------
+my $plan_row = $db->query(q{
+    SELECT id FROM registry.pricing_plans
+    WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant' LIMIT 1
+})->hash;
+ok $plan_row, 'seeded 2% revenue-share plan found in registry.pricing_plans'
+    or BAIL_OUT('No tenant-scoped percentage plan in DB -- cannot walk pricing step');
+
+my $plan_id = $plan_row->{id};
+
+# consumer_id is a NOT NULL FK to registry.users(id); the test dump ships a
+# 'system' user whose id satisfies the constraint.  The pricing query never
+# filters on consumer_id, so no behavioural difference.
+my $system_user_row = $db->query(
+    q{SELECT id FROM registry.users WHERE username = 'system' LIMIT 1}
+)->hash;
+ok $system_user_row, 'system user exists in test dump'
+    or BAIL_OUT('system user missing -- cannot satisfy consumer_id FK');
+
+my $system_user_id = $system_user_row->{id};
+
+$db->query(q{
+    INSERT INTO registry.pricing_relationships
+        (provider_id, consumer_id, pricing_plan_id, status, metadata)
+    VALUES ('00000000-0000-0000-0000-000000000000', ?, ?, 'active',
+            '{"plan_type":"tenant_subscription","created_by":"test_fixture"}'::jsonb)
+}, $system_user_id, $plan_id);
+
+# Verify the seed landed so a misconfigured DB fails loudly here, not later.
+my $rel_count = $db->query(q{
+    SELECT count(*) AS n FROM registry.pricing_relationships
+    WHERE provider_id = '00000000-0000-0000-0000-000000000000'
+      AND pricing_plan_id = ?
+}, $plan_id)->hash->{n};
+is $rel_count, 1, 'exactly one platform pricing relationship seeded';
+
+# ---------------------------------------------------------------------------
+# App setup: pin the app dao to the registry-context DAO so the workflow
+# controller resolves the tenant-signup workflow correctly.  (Matches the
+# data-flow test's $t->app->helper(dao => sub { $db }) pattern.)
+# ---------------------------------------------------------------------------
+my $t = Test::Registry::Mojo->new('Registry');
+$t->app->helper(dao => sub { $dao });
+
+# ---------------------------------------------------------------------------
+# Walk the tenant-signup funnel with REALISTIC data (Portland-Art-Collective-
+# style from t/controller/tenant-signup-data-flow.t), through the full path:
+#   landing -> profile -> users -> pricing -> review -> payment -> complete
+#
+# Stage 1 asserts HTTP-level health only: each POST 302s to the expected next
+# step, each GET 200s, and the complete page renders.
+#
+# Friction inventory (inputs to per-field discussion in Task 5 issue):
+#   landing     — no fields; POST with empty body advances.  Required: none.
+#   profile     — 'name' consumed downstream by _provision_tenant (falls back
+#                 to 'Organization' without it); 'description' is accepted
+#                 empty but displayed on review; 'billing_email' displayed on
+#                 review if non-empty.  Realistic data tests all three.
+#   users       — 'admin_name', 'admin_email', 'admin_username' accumulated in
+#                 run data and rendered on review; 'admin_user_type' must be
+#                 'admin' to avoid the invite-pending warn() path in
+#                 _provision_tenant (pristine-output hazard noted in spec).
+#                 Team kept admin-only here to preserve pristine output.
+#   pricing     — 'selected_plan_id' required (must be a valid UUID for an
+#                 active platform relationship; absent silently skips).  The
+#                 seeded plan renders and is selected explicitly.
+#   review      — 'terms_accepted' required by the controller (Workflows.pm)
+#                 BEFORE calling step->process; the step itself accepts empty
+#                 body but the controller gate refuses without it.
+#   payment     — 'collect_payment_method' + 'setup_intent_id' (seti_test...)
+#                 trigger the test-mode provision path in TenantPayment.pm:43-46.
+#                 The seti_test branch wins on dispatch order before the no-keys
+#                 branch, so Stripe env keys are irrelevant to this POST.
+# ---------------------------------------------------------------------------
+
+# Realistic identity: Portland-Art-Collective-style, $$-suffixed for uniqueness.
+my $org_name     = "Cascadia Maker Camp $$";
+my $admin_name   = "Jordan Cascadia $$";
+my $admin_email  = "jordan_$$\@cascadiamakers.example";
+my $admin_user   = "jordan_$$";
+my $billing_email = "billing_$$\@cascadiamakers.example";
+my $description  = 'Maker education for youth and adults in the Pacific Northwest';
+
+# -- Step: landing (starts the run) ----------------------------------------
+# POST to the tenant-signup start URL.  No form fields required.
+# Expected: 302 -> /tenant-signup/<run-id>/profile
+$t->post_ok('/tenant-signup')
+  ->status_is(302)
+  ->header_like(Location => qr{/tenant-signup/[^/]+/profile$},
+                'landing POST redirects to profile step');
+
+my $profile_url = $t->tx->res->headers->location;
+
+# GET before POST (establishes session / populates CSRF token if any).
+$t->get_ok($profile_url)->status_is(200);
+
+# -- Step: profile ----------------------------------------------------------
+# Realistic org profile data.  'name' is the only field _provision_tenant
+# reads from this step; 'description' and 'billing_email' are captured in run
+# data and displayed on the review page (content_like assertions below).
+# Expected: 302 -> /tenant-signup/<run-id>/users
+$t->post_ok($profile_url => form => {
+    name          => $org_name,
+    description   => $description,
+    billing_email => $billing_email,
+})->status_is(302)
+  ->header_like(Location => qr{/tenant-signup/[^/]+/users$},
+                'profile POST redirects to users step');
+
+my $users_url = $t->tx->res->headers->location;
+
+# GET before POST.
+$t->get_ok($users_url)->status_is(200);
+
+# -- Step: users ------------------------------------------------------------
+# Realistic admin-only team.  'admin_user_type => admin' avoids the
+# invite-pending warn() path in _provision_tenant (pristine output).
+# Full fields (admin_name/email/username) are rendered on the review page.
+# Expected: 302 -> /tenant-signup/<run-id>/pricing
+$t->post_ok($users_url => form => {
+    admin_name      => $admin_name,
+    admin_email     => $admin_email,
+    admin_username  => $admin_user,
+    admin_user_type => 'admin',
+})->status_is(302)
+  ->header_like(Location => qr{/tenant-signup/[^/]+/pricing$},
+                'users POST redirects to pricing step');
+
+my $pricing_url = $t->tx->res->headers->location;
+
+# -- Step: pricing (GET) -- assert seeded plan renders ---------------------
+# This GET doubles as the #268 guard: if the seeded relationship is absent,
+# prepare_pricing_data returns an empty list, the template renders no radio
+# buttons, and the assertion below catches that silently-broken path.
+my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
+
+like $pricing_page, qr/selected_plan_id/,
+    'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
+like $pricing_page, qr/Registry Revenue Share/,
+    'pricing page shows the seeded revenue-share plan name';
+
+# -- Step: pricing (POST) -- select the seeded plan -----------------------
+# 'selected_plan_id' is consumed via exists $form_data->{selected_plan_id}
+# in PricingPlanSelection::process.
+# Expected: 302 -> /tenant-signup/<run-id>/review
+$t->post_ok($pricing_url => form => {
+    selected_plan_id => $plan_id,
+})->status_is(302)
+  ->header_like(Location => qr{/tenant-signup/[^/]+/review$},
+                'pricing POST redirects to review step');
+
+my $review_url = $t->tx->res->headers->location;
+
+# -- Step: review (GET) -- verify accumulated data renders ----------------
+# The TenantSignupReview step spreads profile/team into the stash.
+# The template reads stash('profile') and stash('team') directly.
+# Assert that all four realistic-data fields from the profile and users steps
+# are displayed on the review page (cribbed from tenant-signup-data-flow.t).
+$t->get_ok($review_url)
+  ->status_is(200)
+  ->content_like(qr/\Q$org_name\E/,
+      'review page shows organization name from profile step')
+  ->content_like(qr/\Q$billing_email\E/,
+      'review page shows billing email from profile step')
+  ->content_like(qr/\Q$admin_name\E/,
+      'review page shows admin name from users step')
+  ->content_like(qr/\Q$admin_email\E/,
+      'review page shows admin email from users step')
+  ->content_like(qr/\Q$admin_user\E/,
+      'review page shows admin username from users step');
+
+# -- Step: review (POST) -- accept terms ----------------------------------
+# The controller validates terms_accepted before calling step->process.
+# No other field is required at this step; all accumulation happened earlier.
+# Expected: 302 -> /tenant-signup/<run-id>/payment
+$t->post_ok($review_url => form => {
+    terms_accepted => 1,
+})->status_is(302)
+  ->header_like(Location => qr{/tenant-signup/[^/]+/payment$},
+                'review POST redirects to payment step');
+
+my $payment_url = $t->tx->res->headers->location;
+
+# -- Step: payment (GET) --------------------------------------------------
+$t->get_ok($payment_url)->status_is(200);
+
+# -- Step: payment (POST via seti_test seam) ------------------------------
+# POST collect_payment_method=1 + setup_intent_id=seti_test_... dispatches
+# to handle_setup_completion -> _provision_tenant (TenantPayment.pm:43-46,
+# 283-294).  The seti_test branch wins on dispatch order before the no-keys
+# branch, so Stripe env keys are irrelevant to this POST.
+# Expected: 302 -> /tenant-signup/<run-id>/complete
+$t->post_ok($payment_url => form => {
+    collect_payment_method => 1,
+    setup_intent_id        => 'seti_test_acquire_' . $$,
+})->status_is(302)
+  ->header_like(Location => qr{/tenant-signup/[^/]+/complete$},
+                'payment POST redirects to complete step');
+
+my $complete_url = $t->tx->res->headers->location;
+
+# -- Step: complete -------------------------------------------------------
+# The complete step (RegisterTenant) renders the success page.
+$t->get_ok($complete_url)->status_is(200);
+
+# ---------------------------------------------------------------------------
+# Stage 2 (working-tenant assertions) follows in a later commit.
+# ---------------------------------------------------------------------------
+
+$test_db->cleanup_test_database;
