@@ -53,8 +53,10 @@ stays pristine. Outcome assertions, in Alex's terms:
 3. The new tenant's storefront responds: GET `/` with the tenant's host header renders the
    tenant-storefront workflow page (200, tenant name visible).
 
-This is the first end-to-end HTTP walk of the funnel; the workflow steps are currently
-only unit-tested. Failures here are findings (fix or file), never assertions to weaken.
+This is the first end-to-end HTTP walk of the funnel; the payment→complete steps are
+currently only unit-tested (landing→review has HTTP coverage in
+`t/controller/tenant-signup-data-flow.t`). Failures here are findings (fix or file),
+never assertions to weaken.
 
 ### Leg 2 — `t/user-journeys/alex/02-activate-and-collect.t`
 *Outcome: activating a tenant's Stripe Connect account unlocks paid enrollment, and the
@@ -73,8 +75,8 @@ readiness-gate test's fixture approach), Stripe intercepted at the
    The webhook is delivered **over HTTP with a real signed payload** (set
    `STRIPE_WEBHOOK_SECRET`, compute the `stripe-signature` HMAC the way
    `_verify_stripe_signature` expects) — consistent with the suite's over-HTTP ethos,
-   rather than the direct `_process_account_updated` call idiom used in the integration
-   test.
+   rather than the direct `_process_account_updated` call idiom used in
+   `t/controller/webhook-tenant-payment-finalization.t`.
 3. **Collect:** the parent retries over HTTP → enrollment proceeds; the captured
    PaymentIntent params carry `transfer_data[destination]`, `on_behalf_of`, and
    `application_fee_amount == Registry::DAO::Payment::application_fee_cents(_to_cents($plan_amount))`;
