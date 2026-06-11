@@ -68,6 +68,19 @@ package Test::Registry::Helpers {
         require Mojo::Home;
         require YAML::XS;
         require Registry::DAO;
+        require Registry::DAO::OutcomeDefinition;
+
+        # Import outcome definitions BEFORE workflows.  copy_workflow inserts
+        # workflow_steps rows with outcome_definition_id FK values that reference
+        # the registry schema's outcome_definitions table.  If no definitions
+        # exist when from_yaml runs the FK insert fails.  This mirrors the
+        # production boot order in Registry.pm before_server_start:
+        # import_schemas, then import_workflows.
+        my @schema_files =
+          Mojo::Home->new->child('schemas')->list->grep(qr/\.json$/)->each;
+        Registry::DAO::OutcomeDefinition->import_from_file($dao, $_)
+          for @schema_files;
+
         my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
         for my $file (@files) {
             next if YAML::XS::Load($file->slurp)->{draft};
