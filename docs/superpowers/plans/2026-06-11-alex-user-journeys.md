@@ -25,7 +25,8 @@
   - `t/dao/payment-step-readiness-gate.t` — tenant + paid-session fixtures and the gate's expected error text.
   - `t/integration/tenant-paid-enrollment.t` — Stripe seam interception (`local *Registry::Service::Stripe::create_payment_intent`), fee derivation (`application_fee_cents(_to_cents($PLAN_AMOUNT))`), synthesizing `payment_intent.succeeded` from captured params.
   - `t/job/process-waitlist-tenant.t` + `t/job/waitlist-expiration-tenant.t` — MockLogger/MockJob/MockApp shims, tenant provisioning, sweep assertions.
-- The `TenantPayment` payment step's test seam (production code, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm:43-46,283-294`): POST `collect_payment_method => 1, setup_intent_id => 'seti_test_...'` → `handle_setup_completion` → `_provision_tenant` → `next_step => 'complete'`. Set `STRIPE_PUBLISHABLE_KEY`/`STRIPE_SECRET_KEY` to test dummies so the no-keys branch is NOT taken (we want the seti_test branch).
+- The `TenantPayment` payment step's test seam (production code, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm:43-46,283-294`): POST `collect_payment_method => 1, setup_intent_id => 'seti_test_...'` → `handle_setup_completion` → `_provision_tenant` → `next_step => 'complete'`. The seti_test branch wins on **dispatch order** (it is checked before the no-keys branch), so Stripe env keys are irrelevant to this POST — set dummy keys only where a leg exercises the Stripe service path (Leg 2's `create_payment_intent` interception).
+- **Fresh DBs have ZERO platform pricing relationships** (issue #268): `create-default-pricing-relationships.sql` is orphaned from `sqitch.plan`, so `PricingPlanSelection` finds no plans, renders no radios, and silently skips. Any leg that needs plan selection must first seed a platform relationship fixture (Task 3 shows the INSERT).
 - Webhook signing (`lib/Registry/Controller/Webhooks.pm::_verify_stripe_signature`): header `stripe-signature: t=<epoch>,v1=<hmac>` where `<hmac> = hmac_sha256_hex("<epoch>.<raw_json_body>", $ENV{STRIPE_WEBHOOK_SECRET})`; timestamp within 300s.
 - `ag` returns false negatives under `.claude/worktrees/` — verify any negative search result with `grep -r`.
 - Journey failure philosophy (spec): a red assertion against a real flow is a FINDING — fix small/obvious bugs in-branch (own commit), file issues otherwise. Never weaken an assertion; TODO only with an issue reference.
@@ -89,7 +90,7 @@ $ENV{DB_URL} = $test_db->uri;
 #    $t->get_ok('/health')->status_is(200)->json_is('/status','ok')->json_is('/db','ok');
 ```
 
-The bad-row beat needs a real `perform()` run (not just interception) so the try/catch isolation is exercised; capture the error log line (MockLogger collects messages) and assert it mentions the bad slug — pristine output, the error goes to the captured logger, not STDERR.
+The bad-row beat needs a real `perform()` run (not just interception) so the try/catch isolation is exercised. The `t/job` shims are no-op stubs — EXTEND them here: `MockLogger->error` pushes to an array, `MockJob` records whether `finish` or `fail` was called. Assert the captured error mentions the bad slug (`like`) and that `finish` (not `fail`) fired — pristine output, errors land in the captured logger, never STDERR. Add `like` to the Test::More import list and end with `$test_db->cleanup_test_database`.
 - [ ] **Step 2: Run it.** `carton exec prove -lv t/user-journeys/alex/04-platform-health.t`. Expected: PASS (these behaviors all exist). Any red = finding (investigate before touching the test).
 - [ ] **Step 3: Run the sibling suites** to prove no interference: `carton exec prove -lr t/job/`.
 - [ ] **Step 4: Commit** (`Add Alex journey leg 4: platform health automation`).
@@ -141,8 +142,24 @@ post_signed_webhook($t, {
 
 **Files:** Create `t/user-journeys/alex/03-platform-billing.t`
 
-- [ ] **Step 1: Write the test.** Walk `tenant-signup` from the start over HTTP with **minimal form data** (the data-flow test proves minimal input is accepted; same walk shape as Leg 1, registry-context dao pinned via the helper):
-  - POST `/tenant-signup` → profile (`name` only if accepted; otherwise the minimal set the step actually requires — RECORD what each step requires vs accepts empty, this feeds the friction inventory) → users (minimal admin fields, `admin_user_type => 'admin'` to avoid the invite-warn) → pricing: GET the page, **select the seeded plan** (read the form; submit `plan_id`/equivalent — inspect `templates/tenant-signup/pricing.html.ep` and `PricingPlanSelection::process` for the exact field name) → review → payment: POST `collect_payment_method => 1, setup_intent_id => 'seti_test_journey'` (with dummy Stripe env keys set so the seti_test branch runs) → complete.
+- [ ] **Step 1: Write the test.** FIRST seed the platform pricing relationship that signup needs (fresh DBs have none — issue #268; crib the shape from the orphaned `sql/deploy/create-default-pricing-relationships.sql:64-83`):
+
+```perl
+# Fresh deploys carry no platform pricing relationships (issue #268), so the
+# pricing step would render no plans and silently skip. Seed the relationship
+# for the seeded 2% plan, mirroring the orphaned default-relationships migration.
+my $plan_id = $db->query(q{
+    SELECT id FROM registry.pricing_plans
+    WHERE pricing_model_type = 'percentage' AND target_type = 'tenant' LIMIT 1
+})->hash->{id};
+$db->query(q{
+    INSERT INTO registry.pricing_relationships (provider_id, consumer_id, pricing_plan_id, status)
+    VALUES ('00000000-0000-0000-0000-000000000000', ?, ?, 'active')
+}, $consumer_id, $plan_id);
+```
+
+  (Verify the exact column list and whether `consumer_id` may be the platform UUID/NULL for an offer-to-all relationship by reading the orphaned migration and `PricingPlanSelection::prepare_pricing_data` — adapt the INSERT to what the listing query actually matches.) Then walk `tenant-signup` from the start over HTTP with **minimal form data** (same walk shape as Leg 1, registry-context dao pinned via the helper):
+  - POST `/tenant-signup` → profile: submit minimal data but ALWAYS include `name` (`_provision_tenant` falls back to a generic 'Organization' tenant name without it, which would muddy the later assertions); RECORD what each step requires vs accepts empty — this feeds the friction inventory → users (minimal admin fields, `admin_user_type => 'admin'` to avoid the invite-warn) → pricing: GET the page, assert the seeded plan renders, select it with `selected_plan_id => $plan_id` (radio `name="selected_plan_id"`, `templates/tenant-signup/pricing.html.ep:99`; consumed via `exists $form_data->{selected_plan_id}` in `PricingPlanSelection::process`) → review → payment: POST `collect_payment_method => 1, setup_intent_id => 'seti_test_journey'` → complete.
   - **Assertions:**
     1. Run data carries `selected_pricing_plan`; the provisioned tenant row has `stripe_subscription_id` (`sub_test_…`), `billing_status` = `trial`, `trial_ends_at` set.
     2. **#267 dependency comment:** assert (documented, with the issue link) that NO tenant↔plan record exists post-signup — `TODO`-free, asserting current reality so #267's landing flips it consciously: assert absence now, with a comment that #267 strengthens this to assert the persisted link.
@@ -156,7 +173,7 @@ post_signed_webhook($t, {
 
 **Files:** Create `t/user-journeys/alex/01-acquire-tenant.t`
 
-- [ ] **Step 1: Write the walk.** Full `tenant-signup` over HTTP with REALISTIC (non-minimal) data — Portland-Art-Collective-style from the data-flow test — through landing → profile → users → pricing → review → **payment (`seti_test`) → complete**. Stage 1 asserts only HTTP-level health: every POST 302s to the expected next step (`->header_like(Location => qr/...$/)`), the complete page renders 200. Keep the team admin-only (the invite-pending `warn` hazard) OR capture warns if testing invited members.
+- [ ] **Step 1: Write the walk.** Full `tenant-signup` over HTTP with REALISTIC (non-minimal) data — Portland-Art-Collective-style from the data-flow test — through landing → profile → users → pricing → review → **payment (`seti_test`) → complete**. Seed the platform pricing relationship first (the Task 3 fixture — fresh DBs offer no plans, issue #268) and select the plan with `selected_plan_id`. Stage 1 asserts only HTTP-level health: every POST 302s to the expected next step (`->header_like(Location => qr/...$/)`), the complete page renders 200. Keep the team admin-only (the invite-pending `warn` hazard) OR capture warns if testing invited members.
 - [ ] **Step 2: Run it.** This crosses payment→complete over HTTP for the first time. Reds here are the spec's predicted findings: diagnose (the run's `latest_step`, response content), fix small/obvious in their own commits, `gh issue create` for anything larger, and only then stabilize the walk. Do NOT proceed to Task 5 with a red walk.
 - [ ] **Step 3: Commit** the walk (plus any fix commits separately).
 
