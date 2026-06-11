@@ -54,13 +54,12 @@ ok $copied, 'admin user copied into tenant schema';
 #
 # The app's before_server_start hook (lib/Registry.pm) calls import_schemas
 # first, then import_workflows, so the registry schema always has outcome
-# definitions in place when provision is called in production.  But the
-# old test helper import_all_workflows never imported outcome definitions,
-# meaning every helper-based provisioning test exercised only the NULL-FK
-# path and would pass even with the broken ordering.
+# definitions in place when provision is called in production.  A test that
+# imports workflows without outcome definitions exercises only the NULL-FK
+# path and cannot detect a broken copy ordering.
 #
-# This subtest mirrors the production boot order: load schemas/*.json before
-# importing workflows, then provisions a tenant and verifies that:
+# This subtest mirrors the production boot order (schemas before workflows,
+# via the shared helper), provisions a tenant, and verifies that:
 #   1. summer-camp-registration (the canonical workflow with a linked outcome
 #      definition on its camper-info step) was copied into the tenant schema.
 #   2. No step in the tenant schema has a dangling outcome_definition_id FK
@@ -73,21 +72,11 @@ subtest 'provision copies outcome definitions before workflows (FK ordering pin)
     $ENV{DB_URL}   = $pin_db_obj->uri;
     my $pin_db     = $pin_dao->db;
 
-    # Step 1: import outcome definitions into the registry schema, mirroring
-    # the production import_schemas call (Registry.pm before_server_start).
-    my @schema_files =
-      Mojo::Home->new->child('schemas')->list->grep(qr/\.json$/)->each;
-    Registry::DAO::OutcomeDefinition->import_from_file($pin_dao, $_)
-      for @schema_files;
-
-    # Step 2: import workflows after outcome definitions are in place.
-    my @wf_files =
-      Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
-    for my $file (@wf_files) {
-        require YAML::XS;
-        next if YAML::XS::Load($file->slurp)->{draft};
-        Registry::DAO::Workflow->from_yaml($pin_dao, $file->slurp);
-    }
+    # Import outcome definitions then workflows via the shared helper, which
+    # mirrors the production import_schemas-then-import_workflows boot order.
+    # Sharing the helper keeps this pin on the exact code path every other
+    # provisioning test uses.
+    import_all_workflows($pin_dao);
 
     my $pin_admin = Registry::DAO::User->create($pin_db, {
         username => 'pin_admin', user_type => 'admin',

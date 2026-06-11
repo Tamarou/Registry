@@ -9,7 +9,7 @@ use utf8;
 use warnings;
 use lib qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing diag is like ok subtest )];
+use Test::More import => [qw( done_testing diag is like ok subtest BAIL_OUT )];
 our $TODO;
 defer { done_testing };
 
