@@ -107,7 +107,7 @@ $t->app->helper(dao => sub { $dao });
 # ---------------------------------------------------------------------------
 # Walk the tenant-signup funnel with minimal data.
 #
-# Friction inventory (inputs to the per-field discussion in issue TBD):
+# Friction inventory (inputs to the per-field discussion in issue #270):
 #   landing     — no fields required; POST with empty body advances.
 #   profile     — 'name' consumed downstream by _provision_tenant (falls back
 #                 to 'Organization' without it); 'description' and

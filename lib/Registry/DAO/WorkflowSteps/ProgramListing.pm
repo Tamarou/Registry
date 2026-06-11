@@ -214,12 +214,27 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
             ORDER BY pt.name
         })->hashes;
 
+        # Resolve the tenant's human-readable name for the storefront title.
+        # The search_path on $db is set to the tenant schema, so current_schema()
+        # returns the slug.  A registry.tenants lookup then yields the name.
+        # This populates stash('page_title') which the template uses as the nav logo.
+        my $current_slug = $db->query('SELECT current_schema()')->array->[0];
+        my $tenant_name;
+        if ($current_slug && $current_slug ne 'registry') {
+            my $row = $db->query(
+                q{SELECT name FROM registry.tenants WHERE slug = ?},
+                $current_slug
+            )->hash;
+            $tenant_name = $row->{name} if $row;
+        }
+
         return {
             programs             => \@sorted,
             grouped_programs     => \%grouped,
             filter_locations     => $filter_locations->to_array,
             filter_program_types => $filter_program_types->to_array,
             run                  => $run,
+            page_title           => $tenant_name,
         };
     }
 }

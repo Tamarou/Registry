@@ -14,6 +14,7 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(import_all_workflows);
 
 use Registry::DAO;
 use Registry::DAO::Workflow;
@@ -28,12 +29,18 @@ my $db      = $dao->db;
 $ENV{DB_URL} = $test_db->uri;
 
 # ---------------------------------------------------------------------------
-# Import the tenant-signup workflow into the registry schema.
+# Import all non-draft workflows into the registry schema.
+# Tenant->provision copies every registry workflow (except tenant-signup) into
+# the tenant schema via copy_workflow.  If only tenant-signup is imported here,
+# the tenant schema ends up with zero workflows — making the Stage 2 workflow
+# count assertion vacuous.  import_all_workflows also seeds outcome definitions
+# before the workflow rows, satisfying the outcome_definition_id FK.
 # ---------------------------------------------------------------------------
-$dao->import_workflows(['workflows/tenant-signup.yml']);
+import_all_workflows($dao);
 
 my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
-ok $signup_wf, 'tenant-signup workflow present in registry schema';
+ok $signup_wf, 'tenant-signup workflow present in registry schema'
+    or BAIL_OUT('tenant-signup workflow missing -- cannot walk funnel');
 
 # ---------------------------------------------------------------------------
 # Fixture: seed the platform pricing relationship.
@@ -102,7 +109,7 @@ $t->app->helper(dao => sub { $dao });
 # Stage 1 asserts HTTP-level health only: each POST 302s to the expected next
 # step, each GET 200s, and the complete page renders.
 #
-# Friction inventory (inputs to per-field discussion in Task 5 issue):
+# Friction inventory (inputs to per-field discussion in issue #270):
 #   landing     — no fields; POST with empty body advances.  Required: none.
 #   profile     — 'name' consumed downstream by _provision_tenant (falls back
 #                 to 'Organization' without it); 'description' is accepted
@@ -256,7 +263,120 @@ my $complete_url = $t->tx->res->headers->location;
 $t->get_ok($complete_url)->status_is(200);
 
 # ---------------------------------------------------------------------------
-# Stage 2 (working-tenant assertions) follows in a later commit.
+# Stage 2: working-tenant assertions.
+#
+# The funnel has completed.  Retrieve the run's accumulated data to find the
+# provisioned slug and then assert that the tenant is fully functional from
+# Alex's perspective: row exists, schema exists, workflows were cloned, the
+# admin user is dual-resident, the storefront serves, and the billing fields
+# are set correctly.
 # ---------------------------------------------------------------------------
+
+my $run      = $signup_wf->latest_run($db);
+my $run_data = $run->data;
+
+# The slug is written into run data as 'subdomain' by _provision_tenant.
+# It is derived from the org name: lc(name =~ s/\s+/_/gr) with hyphens also
+# replaced by underscores (see Tenant::provision, TenantPayment::_provision_tenant).
+my $slug = $run_data->{subdomain};
+ok $slug, "provisioned tenant slug present in run data (${\($slug // 'undef')})";
+
+# ---------------------------------------------------------------------------
+# Assertion 1: tenant row + schema exist; clone artifacts present.
+# ---------------------------------------------------------------------------
+subtest 'tenant row, schema, and workflows exist' => sub {
+    # 1a. Tenant row in registry.tenants
+    my $tenant_row = $db->query(
+        q{SELECT id, slug, name FROM registry.tenants WHERE slug = ?},
+        $slug
+    )->hash;
+    ok $tenant_row, "tenant row found in registry.tenants for slug '$slug'";
+
+    # 1b. Postgres schema exists.
+    # information_schema.schemata is available on any PostgreSQL connection and
+    # does not require special privileges.
+    my $schema_row = $db->query(
+        q{SELECT 1 FROM information_schema.schemata WHERE schema_name = ?},
+        $slug
+    )->hash;
+    ok $schema_row, "postgres schema '$slug' exists (clone_schema ran)";
+
+    # 1c. Workflows were copied into the tenant schema.
+    # provision copies every registry workflow except tenant-signup; at least
+    # one workflow (e.g. tenant-storefront) should always be present.
+    # Use a format-safe qualified identifier: the slug was already normalised
+    # to a safe postgres identifier (lc + spaces/hyphens -> underscores) by
+    # Tenant::provision, so direct interpolation is safe here.
+    my $wf_count = $db->query(
+        "SELECT count(*) AS n FROM ${\ $db->dbh->quote_identifier($slug) }.workflows"
+    )->hash->{n};
+    ok $wf_count > 0,
+        "tenant schema '$slug' has $wf_count workflow(s) (copy_workflow ran)";
+};
+
+# ---------------------------------------------------------------------------
+# Assertion 2: signup user is dual-resident (same id in registry.users and
+# <slug>.users).
+# ---------------------------------------------------------------------------
+subtest 'admin user is dual-resident in registry and tenant schemas' => sub {
+    # The admin user was created/looked up by _provision_tenant using the
+    # admin_username field from the funnel.
+    my $registry_user = $db->query(
+        q{SELECT id FROM registry.users WHERE username = ?},
+        $admin_user
+    )->hash;
+    ok $registry_user, "admin user '$admin_user' exists in registry.users";
+
+    my $user_id = $registry_user ? $registry_user->{id} : undef;
+
+    my $tenant_user = $db->query(
+        "SELECT id FROM ${\ $db->dbh->quote_identifier($slug) }.users WHERE id = ?",
+        $user_id
+    )->hash;
+    ok $tenant_user, "admin user id ${\($user_id // 'undef')} also exists in ${slug}.users (dual-resident)";
+    is $tenant_user->{id}, $user_id,
+        'registry.users.id matches tenant.users.id (same identity, no copy)';
+};
+
+# ---------------------------------------------------------------------------
+# Assertion 3: tenant's storefront serves.
+# GET / with Host: <slug>.localhost must return 200 and contain the org name.
+#
+# A fresh Test::Mojo->new('Registry') boots a new app instance whose dao helper
+# is NOT overridden, so host-based tenant resolution takes effect.  $ENV{DB_URL}
+# is already set to the test DB, so the new app resolves to the correct DB.
+# The existing $t pins its dao to the registry schema (needed for the signup
+# workflow walk) and is NOT reused here.
+# ---------------------------------------------------------------------------
+subtest 'tenant storefront serves at <slug>.localhost' => sub {
+    use Test::Mojo;
+    my $t2 = Test::Mojo->new('Registry');
+
+    $t2->get_ok('/' => { Host => "$slug.localhost" })
+      ->status_is(200, 'storefront GET / returns 200')
+      ->content_like(qr/\Q$org_name\E/i,
+          'storefront page contains the organization name');
+};
+
+# ---------------------------------------------------------------------------
+# Assertion 4: billing fields are set correctly for the seti_test path.
+# _provision_tenant writes billing_status='trial' and stripe_subscription_id
+# = 'sub_test_...' when subscription data carries a stripe_subscription_id
+# (set by handle_setup_completion on the seti_test branch).
+# ---------------------------------------------------------------------------
+subtest 'tenant row carries billing fields from seti_test path' => sub {
+    my $tenant_row = $db->query(
+        q{SELECT billing_status, stripe_subscription_id
+          FROM registry.tenants WHERE slug = ?},
+        $slug
+    )->hash;
+    ok $tenant_row, 'tenant row accessible for billing assertions';
+
+    is $tenant_row->{billing_status}, 'trial',
+        'billing_status is "trial" on the seti_test provision path';
+
+    like $tenant_row->{stripe_subscription_id}, qr/^sub_test_/,
+        'stripe_subscription_id starts with sub_test_ (seti_test seam)';
+};
 
 $test_db->cleanup_test_database;
