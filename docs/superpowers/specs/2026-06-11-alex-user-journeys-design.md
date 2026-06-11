@@ -15,8 +15,9 @@ Every persona with in-app flows has journey tests except Alex — yet Alex's sta
 largest: the platform must acquire, activate, and bill customers, and run itself while he
 is away. Those guarantees exist today only as scattered unit/integration tests; nothing
 walks them as user-visible stories, and the tenant-signup funnel has never been driven
-end-to-end at the HTTP layer. A regression in any of these breaks Alex's business, not a
-feature.
+end-to-end at the HTTP layer (`t/controller/tenant-signup-data-flow.t` walks
+landing→review; the payment→complete segment has never been walked over HTTP). A
+regression in any of these breaks Alex's business, not a feature.
 
 ## Decisions (settled with the requester)
 
@@ -38,10 +39,13 @@ feature.
 
 Drive the real `tenant-signup` workflow over HTTP the way Morgan's leg drives
 `project-creation`: POST the workflow start URL, follow each step's redirect, submit each
-form (organization profile → team setup → pricing plan selection → payment → review →
-complete). The `TenantPayment` step is satisfied through its existing test-mode
+form. The funnel's actual step order (per `workflows/tenant-signup.yml`) is
+landing → organization profile → team setup (users) → pricing plan selection → **review →
+payment** → complete. The `TenantPayment` step is satisfied through its existing test-mode
 `setup_intent` seam (`seti_test…`, supported in production code — no mock mode added).
-Outcome assertions, in Alex's terms:
+Note: `TenantPayment` `warn`s a "Would send invitation email" line per `invite_pending`
+team member — the leg either keeps the team admin-only or captures those warns so output
+stays pristine. Outcome assertions, in Alex's terms:
 
 1. The tenant row and schema exist; `clone_schema` artifacts are present (workflows count
    > 0 in the tenant schema).
@@ -66,6 +70,11 @@ readiness-gate test's fixture approach), Stripe intercepted at the
 2. **Activate:** Alex records the connected account (tenant-row update mirroring the
    runbook), then an `account.updated` webhook event flips/confirms
    `stripe_charges_enabled`/`stripe_details_submitted` — both activation paths exercised.
+   The webhook is delivered **over HTTP with a real signed payload** (set
+   `STRIPE_WEBHOOK_SECRET`, compute the `stripe-signature` HMAC the way
+   `_verify_stripe_signature` expects) — consistent with the suite's over-HTTP ethos,
+   rather than the direct `_process_account_updated` call idiom used in the integration
+   test.
 3. **Collect:** the parent retries over HTTP → enrollment proceeds; the captured
    PaymentIntent params carry `transfer_data[destination]`, `on_behalf_of`, and
    `application_fee_amount == Registry::DAO::Payment::application_fee_cents(_to_cents($plan_amount))`;
@@ -78,13 +87,30 @@ through the HTTP surface rather than calling step classes directly.
 *Outcome: Registry bills the tenant for the platform subscription.*
 
 Walk the pricing-plan-selection + `TenantPayment` portion of signup (HTTP, as in Leg 1, or
-the narrowest HTTP path that reaches it) and assert the platform-side artifacts:
+the narrowest HTTP path that reaches it) and assert the platform-side artifacts **that
+actually exist post-signup** (verified against the code: signup does NOT create a
+tenant↔plan `PricingRelationship` — `PricingPlanSelection` only finds the pre-seeded
+platform plans and stashes the choice in run data; `TenantPayment::_provision_tenant`
+writes billing fields onto the tenant row):
 
-1. A `PricingRelationship` (and related platform-billing rows) exists in the registry
-   schema linking tenant and plan.
-2. The tenant row's `billing_status` reflects the established subscription/trial state.
-3. The Solo-tier copy shown to the signing-up owner derives from
-   `Registry::DAO::Payment::REVENUE_SHARE_PERCENT` (single source of truth).
+1. The selected plan is recorded in the workflow run data (`selected_pricing_plan`), and
+   the provisioned tenant row carries the billing fields: `stripe_subscription_id`,
+   `billing_status` (`trial` on the `seti_test` path), `trial_ends_at`.
+2. **Known gap, asserted deliberately:** no platform-billing row links the tenant to its
+   chosen plan after signup. The leg documents this with a comment; if a tenant↔plan
+   record is later introduced, the assertion gets strengthened. (Fix-or-file policy: if
+   the implementer or reviewers judge this a product bug, file it — do not build the
+   missing feature inside a journey test.)
+3. **Pricing-copy drift detection:** the plan copy shown to the signing-up owner must
+   agree with what the platform actually charges
+   (`Registry::DAO::Payment::REVENUE_SHARE_PERCENT` = 2.5). **This is expected to FAIL
+   today**: the seeded platform plan is "Registry Revenue Share - 2%" with `amount 0.02`
+   (`sql/deploy/unified-pricing-infrastructure.sql:107-113`), while destination charges
+   collect 2.5% — a real, pre-existing drift between displayed price and collected fee.
+   Per the failure philosophy this is a finding: fix the seeded data (and any
+   `pricing_configuration` template copy) to 2.5% in-branch if the requester confirms
+   2.5% is the decided rate, or file an issue and mark the assertion TODO with the issue
+   reference.
 
 **Explicit non-goal (stated in the file):** recurring usage-based billing — the
 `_get_usage_data` branch is deliberately non-functional pending redesign (issue #263).
