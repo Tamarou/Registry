@@ -118,21 +118,22 @@ writes billing fields onto the tenant row):
 1. The selected plan is recorded in the workflow run data (`selected_pricing_plan`), and
    the provisioned tenant row carries the billing fields: `stripe_subscription_id`,
    `billing_status` (`trial` on the `seti_test` path), `trial_ends_at`.
-2. **Known gap, asserted deliberately:** no platform-billing row links the tenant to its
-   chosen plan after signup. The leg documents this with a comment; if a tenant↔plan
-   record is later introduced, the assertion gets strengthened. (Fix-or-file policy: if
-   the implementer or reviewers judge this a product bug, file it — do not build the
-   missing feature inside a journey test.)
-3. **Pricing-copy drift detection:** the plan copy shown to the signing-up owner must
-   agree with what the platform actually charges
-   (`Registry::DAO::Payment::REVENUE_SHARE_PERCENT` = 2.5). **This is expected to FAIL
-   today**: the seeded platform plan is "Registry Revenue Share - 2%" with `amount 0.02`
-   (`sql/deploy/unified-pricing-infrastructure.sql:107-113`), while destination charges
-   collect 2.5% — a real, pre-existing drift between displayed price and collected fee.
-   Per the failure philosophy this is a finding: fix the seeded data (and any
-   `pricing_configuration` template copy) to 2.5% in-branch if the requester confirms
-   2.5% is the decided rate, or file an issue and mark the assertion TODO with the issue
-   reference.
+2. **Known gap, now a tracked requirement (issue #267):** no platform-billing row links
+   the tenant to its chosen plan after signup. The requester has decided the revenue-share
+   rate must be **plan-driven, not a constant**, which makes the tenant↔plan link a
+   dependency of #267 (derive the application fee from the tenant's pricing plan). The
+   leg documents the absence with a comment referencing #267; when #267 lands, the
+   assertion gets strengthened to assert the persisted link. Do not build the feature
+   inside a journey test.
+3. **Rate-consistency drift detection:** the rate displayed for the tenant's chosen plan
+   must equal the rate the platform actually charges that tenant. This formulation is
+   rate-value-agnostic and becomes the permanent guard once #267 makes the rate
+   plan-driven. **Expected to FAIL today**: the seeded platform plan advertises 2%
+   (`sql/deploy/unified-pricing-infrastructure.sql:107-113`) while destination charges
+   collect `REVENUE_SHARE_PERCENT` = 2.5% — a real, pre-existing drift between displayed
+   price and collected fee, captured in #267. The assertion lands TODO-marked with the
+   #267 reference (per the failure philosophy: a TODO requires an issue reference) and
+   the TODO comes off when #267 ships.
 
 **Explicit non-goal (stated in the file):** recurring usage-based billing — the
 `_get_usage_data` branch is deliberately non-functional pending redesign (issue #263).
