@@ -196,6 +196,30 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                 $tenant->slug, $user_id);
         }
 
+        # Copy OutcomeDefinitions into the tenant schema BEFORE copying workflows.
+        # copy_workflow inserts workflow_steps with outcome_definition_id FK values;
+        # the tenant schema's workflow_steps FK references the tenant's own
+        # outcome_definitions table (clone_schema strips the schema qualifier).
+        # Copying outcome definitions here ensures the FK is satisfiable when
+        # copy_workflow runs below.  We temporarily switch the search_path on $db
+        # so unqualified 'outcome_definitions' resolves to the tenant schema.
+        # After the inserts we reset to registry so later queries remain correct.
+        my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
+        if (@outcome_defs) {
+            $db->query("SET search_path = ${schema}, public");
+            for my $def (@outcome_defs) {
+                Registry::DAO::OutcomeDefinition->create(
+                    $db,
+                    {
+                        id     => $def->id,
+                        name   => $def->name,
+                        schema => $def->schema,
+                    }
+                );
+            }
+            $db->query('SET search_path = registry, public');
+        }
+
         # Copy every workflow in registry except tenant-signup
         my @workflows = $db->select('registry.workflows', ['id', 'slug'])->hashes->each;
         for my $wf (@workflows) {
@@ -227,26 +251,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             DELETE FROM ${schema}.templates
              WHERE name = 'tenant-storefront/program-listing'
         });
-
-        # Copy OutcomeDefinitions into the tenant schema.  We temporarily switch
-        # the search_path on $db (the in-transaction handle) so that the unqualified
-        # 'outcome_definitions' table resolves to the tenant schema.  After the
-        # inserts, we reset back to registry so later queries remain correct.
-        my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
-        if (@outcome_defs) {
-            $db->query("SET search_path = ${schema}, public");
-            for my $def (@outcome_defs) {
-                Registry::DAO::OutcomeDefinition->create(
-                    $db,
-                    {
-                        id     => $def->id,
-                        name   => $def->name,
-                        schema => $def->schema,
-                    }
-                );
-            }
-            $db->query('SET search_path = registry, public');
-        }
 
         $tx->commit;
 
