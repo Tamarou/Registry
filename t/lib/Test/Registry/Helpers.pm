@@ -9,9 +9,11 @@ package Test::Registry::Helpers {
     sub import(@) {
         no warnings;
         export_lexically(
-            authenticate_as           => __PACKAGE__->can('authenticate_as'),
-            import_all_workflows      => __PACKAGE__->can('import_all_workflows'),
-            process_workflow          => __PACKAGE__->can('process_workflow'),
+            authenticate_as                  => __PACKAGE__->can('authenticate_as'),
+            import_all_workflows             => __PACKAGE__->can('import_all_workflows'),
+            process_workflow                 => __PACKAGE__->can('process_workflow'),
+            seed_platform_pricing_relationship =>
+              __PACKAGE__->can('seed_platform_pricing_relationship'),
             workflow_process_step_url =>
               __PACKAGE__->can('workflow_process_step_url'),
             workflow_run_step_url => __PACKAGE__->can('workflow_run_step_url'),
@@ -62,6 +64,64 @@ package Test::Registry::Helpers {
         else {
             die "Unexpected response code: " . $req->tx->res->code;
         }
+    }
+
+    # seed_platform_pricing_relationship($dao) -- issue #268
+    #
+    # Fresh test databases have ZERO pricing relationships: the migration
+    # sql/deploy/create-default-pricing-relationships.sql is orphaned from
+    # sqitch.plan, so PricingPlanSelection::prepare_pricing_data finds no plans,
+    # renders no radio buttons, and silently skips the pricing step without any
+    # visible error.  Without seeding here, any leg that walks the pricing step
+    # would skip it silently, leaving downstream billing assertions vacuous.
+    #
+    # The INSERT mirrors the orphaned migration (sql/deploy/create-default-
+    # pricing-relationships.sql:63-80) with one difference: consumer_id uses the
+    # 'system' user that ships in the test dump instead of a dynamically-created
+    # platform_admin.  The listing query in PricingPlanSelection never filters on
+    # consumer_id, so any valid user id satisfies the NOT NULL FK constraint.
+    #
+    # Returns the plan UUID so the caller can POST it as selected_plan_id.
+    # Dies with a loud message if any prerequisite is missing (equivalent to
+    # BAIL_OUT in the context of a test script).
+    sub seed_platform_pricing_relationship ($dao) {
+        my $db = $dao->db;
+
+        my $plan_row = $db->query(q{
+            SELECT id FROM registry.pricing_plans
+            WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant' LIMIT 1
+        })->hash;
+        die 'No tenant-scoped percentage plan in DB -- cannot walk pricing step'
+            unless $plan_row;
+        Test::More::ok($plan_row, 'seeded 2% revenue-share plan found in registry.pricing_plans');
+
+        my $plan_id = $plan_row->{id};
+
+        my $system_user_row = $db->query(
+            q{SELECT id FROM registry.users WHERE username = 'system' LIMIT 1}
+        )->hash;
+        die 'system user missing -- cannot satisfy consumer_id FK'
+            unless $system_user_row;
+        Test::More::ok($system_user_row, 'system user exists in test dump');
+
+        my $system_user_id = $system_user_row->{id};
+
+        $db->query(q{
+            INSERT INTO registry.pricing_relationships
+                (provider_id, consumer_id, pricing_plan_id, status, metadata)
+            VALUES ('00000000-0000-0000-0000-000000000000', ?, ?, 'active',
+                    '{"plan_type":"tenant_subscription","created_by":"test_fixture"}'::jsonb)
+        }, $system_user_id, $plan_id);
+
+        # Verify the seed landed so a misconfigured DB fails loudly here, not later.
+        my $rel_count = $db->query(q{
+            SELECT count(*) AS n FROM registry.pricing_relationships
+            WHERE provider_id = '00000000-0000-0000-0000-000000000000'
+              AND pricing_plan_id = ?
+        }, $plan_id)->hash->{n};
+        Test::More::is($rel_count, 1, 'exactly one platform pricing relationship seeded');
+
+        return $plan_id;
     }
 
     sub import_all_workflows ($dao) {

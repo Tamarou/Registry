@@ -15,6 +15,7 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(seed_platform_pricing_relationship);
 
 use Registry::DAO;
 use Registry::DAO::Workflow;
@@ -45,56 +46,9 @@ $dao->import_workflows(['workflows/tenant-signup.yml']);
 my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema';
 
-# ---------------------------------------------------------------------------
-# Fixture: seed the platform pricing relationship.
-#
-# Fresh test databases have ZERO pricing relationships (issue #268):
-# sql/deploy/create-default-pricing-relationships.sql is orphaned from
-# sqitch.plan, so PricingPlanSelection::prepare_pricing_data finds no plans,
-# renders no radio buttons, and silently skips the pricing step without any
-# visible error.  Without seeding here, the leg would walk right past pricing
-# without ever selecting a plan, leaving the assertions in this file vacuous.
-#
-# The INSERT mirrors the orphaned migration (sql/deploy/create-default-
-# pricing-relationships.sql:63-80) with one difference: consumer_id uses the
-# 'system' user that ships in the test dump instead of a dynamically-created
-# platform_admin.  The listing query in PricingPlanSelection never filters on
-# consumer_id, so any valid user id satisfies the NOT NULL FK constraint.
-# ---------------------------------------------------------------------------
-my $plan_row = $db->query(q{
-    SELECT id FROM registry.pricing_plans
-    WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant' LIMIT 1
-})->hash;
-ok $plan_row, 'seeded 2% revenue-share plan found in registry.pricing_plans'
-    or BAIL_OUT('No tenant-scoped percentage plan in DB -- cannot walk pricing step');
-
-my $plan_id = $plan_row->{id};
-
-# consumer_id is a NOT NULL FK to registry.users(id); the test dump ships a
-# 'system' user whose id satisfies the constraint.  The pricing query never
-# filters on consumer_id, so no behavioural difference.
-my $system_user_row = $db->query(
-    q{SELECT id FROM registry.users WHERE username = 'system' LIMIT 1}
-)->hash;
-ok $system_user_row, 'system user exists in test dump'
-    or BAIL_OUT('system user missing -- cannot satisfy consumer_id FK');
-
-my $system_user_id = $system_user_row->{id};
-
-$db->query(q{
-    INSERT INTO registry.pricing_relationships
-        (provider_id, consumer_id, pricing_plan_id, status, metadata)
-    VALUES ('00000000-0000-0000-0000-000000000000', ?, ?, 'active',
-            '{"plan_type":"tenant_subscription","created_by":"test_fixture"}'::jsonb)
-}, $system_user_id, $plan_id);
-
-# Verify the seed landed so a misconfigured DB fails loudly here, not later.
-my $rel_count = $db->query(q{
-    SELECT count(*) AS n FROM registry.pricing_relationships
-    WHERE provider_id = '00000000-0000-0000-0000-000000000000'
-      AND pricing_plan_id = ?
-}, $plan_id)->hash->{n};
-is $rel_count, 1, 'exactly one platform pricing relationship seeded';
+# Fixture: seed the platform pricing relationship -- see #268 for full rationale.
+my $plan_id = seed_platform_pricing_relationship($dao)
+    or BAIL_OUT('seed_platform_pricing_relationship failed -- cannot walk pricing step');
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow

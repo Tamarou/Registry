@@ -14,7 +14,7 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(import_all_workflows);
+use Test::Registry::Helpers qw(import_all_workflows seed_platform_pricing_relationship);
 
 use Registry::DAO;
 use Registry::DAO::Workflow;
@@ -42,56 +42,9 @@ my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema'
     or BAIL_OUT('tenant-signup workflow missing -- cannot walk funnel');
 
-# ---------------------------------------------------------------------------
-# Fixture: seed the platform pricing relationship.
-#
-# Fresh test databases have ZERO pricing relationships (issue #268):
-# sql/deploy/create-default-pricing-relationships.sql is orphaned from
-# sqitch.plan, so PricingPlanSelection::prepare_pricing_data finds no plans,
-# renders no radio buttons, and silently skips the pricing step without any
-# visible error.  Without seeding here, the leg would walk right past pricing
-# without ever selecting a plan, leaving the assertions in this file vacuous.
-#
-# The INSERT mirrors the orphaned migration (sql/deploy/create-default-
-# pricing-relationships.sql:63-80) with one difference: consumer_id uses the
-# 'system' user that ships in the test dump instead of a dynamically-created
-# platform_admin.  The listing query in PricingPlanSelection never filters on
-# consumer_id, so any valid user id satisfies the NOT NULL FK constraint.
-# ---------------------------------------------------------------------------
-my $plan_row = $db->query(q{
-    SELECT id FROM registry.pricing_plans
-    WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant' LIMIT 1
-})->hash;
-ok $plan_row, 'seeded 2% revenue-share plan found in registry.pricing_plans'
-    or BAIL_OUT('No tenant-scoped percentage plan in DB -- cannot walk pricing step');
-
-my $plan_id = $plan_row->{id};
-
-# consumer_id is a NOT NULL FK to registry.users(id); the test dump ships a
-# 'system' user whose id satisfies the constraint.  The pricing query never
-# filters on consumer_id, so no behavioural difference.
-my $system_user_row = $db->query(
-    q{SELECT id FROM registry.users WHERE username = 'system' LIMIT 1}
-)->hash;
-ok $system_user_row, 'system user exists in test dump'
-    or BAIL_OUT('system user missing -- cannot satisfy consumer_id FK');
-
-my $system_user_id = $system_user_row->{id};
-
-$db->query(q{
-    INSERT INTO registry.pricing_relationships
-        (provider_id, consumer_id, pricing_plan_id, status, metadata)
-    VALUES ('00000000-0000-0000-0000-000000000000', ?, ?, 'active',
-            '{"plan_type":"tenant_subscription","created_by":"test_fixture"}'::jsonb)
-}, $system_user_id, $plan_id);
-
-# Verify the seed landed so a misconfigured DB fails loudly here, not later.
-my $rel_count = $db->query(q{
-    SELECT count(*) AS n FROM registry.pricing_relationships
-    WHERE provider_id = '00000000-0000-0000-0000-000000000000'
-      AND pricing_plan_id = ?
-}, $plan_id)->hash->{n};
-is $rel_count, 1, 'exactly one platform pricing relationship seeded';
+# Fixture: seed the platform pricing relationship -- see #268 for full rationale.
+my $plan_id = seed_platform_pricing_relationship($dao)
+    or BAIL_OUT('seed_platform_pricing_relationship failed -- cannot walk pricing step');
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow
@@ -325,15 +278,16 @@ subtest 'admin user is dual-resident in registry and tenant schemas' => sub {
         q{SELECT id FROM registry.users WHERE username = ?},
         $admin_user
     )->hash;
-    ok $registry_user, "admin user '$admin_user' exists in registry.users";
+    ok $registry_user, "admin user '$admin_user' exists in registry.users"
+        or return;    # guard: later assertions would warn on undef $user_id
 
-    my $user_id = $registry_user ? $registry_user->{id} : undef;
+    my $user_id = $registry_user->{id};
 
     my $tenant_user = $db->query(
         "SELECT id FROM ${\ $db->dbh->quote_identifier($slug) }.users WHERE id = ?",
         $user_id
     )->hash;
-    ok $tenant_user, "admin user id ${\($user_id // 'undef')} also exists in ${slug}.users (dual-resident)";
+    ok $tenant_user, "admin user id ${user_id} also exists in ${slug}.users (dual-resident)";
     is $tenant_user->{id}, $user_id,
         'registry.users.id matches tenant.users.id (same identity, no copy)';
 };
@@ -352,10 +306,25 @@ subtest 'tenant storefront serves at <slug>.localhost' => sub {
     use Test::Mojo;
     my $t2 = Test::Mojo->new('Registry');
 
-    $t2->get_ok('/' => { Host => "$slug.localhost" })
+    my $res = $t2->get_ok('/' => { Host => "$slug.localhost" })
       ->status_is(200, 'storefront GET / returns 200')
-      ->content_like(qr/\Q$org_name\E/i,
-          'storefront page contains the organization name');
+      ->tx->res;
+
+    # Pin to the elements ProgramListing populates (page_title -> stash).
+    # The <title> tag and the landing-logo nav div both render stash('page_title'),
+    # which ProgramListing sets to the tenant name.  Asserting here (rather than
+    # page-wide) confirms the fix to that step is what surfaces the org name.
+    my $dom = $res->dom;
+
+    my $title_text = $dom->at('title') ? $dom->at('title')->text : '';
+    like $title_text, qr/\Q$org_name\E/i,
+        'storefront <title> contains the organization name';
+
+    my $logo_el = $dom->at('.landing-logo');
+    ok $logo_el, 'storefront page has a .landing-logo element';
+    like( ($logo_el ? $logo_el->text : ''), qr/\Q$org_name\E/i,
+        'landing-logo element contains the organization name' )
+        if $logo_el;
 };
 
 # ---------------------------------------------------------------------------
