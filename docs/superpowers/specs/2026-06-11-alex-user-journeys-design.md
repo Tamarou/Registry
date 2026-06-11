@@ -31,6 +31,17 @@ regression in any of these breaks Alex's business, not a feature.
   `t/job/*`). Runtime cost accepted.
 - **Structure:** four numbered legs, one per outcome, each self-contained with its own test
   DB (option A; matches the existing per-leg convention).
+- **Implementation sequencing (pushback resolution):** build the cheap legs first —
+  4 (health) → 2 (activate+collect) → 3 (billing) → 1 (acquire) — so the suite delivers
+  value even if Leg 1 stalls on funnel findings. Leg 1 may land in two stages: a
+  walk-the-funnel commit (drive every step, assert HTTP-level success/redirects only),
+  then an outcome-assertions commit, with funnel bugs fixed or filed between them.
+- **Funnel friction inventory (pushback resolution):** while walking the funnel with
+  minimal data, Legs 1 and 3 record which fields each signup step marks required vs.
+  accepts empty, and which of those downstream steps actually consume. The inventory is
+  filed as a funnel-friction issue (per-field evidence); removing fields is a separate
+  product change decided field-by-field — NOT part of this suite. The legs keep asserting
+  the minimal-data path works, permanently guarding against required-field creep.
 
 ## Design
 
@@ -81,16 +92,25 @@ readiness-gate test's fixture approach), Stripe intercepted at the
    PaymentIntent params carry `transfer_data[destination]`, `on_behalf_of`, and
    `application_fee_amount == Registry::DAO::Payment::application_fee_cents(_to_cents($plan_amount))`;
    the payment row lands in the tenant schema.
+4. **Complete (pushback resolution):** deliver a signed `payment_intent.succeeded` over
+   HTTP (synthesized from the captured intent params — the same proof shape as the
+   integration test; reuse the signing helper from step 2) → the payment is `completed`
+   and the enrollment exists, both in the tenant schema. The leg now walks Alex's outcome
+   end to end: gated → activated → charged → enrolled.
 
 Distinct from `t/integration/tenant-paid-enrollment.t` by driving the enrollment workflow
-through the HTTP surface rather than calling step classes directly.
+and both webhooks through the HTTP surface rather than calling step classes/handler
+methods directly.
 
 ### Leg 3 — `t/user-journeys/alex/03-platform-billing.t`
 *Outcome: Registry bills the tenant for the platform subscription.*
 
-Walk the pricing-plan-selection + `TenantPayment` portion of signup (HTTP, as in Leg 1, or
-the narrowest HTTP path that reaches it) and assert the platform-side artifacts **that
-actually exist post-signup** (verified against the code: signup does NOT create a
+Start a `tenant-signup` run over HTTP and drive it from the start with **minimal form
+data** at each pre-pricing step (the data-flow test proves those steps accept minimal
+input) — no mid-workflow entry tricks; journey tests walk the path real users take. The
+walk shape intentionally mirrors Leg 1 with different assertions; if the two legs'
+fixture setup converges, share a `t/lib/` helper per the YAGNI rule. Then assert the
+platform-side artifacts **that actually exist post-signup** (verified against the code: signup does NOT create a
 tenant↔plan `PricingRelationship` — `PricingPlanSelection` only finds the pre-seeded
 platform plans and stashes the choice in run data; `TenantPayment::_provision_tenant`
 writes billing fields onto the tenant row):
@@ -129,7 +149,11 @@ Thin aggregation leg, deliberately:
    and assert per-tenant processing reached the tenant with state and did not abort on the
    other.
 2. A `registry.tenants` row whose schema does not exist (the #265 shape) does not abort
-   either sweep — failure is isolated and logged.
+   either sweep — failure is isolated and logged. **Framing (pushback resolution):** this
+   is a defense-in-depth assertion, not an endorsement of that state. The sweep must never
+   let one bad row break other tenants regardless of whether such rows turn out to be
+   legal; the test comment links #265, and the assertion survives any resolution of it
+   (including deleting the row and forbidding the state).
 3. GET `/health` returns 200 with `db: ok`.
 
 ### Shared conventions (all legs)
