@@ -270,7 +270,9 @@ subtest 'Submit with valid session selections' => sub {
     ok $child_ids{$child1->id} && $child_ids{$child2->id},
         'snapshot carries both child ids';
     ok defined $data->{children}[0]{first_name},
-        'snapshot carries the fields the payment description uses';
+        'snapshot carries the first_name field the payment description uses';
+    ok exists $data->{children}[0]{last_name},
+        'snapshot carries a last_name key (empty string; family members have no surname)';
 };
 
 subtest 'Program type sibling rule validation' => sub {

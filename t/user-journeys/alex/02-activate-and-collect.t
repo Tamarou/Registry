@@ -298,8 +298,10 @@ subtest 'gated: unready tenant blocks paid enrollment' => sub {
     is $step->slug, 'payment', 'at payment step';
 
     # The gate fires: stays on the payment step (redirect back to same URL)
-    # or returns a 200 with errors rendered inline.  Either way, check that
-    # the run stays on the payment step and no payment row was created.
+    # or returns a 200 with errors rendered inline.  Both modes are accepted
+    # deliberately -- the controller's error rendering varies with request
+    # type, and the load-bearing invariants are the ones asserted below:
+    # the run stays on the payment step and no payment row exists anywhere.
     $t->post_ok(
         workflow_process_step_url($reg_wf, $run, $step),
         \%tenant_host,
@@ -377,15 +379,6 @@ subtest 'activate: account row + signed account.updated webhook' => sub {
             details_submitted => \1,
         } },
     })->status_is(200, 'account.updated webhook accepted');
-
-    # Verify webhook-DAO context note (spec, step 3):
-    # The webhook controller calls $self->app->dao (pinned to $tenant_dao).
-    # _process_account_updated executes:
-    #   $dao->db->query('UPDATE registry.tenants ... WHERE stripe_connect_account_id = ?', ...)
-    # $dao->db is a Mojo::Pg::Database whose search_path = [$slug, 'public'].
-    # The table is schema-qualified (registry.tenants), so the search_path is irrelevant;
-    # the UPDATE reaches the correct platform table regardless of the pinned dao.
-    # Confirmed: the assertion below shows the flags were set.
 
     # Assert flags were set
     my $row_after = $db->query('SELECT * FROM registry.tenants WHERE slug = ?', $slug)->hash;
