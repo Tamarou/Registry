@@ -290,11 +290,18 @@ subtest 'WaitlistExpiration: bad row (no schema, #265) is isolated, sweep finish
 };
 
 # ---- subtest 4: real effect in tenant A - WaitlistExpiration flips offer ----
-#
-# After the real WaitlistExpiration run above (subtest 3), the offered entry
-# in tenant A should have flipped to 'expired'.  Assert on the tenant connection.
 
 subtest 'WaitlistExpiration: offered entry in tenant A flipped to expired' => sub {
+    # Run the sweep here rather than relying on the bad-row subtest's run
+    # above, so this subtest is order-independent.  expire_old_offers only
+    # touches rows still in 'offered' status, so a repeat run is a no-op for
+    # an already-expired entry.
+    my $log = MockLogger->new;
+    my $app = MockApp->new( $dao, $log );
+    my $job = MockJob->new( $app );
+    Registry::Job::WaitlistExpiration->perform( $job );
+    is $job->{finished}, 1, 'expiration sweep completed';
+
     # expire_old_offers sets position = 0 for expired entries, so we must NOT
     # filter on position here -- the row moved from position=1 to position=0.
     my $wl = $db_a->query(q{
