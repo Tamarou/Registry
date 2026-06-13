@@ -6,7 +6,7 @@
 A technical solo founder with 25+ years of experience building web applications, running Registry as a Tiny Empire - a lifestyle business optimized for freedom and profit, not growth and scale. Influenced by Tim Ferriss's 4 Hour Work Week and Joshua Tiernan's Tiny Empires philosophy, aiming for 15-20 hours/week of work once systems are established.
 
 **Current Stage:**
-Pre-revenue with a committed first customer who will switch once specific features are built. They're in the classic bootstrap valley of uncertainty - multiple simultaneous blockers around product readiness, pricing validation, customer pipeline, and product-market fit confirmation.
+Pre-revenue with a committed first customer and a launch-ready product: the paid-enrollment path is live, with tuition settling into the customer's own Stripe account (Connect destination charges) and the platform collecting its revenue share at charge time. What remains before first revenue is operational - onboarding the first customer's Stripe account and validating one live registration - not feature work. The bootstrap uncertainty now centers on pricing validation, customer pipeline, and product-market fit confirmation rather than product readiness.
 
 ---
 
@@ -63,10 +63,10 @@ Pre-revenue with a committed first customer who will switch once specific featur
 ## Current Challenges & Blockers
 
 **Pre-Revenue Blockers:**
-1. **Product readiness** - critical features still in development for first customer
+1. **First-customer activation** - the product is launch-ready; remaining steps are operational (Stripe Connect onboarding for the customer's account, one validated live registration). Tenant onboarding is deliberately high-touch at this stage - acceptable per the first-10-20-customers strategy, with self-service onboarding as the automation step that unlocks scale.
 2. **Customer pipeline** - need more conversations beyond first committed customer
 3. **Product-market fit validation** - confirming this solves a real "painkiller" problem
-4. **Pricing optimization** - existing competitors provide pricing benchmarks, but need to validate specific model (subscription vs. transaction vs. hybrid) through PriceOps experimentation
+4. **Pricing optimization** - existing competitors provide pricing benchmarks, but need to validate specific model (subscription vs. transaction vs. hybrid) through PriceOps experimentation; the revenue share is currently collected as a Stripe application fee on each charge
 
 **Resource Constraints:**
 - Solo founder wearing all hats (product, sales, support, development, strategy)
@@ -127,7 +127,7 @@ Pre-revenue with a committed first customer who will switch once specific featur
 ## Daily Activities & Work Allocation
 
 **Current Reality (Pre-Revenue):**
-- Product development and feature implementation for first customer
+- First-customer activation: Stripe onboarding, live validation, launch support
 - System architecture and automation infrastructure
 - Customer conversations and validation
 - Strategic planning for pricing and positioning
@@ -182,8 +182,8 @@ Pre-revenue with a committed first customer who will switch once specific featur
 
 ## Persona Summary
 
-Alex represents the Tiny Empire solo founder archetype: deeply technical, experience-rich, optimizing for freedom and lifestyle rather than growth and scale. They're in the critical pre-revenue phase with a committed first customer, working to validate product-market fit while building the systems and automation that will enable their target 15-20 hour work week.
+Alex represents the Tiny Empire solo founder archetype: deeply technical, experience-rich, optimizing for freedom and lifestyle rather than growth and scale. They're in the critical pre-revenue phase with a committed first customer and a launch-ready product, working to convert that readiness into first revenue and product-market fit validation while building the systems and automation that will enable their target 15-20 hour work week.
 
-Their advantage is technical depth that eliminates dependency on contractors and enables rapid iteration. Their challenge is the classic bootstrap uncertainty: multiple simultaneous blockers that need to be systematically addressed to reach first revenue and validation.
+Their advantage is technical depth that eliminates dependency on contractors and enables rapid iteration. Their challenge is the classic bootstrap uncertainty: with product readiness behind them, pipeline, pricing, and product-market fit validation are the blockers that need to be systematically addressed.
 
 Success for Alex looks like: $100K-$150K+ ARR, 15-20 hours/week, dominated small niche, automated operations, and a business that supports their life rather than consuming it.
