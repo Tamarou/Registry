@@ -260,6 +260,19 @@ subtest 'Submit with valid session selections' => sub {
     # Check session selections
     is $data->{session_selections}->{$child1->id}, $session1->id, 'Child1 session stored';
     is $data->{session_selections}->{$child2->id}, $session1->id, 'Child2 session stored';
+
+    # The children snapshot feeds Payment::calculate_enrollment_total; without
+    # it the total degenerates to $0 and paid enrollment silently goes free,
+    # bypassing the Connect readiness gate.
+    ok $data->{children}, 'children snapshot stored in run data';
+    is scalar(@{$data->{children}}), 2, 'both selected children snapshotted';
+    my %child_ids = map { $_->{id} => 1 } @{$data->{children}};
+    ok $child_ids{$child1->id} && $child_ids{$child2->id},
+        'snapshot carries both child ids';
+    ok defined $data->{children}[0]{first_name},
+        'snapshot carries the first_name field the payment description uses';
+    ok exists $data->{children}[0]{last_name},
+        'snapshot carries a last_name key (empty string; family members have no surname)';
 };
 
 subtest 'Program type sibling rule validation' => sub {

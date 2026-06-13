@@ -119,18 +119,31 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                 };
             }
             
-            # Store selections in run data
+            # Store selections in run data. Also snapshot the children array
+            # so calculate_enrollment_total (called from the Payment step) can
+            # iterate children and look up pricing without re-querying the family.
             my @enrollment_items;
             for my $child_id (keys %selections) {
                 push @enrollment_items, {
-                    child_id => $child_id,
+                    child_id   => $child_id,
                     session_id => $selections{$child_id},
                 };
             }
-            
+
+            my @children_data = map {
+                {
+                    id         => $_->id,
+                    first_name => $_->child_name,
+                    last_name  => '',
+                    birth_date => $_->birth_date,
+                    grade      => $_->grade,
+                }
+            } @children;
+
             $run->update_data($db, {
-                enrollment_items => \@enrollment_items,
+                enrollment_items   => \@enrollment_items,
                 session_selections => \%selections,
+                children           => \@children_data,
             });
             
             # Move to payment step
