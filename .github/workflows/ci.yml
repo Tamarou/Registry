@@ -150,6 +150,20 @@ jobs:
         find lib -name "*.pm" -exec perlcritic --severity=3 --quiet {} \; || true
         echo "Perl::Critic completed (warnings are informational only)"
 
+    - name: Check for orphaned sqitch changes
+      run: |
+        # Every sql/deploy/*.sql must have a matching sql/sqitch.plan entry.
+        orphans=0
+        for f in sql/deploy/*.sql; do
+          n=$(basename "$f" .sql)
+          grep -q "^$n " sql/sqitch.plan || { echo "ORPHAN: $n"; orphans=1; }
+        done
+        if [ "$orphans" -ne 0 ]; then
+          echo "::error::Orphaned sql/deploy files are not in sql/sqitch.plan"
+          exit 1
+        fi
+        echo "No orphaned sqitch changes."
+
   security:
     runs-on: ubuntu-latest
     
