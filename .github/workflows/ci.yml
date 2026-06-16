@@ -150,6 +150,25 @@ jobs:
         find lib -name "*.pm" -exec perlcritic --severity=3 --quiet {} \; || true
         echo "Perl::Critic completed (warnings are informational only)"
 
+    - name: Check for orphaned sqitch changes
+      run: |
+        # Every sql/deploy/*.sql must have a matching change entry in
+        # sql/sqitch.plan. A change name is the first whitespace-delimited field
+        # of a plan line; pragmas (%...) and comments (#...) never equal a change
+        # name, so an exact first-field comparison is robust regardless of the
+        # name's characters or whether it is followed by a space or a [requires].
+        orphans=0
+        for f in sql/deploy/*.sql; do
+          n=$(basename "$f" .sql)
+          awk -v n="$n" '$1 == n { found = 1 } END { exit found ? 0 : 1 }' sql/sqitch.plan \
+            || { echo "ORPHAN: $n"; orphans=1; }
+        done
+        if [ "$orphans" -ne 0 ]; then
+          echo "::error::Orphaned sql/deploy files are not in sql/sqitch.plan"
+          exit 1
+        fi
+        echo "No orphaned sqitch changes."
+
   security:
     runs-on: ubuntu-latest
     

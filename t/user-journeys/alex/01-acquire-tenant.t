@@ -14,7 +14,7 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(import_all_workflows seed_platform_pricing_relationship);
+use Test::Registry::Helpers qw(import_all_workflows platform_revenue_share_plan_id);
 
 use Registry::DAO;
 use Registry::DAO::Workflow;
@@ -42,9 +42,9 @@ my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema'
     or BAIL_OUT('tenant-signup workflow missing -- cannot walk funnel');
 
-# Fixture: seed the platform pricing relationship -- see #268 for full rationale.
-my $plan_id = seed_platform_pricing_relationship($dao)
-    or BAIL_OUT('seed_platform_pricing_relationship failed -- cannot walk pricing step');
+# The migration seeds the platform pricing relationship; fetch the plan id to select. See #268.
+my $plan_id = platform_revenue_share_plan_id($dao)
+    or BAIL_OUT('platform_revenue_share_plan_id failed -- cannot walk pricing step');
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow

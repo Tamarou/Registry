@@ -3,7 +3,7 @@
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is ok like unlike is_deeply subtest )];
+use Test::More import => [qw( done_testing is ok like unlike is_deeply subtest cmp_ok )];
 defer { done_testing };
 
 use Test::Registry::Mojo;
@@ -164,7 +164,7 @@ subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
     ok $template_data->{pricing_plans}, 'template data includes pricing_plans';
 
     my $plans = $template_data->{pricing_plans};
-    is scalar(@$plans), 3, 'three pricing plans returned';
+    cmp_ok scalar(@$plans), '>=', 3, 'at least the three test plans are returned (plus any seeded platform plans)';
     is $plans->[0]{plan_name}, 'Solo', 'first plan is Solo (sorted by display_order)';
     is $plans->[1]{plan_name}, 'Studio', 'second plan is Studio';
     is $plans->[2]{plan_name}, 'Empire', 'third plan is Empire';

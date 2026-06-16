@@ -95,8 +95,8 @@ subtest 'profile data persists through workflow and appears on review step' => s
     # GET the pricing page
     $t->get_ok($pricing_url)->status_is(200);
 
-    # Submit pricing step (skips when no plans are configured)
-    $t->post_ok($pricing_url => form => {})
+    # Submit pricing step -- auto-select the first plan to advance
+    $t->post_ok($pricing_url => form => { __auto_select_plan => 1 })
       ->status_is(302);
 
     my $review_url = $t->tx->res->headers->location;
