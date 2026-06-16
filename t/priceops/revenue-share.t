@@ -110,4 +110,66 @@ subtest 'missing Free fallback plan causes die' => sub {
     }, $saved_plan_id, $seeded_slug);
 };
 
+subtest 'linked plan with no percentage key falls back to amount column' => sub {
+    # The linked plan's pricing_configuration has no 'percentage' key, but its
+    # amount column is non-null. The resolver should fall back to amount.
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration, amount
+          FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    # Strip the percentage key (empty config) and set amount to 0.03.
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = '{}'::jsonb, amount = 0.03
+         WHERE id = ?
+    }, $plan_id);
+
+    my $fraction = revenue_share_fraction_for_tenant($db, $seeded_slug);
+    cmp_ok abs($fraction - 0.03), '<', 1e-9,
+        "no percentage key -> falls back to amount column 0.03 (got $fraction)";
+
+    # Restore
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = ?, amount = ?
+         WHERE id = ?
+    }, $saved->{pricing_configuration}, $saved->{amount}, $plan_id);
+};
+
+subtest 'malformed/non-numeric resolved value dies' => sub {
+    # The linked plan's percentage is a non-numeric string. Even though it is
+    # present (so the amount fallback does not apply), it must die because it
+    # cannot be coerced to a number.
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration, amount
+          FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = '{"percentage":"abc"}'::jsonb
+         WHERE id = ?
+    }, $plan_id);
+
+    my $result = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
+    like $@, qr/not numeric/i,
+        'dies with informative message when resolved value is non-numeric';
+
+    # Restore
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = ?, amount = ?
+         WHERE id = ?
+    }, $saved->{pricing_configuration}, $saved->{amount}, $plan_id);
+};
+
 done_testing;

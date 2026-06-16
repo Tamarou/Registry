@@ -17,16 +17,19 @@ use Registry::DAO;
 # regardless of the calling connection's search_path.
 #
 # Resolution order:
-#   1. tenant.platform_pricing_plan_id is set  -> use that plan's percentage
+#   1. tenant.platform_pricing_plan_id is set  -> use that plan's percentage,
+#      falling back to the plan's amount column when percentage is absent/null
 #   2. FK is NULL or tenant row absent          -> use the platform Free plan (0.00)
 #   3. Free plan missing                        -> die (deployment bug)
 #   4. Resolved percentage non-numeric          -> die (data bug)
 sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     $db = $db->db if $db isa Registry::DAO;
 
-    # Step 1: look up the tenant's explicitly linked plan rate.
+    # Step 1: look up the tenant's explicitly linked plan rate. When the plan's
+    # pricing_configuration has no 'percentage' key, fall back to the plan's
+    # amount column (numeric(10,2) NOT NULL).
     my $row = $db->query(q{
-        SELECT p.pricing_configuration->>'percentage' AS pct
+        SELECT COALESCE(p.pricing_configuration->>'percentage', p.amount::text) AS pct
           FROM registry.tenants t
           JOIN registry.pricing_plans p
             ON p.id = t.platform_pricing_plan_id
@@ -38,9 +41,10 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     }
 
     # Step 2: tenant has no linked plan (NULL FK, or tenant row absent).
-    # Fall back to the seeded platform Free plan.
+    # Fall back to the seeded platform Free plan. As with the linked plan,
+    # fall back to the plan's amount column when percentage is absent/null.
     my $free_row = $db->query(q{
-        SELECT pricing_configuration->>'percentage' AS pct
+        SELECT COALESCE(pricing_configuration->>'percentage', amount::text) AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
