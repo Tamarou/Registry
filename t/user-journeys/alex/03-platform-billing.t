@@ -20,7 +20,6 @@ use Test::Registry::Helpers qw(platform_revenue_share_plan_id);
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
-use Registry::DAO::Payment ();
 
 # ---------------------------------------------------------------------------
 # Non-goal: recurring usage-based billing.
@@ -270,19 +269,21 @@ subtest '#267 dependency: no tenant<->plan pricing_relationship post-signup' => 
 # ---------------------------------------------------------------------------
 # Assertion 3 (TODO #267): rate-consistency drift detection.
 #
-# The plan displayed on the pricing page advertises 2% (from the plan name
-# "Registry Revenue Share - 2%" and description "2% of all customer payments"),
-# but Registry::DAO::Payment::REVENUE_SHARE_PERCENT is 2.5 -- the constant
-# used to compute application_fee_amount at charge time.  This is a real,
-# pre-existing drift between what the tenant is shown and what the platform
-# actually collects, captured in issue #267.
-#
-# This TODO comes off when #267 ships: the revenue-share rate will be read from
-# the tenant's selected pricing plan, making the displayed rate and the charged
-# rate identical.
+# The plan displayed on the pricing page advertises a rate (from the plan name
+# "Registry Revenue Share - 2%" and description "2% of all customer payments").
+# The charged rate is now read from the same selected pricing plan, so the two
+# should agree.  This assertion stays a TODO until the dedicated #267 leg-3 task
+# wires the displayed-vs-charged comparison through the full charge path.
 # ---------------------------------------------------------------------------
-subtest 'rate-consistency: displayed rate equals platform constant' => sub {
-    my $constant_rate = Registry::DAO::Payment::REVENUE_SHARE_PERCENT;
+subtest 'rate-consistency: displayed rate equals charged plan rate' => sub {
+    # Charged rate is plan-driven: read it from the selected platform plan's
+    # configured percentage (a fraction, e.g. 0.02) expressed as a percent.
+    my $plan_rate_str = $db->query(q{
+        SELECT COALESCE(pricing_configuration->>'percentage', amount::text) AS pct
+          FROM registry.pricing_plans
+         WHERE id = ?
+    }, $plan_id)->hash->{pct};
+    my $charged_rate = defined($plan_rate_str) ? ($plan_rate_str + 0) * 100 : undef;
 
     ok defined($displayed_rate_str),
         'extracted a numeric rate from the pricing page HTML';
@@ -291,12 +292,12 @@ subtest 'rate-consistency: displayed rate equals platform constant' => sub {
 
     # Both values printed as diagnostics so the drift is visible in prove -v output.
     diag "displayed_rate (from pricing page HTML): ${\( $displayed_rate // 'undef' )}%";
-    diag "platform REVENUE_SHARE_PERCENT (constant): ${constant_rate}%";
+    diag "charged rate (from selected plan): ${\( $charged_rate // 'undef' )}%";
 
     TODO: {
-        local $TODO = 'rate is constant-driven until #267 ships; seeded plan advertises 2% but constant is 2.5%';
-        is $displayed_rate, $constant_rate,
-            'displayed plan rate matches REVENUE_SHARE_PERCENT (will pass once #267 makes rate plan-driven)';
+        local $TODO = 'full displayed-vs-charged comparison wired by the dedicated #267 leg-3 task';
+        is $displayed_rate, $charged_rate,
+            'displayed plan rate matches the charged plan rate (plan-driven)';
     }
 };
 

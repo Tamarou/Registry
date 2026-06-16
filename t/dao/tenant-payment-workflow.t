@@ -57,28 +57,30 @@ subtest 'Subscription configuration' => sub {
     ok($config->{features} && @{$config->{features}} > 0, 'Features list provided');
 };
 
-subtest 'Solo tier revenue share percent is sourced from a single constant' => sub {
-    plan tests => 3;
+subtest 'Solo tier revenue share percent is plan-driven (Free 0%)' => sub {
+    plan tests => 4;
+
+    # The constant must be gone; the rate is now derived from the seeded
+    # platform Free plan (the no-plan fallback IS the Free plan, 0%).
+    ok( !Registry::DAO::WorkflowSteps::TenantPayment->can('REVENUE_SHARE_PERCENT'),
+        'REVENUE_SHARE_PERCENT constant removed from TenantPayment'
+    );
 
     my $config = $payment_step->get_subscription_config($db);
 
-    # The numeric value must equal the constant REVENUE_SHARE_PERCENT
-    is( $config->{revenue_share_percent},
-        Registry::DAO::WorkflowSteps::TenantPayment::REVENUE_SHARE_PERCENT(),
-        'revenue_share_percent matches REVENUE_SHARE_PERCENT constant'
+    # The no-plan fallback rate comes from the platform Free plan (0%), not 2.5.
+    is( $config->{revenue_share_percent}, 0,
+        'revenue_share_percent is 0 (from the platform Free plan)'
+    );
+    isnt( $config->{revenue_share_percent}, 2.5,
+        'revenue_share_percent is no longer the hardcoded 2.5'
     );
 
-    # The description must contain the same percentage value so they cannot drift
-    my $pct = Registry::DAO::WorkflowSteps::TenantPayment::REVENUE_SHARE_PERCENT();
+    # The description must contain the same percentage value so they cannot drift.
+    my $pct = $config->{revenue_share_percent};
     like( $config->{description},
         qr/\Q$pct\E%/,
         'description string contains the revenue share percent'
-    );
-
-    # The constant itself must be 2.5
-    is( Registry::DAO::WorkflowSteps::TenantPayment::REVENUE_SHARE_PERCENT(),
-        2.5,
-        'REVENUE_SHARE_PERCENT is 2.5'
     );
 };
 
