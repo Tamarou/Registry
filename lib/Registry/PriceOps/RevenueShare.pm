@@ -6,7 +6,7 @@ use experimental 'signatures';
 package Registry::PriceOps::RevenueShare;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(revenue_share_fraction_for_tenant);
+our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction);
 
 use Registry::DAO;
 
@@ -41,8 +41,21 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     }
 
     # Step 2: tenant has no linked plan (NULL FK, or tenant row absent).
-    # Fall back to the seeded platform Free plan. As with the linked plan,
-    # fall back to the plan's amount column when percentage is absent/null.
+    # Fall back to the seeded platform default (Free) plan.
+    return platform_default_fraction($db);
+}
+
+# platform_default_fraction($db) -> number
+#
+# The platform's default ("Free") revenue-share fraction -- the fallback when a
+# tenant has no linked plan, and the single source the signup display reads so
+# the displayed and charged rates cannot diverge. Falls back to the plan's
+# amount column when percentage is absent/null. Dies (deployment bug) if the
+# seeded platform default plan is missing -- the same fail-loud behavior as the
+# charge path, never a silent 0%.
+sub platform_default_fraction ($db) {
+    $db = $db->db if $db isa Registry::DAO;
+
     my $free_row = $db->query(q{
         SELECT COALESCE(pricing_configuration->>'percentage', amount::text) AS pct
           FROM registry.pricing_plans
@@ -51,12 +64,12 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
          LIMIT 1
     })->hash;
 
-    die "No platform Free fallback plan found in registry.pricing_plans "
+    die "No platform default (Free) plan found in registry.pricing_plans "
       . "(plan_scope='platform', metadata->>'default'='true'). "
-      . "This is a deployment bug - run the create-default-pricing-relationships migration."
+      . "This is a deployment bug - run the seed-free-platform-plan migration."
         unless $free_row;
 
-    return _coerce_pct($free_row->{pct}, "platform Free fallback plan");
+    return _coerce_pct($free_row->{pct}, "platform default (Free) plan");
 }
 
 # _coerce_pct($raw, $context) -> number

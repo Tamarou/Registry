@@ -17,6 +17,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Carp qw(croak);
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
+    use Registry::PriceOps::RevenueShare ();
 
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -151,20 +152,14 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         };
     }
 
-    # _platform_default_revenue_share_percent: read the no-plan ("Free")
-    # revenue-share rate from the seeded platform default plan and return it as a
-    # percent number (e.g. 0 for the Free 0% plan). Kept plan-driven so the rate
-    # is never hardcoded in the workflow step.
+    # _platform_default_revenue_share_percent: the no-plan ("Free") revenue-share
+    # rate as a percent number (e.g. 0 for the Free 0% plan). Delegates to
+    # Registry::PriceOps::RevenueShare::platform_default_fraction so the displayed
+    # rate reads the SAME source -- and fails loud the same way -- as the
+    # charge-time path; a missing Free plan can never make display and charge
+    # disagree.
     method _platform_default_revenue_share_percent($db) {
-        $db = $db->db if $db isa Registry::DAO;
-        my $row = $db->query(q{
-            SELECT pricing_configuration->>'percentage' AS pct
-              FROM registry.pricing_plans
-             WHERE plan_scope = 'platform'
-               AND metadata->>'default' = 'true'
-             LIMIT 1
-        })->hash;
-        return ($row && defined $row->{pct}) ? $row->{pct} * 100 : 0;
+        return Registry::PriceOps::RevenueShare::platform_default_fraction($db) * 100;
     }
 
     # Price formatting delegated to Registry::Utility::PriceFormat
