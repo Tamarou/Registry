@@ -141,6 +141,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             billing_status trial_ends_at subscription_started_at
             magic_link_expiry_hours
             stripe_connect_account_id stripe_charges_enabled stripe_details_submitted
+            platform_pricing_plan_id
         );
         my %tenant_data = map { $_ => $data->{$_} }
                           grep { exists $TENANT_COLUMNS{$_} } keys %$data;

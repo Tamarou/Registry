@@ -91,7 +91,8 @@ test.describe('Lifecycle: Morgan -> Nancy -> Amara', () => {
     if (pricingVisible) {
       const planInput = registryPage.locator('input[name="selected_plan_id"]').first();
       if (await planInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-        await planInput.check();
+        // Hidden styled radio -- force past actionability checks.
+        await planInput.check({ force: true });
       }
       await registryPage.click('button[type="submit"]');
       await registryPage.waitForLoadState('networkidle');

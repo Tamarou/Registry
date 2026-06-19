@@ -92,6 +92,21 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
 ok $tenant, 'tenant provisioned (not yet Stripe Connect ready)';
 ok !$tenant->stripe_connect_ready, 'precondition: tenant not Stripe Connect ready';
 
+# Link the tenant to the seeded 2% revenue-share plan so the charge-time
+# resolver applies a 2% fee. A freshly provisioned tenant has
+# platform_pricing_plan_id NULL (the one-time backfill ran before it existed),
+# which would otherwise resolve to the Free 0% plan.
+$db->query(q{
+    UPDATE registry.tenants SET platform_pricing_plan_id = (
+        SELECT id FROM registry.pricing_plans
+         WHERE plan_scope = 'tenant'
+           AND pricing_model_type = 'percentage'
+           AND metadata->>'default' IS DISTINCT FROM 'true'
+         ORDER BY created_at
+         LIMIT 1
+    ) WHERE slug = ?
+}, $slug);
+
 # Tenant-schema DAO
 my $tenant_dao = Registry::DAO->new(url => $test_db->uri, schema => $slug);
 my $tenant_db  = $tenant_dao->db;
@@ -426,12 +441,12 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
     is $captured_params->{'on_behalf_of'}, 'acct_journey',
         'on_behalf_of is the connected account id';
 
-    # Application fee: 2.5% of $150 = $3.75 = 375 cents
+    # Application fee: 2% (tenant's linked plan) of $150 = $3.00 = 300 cents
     my $expected_fee = Registry::DAO::Payment::application_fee_cents(
-        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT));
-    is $expected_fee, 375, 'sanity: expected fee is 375 cents (2.5% of $150)';
+        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT), 0.02);
+    is $expected_fee, 300, 'sanity: expected fee is 300 cents (2% of $150)';
     is $captured_params->{'application_fee_amount'}, $expected_fee,
-        'application_fee_amount matches platform 2.5% fee';
+        'application_fee_amount matches platform 2% fee';
 
     # Bracket-notation metadata keys for webhook routing
     ok exists $captured_params->{'metadata[payment_id]'},

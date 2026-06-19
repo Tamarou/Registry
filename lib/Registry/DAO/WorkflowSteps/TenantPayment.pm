@@ -17,9 +17,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Carp qw(croak);
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
-    use Registry::DAO::Payment ();
-
-    use constant REVENUE_SHARE_PERCENT => Registry::DAO::Payment::REVENUE_SHARE_PERCENT;
+    use Registry::PriceOps::RevenueShare ();
 
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -114,15 +112,18 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             $selected_plan = $run->data->{selected_pricing_plan};
         }
 
-        # If no plan selected, fall back to Solo tier defaults
+        # If no plan selected, fall back to Solo tier defaults. The no-plan case
+        # IS the platform Free plan, so the revenue-share rate is read from that
+        # seeded plan rather than hardcoded.
         unless ($selected_plan) {
+            my $revenue_share_percent = $self->_platform_default_revenue_share_percent($db);
             return {
                 plan_name => 'Solo',
                 monthly_amount => 0,
                 currency => 'usd',
                 trial_days => 0,
-                revenue_share_percent => REVENUE_SHARE_PERCENT,
-                description => REVENUE_SHARE_PERCENT . '% of processed revenue. No monthly fee.',
+                revenue_share_percent => $revenue_share_percent,
+                description => $revenue_share_percent . '% of processed revenue. No monthly fee.',
                 features => [
                     'Unlimited student enrollments',
                     'Attendance tracking and reporting',
@@ -149,6 +150,16 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             billing_cycle => $config->{billing_cycle} || 'monthly',
             formatted_price => format_price($selected_plan->{amount}, $selected_plan->{currency}, suffix => '/month')
         };
+    }
+
+    # _platform_default_revenue_share_percent: the no-plan ("Free") revenue-share
+    # rate as a percent number (e.g. 0 for the Free 0% plan). Delegates to
+    # Registry::PriceOps::RevenueShare::platform_default_fraction so the displayed
+    # rate reads the SAME source -- and fails loud the same way -- as the
+    # charge-time path; a missing Free plan can never make display and charge
+    # disagree.
+    method _platform_default_revenue_share_percent($db) {
+        return Registry::PriceOps::RevenueShare::platform_default_fraction($db) * 100;
     }
 
     # Price formatting delegated to Registry::Utility::PriceFormat
@@ -412,6 +423,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             users => \@user_objects,
         );
         $provision_data{slug} = $slug if $slug;
+
+        # Persist the tenant -> platform plan link when a plan was selected, so
+        # the charge-time revenue-share resolver reads the chosen rate.
+        $provision_data{platform_pricing_plan_id} = $data->{selected_pricing_plan}{id}
+            if $data->{selected_pricing_plan} && $data->{selected_pricing_plan}{id};
 
         if ($subscription_data->{stripe_subscription_id}) {
             $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};

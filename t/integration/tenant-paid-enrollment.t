@@ -206,6 +206,21 @@ $db->query(
     'acct_e2e', $slug,
 );
 
+# Link the tenant to the seeded 2% revenue-share plan so the charge-time
+# resolver applies a 2% fee. A freshly provisioned tenant has
+# platform_pricing_plan_id NULL (the one-time backfill ran before it existed),
+# which would otherwise resolve to the Free 0% plan.
+$db->query(q{
+    UPDATE registry.tenants SET platform_pricing_plan_id = (
+        SELECT id FROM registry.pricing_plans
+         WHERE plan_scope = 'tenant'
+           AND pricing_model_type = 'percentage'
+           AND metadata->>'default' IS DISTINCT FROM 'true'
+         ORDER BY created_at
+         LIMIT 1
+    ) WHERE slug = ?
+}, $slug);
+
 my $captured_params;
 my $captured_stripe_called = 0;
 
@@ -253,10 +268,10 @@ subtest 'Stripe params carry correct destination-charge and metadata keys' => su
     # drift; the round-half-up boundary itself is unit-tested in
     # t/dao/payment-intent-destination-charge.t.
     my $expected_fee = Registry::DAO::Payment::application_fee_cents(
-        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT));
-    is $expected_fee, 375, 'expected fee sanity check: 2.5% of $150.00 = 375 cents';
+        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT), 0.02);
+    is $expected_fee, 300, 'expected fee sanity check: 2% of $150.00 = 300 cents';
     is $captured_params->{'application_fee_amount'}, $expected_fee,
-        'application_fee_amount matches expected 2.5% fee';
+        'application_fee_amount matches expected 2% fee';
 
     # Bracket-notation metadata keys that Stripe echoes back in the webhook
     ok exists $captured_params->{'metadata[payment_id]'},

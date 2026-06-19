@@ -133,7 +133,10 @@ test.describe('Tenant signup workflow', () => {
     // Pricing - select first available plan
     const planRadio = registryPage.locator('input[name="selected_plan_id"]').first();
     if (await planRadio.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await planRadio.check();
+      // The design-system plan radio is visually hidden behind a styled label,
+      // so force the check past Playwright's actionability wait (a real user
+      // clicks the styled button; the raw input is not directly clickable).
+      await planRadio.check({ force: true });
       await registryPage.click('button[type="submit"]');
       await registryPage.waitForLoadState('networkidle');
     }
@@ -173,7 +176,10 @@ test.describe('Tenant signup workflow', () => {
     // Pricing
     const planRadio = registryPage.locator('input[name="selected_plan_id"]').first();
     if (await planRadio.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await planRadio.check();
+      // The design-system plan radio is visually hidden behind a styled label,
+      // so force the check past Playwright's actionability wait (a real user
+      // clicks the styled button; the raw input is not directly clickable).
+      await planRadio.check({ force: true });
       await registryPage.click('button[type="submit"]');
       await registryPage.waitForLoadState('networkidle');
     }
@@ -241,7 +247,8 @@ test.describe('Tenant signup workflow', () => {
     if (pricingStep) {
       const planInput = registryPage.locator('input[name="selected_plan_id"]').first();
       if (await planInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-        await planInput.check();
+        // Hidden styled radio -- force past actionability checks.
+        await planInput.check({ force: true });
       }
       await registryPage.click('button[type="submit"]');
       await registryPage.waitForLoadState('networkidle');

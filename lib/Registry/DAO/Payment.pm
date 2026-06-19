@@ -6,9 +6,8 @@ use Object::Pad;
 class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 
 use Registry::Service::Stripe;
+use Registry::PriceOps::RevenueShare;
 use Mojo::JSON qw(encode_json decode_json);
-
-use constant REVENUE_SHARE_PERCENT => 2.5;
 
 field $id :param :reader = undef;
 field $user_id :param :reader = undef;
@@ -42,9 +41,10 @@ field $_stripe_client = undef;
     sub _to_cents ($dollars) { int($dollars * 100) }
 
     # Platform revenue share, collected at charge time as a Stripe application
-    # fee on the destination charge. Integer cents, rounded half-up.
-    sub application_fee_cents ($amount_cents) {
-        return int($amount_cents * REVENUE_SHARE_PERCENT / 100 + 0.5);
+    # fee on the destination charge. The fraction is resolved from the tenant's
+    # plan by the caller. Integer cents, rounded half-up.
+    sub application_fee_cents ($amount_cents, $fraction) {
+        return int($amount_cents * $fraction + 0.5);
     }
 
     # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
@@ -88,10 +88,15 @@ field $_stripe_client = undef;
         my $acct = $row->{stripe_connect_account_id};
         return () unless $acct;
 
+        # Resolve the revenue-share fraction from the tenant's linked plan
+        # (Free 0% when the tenant has no plan link). $db is already a Mojo::Pg
+        # handle here (coerced at the top of this sub).
+        my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant($db, $slug);
+
         return (
             'transfer_data[destination]' => $acct,
             on_behalf_of                 => $acct,
-            application_fee_amount       => application_fee_cents(_to_cents($amount)),
+            application_fee_amount       => application_fee_cents(_to_cents($amount), $fraction),
         );
     }
 

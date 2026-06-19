@@ -10,7 +10,6 @@ use warnings;
 use lib qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw( done_testing diag is like ok subtest BAIL_OUT )];
-our $TODO;
 defer { done_testing };
 
 use Test::Registry::Mojo;
@@ -18,9 +17,9 @@ use Test::Registry::DB;
 use Test::Registry::Helpers qw(platform_revenue_share_plan_id);
 
 use Registry::DAO;
+use Registry::PriceOps::RevenueShare;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
-use Registry::DAO::Payment ();
 
 # ---------------------------------------------------------------------------
 # Non-goal: recurring usage-based billing.
@@ -127,7 +126,7 @@ like $pricing_page, qr/selected_plan_id/,
 like $pricing_page, qr/Registry Revenue Share/,
     'pricing page shows the seeded 2% revenue-share plan name';
 
-# -- Capture the displayed rate for the TODO drift assertion below ---------
+# -- Capture the displayed rate for the rate-consistency assertion below ----
 # The plan description contains "2% of all customer payments"; the plan name
 # contains "2%".  Extract the rate as a number for numeric comparison.
 # (If the field ever gains a revenue_share_percent key, this pattern still
@@ -227,15 +226,15 @@ subtest 'provisioned tenant row carries billing fields' => sub {
 # provider or consumer.  _provision_tenant writes billing fields onto the
 # tenant row but also does not create a pricing_relationship.
 #
-# This absence is a tracked dependency of issue #267 (plan-driven revenue
-# share): when #267 lands, the revenue-share rate will be read from the
-# tenant's pricing plan rather than the REVENUE_SHARE_PERCENT constant, which
-# requires persisting the tenant<->plan link.  At that point this assertion
-# should be strengthened to assert the persisted link exists.  Until then,
-# the assertion documents current reality so any accidental addition of such
-# a row will cause a visible test failure and prompt a deliberate review.
+# With #267 landed, the tenant<->plan link is persisted as the
+# tenants.platform_pricing_plan_id FK (Option A), NOT as a pricing_relationships
+# row -- those tables are for plan selection/discovery, not the charge-time
+# authority.  So two things must hold: (a) the persisted FK link equals the plan
+# the tenant selected, and (b) no pricing_relationships row was created with the
+# new tenant as provider or consumer (a spurious one would mean the rate could
+# be read from the wrong place).
 # ---------------------------------------------------------------------------
-subtest '#267 dependency: no tenant<->plan pricing_relationship post-signup' => sub {
+subtest '#267: tenant->plan link persisted on the tenant row' => sub {
     my $slug = $run_data->{subdomain};
     ok $slug, "tenant slug available ($slug)";
 
@@ -247,7 +246,14 @@ subtest '#267 dependency: no tenant<->plan pricing_relationship post-signup' => 
 
     my $tenant_id = $tenant_row->{id};
 
-    # Assert zero pricing_relationships rows where the new tenant is either
+    # (a) The persisted FK link equals the plan the tenant selected at signup.
+    my $link = $db->query(
+        q{SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?}, $slug
+    )->hash->{platform_pricing_plan_id};
+    is $link, $plan_id,
+        'tenants.platform_pricing_plan_id equals the selected plan (#267 persisted link)';
+
+    # (b) Assert zero pricing_relationships rows where the new tenant is either
     # provider or consumer -- those are the two roles a tenant could occupy in
     # a platform-billing relationship.  The only relationship in the table
     # should be the fixture we inserted above (provider = platform UUID).
@@ -268,36 +274,37 @@ subtest '#267 dependency: no tenant<->plan pricing_relationship post-signup' => 
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 3 (TODO #267): rate-consistency drift detection.
+# Assertion 3 (#267): rate-consistency -- displayed rate equals charged rate.
 #
-# The plan displayed on the pricing page advertises 2% (from the plan name
-# "Registry Revenue Share - 2%" and description "2% of all customer payments"),
-# but Registry::DAO::Payment::REVENUE_SHARE_PERCENT is 2.5 -- the constant
-# used to compute application_fee_amount at charge time.  This is a real,
-# pre-existing drift between what the tenant is shown and what the platform
-# actually collects, captured in issue #267.
-#
-# This TODO comes off when #267 ships: the revenue-share rate will be read from
-# the tenant's selected pricing plan, making the displayed rate and the charged
-# rate identical.
+# The pricing page advertises a rate (plan name "Registry Revenue Share - 2%"
+# and description "2% of all customer payments").  The CHARGED rate is what the
+# Stripe application fee is computed from: Registry::DAO::Payment::_connect_params
+# derives it via Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant
+# for the provisioned tenant.  This subtest resolves the rate through that same
+# charge-path function (not a direct plan read) and asserts it equals the
+# displayed rate -- the definition of done for #267: one source, no drift.
 # ---------------------------------------------------------------------------
-subtest 'rate-consistency: displayed rate equals platform constant' => sub {
-    my $constant_rate = Registry::DAO::Payment::REVENUE_SHARE_PERCENT;
+subtest 'rate-consistency: displayed rate equals charged rate' => sub {
+    my $slug = $run_data->{subdomain};
+    ok $slug, "provisioned tenant slug available ($slug)";
+
+    # Charged rate via the real charge-path resolver, as a percent.
+    my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+        $db, $slug
+    );
+    my $charged_rate = $fraction * 100;
 
     ok defined($displayed_rate_str),
         'extracted a numeric rate from the pricing page HTML';
 
     my $displayed_rate = defined($displayed_rate_str) ? ($displayed_rate_str + 0) : undef;
 
-    # Both values printed as diagnostics so the drift is visible in prove -v output.
+    # Both values printed as diagnostics so any drift is visible in prove -v output.
     diag "displayed_rate (from pricing page HTML): ${\( $displayed_rate // 'undef' )}%";
-    diag "platform REVENUE_SHARE_PERCENT (constant): ${constant_rate}%";
+    diag "charged rate (via revenue_share_fraction_for_tenant): ${charged_rate}%";
 
-    TODO: {
-        local $TODO = 'rate is constant-driven until #267 ships; seeded plan advertises 2% but constant is 2.5%';
-        is $displayed_rate, $constant_rate,
-            'displayed plan rate matches REVENUE_SHARE_PERCENT (will pass once #267 makes rate plan-driven)';
-    }
+    is $displayed_rate, $charged_rate,
+        'displayed plan rate matches the charged rate (both plan-driven, #267)';
 };
 
 $test_db->cleanup_test_database;
