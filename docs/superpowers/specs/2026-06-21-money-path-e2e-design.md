@@ -65,8 +65,8 @@ I4 builds the event from real charge data and signs it with the known test
 (`Webhooks::_verify_stripe_signature`) use the same HMAC-SHA256 `t.payload`
 scheme, I4 proves the **dedup + finalize path and our own HMAC round-trip** — it
 does **not** prove our parser accepts Stripe's real wire format (Stripe's header
-can carry multiple `v1` values, a `v0`, ordering quirks; our parser takes the
-first `v1`+`t` only). Proving the real wire format needs one genuinely
+can carry multiple `v1` values, a `v0`, ordering quirks; our parser keeps
+only a single `v1`+`t`). Proving the real wire format needs one genuinely
 Stripe-delivered event (`stripe listen`/CLI), which this design deliberately
 excludes to stay deterministic. **This is a named limitation** (see Follow-ups),
 not a claim I4 covers.
