@@ -184,6 +184,10 @@ UPDATE registry.pricing_plans
        jsonb_set(pricing_configuration, '{refund_application_fee}', 'true'::jsonb, true)
  WHERE plan_scope = 'platform' AND metadata->>'default' = 'true';
 
+-- NOTE: this targets ALL tenant percentage plans, not just the launch plan the
+-- tenant-platform-pricing-plan backfill selected. That is intentional: every
+-- percentage plan should declare the flag. Default is true regardless; this
+-- makes it visible.
 UPDATE registry.pricing_plans
    SET pricing_configuration =
        jsonb_set(pricing_configuration, '{refund_application_fee}', 'true'::jsonb, true)
@@ -229,7 +233,7 @@ A deliberate retry-after-decline **rotates** the token so it produces a fresh ch
 
 - [ ] **Step 2: Run it, verify it fails.**
 
-- [ ] **Step 3: Implement.** On `Payment->create`, ensure `metadata.idempotency_token` exists (generate a UUID if absent). In `create_payment_intent[_async]`, pass `_idempotency_key => "pi-create:" . $metadata->{idempotency_token}`. Add `method rotate_idempotency_token ($db)` that assigns a fresh token and persists it.
+- [ ] **Step 3: Implement.** On `Payment->create`, ensure `metadata.idempotency_token` exists (generate a UUID if absent). **Tricky spot:** `create` wraps metadata as `{ -json => ... }` before `SUPER::create` (Payment.pm:105-109) and `ADJUST` decodes it back on load — set the token on the metadata hash *before* the `-json` wrapping, and confirm it survives the decode round-trip on reload. In `create_payment_intent[_async]`, pass `_idempotency_key => "pi-create:" . $metadata->{idempotency_token}`. Add `method rotate_idempotency_token ($db)` that assigns a fresh token and persists it.
 
 - [ ] **Step 4: Run it, verify pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Leg B: derive stable Stripe idempotency key from payment token"`
@@ -280,7 +284,7 @@ A deliberate retry-after-decline **rotates** the token so it produces a fresh ch
 - [ ] **Step 5: I3** — a fresh payment confirmed with `pm_card_chargeDeclined`; assert the step returns an error/retry and no enrollment.
 - [ ] **Step 6: I5** — a tenant using `StripeConnect->unready_account` (or `stripe_charges_enabled=false`); assert the gate blocks, no Stripe call, zero payment rows.
 - [ ] **Step 7: I6** — refund the I1 charge; assert the real refund object reflects the plan's `refund_application_fee` policy at the cent level, and the transfer is reversed.
-- [ ] **Step 8: I7** — submit the same enrollment twice (same idempotency token) → assert exactly one charge at Stripe (retrieve by idempotency behavior / one PaymentIntent); a rotated retry produces a distinct intent.
+- [ ] **Step 8: I7** — submit the same enrollment twice (same idempotency token) → assert exactly one charge at Stripe: retrieve the PaymentIntent and confirm a single `latest_charge` (or one entry in `charges.data`), and that the two create calls returned the same intent id. A rotated retry produces a distinct intent id.
 - [ ] **Step 9: Run with a real test key locally.** `STRIPE_SECRET_KEY=sk_test_... STRIPE_WEBHOOK_SECRET=whsec_local carton exec prove -lv t/stripe-live/paid-enrollment.t`. Expect all pass. Confirm the file `skip_all`s cleanly with the key unset.
 - [ ] **Step 10: Commit.** `git commit -am "Leg C: real-Stripe test-mode suite proving I1-I7"`
 
