@@ -1,0 +1,207 @@
+#!/usr/bin/env perl
+# ABOUTME: Tests for refund_application_fee_for_tenant resolver in Registry::PriceOps::RevenueShare.
+# ABOUTME: Covers linked-plan flag, NULL FK fallback, platform-plan fallback, die cases, and DAO coercion.
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::DB;
+use Registry::PriceOps::RevenueShare qw(refund_application_fee_for_tenant);
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;     # Registry::DAO
+my $db      = $dao->db;         # Mojo::Pg::Database
+
+# Find a seeded tenant linked to a tenant-scoped plan (same query as revenue-share.t).
+my $seeded_slug = $db->query(q{
+    SELECT t.slug
+      FROM registry.tenants t
+      JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
+     WHERE p.pricing_model_type = 'percentage'
+       AND p.plan_scope = 'tenant'
+     LIMIT 1
+})->hash->{slug};
+
+ok $seeded_slug, "found a seeded tenant linked to a plan (slug=$seeded_slug)";
+
+subtest 'linked plan without refund_application_fee key defaults to true (1)' => sub {
+    # Strip the key from pricing_configuration (no-op when absent) to guarantee
+    # the absent-key path is exercised, then restore the original config.
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = pricing_configuration - 'refund_application_fee'
+         WHERE id = ?
+    }, $plan_id);
+
+    my $flag = refund_application_fee_for_tenant($db, $seeded_slug);
+    is $flag, 1, 'absent key -> default true (1)';
+
+    $db->query(q{
+        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
+    }, $saved->{pricing_configuration}, $plan_id);
+};
+
+subtest 'linked plan with refund_application_fee=false returns 0' => sub {
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = pricing_configuration
+                   || '{"refund_application_fee": false}'::jsonb
+         WHERE id = ?
+    }, $plan_id);
+
+    my $flag = refund_application_fee_for_tenant($db, $seeded_slug);
+    is $flag, 0, 'refund_application_fee=false -> returns 0';
+
+    $db->query(q{
+        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
+    }, $saved->{pricing_configuration}, $plan_id);
+};
+
+subtest 'Registry::DAO coercion - accepts DAO object as well as raw db handle' => sub {
+    my $flag = refund_application_fee_for_tenant($dao, $seeded_slug);
+    is $flag, 1, 'DAO coercion: result is the same (absent key -> 1)';
+};
+
+subtest 'NULL platform_pricing_plan_id falls back to platform default -> 1' => sub {
+    my $saved = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    $db->query(q{
+        UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = ?
+    }, $seeded_slug);
+
+    my $flag = refund_application_fee_for_tenant($db, $seeded_slug);
+    is $flag, 1, 'NULL FK -> platform default (no key set) -> 1';
+
+    $db->query(q{
+        UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?
+    }, $saved, $seeded_slug);
+};
+
+subtest 'platform default plan with refund_application_fee=false and NULL FK -> 0' => sub {
+    # Null the tenant FK, set the platform default plan's key to false, verify 0, restore.
+    my $saved_fk = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $platform_plan = $db->query(q{
+        SELECT id, pricing_configuration
+          FROM registry.pricing_plans
+         WHERE plan_scope = 'platform'
+           AND metadata->>'default' = 'true'
+         LIMIT 1
+    })->hash;
+
+    $db->query(q{
+        UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = ?
+    }, $seeded_slug);
+
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = pricing_configuration
+                   || '{"refund_application_fee": false}'::jsonb
+         WHERE id = ?
+    }, $platform_plan->{id});
+
+    my $flag = refund_application_fee_for_tenant($db, $seeded_slug);
+    is $flag, 0, 'NULL FK + platform default plan sets false -> 0';
+
+    # Restore: platform plan first, then tenant FK
+    $db->query(q{
+        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
+    }, $platform_plan->{pricing_configuration}, $platform_plan->{id});
+
+    $db->query(q{
+        UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?
+    }, $saved_fk, $seeded_slug);
+};
+
+subtest 'malformed refund_application_fee value dies with informative message' => sub {
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = pricing_configuration
+                   || '{"refund_application_fee": "sometimes"}'::jsonb
+         WHERE id = ?
+    }, $plan_id);
+
+    my $result = eval { refund_application_fee_for_tenant($db, $seeded_slug) };
+    like $@, qr/refund_application_fee/,
+        'malformed value dies with message mentioning refund_application_fee';
+
+    $db->query(q{
+        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
+    }, $saved->{pricing_configuration}, $plan_id);
+};
+
+subtest 'missing platform default plan with NULL FK causes die' => sub {
+    my $saved_fk = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $free_plan = $db->query(q{
+        SELECT id, plan_scope, plan_name, plan_type, pricing_model_type,
+               amount, currency, installments_allowed, requirements,
+               pricing_configuration, metadata
+          FROM registry.pricing_plans
+         WHERE plan_scope = 'platform'
+           AND metadata->>'default' = 'true'
+         LIMIT 1
+    })->hash;
+
+    # Null FK before deleting (FK constraint)
+    $db->query(q{
+        UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = ?
+    }, $seeded_slug);
+
+    $db->query(q{
+        DELETE FROM registry.pricing_plans WHERE id = ?
+    }, $free_plan->{id});
+
+    my $result = eval { refund_application_fee_for_tenant($db, $seeded_slug) };
+    like $@, qr/Free|fallback|platform|default/i,
+        'dies with informative message when platform default plan is absent';
+
+    # Restore: re-insert plan, then restore FK
+    $db->query(q{
+        INSERT INTO registry.pricing_plans
+            (id, plan_scope, plan_name, plan_type, pricing_model_type,
+             amount, currency, installments_allowed, requirements,
+             pricing_configuration, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb)
+    }, $free_plan->{id}, $free_plan->{plan_scope}, $free_plan->{plan_name},
+       $free_plan->{plan_type}, $free_plan->{pricing_model_type},
+       $free_plan->{amount}, $free_plan->{currency},
+       $free_plan->{installments_allowed}, $free_plan->{requirements},
+       $free_plan->{pricing_configuration}, $free_plan->{metadata});
+
+    $db->query(q{
+        UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?
+    }, $saved_fk, $seeded_slug);
+};
+
+done_testing;
