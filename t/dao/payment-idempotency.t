@@ -79,4 +79,123 @@ my $captured;
     };
 }
 
+# -----------------------------------------------------------------------
+# B2: Payment->create generates a stable idempotency token; create_payment_intent
+# threads it as _idempotency_key; rotate_idempotency_token cycles it.
+# -----------------------------------------------------------------------
+
+use Test::Registry::DB;
+use Registry::DAO::Payment;
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;    # Registry::DAO
+my $db      = $dao->db;        # Mojo::Pg::Database
+
+my $b2_user_id = $db->query(q{
+    INSERT INTO registry.users (username, passhash)
+    VALUES ('b2_idem_test', 'nohash')
+    RETURNING id
+})->hash->{id};
+
+ok $b2_user_id, "created test user for B2 subtests (id=$b2_user_id)";
+
+my $UUID_RE = qr/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+subtest 'AC3: auto-generated token survives -json/ADJUST round-trip on reload' => sub {
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id  => $b2_user_id,
+        amount   => 10.00,
+        metadata => {},
+    });
+
+    my $token = $payment->metadata->{idempotency_token};
+    ok defined $token, 'idempotency_token set on freshly created payment';
+    like $token, $UUID_RE, 'token is UUID-shaped';
+
+    # Reload via Payment->find to prove it survived the -json/ADJUST round-trip
+    my $reloaded = Registry::DAO::Payment->find($db, { id => $payment->id });
+    is $reloaded->metadata->{idempotency_token}, $token,
+        'token unchanged after reload (-json/ADJUST round-trip confirmed)';
+};
+
+subtest 'explicit idempotency_token on create is preserved, not overwritten' => sub {
+    my $explicit = 'explicit-token-b2-test';
+    my $payment  = Registry::DAO::Payment->create($db, {
+        user_id  => $b2_user_id,
+        amount   => 20.00,
+        metadata => { idempotency_token => $explicit },
+    });
+
+    my $reloaded = Registry::DAO::Payment->find($db, { id => $payment->id });
+    is $reloaded->metadata->{idempotency_token}, $explicit,
+        'explicit token preserved after create + reload';
+};
+
+subtest 'AC1: both create_payment_intent calls send identical "pi-create:<token>" key' => sub {
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id  => $b2_user_id,
+        amount   => 30.00,
+        metadata => {},
+    });
+
+    my $token = $payment->metadata->{idempotency_token};
+    ok defined $token, 'payment has idempotency_token';
+
+    my @captured_keys;
+    {
+        no warnings 'redefine';
+        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_b2fake';
+        # DAO's create_payment_intent calls stripe_client->create_payment_intent (sync);
+        # intercept at that level, matching the refund test pattern.
+        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            push @captured_keys, $p->{_idempotency_key};
+            return { id => 'pi_b2_fake', client_secret => 'sec_b2' };
+        };
+        $payment->create_payment_intent($db);
+        $payment->create_payment_intent($db);
+    }
+
+    is scalar @captured_keys, 2, 'create_payment_intent called twice';
+    is $captured_keys[0], "pi-create:$token",
+        "first call: exact key is 'pi-create:$token'";
+    is $captured_keys[1], "pi-create:$token",
+        "second call: same key 'pi-create:$token'";
+    is $captured_keys[0], $captured_keys[1], 'AC1: both calls sent identical idempotency key';
+};
+
+subtest 'AC2: rotate_idempotency_token changes token, persists, next intent uses new key' => sub {
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id  => $b2_user_id,
+        amount   => 40.00,
+        metadata => {},
+    });
+
+    my $orig_token = $payment->metadata->{idempotency_token};
+    ok defined $orig_token, 'original token set';
+
+    $payment->rotate_idempotency_token($db);
+
+    my $new_token = $payment->metadata->{idempotency_token};
+    isnt $new_token, $orig_token, 'token changed after rotation';
+    like $new_token, $UUID_RE, 'new token is UUID-shaped';
+
+    my $reloaded = Registry::DAO::Payment->find($db, { id => $payment->id });
+    is $reloaded->metadata->{idempotency_token}, $new_token,
+        'rotated token persisted to DB (reload confirms)';
+
+    my $captured_key;
+    {
+        no warnings 'redefine';
+        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_b2fake';
+        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            $captured_key = $p->{_idempotency_key};
+            return { id => 'pi_b2_rot', client_secret => 'sec_rot' };
+        };
+        $payment->create_payment_intent($db);
+    }
+
+    is $captured_key, "pi-create:$new_token",
+        'AC2: post-rotation intent sends new pi-create:<new_token> key';
+};
+
 done_testing;

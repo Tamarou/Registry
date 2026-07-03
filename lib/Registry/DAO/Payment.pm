@@ -122,11 +122,18 @@ field $_stripe_client = undef;
     }
 
     sub create ($class, $db, $data) {
-        # Handle JSON encoding for metadata
-        if (exists $data->{metadata} && ref $data->{metadata}) {
-            $data->{metadata} = { -json => $data->{metadata} };
-        }
-        
+        my $raw_db = ($db isa Registry::DAO) ? $db->db : $db;
+
+        # Ensure metadata is always a hashref with a stable idempotency token.
+        # Token is set BEFORE the -json wrapping so it survives the ADJUST
+        # decode round-trip on reload (Payment->find). UUID comes from the DB's
+        # gen_random_uuid() to stay consistent with the schema idiom.
+        $data->{metadata} = {} unless ref $data->{metadata} eq 'HASH';
+        $data->{metadata}{idempotency_token} //= $raw_db->query(
+            'SELECT gen_random_uuid()::text AS uuid'
+        )->hash->{uuid};
+        $data->{metadata} = { -json => $data->{metadata} };
+
         return $class->SUPER::create($db, $data);
     }
     
@@ -176,10 +183,11 @@ field $_stripe_client = undef;
             # values must be strings, so refs (e.g. enrollment_items) are
             # snapshotted only in the DB metadata column, not sent to Stripe.
             $intent = $self->stripe_client->create_payment_intent({
-                amount        => _to_cents($amount),
-                currency      => $currency,
-                description   => $description,
-                receipt_email => $receipt_email,
+                amount            => _to_cents($amount),
+                currency          => $currency,
+                description       => $description,
+                receipt_email     => $receipt_email,
+                _idempotency_key  => 'pi-create:' . $metadata->{idempotency_token},
                 _stripe_metadata_params($user_id, $self->id, $metadata),
                 _connect_params($db, $metadata, $amount),
             });
@@ -333,6 +341,17 @@ field $_stripe_client = undef;
         }, { id => $id });
     }
 
+    # Replace the idempotency token with a fresh UUID and persist immediately.
+    # Call this before retrying a declined intent so the retry is a genuinely
+    # new Stripe charge rather than a duplicate of the failed one.
+    method rotate_idempotency_token ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        $metadata->{idempotency_token} = $db->query(
+            'SELECT gen_random_uuid()::text AS uuid'
+        )->hash->{uuid};
+        $self->save($db);
+    }
+
     method refund ($db, $args = {}) {
         die "Cannot refund non-completed payment" unless $status eq 'completed';
         die "No payment intent to refund" unless $stripe_payment_intent_id;
@@ -439,10 +458,11 @@ field $_stripe_client = undef;
         my $receipt_email = $args->{receipt_email};
         
         return $self->stripe_client->create_payment_intent_async({
-            amount        => _to_cents($amount),
-            currency      => $currency,
-            description   => $description,
-            receipt_email => $receipt_email,
+            amount            => _to_cents($amount),
+            currency          => $currency,
+            description       => $description,
+            receipt_email     => $receipt_email,
+            _idempotency_key  => 'pi-create:' . $metadata->{idempotency_token},
             _stripe_metadata_params($user_id, $self->id, $metadata),
             _connect_params($db, $metadata, $amount),
         })->then(sub ($intent) {
