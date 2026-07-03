@@ -22,13 +22,14 @@ class Registry::Service::Stripe {
         $ua->request_timeout(30);
     }
     
-    method _request_async($method, $endpoint, $data = {}) {
+    method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef) {
         my $url = "https://api.stripe.com/v1/$endpoint";
         my $headers = {
             'Authorization' => "Bearer $api_key",
             'Stripe-Version' => $api_version,
             'User-Agent' => 'Registry/1.0 (https://registry.com)',
         };
+        $headers->{'Idempotency-Key'} = $idempotency_key if defined $idempotency_key;
         
         my $promise;
         
@@ -69,7 +70,9 @@ class Registry::Service::Stripe {
     
     # Payment Intents API
     method create_payment_intent_async($params) {
-        return $self->_request_async('POST', 'payment_intents', $params);
+        my %p  = %$params;  # ponytail: shallow copy avoids mutating caller's hashref
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'payment_intents', \%p, $ik);
     }
     
     method retrieve_payment_intent_async($intent_id) {
