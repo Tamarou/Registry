@@ -100,6 +100,23 @@ field $_stripe_client = undef;
         );
     }
 
+    # Connect refunds: for a destination charge the tenant received the tuition, so
+    # the transfer must be reversed; whether the platform also returns its
+    # application fee is governed by the tenant's plan. Registry/platform payments
+    # (no tenant_slug, or tenant_slug eq 'registry') are unchanged -- neither
+    # parameter is sent and Stripe defaults apply.
+    method _refund_connect_params ($db) {
+        my $slug = ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef;
+        return () unless $slug && $slug ne 'registry';
+        $db = $db->db if $db isa Registry::DAO;
+        my $refund_fee =
+            Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db, $slug);
+        return (
+            reverse_transfer       => 1,
+            refund_application_fee => $refund_fee ? 1 : 0,
+        );
+    }
+
     sub create ($class, $db, $data) {
         # Handle JSON encoding for metadata
         if (exists $data->{metadata} && ref $data->{metadata}) {
@@ -292,6 +309,21 @@ field $_stripe_client = undef;
         return $items;
     }
     
+    # Persist the current in-memory field values back to the database row.
+    # Called by state-mutation methods (refund, process_payment) after they
+    # update fields like $status, $metadata, $completed_at, and $error_message.
+    method save ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        $db->update('payments', {
+            status                   => $status,
+            stripe_payment_intent_id => $stripe_payment_intent_id,
+            stripe_payment_method_id => $stripe_payment_method_id,
+            metadata                 => { -json => ($metadata // {}) },
+            completed_at             => $completed_at,
+            error_message            => $error_message,
+        }, { id => $id });
+    }
+
     method refund ($db, $args = {}) {
         die "Cannot refund non-completed payment" unless $status eq 'completed';
         die "No payment intent to refund" unless $stripe_payment_intent_id;
@@ -303,8 +335,9 @@ field $_stripe_client = undef;
         try {
             $refund = $self->stripe_client->create_refund({
                 payment_intent => $stripe_payment_intent_id,
-                amount => _to_cents($refund_amount),
-                reason => $reason,
+                amount         => _to_cents($refund_amount),
+                reason         => $reason,
+                $self->_refund_connect_params($db),
             });
         }
         catch ($e) {
@@ -460,8 +493,9 @@ field $_stripe_client = undef;
         
         return $self->stripe_client->create_refund_async({
             payment_intent => $stripe_payment_intent_id,
-            amount => _to_cents($refund_amount),
-            reason => $reason,
+            amount         => _to_cents($refund_amount),
+            reason         => $reason,
+            $self->_refund_connect_params($db),
         })->then(sub ($refund) {
             # Update payment status
             if ($refund_amount >= $amount) {
