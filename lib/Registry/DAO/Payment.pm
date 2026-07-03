@@ -105,6 +105,10 @@ field $_stripe_client = undef;
     # application fee is governed by the tenant's plan. Registry/platform payments
     # (no tenant_slug, or tenant_slug eq 'registry') are unchanged -- neither
     # parameter is sent and Stripe defaults apply.
+    #
+    # Stripe's form-encoded API (Stripe.pm posts `form => $data`) requires string
+    # booleans ('true'/'false'). Sending numeric 1/0 yields an "Invalid boolean"
+    # API error on every refund, so these values must always be strings.
     method _refund_connect_params ($db) {
         my $slug = ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef;
         return () unless $slug && $slug ne 'registry';
@@ -112,8 +116,8 @@ field $_stripe_client = undef;
         my $refund_fee =
             Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db, $slug);
         return (
-            reverse_transfer       => 1,
-            refund_application_fee => $refund_fee ? 1 : 0,
+            reverse_transfer       => 'true',
+            refund_application_fee => $refund_fee ? 'true' : 'false',
         );
     }
 
@@ -312,9 +316,14 @@ field $_stripe_client = undef;
     # Persist the current in-memory field values back to the database row.
     # Called by state-mutation methods (refund, process_payment) after they
     # update fields like $status, $metadata, $completed_at, and $error_message.
+    #
+    # Intentionally bypasses the inherited Registry::DAO::Object::update(), which
+    # silently carps and continues on database errors. Refund and payment state
+    # must fail loudly: a Stripe refund that succeeds but whose DB record was not
+    # updated would leave money in an inconsistent state.
     method save ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        $db->update('payments', {
+        $db->update($self->table, {
             status                   => $status,
             stripe_payment_intent_id => $stripe_payment_intent_id,
             stripe_payment_method_id => $stripe_payment_method_id,

@@ -1,11 +1,12 @@
 #!/usr/bin/env perl
 # ABOUTME: Tests for refund_application_fee_for_tenant resolver in Registry::PriceOps::RevenueShare.
-# ABOUTME: Covers linked-plan flag, NULL FK fallback, platform-plan fallback, die cases, and DAO coercion.
+# ABOUTME: Covers linked-plan flag, NULL FK fallback, platform-plan fallback, die cases, DAO coercion, and Payment->refund/refund_async Connect-param encoding.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Mojo::JSON qw(decode_json);
 use Registry::PriceOps::RevenueShare qw(refund_application_fee_for_tenant);
 
 my $test_db = Test::Registry::DB->new;
@@ -267,9 +268,16 @@ subtest 'tenant refund honors plan opt-out (refund_application_fee=false)' => su
         $payment->refund($db);
     }
 
-    is $captured{reverse_transfer},       1, 'tenant refund sets reverse_transfer=1';
-    is $captured{refund_application_fee}, 0, 'tenant refund honors plan opt-out (0)';
-    ok exists $captured{payment_intent},     'payment_intent still present';
+    is $captured{reverse_transfer},       'true',  'tenant refund sets reverse_transfer=true (string)';
+    is $captured{refund_application_fee}, 'false', 'tenant refund honors plan opt-out (false string)';
+    ok exists $captured{payment_intent},           'payment_intent still present';
+
+    # Finding 3: verify save() actually persisted the refund state to the DB row.
+    my $row  = $db->select('payments', '*', { id => $payment->id })->hash;
+    is $row->{status}, 'refunded', 'save() persisted status=refunded';
+    my $saved_meta = ref $row->{metadata} ? $row->{metadata} : decode_json($row->{metadata} // '{}');
+    is  $saved_meta->{refund_id},          're_optout_fake', 'save() persisted refund_id in metadata';
+    cmp_ok $saved_meta->{refund_amount}, '==', 100,        'save() persisted refund_amount in metadata';
 
     $db->query(q{
         UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
@@ -307,8 +315,8 @@ subtest 'tenant refund with absent refund_application_fee key defaults to 1' => 
         $payment->refund($db);
     }
 
-    is $captured{reverse_transfer},       1, 'tenant refund sets reverse_transfer=1';
-    is $captured{refund_application_fee}, 1, 'absent key -> default refund_application_fee=1';
+    is $captured{reverse_transfer},       'true', 'tenant refund sets reverse_transfer=true (string)';
+    is $captured{refund_application_fee}, 'true', 'absent key -> default refund_application_fee=true (string)';
 
     $db->query(q{
         UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
@@ -342,6 +350,33 @@ subtest 'registry (non-tenant) payment refund sends no Connect params' => sub {
     ok  exists $captured{reason},                 'registry refund: reason present';
 };
 
+# Finding 2: pin the `$slug ne 'registry'` gate. tenant_slug='registry' must
+# also produce no Connect params, distinct from the no-slug case above.
+subtest 'tenant_slug=registry is treated as platform payment (no Connect params)' => sub {
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id                  => $test_user_id,
+        amount                   => 75.00,
+        status                   => 'completed',
+        stripe_payment_intent_id => 'pi_registry_slug_gate',
+        metadata                 => { tenant_slug => 'registry' },
+    });
+
+    my %captured;
+    {
+        no warnings 'redefine';
+        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_refund_tests';
+        local *Registry::Service::Stripe::create_refund = sub ($s, $p) {
+            %captured = %$p;
+            return { id => 're_registry_gate_fake' };
+        };
+        $payment->refund($db);
+    }
+
+    ok !exists $captured{reverse_transfer},       'registry-slug gate: no reverse_transfer';
+    ok !exists $captured{refund_application_fee}, 'registry-slug gate: no refund_application_fee';
+    ok  exists $captured{payment_intent},         'registry-slug gate: payment_intent present';
+};
+
 subtest 'refund_async sends the same Connect params as refund (sync)' => sub {
     my $saved = $db->query(q{
         SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
@@ -362,6 +397,7 @@ subtest 'refund_async sends the same Connect params as refund (sync)' => sub {
     });
 
     my %captured;
+    my ($async_result, $async_err);
     {
         no warnings 'redefine';
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_refund_tests';
@@ -369,12 +405,17 @@ subtest 'refund_async sends the same Connect params as refund (sync)' => sub {
             %captured = %$p;
             return Mojo::Promise->resolve({ id => 're_async_fake' });
         };
-        $payment->refund_async($db)->wait;
+        $payment->refund_async($db)
+            ->then(sub { $async_result = shift })
+            ->catch(sub { $async_err = shift })
+            ->wait;
     }
 
-    is $captured{reverse_transfer},       1, 'refund_async: tenant sets reverse_transfer=1';
-    is $captured{refund_application_fee}, 1, 'refund_async: absent key -> refund_application_fee=1';
-    ok  exists $captured{payment_intent},    'refund_async: payment_intent present';
+    is $async_err,    undef,          'refund_async: promise did not reject';
+    is $async_result->{id}, 're_async_fake', 'refund_async: resolved with refund object';
+    is $captured{reverse_transfer},       'true', 'refund_async: tenant sets reverse_transfer=true (string)';
+    is $captured{refund_application_fee}, 'true', 'refund_async: absent key -> refund_application_fee=true (string)';
+    ok  exists $captured{payment_intent},         'refund_async: payment_intent present';
 
     $db->query(q{
         UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
