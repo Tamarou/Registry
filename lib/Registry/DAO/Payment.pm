@@ -259,16 +259,29 @@ field $_stripe_client = undef;
 
         # Update payment status based on intent status
         if ($intent->{status} eq 'succeeded') {
+            # The captured amount must match this row before completing: a
+            # stale intent from before a cart refresh must not settle the
+            # refreshed (differently-priced) cart. Intents without an amount
+            # (internal fixtures) pass; real Stripe intents always carry one.
+            # No status mutation on mismatch -- this is a refusal, not a
+            # payment failure.
+            if ( defined $intent->{amount} && $intent->{amount} != _to_cents($amount) ) {
+                return {
+                    success => 0,
+                    error   => 'Payment intent amount does not match payment record',
+                };
+            }
+
             $status = 'completed';
             $completed_at = \'NOW()';
             $stripe_payment_method_id = $intent->{payment_method};
             $self->save($db);
-            
+
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
             $status = 'processing';
             $self->save($db);
-            
+
             return { success => 0, processing => 1 };
         } else {
             $status = 'failed';
@@ -520,6 +533,19 @@ field $_stripe_client = undef;
     method process_payment_async ($db, $payment_intent_id) {
         return $self->stripe_client->retrieve_payment_intent_async($payment_intent_id)
             ->then(sub ($intent) {
+                # Same amount guard as the sync path: a stale intent must not
+                # settle a refreshed, differently-priced cart. Refusal, not a
+                # payment failure -- no status mutation.
+                if (   $intent->{status} eq 'succeeded'
+                    && defined $intent->{amount}
+                    && $intent->{amount} != _to_cents($amount) )
+                {
+                    return {
+                        success => 0,
+                        error   => 'Payment intent amount does not match payment record',
+                    };
+                }
+
                 # Update payment status based on intent status
                 if ($intent->{status} eq 'succeeded') {
                     $status = 'completed';

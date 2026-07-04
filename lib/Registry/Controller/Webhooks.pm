@@ -118,6 +118,20 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
           . ($slug ? " in tenant schema '$slug'" : ' in registry schema') . "\n"
             unless $payment;
 
+        # The intent's captured amount must match the payment row before the
+        # enrollment snapshot is granted: a stale intent completing after a
+        # cart refresh must not enroll the new cart against the old charge.
+        # Dying releases the dedup claim, so Stripe retries and a healed row
+        # finalizes on a later delivery. Events without an amount (internal
+        # fixtures) pass; real Stripe events always carry one.
+        if ( defined $intent->{amount} ) {
+            my $row_cents = Registry::DAO::Payment::_to_cents($payment->amount);
+            die "payment_intent.succeeded: intent $intent->{id} amount "
+              . "$intent->{amount} does not match payment $payment_id "
+              . "amount $row_cents\n"
+                if $intent->{amount} != $row_cents;
+        }
+
         unless (($payment->status // '') eq 'completed') {
             $payment->update($tdb, {
                 status                   => 'completed',

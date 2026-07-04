@@ -606,6 +606,45 @@ sub get_b3_step {
     };
 }
 
+# -----------------------------------------------------------------------
+# Leg W1: process_payment only completes when the intent's captured amount
+# matches the payment row (guards against a stale intent completing a
+# refreshed, differently-priced cart).
+# -----------------------------------------------------------------------
+subtest 'W1: process_payment rejects a succeeded intent whose amount mismatches the row' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_w1fake';
+
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id                  => $b2_user_id,
+        amount                   => 100,
+        status                   => 'pending',
+        stripe_payment_intent_id => 'pi_w1_guard',
+        metadata                 => {},
+    });
+    $payment = Registry::DAO::Payment->find($db, { id => $payment->id });
+
+    no warnings 'redefine';
+    my $intent_amount;
+    local *Registry::Service::Stripe::retrieve_payment_intent = sub ($s, $intent_id) {
+        return {
+            id       => 'pi_w1_guard',
+            status   => 'succeeded',
+            amount   => $intent_amount,
+            metadata => { payment_id => $payment->id },
+        };
+    };
+
+    $intent_amount = 5000;    # row is $100 = 10000 cents
+    my $bad = $payment->process_payment($db, 'pi_w1_guard');
+    ok !$bad->{success}, 'mismatched amount is not honored';
+    my $row = Registry::DAO::Payment->find($db, { id => $payment->id });
+    isnt $row->status, 'completed', 'payment not completed on amount mismatch';
+
+    $intent_amount = 10000;
+    my $good = $payment->process_payment($db, 'pi_w1_guard');
+    ok $good->{success}, 'matching amount completes as before';
+};
+
 # ---------------------------------------------------------------------------
 # Leg B4: sync wrappers must return the resolved API response.
 # Mojo::Promise::wait returns 1 (or undef inside a running ioloop), never the
