@@ -420,4 +420,62 @@ sub get_b3_step {
     };
 }
 
+# ---------------------------------------------------------------------------
+# Leg B4: sync wrappers must return the resolved API response.
+# Mojo::Promise::wait returns 1 (or undef inside a running ioloop), never the
+# resolved value, so `return $p->wait` in a sync wrapper returns garbage. These
+# subtests exercise the REAL sync wrappers end-to-end against an intercepted
+# transport (Mojo::UserAgent::start_p) -- never the wrapper itself -- so a
+# regression back to `->wait` cannot hide behind a mocked wrapper.
+# ---------------------------------------------------------------------------
+{
+    my $b4_svc = Registry::Service::Stripe->new(api_key => 'sk_test_fake_b4');
+
+    sub _fake_tx_json ($json, $code = 200) {
+        my $tx = Mojo::Transaction::HTTP->new;
+        $tx->res->code($code);
+        $tx->res->body($json);
+        return $tx;
+    }
+
+    no warnings 'redefine';
+
+    subtest 'B4: create_payment_intent (sync) returns the decoded intent hash' => sub {
+        local *Mojo::UserAgent::start_p = sub ($self, $tx) {
+            return Mojo::Promise->resolve(
+                _fake_tx_json('{"id":"pi_b4_sync","client_secret":"cs_b4"}'));
+        };
+        my $intent = $b4_svc->create_payment_intent({ amount => 1000, currency => 'usd' });
+        is ref $intent, 'HASH', 'sync create_payment_intent returns a hashref';
+        is $intent->{id}, 'pi_b4_sync', 'hashref is the decoded API response';
+        is $intent->{client_secret}, 'cs_b4', 'all response fields present';
+    };
+
+    subtest 'B4: create_refund (sync) returns the decoded refund hash' => sub {
+        local *Mojo::UserAgent::start_p = sub ($self, $tx) {
+            return Mojo::Promise->resolve(
+                _fake_tx_json('{"id":"re_b4_sync","status":"succeeded"}'));
+        };
+        my $refund = $b4_svc->create_refund({ payment_intent => 'pi_x' });
+        is ref $refund, 'HASH', 'sync create_refund returns a hashref';
+        is $refund->{id}, 're_b4_sync', 'hashref is the decoded refund';
+        is $refund->{status}, 'succeeded', 'refund status present';
+    };
+
+    subtest 'B4: sync wrapper preserves the croak message format on API errors' => sub {
+        local *Mojo::UserAgent::start_p = sub ($self, $tx) {
+            return Mojo::Promise->resolve(_fake_tx_json(
+                '{"error":{"message":"Your card was declined.","type":"card_error","code":"card_declined"}}',
+                402));
+        };
+        my $err = do {
+            local $@;
+            eval { $b4_svc->create_payment_intent({ amount => 1000, currency => 'usd' }) };
+            $@;
+        };
+        like $err, qr/Stripe card_error: Your card was declined\. \(card_declined\)/,
+            'error message format preserved (matches is_card_error contract)';
+    };
+}
+
 done_testing;

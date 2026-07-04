@@ -232,45 +232,68 @@ class Registry::Service::Stripe {
         return 1;
     }
     
+    # Block on a promise and return its RESOLVED value, or re-die its rejection.
+    # Mojo::Promise::wait returns 1 (or undef inside a running ioloop), never
+    # the resolved value, so sync wrappers must capture the settlement
+    # explicitly. Dies loudly if the promise never settles (e.g. called from
+    # inside a running event loop, where blocking is impossible) instead of
+    # silently returning undef.
+    method _await ($promise) {
+        my ($settled, $resolved, $rejected);
+        $promise->then(
+            sub { $resolved = shift; $settled = 1 },
+            sub { $rejected = shift // 'unknown promise rejection'; $settled = 1 },
+        )->wait;
+        die "Synchronous Stripe call did not settle - it was likely made "
+          . "inside a running event loop; use the _async variant there.\n"
+            unless $settled;
+        die $rejected if defined $rejected;
+        return $resolved;
+    }
+
     # Synchronous wrapper methods for backward compatibility
     method create_payment_intent($params) {
-        return $self->create_payment_intent_async($params)->wait;
+        return $self->_await($self->create_payment_intent_async($params));
     }
-    
+
     method retrieve_payment_intent($intent_id) {
-        return $self->retrieve_payment_intent_async($intent_id)->wait;
+        return $self->_await($self->retrieve_payment_intent_async($intent_id));
     }
-    
+
+    method cancel_payment_intent($intent_id) {
+        return $self->_await($self->cancel_payment_intent_async($intent_id));
+    }
+
     method create_refund($params) {
-        return $self->create_refund_async($params)->wait;
+        return $self->_await($self->create_refund_async($params));
     }
-    
+
     method create_customer($params) {
-        return $self->create_customer_async($params)->wait;
+        return $self->_await($self->create_customer_async($params));
     }
-    
+
     method create_setup_intent($params) {
-        return $self->create_setup_intent_async($params)->wait;
+        return $self->_await($self->create_setup_intent_async($params));
     }
-    
+
     method create_subscription($params) {
-        return $self->create_subscription_async($params)->wait;
+        return $self->_await($self->create_subscription_async($params));
     }
 
     method retrieve_subscription($subscription_id) {
-        return $self->retrieve_subscription_async($subscription_id)->wait;
+        return $self->_await($self->retrieve_subscription_async($subscription_id));
     }
 
     method update_subscription($subscription_id, $params) {
-        return $self->update_subscription_async($subscription_id, $params)->wait;
+        return $self->_await($self->update_subscription_async($subscription_id, $params));
     }
 
     method cancel_subscription($subscription_id, $params = {}) {
-        return $self->cancel_subscription_async($subscription_id, $params)->wait;
+        return $self->_await($self->cancel_subscription_async($subscription_id, $params));
     }
 
     method list_invoices($params = {}) {
-        return $self->list_invoices_async($params)->wait;
+        return $self->_await($self->list_invoices_async($params));
     }
     
     # Helper method for secure string comparison
