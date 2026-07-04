@@ -65,18 +65,29 @@ package Test::Registry::StripeConfirm {
     # Returns the decoded confirmed intent on success.
     # Dies with Stripe error message + type/code/decline_code on any Stripe error
     # so callers (e.g. C3's I3 decline test) can catch and inspect it via eval/$@.
+    #
+    # A return_url is always sent: production intents are created with
+    # automatic_payment_methods enabled (the browser uses the Payment Element +
+    # stripe.confirmPayment with a return_url), so Stripe requires a return_url
+    # when confirming server-side even though pm_card_visa never redirects.
     sub confirm {
         my ($pi_id, $pm) = @_;
         $pm //= 'pm_card_visa';
         my $data = _post_raw(
             "/payment_intents/$pi_id/confirm",
-            { payment_method => $pm },
+            {
+                payment_method => $pm,
+                return_url      => 'https://registry.test/stripe-return',
+            },
         );
         if ($data->{error}) {
             my $e = $data->{error};
-            # Include all three fields so callers can match on type, code, or decline_code.
+            # Include all three fields so callers can match on type, code, or
+            # decline_code; some error types leave code/decline_code unset.
             die "Stripe confirm error: $e->{message} "
-              . "(type=$e->{type} code=$e->{code} decline_code=$e->{decline_code})\n";
+              . "(type=" . ( $e->{type}         // '' )
+              . " code=" . ( $e->{code}         // '' )
+              . " decline_code=" . ( $e->{decline_code} // '' ) . ")\n";
         }
         return $data;
     }
@@ -89,6 +100,27 @@ package Test::Registry::StripeConfirm {
         my $charge_id = $intent->{latest_charge}
             or die "PaymentIntent $pi_id has no latest_charge\n";
         return _get("/charges/$charge_id");
+    }
+
+    # Like charge_for, but polls until the destination-charge side effects are
+    # attached. On a destination charge the application_fee and transfer objects
+    # are created a few seconds after the charge succeeds (Stripe eventual
+    # consistency), so the charge's application_fee / transfer id fields are
+    # briefly empty. Tests that need those ids must wait rather than read once.
+    # transfer_data.destination and application_fee_amount are present
+    # immediately; only the result-object ids lag.
+    sub charge_for_settled {
+        my ($pi_id, %opt) = @_;
+        my $timeout  = $opt{timeout} // 30;
+        my $deadline = time() + $timeout;
+        while (1) {
+            my $charge = charge_for($pi_id);
+            return $charge if $charge->{application_fee} && $charge->{transfer};
+            die "charge for $pi_id did not attach application_fee/transfer "
+              . "within ${timeout}s\n"
+                if time() >= $deadline;
+            sleep 2;
+        }
     }
 }
 
