@@ -12,7 +12,7 @@ class Registry::Service::Stripe {
 
     field $ua = Mojo::UserAgent->new;
     field $api_key :param;
-    field $api_version :param = '2024-12-18'; # Latest Stripe API version
+    field $api_version :param = '2024-12-18.acacia'; # Stripe release name for this API date; the bare date is rejected as invalid
     field $webhook_secret :param = undef;
     
     # Configure user agent for optimal performance
