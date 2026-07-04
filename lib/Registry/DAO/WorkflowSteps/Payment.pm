@@ -122,24 +122,54 @@ method create_payment ($db, $run, $form_data) {
         }
     }
 
-    # Create payment record
-    my $payment = Registry::DAO::Payment->create($db, {
-        user_id => $user_id,
-        amount => $payment_info->{total},
-        metadata => {
-            workflow_id => $run->workflow_id,
-            workflow_run_id => $run->id,
-            enrollment_data => $enrollment_data,
-            # Snapshot what finalization needs so the payment_intent.succeeded
-            # webhook can complete the enrollment without the workflow run:
-            # the resolved (session, child) pairs and the tenant schema they
-            # belong to.
-            enrollment_items => $run->data->{enrollment_items} || [],
-            tenant_slug => $run->data->{__tenant_slug},
+    # Reuse existing payment row for this run if it exists and is not yet
+    # completed. A double-submit of the same agreeTerms form must not create
+    # a second payment row or a second Stripe charge -- the stable
+    # idempotency_token on the existing row ensures Stripe deduplicates too.
+    # ponytail: reuse check; completed payments start a new row (second purchase)
+    my $existing_payment_id = $run->data->{payment_id};
+    my $payment;
+    if ($existing_payment_id) {
+        my $existing = Registry::DAO::Payment->find($db, { id => $existing_payment_id });
+        if ($existing && $existing->status ne 'completed') {
+            # Refresh amount and enrollment snapshot in DB; preserve idempotency_token
+            my $raw_db = ($db isa Registry::DAO) ? $db->db : $db;
+            my $updated_meta = {
+                %{$existing->metadata},
+                enrollment_data  => $enrollment_data,
+                enrollment_items => $run->data->{enrollment_items} || [],
+            };
+            $raw_db->update('payments', {
+                amount   => $payment_info->{total},
+                metadata => { -json => $updated_meta },
+            }, { id => $existing_payment_id });
+            # Remove stale line items; fresh ones added below
+            $raw_db->delete('payment_items', { payment_id => $existing_payment_id });
+            # Reload to pick up the updated amount in the in-memory object
+            $payment = Registry::DAO::Payment->find($db, { id => $existing_payment_id });
         }
-    });
-    
-    # Add line items
+    }
+
+    unless ($payment) {
+        # First submit for this run: create the payment record
+        $payment = Registry::DAO::Payment->create($db, {
+            user_id => $user_id,
+            amount => $payment_info->{total},
+            metadata => {
+                workflow_id => $run->workflow_id,
+                workflow_run_id => $run->id,
+                enrollment_data => $enrollment_data,
+                # Snapshot what finalization needs so the payment_intent.succeeded
+                # webhook can complete the enrollment without the workflow run:
+                # the resolved (session, child) pairs and the tenant schema they
+                # belong to.
+                enrollment_items => $run->data->{enrollment_items} || [],
+                tenant_slug => $run->data->{__tenant_slug},
+            }
+        });
+    }
+
+    # Add line items (fresh for both new and reused payments)
     for my $item (@{$payment_info->{items}}) {
         $payment->add_line_item($db, $item);
     }
@@ -208,10 +238,13 @@ method handle_payment_callback ($db, $run, $form_data) {
         # Payment failed. Re-issue a fresh Stripe PaymentIntent so the
         # parent can retry with a different card immediately instead of
         # being dumped back at the terms-agreement page. The Payment
-        # record is reused so we don't orphan it.
+        # record is reused so we don't orphan it. Rotate the idempotency
+        # token first: the retry must be a genuinely new Stripe charge,
+        # not a replay of the declined one.
         my $user = Registry::DAO::User->find($db, { id => $run->data->{user_id} });
         my $retry_intent;
         try {
+            $payment->rotate_idempotency_token($db);
             $retry_intent = $payment->create_payment_intent($db, {
                 description   => 'Program Enrollment (retry)',
                 receipt_email => $user ? $user->email : undef,

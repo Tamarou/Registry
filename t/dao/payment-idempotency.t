@@ -85,7 +85,19 @@ my $captured;
 # -----------------------------------------------------------------------
 
 use Test::Registry::DB;
+use Registry::DAO;
 use Registry::DAO::Payment;
+use Registry::DAO::Tenant;
+use Registry::DAO::Workflow;
+use Registry::DAO::WorkflowStep;
+use Registry::DAO::WorkflowSteps::Payment;
+use Registry::DAO::User;
+use Registry::DAO::Family;
+use Registry::DAO::Session;
+use Registry::DAO::PricingPlan;
+use Registry::DAO::Project;
+use Registry::DAO::Event;
+use Registry::DAO::Location;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;    # Registry::DAO
@@ -197,5 +209,215 @@ subtest 'AC2: rotate_idempotency_token changes token, persists, next intent uses
     is $captured_key, "pi-create:$new_token",
         'AC2: post-rotation intent sends new pi-create:<new_token> key';
 };
+
+# -----------------------------------------------------------------------
+# B3: Workflow step reuses the run's payment row on double-submit;
+#     retry (decline) path rotates the idempotency token.
+# -----------------------------------------------------------------------
+
+# B3 fixtures: stripe-ready tenant, tenant schema, session with pricing,
+# parent user, workflow with payment step.
+
+my $b3_slug = 'b3_idem_' . $$;
+
+Registry::DAO::Tenant->create($db, {
+    name                      => 'B3 Idempotency Tenant',
+    slug                      => $b3_slug,
+    stripe_connect_account_id => 'acct_b3test',
+    stripe_charges_enabled    => 1,
+    stripe_details_submitted  => 1,
+});
+$db->query('SELECT clone_schema(?)', $b3_slug);
+
+my $b3dao = Registry::DAO->new(url => $test_db->uri, schema => $b3_slug);
+my $b3db  = $b3dao->db;
+
+my $b3_location = Registry::DAO::Location->create($b3db, {
+    name         => 'B3 Studio',
+    address_info => { street_address => '1 B3 St', city => 'Testville', state => 'TX', postal_code => '78701' },
+    metadata     => {},
+});
+
+my $b3_teacher = Registry::DAO::User->create($b3db, {
+    name      => 'B3 Teacher',
+    username  => 'b3teacher_' . $$,
+    email     => "b3teacher_$$\@test.com",
+    user_type => 'staff',
+});
+
+my $b3_project = Registry::DAO::Project->create($b3db, {
+    name     => 'B3 Summer Camp',
+    metadata => {},
+});
+
+my $b3_event = Registry::DAO::Event->create($b3db, {
+    time        => '2026-07-01 10:00:00',
+    duration    => 120,
+    location_id => $b3_location->id,
+    project_id  => $b3_project->id,
+    teacher_id  => $b3_teacher->id,
+    capacity    => 20,
+    metadata    => {},
+});
+
+my $b3_session = Registry::DAO::Session->create($b3db, {
+    name       => 'B3 Week',
+    start_date => '2026-07-01',
+    end_date   => '2026-07-07',
+    status     => 'published',
+    capacity   => 20,
+    metadata   => {},
+});
+$b3_session->add_events($b3db, $b3_event->id);
+
+Registry::DAO::PricingPlan->create($b3db, {
+    session_id => $b3_session->id,
+    plan_name  => 'Standard',
+    plan_type  => 'standard',
+    amount     => 100.00,
+});
+
+my $b3_parent = Registry::DAO::User->create($b3db, {
+    email     => "b3parent_$$\@example.com",
+    username  => 'b3parent_' . $$,
+    name      => 'B3 Parent',
+    user_type => 'parent',
+});
+
+my $b3_child = Registry::DAO::Family->add_child($b3db, $b3_parent->id, {
+    child_name        => 'B3 Child',
+    birth_date        => '2018-03-15',
+    grade             => '3',
+    medical_info      => {},
+    emergency_contact => { name => 'Emergency', phone => '555-0199' },
+});
+
+my $b3_workflow = Registry::DAO::Workflow->create($b3db, {
+    name        => 'B3 Test Workflow',
+    slug        => 'b3-workflow-' . $$,
+    description => 'B3 idempotency test workflow',
+});
+
+my $b3_step_row = Registry::DAO::WorkflowStep->create($b3db, {
+    workflow_id => $b3_workflow->id,
+    slug        => 'payment',
+    class       => 'Registry::DAO::WorkflowSteps::Payment',
+    description => 'Payment step',
+});
+
+Registry::DAO::WorkflowStep->create($b3db, {
+    workflow_id => $b3_workflow->id,
+    slug        => 'complete',
+    class       => 'Registry::DAO::WorkflowStep',
+    description => 'Completion step',
+    depends_on  => $b3_step_row->id,
+});
+
+$b3_workflow->update($b3db, { first_step => 'payment' }, { id => $b3_workflow->id });
+
+sub make_b3_run {
+    my $run = $b3_workflow->new_run($b3db);
+    $run->update_data($b3db, {
+        user_id            => $b3_parent->id,
+        children           => [ {
+            id         => $b3_child->id,
+            first_name => 'B3',
+            last_name  => 'Child',
+            birth_date => '2018-03-15',
+            grade      => '3',
+        } ],
+        session_selections => { $b3_child->id => $b3_session->id },
+        enrollment_items   => [ { child_id => $b3_child->id, session_id => $b3_session->id } ],
+        __tenant_slug      => $b3_slug,
+    });
+    return $run;
+}
+
+sub get_b3_step {
+    return $b3_workflow->get_step($b3db, { slug => 'payment' });
+}
+
+{
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_b3fake';
+
+    subtest 'B3-AC1: double agreeTerms submit yields one payment row, identical idempotency key' => sub {
+        my $run  = make_b3_run();
+        my $step = get_b3_step();
+
+        my @captured_keys;
+        {
+            no warnings 'redefine';
+            local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+                push @captured_keys, $p->{_idempotency_key};
+                return { id => 'pi_b3_ac1', client_secret => 'cs_b3_ac1' };
+            };
+
+            $step->process($b3db, { agreeTerms => 1 }, $run);
+            my $first_payment_id = $run->data->{payment_id};
+            ok $first_payment_id, 'payment_id set after first submit';
+
+            $step->process($b3db, { agreeTerms => 1 }, $run);
+            my $second_payment_id = $run->data->{payment_id};
+            is $second_payment_id, $first_payment_id,
+                'payment_id unchanged after second submit (same row reused)';
+        }
+
+        my $count = $b3db->query(
+            "SELECT COUNT(*) FROM payments WHERE metadata->>'workflow_run_id' = ?",
+            $run->id
+        )->array->[0];
+        is $count, 1,
+            'AC1: exactly one payment row for this workflow run after double submit';
+
+        is scalar @captured_keys, 2,
+            'create_payment_intent called once per submit';
+        is $captured_keys[0], $captured_keys[1],
+            'AC1: both calls sent identical idempotency key';
+    };
+
+    subtest 'B3-AC2: decline then retry rotates idempotency token (new key, same row)' => sub {
+        my $run  = make_b3_run();
+        my $step = get_b3_step();
+
+        my $orig_key;
+        {
+            no warnings 'redefine';
+            local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+                $orig_key //= $p->{_idempotency_key};
+                return { id => 'pi_b3_ac2_orig', client_secret => 'cs_b3_ac2_orig' };
+            };
+            $step->process($b3db, { agreeTerms => 1 }, $run);
+        }
+
+        ok defined $orig_key, 'original idempotency key captured from first intent';
+
+        my $retry_key;
+        {
+            no warnings 'redefine';
+            local *Registry::Service::Stripe::retrieve_payment_intent = sub ($s, $id) {
+                return {
+                    status             => 'requires_payment_method',
+                    last_payment_error => { message => 'Your card was declined.' },
+                };
+            };
+            local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+                $retry_key = $p->{_idempotency_key};
+                return { id => 'pi_b3_ac2_retry', client_secret => 'cs_b3_ac2_retry' };
+            };
+            $step->process($b3db, { payment_intent_id => 'pi_b3_ac2_orig' }, $run);
+        }
+
+        ok defined $retry_key, 'retry idempotency key captured from retry intent';
+        isnt $retry_key, $orig_key,
+            'AC2: retry used a different idempotency key (token was rotated for new charge)';
+
+        my $count = $b3db->query(
+            "SELECT COUNT(*) FROM payments WHERE metadata->>'workflow_run_id' = ?",
+            $run->id
+        )->array->[0];
+        is $count, 1,
+            'AC2: still exactly one payment row after decline and retry';
+    };
+}
 
 done_testing;
