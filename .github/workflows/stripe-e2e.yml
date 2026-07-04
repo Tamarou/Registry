@@ -1,0 +1,109 @@
+# ABOUTME: GitHub Actions workflow for real-Stripe gated test suites (Perl + Playwright).
+# ABOUTME: Informational only -- continue-on-error means failures never block merges.
+
+name: Stripe E2E
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  stripe-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # Skip for fork PRs: they have no access to repo secrets.
+    # Runs on direct pushes to main and on same-repo PRs only.
+    if: >
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    env:
+      # Stripe test-mode secrets -- must be pk_test_* / sk_test_* / whsec_* values.
+      # Set STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, and STRIPE_WEBHOOK_SECRET
+      # in GitHub repo Settings → Secrets and variables → Actions.
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      EMAIL_SENDER_TRANSPORT: Test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.42'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev postgresql-client build-essential libssl-dev libz-dev
+
+    - name: Install cpanm and Carton
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+
+    - name: Cache Perl dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/perl5
+        key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
+        restore-keys: |
+          ${{ runner.os }}-perl-
+
+    - name: Install Perl dependencies
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
+        carton install --deployment
+
+    - name: Install Node dependencies
+      run: npm install
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps chromium
+
+    - name: Verify Test::PostgreSQL can start
+      run: |
+        export PATH="$HOME/perl5/bin:$PATH"
+        carton exec perl -MTest::PostgreSQL -e 'my $pg = Test::PostgreSQL->new; print "Test::PostgreSQL OK: ", $pg->uri, "\n"'
+
+    # Informational: failures here do not block merges.
+    - name: Run real-Stripe Perl suites
+      continue-on-error: true
+      run: |
+        export PATH="$HOME/perl5/bin:$PATH"
+        carton exec prove -lv t/stripe-live/
+
+    # Informational: failures here do not block merges.
+    # payment-smoke.spec.js may not yet exist; the step is a no-op until it does.
+    - name: Run Playwright payment smoke test
+      continue-on-error: true
+      run: |
+        npx playwright test t/playwright/payment-smoke.spec.js --project=chromium
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: stripe-e2e-playwright-report
+        path: playwright-report/
+        retention-days: 14
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: stripe-e2e-test-results
+        path: test-results/
+        retention-days: 14
