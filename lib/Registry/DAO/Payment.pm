@@ -169,6 +169,18 @@ field $_stripe_client = undef;
         return $_stripe_client;
     }
     
+    # The Stripe idempotency key for creating this payment's intent. Fails
+    # loudly if the token is missing: a payment without one would send the
+    # same bare "pi-create:" key as every other tokenless payment, and Stripe
+    # would silently replay another payment's intent. Payment->create always
+    # seeds the token, so this only fires for rows built outside it.
+    method _charge_idempotency_key {
+        die "Payment $id has no idempotency_token in metadata - "
+          . "was it created outside Payment->create?"
+            unless ref $metadata eq 'HASH' && defined $metadata->{idempotency_token};
+        return 'pi-create:' . $metadata->{idempotency_token};
+    }
+
     method create_payment_intent ($db, $args = {}) {
         my $description = $args->{description} // 'Registry Program Enrollment';
         my $receipt_email = $args->{receipt_email};
@@ -187,7 +199,7 @@ field $_stripe_client = undef;
                 currency          => $currency,
                 description       => $description,
                 receipt_email     => $receipt_email,
-                _idempotency_key  => 'pi-create:' . $metadata->{idempotency_token},
+                _idempotency_key  => $self->_charge_idempotency_key,
                 _stripe_metadata_params($user_id, $self->id, $metadata),
                 _connect_params($db, $metadata, $amount),
             });
@@ -226,7 +238,25 @@ field $_stripe_client = undef;
             $self->save($db);
             return { success => 0, error => $e };
         }
-        
+
+        # The posted intent id is client-controlled: only honor an intent that
+        # belongs to THIS payment row -- either the id stored at creation time
+        # or an intent stamped with our payment_id in its Stripe metadata.
+        # Without this check, any succeeded intent id from anywhere on the
+        # platform could complete an unrelated (and more expensive) enrollment.
+        # Do not mutate status on mismatch: a forged id must not be able to
+        # flip a payment to failed either.
+        my $intent_id = $intent->{id} // $payment_intent_id;
+        my $owned =
+            ( defined $stripe_payment_intent_id && $intent_id eq $stripe_payment_intent_id )
+            || ( ( $intent->{metadata}{payment_id} // '' ) eq $id );
+        unless ($owned) {
+            return {
+                success => 0,
+                error   => 'Payment intent does not belong to this payment',
+            };
+        }
+
         # Update payment status based on intent status
         if ($intent->{status} eq 'succeeded') {
             $status = 'completed';
@@ -244,8 +274,15 @@ field $_stripe_client = undef;
             $status = 'failed';
             $error_message = $intent->{last_payment_error}->{message} // 'Payment failed';
             $self->save($db);
-            
-            return { success => 0, error => $error_message };
+
+            # Surface the raw intent status: the caller must distinguish a true
+            # decline (requires_payment_method) from a customer mid-3DS
+            # (requires_action) before deciding to mint a replacement intent.
+            return {
+                success       => 0,
+                error         => $error_message,
+                intent_status => $intent->{status},
+            };
         }
     }
     
@@ -462,7 +499,7 @@ field $_stripe_client = undef;
             currency          => $currency,
             description       => $description,
             receipt_email     => $receipt_email,
-            _idempotency_key  => 'pi-create:' . $metadata->{idempotency_token},
+            _idempotency_key  => $self->_charge_idempotency_key,
             _stripe_metadata_params($user_id, $self->id, $metadata),
             _connect_params($db, $metadata, $amount),
         })->then(sub ($intent) {

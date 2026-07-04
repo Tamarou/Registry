@@ -420,6 +420,192 @@ sub get_b3_step {
     };
 }
 
+# -----------------------------------------------------------------------
+# B3 review-fix subtests: pin the reuse-path clauses the TIER_2 mutation
+# pass proved undefended (m1 completed->new-row, m2 payment_items refresh,
+# m4 amount refresh), and the behavior fixes from the confirmed findings:
+# rotation only on true declines, superseded-intent cancellation, and
+# intent-ownership verification on the parent-return callback.
+# -----------------------------------------------------------------------
+{
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_b3fake';
+
+    subtest 'B3-fix m1: completed payment starts a NEW row (second purchase)' => sub {
+        my $run  = make_b3_run();
+        my $step = get_b3_step();
+
+        no warnings 'redefine';
+        my $seq = 0;
+        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            $seq++;
+            return { id => "pi_m1_$seq", client_secret => "cs_m1_$seq" };
+        };
+
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+        my $first = $run->data->{payment_id};
+        ok $first, 'first purchase created a payment row';
+
+        $b3db->update('payments', { status => 'completed' }, { id => $first });
+
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+        my $second = $run->data->{payment_id};
+        isnt $second, $first, 'completed row is NOT reused (second purchase)';
+
+        my $count = $b3db->query(
+            "SELECT COUNT(*) FROM payments WHERE metadata->>'workflow_run_id' = ?",
+            $run->id
+        )->array->[0];
+        is $count, 2, 'two rows: settled purchase plus the new one';
+    };
+
+    subtest 'B3-fix m2: identical resubmit does not duplicate payment_items' => sub {
+        my $run  = make_b3_run();
+        my $step = get_b3_step();
+
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            return { id => 'pi_m2', client_secret => 'cs_m2' };
+        };
+
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+
+        my $items = $b3db->query(
+            'SELECT COUNT(*) FROM payment_items WHERE payment_id = ?',
+            $run->data->{payment_id}
+        )->array->[0];
+        is $items, 1, 'line items refreshed in place, not appended';
+    };
+
+    subtest 'B3-fix m4: changed cart refreshes amount, rotates key, cancels superseded intent' => sub {
+        my $run  = make_b3_run();
+        my $step = get_b3_step();
+
+        my (@keys, @cancelled);
+        no warnings 'redefine';
+        my $seq = 0;
+        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            $seq++;
+            push @keys, $p->{_idempotency_key};
+            return { id => "pi_m4_$seq", client_secret => "cs_m4_$seq" };
+        };
+        local *Registry::Service::Stripe::cancel_payment_intent = sub ($s, $intent_id) {
+            push @cancelled, $intent_id;
+            return { id => $intent_id, status => 'canceled' };
+        };
+
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+        my $payment_id = $run->data->{payment_id};
+        my $amount1    = Registry::DAO::Payment->find($b3db, { id => $payment_id })->amount;
+        cmp_ok $amount1, '==', 100, 'first submit: single-child cart totals 100';
+
+        # Parent goes back and adds a second child before resubmitting.
+        my $m4_child2 = Registry::DAO::Family->add_child($b3db, $b3_parent->id, {
+            child_name        => 'B3 Second Child',
+            birth_date        => '2019-06-01',
+            grade             => '2',
+            medical_info      => {},
+            emergency_contact => { name => 'Emergency', phone => '555-0199' },
+        });
+        my $children = [
+            @{ $run->data->{children} },
+            { id => $m4_child2->id, first_name => 'B3Second', last_name => 'Child',
+              birth_date => '2019-06-01', grade => '2' },
+        ];
+        $run->update_data($b3db, {
+            children           => $children,
+            session_selections => {
+                %{ $run->data->{session_selections} },
+                $m4_child2->id => $b3_session->id,
+            },
+            enrollment_items   => [
+                @{ $run->data->{enrollment_items} },
+                { child_id => $m4_child2->id, session_id => $b3_session->id },
+            ],
+        });
+
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+
+        is $run->data->{payment_id}, $payment_id, 'same payment row reused';
+        my $refreshed = Registry::DAO::Payment->find($b3db, { id => $payment_id });
+        cmp_ok $refreshed->amount, '==', 200, 'amount refreshed to the new cart total';
+        is scalar @keys, 2, 'one intent creation per submit';
+        isnt $keys[1], $keys[0],
+            'changed cart rotated the idempotency key (fresh charge, not a doomed replay)';
+        is_deeply \@cancelled, ['pi_m4_1'],
+            'superseded intent was cancelled (at most one confirmable intent)';
+    };
+
+    subtest 'B3-fix: requires_action callback neither rotates nor mints a new intent' => sub {
+        my $run  = make_b3_run();
+        my $step = get_b3_step();
+
+        my @keys;
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            push @keys, $p->{_idempotency_key};
+            return { id => 'pi_ra_1', client_secret => 'cs_ra_1' };
+        };
+
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+        is scalar @keys, 1, 'initial intent created';
+
+        local *Registry::Service::Stripe::retrieve_payment_intent = sub ($s, $intent_id) {
+            return {
+                id       => 'pi_ra_1',
+                status   => 'requires_action',
+                metadata => { payment_id => $run->data->{payment_id} },
+            };
+        };
+
+        my $result = $step->process($b3db, { payment_intent_id => 'pi_ra_1' }, $run);
+
+        is scalar @keys, 1,
+            'no replacement intent minted while the customer is mid-authentication';
+        ok $result->{data}{processing},
+            'callback surfaces an in-progress state, not a decline retry';
+        my $token = Registry::DAO::Payment->find($b3db, { id => $run->data->{payment_id} })
+            ->metadata->{idempotency_token};
+        like $keys[0], qr/\Q$token\E\z/,
+            'idempotency token unchanged (no rotation on requires_action)';
+    };
+
+    subtest 'B3-fix: succeeded intent not owned by this payment is rejected' => sub {
+        my $run  = make_b3_run();
+        my $step = get_b3_step();
+
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            return { id => 'pi_own_mine', client_secret => 'cs_own' };
+        };
+
+        $step->process($b3db, { agreeTerms => 1 }, $run);
+        my $payment_id = $run->data->{payment_id};
+
+        # Attacker replays a succeeded intent that belongs to a DIFFERENT payment.
+        local *Registry::Service::Stripe::retrieve_payment_intent = sub ($s, $intent_id) {
+            return {
+                id       => 'pi_foreign',
+                status   => 'succeeded',
+                metadata => { payment_id => 'not-this-payment' },
+            };
+        };
+        local *Registry::Service::Stripe::cancel_payment_intent = sub ($s, $intent_id) {
+            return { id => $intent_id, status => 'canceled' };
+        };
+
+        $step->process($b3db, { payment_intent_id => 'pi_foreign' }, $run);
+
+        my $payment = Registry::DAO::Payment->find($b3db, { id => $payment_id });
+        isnt $payment->status, 'completed',
+            'foreign succeeded intent does not complete this payment';
+        my $enrollments = $b3db->query(
+            'SELECT COUNT(*) FROM enrollments WHERE payment_id = ?', $payment_id
+        )->array->[0];
+        is $enrollments, 0, 'no enrollment granted for a foreign charge';
+    };
+}
+
 # ---------------------------------------------------------------------------
 # Leg B4: sync wrappers must return the resolved API response.
 # Mojo::Promise::wait returns 1 (or undef inside a running ioloop), never the

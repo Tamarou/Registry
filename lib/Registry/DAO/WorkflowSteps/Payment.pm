@@ -147,6 +147,23 @@ method create_payment ($db, $run, $form_data) {
             $raw_db->delete('payment_items', { payment_id => $existing_payment_id });
             # Reload to pick up the updated amount in the in-memory object
             $payment = Registry::DAO::Payment->find($db, { id => $existing_payment_id });
+
+            # A changed cart must become a NEW Stripe charge: replaying the
+            # old idempotency key with a different amount is a guaranteed
+            # Stripe idempotency_error (same key, different body), which
+            # would dead-end the run. Rotate the key and cancel the
+            # superseded intent so at most one confirmable PaymentIntent
+            # exists for this payment row. An identical resubmit keeps the
+            # token, so Stripe replays the same intent (at most one charge).
+            if ($existing->amount != $payment_info->{total}) {
+                $payment->rotate_idempotency_token($db);
+                if (my $old_intent = $payment->stripe_payment_intent_id) {
+                    # Best-effort: an already-settled or already-canceled
+                    # intent makes this a no-op error we can ignore.
+                    try { $payment->stripe_client->cancel_payment_intent($old_intent) }
+                    catch ($cancel_err) { }
+                }
+            }
         }
     }
 
@@ -169,11 +186,16 @@ method create_payment ($db, $run, $form_data) {
         });
     }
 
+    # Link the row to the run BEFORE the intent call: if intent creation dies
+    # (Stripe outage, config error), the next submit must still find and reuse
+    # this row instead of orphaning it and minting a second token.
+    $run->update_data($db, { payment_id => $payment->id });
+
     # Add line items (fresh for both new and reused payments)
     for my $item (@{$payment_info->{items}}) {
         $payment->add_line_item($db, $item);
     }
-    
+
     # Create Stripe payment intent
     my $intent_data;
     try {
@@ -188,10 +210,7 @@ method create_payment ($db, $run, $form_data) {
             data => $self->prepare_payment_data($db, $run),
         };
     };
-    
-    # Store payment ID in workflow data
-    $run->update_data($db, { payment_id => $payment->id });
-    
+
     return {
         next_step => $self->id,
         data => {
@@ -235,15 +254,52 @@ method handle_payment_callback ($db, $run, $form_data) {
             }
         };
     } else {
-        # Payment failed. Re-issue a fresh Stripe PaymentIntent so the
+        my $intent_status = $result->{intent_status} // '';
+
+        # Customer is mid-authentication (e.g. 3DS): the intent is still live
+        # and confirmable. Minting a replacement here would leave TWO live
+        # PaymentIntents (a double-charge window), so surface an in-progress
+        # state instead and let the webhook or a later callback settle it.
+        if ($intent_status eq 'requires_action' || $intent_status eq 'requires_confirmation') {
+            return {
+                next_step => $self->id,
+                data => {
+                    %{$self->prepare_payment_data($db, $run)},
+                    processing => 1,
+                    message => 'Payment requires additional verification. '
+                             . 'Please complete the authentication step.',
+                }
+            };
+        }
+
+        # Only a true terminal state gets a fresh intent: a decline
+        # (requires_payment_method) or a canceled intent. Anything else --
+        # transport errors, unknown states, ownership rejections -- surfaces
+        # the failure without minting a replacement charge.
+        unless ($intent_status eq 'requires_payment_method' || $intent_status eq 'canceled') {
+            $run->update_data($db, { payment_retry_state => undef });
+            return {
+                next_step => $self->id,
+                errors    => [ $result->{error} ],
+                data      => $self->prepare_payment_data($db, $run),
+            };
+        }
+
+        # Payment declined. Re-issue a fresh Stripe PaymentIntent so the
         # parent can retry with a different card immediately instead of
         # being dumped back at the terms-agreement page. The Payment
         # record is reused so we don't orphan it. Rotate the idempotency
         # token first: the retry must be a genuinely new Stripe charge,
-        # not a replay of the declined one.
+        # not a replay of the declined one. Cancel the superseded intent
+        # (best-effort) so at most one confirmable PaymentIntent exists;
+        # a declined intent is still re-confirmable at Stripe otherwise.
         my $user = Registry::DAO::User->find($db, { id => $run->data->{user_id} });
         my $retry_intent;
         try {
+            if (my $old_intent = $payment->stripe_payment_intent_id) {
+                try { $payment->stripe_client->cancel_payment_intent($old_intent) }
+                catch ($cancel_err) { }   # already settled/canceled is fine
+            }
             $payment->rotate_idempotency_token($db);
             $retry_intent = $payment->create_payment_intent($db, {
                 description   => 'Program Enrollment (retry)',
