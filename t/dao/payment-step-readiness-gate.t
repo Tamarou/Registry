@@ -19,7 +19,9 @@ use Registry::DAO::Event;
 use Registry::DAO::Location;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
+use Test::Registry::Async qw( settle );
 use Registry::Service::Stripe;
+use Mojo::Promise;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -182,7 +184,7 @@ subtest 'paid + tenant not ready: gate returns error, no payment row' => sub {
     my $run  = make_paid_run();
     my $step = get_payment_step();
 
-    my $result = $step->process($tenant_db, { agreeTerms => 1 }, $run);
+    my $result = settle($step->process($tenant_db, { agreeTerms => 1 }, $run));
 
     ok $result->{errors}, 'gate returned errors';
     like $result->{errors}[0], qr/not yet available/i,
@@ -208,15 +210,18 @@ subtest 'paid + tenant ready: gate passes, payment row created' => sub {
     my $intent_called = 0;
     {
         no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub {
+        # The step drives Stripe through the async seam; a blocking call in the
+        # web path can never settle inside the daemon's running event loop.
+        local *Registry::Service::Stripe::create_payment_intent_async = sub {
             $intent_called++;
-            return { id => 'pi_gate_test', client_secret => 'cs_gate_test' };
+            return Mojo::Promise->resolve(
+                { id => 'pi_gate_test', client_secret => 'cs_gate_test' });
         };
 
         my $run  = make_paid_run();
         my $step = get_payment_step();
 
-        my $result = $step->process($tenant_db, { agreeTerms => 1 }, $run);
+        my $result = settle($step->process($tenant_db, { agreeTerms => 1 }, $run));
 
         ok !$result->{errors}, 'no gate error when tenant is ready'
             or diag explain $result->{errors};
@@ -259,7 +264,7 @@ subtest 'free ($0) + tenant not ready: no gate error, enrollment completes' => s
     });
 
     my $step   = get_payment_step();
-    my $result = $step->process($tenant_db, { agreeTerms => 1 }, $run);
+    my $result = settle($step->process($tenant_db, { agreeTerms => 1 }, $run));
 
     # Free path routes via create_demo_enrollments which returns next_step => 'complete'
     # before the gate is ever evaluated.

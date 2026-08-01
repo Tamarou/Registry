@@ -8,6 +8,7 @@ use Test::More;
 use Registry::Service::Stripe;
 use Mojo::Promise;
 use Mojo::Transaction::HTTP;
+use Test::Registry::Async qw( settle );
 
 my $svc = Registry::Service::Stripe->new(api_key => 'sk_test_fake_b1');
 
@@ -347,16 +348,17 @@ sub get_b3_step {
         my @captured_keys;
         {
             no warnings 'redefine';
-            local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
                 push @captured_keys, $p->{_idempotency_key};
-                return { id => 'pi_b3_ac1', client_secret => 'cs_b3_ac1' };
+                return Mojo::Promise->resolve(
+                    { id => 'pi_b3_ac1', client_secret => 'cs_b3_ac1' });
             };
 
-            $step->process($b3db, { agreeTerms => 1 }, $run);
+            settle($step->process($b3db, { agreeTerms => 1 }, $run));
             my $first_payment_id = $run->data->{payment_id};
             ok $first_payment_id, 'payment_id set after first submit';
 
-            $step->process($b3db, { agreeTerms => 1 }, $run);
+            settle($step->process($b3db, { agreeTerms => 1 }, $run));
             my $second_payment_id = $run->data->{payment_id};
             is $second_payment_id, $first_payment_id,
                 'payment_id unchanged after second submit (same row reused)';
@@ -382,11 +384,12 @@ sub get_b3_step {
         my $orig_key;
         {
             no warnings 'redefine';
-            local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
                 $orig_key //= $p->{_idempotency_key};
-                return { id => 'pi_b3_ac2_orig', client_secret => 'cs_b3_ac2_orig' };
+                return Mojo::Promise->resolve(
+                    { id => 'pi_b3_ac2_orig', client_secret => 'cs_b3_ac2_orig' });
             };
-            $step->process($b3db, { agreeTerms => 1 }, $run);
+            settle($step->process($b3db, { agreeTerms => 1 }, $run));
         }
 
         ok defined $orig_key, 'original idempotency key captured from first intent';
@@ -394,17 +397,18 @@ sub get_b3_step {
         my $retry_key;
         {
             no warnings 'redefine';
-            local *Registry::Service::Stripe::retrieve_payment_intent = sub ($s, $id) {
-                return {
+            local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ($s, $id) {
+                return Mojo::Promise->resolve({
                     status             => 'requires_payment_method',
                     last_payment_error => { message => 'Your card was declined.' },
-                };
+                });
             };
-            local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+            local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
                 $retry_key = $p->{_idempotency_key};
-                return { id => 'pi_b3_ac2_retry', client_secret => 'cs_b3_ac2_retry' };
+                return Mojo::Promise->resolve(
+                    { id => 'pi_b3_ac2_retry', client_secret => 'cs_b3_ac2_retry' });
             };
-            $step->process($b3db, { payment_intent_id => 'pi_b3_ac2_orig' }, $run);
+            settle($step->process($b3db, { payment_intent_id => 'pi_b3_ac2_orig' }, $run));
         }
 
         ok defined $retry_key, 'retry idempotency key captured from retry intent';
@@ -436,18 +440,19 @@ sub get_b3_step {
 
         no warnings 'redefine';
         my $seq = 0;
-        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
             $seq++;
-            return { id => "pi_m1_$seq", client_secret => "cs_m1_$seq" };
+            return Mojo::Promise->resolve(
+                { id => "pi_m1_$seq", client_secret => "cs_m1_$seq" });
         };
 
-        $step->process($b3db, { agreeTerms => 1 }, $run);
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
         my $first = $run->data->{payment_id};
         ok $first, 'first purchase created a payment row';
 
         $b3db->update('payments', { status => 'completed' }, { id => $first });
 
-        $step->process($b3db, { agreeTerms => 1 }, $run);
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
         my $second = $run->data->{payment_id};
         isnt $second, $first, 'completed row is NOT reused (second purchase)';
 
@@ -463,12 +468,12 @@ sub get_b3_step {
         my $step = get_b3_step();
 
         no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
-            return { id => 'pi_m2', client_secret => 'cs_m2' };
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
+            return Mojo::Promise->resolve({ id => 'pi_m2', client_secret => 'cs_m2' });
         };
 
-        $step->process($b3db, { agreeTerms => 1 }, $run);
-        $step->process($b3db, { agreeTerms => 1 }, $run);
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
 
         my $items = $b3db->query(
             'SELECT COUNT(*) FROM payment_items WHERE payment_id = ?',
@@ -484,17 +489,18 @@ sub get_b3_step {
         my (@keys, @cancelled);
         no warnings 'redefine';
         my $seq = 0;
-        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
             $seq++;
             push @keys, $p->{_idempotency_key};
-            return { id => "pi_m4_$seq", client_secret => "cs_m4_$seq" };
+            return Mojo::Promise->resolve(
+                { id => "pi_m4_$seq", client_secret => "cs_m4_$seq" });
         };
-        local *Registry::Service::Stripe::cancel_payment_intent = sub ($s, $intent_id) {
+        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $intent_id) {
             push @cancelled, $intent_id;
-            return { id => $intent_id, status => 'canceled' };
+            return Mojo::Promise->resolve({ id => $intent_id, status => 'canceled' });
         };
 
-        $step->process($b3db, { agreeTerms => 1 }, $run);
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
         my $payment_id = $run->data->{payment_id};
         my $amount1    = Registry::DAO::Payment->find($b3db, { id => $payment_id })->amount;
         cmp_ok $amount1, '==', 100, 'first submit: single-child cart totals 100';
@@ -524,7 +530,7 @@ sub get_b3_step {
             ],
         });
 
-        $step->process($b3db, { agreeTerms => 1 }, $run);
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
 
         is $run->data->{payment_id}, $payment_id, 'same payment row reused';
         my $refreshed = Registry::DAO::Payment->find($b3db, { id => $payment_id });
@@ -542,23 +548,23 @@ sub get_b3_step {
 
         my @keys;
         no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
             push @keys, $p->{_idempotency_key};
-            return { id => 'pi_ra_1', client_secret => 'cs_ra_1' };
+            return Mojo::Promise->resolve({ id => 'pi_ra_1', client_secret => 'cs_ra_1' });
         };
 
-        $step->process($b3db, { agreeTerms => 1 }, $run);
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
         is scalar @keys, 1, 'initial intent created';
 
-        local *Registry::Service::Stripe::retrieve_payment_intent = sub ($s, $intent_id) {
-            return {
+        local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ($s, $intent_id) {
+            return Mojo::Promise->resolve({
                 id       => 'pi_ra_1',
                 status   => 'requires_action',
                 metadata => { payment_id => $run->data->{payment_id} },
-            };
+            });
         };
 
-        my $result = $step->process($b3db, { payment_intent_id => 'pi_ra_1' }, $run);
+        my $result = settle($step->process($b3db, { payment_intent_id => 'pi_ra_1' }, $run));
 
         is scalar @keys, 1,
             'no replacement intent minted while the customer is mid-authentication';
@@ -575,26 +581,26 @@ sub get_b3_step {
         my $step = get_b3_step();
 
         no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub ($s, $p) {
-            return { id => 'pi_own_mine', client_secret => 'cs_own' };
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
+            return Mojo::Promise->resolve({ id => 'pi_own_mine', client_secret => 'cs_own' });
         };
 
-        $step->process($b3db, { agreeTerms => 1 }, $run);
+        settle($step->process($b3db, { agreeTerms => 1 }, $run));
         my $payment_id = $run->data->{payment_id};
 
         # Attacker replays a succeeded intent that belongs to a DIFFERENT payment.
-        local *Registry::Service::Stripe::retrieve_payment_intent = sub ($s, $intent_id) {
-            return {
+        local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ($s, $intent_id) {
+            return Mojo::Promise->resolve({
                 id       => 'pi_foreign',
                 status   => 'succeeded',
                 metadata => { payment_id => 'not-this-payment' },
-            };
+            });
         };
-        local *Registry::Service::Stripe::cancel_payment_intent = sub ($s, $intent_id) {
-            return { id => $intent_id, status => 'canceled' };
+        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $intent_id) {
+            return Mojo::Promise->resolve({ id => $intent_id, status => 'canceled' });
         };
 
-        $step->process($b3db, { payment_intent_id => 'pi_foreign' }, $run);
+        settle($step->process($b3db, { payment_intent_id => 'pi_foreign' }, $run));
 
         my $payment = Registry::DAO::Payment->find($b3db, { id => $payment_id });
         isnt $payment->status, 'completed',

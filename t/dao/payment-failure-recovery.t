@@ -13,6 +13,8 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
+use Test::Registry::Async qw( settle );
+use Mojo::Promise;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -62,26 +64,32 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 # loads Payment by id, so we monkey-patch the class methods to inject
 # our mock.
 #
-# A failing $process_result must carry the intent_status process_payment
+# A failing $process_result must carry the intent_status process_payment_async
 # really returns. Only a terminal state (requires_payment_method =
 # declined, or canceled) earns a fresh intent; requires_action means the
 # customer is mid-3DS and minting a replacement would open a
 # double-charge window. A bare {success=>0} is a transport error and
 # deliberately gets no retry.
+#
+# The step drives Stripe through the *_async methods, so the mocks hand back
+# promises: a blocking call in the web path can never settle inside the
+# daemon's running event loop.
 sub mock_payment_with_outcome ($process_result, %more) {
     my $mock = Test::MockObject->new;
     $mock->set_always('id',                    $payment_id);
-    $mock->set_always('process_payment',       $process_result);
+    $mock->set_always('process_payment_async', Mojo::Promise->resolve($process_result));
     # Before minting a replacement intent the retry path cancels the
     # superseded one and rotates the idempotency token. undef here means
     # there is no prior intent to cancel, so no stripe_client is needed.
     $mock->set_always('stripe_payment_intent_id', undef);
     $mock->set_always('rotate_idempotency_token', 1);
     if (exists $more{retry_intent}) {
-        $mock->set_always('create_payment_intent', $more{retry_intent});
+        $mock->set_always('create_payment_intent_async',
+            Mojo::Promise->resolve($more{retry_intent}));
     }
     elsif (exists $more{retry_dies}) {
-        $mock->mock('create_payment_intent', sub { die $more{retry_dies} });
+        $mock->set_always('create_payment_intent_async',
+            Mojo::Promise->reject($more{retry_dies}));
     }
     return $mock;
 }
@@ -103,9 +111,9 @@ subtest 'recoverable failure re-renders form with a fresh client_secret' => sub 
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    my $result = $step->handle_payment_callback($db, $run, {
+    my $result = settle($step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_old_failed',
-    });
+    }));
 
     ok($result->{errors}, 'error array included');
     like($result->{errors}[0], qr/declined/i, 'message surfaces the decline reason');
@@ -132,9 +140,9 @@ subtest 'if a new intent cannot be issued, still surface an error' => sub {
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    my $result = $step->handle_payment_callback($db, $run, {
+    my $result = settle($step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_old_failed',
-    });
+    }));
 
     ok($result->{errors}, 'error array included');
     ok(!$result->{data}{show_stripe_form},
@@ -156,9 +164,9 @@ subtest 'retry state persists in run data for next GET' => sub {
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    $step->handle_payment_callback($db, $run, {
+    settle($step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_old_failed',
-    });
+    }));
 
     # Reload the run to make sure data was persisted.
     my $reloaded = Registry::DAO::WorkflowRun->find($db, { id => $run->id });
@@ -180,7 +188,8 @@ subtest 'retry state persists in run data for next GET' => sub {
 subtest 'successful payment still transitions to complete' => sub {
     my $mock = Test::MockObject->new;
     $mock->set_always('id', $payment_id);
-    $mock->set_always('process_payment', { success => 1, payment => $mock });
+    $mock->set_always('process_payment_async',
+        Mojo::Promise->resolve({ success => 1, payment => $mock }));
     # A successful callback finalizes the enrollment; stub it so the mock
     # doesn't warn about the un-mocked call.
     $mock->set_always('finalize_enrollment', 1);
@@ -188,9 +197,9 @@ subtest 'successful payment still transitions to complete' => sub {
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    my $result = $step->handle_payment_callback($db, $run, {
+    my $result = settle($step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_ok',
-    });
+    }));
 
     is($result->{next_step}, 'complete',
        'success still advances to complete step');

@@ -12,6 +12,7 @@ use Test::More import => [qw( done_testing is like ok subtest )];
 defer { done_testing };
 
 use Mojo::JSON     qw(encode_json);
+use Mojo::Promise;
 use Digest::SHA    qw(hmac_sha256_hex);
 use Mojo::Home;
 use YAML::XS qw(Load);
@@ -412,13 +413,16 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
     my $step   = $run->next_step($tenant_db);
     is $step->slug, 'payment', 'run is still on payment step (gate refusal did not advance it)';
 
-    # Intercept create_payment_intent; capture params and return a fixture intent.
+    # Intercept the async intent seam; capture params and return a fixture
+    # intent. The controller renders only once this promise settles, so the
+    # request also exercises the render_later path.
     {
         no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub {
+        local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self_stripe, $params) = @_;
             $captured_params = $params;
-            return { id => 'pi_journey', client_secret => 'cs_journey' };
+            return Mojo::Promise->resolve(
+                { id => 'pi_journey', client_secret => 'cs_journey' });
         };
 
         # When payment intent is created, the step stays on the payment page
@@ -433,7 +437,8 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
         )->status_is(200, 'payment step renders Stripe form after passing gate');
     }
 
-    ok $captured_params, 'Stripe create_payment_intent was called and params captured';
+    ok $captured_params,
+        'Stripe create_payment_intent_async was called and params captured';
 
     # Connect routing params
     is $captured_params->{'transfer_data[destination]'}, 'acct_journey',

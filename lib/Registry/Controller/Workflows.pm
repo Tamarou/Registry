@@ -5,6 +5,7 @@ use Object::Pad;
 class Registry::Controller::Workflows :isa(Registry::Controller) {
     use Carp qw(confess);
     use DateTime;
+    use Mojo::Promise ();
 
     method workflow ( $slug = $self->param('workflow') ) {
         my $dao = $self->dao;
@@ -359,6 +360,26 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         }
 
         my $result = $run->process( $dao->db, $step, $data );
+
+        # Steps that talk to Stripe hand back a promise rather than a hashref;
+        # the response can only be rendered once it settles. render_later keeps
+        # Mojolicious from closing the transaction in the meantime.
+        if ( $result isa Mojo::Promise ) {
+            $self->render_later;
+            return $result->then(
+                sub ($resolved) { $self->_render_step_result( $run, $step, $resolved ) },
+                sub ($error) {
+                    $self->app->log->error("Workflow step failed: $error");
+                    $self->render( text => 'Workflow error', status => 500 );
+                },
+            );
+        }
+
+        return $self->_render_step_result( $run, $step, $result );
+    }
+
+    method _render_step_result ( $run, $step, $result ) {
+        my $dao = $self->dao;
 
         # Check for validation errors from workflow steps.
         # Steps may use either '_validation_errors' or 'errors' key.

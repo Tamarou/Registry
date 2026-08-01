@@ -14,6 +14,7 @@ use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
 use Registry::Service::Stripe;
 use Mojo::Promise;
+use Test::Registry::Async qw( settle );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -278,21 +279,23 @@ subtest 'retry intent carries same connect params as original' => sub {
         # requires_payment_method / canceled earn a fresh intent, so
         # omitting it would skip the retry branch this subtest exists to
         # cover.
-        local *Registry::DAO::Payment::process_payment = sub {
-            {   success       => 0,
+        local *Registry::DAO::Payment::process_payment_async = sub {
+            Mojo::Promise->resolve({
+                success       => 0,
                 error         => 'Card declined',
                 intent_status => 'requires_payment_method',
-            };
+            });
         };
-        local *Registry::Service::Stripe::create_payment_intent = sub {
+        local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self, $params) = @_;
             $retry_captured = $params;
-            return { id => 'pi_dc_retry', client_secret => 'cs_dc_retry' };
+            return Mojo::Promise->resolve(
+                { id => 'pi_dc_retry', client_secret => 'cs_dc_retry' });
         };
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
-        $step->handle_payment_callback($tenant_db, $run, {
+        settle($step->handle_payment_callback($tenant_db, $run, {
             payment_intent_id => 'pi_dc_initial',
-        });
+        }));
     }
 
     ok $retry_captured, 'retry intent was requested';

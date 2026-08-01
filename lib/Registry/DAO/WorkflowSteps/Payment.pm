@@ -11,7 +11,14 @@ use Registry::DAO::Location;
 use Registry::DAO::Notification;
 use Registry::DAO::Tenant;
 use Mojo::JSON qw(encode_json);
+use Mojo::Promise;
 
+# The two Stripe-touching branches (create_payment, handle_payment_callback)
+# return a Mojo::Promise; the free-enrollment and page-view branches return a
+# plain hashref. WorkflowRun::process accepts either. Blocking on the Stripe
+# call instead is not an option in the web path: Mojo::Promise::wait returns
+# immediately once its loop is already running, which under the daemon turns
+# every paid enrollment into a "Payment processing error".
 method process ($db, $form_data, $run = undef) {
     $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
 
@@ -113,12 +120,12 @@ method create_payment ($db, $run, $form_data) {
             : undef;
         my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
         unless ($tenant && $tenant->stripe_connect_ready) {
-            return {
+            return Mojo::Promise->resolve({
                 next_step => $self->id,
                 errors    => ['Online payment is not yet available for this organization. '
                             . 'Please contact the program organizer to complete enrollment.'],
                 data      => $self->prepare_payment_data($db, $run),
-            };
+            });
         }
     }
 
@@ -129,6 +136,10 @@ method create_payment ($db, $run, $form_data) {
     # ponytail: reuse check; completed payments start a new row (second purchase)
     my $existing_payment_id = $run->data->{payment_id};
     my $payment;
+    # Cancelling the superseded intent has to finish before the replacement is
+    # minted, so it is threaded through the chain rather than fired and
+    # forgotten -- otherwise two confirmable intents can exist at once.
+    my $supersede = Mojo::Promise->resolve;
     if ($existing_payment_id) {
         my $existing = Registry::DAO::Payment->find($db, { id => $existing_payment_id });
         if ($existing && $existing->status ne 'completed') {
@@ -160,8 +171,9 @@ method create_payment ($db, $run, $form_data) {
                 if (my $old_intent = $payment->stripe_payment_intent_id) {
                     # Best-effort: an already-settled or already-canceled
                     # intent makes this a no-op error we can ignore.
-                    try { $payment->stripe_client->cancel_payment_intent($old_intent) }
-                    catch ($cancel_err) { }
+                    $supersede = $payment->stripe_client
+                        ->cancel_payment_intent_async($old_intent)
+                        ->catch(sub ($cancel_err) { });
                 }
             }
         }
@@ -197,29 +209,28 @@ method create_payment ($db, $run, $form_data) {
     }
 
     # Create Stripe payment intent
-    my $intent_data;
-    try {
-        $intent_data = $payment->create_payment_intent($db, {
+    return $supersede->then(sub {
+        $payment->create_payment_intent_async($db, {
             description => 'Program Enrollment',
             receipt_email => $user->email,
         });
-    } catch ($error) {
+    })->then(sub ($intent_data) {
+        return {
+            next_step => $self->id,
+            data => {
+                %{$self->prepare_payment_data($db, $run)},
+                payment_id => $payment->id,
+                client_secret => $intent_data->{client_secret},
+                show_stripe_form => 1,
+            }
+        };
+    }, sub ($error) {
         return {
             next_step => $self->id,
             errors => ["Payment processing error: $error"],
             data => $self->prepare_payment_data($db, $run),
         };
-    };
-
-    return {
-        next_step => $self->id,
-        data => {
-            %{$self->prepare_payment_data($db, $run)},
-            payment_id => $payment->id,
-            client_secret => $intent_data->{client_secret},
-            show_stripe_form => 1,
-        }
-    };
+    });
 }
 
 method handle_payment_callback ($db, $run, $form_data) {
@@ -229,8 +240,11 @@ method handle_payment_callback ($db, $run, $form_data) {
     die "Payment $payment_id not found" unless $payment;
 
     # Process the payment
-    my $result = $payment->process_payment($db, $form_data->{payment_intent_id});
+    return $payment->process_payment_async($db, $form_data->{payment_intent_id})
+        ->then(sub ($result) { $self->_settle_callback($db, $run, $payment, $result) });
+}
 
+method _settle_callback ($db, $run, $payment, $result) {
     if ($result->{success}) {
         # Idempotently create enrollments and queue confirmation emails. The
         # same finalizer runs from the payment_intent.succeeded webhook, so a
@@ -294,19 +308,39 @@ method handle_payment_callback ($db, $run, $form_data) {
         # (best-effort) so at most one confirmable PaymentIntent exists;
         # a declined intent is still re-confirmable at Stripe otherwise.
         my $user = Registry::DAO::User->find($db, { id => $run->data->{user_id} });
-        my $retry_intent;
-        try {
-            if (my $old_intent = $payment->stripe_payment_intent_id) {
-                try { $payment->stripe_client->cancel_payment_intent($old_intent) }
-                catch ($cancel_err) { }   # already settled/canceled is fine
-            }
+
+        my $cancel = Mojo::Promise->resolve;
+        if (my $old_intent = $payment->stripe_payment_intent_id) {
+            $cancel = $payment->stripe_client->cancel_payment_intent_async($old_intent)
+                ->catch(sub ($cancel_err) { });   # already settled/canceled is fine
+        }
+
+        return $cancel->then(sub {
             $payment->rotate_idempotency_token($db);
-            $retry_intent = $payment->create_payment_intent($db, {
+            $payment->create_payment_intent_async($db, {
                 description   => 'Program Enrollment (retry)',
                 receipt_email => $user ? $user->email : undef,
             });
-        }
-        catch ($retry_err) {
+        })->then(sub ($retry_intent) {
+            # Persist retry state so prepare_template_data can surface it
+            # on the subsequent GET (flash-redirect path).
+            my %retry_state = (
+                payment_id       => $payment->id,
+                client_secret    => $retry_intent->{client_secret},
+                show_stripe_form => 1,
+                retry            => 1,
+            );
+            $run->update_data($db, { payment_retry_state => \%retry_state });
+
+            return {
+                next_step => $self->id,
+                errors    => [$result->{error}],
+                data      => {
+                    %{$self->prepare_payment_data($db, $run)},
+                    %retry_state,
+                },
+            };
+        }, sub ($retry_err) {
             # Couldn't even create a retry intent -- surface both
             # failures and drop back to the non-retry state. Also
             # clear any stale retry state.
@@ -319,26 +353,7 @@ method handle_payment_callback ($db, $run, $form_data) {
                 ],
                 data => $self->prepare_payment_data($db, $run),
             };
-        }
-
-        # Persist retry state so prepare_template_data can surface it
-        # on the subsequent GET (flash-redirect path).
-        my %retry_state = (
-            payment_id       => $payment->id,
-            client_secret    => $retry_intent->{client_secret},
-            show_stripe_form => 1,
-            retry            => 1,
-        );
-        $run->update_data($db, { payment_retry_state => \%retry_state });
-
-        return {
-            next_step => $self->id,
-            errors    => [$result->{error}],
-            data      => {
-                %{$self->prepare_payment_data($db, $run)},
-                %retry_state,
-            },
-        };
+        });
     }
 }
 

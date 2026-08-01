@@ -181,51 +181,74 @@ field $_stripe_client = undef;
         return 'pi-create:' . $metadata->{idempotency_token};
     }
 
-    method create_payment_intent ($db, $args = {}) {
-        my $description = $args->{description} // 'Registry Program Enrollment';
-        my $receipt_email = $args->{receipt_email};
-        
-        # Create payment intent with Stripe
-        my $intent;
-        try {
-            # Stripe's API is form-encoded; nested hashes must be flattened to
-            # bracket notation (metadata[key]=value). Mojo's form generator
-            # would otherwise turn a nested hashref into a bogus multipart
-            # upload and the metadata would never reach Stripe. Metadata
-            # values must be strings, so refs (e.g. enrollment_items) are
-            # snapshotted only in the DB metadata column, not sent to Stripe.
-            $intent = $self->stripe_client->create_payment_intent({
-                amount            => _to_cents($amount),
-                currency          => $currency,
-                description       => $description,
-                receipt_email     => $receipt_email,
-                _idempotency_key  => $self->_charge_idempotency_key,
-                _stripe_metadata_params($user_id, $self->id, $metadata),
-                _connect_params($db, $metadata, $amount),
-            });
-        }
-        catch ($e) {
-            $error_message = $e;
-            $status = 'failed';
-            $self->update($db, {
-                error_message => $error_message,
-                status => $status
-            });
-            die "Failed to create payment intent: $e";
-        }
-        
-        # Update payment record with Stripe intent ID
+    # Request body for a PaymentIntent create call.
+    #
+    # Stripe's API is form-encoded; nested hashes must be flattened to bracket
+    # notation (metadata[key]=value). Mojo's form generator would otherwise turn
+    # a nested hashref into a bogus multipart upload and the metadata would
+    # never reach Stripe. Metadata values must be strings, so refs (e.g.
+    # enrollment_items) are snapshotted only in the DB metadata column, not sent
+    # to Stripe.
+    #
+    # Shared by the sync and async wrappers so the Connect routing, application
+    # fee, and idempotency key are derived in exactly one place.
+    method _intent_params ($db, $args) {
+        return {
+            amount            => _to_cents($amount),
+            currency          => $currency,
+            description       => $args->{description} // 'Registry Program Enrollment',
+            receipt_email     => $args->{receipt_email},
+            _idempotency_key  => $self->_charge_idempotency_key,
+            _stripe_metadata_params($user_id, $self->id, $metadata),
+            _connect_params($db, $metadata, $amount),
+        };
+    }
+
+    # Stamp the created intent onto the payment row and hand back the pair the
+    # checkout form needs.
+    method _record_intent ($db, $intent) {
         $stripe_payment_intent_id = $intent->{id};
         $self->update($db, {
             stripe_payment_intent_id => $stripe_payment_intent_id
         });
-        
+
         return {
             client_secret => $intent->{client_secret},
             payment_intent_id => $intent->{id},
         };
     }
+
+    method _record_intent_failure ($db, $error) {
+        $error_message = $error;
+        $status = 'failed';
+        $self->update($db, {
+            error_message => $error_message,
+            status => $status
+        });
+        die "Failed to create payment intent: $error";
+    }
+
+    method create_payment_intent ($db, $args = {}) {
+        my $intent;
+        try {
+            $intent = $self->stripe_client->create_payment_intent(
+                $self->_intent_params($db, $args)
+            );
+        }
+        catch ($e) {
+            $self->_record_intent_failure($db, $e);
+        }
+
+        return $self->_record_intent($db, $intent);
+    }
     
+    method _record_retrieval_failure ($db, $error) {
+        $error_message = $error;
+        $status = 'failed';
+        $self->save($db);
+        return { success => 0, error => $error };
+    }
+
     method process_payment ($db, $payment_intent_id) {
         # Retrieve payment intent from Stripe
         my $intent;
@@ -233,12 +256,17 @@ field $_stripe_client = undef;
             $intent = $self->stripe_client->retrieve_payment_intent($payment_intent_id);
         }
         catch ($e) {
-            $error_message = $e;
-            $status = 'failed';
-            $self->save($db);
-            return { success => 0, error => $e };
+            return $self->_record_retrieval_failure($db, $e);
         }
 
+        return $self->_apply_intent($db, $intent, $payment_intent_id);
+    }
+
+    # Interpret a retrieved PaymentIntent against this payment row and move the
+    # row's status accordingly. Shared by the sync and async wrappers: the
+    # ownership and captured-amount guards are the security-critical part of the
+    # money path and must not be able to drift apart between the two callers.
+    method _apply_intent ($db, $intent, $payment_intent_id) {
         # The posted intent id is client-controlled: only honor an intent that
         # belongs to THIS payment row -- either the id stored at creation time
         # or an intent stamped with our payment_id in its Stripe metadata.
@@ -502,78 +530,27 @@ field $_stripe_client = undef;
         };
     }
     
-    # Async payment methods for better performance
+    # Async payment methods. These are what the web request path uses: a
+    # blocking Stripe call inside the running IOLoop can never settle, because
+    # Mojo::Promise::wait is a no-op once its loop is already running.
     method create_payment_intent_async ($db, $args = {}) {
-        my $description = $args->{description} // 'Registry Program Enrollment';
-        my $receipt_email = $args->{receipt_email};
-        
-        return $self->stripe_client->create_payment_intent_async({
-            amount            => _to_cents($amount),
-            currency          => $currency,
-            description       => $description,
-            receipt_email     => $receipt_email,
-            _idempotency_key  => $self->_charge_idempotency_key,
-            _stripe_metadata_params($user_id, $self->id, $metadata),
-            _connect_params($db, $metadata, $amount),
-        })->then(sub ($intent) {
-            # Update payment record with Stripe intent ID
-            $stripe_payment_intent_id = $intent->{id};
-            $self->update($db, {
-                stripe_payment_intent_id => $stripe_payment_intent_id
-            });
-            return $intent;
-        })->catch(sub ($error) {
-            $error_message = $error;
-            $status = 'failed';
-            $self->save($db);
-            die "Failed to create payment intent: $error";
-        });
+        return $self->stripe_client->create_payment_intent_async(
+            $self->_intent_params($db, $args)
+        )->then(
+            sub ($intent) { $self->_record_intent($db, $intent) },
+            sub ($error)  { $self->_record_intent_failure($db, $error) },
+        );
     }
     
+    # Two-argument then: the rejection handler must see only a failed retrieval.
+    # A single trailing ->catch would also swallow anything _apply_intent threw
+    # and mis-record it as a Stripe transport failure.
     method process_payment_async ($db, $payment_intent_id) {
         return $self->stripe_client->retrieve_payment_intent_async($payment_intent_id)
-            ->then(sub ($intent) {
-                # Same amount guard as the sync path: a stale intent must not
-                # settle a refreshed, differently-priced cart. Refusal, not a
-                # payment failure -- no status mutation.
-                if (   $intent->{status} eq 'succeeded'
-                    && defined $intent->{amount}
-                    && $intent->{amount} != _to_cents($amount) )
-                {
-                    return {
-                        success => 0,
-                        error   => 'Payment intent amount does not match payment record',
-                    };
-                }
-
-                # Update payment status based on intent status
-                if ($intent->{status} eq 'succeeded') {
-                    $status = 'completed';
-                    $completed_at = \'NOW()';
-                } elsif ($intent->{status} eq 'processing') {
-                    $status = 'processing';
-                } elsif ($intent->{status} eq 'requires_payment_method') {
-                    $status = 'failed';
-                    $error_message = 'Payment method required';
-                } else {
-                    $status = 'failed';
-                    $error_message = 'Payment failed with status: ' . $intent->{status};
-                }
-                
-                $self->save($db);
-                
-                return { 
-                    success => $status eq 'completed' ? 1 : 0, 
-                    status => $status,
-                    intent => $intent 
-                };
-            })
-            ->catch(sub ($error) {
-                $error_message = $error;
-                $status = 'failed';
-                $self->save($db);
-                return { success => 0, error => $error };
-            });
+            ->then(
+                sub ($intent) { $self->_apply_intent($db, $intent, $payment_intent_id) },
+                sub ($error)  { $self->_record_retrieval_failure($db, $error) },
+            );
     }
     
     method refund_async ($db, $args = {}) {
