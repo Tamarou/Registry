@@ -121,9 +121,12 @@ jobs:
         export PGPASSWORD=postgres
         export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         export EMAIL_SENDER_TRANSPORT=Test
-        # Dummy test key so the Stripe DAO constructs; these tests make no real
-        # API calls. A live key (sk_live_) would be refused outside production.
-        export STRIPE_SECRET_KEY=sk_test_dummy
+        # Placeholder so the Stripe DAO constructs; these tests make no real API
+        # calls. It must NOT start with sk_test_: t/stripe-live/ gates itself on
+        # that prefix, so a test-shaped placeholder makes the live suite believe
+        # Stripe is reachable and fail against the real API. Real keys live in
+        # the stripe-e2e workflow.
+        export STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key
         # Run tests sequentially to avoid database conflicts
         timeout 20m carton exec prove -lr t/ --formatter=TAP::Formatter::Console
 
@@ -362,7 +365,8 @@ jobs:
         export PGPASSWORD=postgres
         export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         export EMAIL_SENDER_TRANSPORT=Test
-        export STRIPE_SECRET_KEY=sk_test_dummy
+        # See the note in the test job: this must not wear the sk_test_ prefix.
+        export STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key
 
         # Run a sample of tests with coverage
         carton exec cover -test -report html_basic -ignore_re '^t/' || true

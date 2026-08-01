@@ -54,4 +54,20 @@ subtest 'live key in production mode is allowed past the guard' => sub {
         'sk_live_ with MOJO_MODE=production is permitted';
 };
 
+subtest 'CI does not export a placeholder that looks like a usable test key' => sub {
+    # Test::Registry::StripeConnect::available() gates t/stripe-live/ on the
+    # sk_test_ prefix alone, and ci.yml runs `prove -lr t/`, which includes
+    # those files.  A placeholder starting with sk_test_ therefore convinces the
+    # live suite that Stripe is reachable, and it fails against the real API on
+    # every push.  Whatever CI exports must not wear that prefix.
+    open my $fh, '<', '.github/workflows/ci.yml'
+        or plan skip_all => "cannot read ci.yml: $!";
+    my @offending = grep { /STRIPE_SECRET_KEY=sk_test_/ } <$fh>;
+    close $fh;
+
+    is scalar @offending, 0,
+        'ci.yml exports no sk_test_-prefixed placeholder'
+        or diag "offending lines:\n@offending";
+};
+
 done_testing;
