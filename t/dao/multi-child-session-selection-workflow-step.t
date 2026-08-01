@@ -19,6 +19,29 @@ use Registry::DAO::ProgramType;
 use Registry::DAO::WorkflowSteps::MultiChildSessionSelection;
 use Mojo::JSON qw(encode_json);
 
+# This suite asserts eligibility, which is a function of age and of a
+# session still being in the future -- both measured against the day the
+# test runs. Hardcoded dates silently expire, so derive them.
+
+# A birth date for a child who is exactly $years old today. Six months
+# back from the current month puts the birthday mid-year, so there is no
+# boundary for FamilyMember::age to land on; day 15 exists in every month.
+sub birth_date_for_age ($years) {
+    my ( $year, $month ) = (localtime)[ 5, 4 ];
+    $year += 1900;
+    $month += 1;
+
+    $month -= 6;
+    if ( $month < 1 ) { $month += 12; $year-- }
+
+    return sprintf '%04d-%02d-15', $year - $years, $month;
+}
+
+sub days_from_now ($days) {
+    my ( $year, $month, $day ) = ( localtime( time + $days * 86_400 ) )[ 5, 4, 3 ];
+    return sprintf '%04d-%02d-%02d', $year + 1900, $month + 1, $day;
+}
+
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 
@@ -83,10 +106,12 @@ my $event2 = Registry::DAO::Event->create($db, {
 });
 
 # Create sessions with future dates and capacity limits
+# Both sessions run the same week -- get_available_sessions filters on
+# end_date >= CURRENT_DATE, so the window has to stay ahead of today.
 my $session1 = Registry::DAO::Session->create($db, {
     name => 'Morning Session',
-    start_date => '2027-12-02',
-    end_date => '2027-12-09',
+    start_date => days_from_now(30),
+    end_date => days_from_now(37),
     status => 'published',
     capacity => 10,
     metadata => {}
@@ -94,8 +119,8 @@ my $session1 = Registry::DAO::Session->create($db, {
 
 my $session2 = Registry::DAO::Session->create($db, {
     name => 'Afternoon Session',
-    start_date => '2027-12-02',
-    end_date => '2027-12-09',
+    start_date => days_from_now(30),
+    end_date => days_from_now(37),
     status => 'published',
     capacity => 5,
     metadata => {}
@@ -149,7 +174,7 @@ my $parent = Registry::DAO::User->create($db, {
 # Add children to family - one eligible for both sessions, one only for session2
 my $child1 = Registry::DAO::Family->add_child($db, $parent->id, {
     child_name => 'Alice Smith',
-    birth_date => '2016-03-15',  # 8 years old - eligible for both sessions
+    birth_date => birth_date_for_age(8),  # eligible for both sessions
     grade => '3',
     medical_info => {},
     emergency_contact => {
@@ -161,7 +186,7 @@ my $child1 = Registry::DAO::Family->add_child($db, $parent->id, {
 
 my $child2 = Registry::DAO::Family->add_child($db, $parent->id, {
     child_name => 'Bob Smith',
-    birth_date => '2018-06-20',  # 6 years old - only eligible for session1
+    birth_date => birth_date_for_age(6),  # under event2's min_age, so session1 only
     grade => '1',
     medical_info => {},
     emergency_contact => {
