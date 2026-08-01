@@ -86,8 +86,16 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
             $tx = $ua->delete($url, $headers, form => $data);
         }
         
-        unless ($tx->success) {
-            warn "Stripe API error: " . $tx->error->{message} if $tx->error;
+        unless ($tx->res->is_success) {
+            # $tx->error carries Mojolicious' view of the failure -- the bare
+            # status reason, or a transport error -- so it says "Payment
+            # Required" where Stripe says which card control declined.  Read
+            # the body first and keep $tx->error as the transport fallback.
+            my $message = $tx->res->json('/error/message')
+                || ( $tx->error // {} )->{message}
+                || $tx->res->message
+                || 'unknown error';
+            warn "Stripe API error: $message";
             return;
         }
         
