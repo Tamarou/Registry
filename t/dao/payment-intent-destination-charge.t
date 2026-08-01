@@ -274,8 +274,16 @@ subtest 'retry intent carries same connect params as original' => sub {
         # Leave Registry::DAO::Payment::find REAL so the payment (and its
         # metadata) is reloaded from the DB and round-trips through the
         # jsonb -> ADJUST decode path before _connect_params reads tenant_slug.
-        local *Registry::DAO::Payment::process_payment =
-            sub { { success => 0, error => 'Card declined' } };
+        # intent_status must be the terminal decline state: only
+        # requires_payment_method / canceled earn a fresh intent, so
+        # omitting it would skip the retry branch this subtest exists to
+        # cover.
+        local *Registry::DAO::Payment::process_payment = sub {
+            {   success       => 0,
+                error         => 'Card declined',
+                intent_status => 'requires_payment_method',
+            };
+        };
         local *Registry::Service::Stripe::create_payment_intent = sub {
             my ($self, $params) = @_;
             $retry_captured = $params;

@@ -61,10 +61,22 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 # Swap in a Payment whose Stripe methods are mocked. The workflow step
 # loads Payment by id, so we monkey-patch the class methods to inject
 # our mock.
+#
+# A failing $process_result must carry the intent_status process_payment
+# really returns. Only a terminal state (requires_payment_method =
+# declined, or canceled) earns a fresh intent; requires_action means the
+# customer is mid-3DS and minting a replacement would open a
+# double-charge window. A bare {success=>0} is a transport error and
+# deliberately gets no retry.
 sub mock_payment_with_outcome ($process_result, %more) {
     my $mock = Test::MockObject->new;
     $mock->set_always('id',                    $payment_id);
     $mock->set_always('process_payment',       $process_result);
+    # Before minting a replacement intent the retry path cancels the
+    # superseded one and rotates the idempotency token. undef here means
+    # there is no prior intent to cancel, so no stripe_client is needed.
+    $mock->set_always('stripe_payment_intent_id', undef);
+    $mock->set_always('rotate_idempotency_token', 1);
     if (exists $more{retry_intent}) {
         $mock->set_always('create_payment_intent', $more{retry_intent});
     }
@@ -76,7 +88,10 @@ sub mock_payment_with_outcome ($process_result, %more) {
 
 subtest 'recoverable failure re-renders form with a fresh client_secret' => sub {
     my $mock = mock_payment_with_outcome(
-        { success => 0, error => 'Your card was declined.' },
+        {   success       => 0,
+            error         => 'Your card was declined.',
+            intent_status => 'requires_payment_method',
+        },
         retry_intent => {
             client_secret     => 'pi_new_secret_123',
             payment_intent_id => 'pi_new_123',
@@ -104,8 +119,13 @@ subtest 'recoverable failure re-renders form with a fresh client_secret' => sub 
 };
 
 subtest 'if a new intent cannot be issued, still surface an error' => sub {
+    # A genuine decline, so the step does reach for a fresh intent -- and
+    # Stripe is down when it tries.
     my $mock = mock_payment_with_outcome(
-        { success => 0, error => 'Network error' },
+        {   success       => 0,
+            error         => 'Your card was declined.',
+            intent_status => 'requires_payment_method',
+        },
         retry_dies => 'Stripe unreachable',
     );
 
@@ -123,7 +143,10 @@ subtest 'if a new intent cannot be issued, still surface an error' => sub {
 
 subtest 'retry state persists in run data for next GET' => sub {
     my $mock = mock_payment_with_outcome(
-        { success => 0, error => 'Your card was declined.' },
+        {   success       => 0,
+            error         => 'Your card was declined.',
+            intent_status => 'requires_payment_method',
+        },
         retry_intent => {
             client_secret     => 'pi_retry_secret',
             payment_intent_id => 'pi_retry',
@@ -158,6 +181,9 @@ subtest 'successful payment still transitions to complete' => sub {
     my $mock = Test::MockObject->new;
     $mock->set_always('id', $payment_id);
     $mock->set_always('process_payment', { success => 1, payment => $mock });
+    # A successful callback finalizes the enrollment; stub it so the mock
+    # doesn't warn about the un-mocked call.
+    $mock->set_always('finalize_enrollment', 1);
 
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
