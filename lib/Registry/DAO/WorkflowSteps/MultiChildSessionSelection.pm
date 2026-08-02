@@ -276,7 +276,11 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             AND (e.min_age IS NULL OR e.min_age <= ?)
             AND (e.max_age IS NULL OR e.max_age >= ?)
             AND s.end_date >= CURRENT_DATE
-            ORDER BY s.start_date
+            -- s.id breaks ties: sessions sharing a start_date (a morning and
+            -- an afternoon of the same week) would otherwise come back in
+            -- whatever order Postgres chose, reshuffling the list between
+            -- page loads.
+            ORDER BY s.start_date, s.id
         };
         
         my $child_age = $child->age();
