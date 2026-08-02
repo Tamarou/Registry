@@ -10,6 +10,7 @@ use Test::Registry::Fixtures;
 use Registry::DAO::Subscription;
 use JSON;
 use DateTime;
+use Mojo::Transaction::HTTP;
 
 # Setup test database
 my $t = Test::Registry::DB->new;
@@ -210,6 +211,61 @@ subtest 'Configurable subscription creation' => sub {
     
     # Just verify the config is properly structured
     ok($config->{monthly_amount} == 15000, 'Configuration structure is correct');
+};
+
+subtest 'Stripe HTTP transport against a real transaction' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
+
+    my $subscription_dao = Registry::DAO::Subscription->new(db => $db->db);
+
+    my $transport_tenant = Test::Registry::Fixtures::create_tenant($db, {
+        name => 'Transport Test Org',
+        slug => 'transport_test'
+    });
+
+    # Hand back a real Mojo::Transaction::HTTP rather than a stand-in.  The
+    # response API this code calls is the thing under test, so a fake
+    # transaction would pass here while tenant signup dies in production.
+    my $canned;
+    no warnings 'redefine';
+    local *Mojo::UserAgent::post = sub { $canned };
+
+    $canned = Mojo::Transaction::HTTP->new;
+    $canned->res->code(200)->headers->content_type('application/json');
+    $canned->res->body(encode_json({ id => 'cus_transport', object => 'customer' }));
+
+    my $customer = $subscription_dao->create_customer(
+        { id => $transport_tenant->id, name => 'Transport Test Org' },
+        { billing_email => 'billing@transport.test' },
+    );
+
+    is($customer->{id}, 'cus_transport', 'successful response is parsed and returned');
+
+    my $stored = $db->db->query(
+        'SELECT stripe_customer_id FROM registry.tenants WHERE id = ?',
+        $transport_tenant->id
+    )->hash;
+    is($stored->{stripe_customer_id}, 'cus_transport', 'customer id written back to the tenant');
+
+    # Stripe reports failures as a 4xx with a JSON body.  $tx->error would only
+    # give the status reason ("Payment Required"), so the useful message has to
+    # come off the response body.
+    $canned = Mojo::Transaction::HTTP->new;
+    $canned->res->code(402)->headers->content_type('application/json');
+    $canned->res->body(encode_json({ error => { message => 'Your card was declined.' } }));
+
+    my @warnings;
+    my $declined = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        $subscription_dao->create_customer(
+            { id => $transport_tenant->id, name => 'Transport Test Org' },
+            { billing_email => 'billing@transport.test' },
+        );
+    };
+
+    ok(!defined $declined, 'failed request returns undef');
+    like(join('', @warnings), qr/Your card was declined/,
+        'Stripe error message is surfaced in the warning');
 };
 
 done_testing();
