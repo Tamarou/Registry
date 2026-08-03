@@ -135,10 +135,11 @@ test.describe('Payment happy path', () => {
       }
 
       // -----------------------------------------------------------------------
-      // 8. Submit the Stripe form.  stripe.confirmPayment() will process the card
-      //    and redirect the browser to the return_url with payment_intent_id
-      //    substituted, which triggers handle_payment_callback on the server and
-      //    advances the workflow run to 'complete'.
+      // 8. Submit the Stripe form.  stripe.confirmPayment() processes the card and
+      //    redirects the browser to the return_url, onto which Stripe appends
+      //    payment_intent.  The GET handler hands that intent to the payment step,
+      //    which triggers handle_payment_callback and advances the run to
+      //    'complete'.
       // -----------------------------------------------------------------------
       await registryPage.locator('#submit').click();
 

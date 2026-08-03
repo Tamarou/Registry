@@ -242,6 +242,22 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # Fallback to latest step if the requested step isn't found
         $step ||= $run->latest_step($dao->db) || $run->next_step($dao->db);
 
+        # Stripe sends the parent back here with a GET after confirmPayment,
+        # appending payment_intent/redirect_status to return_url. Re-rendering
+        # the card form would strand them on a paid-but-unconfirmed page, so
+        # hand the intent to the step exactly as the POST path does.
+        #
+        # Gated on the step actually handling payment callbacks, so appending
+        # ?payment_intent= to any other step's URL cannot advance a run on a GET.
+        # Safe to repeat: the intent is checked for ownership and captured amount
+        # before anything settles, and finalize_enrollment is idempotent -- the
+        # payment_intent.succeeded webhook runs the same finalizer.
+        if ( $step && $step->can('handle_payment_callback')
+             && ( my $intent = $self->param('payment_intent') ) ) {
+            return $self->_process_step( $run, $step,
+                { payment_intent_id => $intent } );
+        }
+
         # If the authenticated user is not yet recorded in this run's data,
         # store them now so that the account-check step can render the
         # "already logged in" branch.
@@ -359,7 +375,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             }
         }
 
-        my $result = $run->process( $dao->db, $step, $data );
+        return $self->_process_step( $run, $step, $data );
+    }
+
+    # Run a step and render whatever it hands back. Shared by the POST path and
+    # by the Stripe return leg, which arrives as a GET.
+    method _process_step ( $run, $step, $data ) {
+        my $result = $run->process( $self->dao->db, $step, $data );
 
         # Steps that talk to Stripe hand back a promise rather than a hashref;
         # the response can only be rendered once it settles. render_later keeps

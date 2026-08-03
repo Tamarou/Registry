@@ -155,10 +155,16 @@
                 e.preventDefault();
                 setLoading(true);
                 
+                // Stripe appends payment_intent, payment_intent_client_secret
+                // and redirect_status to return_url itself; the GET handler
+                // picks up payment_intent and finishes the enrollment. Build
+                // the URL from the route rather than window.location.href so a
+                // retry after a failed attempt does not carry the previous
+                // attempt's parameters back into this one.
                 const {error} = await stripe.confirmPayment({
                     elements,
                     confirmParams: {
-                        return_url: window.location.href + '&payment_intent_id={PAYMENT_INTENT}',
+                        return_url: '<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => "payment")->to_abs %>',
                     },
                 });
                 
