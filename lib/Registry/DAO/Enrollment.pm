@@ -71,6 +71,14 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # enrollments_payment_dedup unique index: a duplicate (same session,
     # student, payment) is silently skipped, so calling this twice for the same
     # payment is safe.
+    #
+    # The arbiter is named deliberately. A bare ON CONFLICT DO NOTHING has no
+    # arbiter and so absorbs a violation of every unique constraint on the
+    # table, including the status-blind enrollments_session_student_type_unique
+    # -- which a parent re-registering a child for a session they dropped will
+    # hit. Stripe has captured by the time this runs, so swallowing that insert
+    # means money taken and no enrollment, silently. Only the payment replay is
+    # meant to be quiet; everything else must raise.
     sub create_for_payment ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -83,7 +91,9 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             $data->{metadata} = { -json => $data->{metadata} };
         }
 
-        $db->insert( $class->table, $data, { on_conflict => undef } );
+        $db->insert( $class->table, $data, {
+            on_conflict => \'(session_id, student_id, payment_id) WHERE payment_id IS NOT NULL DO NOTHING'
+        } );
     }
 
     # Enroll a list of children into sessions with no payment: create each active
