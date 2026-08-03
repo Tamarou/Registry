@@ -11,6 +11,7 @@ use Test::Registry::StripeConfirm;
 use Test::Registry::StripeWebhook;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
+use Test::Registry::Async qw( settle );
 
 use Registry::DAO;
 use Registry::DAO::Tenant;
@@ -178,6 +179,17 @@ sub get_payment_step {
     return $workflow->get_step($tdb, { slug => 'payment' });
 }
 
+# Every process() call in this file is a paid-enrollment path with a real Stripe
+# key set, so the step always defers (see Payment.pm's contract comment). Assert
+# that before settling rather than after: a Mojo::Promise is a blessed hashref,
+# so reading $result->{errors} off one yields undef and every assertion in the
+# subtest passes or fails for the wrong reason instead of erroring.
+sub process_payment_step ( $step, $run ) {
+    my $result = $step->process($tdb, { agreeTerms => 1 }, $run);
+    isa_ok $result, 'Mojo::Promise', 'payment step result';
+    return settle($result);
+}
+
 # ---------------------------------------------------------------------------
 # 2. Build the Mojo test app for webhook subtests (I4).
 #    Mirrors t/controller/payment-intent-webhook.t exactly.
@@ -217,7 +229,7 @@ subtest 'I5: unready-tenant gate fires, no payment rows, Stripe never called' =>
 
     my $run  = make_e2e_run();
     my $step = get_payment_step();
-    my $result = $step->process($tdb, { agreeTerms => 1 }, $run);
+    my $result = process_payment_step($step, $run);
 
     ok $result->{errors}, 'I5: gate returned errors';
     like $result->{errors}[0], qr/not yet available/i,
@@ -263,7 +275,7 @@ my ($main_payment_id, $main_pi_id, $charge_fee_id, $charge_transfer_id);
 subtest 'I1+I2: destination charge routes to ready account with correct 2% fee' => sub {
     my $run  = make_e2e_run();
     my $step = get_payment_step();
-    my $result = $step->process($tdb, { agreeTerms => 1 }, $run);
+    my $result = process_payment_step($step, $run);
 
     ok !$result->{errors}, 'I1/I2: no gate error for ready tenant'
         or diag explain $result->{errors};
@@ -331,7 +343,7 @@ subtest 'I4: webhook dedup -- first delivery enrolls, same event_id replay is a 
 subtest 'I3: declined card fails with card_declined and creates no enrollment' => sub {
     my $run3  = make_e2e_run();
     my $step3 = get_payment_step();
-    my $result3 = $step3->process($tdb, { agreeTerms => 1 }, $run3);
+    my $result3 = process_payment_step($step3, $run3);
 
     ok !$result3->{errors}, 'I3: step creates intent without gate error'
         or diag explain $result3->{errors};
@@ -388,7 +400,7 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
     my $step7 = get_payment_step();
 
     # First submit: creates payment row and real Stripe PI.
-    my $result7a = $step7->process($tdb, { agreeTerms => 1 }, $run7);
+    my $result7a = process_payment_step($step7, $run7);
     ok !$result7a->{errors}, 'I7: first process succeeds'
         or diag explain $result7a->{errors};
 
@@ -397,7 +409,7 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
     like $pi_id_a, qr/^pi_/, 'I7: first process created a real Stripe PI';
 
     # Second submit on the SAME run: idempotency_token preserved -> Stripe dedup.
-    my $result7b = $step7->process($tdb, { agreeTerms => 1 }, $run7);
+    my $result7b = process_payment_step($step7, $run7);
     ok !$result7b->{errors}, 'I7: second process succeeds'
         or diag explain $result7b->{errors};
 
