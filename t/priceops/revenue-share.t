@@ -141,6 +141,78 @@ subtest 'linked plan with no percentage key falls back to amount column' => sub 
     }, $saved->{pricing_configuration}, $saved->{amount}, $plan_id);
 };
 
+subtest 'fixed-price plan does not have its dollar amount read as a rate' => sub {
+    # The amount column means different things per pricing_model_type: on a
+    # 'percentage' plan it is the rate (0.02), on a 'fixed' plan it is dollars
+    # ($200/month). Reading a fixed plan's amount as a rate yields fraction 200
+    # -- a 20000% application fee that Stripe rejects outright. The seeded
+    # "Registry Standard - $200/month" plan is exactly this shape and is the one
+    # marked default:true, so it is the plan an admin is most likely to pick.
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration, amount, pricing_model_type
+          FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = '{}'::jsonb,
+               amount                = 200.00,
+               pricing_model_type    = 'fixed'
+         WHERE id = ?
+    }, $plan_id);
+
+    my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
+    ok !defined $fraction, 'no fraction returned for a fixed-price plan'
+        or diag "returned $fraction -- a fixed plan's dollar amount was read as a rate";
+    like $@, qr/percentage|rate/i,
+        'dies pointing at the missing percentage rather than inventing one';
+
+    # Restore
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = ?, amount = ?, pricing_model_type = ?
+         WHERE id = ?
+    }, $saved->{pricing_configuration}, $saved->{amount},
+       $saved->{pricing_model_type}, $plan_id);
+};
+
+subtest 'a rate outside 0..1 dies rather than reaching Stripe' => sub {
+    # Backstop at the coercion boundary: "2" almost certainly means 2%, but as a
+    # fraction it is a 200% fee. No legitimate revenue share sits outside [0,1],
+    # so refuse it here rather than let Stripe reject the charge at capture time.
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    for my $bad (2, -0.01) {
+        $db->query(q{
+            UPDATE registry.pricing_plans
+               SET pricing_configuration = ?::jsonb
+             WHERE id = ?
+        }, qq[{"percentage":$bad}], $plan_id);
+
+        my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
+        ok !defined $fraction, "percentage $bad is refused";
+        like $@, qr/between 0 and 1|fraction/i,
+            "percentage $bad dies with a message naming the expected range";
+    }
+
+    # Restore
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = ?
+         WHERE id = ?
+    }, $saved->{pricing_configuration}, $plan_id);
+};
+
 subtest 'malformed/non-numeric resolved value dies' => sub {
     # The linked plan's percentage is a non-numeric string. Even though it is
     # present (so the amount fallback does not apply), it must die because it

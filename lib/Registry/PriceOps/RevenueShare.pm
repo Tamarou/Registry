@@ -27,9 +27,16 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
 
     # Step 1: look up the tenant's explicitly linked plan rate. When the plan's
     # pricing_configuration has no 'percentage' key, fall back to the plan's
-    # amount column (numeric(10,2) NOT NULL).
+    # amount column -- but only on a percentage-model plan, where amount IS the
+    # rate. On a 'fixed' plan amount is dollars ($200/month), and reading it as
+    # a rate yields fraction 200: a 20000% fee. Anything else resolves to NULL
+    # and dies in _coerce_pct rather than inventing a rate.
     my $row = $db->query(q{
-        SELECT COALESCE(p.pricing_configuration->>'percentage', p.amount::text) AS pct
+        SELECT COALESCE(
+                 p.pricing_configuration->>'percentage',
+                 CASE WHEN p.pricing_model_type = 'percentage'
+                      THEN p.amount::text END
+               ) AS pct
           FROM registry.tenants t
           JOIN registry.pricing_plans p
             ON p.id = t.platform_pricing_plan_id
@@ -57,7 +64,11 @@ sub platform_default_fraction ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
     my $free_row = $db->query(q{
-        SELECT COALESCE(pricing_configuration->>'percentage', amount::text) AS pct
+        SELECT COALESCE(
+                 pricing_configuration->>'percentage',
+                 CASE WHEN pricing_model_type = 'percentage'
+                      THEN amount::text END
+               ) AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
@@ -142,11 +153,21 @@ sub _coerce_refund_flag ($raw) {
 # _coerce_pct($raw, $context) -> number
 # Validates and coerces a raw percentage string to a number. Dies on malformed input.
 sub _coerce_pct ($raw, $context) {
-    die "Revenue-share percentage is undefined for $context - check pricing_configuration."
+    die "Revenue-share percentage is undefined for $context - the plan carries no "
+      . "'percentage' in pricing_configuration and is not a percentage-model plan, "
+      . "so it has no revenue-share rate."
         unless defined $raw;
 
     die "Revenue-share percentage '$raw' is not numeric for $context - check pricing_configuration."
         unless $raw =~ /\A[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\z/;
+
+    # The rate is a fraction, not a percent: 0.02 is 2%. A value outside [0,1]
+    # is a unit mix-up (a bare "2" meaning 2%, or a dollar amount), and Stripe
+    # rejects the resulting application_fee_amount at capture time. Refuse here,
+    # where the message names the plan, rather than at the charge.
+    die "Revenue-share percentage '$raw' is not a fraction between 0 and 1 for $context "
+      . "- express the rate as a fraction (0.02 means 2%)."
+        unless $raw >= 0 && $raw <= 1;
 
     return $raw + 0;
 }
