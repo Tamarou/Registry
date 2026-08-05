@@ -285,6 +285,24 @@ field $_stripe_client = undef;
             };
         }
 
+        # A captured payment must not be demoted by a superseded intent. The
+        # ownership check above cannot tell them apart: every intent ever minted
+        # for this row is stamped with our payment_id (_stripe_metadata_params),
+        # so the one cancelled after a declined first attempt still passes.
+        # Letting it reach the else-branch flips a paid row to 'failed', which
+        # sends the caller on to mint a replacement intent and offer a live card
+        # form to a parent who has already paid.
+        #
+        # Reported as its own outcome rather than a failure: the payment is
+        # fine, and the caller should carry on to completion, not show an error.
+        if ( $status eq 'completed' && $intent->{status} ne 'succeeded' ) {
+            return {
+                success           => 0,
+                already_completed => 1,
+                error             => 'Payment is already completed',
+            };
+        }
+
         # Update payment status based on intent status
         if ($intent->{status} eq 'succeeded') {
             # The captured amount must match this row before completing: a

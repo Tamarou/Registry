@@ -568,7 +568,7 @@ sub get_b3_step {
 
         is scalar @keys, 1,
             'no replacement intent minted while the customer is mid-authentication';
-        ok $result->{data}{processing},
+        ok $result->{data}{step_data}{processing},
             'callback surfaces an in-progress state, not a decline retry';
         my $token = Registry::DAO::Payment->find($b3db, { id => $run->data->{payment_id} })
             ->metadata->{idempotency_token};

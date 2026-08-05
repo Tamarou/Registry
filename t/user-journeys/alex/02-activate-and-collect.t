@@ -434,7 +434,11 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
             workflow_process_step_url($reg_wf, $run, $step),
             \%tenant_host,
             form => { agreeTerms => 1 }
-        )->status_is(200, 'payment step renders Stripe form after passing gate');
+        )->status_is(200, 'payment step renders Stripe form after passing gate')
+         ->content_like(qr/id="payment-form"/,
+            'the card-entry form the parent has to use is on the page')
+         ->content_like(qr/cs_journey/,
+            'the fresh client_secret reaches the Stripe Elements init');
     }
 
     ok $captured_params,

@@ -235,9 +235,12 @@ subtest 'create_payment settles inside a running IOLoop' => sub {
 
     is $error, undef, 'step settled without dying inside the running loop'
         or diag "error: $error";
-    is $result->{data}{client_secret}, 'cs_async_1',
+    # Nested under step_data because that is the key the template reads; the
+    # controller splats a step's rendering data flat into the stash, so
+    # anything returned unwrapped never reaches the page.
+    is $result->{data}{step_data}{client_secret}, 'cs_async_1',
         'client_secret from the deferred Stripe response reaches the caller';
-    ok $result->{data}{show_stripe_form}, 'stripe form flagged for display';
+    ok $result->{data}{step_data}{show_stripe_form}, 'stripe form flagged for display';
 };
 
 subtest 'handle_payment_callback settles inside a running IOLoop' => sub {
@@ -311,6 +314,81 @@ subtest 'intent-ownership guard survives on the async path' => sub {
     my $reloaded = Registry::DAO::Payment->find( $tdb, { id => $payment->id } );
     isnt $reloaded->status, 'completed',
         'payment row is not marked completed by a foreign intent';
+};
+
+# The back button, not an attacker: a 3DS attempt fails, Stripe redirects back,
+# the decline branch cancels pi_first and mints pi_second, the parent pays with
+# pi_second -- and then goes back one page, re-firing the finalizer on the
+# pi_first history entry. The DAO refuses to demote the row; the step must not
+# leave the parent staring at an error for a payment that went through.
+subtest 'a stale intent still routes a paid parent to completion' => sub {
+    my $run = make_run();
+
+    # Its own child: enrollments are unique per (session, student), and this
+    # subtest actually settles a payment rather than stopping at the guard.
+    my $sibling = Registry::DAO::Family->add_child($tdb, $parent->id, {
+        child_name        => 'Async Sibling',
+        birth_date        => '2019-05-20',
+        grade             => '2',
+        medical_info      => {},
+        emergency_contact => { name => 'Emergency', phone => '555-0199' },
+    });
+
+    my $payment = Registry::DAO::Payment->create($tdb, {
+        user_id  => $parent->id,
+        amount   => $PLAN_AMOUNT,
+        metadata => {
+            tenant_slug      => $slug,
+            enrollment_items => [ { child_id => $sibling->id, session_id => $session->id } ],
+        },
+    });
+    $payment->update( $tdb, { stripe_payment_intent_id => 'pi_second' } );
+    $run->update_data( $tdb, { payment_id => $payment->id } );
+
+    no warnings 'redefine';
+
+    # The payment the parent actually made.
+    {
+        local *Registry::Service::Stripe::retrieve_payment_intent_async = sub {
+            return deferred({
+                id             => 'pi_second',
+                status         => 'succeeded',
+                amount         => int( $PLAN_AMOUNT * 100 ),
+                payment_method => 'pm_async_2',
+                metadata       => { payment_id => $payment->id },
+            });
+        };
+
+        my ( $settled, $err ) = in_running_loop(
+            sub { payment_step()->process( $tdb, { payment_intent_id => 'pi_second' }, $run ) } );
+        is $err, undef, 'setup: pi_second settled' or diag "error: $err";
+        is $settled->{next_step}, 'complete', 'setup: pi_second completed the enrollment';
+    }
+
+    # The superseded intent the browser still holds. It carries our payment_id,
+    # like every intent minted for this row, so ownership alone lets it through.
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub {
+        return deferred({
+            id       => 'pi_first',
+            status   => 'canceled',
+            metadata => { payment_id => $payment->id },
+        });
+    };
+
+    my ( $result, $error ) = in_running_loop(
+        sub { payment_step()->process( $tdb, { payment_intent_id => 'pi_first' }, $run ) } );
+
+    is $error, undef, 'settled without dying' or diag "error: $error";
+    is $result->{next_step}, 'complete',
+        'a parent who already paid lands on completion, not an error page';
+    ok !$result->{errors}, 'no error is shown for a payment that succeeded';
+    ok !$result->{data}{step_data}{show_stripe_form},
+        'no live card form is offered to a parent who already paid';
+
+    my $reloaded = Registry::DAO::Payment->find( $tdb, { id => $payment->id } );
+    is $reloaded->status, 'completed', 'payment is still completed';
+    is $reloaded->stripe_payment_intent_id, 'pi_second',
+        'the capturing intent is still the one on record';
 };
 
 done_testing();

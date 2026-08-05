@@ -54,7 +54,7 @@ method process ($db, $form_data, $run = undef) {
     # Just show the payment page
     return {
         next_step => $self->id,
-        data => $self->prepare_payment_data($db, $run)
+        data => $self->_render_data($db, $run)
     };
 }
 
@@ -87,6 +87,15 @@ method prepare_template_data ($db, $run, $params = {}) {
             %$retry_state,
         },
     };
+}
+
+# The value for a step result's `data` key. Controller::Workflows splats that
+# hash flat into the stash, but this step's template reads everything out of
+# stash('step_data') -- so anything returned unwrapped is silently dropped on
+# the floor, card form included. Same shape prepare_template_data returns, so
+# both entry points (POST render and flash-redirect GET) agree.
+method _render_data ($db, $run, %extra) {
+    return { step_data => { %{ $self->prepare_payment_data($db, $run) }, %extra } };
 }
 
 method create_payment ($db, $run, $form_data) {
@@ -124,7 +133,7 @@ method create_payment ($db, $run, $form_data) {
                 next_step => $self->id,
                 errors    => ['Online payment is not yet available for this organization. '
                             . 'Please contact the program organizer to complete enrollment.'],
-                data      => $self->prepare_payment_data($db, $run),
+                data      => $self->_render_data($db, $run),
             });
         }
     }
@@ -217,18 +226,17 @@ method create_payment ($db, $run, $form_data) {
     })->then(sub ($intent_data) {
         return {
             next_step => $self->id,
-            data => {
-                %{$self->prepare_payment_data($db, $run)},
+            data => $self->_render_data($db, $run,
                 payment_id => $payment->id,
                 client_secret => $intent_data->{client_secret},
                 show_stripe_form => 1,
-            }
+            ),
         };
     }, sub ($error) {
         return {
             next_step => $self->id,
             errors => ["Payment processing error: $error"],
-            data => $self->prepare_payment_data($db, $run),
+            data => $self->_render_data($db, $run),
         };
     });
 }
@@ -245,7 +253,12 @@ method handle_payment_callback ($db, $run, $form_data) {
 }
 
 method _settle_callback ($db, $run, $payment, $result) {
-    if ($result->{success}) {
+    # already_completed is a superseded intent landing on a row Stripe has
+    # already captured -- the back button after a 3DS retry. The money is in,
+    # so it settles exactly like success: finalize_enrollment is idempotent per
+    # payment, and routing it anywhere else would show an error (or a live card
+    # form) to a parent who has already paid.
+    if ($result->{success} || $result->{already_completed}) {
         # Idempotently create enrollments and queue confirmation emails. The
         # same finalizer runs from the payment_intent.succeeded webhook, so a
         # card finalized off-site (3DS/redirect) and the parent returning to
@@ -261,11 +274,10 @@ method _settle_callback ($db, $run, $payment, $result) {
         # Payment still processing
         return {
             next_step => $self->id,
-            data => {
-                %{$self->prepare_payment_data($db, $run)},
+            data => $self->_render_data($db, $run,
                 processing => 1,
                 message => 'Payment is being processed. Please wait...',
-            }
+            ),
         };
     } else {
         my $intent_status = $result->{intent_status} // '';
@@ -277,12 +289,11 @@ method _settle_callback ($db, $run, $payment, $result) {
         if ($intent_status eq 'requires_action' || $intent_status eq 'requires_confirmation') {
             return {
                 next_step => $self->id,
-                data => {
-                    %{$self->prepare_payment_data($db, $run)},
+                data => $self->_render_data($db, $run,
                     processing => 1,
                     message => 'Payment requires additional verification. '
                              . 'Please complete the authentication step.',
-                }
+                ),
             };
         }
 
@@ -295,7 +306,7 @@ method _settle_callback ($db, $run, $payment, $result) {
             return {
                 next_step => $self->id,
                 errors    => [ $result->{error} ],
-                data      => $self->prepare_payment_data($db, $run),
+                data      => $self->_render_data($db, $run),
             };
         }
 
@@ -335,10 +346,7 @@ method _settle_callback ($db, $run, $payment, $result) {
             return {
                 next_step => $self->id,
                 errors    => [$result->{error}],
-                data      => {
-                    %{$self->prepare_payment_data($db, $run)},
-                    %retry_state,
-                },
+                data      => $self->_render_data($db, $run, %retry_state),
             };
         }, sub ($retry_err) {
             # Couldn't even create a retry intent -- surface both
@@ -351,7 +359,7 @@ method _settle_callback ($db, $run, $payment, $result) {
                     $result->{error},
                     "Retry unavailable: $retry_err",
                 ],
-                data => $self->prepare_payment_data($db, $run),
+                data => $self->_render_data($db, $run),
             };
         });
     }

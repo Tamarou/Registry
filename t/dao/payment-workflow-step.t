@@ -179,8 +179,8 @@ subtest 'Payment step data preparation' => sub {
 
     is $result->{next_step}, $payment_step->id, 'Stays on payment step';
     ok $result->{data}, 'Payment data prepared';
-    is $result->{data}->{total}, 300, 'Total calculated correctly (150 * 2)';
-    is scalar(@{$result->{data}->{items}}), 2, 'Two line items prepared';
+    is $result->{data}{step_data}{total}, 300, 'Total calculated correctly (150 * 2)';
+    is scalar(@{$result->{data}{step_data}{items}}), 2, 'Two line items prepared';
 };
 
 subtest 'Payment creation without Stripe' => sub {
