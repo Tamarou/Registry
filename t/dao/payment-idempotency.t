@@ -275,7 +275,7 @@ Registry::DAO::PricingPlan->create($b3db, {
     session_id => $b3_session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 100.00,
+    amount_cents => 10000,
 });
 
 my $b3_parent = Registry::DAO::User->create($b3db, {

@@ -61,3 +61,4 @@ create-default-pricing-relationships [remove-pricing-plan-relationship-fields un
 tenant-platform-pricing-plan [create-default-pricing-relationships] 2026-06-16T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Add tenants.platform_pricing_plan_id FK and backfill existing tenants
 refund-application-fee-config [seed-free-platform-plan] 2026-07-03T23:09:47Z Chris Prather <chris.prather@tamarou.com> # Declare refund_application_fee on seeded platform + tenant plans
 suspend-rateless-tenant-plans [create-default-pricing-relationships] 2026-08-03T23:18:43Z Chris Prather <chris.prather@tamarou.com> # Stop offering tenant plans with no resolvable revenue-share rate
+pricing-plans-amount-cents [suspend-rateless-tenant-plans] 2026-08-06T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Store pricing_plans money as integer cents; the rate lives only in pricing_configuration

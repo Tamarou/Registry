@@ -47,14 +47,14 @@ subtest 'Create pricing plan' => sub {
         session_id => $session->id,
         plan_name => 'Standard Rate',
         plan_type => 'standard',
-        amount => 500.00,
+        amount_cents => 50000,
         currency => 'USD',
     });
     
     ok($plan, 'Pricing plan created');
     is($plan->plan_name, 'Standard Rate', 'Plan name set');
     is($plan->plan_type, 'standard', 'Plan type set');
-    is($plan->amount, '500.00', 'Amount set');
+    is($plan->amount_cents, 50000, 'Amount stored as cents');
     is($plan->currency, 'USD', 'Currency set');
     ok(!$plan->installments_allowed, 'Installments not allowed by default');
 };
@@ -64,7 +64,7 @@ subtest 'Create early bird plan' => sub {
         session_id => $session->id,
         plan_name => 'Early Bird Special',
         plan_type => 'early_bird',
-        amount => 450.00,
+        amount_cents => 45000,
         requirements => {
             early_bird_cutoff_date => '2024-05-01'
         }
@@ -72,7 +72,7 @@ subtest 'Create early bird plan' => sub {
     
     ok($plan, 'Early bird plan created');
     is($plan->plan_type, 'early_bird', 'Plan type is early_bird');
-    is($plan->amount, '450.00', 'Discounted amount set');
+    is($plan->amount_cents, 45000, 'Discounted amount stored as cents');
     is($plan->requirements->{early_bird_cutoff_date}, '2024-05-01', 'Cutoff date stored');
 };
 
@@ -81,7 +81,7 @@ subtest 'Create family plan' => sub {
         session_id => $session->id,
         plan_name => 'Family Discount',
         plan_type => 'family',
-        amount => 425.00,
+        amount_cents => 42500,
         requirements => {
             min_children => 2,
             percentage_discount => 15
@@ -98,21 +98,21 @@ subtest 'Installment plans' => sub {
         session_id => $session->id,
         plan_name => 'Payment Plan',
         plan_type => 'standard',
-        amount => 600.00,
+        amount_cents => 60000,
         installments_allowed => 1,
         installment_count => 3
     });
     
     ok($plan->installments_allowed, 'Installments allowed');
     is($plan->installment_count, 3, 'Three installments');
-    is($plan->installment_amount, '200', 'Installment amount calculated correctly');
+    is($plan->installment_amount, 20000, 'Installment amount calculated correctly');
     
     # Test invalid installment configuration
     dies_ok {
         Registry::DAO::PricingPlan->create($db, {
             session_id => $session->id,
             plan_name => 'Bad Plan',
-            amount => 100,
+            amount_cents => 10000,
             installments_allowed => 1,
             installment_count => 1  # Should be > 1
         });
@@ -128,14 +128,14 @@ subtest 'Get pricing plans for session' => sub {
         session_id => $session->id,
         plan_name => 'Standard',
         plan_type => 'standard',
-        amount => 500
+        amount_cents => 50000
     });
     
     Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Early Bird',
         plan_type => 'early_bird',
-        amount => 450,
+        amount_cents => 45000,
         requirements => { early_bird_cutoff_date => '2024-05-01' }
     });
     
@@ -151,13 +151,13 @@ subtest 'Calculate price with requirements' => sub {
         session_id => $session->id,
         plan_name => 'Early Bird',
         plan_type => 'early_bird',
-        amount => 400,
+        amount_cents => 40000,
         requirements => { early_bird_cutoff_date => '2024-05-01' }
     });
     
     # Test before cutoff
     my $price = $early_bird->calculate_price({ date => '2024-04-15' });
-    is($price, '400.00', 'Early bird price available before cutoff');
+    is($price, 40000, 'Early bird price available before cutoff');
     
     # Test after cutoff
     $price = $early_bird->calculate_price({ date => '2024-05-15' });
@@ -168,7 +168,7 @@ subtest 'Calculate price with requirements' => sub {
         session_id => $session->id,
         plan_name => 'Family',
         plan_type => 'family',
-        amount => 450,
+        amount_cents => 45000,
         requirements => { min_children => 2 }
     });
     
@@ -176,7 +176,7 @@ subtest 'Calculate price with requirements' => sub {
     is($price, undef, 'Family price not available with 1 child');
     
     $price = $family->calculate_price({ child_count => 2 });
-    is($price, '450.00', 'Family price available with 2 children');
+    is($price, 45000, 'Family price available with 2 children');
 };
 
 subtest 'Get best price' => sub {
@@ -187,14 +187,14 @@ subtest 'Get best price' => sub {
         session_id => $session->id,
         plan_name => 'Standard',
         plan_type => 'standard',
-        amount => 500
+        amount_cents => 50000
     });
     
     Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Early Bird',
         plan_type => 'early_bird',
-        amount => 450,
+        amount_cents => 45000,
         requirements => { early_bird_cutoff_date => '2024-12-31' }
     });
     
@@ -202,7 +202,7 @@ subtest 'Get best price' => sub {
         session_id => $session->id,
         plan_name => 'Family',
         plan_type => 'family',
-        amount => 425,
+        amount_cents => 42500,
         requirements => { min_children => 2 }
     });
     
@@ -211,19 +211,19 @@ subtest 'Get best price' => sub {
         date => '2024-01-01',
         child_count => 1
     });
-    is($best, '450.00', 'Early bird is best price for single child early');
+    is($best, 45000, 'Early bird is best price for single child early');
     
     $best = Registry::DAO::PricingPlan->get_best_price($db, $session->id, {
         date => '2024-01-01',
         child_count => 2
     });
-    is($best, '425.00', 'Family plan is best price for multiple children');
+    is($best, 42500, 'Family plan is best price for multiple children');
     
     $best = Registry::DAO::PricingPlan->get_best_price($db, $session->id, {
         date => '2025-01-01',
         child_count => 1
     });
-    is($best, '500.00', 'Standard price when no special plans apply');
+    is($best, 50000, 'Standard price when no special plans apply');
 };
 
 subtest 'Session integration' => sub {
@@ -239,7 +239,7 @@ subtest 'Formatted price' => sub {
     my $plan = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Test',
-        amount => 123.45,
+        amount_cents => 12345,
         currency => 'USD'
     });
     
@@ -248,7 +248,7 @@ subtest 'Formatted price' => sub {
     $plan = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Test EUR',
-        amount => 100.00,
+        amount_cents => 10000,
         currency => 'EUR'
     });
     

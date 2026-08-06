@@ -84,7 +84,7 @@ $dao->create(PricingPlan => {
     session_id => $session_week2->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 300.00,
+    amount_cents => 30000,
 });
 
 # Pre-existing returning parent with a child

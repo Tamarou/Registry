@@ -165,7 +165,7 @@ Registry::DAO::PricingPlan->create($tenant_db, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => $PLAN_AMOUNT,
+    amount_cents => int( $PLAN_AMOUNT * 100 ),
 });
 
 # ---------------------------------------------------------------------------

@@ -147,10 +147,10 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
 
             # Get best price from pre-loaded pricing
             my $plans = $pricing_by_session{$row->{session_id}} || [];
-            my $best_price;
+            my $best_price_cents;
             for my $plan (@$plans) {
-                my $amount = $plan->{amount};
-                $best_price = $amount if defined $amount && (!defined $best_price || $amount < $best_price);
+                my $amount = $plan->{amount_cents};
+                $best_price_cents = $amount if defined $amount && (!defined $best_price_cents || $amount < $best_price_cents);
             }
 
             push @{$programs{$project_id}{sessions}}, {
@@ -172,7 +172,7 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 is_full         => $is_full,
                 has_waitlist    => $is_full,
                 pricing_plans   => $plans,
-                best_price      => $best_price,
+                best_price_cents => $best_price_cents,
                 location_id     => $row->{location_id},
                 location_name   => $row->{location_name},
                 location_slug   => $row->{location_slug},

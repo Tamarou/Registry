@@ -79,7 +79,7 @@ method get_installment_plans_for_sessions ($db, $session_ids, $total_amount) {
 
 # Business Logic: Calculate price with any applicable discounts or rules
 method calculate_plan_price ($pricing_plan_dao, $args = {}) {
-    my $base_amount = $pricing_plan_dao->amount;
+    my $base_amount = $pricing_plan_dao->amount_cents;
     my $child_count = $args->{child_count} || 1;
     my $date = $args->{date} || time();
 
@@ -102,14 +102,16 @@ method calculate_plan_price ($pricing_plan_dao, $args = {}) {
 
     # Business rule: Family/sibling discounts
     if ($pricing_plan_dao->plan_type eq 'family' && $child_count > 1) {
-        my $sibling_discount = $requirements->{sibling_discount} || 0;
+        # The admin enters the sibling discount in dollars; prices are cents.
+        my $sibling_discount = ($requirements->{sibling_discount} || 0) * 100;
         # Apply discount to additional children
         my $discount_amount = ($child_count - 1) * $sibling_discount;
         $calculated_price = $base_amount - $discount_amount;
     }
 
-    # Ensure price doesn't go negative
-    return $calculated_price > 0 ? $calculated_price : 0;
+    # Ensure price doesn't go negative. A discount can land between cents
+    # (15.05 * 100 is not exactly 1505 in floating point); money cannot.
+    return $calculated_price > 0 ? int($calculated_price + 0.5) : 0;
 }
 
 # Business Logic: Determine if a plan is currently available

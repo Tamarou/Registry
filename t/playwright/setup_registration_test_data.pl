@@ -146,7 +146,7 @@ for my $cfg (@session_configs) {
     Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name  => 'Standard',
-        amount     => 300.00,
+        amount_cents => 30000,
     });
 
     $sessions{$cfg->{key}} = {

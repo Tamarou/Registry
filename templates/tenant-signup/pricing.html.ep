@@ -54,7 +54,7 @@
           </header>
 
           <div class="plan-pricing">
-            % if ($plan->{amount} == 0) {
+            % if ($plan->{amount_cents} == 0) {
               <span class="price-amount">$0</span>
               <span class="price-period">/mo</span>
             % } else {

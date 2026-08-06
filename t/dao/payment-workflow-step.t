@@ -82,7 +82,7 @@ Registry::DAO::PricingPlan->create($db, {
     session_id => $session->id,
     plan_name => 'Standard',
     plan_type => 'standard',
-    amount => 150.00
+    amount_cents => 15000
 });
 
 # Create workflow
@@ -247,13 +247,16 @@ subtest 'Calculate enrollment totals' => sub {
     is $payment_info->{total}, 300, 'Total is $300 for two enrollments';
     is scalar(@{$payment_info->{items}}), 2, 'Two line items generated';
 
+    # Compare numerically. This used to assert the string '150.00' because the
+    # price came back as a DECIMAL string from the driver -- the same
+    # string-ness that made int($dollars * 100) drop a cent.
     my $item1 = $payment_info->{items}->[0];
-    is $item1->{amount}, '150.00', 'First item is $150';
+    cmp_ok $item1->{amount}, '==', 150, 'First item is $150';
     like $item1->{description}, qr/Alice Smith/, 'First item mentions Alice';
     like $item1->{description}, qr/Test Session/, 'First item mentions session';
 
     my $item2 = $payment_info->{items}->[1];
-    is $item2->{amount}, '150.00', 'Second item is $150';
+    cmp_ok $item2->{amount}, '==', 150, 'Second item is $150';
     like $item2->{description}, qr/Bob Smith/, 'Second item mentions Bob';
 };
 

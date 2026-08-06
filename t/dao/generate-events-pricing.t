@@ -74,6 +74,6 @@ my $plan = $db->query(
 )->hash;
 
 ok $plan, 'a PricingPlan is linked to the generated session';
-is( ( $plan->{amount} // -1 ) + 0, 0, 'plan amount matches the pricing_override (free)' );
+is( ( $plan->{amount_cents} // -1 ) + 0, 0, 'plan amount matches the pricing_override (free)' );
 
 done_testing;

@@ -114,7 +114,7 @@ Registry::DAO::PricingPlan->create($tdb, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => $PLAN_AMOUNT,
+    amount_cents => int( $PLAN_AMOUNT * 100 ),
 });
 
 # Parent + child in the tenant schema

@@ -14,7 +14,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     field $plan_name :param :reader;
     field $plan_type :param :reader = 'standard';
     field $pricing_model_type :param :reader = 'fixed';
-    field $amount :param :reader;
+    field $amount_cents :param :reader = 0;
     field $currency :param :reader = 'USD';
     field $installments_allowed :param :reader = 0;
     field $installment_count :param :reader = undef;
@@ -137,14 +137,15 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         # Check if this plan's requirements are met
         return unless $self->requirements_met($context);
         
-        my $price = $amount;
-        
+        my $price = $amount_cents;
+
         # Apply any dynamic pricing rules from requirements
         if ($requirements->{percentage_discount}) {
             $price = $price * (1 - $requirements->{percentage_discount} / 100);
         }
-        
-        return $price;
+
+        # A discount can land between cents; money cannot.
+        return int($price + 0.5);
     }
     
     # Check if plan requirements are met
@@ -192,18 +193,21 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return $date <= $cutoff;
     }
     
-    # Get installment amount
+    # Get installment amount, in cents. Integer division drops the remainder,
+    # so the installments can sum to less than the plan price -- see
+    # Registry::PriceOps::PricingPlan for the breakdown that carries it.
     method installment_amount {
-        return $amount unless $installments_allowed && $installment_count;
-        return $amount / $installment_count;
+        return $amount_cents unless $installments_allowed && $installment_count;
+        return int($amount_cents / $installment_count);
     }
-    
+
     # Format price with currency
     method formatted_price {
+        my $dollars = $amount_cents / 100;
         if ($currency eq 'USD') {
-            return sprintf('$%.2f', $amount);
+            return sprintf('$%.2f', $dollars);
         }
-        return sprintf('%.2f %s', $amount, $currency);
+        return sprintf('%.2f %s', $dollars, $currency);
     }
     
     # Get best available price for a session given context

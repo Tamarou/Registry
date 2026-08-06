@@ -82,7 +82,7 @@ Registry::DAO::PricingPlan->create($db, {
     session_id => $sess->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 300.00,
+    amount_cents => 30000,
 });
 
 # Parent with enrollment

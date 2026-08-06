@@ -170,7 +170,7 @@ subtest 'admin creates location, program, session, events, pricing' => sub {
         session_id => $session->id,
         plan_name  => 'Standard',
         plan_type  => 'standard',
-        amount     => 300.00,
+        amount_cents => 30000,
     });
     ok $pricing, 'Pricing plan created';
 };

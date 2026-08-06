@@ -40,7 +40,7 @@ my $session = Registry::DAO::Session->create($db, {
 my $pricing = Registry::DAO::PricingPlan->create($db, {
     session_id  => $session->id,
     plan_name   => 'Standard',
-    amount      => 100.50
+    amount_cents => 10050
 });
 
 subtest 'Create payment' => sub {

@@ -28,7 +28,7 @@ subtest 'PricingPlan should not have relationship fields' => sub {
             id => '123e4567-e89b-12d3-a456-426614174000',
             session_id => '223e4567-e89b-12d3-a456-426614174000',
             plan_name => 'Test Plan',
-            amount => 100.00,
+            amount_cents => 10000,
             created_at => '2024-01-01T00:00:00Z',
             updated_at => '2024-01-01T00:00:00Z',
         );
@@ -42,7 +42,7 @@ subtest 'PricingPlan should not have relationship fields' => sub {
 
     # These fields SHOULD exist (core plan definition)
     ok($plan->can('plan_name'), 'PricingPlan should have plan_name field');
-    ok($plan->can('amount'), 'PricingPlan should have amount field');
+    ok($plan->can('amount_cents'), 'PricingPlan should have amount_cents field');
     ok($plan->can('plan_scope'), 'PricingPlan should have plan_scope field');
     ok($plan->can('requirements'), 'PricingPlan should have requirements field');
 };
@@ -52,7 +52,7 @@ subtest 'Create PricingPlan without relationship fields' => sub {
     my $plan = eval {
         Registry::DAO::PricingPlan->create($db, {
             plan_name => 'Minimal Plan',
-            amount => 100.00,
+            amount_cents => 10000,
         });
     };
 
@@ -64,7 +64,7 @@ subtest 'Create PricingPlan without relationship fields' => sub {
 
     ok($plan, 'Created plan without relationship fields');
     is($plan->plan_name, 'Minimal Plan', 'Plan name is correct');
-    is($plan->amount, 100.00, 'Amount is correct');
+    is($plan->amount_cents, 10000, 'Amount is correct');
     is($plan->plan_scope, 'customer', 'Plan scope is correct (default)');
 
     # Verify in database that relationship columns don't exist
@@ -106,7 +106,7 @@ subtest 'Relationships handled by PricingRelationship' => sub {
         my $plan = Registry::DAO::PricingPlan->create($db, {
             plan_name => 'Service Plan',
             plan_type => 'standard',
-            amount => 200.00,
+            amount_cents => 20000,
             plan_scope => 'tenant',  # Indicates this is for tenant-to-tenant
         });
 
@@ -139,7 +139,7 @@ subtest 'Relationships handled by PricingRelationship' => sub {
 
     # Plan should only define what's offered, not to whom
     is($fetched_plan->plan_scope, 'tenant', 'Plan scope indicates tenant-level pricing');
-    is($fetched_plan->amount, 200.00, 'Plan amount is defined');
+    is($fetched_plan->amount_cents, 20000, 'Plan amount is defined');
 };
 
 subtest 'Platform plans without embedded relationships' => sub {
@@ -152,7 +152,7 @@ subtest 'Platform plans without embedded relationships' => sub {
             plan_name => 'Registry Standard - $200/month',
             plan_type => 'subscription',
             pricing_model_type => 'fixed',
-            amount => 200.00,
+            amount_cents => 20000,
             currency => 'USD',
             plan_scope => 'platform',  # Platform-level plan
             pricing_configuration => {

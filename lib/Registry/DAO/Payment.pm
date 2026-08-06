@@ -530,15 +530,19 @@ field $_stripe_client = undef;
             
             # Use the first pricing plan or find the best price
             my $pricing = $pricing_plans->[0];
-            my $price = $pricing->calculate_price({
+            my $price_cents = $pricing->calculate_price({
                 child_count => 1,
                 date => time(),
                 %$child
             });
-            
+
+            # Seam: pricing plans are cents, payments.amount is still dollars.
+            # Drop this division when the payment columns move to cents too.
+            my $price = defined $price_cents ? $price_cents / 100 : undef;
+
             if (defined $price) {
                 $total += $price;
-                
+
                 push @$items, {
                     description => "$child->{first_name} $child->{last_name} - " . $session->name,
                     amount => $price,

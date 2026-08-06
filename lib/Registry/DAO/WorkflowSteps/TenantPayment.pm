@@ -142,13 +142,13 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         my $config = $selected_plan->{pricing_configuration} || {};
         return {
             plan_name => $selected_plan->{plan_name},
-            monthly_amount => $selected_plan->{amount},
+            monthly_amount => $selected_plan->{amount_cents},
             currency => lc($selected_plan->{currency} || 'usd'),
             trial_days => $config->{trial_days} // 30,
             description => $config->{description} || $selected_plan->{plan_name},
             features => $config->{features} || [],
             billing_cycle => $config->{billing_cycle} || 'monthly',
-            formatted_price => format_price($selected_plan->{amount}, $selected_plan->{currency}, suffix => '/month')
+            formatted_price => format_price($selected_plan->{amount_cents}, $selected_plan->{currency}, suffix => '/month')
         };
     }
 

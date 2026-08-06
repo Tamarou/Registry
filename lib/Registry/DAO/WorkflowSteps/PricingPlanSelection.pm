@@ -64,7 +64,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
             selected_pricing_plan => {
                 id => $selected_plan->id,
                 plan_name => $selected_plan->plan_name,
-                amount => int($selected_plan->amount),
+                amount_cents => $selected_plan->amount_cents,
                 currency => $selected_plan->currency,
                 pricing_configuration => $selected_plan->pricing_configuration
             }
@@ -97,19 +97,19 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
                 id => $plan->id,
                 plan_name => $plan->plan_name,
                 plan_type => $plan->plan_type,
-                amount => int($plan->amount),  # Convert to integer
+                amount_cents => $plan->amount_cents,
                 currency => $plan->currency,
                 pricing_configuration => $plan->pricing_configuration,
                 metadata => $plan->metadata,
-                formatted_price => format_price($plan->amount, $plan->currency),
+                formatted_price => format_price($plan->amount_cents, $plan->currency),
             };
         }
 
-        # Sort plans by display order (if available) or by amount
+        # Sort plans by display order (if available) or by price
         @pricing_plans = sort {
             my $order_a = $a->{metadata}->{display_order} // 999;
             my $order_b = $b->{metadata}->{display_order} // 999;
-            $order_a <=> $order_b || $a->{amount} <=> $b->{amount}
+            $order_a <=> $order_b || $a->{amount_cents} <=> $b->{amount_cents}
         } @pricing_plans;
 
         return {

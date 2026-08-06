@@ -30,14 +30,16 @@ subtest 'signup offers selectable plans' => sub {
 
 subtest 'Free platform fallback plan exists and is not selectable' => sub {
     my $row = $db->query(q{
-        SELECT amount, pricing_model_type
+        SELECT amount_cents, pricing_model_type,
+               pricing_configuration->>'percentage' AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
     })->hash;
     ok $row, 'a platform-scope default plan exists';
     is $row->{pricing_model_type}, 'percentage', 'Free plan is percentage-typed';
-    cmp_ok $row->{amount} + 0, '==', 0, 'Free plan rate is 0';
+    cmp_ok $row->{pct} + 0, '==', 0, 'Free plan rate is 0';
+    is $row->{amount_cents}, 0, 'Free plan carries no dollar amount';
 
     my $selectable = $db->query(q{
         SELECT COUNT(*) AS n
@@ -52,15 +54,11 @@ subtest 'every selectable plan has a usable revenue-share rate' => sub {
     # A tenant that picks a plan with no resolvable rate cannot take payments at
     # all: the fee resolver dies rather than guess, so every enrollment charge
     # fails. Offering such a plan at signup is therefore a deploy-time bug, not
-    # a runtime one. This mirrors the COALESCE in RevenueShare.pm -- if that
+    # a runtime one. This mirrors the lookup in RevenueShare.pm -- if that
     # resolution changes, this guard must change with it.
     my $rows = $db->query(q{
         SELECT p.plan_name,
-               COALESCE(
-                 p.pricing_configuration->>'percentage',
-                 CASE WHEN p.pricing_model_type = 'percentage'
-                      THEN p.amount::text END
-               ) AS pct
+               p.pricing_configuration->>'percentage' AS pct
           FROM registry.pricing_relationships pr
           JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
          WHERE pr.provider_id = ?

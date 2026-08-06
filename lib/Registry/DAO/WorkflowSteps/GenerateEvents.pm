@@ -98,7 +98,8 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
                 session_id => $session->id,
                 plan_name  => 'Standard',
                 plan_type  => 'standard',
-                amount     => $override + 0,
+                # The admin enters the override in dollars; the column is cents.
+                amount_cents => int( $override * 100 + 0.5 ),
             });
         }
 

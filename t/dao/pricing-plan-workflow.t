@@ -315,7 +315,8 @@ subtest 'Step 5: Review and Activate' => sub {
     ok($plan, 'Pricing plan created in database');
     is($plan->plan_name, 'Enterprise Plan', 'Plan name matches');
     is($plan->pricing_model_type, 'hybrid', 'Pricing model type matches');
-    is($plan->amount + 0, 500, 'Amount matches'); # Convert to numeric for comparison
+    # The form collects dollars; the column stores cents.
+    is($plan->amount_cents + 0, 50000, 'Amount matches'); # Convert to numeric for comparison
 
     # Verify resource allocation in pricing_configuration
     my $config = $plan->pricing_configuration;

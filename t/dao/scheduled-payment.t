@@ -85,7 +85,7 @@ my $pricing_plan = Registry::DAO::PricingPlan->create($db, {
     session_id => $session->id,
     plan_name => 'Installment Plan',
     plan_type => 'standard',
-    amount => 300.00,
+    amount_cents => 30000,
     installments_allowed => 1,
     installment_count => 3
 });

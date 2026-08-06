@@ -102,7 +102,7 @@ my $pricing_plan_id = $db->insert('pricing_plans', {
     session_id => $session->id,
     plan_name => 'Admin Test Plan',
     plan_type => 'standard',
-    amount => 450.00,
+    amount_cents => 45000,
     installments_allowed => 1
 }, { returning => 'id' })->hash->{id};
 

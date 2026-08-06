@@ -187,8 +187,8 @@ $db = $db->schema($tenant->slug);
 
     ok scalar( grep { $_->{column_name} eq 'session_id' } $columns->@* ),
       'pricing_plans table has session_id column';
-    ok scalar( grep { $_->{column_name} eq 'amount' } $columns->@* ),
-      'pricing_plans table has amount column';
+    ok scalar( grep { $_->{column_name} eq 'amount_cents' } $columns->@* ),
+      'pricing_plans table has amount_cents column';
     ok scalar( grep { $_->{column_name} eq 'plan_name' } $columns->@* ),
       'pricing_plans table has plan_name column';
     ok scalar( grep { $_->{column_name} eq 'plan_type' } $columns->@* ),

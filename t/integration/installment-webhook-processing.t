@@ -94,7 +94,7 @@ my $pricing_plan_id = $db->insert('pricing_plans', {
     session_id => $session->id,
     plan_name => 'Webhook Test Plan',
     plan_type => 'standard',
-    amount => 300.00,
+    amount_cents => 30000,
     installments_allowed => 1
 }, { returning => 'id' })->hash->{id};
 
