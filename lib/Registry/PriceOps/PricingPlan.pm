@@ -36,22 +36,25 @@ method calculate_installment_breakdown ($pricing_plan_dao, $total_cents) {
     my $installment_count = $validation->{installment_count};
     my $base_cents = int($total_cents / $installment_count);
 
-    # Business rule: Handle remainder in the last payment. In integer cents the
-    # remainder is exact and always under $installment_count cents.
+    # Business rule: Handle the remainder in the first payment. In integer cents
+    # the remainder is exact and always under $installment_count cents. It goes
+    # first because the first installment is charged on its own PaymentIntent to
+    # capture the card, and so is the only one whose amount can differ -- every
+    # invoice on the subscription that collects the rest bills the same integer.
     my $remainder = $total_cents - $base_cents * $installment_count;
-    my $final_cents = $base_cents + $remainder;
+    my $first_cents = $base_cents + $remainder;
 
     my $base_dollars  = sprintf('%.2f', $base_cents / 100);
-    my $final_dollars = sprintf('%.2f', $final_cents / 100);
+    my $first_dollars = sprintf('%.2f', $first_cents / 100);
 
     return {
         installment_count => $installment_count,
         base_installment_amount_cents => $base_cents,
-        final_installment_amount_cents => $final_cents,
+        first_installment_amount_cents => $first_cents,
         total_amount_cents => $total_cents,
         frequency => 'monthly', # Default frequency - could be configurable per plan
         description => "Pay in $installment_count installments of \$$base_dollars" .
-                      ($remainder != 0 ? " (final payment: \$$final_dollars)" : ""),
+                      ($remainder != 0 ? " (first payment: \$$first_dollars)" : ""),
     };
 }
 

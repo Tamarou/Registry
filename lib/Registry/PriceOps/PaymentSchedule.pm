@@ -28,6 +28,7 @@ method create_for_enrollment ($db, $args) {
     my $total_cents = $args->{total_amount_cents};
     my $installment_count = $args->{installment_count};
     my $frequency = $args->{frequency} || 'monthly';
+    my $first_payment = $args->{first_payment};
 
     # Business validation
     die "total_amount_cents required" unless defined $total_cents;
@@ -35,11 +36,31 @@ method create_for_enrollment ($db, $args) {
     die "installment_count must be greater than 1" if $installment_count <= 1;
     die "total_amount_cents must be positive" if $total_cents <= 0;
 
-    # Business rule: Calculate installment amount with proper rounding
-    my $amount_cents = $self->calculate_installment_amount($total_cents, $installment_count);
+    # Business rule: Calculate installment amount with proper rounding.  When
+    # installment 1 has already been collected out of band it carries the
+    # remainder, so what is left always divides exactly.
+    my $billed_total = $total_cents;
+    my $billed_count = $installment_count;
+    if ($first_payment) {
+        $billed_total -= $first_payment->amount_cents;
+        $billed_count -= 1;
+    }
+    my $amount_cents = $self->calculate_installment_amount($billed_total, $billed_count);
+
+    # A first payment that does not carry the whole remainder would leave cents
+    # that no invoice can collect.  Refuse rather than quietly undercharge.
+    die "first_payment leaves $billed_total over $billed_count installments, which does not divide evenly"
+        if $first_payment && $amount_cents * $billed_count != $billed_total;
 
     # Create Stripe subscription first (fail fast if Stripe is unavailable)
     my ($interval, $interval_count) = $self->stripe_interval_from_frequency($frequency);
+
+    # Stripe invoices a new subscription immediately.  If installment 1 is
+    # already paid, hold the first invoice back one interval so the parent is
+    # not charged twice on day one.
+    my $trial_end = $first_payment
+        ? DateTime->now->add( "${interval}s" => $interval_count )->epoch
+        : undef;
 
     my $subscription;
     try {
@@ -49,6 +70,7 @@ method create_for_enrollment ($db, $args) {
             amount_cents => $amount_cents,
             interval => $interval,
             interval_count => $interval_count,
+            trial_end => $trial_end,
             description => "Installment payments for enrollment $enrollment_id",
             metadata => {
                 enrollment_id => $enrollment_id,
@@ -72,7 +94,7 @@ method create_for_enrollment ($db, $args) {
     });
 
     # Create scheduled payment tracking records (for status tracking only)
-    $self->create_scheduled_payment_trackers($db, $schedule_dao, $subscription);
+    $self->create_scheduled_payment_trackers($db, $schedule_dao, $subscription, $first_payment);
 
     return $schedule_dao;
 }
@@ -80,21 +102,33 @@ method create_for_enrollment ($db, $args) {
 # Business Logic: Calculate installment amount with rounding rules
 method calculate_installment_amount ($total_cents, $installment_count) {
     # Business rule: round down to whole cents. A Stripe subscription charges a
-    # fixed amount every interval, so any remainder cannot be collected here;
-    # see calculate_installment_breakdown for the remainder it leaves behind.
+    # fixed amount every interval, so every invoice has to be the same integer;
+    # the remainder rides on the installment collected out of band instead.
     return int($total_cents / $installment_count);
 }
 
 # Business Logic: Create payment tracking records (Stripe handles actual scheduling)
-method create_scheduled_payment_trackers ($db, $schedule_dao, $subscription) {
+method create_scheduled_payment_trackers ($db, $schedule_dao, $subscription, $first_payment = undef) {
     # Create simple tracking records for each installment
     # Stripe subscription handles the actual payment scheduling
     for my $i (1..$schedule_dao->installment_count) {
+        # Installment 1 is settled before the subscription exists when the
+        # enrollment workflow charged it to capture the card.  Record it as
+        # paid so the completion count reaches zero after the last invoice.
+        my $paid_up_front = $first_payment && $i == 1;
+
         Registry::DAO::ScheduledPayment->create($db, {
             payment_schedule_id => $schedule_dao->id,
             installment_number => $i,
-            amount_cents => $schedule_dao->installment_amount_cents,
-            status => 'pending' # Will be updated via webhooks
+            amount_cents => $paid_up_front ? $first_payment->amount_cents
+                                           : $schedule_dao->installment_amount_cents,
+            $paid_up_front ? (
+                status     => 'completed',
+                payment_id => $first_payment->id,
+                paid_at    => \'NOW()',
+            ) : (
+                status => 'pending' # Will be updated via webhooks
+            ),
         });
     }
 }

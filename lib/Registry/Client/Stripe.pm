@@ -109,6 +109,7 @@ method create_installment_subscription ($args) {
     my $interval_count = $args->{interval_count} || 1;
     my $description = $args->{description} || 'Installment Payment';
     my $metadata = $args->{metadata} || {};
+    my $trial_end = $args->{trial_end};
 
     return $self->create_subscription({
         customer => $customer_id,
@@ -127,6 +128,10 @@ method create_installment_subscription ($args) {
             },
             quantity => 1,
         }],
+        # Stripe invoices a new subscription on creation. A trial_end defers
+        # that first invoice, which is what keeps an already-collected
+        # installment from being charged a second time.
+        ( $trial_end ? ( trial_end => $trial_end ) : () ),
         metadata => $metadata,
     });
 }

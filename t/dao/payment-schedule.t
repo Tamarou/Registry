@@ -7,6 +7,7 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::PaymentSchedule;
 use Registry::DAO::ScheduledPayment;
+use Registry::DAO::Payment;
 use Registry::DAO::User;
 use Registry::DAO::Session;
 use Registry::DAO::PricingPlan;
@@ -149,6 +150,60 @@ subtest 'PaymentSchedule creation' => sub {
     my $second_payment = $scheduled_payments[1];
     is $second_payment->installment_number, 2, 'Second payment has correct installment number';
     is $second_payment->amount_cents, 10000, 'Second payment has correct amount';
+};
+
+subtest 'first installment collected out of band' => sub {
+    # The enrollment workflow charges installment 1 on its own PaymentIntent to
+    # capture the card, then hands that payment here.  The subscription must
+    # cover only the installments that are left, and must not invoice until one
+    # interval has passed, or the parent pays twice on the first day.
+    my $schedule_ops = Registry::PriceOps::PaymentSchedule->new(stripe_client => $mock_stripe);
+
+    # 10000 over three does not divide evenly; the stray cent rides on the
+    # payment we have already taken, which is the only one free to vary.
+    my $first_payment = Registry::DAO::Payment->create($db, {
+        user_id      => $parent->id,
+        amount_cents => 3334,
+        status       => 'completed',
+    });
+
+    my $before = time;
+    my $schedule = $schedule_ops->create_for_enrollment($db, {
+        enrollment_id      => $enrollment_id,
+        pricing_plan_id    => $pricing_plan->id,
+        customer_id        => 'cus_test_mock_customer',
+        payment_method_id  => 'pm_test_mock_payment_method',
+        total_amount_cents => 10000,
+        installment_count  => 3,
+        first_payment      => $first_payment,
+    });
+
+    is $schedule->total_amount_cents, 10000, 'Schedule total is what the parent owes in all';
+    is $schedule->installment_count, 3, 'Schedule counts every installment, not just the billed ones';
+    is $schedule->installment_amount_cents, 3333, 'Recurring amount is the floor';
+
+    my @trackers = sort { $a->installment_number <=> $b->installment_number }
+                   $schedule->scheduled_payments($db);
+    is scalar @trackers, 3, 'One tracker per installment';
+
+    is $trackers[0]->amount_cents, 3334, 'Installment 1 carries the remainder';
+    is $trackers[0]->status, 'completed', 'Installment 1 is already paid';
+    is $trackers[0]->payment_id, $first_payment->id, 'Installment 1 links to the payment that settled it';
+    ok defined $trackers[0]->paid_at, 'Installment 1 records when it was paid';
+
+    is $trackers[1]->status, 'pending', 'Installment 2 is left to the subscription';
+    is $trackers[1]->amount_cents, 3333, 'Installment 2 is the recurring amount';
+    is $trackers[2]->status, 'pending', 'Installment 3 is left to the subscription';
+
+    my $collected = 0;
+    $collected += $_->amount_cents for @trackers;
+    is $collected, 10000, 'Trackers sum to the total: no cent lost, none charged twice';
+
+    my $args = $mock_stripe->call_args_pos(-1, 2);
+    is $args->{amount_cents}, 3333, 'Subscription bills the recurring amount';
+    ok $args->{trial_end}, 'Subscription waits an interval before its first invoice';
+    cmp_ok $args->{trial_end}, '>', $before + 27 * 86400,
+        'Trial runs to roughly one month out, so day one is not billed twice';
 };
 
 subtest 'PaymentSchedule validation' => sub {

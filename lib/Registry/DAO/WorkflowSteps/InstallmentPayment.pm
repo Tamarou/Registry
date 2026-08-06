@@ -179,9 +179,11 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan_dao) {
     my $breakdown = $pricing_ops->calculate_installment_breakdown($pricing_plan_dao, $payment_info->{total});
 
     # Create first payment for immediate processing
+    # This one is charged on its own PaymentIntent, so it is the installment
+    # that can carry the remainder the subscription's fixed invoices cannot.
     my $first_payment = Registry::DAO::Payment->create($db, {
         user_id => $user_id,
-        amount_cents => $breakdown->{base_installment_amount_cents},
+        amount_cents => $breakdown->{first_installment_amount_cents},
         metadata => {
             workflow_id => $run->workflow_id,
             workflow_run_id => $run->id,
@@ -241,7 +243,7 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan_dao) {
             installment_info => {
                 current_payment => 1,
                 total_installments => $breakdown->{installment_count},
-                installment_amount_cents => $breakdown->{base_installment_amount_cents},
+                installment_amount_cents => $breakdown->{first_installment_amount_cents},
                 total_amount_cents => $payment_info->{total},
             },
         }
@@ -312,6 +314,8 @@ method handle_installment_payment_callback ($db, $run, $form_data) {
             payment_method_id => $payment_method_id,
             total_amount_cents => $run->data->{total_amount_cents},
             installment_count => $run->data->{installment_count},
+            # Installment 1 is already paid; the subscription collects the rest.
+            first_payment => $first_payment,
         });
 
         # Store schedule ID for future reference
