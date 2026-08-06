@@ -134,7 +134,6 @@ subtest 'Payment for user' => sub {
 };
 
 subtest '_to_cents converts dollars to integer cents' => sub {
-    # Prove the helper exists and matches int($x * 100) exactly
     can_ok( 'Registry::DAO::Payment', '_to_cents' );
 
     my @cases = (
@@ -142,7 +141,10 @@ subtest '_to_cents converts dollars to integer cents' => sub {
         [ 9.99,    999  ],
         [ 100,     10000 ],
         [ 100.50,  10050 ],
-        [ 0.025,   2     ],   # int() truncates, same as the old inline expression
+        # Money columns are DECIMAL(10,2), so the DB never hands us a third
+        # decimal place. A half-cent is only reachable from a literal, and
+        # rounding it up is the same half-up rule application_fee_cents uses.
+        [ 0.025,   3     ],
     );
 
     for my $case (@cases) {
@@ -151,12 +153,34 @@ subtest '_to_cents converts dollars to integer cents' => sub {
             $expected,
             "_to_cents($dollars) == $expected"
         );
-        # Double-check it matches the original expression byte-for-byte
-        is( Registry::DAO::Payment::_to_cents($dollars),
-            int($dollars * 100),
-            "_to_cents($dollars) matches int(\$dollars * 100)"
+    }
+};
+
+subtest '_to_cents does not undercharge on binary-float representation' => sub {
+    # DBD::Pg returns DECIMAL(10,2) as a string; "19.99" numifies to a hair
+    # under 19.99, so truncating toward zero bills a cent short. Postgres
+    # stored the amount exactly -- the cent is lost in Perl, on the way to
+    # Stripe, and the parent is undercharged.
+    my @cases = ( [ 19.99, 1999 ], [ 1.15, 115 ], [ 0.29, 29 ], [ 8.87, 887 ] );
+
+    for my $case (@cases) {
+        my ($dollars, $expected) = @$case;
+        is( Registry::DAO::Payment::_to_cents("$dollars"),
+            $expected,
+            "_to_cents($dollars) == $expected, not " . ($expected - 1)
         );
     }
+
+    # Sweep every two-decimal amount up to $100. Any drift is a real cent off
+    # a real invoice, so none is acceptable.
+    my @wrong;
+    for my $c ( 0 .. 10_000 ) {
+        my $dollars = sprintf( '%.2f', $c / 100 );
+        push @wrong, $dollars
+            if Registry::DAO::Payment::_to_cents($dollars) != $c;
+    }
+    is( scalar @wrong, 0, 'no drift across 10001 two-decimal amounts' )
+        or diag "first offenders: @wrong[ 0 .. 9 ]";
 };
 
 subtest 'create_payment_intent uses _to_cents for amount conversion' => sub {

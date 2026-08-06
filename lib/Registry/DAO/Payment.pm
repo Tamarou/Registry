@@ -38,7 +38,15 @@ field $_stripe_client = undef;
     sub table { 'payments' }
 
     # Convert a dollar amount to integer cents for Stripe API calls.
-    sub _to_cents ($dollars) { int($dollars * 100) }
+    #
+    # Rounds rather than truncates. Money columns are DECIMAL(10,2) and Postgres
+    # stores them exactly, but DBD::Pg returns them as strings: "19.99" numifies
+    # to a hair under 19.99, so int() alone bills 1998 cents. That undercharges
+    # 5.7% of two-decimal amounts by a cent -- silently, on real invoices.
+    #
+    # Half-up, matching application_fee_cents below. Every caller passes a
+    # non-negative magnitude (charge or refund amount), so no sign handling.
+    sub _to_cents ($dollars) { int($dollars * 100 + 0.5) }
 
     # Platform revenue share, collected at charge time as a Stripe application
     # fee on the destination charge. The fraction is resolved from the tenant's
