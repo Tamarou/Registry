@@ -125,7 +125,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # finalizes on a later delivery. Events without an amount (internal
         # fixtures) pass; real Stripe events always carry one.
         if ( defined $intent->{amount} ) {
-            my $row_cents = Registry::DAO::Payment::_to_cents($payment->amount);
+            my $row_cents = $payment->amount_cents;
             die "payment_intent.succeeded: intent $intent->{id} amount "
               . "$intent->{amount} does not match payment $payment_id "
               . "amount $row_cents\n"

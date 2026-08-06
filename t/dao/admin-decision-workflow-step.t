@@ -156,7 +156,7 @@ subtest 'ProcessAdminDropDecision starts drop-request-processing workflow run' =
         $step->process($db, {
             action          => 'approve',
             admin_notes     => 'Approved',
-            refund_amount   => 50,
+            refund_amount_cents => 5000,
             drop_request_id => $drop_request->id,
             admin_user_id   => $admin_user->id,
         });

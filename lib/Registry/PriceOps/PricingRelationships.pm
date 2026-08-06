@@ -239,7 +239,7 @@ sub _get_usage_data ($db, $relationship, $period) {
     if ($config->{applies_to} && $config->{applies_to} eq 'customer_payments') {
         # Query payments for the tenant during the period
         my $result = $db->query(q{
-            SELECT COALESCE(SUM(amount), 0) as total
+            SELECT COALESCE(SUM(amount_cents), 0) as total
             FROM registry.payments
             WHERE tenant_id = ?
               AND created_at >= ?
@@ -255,7 +255,7 @@ sub _get_usage_data ($db, $relationship, $period) {
         my $result = $db->query(q{
             SELECT
                 COUNT(*) as count,
-                COALESCE(SUM(amount), 0) as volume
+                COALESCE(SUM(amount_cents), 0) as volume
             FROM registry.payments
             WHERE tenant_id = ?
               AND created_at >= ?

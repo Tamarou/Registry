@@ -2,15 +2,18 @@ BEGIN;
 
 SET search_path TO registry, public;
 
--- Verify enrollments table has new columns
-SELECT drop_reason, dropped_at, dropped_by, refund_status, refund_amount,
+-- Verify enrollments table has new columns. The money column is deliberately
+-- absent: a later change renames it, so asserting it here would fail once that
+-- change deploys.
+SELECT drop_reason, dropped_at, dropped_by, refund_status,
        transfer_to_session_id, transfer_status
 FROM enrollments
 WHERE FALSE;
 
--- Verify drop_requests table exists with correct structure
+-- Verify drop_requests table exists with correct structure. The money column
+-- is deliberately absent for the same reason.
 SELECT id, enrollment_id, requested_by, reason, refund_requested,
-       refund_amount_requested, status, admin_notes, processed_by,
+       status, admin_notes, processed_by,
        processed_at, created_at, updated_at
 FROM drop_requests
 WHERE FALSE;

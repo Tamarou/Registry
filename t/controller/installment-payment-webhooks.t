@@ -124,7 +124,7 @@ my $schedule = $schedule_ops->create_for_enrollment($db, {
     pricing_plan_id => $pricing_plan->id,
     customer_id => 'cus_test_mock_customer',
     payment_method_id => 'pm_test_mock_payment_method',
-    total_amount => 300.00,
+    total_amount_cents => 30000,
     installment_count => 3
 });
 
@@ -161,7 +161,7 @@ subtest 'Invoice paid webhook processing' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_paid_webhook',
         payment_method_id => 'pm_test_paid_webhook',
-        total_amount => 200.00,
+        total_amount_cents => 20000,
         installment_count => 2
     });
 
@@ -206,7 +206,7 @@ subtest 'Invoice payment failed webhook processing' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_failed_webhook',
         payment_method_id => 'pm_test_failed_webhook',
-        total_amount => 150.00,
+        total_amount_cents => 15000,
         installment_count => 2
     });
 
@@ -255,7 +255,7 @@ subtest 'Webhook event idempotency' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_duplicate_webhook',
         payment_method_id => 'pm_test_duplicate_webhook',
-        total_amount => 100.00,
+        total_amount_cents => 10000,
         installment_count => 2
     });
 

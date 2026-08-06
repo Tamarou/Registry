@@ -47,7 +47,7 @@ my $child = Registry::DAO::Family->add_child($db, $parent->id, {
 # Payment as create_payment would leave it: enrollment_items + tenant snapshot.
 my $payment = Registry::DAO::Payment->create($db, {
     user_id  => $parent->id,
-    amount   => 100,
+    amount_cents => 10000,
     status   => 'pending',
     metadata => {
         enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
@@ -122,7 +122,7 @@ subtest 'amount mismatch fails loudly and does not finalize (Leg W1)' => sub {
     # match the row before the enrollment snapshot is granted.
     my $payment2 = Registry::DAO::Payment->create($db, {
         user_id  => $parent->id,
-        amount   => 100,
+        amount_cents => 10000,
         status   => 'pending',
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $child2->id } ],

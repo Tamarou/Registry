@@ -125,7 +125,7 @@ subtest 'Webhook-based payment processing eliminates race conditions' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_race_condition',
         payment_method_id => 'pm_test_race_condition',
-        total_amount => 300.00,
+        total_amount_cents => 30000,
         installment_count => 3,
     });
 
@@ -199,7 +199,7 @@ subtest 'Webhook idempotency handling' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_idempotency',
         payment_method_id => 'pm_test_idempotency',
-        total_amount => 200.00,
+        total_amount_cents => 20000,
         installment_count => 2,
     });
 
@@ -245,7 +245,7 @@ subtest 'Stripe subscription status synchronization' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_sync',
         payment_method_id => 'pm_test_sync',
-        total_amount => 150.00,
+        total_amount_cents => 15000,
         installment_count => 2,
     });
 

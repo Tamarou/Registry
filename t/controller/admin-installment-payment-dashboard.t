@@ -111,8 +111,8 @@ my $payment_schedule = Registry::DAO::PaymentSchedule->create($db, {
     enrollment_id => $enrollment->{id},
     pricing_plan_id => $pricing_plan_id,
     stripe_subscription_id => 'sub_admin_dashboard_test',
-    total_amount => 450.00,
-    installment_amount => 150.00,
+    total_amount_cents => 45000,
+    installment_amount_cents => 15000,
     installment_count => 3,
     status => 'active'
 });
@@ -121,7 +121,7 @@ my $payment_schedule = Registry::DAO::PaymentSchedule->create($db, {
 my $completed_payment = Registry::DAO::ScheduledPayment->create($db, {
     payment_schedule_id => $payment_schedule->id,
     installment_number => 1,
-    amount => 150.00,
+    amount_cents => 15000,
     status => 'completed',
     paid_at => \"NOW() - INTERVAL '30 days'"
 });
@@ -129,14 +129,14 @@ my $completed_payment = Registry::DAO::ScheduledPayment->create($db, {
 my $pending_payment = Registry::DAO::ScheduledPayment->create($db, {
     payment_schedule_id => $payment_schedule->id,
     installment_number => 2,
-    amount => 150.00,
+    amount_cents => 15000,
     status => 'pending'
 });
 
 my $failed_payment = Registry::DAO::ScheduledPayment->create($db, {
     payment_schedule_id => $payment_schedule->id,
     installment_number => 3,
-    amount => 150.00,
+    amount_cents => 15000,
     status => 'failed',
     failed_at => \"NOW() - INTERVAL '5 days'",
     failure_reason => 'card_declined'
@@ -150,7 +150,7 @@ subtest 'Admin dashboard payment schedule data operations' => sub {
     my $schedule = $active_schedules->[0];
     isa_ok $schedule, 'HASH';
     is $schedule->{status}, 'active', 'Schedule has active status';
-    is $schedule->{total_amount}, '450.00', 'Schedule has correct total amount';
+    is $schedule->{total_amount_cents}, 45000, 'Schedule has correct total amount';
     is $schedule->{installment_count}, 3, 'Schedule has correct installment count';
 
     # Test finding by enrollment (for enrollment detail pages)
@@ -189,8 +189,8 @@ subtest 'Admin dashboard payment schedule management' => sub {
         enrollment_id => $enrollment->{id},
         pricing_plan_id => $pricing_plan_id,
         stripe_subscription_id => 'sub_test_cancellation',
-        total_amount => 300.00,
-        installment_amount => 100.00,
+        total_amount_cents => 30000,
+        installment_amount_cents => 10000,
         installment_count => 3,
         status => 'active'
     });
@@ -199,14 +199,14 @@ subtest 'Admin dashboard payment schedule management' => sub {
     Registry::DAO::ScheduledPayment->create($db, {
         payment_schedule_id => $test_schedule->id,
         installment_number => 1,
-        amount => 100.00,
+        amount_cents => 10000,
         status => 'pending'
     });
 
     Registry::DAO::ScheduledPayment->create($db, {
         payment_schedule_id => $test_schedule->id,
         installment_number => 2,
-        amount => 100.00,
+        amount_cents => 10000,
         status => 'pending'
     });
 
@@ -232,7 +232,7 @@ subtest 'Admin dashboard reporting data' => sub {
     my $cancelled_count = 0;
 
     for my $schedule (@$all_schedules) {
-        $total_revenue += $schedule->{total_amount};
+        $total_revenue += $schedule->{total_amount_cents};
         $active_count++ if $schedule->{status} eq 'active';
         $cancelled_count++ if $schedule->{status} eq 'cancelled';
     }
@@ -262,5 +262,5 @@ subtest 'Admin dashboard Stripe integration data' => sub {
 
     # This data would be used for webhook processing and admin monitoring
     ok defined $schedule->{enrollment_id}, 'Schedule is linked to enrollment';
-    ok $schedule->{total_amount} > 0, 'Schedule has valid total amount';
+    ok $schedule->{total_amount_cents} > 0, 'Schedule has valid total amount';
 };

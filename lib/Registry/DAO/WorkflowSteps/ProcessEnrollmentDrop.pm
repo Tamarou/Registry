@@ -36,13 +36,13 @@ class Registry::DAO::WorkflowSteps::ProcessEnrollmentDrop :isa(Registry::DAO::Wo
             dropped_at => \'now()',
             dropped_by => $admin_id,
             refund_status => $data->{refund_requested} ? 'pending' : 'none',
-            refund_amount => $data->{refund_amount}
+            refund_amount_cents => $data->{refund_amount_cents}
         });
 
         return {
             enrollment_cancelled => 1,
             refund_requested => $data->{refund_requested} || 0,
-            refund_amount => $data->{refund_amount}
+            refund_amount_cents => $data->{refund_amount_cents}
         };
     }
 }

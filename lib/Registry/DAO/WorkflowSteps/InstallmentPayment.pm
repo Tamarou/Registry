@@ -51,7 +51,7 @@ method prepare_payment_options ($db, $run) {
         payment_options => {
             full_payment => {
                 type => 'full',
-                amount => $payment_info->{total},
+                amount_cents => $payment_info->{total},
                 description => 'Pay in full',
             },
             installment_plans => $installment_plans,
@@ -116,7 +116,7 @@ method process_full_payment ($db, $run, $form_data) {
     # Create payment record
     my $payment = Registry::DAO::Payment->create($db, {
         user_id => $user_id,
-        amount => $payment_info->{total},
+        amount_cents => $payment_info->{total},
         metadata => {
             workflow_id => $run->workflow_id,
             workflow_run_id => $run->id,
@@ -181,13 +181,13 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan_dao) {
     # Create first payment for immediate processing
     my $first_payment = Registry::DAO::Payment->create($db, {
         user_id => $user_id,
-        amount => $breakdown->{base_installment_amount},
+        amount_cents => $breakdown->{base_installment_amount_cents},
         metadata => {
             workflow_id => $run->workflow_id,
             workflow_run_id => $run->id,
             enrollment_data => $enrollment_data,
             payment_type => 'installment_first',
-            total_amount => $payment_info->{total},
+            total_amount_cents => $payment_info->{total},
             installment_count => $breakdown->{installment_count},
             installment_number => 1,
         }
@@ -197,7 +197,7 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan_dao) {
     for my $item (@{$payment_info->{items}}) {
         $first_payment->add_line_item($db, {
             %$item,
-            amount => sprintf("%.2f", $item->{amount} / $breakdown->{installment_count}),
+            amount_cents => int($item->{amount_cents} / $breakdown->{installment_count}),
             metadata => {
                 %{$item->{metadata} || {}},
                 installment_portion => 1,
@@ -226,9 +226,9 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan_dao) {
         first_payment_id => $first_payment->id,
         payment_type => 'installment',
         pricing_plan_id => $pricing_plan_dao->id,
-        total_amount => $payment_info->{total},
+        total_amount_cents => $payment_info->{total},
         installment_count => $breakdown->{installment_count},
-        installment_amount => $breakdown->{base_installment_amount},
+        installment_amount_cents => $breakdown->{base_installment_amount_cents},
     });
 
     return {
@@ -241,8 +241,8 @@ method create_installment_payment ($db, $run, $form_data, $pricing_plan_dao) {
             installment_info => {
                 current_payment => 1,
                 total_installments => $breakdown->{installment_count},
-                installment_amount => $breakdown->{base_installment_amount},
-                total_amount => $payment_info->{total},
+                installment_amount_cents => $breakdown->{base_installment_amount_cents},
+                total_amount_cents => $payment_info->{total},
             },
         }
     };
@@ -310,7 +310,7 @@ method handle_installment_payment_callback ($db, $run, $form_data) {
             pricing_plan_id => $run->data->{pricing_plan_id},
             customer_id => $customer_id,
             payment_method_id => $payment_method_id,
-            total_amount => $run->data->{total_amount},
+            total_amount_cents => $run->data->{total_amount_cents},
             installment_count => $run->data->{installment_count},
         });
 

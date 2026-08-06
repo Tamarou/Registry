@@ -103,8 +103,8 @@ my $payment_schedule = Registry::DAO::PaymentSchedule->create($db, {
     enrollment_id => $enrollment->{id},
     pricing_plan_id => $pricing_plan_id,
     stripe_subscription_id => 'sub_webhook_test_123',
-    total_amount => 300.00,
-    installment_amount => 100.00,
+    total_amount_cents => 30000,
+    installment_amount_cents => 10000,
     installment_count => 3,
     status => 'active'
 });
@@ -113,14 +113,14 @@ my $payment_schedule = Registry::DAO::PaymentSchedule->create($db, {
 my $scheduled_payment_1 = Registry::DAO::ScheduledPayment->create($db, {
     payment_schedule_id => $payment_schedule->id,
     installment_number => 2,
-    amount => 100.00,
+    amount_cents => 10000,
     status => 'pending'
 });
 
 my $scheduled_payment_2 = Registry::DAO::ScheduledPayment->create($db, {
     payment_schedule_id => $payment_schedule->id,
     installment_number => 3,
-    amount => 100.00,
+    amount_cents => 10000,
     status => 'pending'
 });
 
@@ -238,8 +238,8 @@ subtest 'Payment schedule cancellation' => sub {
         enrollment_id => $enrollment->{id},
         pricing_plan_id => $pricing_plan_id,
         stripe_subscription_id => 'sub_cancellation_test_456',
-        total_amount => 300.00,
-        installment_amount => 100.00,
+        total_amount_cents => 30000,
+        installment_amount_cents => 10000,
         installment_count => 3,
         status => 'active'
     });
@@ -247,7 +247,7 @@ subtest 'Payment schedule cancellation' => sub {
     my $pending_payment = Registry::DAO::ScheduledPayment->create($db, {
         payment_schedule_id => $cancellation_schedule->id,
         installment_number => 2,
-        amount => 100.00,
+        amount_cents => 10000,
         status => 'pending'
     });
 

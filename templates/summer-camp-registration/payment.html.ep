@@ -98,7 +98,7 @@
                     <div class="border-l-4 border-blue-500 pl-4">
                         <h3 class="font-semibold"><%= $item->{description} %></h3>
                         <p class="text-gray-600">
-                            <span class="font-medium">Cost: $<%= $item->{amount} %></span>
+                            <span class="font-medium">Cost: $<%= sprintf('%.2f', $item->{amount_cents} / 100) %></span>
                         </p>
                     </div>
                 <% } %>
@@ -107,7 +107,7 @@
             <div class="mt-6 pt-6 border-t">
                 <div class="flex justify-between items-center text-xl font-bold">
                     <span>Total:</span>
-                    <span>$<%= $step_data->{total} || 0 %></span>
+                    <span>$<%= sprintf('%.2f', ($step_data->{total} || 0) / 100) %></span>
                 </div>
             </div>
         <% } %>
@@ -132,7 +132,7 @@
                     Back
                 </a>
                 <button id="submit" type="submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <span id="button-text">Pay $<%= $step_data->{total} || 0 %></span>
+                    <span id="button-text">Pay $<%= sprintf('%.2f', ($step_data->{total} || 0) / 100) %></span>
                     <span id="spinner" class="hidden">Processing...</span>
                 </button>
             </div>

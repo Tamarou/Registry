@@ -11,14 +11,16 @@ our @EXPORT_OK = qw(format_price);
 sub format_price ($amount_cents, $currency, %opts) {
     $amount_cents //= 0;
     $currency //= 'USD';
-    my $amount_dollars = $amount_cents / 100;
     my $suffix = $opts{suffix} // '';
 
-    if (uc($currency) eq 'USD') {
-        return sprintf('$%.0f%s', $amount_dollars, $suffix);
-    }
+    # Show cents only when there are any: a $200/month plan should read "$200",
+    # but a $19.99 one must not be quoted as "$20".
+    my $format = $amount_cents % 100 ? '%.2f' : '%.0f';
+    my $amount = sprintf($format, $amount_cents / 100);
 
-    return sprintf('%.0f %s%s', $amount_dollars, uc($currency), $suffix);
+    return "\$$amount$suffix" if uc($currency) eq 'USD';
+
+    return "$amount " . uc($currency) . $suffix;
 }
 
 1;

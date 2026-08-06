@@ -105,7 +105,7 @@ subtest 'Installment plans' => sub {
     
     ok($plan->installments_allowed, 'Installments allowed');
     is($plan->installment_count, 3, 'Three installments');
-    is($plan->installment_amount, 20000, 'Installment amount calculated correctly');
+    cmp_ok($plan->installment_amount_cents, '==', 20000, 'Installment amount calculated correctly');
     
     # Test invalid installment configuration
     dies_ok {

@@ -114,14 +114,22 @@ my $deploy_sql      = $deploy_sql_path->slurp;
 ( my $do_block = $deploy_sql ) =~ s{\A.*?^(DO\b)}{$1}ms;
 $do_block =~ s/\s*COMMIT;\s*\z//s;
 
+# The deploy script's column lists are pinned to the schema as it stood when
+# that change was written, where money lived in a DECIMAL column named
+# "amount".  A later change renames it to amount_cents.  Sqitch never replays
+# an old change against a newer schema, but this test does, so apply the same
+# rename to the extracted SQL.  Word-anchored so a future unrelated "amount"
+# has to be considered rather than silently rewritten.
+$do_block =~ s/\bamount\b/amount_cents/g;
+
 subtest 'migration move-logic: rows land in tenant schema' => sub {
     # Insert a registry.payments row attributed to our test tenant.
     # $admin->id is dual-resident (exists in both registry.users and
     # $slug.users via copy_user at provisioning), so the payer pre-flight passes.
     my $pay_id = $db->query(
         q{INSERT INTO registry.payments
-              (user_id, amount, currency, status, metadata)
-          VALUES ($1, 75.00, 'USD', 'pending',
+              (user_id, amount_cents, currency, status, metadata)
+          VALUES ($1, 7500, 'USD', 'pending',
                   jsonb_build_object('tenant_slug', $2::text))
           RETURNING id},
         $admin->id, $slug
@@ -131,8 +139,8 @@ subtest 'migration move-logic: rows land in tenant schema' => sub {
     # Insert a linked payment_items row.
     my $item_id = $db->query(
         q{INSERT INTO registry.payment_items
-              (payment_id, description, amount, quantity, metadata)
-          VALUES ($1, 'Test item', 75.00, 1, '{}')
+              (payment_id, description, amount_cents, quantity, metadata)
+          VALUES ($1, 'Test item', 7500, 1, '{}')
           RETURNING id},
         $pay_id
     )->hash->{id};
@@ -163,8 +171,8 @@ subtest 'migration schedule-guard: blocks move when scheduled_payments reference
     # Seed a fresh registry.payments row for this tenant.
     my $pay_id2 = $db->query(
         q{INSERT INTO registry.payments
-              (user_id, amount, currency, status, metadata)
-          VALUES ($1, 100.00, 'USD', 'pending',
+              (user_id, amount_cents, currency, status, metadata)
+          VALUES ($1, 10000, 'USD', 'pending',
                   jsonb_build_object('tenant_slug', $2::text))
           RETURNING id},
         $admin->id, $slug
@@ -175,9 +183,9 @@ subtest 'migration schedule-guard: blocks move when scheduled_payments reference
     # plain UUID NOT NULL columns with no FK -- gen_random_uuid() is sufficient.
     my $sched_id = $db->query(
         q{INSERT INTO registry.payment_schedules
-              (enrollment_id, pricing_plan_id, total_amount,
-               installment_amount, installment_count)
-          VALUES (gen_random_uuid(), gen_random_uuid(), 100.00, 50.00, 2)
+              (enrollment_id, pricing_plan_id, total_amount_cents,
+                installment_amount_cents, installment_count)
+          VALUES (gen_random_uuid(), gen_random_uuid(), 10000, 5000, 2)
           RETURNING id}
     )->hash->{id};
     ok $sched_id, 'seeded registry.payment_schedules row';
@@ -185,8 +193,8 @@ subtest 'migration schedule-guard: blocks move when scheduled_payments reference
     # Seed a scheduled_payments row linking the schedule to the to-move payment.
     my $sp_id = $db->query(
         q{INSERT INTO registry.scheduled_payments
-              (payment_schedule_id, payment_id, installment_number, amount)
-          VALUES ($1, $2, 1, 50.00)
+              (payment_schedule_id, payment_id, installment_number, amount_cents)
+          VALUES ($1, $2, 1, 5000)
           RETURNING id},
         $sched_id, $pay_id2
     )->hash->{id};
@@ -220,7 +228,7 @@ subtest 'migration schedule-guard: blocks move when scheduled_payments reference
 
 my $payment = Registry::DAO::Payment->create($tenant_db, {
     user_id => $parent->id,
-    amount  => '50.00',
+    amount_cents => 5000,
 });
 ok $payment, 'payment created successfully in tenant schema';
 

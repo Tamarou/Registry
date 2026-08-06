@@ -160,8 +160,8 @@ method create_payment ($db, $run, $form_data) {
                 enrollment_items => $run->data->{enrollment_items} || [],
             };
             $raw_db->update('payments', {
-                amount   => $payment_info->{total},
-                metadata => { -json => $updated_meta },
+                amount_cents => $payment_info->{total},
+                metadata     => { -json => $updated_meta },
             }, { id => $existing_payment_id });
             # Remove stale line items; fresh ones added below
             $raw_db->delete('payment_items', { payment_id => $existing_payment_id });
@@ -175,7 +175,7 @@ method create_payment ($db, $run, $form_data) {
             # superseded intent so at most one confirmable PaymentIntent
             # exists for this payment row. An identical resubmit keeps the
             # token, so Stripe replays the same intent (at most one charge).
-            if ($existing->amount != $payment_info->{total}) {
+            if ($existing->amount_cents != $payment_info->{total}) {
                 $payment->rotate_idempotency_token($db);
                 if (my $old_intent = $payment->stripe_payment_intent_id) {
                     # Best-effort: an already-settled or already-canceled
@@ -192,7 +192,7 @@ method create_payment ($db, $run, $form_data) {
         # First submit for this run: create the payment record
         $payment = Registry::DAO::Payment->create($db, {
             user_id => $user_id,
-            amount => $payment_info->{total},
+            amount_cents => $payment_info->{total},
             metadata => {
                 workflow_id => $run->workflow_id,
                 workflow_run_id => $run->id,

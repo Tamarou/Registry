@@ -24,7 +24,7 @@ class Registry::DAO::WorkflowSteps::ProcessDropRefund :isa(Registry::DAO::Workfl
 
         return {
             refund_processed => 1,
-            refund_amount => $data->{refund_amount},
+            refund_amount_cents => $data->{refund_amount_cents},
             refund_status => 'pending',
             message => 'Refund marked as pending for payment processing'
         };

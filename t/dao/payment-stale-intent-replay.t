@@ -28,7 +28,7 @@ my $user_id = $db->query(q{
 sub captured_payment () {
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id  => $user_id,
-        amount   => 150.00,
+        amount_cents => 15000,
         metadata => {},
     } );
     $payment->update( $db, { stripe_payment_intent_id => 'pi_second' } );
@@ -90,7 +90,7 @@ subtest 'the current intent still completes a pending payment' => sub {
     # The guard must not block the ordinary first settlement.
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id  => $user_id,
-        amount   => 42.00,
+        amount_cents => 4200,
         metadata => {},
     } );
     $payment->update( $db, { stripe_payment_intent_id => 'pi_only' } );
@@ -116,7 +116,7 @@ subtest 'a genuine decline on a pending payment still reports intent_status' => 
     # replacement intent; the guard must not suppress it for real declines.
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id  => $user_id,
-        amount   => 99.00,
+        amount_cents => 9900,
         metadata => {},
     } );
     $payment->update( $db, { stripe_payment_intent_id => 'pi_declined' } );

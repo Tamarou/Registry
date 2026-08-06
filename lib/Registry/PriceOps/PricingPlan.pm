@@ -29,31 +29,34 @@ method validate_installment_configuration ($pricing_plan_dao) {
 }
 
 # Business Logic: Calculate installment breakdown for a pricing plan
-method calculate_installment_breakdown ($pricing_plan_dao, $total_amount) {
+method calculate_installment_breakdown ($pricing_plan_dao, $total_cents) {
     my $validation = $self->validate_installment_configuration($pricing_plan_dao);
     die $validation->{reason} unless $validation->{valid};
 
     my $installment_count = $validation->{installment_count};
-    my $base_amount = sprintf("%.2f", $total_amount / $installment_count);
+    my $base_cents = int($total_cents / $installment_count);
 
-    # Business rule: Handle remainder in the last payment
-    my $total_base = $base_amount * $installment_count;
-    my $remainder = $total_amount - $total_base;
-    my $final_amount = $base_amount + $remainder;
+    # Business rule: Handle remainder in the last payment. In integer cents the
+    # remainder is exact and always under $installment_count cents.
+    my $remainder = $total_cents - $base_cents * $installment_count;
+    my $final_cents = $base_cents + $remainder;
+
+    my $base_dollars  = sprintf('%.2f', $base_cents / 100);
+    my $final_dollars = sprintf('%.2f', $final_cents / 100);
 
     return {
         installment_count => $installment_count,
-        base_installment_amount => $base_amount,
-        final_installment_amount => $final_amount,
-        total_amount => $total_amount,
+        base_installment_amount_cents => $base_cents,
+        final_installment_amount_cents => $final_cents,
+        total_amount_cents => $total_cents,
         frequency => 'monthly', # Default frequency - could be configurable per plan
-        description => "Pay in $installment_count installments of \$$base_amount" .
-                      ($remainder != 0 ? " (final payment: \$$final_amount)" : ""),
+        description => "Pay in $installment_count installments of \$$base_dollars" .
+                      ($remainder != 0 ? " (final payment: \$$final_dollars)" : ""),
     };
 }
 
 # Business Logic: Get available installment plans for sessions
-method get_installment_plans_for_sessions ($db, $session_ids, $total_amount) {
+method get_installment_plans_for_sessions ($db, $session_ids, $total_cents) {
     my @plans;
 
     for my $session_id (@$session_ids) {
@@ -63,7 +66,7 @@ method get_installment_plans_for_sessions ($db, $session_ids, $total_amount) {
             my $validation = $self->validate_installment_configuration($plan);
             next unless $validation->{valid};
 
-            my $breakdown = $self->calculate_installment_breakdown($plan, $total_amount);
+            my $breakdown = $self->calculate_installment_breakdown($plan, $total_cents);
 
             push @plans, {
                 id => $plan->id,

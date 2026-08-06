@@ -109,12 +109,12 @@ my $session = Registry::DAO::Session->create($tdb, {
 });
 $session->add_events( $tdb, $event->id );
 
-my $PLAN_AMOUNT = 150.00;
+my $PLAN_AMOUNT_CENTS = 15_000;
 Registry::DAO::PricingPlan->create($tdb, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount_cents => int( $PLAN_AMOUNT * 100 ),
+    amount_cents => $PLAN_AMOUNT_CENTS,
 });
 
 my $parent = Registry::DAO::User->create($tdb, {
@@ -248,7 +248,7 @@ subtest 'handle_payment_callback settles inside a running IOLoop' => sub {
 
     my $payment = Registry::DAO::Payment->create($tdb, {
         user_id  => $parent->id,
-        amount   => $PLAN_AMOUNT,
+        amount_cents => $PLAN_AMOUNT_CENTS,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [ { child_id => $child->id, session_id => $session->id } ],
@@ -262,7 +262,7 @@ subtest 'handle_payment_callback settles inside a running IOLoop' => sub {
         return deferred({
             id             => 'pi_cb_ok',
             status         => 'succeeded',
-            amount         => int( $PLAN_AMOUNT * 100 ),
+            amount         => $PLAN_AMOUNT_CENTS,
             payment_method => 'pm_async_1',
             metadata       => { payment_id => $payment->id },
         });
@@ -284,7 +284,7 @@ subtest 'intent-ownership guard survives on the async path' => sub {
 
     my $payment = Registry::DAO::Payment->create($tdb, {
         user_id  => $parent->id,
-        amount   => $PLAN_AMOUNT,
+        amount_cents => $PLAN_AMOUNT_CENTS,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [ { child_id => $child->id, session_id => $session->id } ],
@@ -299,7 +299,7 @@ subtest 'intent-ownership guard survives on the async path' => sub {
         return deferred({
             id       => 'pi_someone_else',
             status   => 'succeeded',
-            amount   => int( $PLAN_AMOUNT * 100 ),
+            amount   => $PLAN_AMOUNT_CENTS,
             metadata => { payment_id => '00000000-0000-0000-0000-0000000000ff' },
         });
     };
@@ -336,7 +336,7 @@ subtest 'a stale intent still routes a paid parent to completion' => sub {
 
     my $payment = Registry::DAO::Payment->create($tdb, {
         user_id  => $parent->id,
-        amount   => $PLAN_AMOUNT,
+        amount_cents => $PLAN_AMOUNT_CENTS,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [ { child_id => $sibling->id, session_id => $session->id } ],
@@ -353,7 +353,7 @@ subtest 'a stale intent still routes a paid parent to completion' => sub {
             return deferred({
                 id             => 'pi_second',
                 status         => 'succeeded',
-                amount         => int( $PLAN_AMOUNT * 100 ),
+                amount         => $PLAN_AMOUNT_CENTS,
                 payment_method => 'pm_async_2',
                 metadata       => { payment_id => $payment->id },
             });

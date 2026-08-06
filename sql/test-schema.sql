@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict y57PtbDyvTQVHtnLVoJCzOBAJaXbifWIttpSbmZaGLHC18wpyacEKzFmIjejiwE
+\restrict CnROgHq9s2Fl1d5IilM82T6sg8OHf5hHIsAB839DCm87GCAuNrSNsqensR9YYea
 
 -- Dumped from database version 18.4 (Ubuntu 18.4-1.pgdg22.04+1)
 -- Dumped by pg_dump version 18.4 (Ubuntu 18.4-1.pgdg22.04+1)
@@ -792,13 +792,13 @@ CREATE TABLE registry.drop_requests (
     requested_by uuid NOT NULL,
     reason text NOT NULL,
     refund_requested boolean DEFAULT false,
-    refund_amount_requested numeric(10,2),
     status text DEFAULT 'pending'::text,
     admin_notes text,
     processed_by uuid,
     processed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
+    refund_amount_requested_cents integer,
     CONSTRAINT drop_requests_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text])))
 );
 
@@ -832,9 +832,9 @@ CREATE TABLE registry.enrollments (
     dropped_at timestamp with time zone,
     dropped_by uuid,
     refund_status text DEFAULT 'none'::text,
-    refund_amount numeric(10,2),
     transfer_to_session_id uuid,
     transfer_status text DEFAULT 'none'::text,
+    refund_amount_cents integer,
     CONSTRAINT enrollments_refund_status_check CHECK ((refund_status = ANY (ARRAY['none'::text, 'pending'::text, 'approved'::text, 'processed'::text, 'denied'::text]))),
     CONSTRAINT enrollments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'cancelled'::text, 'waitlisted'::text]))),
     CONSTRAINT enrollments_student_type_check CHECK ((student_type = ANY (ARRAY['family_member'::text, 'individual'::text, 'group_member'::text, 'corporate'::text]))),
@@ -880,13 +880,6 @@ COMMENT ON COLUMN registry.enrollments.refund_status IS 'Status of refund proces
 
 
 --
--- Name: COLUMN enrollments.refund_amount; Type: COMMENT; Schema: registry; Owner: postgres
---
-
-COMMENT ON COLUMN registry.enrollments.refund_amount IS 'Amount refunded for dropped enrollment';
-
-
---
 -- Name: COLUMN enrollments.transfer_to_session_id; Type: COMMENT; Schema: registry; Owner: postgres
 --
 
@@ -898,6 +891,13 @@ COMMENT ON COLUMN registry.enrollments.transfer_to_session_id IS 'Target session
 --
 
 COMMENT ON COLUMN registry.enrollments.transfer_status IS 'Status of transfer processing';
+
+
+--
+-- Name: COLUMN enrollments.refund_amount_cents; Type: COMMENT; Schema: registry; Owner: postgres
+--
+
+COMMENT ON COLUMN registry.enrollments.refund_amount_cents IS 'Amount refunded for dropped enrollment, in cents';
 
 
 --
@@ -1124,10 +1124,10 @@ CREATE TABLE registry.payment_items (
     payment_id uuid NOT NULL,
     enrollment_id uuid,
     description text NOT NULL,
-    amount numeric(10,2) NOT NULL,
     quantity integer DEFAULT 1,
     metadata jsonb DEFAULT '{}'::jsonb,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    amount_cents integer DEFAULT 0 NOT NULL
 );
 
 
@@ -1142,15 +1142,15 @@ CREATE TABLE registry.payment_schedules (
     enrollment_id uuid NOT NULL,
     pricing_plan_id uuid NOT NULL,
     stripe_subscription_id character varying(255),
-    total_amount numeric(10,2) NOT NULL,
-    installment_amount numeric(10,2) NOT NULL,
     installment_count integer NOT NULL,
     status character varying(20) DEFAULT 'active'::character varying,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT check_installment_amount CHECK ((installment_amount > (0)::numeric)),
+    total_amount_cents integer DEFAULT 0 NOT NULL,
+    installment_amount_cents integer DEFAULT 0 NOT NULL,
+    CONSTRAINT check_installment_amount CHECK ((installment_amount_cents > 0)),
     CONSTRAINT check_installment_count CHECK ((installment_count > 1)),
-    CONSTRAINT check_total_amount CHECK ((total_amount > (0)::numeric)),
+    CONSTRAINT check_total_amount CHECK ((total_amount_cents > 0)),
     CONSTRAINT payment_schedules_status_check CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'completed'::character varying, 'cancelled'::character varying, 'suspended'::character varying, 'past_due'::character varying])::text[])))
 );
 
@@ -1178,7 +1178,6 @@ COMMENT ON COLUMN registry.payment_schedules.stripe_subscription_id IS 'Stripe s
 CREATE TABLE registry.payments (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
-    amount numeric(10,2) NOT NULL,
     currency character varying(3) DEFAULT 'USD'::character varying,
     status character varying(50) DEFAULT 'pending'::character varying NOT NULL,
     stripe_payment_intent_id character varying(255),
@@ -1187,7 +1186,8 @@ CREATE TABLE registry.payments (
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     completed_at timestamp with time zone,
-    error_message text
+    error_message text,
+    amount_cents integer DEFAULT 0 NOT NULL
 );
 
 
@@ -1364,15 +1364,15 @@ CREATE TABLE registry.scheduled_payments (
     payment_schedule_id uuid NOT NULL,
     payment_id uuid,
     installment_number integer NOT NULL,
-    amount numeric(10,2) NOT NULL,
     status character varying(20) DEFAULT 'pending'::character varying,
     paid_at timestamp with time zone,
     failed_at timestamp with time zone,
     failure_reason text,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
+    amount_cents integer DEFAULT 0 NOT NULL,
     CONSTRAINT check_installment_number CHECK ((installment_number > 0)),
-    CONSTRAINT check_scheduled_amount CHECK ((amount > (0)::numeric)),
+    CONSTRAINT check_scheduled_amount CHECK ((amount_cents > 0)),
     CONSTRAINT scheduled_payments_status_check CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'completed'::character varying, 'failed'::character varying, 'cancelled'::character varying])::text[])))
 );
 
@@ -2258,7 +2258,7 @@ COPY registry.billing_periods (id, period_start, period_end, calculated_amount, 
 -- Data for Name: drop_requests; Type: TABLE DATA; Schema: registry; Owner: postgres
 --
 
-COPY registry.drop_requests (id, enrollment_id, requested_by, reason, refund_requested, refund_amount_requested, status, admin_notes, processed_by, processed_at, created_at, updated_at) FROM stdin;
+COPY registry.drop_requests (id, enrollment_id, requested_by, reason, refund_requested, status, admin_notes, processed_by, processed_at, created_at, updated_at, refund_amount_requested_cents) FROM stdin;
 \.
 
 
@@ -2266,7 +2266,7 @@ COPY registry.drop_requests (id, enrollment_id, requested_by, reason, refund_req
 -- Data for Name: enrollments; Type: TABLE DATA; Schema: registry; Owner: postgres
 --
 
-COPY registry.enrollments (id, session_id, student_id, status, metadata, created_at, updated_at, family_member_id, payment_id, parent_id, student_type, drop_reason, dropped_at, dropped_by, refund_status, refund_amount, transfer_to_session_id, transfer_status) FROM stdin;
+COPY registry.enrollments (id, session_id, student_id, status, metadata, created_at, updated_at, family_member_id, payment_id, parent_id, student_type, drop_reason, dropped_at, dropped_by, refund_status, transfer_to_session_id, transfer_status, refund_amount_cents) FROM stdin;
 \.
 
 
@@ -2275,7 +2275,7 @@ COPY registry.enrollments (id, session_id, student_id, status, metadata, created
 --
 
 COPY registry.events (id, "time", duration, location_id, project_id, teacher_id, metadata, notes, created_at, updated_at, min_age, max_age, capacity, event_type, status) FROM stdin;
-df3c5b03-cd6f-41f1-bf92-f3a6ecb39388	2026-08-06 07:03:06.022873+00	0	8a820cc5-0600-46c9-b5e8-b0b3d7d9aa50	4ec90e0c-9749-4aeb-963f-39455a559a0f	c2471428-c7f1-4987-afe3-d4d4e7b15fdc	\N	\N	2026-08-06 07:03:06.022873+00	2026-08-06 07:03:06.022873	\N	\N	999999	registration	published
+c1eee993-d008-4b80-b93c-87c08dd5945e	2026-08-06 10:31:36.095125+00	0	cb7a54e5-5dbe-442c-b758-dbde96e09da3	284731a6-f8c3-4421-a087-a9ca29fb0558	f4e8347f-5190-4bd3-a047-c2c0025494e6	\N	\N	2026-08-06 10:31:36.095125+00	2026-08-06 10:31:36.095125	\N	\N	999999	registration	published
 \.
 
 
@@ -2292,7 +2292,7 @@ COPY registry.family_members (id, family_id, child_name, birth_date, grade, medi
 --
 
 COPY registry.locations (id, name, slug, address_info, metadata, notes, created_at, updated_at, address_street, address_city, address_state, address_zip, capacity, contact_info, facilities, latitude, longitude, contact_person_id) FROM stdin;
-8a820cc5-0600-46c9-b5e8-b0b3d7d9aa50	Online	online	{"type": "virtual"}	\N	\N	2026-08-06 07:03:06.014397+00	2026-08-06 07:03:06.014397	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+cb7a54e5-5dbe-442c-b758-dbde96e09da3	Online	online	{"type": "virtual"}	\N	\N	2026-08-06 10:31:36.07491+00	2026-08-06 10:31:36.07491	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 \.
 
 
@@ -2317,9 +2317,9 @@ COPY registry.message_recipients (id, message_id, recipient_id, recipient_type, 
 --
 
 COPY registry.message_templates (id, name, subject_template, body_template, message_type, scope, variables, created_by, is_active, created_at, updated_at) FROM stdin;
-bf2cbae0-324b-444e-b98a-6113158e299e	Program Announcement	Important Update: {{program_name}}	Dear {{parent_name}},\n\nWe have an important announcement regarding {{program_name}}.\n\n{{announcement_details}}\n\nIf you have any questions, please don't hesitate to contact us.\n\nBest regards,\n{{sender_name}}\n{{organization_name}}	announcement	program	{"parent_name": "Parent's name", "sender_name": "Staff member name", "program_name": "Name of the program", "organization_name": "Organization name", "announcement_details": "Details of the announcement"}	00000000-0000-0000-0000-000000000000	t	2026-08-06 07:02:58.78746+00	2026-08-06 07:02:58.78746+00
-505fdeb0-2120-46e2-af66-aff5b0919d7b	Session Update	Session Update: {{session_name}}	Dear {{parent_name}},\n\nWe wanted to update you about {{session_name}} for {{child_name}}.\n\n{{update_details}}\n\nThank you for your understanding.\n\nBest regards,\n{{sender_name}}	update	session	{"child_name": "Child's name", "parent_name": "Parent's name", "sender_name": "Staff member name", "session_name": "Name of the session", "update_details": "Details of the update"}	00000000-0000-0000-0000-000000000000	t	2026-08-06 07:02:58.78746+00	2026-08-06 07:02:58.78746+00
-2e69dad9-5b53-477b-8922-7cdf41ca5a1c	Emergency Alert	URGENT: {{emergency_title}}	Dear {{parent_name}},\n\nThis is an urgent message regarding {{scope_description}}.\n\n{{emergency_details}}\n\nPlease take immediate action as needed.\n\n{{contact_information}}\n\n{{sender_name}}\n{{organization_name}}	emergency	tenant-wide	{"parent_name": "Parent's name", "sender_name": "Staff member name", "emergency_title": "Title of emergency", "emergency_details": "Emergency details", "organization_name": "Organization name", "scope_description": "What the emergency affects", "contact_information": "Emergency contact info"}	00000000-0000-0000-0000-000000000000	t	2026-08-06 07:02:58.78746+00	2026-08-06 07:02:58.78746+00
+2cb8afd6-221c-461f-aed3-0210fe60d3b8	Program Announcement	Important Update: {{program_name}}	Dear {{parent_name}},\n\nWe have an important announcement regarding {{program_name}}.\n\n{{announcement_details}}\n\nIf you have any questions, please don't hesitate to contact us.\n\nBest regards,\n{{sender_name}}\n{{organization_name}}	announcement	program	{"parent_name": "Parent's name", "sender_name": "Staff member name", "program_name": "Name of the program", "organization_name": "Organization name", "announcement_details": "Details of the announcement"}	00000000-0000-0000-0000-000000000000	t	2026-08-06 10:31:22.736437+00	2026-08-06 10:31:22.736437+00
+12ce6f92-7430-45a7-9abe-f629c0077fd7	Session Update	Session Update: {{session_name}}	Dear {{parent_name}},\n\nWe wanted to update you about {{session_name}} for {{child_name}}.\n\n{{update_details}}\n\nThank you for your understanding.\n\nBest regards,\n{{sender_name}}	update	session	{"child_name": "Child's name", "parent_name": "Parent's name", "sender_name": "Staff member name", "session_name": "Name of the session", "update_details": "Details of the update"}	00000000-0000-0000-0000-000000000000	t	2026-08-06 10:31:22.736437+00	2026-08-06 10:31:22.736437+00
+0760099b-6c4d-4b50-b832-e2212b24b888	Emergency Alert	URGENT: {{emergency_title}}	Dear {{parent_name}},\n\nThis is an urgent message regarding {{scope_description}}.\n\n{{emergency_details}}\n\nPlease take immediate action as needed.\n\n{{contact_information}}\n\n{{sender_name}}\n{{organization_name}}	emergency	tenant-wide	{"parent_name": "Parent's name", "sender_name": "Staff member name", "emergency_title": "Title of emergency", "emergency_details": "Emergency details", "organization_name": "Organization name", "scope_description": "What the emergency affects", "contact_information": "Emergency contact info"}	00000000-0000-0000-0000-000000000000	t	2026-08-06 10:31:22.736437+00	2026-08-06 10:31:22.736437+00
 \.
 
 
@@ -2359,7 +2359,7 @@ COPY registry.passkeys (id, user_id, credential_id, public_key, sign_count, devi
 -- Data for Name: payment_items; Type: TABLE DATA; Schema: registry; Owner: postgres
 --
 
-COPY registry.payment_items (id, payment_id, enrollment_id, description, amount, quantity, metadata, created_at) FROM stdin;
+COPY registry.payment_items (id, payment_id, enrollment_id, description, quantity, metadata, created_at, amount_cents) FROM stdin;
 \.
 
 
@@ -2367,7 +2367,7 @@ COPY registry.payment_items (id, payment_id, enrollment_id, description, amount,
 -- Data for Name: payment_schedules; Type: TABLE DATA; Schema: registry; Owner: postgres
 --
 
-COPY registry.payment_schedules (id, enrollment_id, pricing_plan_id, stripe_subscription_id, total_amount, installment_amount, installment_count, status, created_at, updated_at) FROM stdin;
+COPY registry.payment_schedules (id, enrollment_id, pricing_plan_id, stripe_subscription_id, installment_count, status, created_at, updated_at, total_amount_cents, installment_amount_cents) FROM stdin;
 \.
 
 
@@ -2375,7 +2375,7 @@ COPY registry.payment_schedules (id, enrollment_id, pricing_plan_id, stripe_subs
 -- Data for Name: payments; Type: TABLE DATA; Schema: registry; Owner: postgres
 --
 
-COPY registry.payments (id, user_id, amount, currency, status, stripe_payment_intent_id, stripe_payment_method_id, metadata, created_at, updated_at, completed_at, error_message) FROM stdin;
+COPY registry.payments (id, user_id, currency, status, stripe_payment_intent_id, stripe_payment_method_id, metadata, created_at, updated_at, completed_at, error_message, amount_cents) FROM stdin;
 \.
 
 
@@ -2384,10 +2384,10 @@ COPY registry.payments (id, user_id, amount, currency, status, stripe_payment_in
 --
 
 COPY registry.pricing_plans (id, session_id, plan_scope, plan_name, plan_type, pricing_model_type, currency, installments_allowed, installment_count, requirements, pricing_configuration, metadata, created_at, updated_at, amount_cents) FROM stdin;
-3f0979db-a73a-4482-bf47-b73b4ea66c67	\N	tenant	Registry Standard - $200/month	subscription	fixed	USD	f	\N	{}	{"includes": ["unlimited_programs", "unlimited_enrollments", "email_support"], "monthly_amount": 200.00}	{"default": true, "description": "Standard monthly subscription"}	2026-08-06 07:03:03.280752+00	2026-08-06 07:03:03.280752+00	20000
-a8b756bd-1672-4009-91b6-43bd27544a56	\N	tenant	Registry Plus - $100/month + 1%	hybrid	hybrid	USD	f	\N	{}	{"applies_to": "customer_payments", "percentage": 0.01, "monthly_base": 100.00}	{"default": false, "description": "Reduced monthly fee with revenue share"}	2026-08-06 07:03:03.280752+00	2026-08-06 07:03:03.280752+00	10000
-c563e966-bdc8-44fa-9bd6-09f8337c8859	\N	platform	Registry Free	standard	percentage	USD	f	\N	{}	{"applies_to": "customer_payments", "percentage": 0.00, "minimum_monthly": 0, "refund_application_fee": true}	{"default": true, "description": "Platform fallback: no revenue share"}	2026-08-06 07:03:10.131871+00	2026-08-06 07:03:10.131871+00	0
-6f856cde-02e3-460b-945b-446be536a1c3	\N	tenant	Registry Revenue Share - 2%	revenue_share	percentage	USD	f	\N	{}	{"applies_to": "customer_payments", "percentage": 0.02, "minimum_monthly": 0, "refund_application_fee": true}	{"default": false, "description": "2% of all customer payments, no minimums"}	2026-08-06 07:03:03.280752+00	2026-08-06 07:03:03.280752+00	0
+7628b2fe-63a6-441e-95c9-67f8d8511ec9	\N	tenant	Registry Standard - $200/month	subscription	fixed	USD	f	\N	{}	{"includes": ["unlimited_programs", "unlimited_enrollments", "email_support"], "monthly_amount": 200.00}	{"default": true, "description": "Standard monthly subscription"}	2026-08-06 10:31:31.049156+00	2026-08-06 10:31:31.049156+00	20000
+39e9ccfe-ff63-41c8-a1e9-17e73cf4efcf	\N	tenant	Registry Plus - $100/month + 1%	hybrid	hybrid	USD	f	\N	{}	{"applies_to": "customer_payments", "percentage": 0.01, "monthly_base": 100.00}	{"default": false, "description": "Reduced monthly fee with revenue share"}	2026-08-06 10:31:31.049156+00	2026-08-06 10:31:31.049156+00	10000
+1c5bdd45-9beb-457f-914f-a8f20b0f62bb	\N	platform	Registry Free	standard	percentage	USD	f	\N	{}	{"applies_to": "customer_payments", "percentage": 0.00, "minimum_monthly": 0, "refund_application_fee": true}	{"default": true, "description": "Platform fallback: no revenue share"}	2026-08-06 10:31:45.118366+00	2026-08-06 10:31:45.118366+00	0
+8dc6d515-a279-4992-a262-a36cd89ec47d	\N	tenant	Registry Revenue Share - 2%	revenue_share	percentage	USD	f	\N	{}	{"applies_to": "customer_payments", "percentage": 0.02, "minimum_monthly": 0, "refund_application_fee": true}	{"default": false, "description": "2% of all customer payments, no minimums"}	2026-08-06 10:31:31.049156+00	2026-08-06 10:31:31.049156+00	0
 \.
 
 
@@ -2404,9 +2404,9 @@ COPY registry.pricing_relationship_events (id, relationship_id, event_type, acto
 --
 
 COPY registry.pricing_relationships (id, provider_id, consumer_id, pricing_plan_id, status, metadata, created_at, updated_at) FROM stdin;
-d44eb9fa-0828-47c8-93e8-249ab5b2f345	00000000-0000-0000-0000-000000000000	caeee12f-0f93-43ad-a607-79d4fc56a4d1	6f856cde-02e3-460b-945b-446be536a1c3	active	{"plan_name": "Registry Revenue Share - 2%", "plan_type": "tenant_subscription", "created_by_migration": "create-default-pricing-relationships"}	2026-08-06 07:03:10.32005+00	2026-08-06 07:03:10.32005+00
-c10d0046-083c-48a4-bb9e-1a41b9781b3d	00000000-0000-0000-0000-000000000000	caeee12f-0f93-43ad-a607-79d4fc56a4d1	a8b756bd-1672-4009-91b6-43bd27544a56	active	{"plan_name": "Registry Plus - $100/month + 1%", "plan_type": "tenant_subscription", "created_by_migration": "create-default-pricing-relationships"}	2026-08-06 07:03:10.32005+00	2026-08-06 07:03:10.32005+00
-394d2000-84ac-4836-baa5-df658c899023	00000000-0000-0000-0000-000000000000	caeee12f-0f93-43ad-a607-79d4fc56a4d1	3f0979db-a73a-4482-bf47-b73b4ea66c67	suspended	{"plan_name": "Registry Standard - $200/month", "plan_type": "tenant_subscription", "created_by_migration": "create-default-pricing-relationships", "suspended_by_migration": "suspend-rateless-tenant-plans"}	2026-08-06 07:03:10.32005+00	2026-08-06 07:03:11.782461+00
+6c4c5943-1c61-46aa-9a8b-2e645d85e702	00000000-0000-0000-0000-000000000000	d2bacd70-9433-4f5b-aac9-38605e611791	8dc6d515-a279-4992-a262-a36cd89ec47d	active	{"plan_name": "Registry Revenue Share - 2%", "plan_type": "tenant_subscription", "created_by_migration": "create-default-pricing-relationships"}	2026-08-06 10:31:45.910971+00	2026-08-06 10:31:45.910971+00
+c38dc7f8-af12-475d-af24-2e74d90aef2a	00000000-0000-0000-0000-000000000000	d2bacd70-9433-4f5b-aac9-38605e611791	39e9ccfe-ff63-41c8-a1e9-17e73cf4efcf	active	{"plan_name": "Registry Plus - $100/month + 1%", "plan_type": "tenant_subscription", "created_by_migration": "create-default-pricing-relationships"}	2026-08-06 10:31:45.910971+00	2026-08-06 10:31:45.910971+00
+d3c49864-822d-4a44-9b04-630c6038c8a6	00000000-0000-0000-0000-000000000000	d2bacd70-9433-4f5b-aac9-38605e611791	7628b2fe-63a6-441e-95c9-67f8d8511ec9	suspended	{"plan_name": "Registry Standard - $200/month", "plan_type": "tenant_subscription", "created_by_migration": "create-default-pricing-relationships", "suspended_by_migration": "suspend-rateless-tenant-plans"}	2026-08-06 10:31:45.910971+00	2026-08-06 10:31:46.553241+00
 \.
 
 
@@ -2415,8 +2415,8 @@ c10d0046-083c-48a4-bb9e-1a41b9781b3d	00000000-0000-0000-0000-000000000000	caeee1
 --
 
 COPY registry.program_types (id, slug, name, config, created_at, updated_at) FROM stdin;
-237f4132-2572-4e89-89b6-1a7d9307f221	afterschool	After School Program	{"standard_times": {"friday": "15:00", "monday": "15:00", "tuesday": "15:00", "thursday": "15:00", "wednesday": "14:00"}, "session_pattern": "weekly_for_x_weeks", "enrollment_rules": {"same_session_for_siblings": true}}	2026-08-06 07:02:54.399962+00	2026-08-06 07:02:54.399962
-f436df8d-4fee-4baa-b556-17abf042a477	summer-camp	Summer Camp	{"standard_times": {"end": "15:00", "start": "09:00"}, "session_pattern": "daily_for_x_days", "enrollment_rules": {"same_session_for_siblings": false}}	2026-08-06 07:02:54.399962+00	2026-08-06 07:02:54.399962
+8b19b387-f084-426c-8fe8-bf1f1f8a3eef	afterschool	After School Program	{"standard_times": {"friday": "15:00", "monday": "15:00", "tuesday": "15:00", "thursday": "15:00", "wednesday": "14:00"}, "session_pattern": "weekly_for_x_weeks", "enrollment_rules": {"same_session_for_siblings": true}}	2026-08-06 10:31:18.734878+00	2026-08-06 10:31:18.734878
+03d7720a-4c20-48fc-9629-ff530fa566b7	summer-camp	Summer Camp	{"standard_times": {"end": "15:00", "start": "09:00"}, "session_pattern": "daily_for_x_days", "enrollment_rules": {"same_session_for_siblings": false}}	2026-08-06 10:31:18.734878+00	2026-08-06 10:31:18.734878
 \.
 
 
@@ -2425,7 +2425,7 @@ f436df8d-4fee-4baa-b556-17abf042a477	summer-camp	Summer Camp	{"standard_times": 
 --
 
 COPY registry.projects (id, name, slug, metadata, notes, created_at, updated_at, program_type_slug, status) FROM stdin;
-4ec90e0c-9749-4aeb-963f-39455a559a0f	Tiny Art Empire	tiny-art-empire	{"registration_workflow": "tenant-signup"}	Start your own art education business. Create programs, manage enrollments, accept payments — all in one platform.	2026-08-06 07:03:06.016796+00	2026-08-06 07:03:06.016796	\N	draft
+284731a6-f8c3-4421-a087-a9ca29fb0558	Tiny Art Empire	tiny-art-empire	{"registration_workflow": "tenant-signup"}	Start your own art education business. Create programs, manage enrollments, accept payments — all in one platform.	2026-08-06 10:31:36.080379+00	2026-08-06 10:31:36.080379	\N	draft
 \.
 
 
@@ -2433,7 +2433,7 @@ COPY registry.projects (id, name, slug, metadata, notes, created_at, updated_at,
 -- Data for Name: scheduled_payments; Type: TABLE DATA; Schema: registry; Owner: postgres
 --
 
-COPY registry.scheduled_payments (id, payment_schedule_id, payment_id, installment_number, amount, status, paid_at, failed_at, failure_reason, created_at, updated_at) FROM stdin;
+COPY registry.scheduled_payments (id, payment_schedule_id, payment_id, installment_number, status, paid_at, failed_at, failure_reason, created_at, updated_at, amount_cents) FROM stdin;
 \.
 
 
@@ -2442,7 +2442,7 @@ COPY registry.scheduled_payments (id, payment_schedule_id, payment_id, installme
 --
 
 COPY registry.session_events (id, session_id, event_id, created_at, updated_at) FROM stdin;
-e46a4330-728a-4fa6-8715-23d112f8202a	962d76cd-9569-4927-ae0c-ec8767c8bdd9	df3c5b03-cd6f-41f1-bf92-f3a6ecb39388	2026-08-06 07:03:06.028546+00	2026-08-06 07:03:06.028546
+bf8d1f05-d40c-401f-8b3c-d00d0d3f8d5e	eb3a0093-7a78-427e-bd84-ced4be40af29	c1eee993-d008-4b80-b93c-87c08dd5945e	2026-08-06 10:31:36.110893+00	2026-08-06 10:31:36.110893
 \.
 
 
@@ -2459,7 +2459,7 @@ COPY registry.session_teachers (id, session_id, teacher_id, created_at, updated_
 --
 
 COPY registry.sessions (id, name, slug, metadata, notes, created_at, updated_at, session_type, start_date, end_date, status, capacity) FROM stdin;
-962d76cd-9569-4927-ae0c-ec8767c8bdd9	Get Started Today	get-started	\N	\N	2026-08-06 07:03:06.019925+00	2026-08-06 07:03:06.019925	regular	2026-08-06	2036-08-06	published	999999
+eb3a0093-7a78-427e-bd84-ced4be40af29	Get Started Today	get-started	\N	\N	2026-08-06 10:31:36.087539+00	2026-08-06 10:31:36.087539	regular	2026-08-06	2036-08-06	published	999999
 \.
 
 
@@ -2476,7 +2476,7 @@ COPY registry.subscription_events (id, tenant_id, stripe_event_id, event_type, e
 --
 
 COPY registry.templates (id, name, slug, content, metadata, notes, created_at, updated_at) FROM stdin;
-89d895a5-a7aa-46ae-8805-4ebe08d9c072	tenant-storefront/program-listing	tenant-storefront-program-listing	% layout 'default';\n% title 'Tiny Art Empire';\n% stash no_container => 1, enable_background_effects => 1;\n\n% # Extract data for callcc form\n% my $prog = $programs->[0] || {};\n% my $project = $prog->{project};\n% my $sess_info = ($prog->{sessions} || [])->[0] || {};\n% my $session = $sess_info->{session};\n% my $reg_workflow = ($project && $project->metadata || {})->{registration_workflow} || 'tenant-signup';\n\n<div class="landing-page">\n  <nav class="landing-nav">\n    <div class="landing-logo">Tiny Art Empire</div>\n  </nav>\n\n  <!-- Hero: The Why -->\n  <section class="landing-hero">\n    <h1>Your art deserves a real business.</h1>\n    <p class="landing-hero-subtitle">\n      Everything you need to fill classes, get paid, and stay organized\n      -- so you can get back to making art.\n    </p>\n    <div class="landing-cta-container">\n      % if ($project && $session) {\n        <form method="POST"\n              action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">\n          <input type="hidden" name="session_id" value="<%= $session->id %>">\n          <input type="hidden" name="program_id" value="<%= $project->id %>">\n          <button type="submit" class="landing-cta-button">Get Started</button>\n        </form>\n      % } else {\n        <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">\n          Get Started\n        </a>\n      % }\n    </div>\n  </section>\n\n  <!-- Problem Cards: The How -->\n  <section class="landing-features">\n    <div class="landing-features-container">\n      <h2>Less paperwork. More studio time.</h2>\n      <div class="landing-features-grid" style="grid-template-columns: repeat(3, 1fr);">\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Fill your classes without the hustle</h3>\n          <p class="landing-feature-description">\n            Parents find your programs and register online -- no back-and-forth\n            emails or paper forms.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Get paid before class starts</h3>\n          <p class="landing-feature-description">\n            Online payments at registration. No chasing checks, no awkward reminders.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">One place for all of it</h3>\n          <p class="landing-feature-description">\n            Scheduling, attendance, waitlists, and families with three kids -- handled.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Keep parents in the loop</h3>\n          <p class="landing-feature-description">\n            Automatic updates and notifications so you're not writing the same\n            email twelve times.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">See how your business is doing</h3>\n          <p class="landing-feature-description">\n            Plain-English reports on revenue, enrollment, and trends.\n            No spreadsheet required.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Grow when you're ready</h3>\n          <p class="landing-feature-description">\n            Add instructors, locations, and programs without adding chaos.\n          </p>\n        </article>\n      </div>\n    </div>\n  </section>\n\n  <!-- Alignment: The Trust -->\n  <section class="landing-features">\n    <div class="landing-features-container" style="text-align: center;">\n      <h2>Free to Start</h2>\n      <p class="landing-hero-subtitle">\n        There are no monthly fees, no set up fees. We have a 2.5% revenue\n        share, so we only make money when you do. Our entire job is to help\n        you succeed!\n      </p>\n      <div class="landing-cta-container">\n        % if ($project && $session) {\n          <form method="POST"\n                action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">\n            <input type="hidden" name="session_id" value="<%= $session->id %>">\n            <input type="hidden" name="program_id" value="<%= $project->id %>">\n            <button type="submit" class="landing-cta-button">Get Started</button>\n          </form>\n        % } else {\n          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">\n            Get Started\n          </a>\n        % }\n      </div>\n    </div>\n  </section>\n\n  <footer style="text-align: center; padding: var(--space-8); color: var(--landing-text-secondary); font-size: var(--font-size-sm);">\n    <p>A <strong>Tamarou</strong> &amp; <strong>Super Awesome Cool Pottery</strong> project</p>\n  </footer>\n</div>	{}	Registry tenant landing page for Jordan (art teacher) user journey	2026-08-06 07:03:06.251679+00	2026-08-06 07:03:06.838611+00
+422eb7c2-5fe9-4d29-a21e-020e5bc72552	tenant-storefront/program-listing	tenant-storefront-program-listing	% layout 'default';\n% title 'Tiny Art Empire';\n% stash no_container => 1, enable_background_effects => 1;\n\n% # Extract data for callcc form\n% my $prog = $programs->[0] || {};\n% my $project = $prog->{project};\n% my $sess_info = ($prog->{sessions} || [])->[0] || {};\n% my $session = $sess_info->{session};\n% my $reg_workflow = ($project && $project->metadata || {})->{registration_workflow} || 'tenant-signup';\n\n<div class="landing-page">\n  <nav class="landing-nav">\n    <div class="landing-logo">Tiny Art Empire</div>\n  </nav>\n\n  <!-- Hero: The Why -->\n  <section class="landing-hero">\n    <h1>Your art deserves a real business.</h1>\n    <p class="landing-hero-subtitle">\n      Everything you need to fill classes, get paid, and stay organized\n      -- so you can get back to making art.\n    </p>\n    <div class="landing-cta-container">\n      % if ($project && $session) {\n        <form method="POST"\n              action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">\n          <input type="hidden" name="session_id" value="<%= $session->id %>">\n          <input type="hidden" name="program_id" value="<%= $project->id %>">\n          <button type="submit" class="landing-cta-button">Get Started</button>\n        </form>\n      % } else {\n        <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">\n          Get Started\n        </a>\n      % }\n    </div>\n  </section>\n\n  <!-- Problem Cards: The How -->\n  <section class="landing-features">\n    <div class="landing-features-container">\n      <h2>Less paperwork. More studio time.</h2>\n      <div class="landing-features-grid" style="grid-template-columns: repeat(3, 1fr);">\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Fill your classes without the hustle</h3>\n          <p class="landing-feature-description">\n            Parents find your programs and register online -- no back-and-forth\n            emails or paper forms.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Get paid before class starts</h3>\n          <p class="landing-feature-description">\n            Online payments at registration. No chasing checks, no awkward reminders.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">One place for all of it</h3>\n          <p class="landing-feature-description">\n            Scheduling, attendance, waitlists, and families with three kids -- handled.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Keep parents in the loop</h3>\n          <p class="landing-feature-description">\n            Automatic updates and notifications so you're not writing the same\n            email twelve times.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">See how your business is doing</h3>\n          <p class="landing-feature-description">\n            Plain-English reports on revenue, enrollment, and trends.\n            No spreadsheet required.\n          </p>\n        </article>\n        <article class="landing-feature-card">\n          <h3 class="landing-feature-title">Grow when you're ready</h3>\n          <p class="landing-feature-description">\n            Add instructors, locations, and programs without adding chaos.\n          </p>\n        </article>\n      </div>\n    </div>\n  </section>\n\n  <!-- Alignment: The Trust -->\n  <section class="landing-features">\n    <div class="landing-features-container" style="text-align: center;">\n      <h2>Free to Start</h2>\n      <p class="landing-hero-subtitle">\n        There are no monthly fees, no set up fees. We have a 2.5% revenue\n        share, so we only make money when you do. Our entire job is to help\n        you succeed!\n      </p>\n      <div class="landing-cta-container">\n        % if ($project && $session) {\n          <form method="POST"\n                action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">\n            <input type="hidden" name="session_id" value="<%= $session->id %>">\n            <input type="hidden" name="program_id" value="<%= $project->id %>">\n            <button type="submit" class="landing-cta-button">Get Started</button>\n          </form>\n        % } else {\n          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">\n            Get Started\n          </a>\n        % }\n      </div>\n    </div>\n  </section>\n\n  <footer style="text-align: center; padding: var(--space-8); color: var(--landing-text-secondary); font-size: var(--font-size-sm);">\n    <p>A <strong>Tamarou</strong> &amp; <strong>Super Awesome Cool Pottery</strong> project</p>\n  </footer>\n</div>	{}	Registry tenant landing page for Jordan (art teacher) user journey	2026-08-06 10:31:36.836066+00	2026-08-06 10:31:38.267204+00
 \.
 
 
@@ -2501,7 +2501,7 @@ COPY registry.tenant_profiles (tenant_id, description, created_at, billing_email
 --
 
 COPY registry.tenant_users (tenant_id, user_id, is_primary, created_at) FROM stdin;
-00000000-0000-0000-0000-000000000000	caeee12f-0f93-43ad-a607-79d4fc56a4d1	t	2026-08-06 07:03:10.32005+00
+00000000-0000-0000-0000-000000000000	d2bacd70-9433-4f5b-aac9-38605e611791	t	2026-08-06 10:31:45.910971+00
 \.
 
 
@@ -2510,8 +2510,8 @@ COPY registry.tenant_users (tenant_id, user_id, is_primary, created_at) FROM std
 --
 
 COPY registry.tenants (id, name, slug, created_at, stripe_customer_id, stripe_subscription_id, billing_status, trial_ends_at, subscription_started_at, canonical_domain, magic_link_expiry_hours, stripe_connect_account_id, stripe_charges_enabled, stripe_details_submitted, platform_pricing_plan_id) FROM stdin;
-ae75ad0a-2d03-4432-87ee-d8f65358110a	Registry System	registry	2026-08-06 07:02:50.248625+00	\N	\N	trial	\N	\N	\N	24	\N	f	f	6f856cde-02e3-460b-945b-446be536a1c3
-00000000-0000-0000-0000-000000000000	Registry Platform	registry-platform	2026-08-06 07:03:03.280752+00	\N	\N	active	\N	\N	\N	24	\N	f	f	6f856cde-02e3-460b-945b-446be536a1c3
+562521b8-ae05-4a37-abc8-27186eef10e0	Registry System	registry	2026-08-06 10:31:13.600119+00	\N	\N	trial	\N	\N	\N	24	\N	f	f	8dc6d515-a279-4992-a262-a36cd89ec47d
+00000000-0000-0000-0000-000000000000	Registry Platform	registry-platform	2026-08-06 10:31:31.049156+00	\N	\N	active	\N	\N	\N	24	\N	f	f	8dc6d515-a279-4992-a262-a36cd89ec47d
 \.
 
 
@@ -2536,8 +2536,8 @@ COPY registry.user_preferences (id, user_id, preference_key, preference_value, c
 --
 
 COPY registry.user_profiles (user_id, email, name, phone, data, created_at) FROM stdin;
-c2471428-c7f1-4987-afe3-d4d4e7b15fdc	system@tinyartempire.com	System	\N	\N	2026-08-06 07:03:06.010801+00
-caeee12f-0f93-43ad-a607-79d4fc56a4d1	admin@registry.platform	Platform Admin	\N	\N	2026-08-06 07:03:10.32005+00
+f4e8347f-5190-4bd3-a047-c2c0025494e6	system@tinyartempire.com	System	\N	\N	2026-08-06 10:31:36.066301+00
+d2bacd70-9433-4f5b-aac9-38605e611791	admin@registry.platform	Platform Admin	\N	\N	2026-08-06 10:31:45.910971+00
 \.
 
 
@@ -2546,8 +2546,8 @@ caeee12f-0f93-43ad-a607-79d4fc56a4d1	admin@registry.platform	Platform Admin	\N	\
 --
 
 COPY registry.users (id, username, passhash, created_at, birth_date, user_type, grade, email_verified_at, invite_pending) FROM stdin;
-c2471428-c7f1-4987-afe3-d4d4e7b15fdc	system	nologin	2026-08-06 07:03:06.007919+00	\N	parent	\N	\N	f
-caeee12f-0f93-43ad-a607-79d4fc56a4d1	platform_admin	$2b$12$DummyHashForSystemUser	2026-08-06 07:03:10.32005+00	\N	admin	\N	\N	f
+f4e8347f-5190-4bd3-a047-c2c0025494e6	system	nologin	2026-08-06 10:31:36.058554+00	\N	parent	\N	\N	f
+d2bacd70-9433-4f5b-aac9-38605e611791	platform_admin	$2b$12$DummyHashForSystemUser	2026-08-06 10:31:45.910971+00	\N	admin	\N	\N	f
 \.
 
 
@@ -2596,67 +2596,70 @@ COPY registry.workflows (id, slug, name, description, first_step, created_at, up
 --
 
 COPY sqitch.changes (change_id, script_hash, change, project, note, committed_at, committer_name, committer_email, planned_at, planner_name, planner_email) FROM stdin;
-c9235c00bc368836d5323cd4b98cadfa673aa00e	a363697ff7f1f2ad0642dfc426f003e430fbb342	users	registry	initial creation of users table and basic schema etc	2026-08-06 07:02:49.369931+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:21:58+00	Chris Prather	chris@prather.org
-2960f6c6a1df94ef7f1c75a036db14aefe121bc5	978d2b0afaad7749217fc4bf998d858c91cb9e93	workflows	registry	add workflows\n\nWorkflows define a sequence of steps to be executed. We process each step and record the outcome in a workflow run.	2026-08-06 07:02:49.88763+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:30:35+00	Chris Prather	chris@prather.org
-2abd1a15dc06e9db731062527f8541e8c79ffb6f	24d73f7d6572fe110f256ca48b0a2a48dfafa96b	tenant-on-boarding	registry	create an onboarding workflow for tenants	2026-08-06 07:02:50.702533+00	Chris Prather	chris.prather@tamarou.com	2024-05-20 21:00:32+00	Chris Prather	chris@prather.org
-2f7ae3c1f6f41d31425a9ba8fa21f2e73560115c	707b1c42fa45736727df395e145cbf439387c241	schema-based-multitennancy	registry	add the tools to do the schema-based multi-tenancy	2026-08-06 07:02:51.505596+00	Chris Prather	chris.prather@tamarou.com	2024-05-21 01:43:52+00	Chris Prather	chris@prather.org
-5920ebcdc5fd6c9478af9fb1e435aedd26b5b5ce	841ff17f8bd522a515385b293e9914d111f0fd19	events-and-sessions	registry	Add events and sessions to the system	2026-08-06 07:02:52.406124+00	Chris Prather	chris.prather@tamarou.com	2024-05-31 03:36:11+00	Chris Prather	chris.prather@tamarou.com
-72bea40753b0250624322f67c9a64fe479f02df7	67a0442cd1589b353394cbd451cca098bb8e8634	edit-template-workflow	registry	default workflow for editing templates	2026-08-06 07:02:52.757249+00	Chris Prather	chris.prather@tamarou.com	2025-02-11 23:59:19+00	Chris Prather	chris.prather@tamarou.com
-daf665c0e9b4b1255a0cf09bb88e322f6609b59f	db62b982c609c21307787f014f58577662cca0cd	outcomes	registry	add outcome definitions	2026-08-06 07:02:53.317275+00	Chris Prather	chris.prather@tamarou.com	2025-02-21 06:45:47+00	Chris Prather	chris.prather@tamarou.com
-c0bb268a4a0c27a97351166c95d50a5f6d73d0ae	7d3e7133c01ac03e83020ba1578259ec444584cd	summer-camp-module	registry	add summer-camp-module	2026-08-06 07:02:54.036718+00	Chris Prather	chris.prather@tamarou.com	2025-02-22 04:38:37+00	Chris Prather	chris.prather@tamarou.com
-6d1c676dccf7787d99a54edd3ec556193ff0562d	464a90d2ef6e7939e38fa2717439f3796e2f6936	fix-tenant-workflows	registry	Fix tenant workflows to include first_step	2026-08-06 07:02:54.305087+00	Chris Prather	chris.prather@tamarou.com	2025-03-22 18:57:13+00	Chris Prather	chris.prather@tamarou.com
-4d1cce9dd15eadfe664b1a909c36f1afd6d943f2	7851550d6b87474630cd02469c9772024987ce32	program-types	registry	Add program types configuration system	2026-08-06 07:02:54.512958+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:00:00+00	Claude	noreply@anthropic.com
-ac009951a991475b6b82050987874c5e1562b227	e79fc2deea1f57838d388bd3effc672f3d9de20b	enhanced-pricing-model	registry	Transform pricing to flexible pricing_plans with multiple tiers per session	2026-08-06 07:02:54.733935+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:30:00+00	Claude	noreply@anthropic.com
-ca85da23e2f52eb6ef3b500530d301617d8d64d3	6e636122ad2b14731a616bee3fb8d06083559358	attendance-tracking	registry	Add attendance tracking infrastructure	2026-08-06 07:02:54.946454+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:00:00+00	Claude	noreply@anthropic.com
-9478a08db15d08f6fae783493e14eb2348a478a4	1b0a9ae93451b1aad3fcad727c30430146b39669	waitlist-management	registry	Add waitlist functionality to enrollment system	2026-08-06 07:02:55.164706+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:30:00+00	Claude	noreply@anthropic.com
-125881c219bfb9b9053e66b6b5fb5fdb720a1ee3	fa279aaea8c8f5c6fc0fc942ac69274ced15c1d4	add-program-type-to-projects	registry	Add program type reference to projects	2026-08-06 07:02:55.551962+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:00:00+00	Claude	noreply@anthropic.com
-b935f44f3eace95edc2fa318ed7de32c27e8ac1a	b93b975d490c4384a02a3f8a66a48d99fd35a84b	add-user-fields-for-family	registry	Add birth_date, user_type, grade fields to users	2026-08-06 07:02:56.312564+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:25:00+00	Claude	noreply@anthropic.com
-7deaa9fb9f8f3d0309d635af087792c28525f78e	189953a84a37895f33e367d8eb0fe3b647a2bfdf	multi-child-data-model	registry	Add family_members table for multi-child support	2026-08-06 07:02:57.185414+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:30:00+00	Claude	noreply@anthropic.com
-815c14422aeab29c0c21415ea7e8927785a1c910	36fd27b0aff2c634ec86eb7662a0ecbc11d188e6	payments	registry	Add payments infrastructure for Stripe integration	2026-08-06 07:02:57.995993+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:00:00+00	Claude	noreply@anthropic.com
-eee70c0e408183c5d818fa1a6ce7e3b34d3b7cf6	344a280c4b37d460e57e312c538aa0507dae53e1	add-payment-to-enrollments	registry	Add payment_id reference to enrollments table	2026-08-06 07:02:58.21171+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:15:00+00	Claude	noreply@anthropic.com
-acd808bf85b5a9d8971f598186ced619196ffd0e	8cdbcbf5f5d6b5933c1027b75293e23c21f82f45	notifications-and-preferences	registry	Add notifications and user preferences for attendance tracking	2026-08-06 07:02:58.666032+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 10:00:00+00	Claude	noreply@anthropic.com
-5ce709b8eff5b3b920e7a675d78bee9dabd98367	9f6bfbd59ca138c524285ed7d9f0b7895354f801	parent-communication-system	registry	Add parent communication system with messages, recipients, and templates	2026-08-06 07:02:59.034876+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 11:00:00+00	Claude	noreply@anthropic.com
-fbe73787977942423bb4d7ba5dd152c0c1551e38	fea7e5a85e605358de32808abb27b09f7dd78e83	performance-optimization	registry	Add database indexes and performance optimizations for production readiness	2026-08-06 07:02:59.791699+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 15:00:00+00	Claude	noreply@anthropic.com
-d7d8aaecb2610865fd3801bb68ef57e474b29181	4a0067318476e1aa7150a0f54458884434cf9bfb	stripe-subscription-integration	registry	Add Stripe subscription integration for tenant billing	2026-08-06 07:03:00.034143+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 16:00:00+00	Claude	noreply@anthropic.com
-8eb88eeec3cb411430882061df8d5563af64ba1c	3fa34c99f03fa41b55239b2a0c7f393ba3d49bbf	fix-multi-child-enrollments	registry	Fix multi-child enrollment constraints for cleaner architecture	2026-08-06 07:03:00.608895+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 00:34:24+00	Chris Prather	chris.prather@tamarou.com
-4883848eccc158220c9e751882d20ae963d71f52	c4e3ea6ffbffc982060b0d165f60f0ff17bf78e7	flexible-enrollment-architecture	registry	Create flexible enrollment architecture supporting family, individual, group, and corporate students	2026-08-06 07:03:00.855012+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:09:59+00	Chris Prather	chris.prather@tamarou.com
-f6dbddd094284b0b7296c6e8258922882ae24b5d	b5baa9d2cf71178ed6fd3382231eb69d0b310cfd	remove-student-id-foreign-key	registry	Remove student_id foreign key constraint to support polymorphic student references	2026-08-06 07:03:01.063077+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:28:59+00	Chris Prather	chris.prather@tamarou.com
-ffe9a13ee38d1ffa2c706750718b34126adfe6e1	d2feca17971e5f93417b098a4295ff70ead570ee	fix-waitlist-family-member-refs	registry	Fix waitlist student_id to reference family_members instead of users	2026-08-06 07:03:01.245317+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 14:30:00+00	Claude	noreply@anthropic.com
-3c3d83d65febc9de2fbce70f02fa01b5483736e8	49be975f75b20172863921261abf3906bc100990	fix-waitlist-reorder	registry	Fix waitlist position reordering to avoid unique constraint violations	2026-08-06 07:03:01.449933+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 12:30:00+00	Claude	noreply@anthropic.com
-300e4d9f1d6bafe1b45f937ea482260f3313760d	b2b54846389dbdf3e2cf7ecbb15ae53fb4175d82	fix-waitlist-reorder-v2	registry	Improved waitlist position reordering to fully avoid constraint violations	2026-08-06 07:03:01.704195+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 22:50:00+00	Claude	noreply@anthropic.com
-0903ffab54af2242711b1cb470a44753acf6c9d7	695f0a352ff02e4b5f84381856fe538ac1badbb7	fix-waitlist-reorder-v3	registry	Remove problematic database trigger and handle position reordering in application code	2026-08-06 07:03:01.945133+00	Chris Prather	chris.prather@tamarou.com	2025-07-17 00:00:00+00	Claude	noreply@anthropic.com
-acbd53f8d5ddfc205c3c1ca518ed92170803e32c	7b6df5319ffd75e81b5f3f06e95102a1df7f2e92	drop-transfer-business-rules	registry	Add drop and transfer business rules with admin approval workflow	2026-08-06 07:03:02.215546+00	Chris Prather	chris.prather@tamarou.com	2025-09-18 00:00:00+00	Claude	noreply@anthropic.com
-41ae5ed8ebd0150b8a8c2987bdbfd98967252b18	4ca09b1d82b01de2a829979849fa4a7f4c3120d4	remove-waitlist-position-constraint	registry	Remove unique constraint on waitlist position to allow status-based visibility	2026-08-06 07:03:02.432189+00	Chris Prather	chris.prather@tamarou.com	2025-09-21 00:00:00+00	Claude	noreply@anthropic.com
-788f8edbabafb05aef3b90f4b634beb1aaab7b8b	7dda1d870afb87ee03300b43bacf070e53c5c5ba	installment-payment-schedules	registry	Add payment schedules and scheduled payments for installment processing	2026-08-06 07:03:02.913836+00	Chris Prather	chris.prather@tamarou.com	2025-09-23 03:35:05+00	Chris Prather	chris.prather@tamarou.com
-2fc34cc17316d64ee48ef1c04e4d9c5e096b29ba	e7ea8e7d72a0222c7493190abb060dd0767adb28	simplify-installment-schema-for-stripe	registry	Simplify database schema to use Stripe native scheduling and retry features	2026-08-06 07:03:03.171045+00	Chris Prather	chris.prather@tamarou.com	2025-09-24 18:00:00+00	Claude	noreply@anthropic.com
-f61a99336db06d9d07bd30abcf6e18e98d7609ac	0f1e40107de5540b06f5181f72d75c6741728143	unified-pricing-infrastructure	registry	Add unified tenant-to-tenant pricing infrastructure	2026-08-06 07:03:03.446579+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 00:44:03+00	Chris Prather	chris.prather@tamarou.com
-eb5973974d4f4c06b6e5a93c84b5a66bfcd8f342	031717d9b7ea0651ef6b5f67942c8c978f502dbe	consolidate-pricing-relationships	registry	Consolidate pricing relationships into unified model	2026-08-06 07:03:03.726386+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 16:07:15+00	Chris Prather	chris.prather@tamarou.com
-20f187ed4e2e4c35404fcb5f7d48df933cebfcd5	6017815b229c39d2e9f7af54f1a963e3257a5bf2	pricing-relationship-events	registry	Add event sourcing for pricing relationship audit trail	2026-08-06 07:03:03.960562+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 19:55:59+00	Chris Prather	chris.prather@tamarou.com
-5f3d84a4d2158ce0ffcfeabc5772970faca7c3d3	f41063facc70f0ff67e7cc54de594af5b99d358b	remove-pricing-plan-relationship-fields	registry	Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans	2026-08-06 07:03:04.17883+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 22:27:51+00	Chris Prather	chris.prather@tamarou.com
-a2248de7c1f81778ea19e6f9bc5c94e806e21268	5c6daf2fa1ab2205c6f0f0a0b153947e9304f3bd	passwordless-auth	registry	Passwordless auth: passkeys, magic links, API keys	2026-08-06 07:03:04.441183+00	Chris Prather	chris.prather@tamarou.com	2026-03-25 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-afdf73989587e92e423e0b5f643361890a90a860	bdd207b58bea14042c69ffad9efcc71e3cbfbcd7	auth-notification-types	registry	Add auth notification types to notification_type enum	2026-08-06 07:03:04.684311+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 06:56:54+00	Chris Prather	chris.prather@tamarou.com
-c0834addb5a970c41dc185be91f226cba562e013	314f27eca2ee77ce95e888776a12618b7d1bb0fc	tenant-domains	registry	Custom domain management for tenants	2026-08-06 07:03:05.062195+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 19:04:42+00	Chris Prather	chris.prather@tamarou.com
-5656344b5447eb9e8d5b274f18d9fbfffa20f8d4	aeab9e685093de23275127520d1387c90bff2e78	magic-link-verification	registry	Add verified_at column for two-step magic link flow	2026-08-06 07:03:05.294617+00	Chris Prather	chris.prather@tamarou.com	2026-03-31 12:11:05+00	Chris Prather	chris.prather@tamarou.com
-c3c7ae6599f4db30315a79d7021519f29dafa31d	ca3c13270b018c747b12a06b702742a416a46a0e	waitlist-accepted-status	registry	Add accepted status to waitlist check constraint	2026-08-06 07:03:05.707367+00	Chris Prather	chris.prather@tamarou.com	2026-04-05 01:37:21+00	Chris Prather	chris.prather@tamarou.com
-b1024a8fd0df88c3fd8a543fb5a09512b3fa1cfb	a54ac0d95185ebb088b7bc391c48cb9cfbfb792e	seed-registry-storefront	registry	Seed registry tenant storefront (empty stub, deployed to production)	2026-08-06 07:03:05.906764+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 13:42:30+00	Chris Prather	chris.prather@tamarou.com
-0d0c296e547099f9f75884c8283a0077920abc8c	70ca373942437f7f4629b935d4f21ac4b07c0c2e	seed-registry-storefront-v2	registry	Seed registry tenant storefront with actual data	2026-08-06 07:03:06.139092+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 14:44:00+00	Chris Prather	chris.prather@tamarou.com
-3c41efd35c15d993a9e2b9e7621c7f14de92649e	c4df39ebada0ae78be2778a281fde400b3609664	registry-landing-page-template	registry	Customize registry tenant landing page for Jordan's user journey	2026-08-06 07:03:06.556616+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-730dfd28d76922a358dc3e5eaeb144725df7111e	526f15f28e63d0a77f4806b4d3b7aa513564d281	fix-utf8-mojibake	registry	Delete DB templates with mojibake so app reimports fixed versions	2026-08-06 07:03:06.747254+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 12:00:00+00	Chris Prather	chris.prather@tamarou.com
-4a34ed08664b5ae39f7caacd4f663285efb88267	0c6e696b7529c06d71365a38e32403b54bb173fc	update-registry-landing-copy	registry	Update registry landing page copy and 3x2 card grid	2026-08-06 07:03:06.935945+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 14:00:00+00	Chris Prather	chris.prather@tamarou.com
-44c65bead55e0a35c5372aa2410a7fe5b3bf0e6b	83f48bc9c421c0e1cf1f0825a2e6a9498ca63e0d	program-publish-status	registry	Add status to projects and contact_person_id to locations for admin program setup	2026-08-06 07:03:07.145424+00	Chris Prather	chris.prather@tamarou.com	2026-04-19 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-c2d827c1542f2cf88b9769412919a1ee176147e7	3e1b6a2bee1de37a32150e01a522d5d6ed4caa09	enrollment-confirmation-notification-type	registry	Add enrollment_confirmation notification type	2026-08-06 07:03:07.329262+00	Chris Prather	chris.prather@tamarou.com	2026-04-23 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-d8dd117aea69688b601f189b8a05f2cc9975b897	8c6355a7f1a9332e26a6d5cc6b845776838157c7	webhook-event-dedup	registry	Track processed Stripe webhook event IDs for deduplication	2026-08-06 07:03:07.683844+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-bfb052f4957649f0ccf5c59096ee321a100f2886	aa1d00cc663322063dd336e664e72e0f60d56910	enrollment-payment-dedup	registry	Unique index to make paid-enrollment finalization idempotent	2026-08-06 07:03:08.086904+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 01:00:00+00	Chris Prather	chris.prather@tamarou.com
-e9ff0519934e4fcea62f4734c5b9d3b20c09ef4c	8951d1778d26f1f372e59ee27de44183a0470533	fix-attendance-student-id-fkey	registry	Remove student_id FK from attendance_records to allow polymorphic family_member references	2026-08-06 07:03:08.909297+00	Chris Prather	chris.prather@tamarou.com	2026-06-08 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-3c299ff8324976d192be357e48699e64c975784f	5b0df8b63eb927e6f21cec635192008cda10414e	fix-clone-schema-identifier-quoting	registry	Quote dest_schema consistently with quote_ident in clone_schema to support reserved-word schema names	2026-08-06 07:03:09.632511+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-3207dcbdd391a3113f62367a901b0319137093bc	4aa621090f6b0cab6de2d09acb81779587e32827	tenant-stripe-connect	registry	Add per-tenant Stripe Connect account and readiness flags for destination charges	2026-08-06 07:03:09.823267+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-28e0bf2c6d92e23110f116d7ec4bd11d3a37c607	e1650770850473953cf5a6b823e1218eb79898a0	tenant-scoped-payments	registry	Move payment tables into tenant schemas and repoint enrollments.payment_id FK for tenant-local payment isolation	2026-08-06 07:03:10.039385+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-28d74506683168469a7f47f7ba0500804400ebeb	2f7b7598efa787ec0a430cca91477d7261b9414f	seed-free-platform-plan	registry	Seed platform-scope Free (0%) fallback plan	2026-08-06 07:03:10.231975+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-ab661862f6c5f4126610587fd3e7da46123c2f04	0660243596d8771fa9e2afcefbee446c73cf1cc6	create-default-pricing-relationships	registry	Create active platform relationships so tenant plans are selectable	2026-08-06 07:03:10.432126+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-a3a7d4de067885cf24f3b965cee829661b4e7c63	155381d51a2aa54184c5a14f38a58449f288d20c	tenant-platform-pricing-plan	registry	Add tenants.platform_pricing_plan_id FK and backfill existing tenants	2026-08-06 07:03:10.919163+00	Chris Prather	chris.prather@tamarou.com	2026-06-16 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-4f5c0e1ad6352f2a79bd35ab6532bea463f381dc	742ee7a544d54b7c6d9052e7ffbf2fe7022b38dd	refund-application-fee-config	registry	Declare refund_application_fee on seeded platform + tenant plans	2026-08-06 07:03:11.666239+00	Chris Prather	chris.prather@tamarou.com	2026-07-03 23:09:47+00	Chris Prather	chris.prather@tamarou.com
-f2e5326eff1970535911be0d1222e035d521c000	82e0ce0ff7efe488352cae133cbe6d6f7725993d	suspend-rateless-tenant-plans	registry	Stop offering tenant plans with no resolvable revenue-share rate	2026-08-06 07:03:12.18303+00	Chris Prather	chris.prather@tamarou.com	2026-08-03 23:18:43+00	Chris Prather	chris.prather@tamarou.com
-0efcbdec112780d02871150d379f0e2b07264241	41842368d11c145c5430b6507668c56cb17014b7	pricing-plans-amount-cents	registry	Store pricing_plans money as integer cents; the rate lives only in pricing_configuration	2026-08-06 07:03:13.067424+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+c9235c00bc368836d5323cd4b98cadfa673aa00e	a363697ff7f1f2ad0642dfc426f003e430fbb342	users	registry	initial creation of users table and basic schema etc	2026-08-06 10:31:12.768817+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:21:58+00	Chris Prather	chris@prather.org
+2960f6c6a1df94ef7f1c75a036db14aefe121bc5	978d2b0afaad7749217fc4bf998d858c91cb9e93	workflows	registry	add workflows\n\nWorkflows define a sequence of steps to be executed. We process each step and record the outcome in a workflow run.	2026-08-06 10:31:13.241451+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:30:35+00	Chris Prather	chris@prather.org
+2abd1a15dc06e9db731062527f8541e8c79ffb6f	24d73f7d6572fe110f256ca48b0a2a48dfafa96b	tenant-on-boarding	registry	create an onboarding workflow for tenants	2026-08-06 10:31:13.819011+00	Chris Prather	chris.prather@tamarou.com	2024-05-20 21:00:32+00	Chris Prather	chris@prather.org
+2f7ae3c1f6f41d31425a9ba8fa21f2e73560115c	707b1c42fa45736727df395e145cbf439387c241	schema-based-multitennancy	registry	add the tools to do the schema-based multi-tenancy	2026-08-06 10:31:14.500507+00	Chris Prather	chris.prather@tamarou.com	2024-05-21 01:43:52+00	Chris Prather	chris@prather.org
+5920ebcdc5fd6c9478af9fb1e435aedd26b5b5ce	841ff17f8bd522a515385b293e9914d111f0fd19	events-and-sessions	registry	Add events and sessions to the system	2026-08-06 10:31:15.47237+00	Chris Prather	chris.prather@tamarou.com	2024-05-31 03:36:11+00	Chris Prather	chris.prather@tamarou.com
+72bea40753b0250624322f67c9a64fe479f02df7	67a0442cd1589b353394cbd451cca098bb8e8634	edit-template-workflow	registry	default workflow for editing templates	2026-08-06 10:31:16.136094+00	Chris Prather	chris.prather@tamarou.com	2025-02-11 23:59:19+00	Chris Prather	chris.prather@tamarou.com
+daf665c0e9b4b1255a0cf09bb88e322f6609b59f	db62b982c609c21307787f014f58577662cca0cd	outcomes	registry	add outcome definitions	2026-08-06 10:31:16.788828+00	Chris Prather	chris.prather@tamarou.com	2025-02-21 06:45:47+00	Chris Prather	chris.prather@tamarou.com
+c0bb268a4a0c27a97351166c95d50a5f6d73d0ae	7d3e7133c01ac03e83020ba1578259ec444584cd	summer-camp-module	registry	add summer-camp-module	2026-08-06 10:31:17.576019+00	Chris Prather	chris.prather@tamarou.com	2025-02-22 04:38:37+00	Chris Prather	chris.prather@tamarou.com
+6d1c676dccf7787d99a54edd3ec556193ff0562d	464a90d2ef6e7939e38fa2717439f3796e2f6936	fix-tenant-workflows	registry	Fix tenant workflows to include first_step	2026-08-06 10:31:18.437645+00	Chris Prather	chris.prather@tamarou.com	2025-03-22 18:57:13+00	Chris Prather	chris.prather@tamarou.com
+4d1cce9dd15eadfe664b1a909c36f1afd6d943f2	7851550d6b87474630cd02469c9772024987ce32	program-types	registry	Add program types configuration system	2026-08-06 10:31:18.871501+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:00:00+00	Claude	noreply@anthropic.com
+ac009951a991475b6b82050987874c5e1562b227	e79fc2deea1f57838d388bd3effc672f3d9de20b	enhanced-pricing-model	registry	Transform pricing to flexible pricing_plans with multiple tiers per session	2026-08-06 10:31:19.079671+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:30:00+00	Claude	noreply@anthropic.com
+ca85da23e2f52eb6ef3b500530d301617d8d64d3	6e636122ad2b14731a616bee3fb8d06083559358	attendance-tracking	registry	Add attendance tracking infrastructure	2026-08-06 10:31:19.278281+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:00:00+00	Claude	noreply@anthropic.com
+9478a08db15d08f6fae783493e14eb2348a478a4	1b0a9ae93451b1aad3fcad727c30430146b39669	waitlist-management	registry	Add waitlist functionality to enrollment system	2026-08-06 10:31:19.484062+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:30:00+00	Claude	noreply@anthropic.com
+125881c219bfb9b9053e66b6b5fb5fdb720a1ee3	fa279aaea8c8f5c6fc0fc942ac69274ced15c1d4	add-program-type-to-projects	registry	Add program type reference to projects	2026-08-06 10:31:19.669944+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:00:00+00	Claude	noreply@anthropic.com
+b935f44f3eace95edc2fa318ed7de32c27e8ac1a	b93b975d490c4384a02a3f8a66a48d99fd35a84b	add-user-fields-for-family	registry	Add birth_date, user_type, grade fields to users	2026-08-06 10:31:20.115301+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:25:00+00	Claude	noreply@anthropic.com
+7deaa9fb9f8f3d0309d635af087792c28525f78e	189953a84a37895f33e367d8eb0fe3b647a2bfdf	multi-child-data-model	registry	Add family_members table for multi-child support	2026-08-06 10:31:20.953139+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:30:00+00	Claude	noreply@anthropic.com
+815c14422aeab29c0c21415ea7e8927785a1c910	36fd27b0aff2c634ec86eb7662a0ecbc11d188e6	payments	registry	Add payments infrastructure for Stripe integration	2026-08-06 10:31:21.827767+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:00:00+00	Claude	noreply@anthropic.com
+eee70c0e408183c5d818fa1a6ce7e3b34d3b7cf6	344a280c4b37d460e57e312c538aa0507dae53e1	add-payment-to-enrollments	registry	Add payment_id reference to enrollments table	2026-08-06 10:31:22.364104+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:15:00+00	Claude	noreply@anthropic.com
+acd808bf85b5a9d8971f598186ced619196ffd0e	8cdbcbf5f5d6b5933c1027b75293e23c21f82f45	notifications-and-preferences	registry	Add notifications and user preferences for attendance tracking	2026-08-06 10:31:22.636047+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 10:00:00+00	Claude	noreply@anthropic.com
+5ce709b8eff5b3b920e7a675d78bee9dabd98367	9f6bfbd59ca138c524285ed7d9f0b7895354f801	parent-communication-system	registry	Add parent communication system with messages, recipients, and templates	2026-08-06 10:31:23.186268+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 11:00:00+00	Claude	noreply@anthropic.com
+fbe73787977942423bb4d7ba5dd152c0c1551e38	fea7e5a85e605358de32808abb27b09f7dd78e83	performance-optimization	registry	Add database indexes and performance optimizations for production readiness	2026-08-06 10:31:24.288321+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 15:00:00+00	Claude	noreply@anthropic.com
+d7d8aaecb2610865fd3801bb68ef57e474b29181	4a0067318476e1aa7150a0f54458884434cf9bfb	stripe-subscription-integration	registry	Add Stripe subscription integration for tenant billing	2026-08-06 10:31:24.940865+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 16:00:00+00	Claude	noreply@anthropic.com
+8eb88eeec3cb411430882061df8d5563af64ba1c	3fa34c99f03fa41b55239b2a0c7f393ba3d49bbf	fix-multi-child-enrollments	registry	Fix multi-child enrollment constraints for cleaner architecture	2026-08-06 10:31:25.128919+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 00:34:24+00	Chris Prather	chris.prather@tamarou.com
+4883848eccc158220c9e751882d20ae963d71f52	c4e3ea6ffbffc982060b0d165f60f0ff17bf78e7	flexible-enrollment-architecture	registry	Create flexible enrollment architecture supporting family, individual, group, and corporate students	2026-08-06 10:31:25.328894+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:09:59+00	Chris Prather	chris.prather@tamarou.com
+f6dbddd094284b0b7296c6e8258922882ae24b5d	b5baa9d2cf71178ed6fd3382231eb69d0b310cfd	remove-student-id-foreign-key	registry	Remove student_id foreign key constraint to support polymorphic student references	2026-08-06 10:31:25.519715+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:28:59+00	Chris Prather	chris.prather@tamarou.com
+ffe9a13ee38d1ffa2c706750718b34126adfe6e1	d2feca17971e5f93417b098a4295ff70ead570ee	fix-waitlist-family-member-refs	registry	Fix waitlist student_id to reference family_members instead of users	2026-08-06 10:31:25.724237+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 14:30:00+00	Claude	noreply@anthropic.com
+3c3d83d65febc9de2fbce70f02fa01b5483736e8	49be975f75b20172863921261abf3906bc100990	fix-waitlist-reorder	registry	Fix waitlist position reordering to avoid unique constraint violations	2026-08-06 10:31:26.227742+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 12:30:00+00	Claude	noreply@anthropic.com
+300e4d9f1d6bafe1b45f937ea482260f3313760d	b2b54846389dbdf3e2cf7ecbb15ae53fb4175d82	fix-waitlist-reorder-v2	registry	Improved waitlist position reordering to fully avoid constraint violations	2026-08-06 10:31:26.993264+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 22:50:00+00	Claude	noreply@anthropic.com
+0903ffab54af2242711b1cb470a44753acf6c9d7	695f0a352ff02e4b5f84381856fe538ac1badbb7	fix-waitlist-reorder-v3	registry	Remove problematic database trigger and handle position reordering in application code	2026-08-06 10:31:27.83914+00	Chris Prather	chris.prather@tamarou.com	2025-07-17 00:00:00+00	Claude	noreply@anthropic.com
+acbd53f8d5ddfc205c3c1ca518ed92170803e32c	7b6df5319ffd75e81b5f3f06e95102a1df7f2e92	drop-transfer-business-rules	registry	Add drop and transfer business rules with admin approval workflow	2026-08-06 10:31:28.641058+00	Chris Prather	chris.prather@tamarou.com	2025-09-18 00:00:00+00	Claude	noreply@anthropic.com
+41ae5ed8ebd0150b8a8c2987bdbfd98967252b18	4ca09b1d82b01de2a829979849fa4a7f4c3120d4	remove-waitlist-position-constraint	registry	Remove unique constraint on waitlist position to allow status-based visibility	2026-08-06 10:31:29.345039+00	Chris Prather	chris.prather@tamarou.com	2025-09-21 00:00:00+00	Claude	noreply@anthropic.com
+788f8edbabafb05aef3b90f4b634beb1aaab7b8b	7dda1d870afb87ee03300b43bacf070e53c5c5ba	installment-payment-schedules	registry	Add payment schedules and scheduled payments for installment processing	2026-08-06 10:31:30.181741+00	Chris Prather	chris.prather@tamarou.com	2025-09-23 03:35:05+00	Chris Prather	chris.prather@tamarou.com
+2fc34cc17316d64ee48ef1c04e4d9c5e096b29ba	e7ea8e7d72a0222c7493190abb060dd0767adb28	simplify-installment-schema-for-stripe	registry	Simplify database schema to use Stripe native scheduling and retry features	2026-08-06 10:31:30.965959+00	Chris Prather	chris.prather@tamarou.com	2025-09-24 18:00:00+00	Claude	noreply@anthropic.com
+f61a99336db06d9d07bd30abcf6e18e98d7609ac	0f1e40107de5540b06f5181f72d75c6741728143	unified-pricing-infrastructure	registry	Add unified tenant-to-tenant pricing infrastructure	2026-08-06 10:31:31.191674+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 00:44:03+00	Chris Prather	chris.prather@tamarou.com
+eb5973974d4f4c06b6e5a93c84b5a66bfcd8f342	031717d9b7ea0651ef6b5f67942c8c978f502dbe	consolidate-pricing-relationships	registry	Consolidate pricing relationships into unified model	2026-08-06 10:31:31.430224+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 16:07:15+00	Chris Prather	chris.prather@tamarou.com
+20f187ed4e2e4c35404fcb5f7d48df933cebfcd5	6017815b229c39d2e9f7af54f1a963e3257a5bf2	pricing-relationship-events	registry	Add event sourcing for pricing relationship audit trail	2026-08-06 10:31:31.637158+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 19:55:59+00	Chris Prather	chris.prather@tamarou.com
+5f3d84a4d2158ce0ffcfeabc5772970faca7c3d3	f41063facc70f0ff67e7cc54de594af5b99d358b	remove-pricing-plan-relationship-fields	registry	Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans	2026-08-06 10:31:31.884817+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 22:27:51+00	Chris Prather	chris.prather@tamarou.com
+a2248de7c1f81778ea19e6f9bc5c94e806e21268	5c6daf2fa1ab2205c6f0f0a0b153947e9304f3bd	passwordless-auth	registry	Passwordless auth: passkeys, magic links, API keys	2026-08-06 10:31:32.322838+00	Chris Prather	chris.prather@tamarou.com	2026-03-25 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+afdf73989587e92e423e0b5f643361890a90a860	bdd207b58bea14042c69ffad9efcc71e3cbfbcd7	auth-notification-types	registry	Add auth notification types to notification_type enum	2026-08-06 10:31:32.956694+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 06:56:54+00	Chris Prather	chris.prather@tamarou.com
+c0834addb5a970c41dc185be91f226cba562e013	314f27eca2ee77ce95e888776a12618b7d1bb0fc	tenant-domains	registry	Custom domain management for tenants	2026-08-06 10:31:33.777915+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 19:04:42+00	Chris Prather	chris.prather@tamarou.com
+5656344b5447eb9e8d5b274f18d9fbfffa20f8d4	aeab9e685093de23275127520d1387c90bff2e78	magic-link-verification	registry	Add verified_at column for two-step magic link flow	2026-08-06 10:31:34.49888+00	Chris Prather	chris.prather@tamarou.com	2026-03-31 12:11:05+00	Chris Prather	chris.prather@tamarou.com
+c3c7ae6599f4db30315a79d7021519f29dafa31d	ca3c13270b018c747b12a06b702742a416a46a0e	waitlist-accepted-status	registry	Add accepted status to waitlist check constraint	2026-08-06 10:31:35.159975+00	Chris Prather	chris.prather@tamarou.com	2026-04-05 01:37:21+00	Chris Prather	chris.prather@tamarou.com
+b1024a8fd0df88c3fd8a543fb5a09512b3fa1cfb	a54ac0d95185ebb088b7bc391c48cb9cfbfb792e	seed-registry-storefront	registry	Seed registry tenant storefront (empty stub, deployed to production)	2026-08-06 10:31:35.728343+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 13:42:30+00	Chris Prather	chris.prather@tamarou.com
+0d0c296e547099f9f75884c8283a0077920abc8c	70ca373942437f7f4629b935d4f21ac4b07c0c2e	seed-registry-storefront-v2	registry	Seed registry tenant storefront with actual data	2026-08-06 10:31:36.455736+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 14:44:00+00	Chris Prather	chris.prather@tamarou.com
+3c41efd35c15d993a9e2b9e7621c7f14de92649e	c4df39ebada0ae78be2778a281fde400b3609664	registry-landing-page-template	registry	Customize registry tenant landing page for Jordan's user journey	2026-08-06 10:31:37.223118+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+730dfd28d76922a358dc3e5eaeb144725df7111e	526f15f28e63d0a77f4806b4d3b7aa513564d281	fix-utf8-mojibake	registry	Delete DB templates with mojibake so app reimports fixed versions	2026-08-06 10:31:37.938098+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 12:00:00+00	Chris Prather	chris.prather@tamarou.com
+4a34ed08664b5ae39f7caacd4f663285efb88267	0c6e696b7529c06d71365a38e32403b54bb173fc	update-registry-landing-copy	registry	Update registry landing page copy and 3x2 card grid	2026-08-06 10:31:38.69492+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 14:00:00+00	Chris Prather	chris.prather@tamarou.com
+44c65bead55e0a35c5372aa2410a7fe5b3bf0e6b	83f48bc9c421c0e1cf1f0825a2e6a9498ca63e0d	program-publish-status	registry	Add status to projects and contact_person_id to locations for admin program setup	2026-08-06 10:31:39.520331+00	Chris Prather	chris.prather@tamarou.com	2026-04-19 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+c2d827c1542f2cf88b9769412919a1ee176147e7	3e1b6a2bee1de37a32150e01a522d5d6ed4caa09	enrollment-confirmation-notification-type	registry	Add enrollment_confirmation notification type	2026-08-06 10:31:40.313067+00	Chris Prather	chris.prather@tamarou.com	2026-04-23 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+d8dd117aea69688b601f189b8a05f2cc9975b897	8c6355a7f1a9332e26a6d5cc6b845776838157c7	webhook-event-dedup	registry	Track processed Stripe webhook event IDs for deduplication	2026-08-06 10:31:41.021027+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+bfb052f4957649f0ccf5c59096ee321a100f2886	aa1d00cc663322063dd336e664e72e0f60d56910	enrollment-payment-dedup	registry	Unique index to make paid-enrollment finalization idempotent	2026-08-06 10:31:41.745084+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 01:00:00+00	Chris Prather	chris.prather@tamarou.com
+e9ff0519934e4fcea62f4734c5b9d3b20c09ef4c	8951d1778d26f1f372e59ee27de44183a0470533	fix-attendance-student-id-fkey	registry	Remove student_id FK from attendance_records to allow polymorphic family_member references	2026-08-06 10:31:42.501013+00	Chris Prather	chris.prather@tamarou.com	2026-06-08 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+3c299ff8324976d192be357e48699e64c975784f	5b0df8b63eb927e6f21cec635192008cda10414e	fix-clone-schema-identifier-quoting	registry	Quote dest_schema consistently with quote_ident in clone_schema to support reserved-word schema names	2026-08-06 10:31:43.293375+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+3207dcbdd391a3113f62367a901b0319137093bc	4aa621090f6b0cab6de2d09acb81779587e32827	tenant-stripe-connect	registry	Add per-tenant Stripe Connect account and readiness flags for destination charges	2026-08-06 10:31:43.983006+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+28e0bf2c6d92e23110f116d7ec4bd11d3a37c607	e1650770850473953cf5a6b823e1218eb79898a0	tenant-scoped-payments	registry	Move payment tables into tenant schemas and repoint enrollments.payment_id FK for tenant-local payment isolation	2026-08-06 10:31:44.774799+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+28d74506683168469a7f47f7ba0500804400ebeb	2f7b7598efa787ec0a430cca91477d7261b9414f	seed-free-platform-plan	registry	Seed platform-scope Free (0%) fallback plan	2026-08-06 10:31:45.529857+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+ab661862f6c5f4126610587fd3e7da46123c2f04	0660243596d8771fa9e2afcefbee446c73cf1cc6	create-default-pricing-relationships	registry	Create active platform relationships so tenant plans are selectable	2026-08-06 10:31:46.069503+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+a3a7d4de067885cf24f3b965cee829661b4e7c63	155381d51a2aa54184c5a14f38a58449f288d20c	tenant-platform-pricing-plan	registry	Add tenants.platform_pricing_plan_id FK and backfill existing tenants	2026-08-06 10:31:46.277544+00	Chris Prather	chris.prather@tamarou.com	2026-06-16 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+4f5c0e1ad6352f2a79bd35ab6532bea463f381dc	742ee7a544d54b7c6d9052e7ffbf2fe7022b38dd	refund-application-fee-config	registry	Declare refund_application_fee on seeded platform + tenant plans	2026-08-06 10:31:46.461443+00	Chris Prather	chris.prather@tamarou.com	2026-07-03 23:09:47+00	Chris Prather	chris.prather@tamarou.com
+f2e5326eff1970535911be0d1222e035d521c000	82e0ce0ff7efe488352cae133cbe6d6f7725993d	suspend-rateless-tenant-plans	registry	Stop offering tenant plans with no resolvable revenue-share rate	2026-08-06 10:31:46.659316+00	Chris Prather	chris.prather@tamarou.com	2026-08-03 23:18:43+00	Chris Prather	chris.prather@tamarou.com
+0efcbdec112780d02871150d379f0e2b07264241	41842368d11c145c5430b6507668c56cb17014b7	pricing-plans-amount-cents	registry	Store pricing_plans money as integer cents; the rate lives only in pricing_configuration	2026-08-06 10:31:46.880384+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+d685f3eb74071b32ce295c7722ef57a33c66f5d5	bf42fde8d39cdadb38af50afa9b589bd1e036804	payments-amount-cents	registry	Store payments and payment_items money as integer cents	2026-08-06 10:31:47.204324+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 12:00:00+00	Chris Prather	chris.prather@tamarou.com
+723b2c3e0164207d1f004b5584857c3f892cb0cc	0e5f13b006f2d71bff25eca81cecded06fe708b0	schedule-amounts-cents	registry	Store installment schedule money as integer cents	2026-08-06 10:31:48.095222+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 13:00:00+00	Chris Prather	chris.prather@tamarou.com
+7299cb40a004b6904fadeecd2da45cb01f18da03	892f9c723523cda0a17dcb6f9fa3bfa143a12d87	refund-amounts-cents	registry	Store refund money as integer cents	2026-08-06 10:31:48.933601+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 14:00:00+00	Chris Prather	chris.prather@tamarou.com
 \.
 
 
@@ -2735,6 +2738,9 @@ a3a7d4de067885cf24f3b965cee829661b4e7c63	require	create-default-pricing-relation
 4f5c0e1ad6352f2a79bd35ab6532bea463f381dc	require	seed-free-platform-plan	28d74506683168469a7f47f7ba0500804400ebeb
 f2e5326eff1970535911be0d1222e035d521c000	require	create-default-pricing-relationships	ab661862f6c5f4126610587fd3e7da46123c2f04
 0efcbdec112780d02871150d379f0e2b07264241	require	suspend-rateless-tenant-plans	f2e5326eff1970535911be0d1222e035d521c000
+d685f3eb74071b32ce295c7722ef57a33c66f5d5	require	pricing-plans-amount-cents	0efcbdec112780d02871150d379f0e2b07264241
+723b2c3e0164207d1f004b5584857c3f892cb0cc	require	payments-amount-cents	d685f3eb74071b32ce295c7722ef57a33c66f5d5
+7299cb40a004b6904fadeecd2da45cb01f18da03	require	schedule-amounts-cents	723b2c3e0164207d1f004b5584857c3f892cb0cc
 \.
 
 
@@ -2743,67 +2749,70 @@ f2e5326eff1970535911be0d1222e035d521c000	require	create-default-pricing-relation
 --
 
 COPY sqitch.events (event, change_id, change, project, note, requires, conflicts, tags, committed_at, committer_name, committer_email, planned_at, planner_name, planner_email) FROM stdin;
-deploy	c9235c00bc368836d5323cd4b98cadfa673aa00e	users	registry	initial creation of users table and basic schema etc	{}	{}	{}	2026-08-06 07:02:49.37372+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:21:58+00	Chris Prather	chris@prather.org
-deploy	2960f6c6a1df94ef7f1c75a036db14aefe121bc5	workflows	registry	add workflows\n\nWorkflows define a sequence of steps to be executed. We process each step and record the outcome in a workflow run.	{users}	{}	{}	2026-08-06 07:02:49.899984+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:30:35+00	Chris Prather	chris@prather.org
-deploy	2abd1a15dc06e9db731062527f8541e8c79ffb6f	tenant-on-boarding	registry	create an onboarding workflow for tenants	{workflows,users}	{}	{}	2026-08-06 07:02:50.713999+00	Chris Prather	chris.prather@tamarou.com	2024-05-20 21:00:32+00	Chris Prather	chris@prather.org
-deploy	2f7ae3c1f6f41d31425a9ba8fa21f2e73560115c	schema-based-multitennancy	registry	add the tools to do the schema-based multi-tenancy	{tenant-on-boarding}	{}	{}	2026-08-06 07:02:51.515145+00	Chris Prather	chris.prather@tamarou.com	2024-05-21 01:43:52+00	Chris Prather	chris@prather.org
-deploy	5920ebcdc5fd6c9478af9fb1e435aedd26b5b5ce	events-and-sessions	registry	Add events and sessions to the system	{schema-based-multitennancy}	{}	{}	2026-08-06 07:02:52.417205+00	Chris Prather	chris.prather@tamarou.com	2024-05-31 03:36:11+00	Chris Prather	chris.prather@tamarou.com
-deploy	72bea40753b0250624322f67c9a64fe479f02df7	edit-template-workflow	registry	default workflow for editing templates	{}	{}	{}	2026-08-06 07:02:52.760283+00	Chris Prather	chris.prather@tamarou.com	2025-02-11 23:59:19+00	Chris Prather	chris.prather@tamarou.com
-deploy	daf665c0e9b4b1255a0cf09bb88e322f6609b59f	outcomes	registry	add outcome definitions	{}	{}	{}	2026-08-06 07:02:53.32283+00	Chris Prather	chris.prather@tamarou.com	2025-02-21 06:45:47+00	Chris Prather	chris.prather@tamarou.com
-deploy	c0bb268a4a0c27a97351166c95d50a5f6d73d0ae	summer-camp-module	registry	add summer-camp-module	{}	{}	{}	2026-08-06 07:02:54.039115+00	Chris Prather	chris.prather@tamarou.com	2025-02-22 04:38:37+00	Chris Prather	chris.prather@tamarou.com
-deploy	6d1c676dccf7787d99a54edd3ec556193ff0562d	fix-tenant-workflows	registry	Fix tenant workflows to include first_step	{schema-based-multitennancy}	{}	{}	2026-08-06 07:02:54.30836+00	Chris Prather	chris.prather@tamarou.com	2025-03-22 18:57:13+00	Chris Prather	chris.prather@tamarou.com
-deploy	4d1cce9dd15eadfe664b1a909c36f1afd6d943f2	program-types	registry	Add program types configuration system	{schema-based-multitennancy}	{}	{}	2026-08-06 07:02:54.515652+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:00:00+00	Claude	noreply@anthropic.com
-deploy	ac009951a991475b6b82050987874c5e1562b227	enhanced-pricing-model	registry	Transform pricing to flexible pricing_plans with multiple tiers per session	{summer-camp-module}	{}	{}	2026-08-06 07:02:54.736558+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:30:00+00	Claude	noreply@anthropic.com
-deploy	ca85da23e2f52eb6ef3b500530d301617d8d64d3	attendance-tracking	registry	Add attendance tracking infrastructure	{summer-camp-module,program-types}	{}	{}	2026-08-06 07:02:54.949365+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:00:00+00	Claude	noreply@anthropic.com
-deploy	9478a08db15d08f6fae783493e14eb2348a478a4	waitlist-management	registry	Add waitlist functionality to enrollment system	{summer-camp-module,program-types}	{}	{}	2026-08-06 07:02:55.167738+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:30:00+00	Claude	noreply@anthropic.com
-deploy	125881c219bfb9b9053e66b6b5fb5fdb720a1ee3	add-program-type-to-projects	registry	Add program type reference to projects	{program-types}	{}	{}	2026-08-06 07:02:55.561344+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:00:00+00	Claude	noreply@anthropic.com
-deploy	b935f44f3eace95edc2fa318ed7de32c27e8ac1a	add-user-fields-for-family	registry	Add birth_date, user_type, grade fields to users	{users}	{}	{}	2026-08-06 07:02:56.320915+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:25:00+00	Claude	noreply@anthropic.com
-deploy	7deaa9fb9f8f3d0309d635af087792c28525f78e	multi-child-data-model	registry	Add family_members table for multi-child support	{summer-camp-module,add-user-fields-for-family,program-types}	{}	{}	2026-08-06 07:02:57.195501+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:30:00+00	Claude	noreply@anthropic.com
-deploy	815c14422aeab29c0c21415ea7e8927785a1c910	payments	registry	Add payments infrastructure for Stripe integration	{schema-based-multitennancy}	{}	{}	2026-08-06 07:02:58.003611+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:00:00+00	Claude	noreply@anthropic.com
-deploy	eee70c0e408183c5d818fa1a6ce7e3b34d3b7cf6	add-payment-to-enrollments	registry	Add payment_id reference to enrollments table	{payments,summer-camp-module}	{}	{}	2026-08-06 07:02:58.214795+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:15:00+00	Claude	noreply@anthropic.com
-deploy	acd808bf85b5a9d8971f598186ced619196ffd0e	notifications-and-preferences	registry	Add notifications and user preferences for attendance tracking	{attendance-tracking}	{}	{}	2026-08-06 07:02:58.670422+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 10:00:00+00	Claude	noreply@anthropic.com
-deploy	5ce709b8eff5b3b920e7a675d78bee9dabd98367	parent-communication-system	registry	Add parent communication system with messages, recipients, and templates	{notifications-and-preferences}	{}	{}	2026-08-06 07:02:59.042817+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 11:00:00+00	Claude	noreply@anthropic.com
-deploy	fbe73787977942423bb4d7ba5dd152c0c1551e38	performance-optimization	registry	Add database indexes and performance optimizations for production readiness	{parent-communication-system}	{}	{}	2026-08-06 07:02:59.794968+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 15:00:00+00	Claude	noreply@anthropic.com
-deploy	d7d8aaecb2610865fd3801bb68ef57e474b29181	stripe-subscription-integration	registry	Add Stripe subscription integration for tenant billing	{enhanced-pricing-model}	{}	{}	2026-08-06 07:03:00.037511+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 16:00:00+00	Claude	noreply@anthropic.com
-deploy	8eb88eeec3cb411430882061df8d5563af64ba1c	fix-multi-child-enrollments	registry	Fix multi-child enrollment constraints for cleaner architecture	{multi-child-data-model}	{}	{}	2026-08-06 07:03:00.613388+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 00:34:24+00	Chris Prather	chris.prather@tamarou.com
-deploy	4883848eccc158220c9e751882d20ae963d71f52	flexible-enrollment-architecture	registry	Create flexible enrollment architecture supporting family, individual, group, and corporate students	{fix-multi-child-enrollments}	{}	{}	2026-08-06 07:03:00.857564+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:09:59+00	Chris Prather	chris.prather@tamarou.com
-deploy	f6dbddd094284b0b7296c6e8258922882ae24b5d	remove-student-id-foreign-key	registry	Remove student_id foreign key constraint to support polymorphic student references	{flexible-enrollment-architecture}	{}	{}	2026-08-06 07:03:01.065418+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:28:59+00	Chris Prather	chris.prather@tamarou.com
-deploy	ffe9a13ee38d1ffa2c706750718b34126adfe6e1	fix-waitlist-family-member-refs	registry	Fix waitlist student_id to reference family_members instead of users	{remove-student-id-foreign-key}	{}	{}	2026-08-06 07:03:01.247909+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 14:30:00+00	Claude	noreply@anthropic.com
-deploy	3c3d83d65febc9de2fbce70f02fa01b5483736e8	fix-waitlist-reorder	registry	Fix waitlist position reordering to avoid unique constraint violations	{waitlist-management}	{}	{}	2026-08-06 07:03:01.454096+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 12:30:00+00	Claude	noreply@anthropic.com
-deploy	300e4d9f1d6bafe1b45f937ea482260f3313760d	fix-waitlist-reorder-v2	registry	Improved waitlist position reordering to fully avoid constraint violations	{fix-waitlist-reorder}	{}	{}	2026-08-06 07:03:01.709945+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 22:50:00+00	Claude	noreply@anthropic.com
-deploy	0903ffab54af2242711b1cb470a44753acf6c9d7	fix-waitlist-reorder-v3	registry	Remove problematic database trigger and handle position reordering in application code	{fix-waitlist-reorder-v2}	{}	{}	2026-08-06 07:03:01.949916+00	Chris Prather	chris.prather@tamarou.com	2025-07-17 00:00:00+00	Claude	noreply@anthropic.com
-deploy	acbd53f8d5ddfc205c3c1ca518ed92170803e32c	drop-transfer-business-rules	registry	Add drop and transfer business rules with admin approval workflow	{fix-multi-child-enrollments}	{}	{}	2026-08-06 07:03:02.219836+00	Chris Prather	chris.prather@tamarou.com	2025-09-18 00:00:00+00	Claude	noreply@anthropic.com
-deploy	41ae5ed8ebd0150b8a8c2987bdbfd98967252b18	remove-waitlist-position-constraint	registry	Remove unique constraint on waitlist position to allow status-based visibility	{fix-waitlist-reorder-v3}	{}	{}	2026-08-06 07:03:02.436513+00	Chris Prather	chris.prather@tamarou.com	2025-09-21 00:00:00+00	Claude	noreply@anthropic.com
-deploy	788f8edbabafb05aef3b90f4b634beb1aaab7b8b	installment-payment-schedules	registry	Add payment schedules and scheduled payments for installment processing	{payments}	{}	{}	2026-08-06 07:03:02.918319+00	Chris Prather	chris.prather@tamarou.com	2025-09-23 03:35:05+00	Chris Prather	chris.prather@tamarou.com
-deploy	2fc34cc17316d64ee48ef1c04e4d9c5e096b29ba	simplify-installment-schema-for-stripe	registry	Simplify database schema to use Stripe native scheduling and retry features	{installment-payment-schedules}	{}	{}	2026-08-06 07:03:03.175464+00	Chris Prather	chris.prather@tamarou.com	2025-09-24 18:00:00+00	Claude	noreply@anthropic.com
-deploy	f61a99336db06d9d07bd30abcf6e18e98d7609ac	unified-pricing-infrastructure	registry	Add unified tenant-to-tenant pricing infrastructure	{}	{}	{}	2026-08-06 07:03:03.4487+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 00:44:03+00	Chris Prather	chris.prather@tamarou.com
-deploy	eb5973974d4f4c06b6e5a93c84b5a66bfcd8f342	consolidate-pricing-relationships	registry	Consolidate pricing relationships into unified model	{unified-pricing-infrastructure}	{}	{}	2026-08-06 07:03:03.729273+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 16:07:15+00	Chris Prather	chris.prather@tamarou.com
-deploy	20f187ed4e2e4c35404fcb5f7d48df933cebfcd5	pricing-relationship-events	registry	Add event sourcing for pricing relationship audit trail	{consolidate-pricing-relationships}	{}	{}	2026-08-06 07:03:03.963622+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 19:55:59+00	Chris Prather	chris.prather@tamarou.com
-deploy	5f3d84a4d2158ce0ffcfeabc5772970faca7c3d3	remove-pricing-plan-relationship-fields	registry	Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans	{}	{}	{}	2026-08-06 07:03:04.180907+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 22:27:51+00	Chris Prather	chris.prather@tamarou.com
-deploy	a2248de7c1f81778ea19e6f9bc5c94e806e21268	passwordless-auth	registry	Passwordless auth: passkeys, magic links, API keys	{users,schema-based-multitennancy}	{}	{}	2026-08-06 07:03:04.445569+00	Chris Prather	chris.prather@tamarou.com	2026-03-25 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	afdf73989587e92e423e0b5f643361890a90a860	auth-notification-types	registry	Add auth notification types to notification_type enum	{notifications-and-preferences,passwordless-auth}	{}	{}	2026-08-06 07:03:04.687963+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 06:56:54+00	Chris Prather	chris.prather@tamarou.com
-deploy	c0834addb5a970c41dc185be91f226cba562e013	tenant-domains	registry	Custom domain management for tenants	{notifications-and-preferences}	{}	{}	2026-08-06 07:03:05.065417+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 19:04:42+00	Chris Prather	chris.prather@tamarou.com
-deploy	5656344b5447eb9e8d5b274f18d9fbfffa20f8d4	magic-link-verification	registry	Add verified_at column for two-step magic link flow	{passwordless-auth}	{}	{}	2026-08-06 07:03:05.297623+00	Chris Prather	chris.prather@tamarou.com	2026-03-31 12:11:05+00	Chris Prather	chris.prather@tamarou.com
-deploy	c3c7ae6599f4db30315a79d7021519f29dafa31d	waitlist-accepted-status	registry	Add accepted status to waitlist check constraint	{waitlist-management}	{}	{}	2026-08-06 07:03:05.710547+00	Chris Prather	chris.prather@tamarou.com	2026-04-05 01:37:21+00	Chris Prather	chris.prather@tamarou.com
-deploy	b1024a8fd0df88c3fd8a543fb5a09512b3fa1cfb	seed-registry-storefront	registry	Seed registry tenant storefront (empty stub, deployed to production)	{events-and-sessions}	{}	{}	2026-08-06 07:03:05.910119+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 13:42:30+00	Chris Prather	chris.prather@tamarou.com
-deploy	0d0c296e547099f9f75884c8283a0077920abc8c	seed-registry-storefront-v2	registry	Seed registry tenant storefront with actual data	{seed-registry-storefront}	{}	{}	2026-08-06 07:03:06.142587+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 14:44:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	3c41efd35c15d993a9e2b9e7621c7f14de92649e	registry-landing-page-template	registry	Customize registry tenant landing page for Jordan's user journey	{seed-registry-storefront-v2}	{}	{}	2026-08-06 07:03:06.559334+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	730dfd28d76922a358dc3e5eaeb144725df7111e	fix-utf8-mojibake	registry	Delete DB templates with mojibake so app reimports fixed versions	{registry-landing-page-template}	{}	{}	2026-08-06 07:03:06.749903+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 12:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	4a34ed08664b5ae39f7caacd4f663285efb88267	update-registry-landing-copy	registry	Update registry landing page copy and 3x2 card grid	{fix-utf8-mojibake}	{}	{}	2026-08-06 07:03:06.938477+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 14:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	44c65bead55e0a35c5372aa2410a7fe5b3bf0e6b	program-publish-status	registry	Add status to projects and contact_person_id to locations for admin program setup	{summer-camp-module,tenant-domains}	{}	{}	2026-08-06 07:03:07.148053+00	Chris Prather	chris.prather@tamarou.com	2026-04-19 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	c2d827c1542f2cf88b9769412919a1ee176147e7	enrollment-confirmation-notification-type	registry	Add enrollment_confirmation notification type	{auth-notification-types}	{}	{}	2026-08-06 07:03:07.331843+00	Chris Prather	chris.prather@tamarou.com	2026-04-23 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	d8dd117aea69688b601f189b8a05f2cc9975b897	webhook-event-dedup	registry	Track processed Stripe webhook event IDs for deduplication	{payments}	{}	{}	2026-08-06 07:03:07.687943+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	bfb052f4957649f0ccf5c59096ee321a100f2886	enrollment-payment-dedup	registry	Unique index to make paid-enrollment finalization idempotent	{add-payment-to-enrollments}	{}	{}	2026-08-06 07:03:08.09481+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 01:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	e9ff0519934e4fcea62f4734c5b9d3b20c09ef4c	fix-attendance-student-id-fkey	registry	Remove student_id FK from attendance_records to allow polymorphic family_member references	{attendance-tracking}	{}	{}	2026-08-06 07:03:08.92017+00	Chris Prather	chris.prather@tamarou.com	2026-06-08 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	3c299ff8324976d192be357e48699e64c975784f	fix-clone-schema-identifier-quoting	registry	Quote dest_schema consistently with quote_ident in clone_schema to support reserved-word schema names	{schema-based-multitennancy}	{}	{}	2026-08-06 07:03:09.635358+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	3207dcbdd391a3113f62367a901b0319137093bc	tenant-stripe-connect	registry	Add per-tenant Stripe Connect account and readiness flags for destination charges	{stripe-subscription-integration}	{}	{}	2026-08-06 07:03:09.826165+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	28e0bf2c6d92e23110f116d7ec4bd11d3a37c607	tenant-scoped-payments	registry	Move payment tables into tenant schemas and repoint enrollments.payment_id FK for tenant-local payment isolation	{payments,installment-payment-schedules,add-payment-to-enrollments,enrollment-payment-dedup,tenant-stripe-connect}	{}	{}	2026-08-06 07:03:10.043131+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	28d74506683168469a7f47f7ba0500804400ebeb	seed-free-platform-plan	registry	Seed platform-scope Free (0%) fallback plan	{unified-pricing-infrastructure}	{}	{}	2026-08-06 07:03:10.234737+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	ab661862f6c5f4126610587fd3e7da46123c2f04	create-default-pricing-relationships	registry	Create active platform relationships so tenant plans are selectable	{remove-pricing-plan-relationship-fields,unified-pricing-infrastructure,seed-free-platform-plan}	{}	{}	2026-08-06 07:03:10.435412+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	a3a7d4de067885cf24f3b965cee829661b4e7c63	tenant-platform-pricing-plan	registry	Add tenants.platform_pricing_plan_id FK and backfill existing tenants	{create-default-pricing-relationships}	{}	{}	2026-08-06 07:03:10.930052+00	Chris Prather	chris.prather@tamarou.com	2026-06-16 00:00:00+00	Chris Prather	chris.prather@tamarou.com
-deploy	4f5c0e1ad6352f2a79bd35ab6532bea463f381dc	refund-application-fee-config	registry	Declare refund_application_fee on seeded platform + tenant plans	{seed-free-platform-plan}	{}	{}	2026-08-06 07:03:11.67478+00	Chris Prather	chris.prather@tamarou.com	2026-07-03 23:09:47+00	Chris Prather	chris.prather@tamarou.com
-deploy	f2e5326eff1970535911be0d1222e035d521c000	suspend-rateless-tenant-plans	registry	Stop offering tenant plans with no resolvable revenue-share rate	{create-default-pricing-relationships}	{}	{}	2026-08-06 07:03:12.193631+00	Chris Prather	chris.prather@tamarou.com	2026-08-03 23:18:43+00	Chris Prather	chris.prather@tamarou.com
-deploy	0efcbdec112780d02871150d379f0e2b07264241	pricing-plans-amount-cents	registry	Store pricing_plans money as integer cents; the rate lives only in pricing_configuration	{suspend-rateless-tenant-plans}	{}	{}	2026-08-06 07:03:13.07481+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	c9235c00bc368836d5323cd4b98cadfa673aa00e	users	registry	initial creation of users table and basic schema etc	{}	{}	{}	2026-08-06 10:31:12.771657+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:21:58+00	Chris Prather	chris@prather.org
+deploy	2960f6c6a1df94ef7f1c75a036db14aefe121bc5	workflows	registry	add workflows\n\nWorkflows define a sequence of steps to be executed. We process each step and record the outcome in a workflow run.	{users}	{}	{}	2026-08-06 10:31:13.25411+00	Chris Prather	chris.prather@tamarou.com	2024-05-13 17:30:35+00	Chris Prather	chris@prather.org
+deploy	2abd1a15dc06e9db731062527f8541e8c79ffb6f	tenant-on-boarding	registry	create an onboarding workflow for tenants	{workflows,users}	{}	{}	2026-08-06 10:31:13.824153+00	Chris Prather	chris.prather@tamarou.com	2024-05-20 21:00:32+00	Chris Prather	chris@prather.org
+deploy	2f7ae3c1f6f41d31425a9ba8fa21f2e73560115c	schema-based-multitennancy	registry	add the tools to do the schema-based multi-tenancy	{tenant-on-boarding}	{}	{}	2026-08-06 10:31:14.508199+00	Chris Prather	chris.prather@tamarou.com	2024-05-21 01:43:52+00	Chris Prather	chris@prather.org
+deploy	5920ebcdc5fd6c9478af9fb1e435aedd26b5b5ce	events-and-sessions	registry	Add events and sessions to the system	{schema-based-multitennancy}	{}	{}	2026-08-06 10:31:15.484024+00	Chris Prather	chris.prather@tamarou.com	2024-05-31 03:36:11+00	Chris Prather	chris.prather@tamarou.com
+deploy	72bea40753b0250624322f67c9a64fe479f02df7	edit-template-workflow	registry	default workflow for editing templates	{}	{}	{}	2026-08-06 10:31:16.143433+00	Chris Prather	chris.prather@tamarou.com	2025-02-11 23:59:19+00	Chris Prather	chris.prather@tamarou.com
+deploy	daf665c0e9b4b1255a0cf09bb88e322f6609b59f	outcomes	registry	add outcome definitions	{}	{}	{}	2026-08-06 10:31:16.793155+00	Chris Prather	chris.prather@tamarou.com	2025-02-21 06:45:47+00	Chris Prather	chris.prather@tamarou.com
+deploy	c0bb268a4a0c27a97351166c95d50a5f6d73d0ae	summer-camp-module	registry	add summer-camp-module	{}	{}	{}	2026-08-06 10:31:17.583173+00	Chris Prather	chris.prather@tamarou.com	2025-02-22 04:38:37+00	Chris Prather	chris.prather@tamarou.com
+deploy	6d1c676dccf7787d99a54edd3ec556193ff0562d	fix-tenant-workflows	registry	Fix tenant workflows to include first_step	{schema-based-multitennancy}	{}	{}	2026-08-06 10:31:18.450074+00	Chris Prather	chris.prather@tamarou.com	2025-03-22 18:57:13+00	Chris Prather	chris.prather@tamarou.com
+deploy	4d1cce9dd15eadfe664b1a909c36f1afd6d943f2	program-types	registry	Add program types configuration system	{schema-based-multitennancy}	{}	{}	2026-08-06 10:31:18.874118+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:00:00+00	Claude	noreply@anthropic.com
+deploy	ac009951a991475b6b82050987874c5e1562b227	enhanced-pricing-model	registry	Transform pricing to flexible pricing_plans with multiple tiers per session	{summer-camp-module}	{}	{}	2026-08-06 10:31:19.082069+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 12:30:00+00	Claude	noreply@anthropic.com
+deploy	ca85da23e2f52eb6ef3b500530d301617d8d64d3	attendance-tracking	registry	Add attendance tracking infrastructure	{summer-camp-module,program-types}	{}	{}	2026-08-06 10:31:19.28045+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:00:00+00	Claude	noreply@anthropic.com
+deploy	9478a08db15d08f6fae783493e14eb2348a478a4	waitlist-management	registry	Add waitlist functionality to enrollment system	{summer-camp-module,program-types}	{}	{}	2026-08-06 10:31:19.486259+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 13:30:00+00	Claude	noreply@anthropic.com
+deploy	125881c219bfb9b9053e66b6b5fb5fdb720a1ee3	add-program-type-to-projects	registry	Add program type reference to projects	{program-types}	{}	{}	2026-08-06 10:31:19.672929+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:00:00+00	Claude	noreply@anthropic.com
+deploy	b935f44f3eace95edc2fa318ed7de32c27e8ac1a	add-user-fields-for-family	registry	Add birth_date, user_type, grade fields to users	{users}	{}	{}	2026-08-06 10:31:20.123437+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:25:00+00	Claude	noreply@anthropic.com
+deploy	7deaa9fb9f8f3d0309d635af087792c28525f78e	multi-child-data-model	registry	Add family_members table for multi-child support	{summer-camp-module,add-user-fields-for-family,program-types}	{}	{}	2026-08-06 10:31:20.965733+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 14:30:00+00	Claude	noreply@anthropic.com
+deploy	815c14422aeab29c0c21415ea7e8927785a1c910	payments	registry	Add payments infrastructure for Stripe integration	{schema-based-multitennancy}	{}	{}	2026-08-06 10:31:21.834985+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:00:00+00	Claude	noreply@anthropic.com
+deploy	eee70c0e408183c5d818fa1a6ce7e3b34d3b7cf6	add-payment-to-enrollments	registry	Add payment_id reference to enrollments table	{payments,summer-camp-module}	{}	{}	2026-08-06 10:31:22.372948+00	Chris Prather	chris.prather@tamarou.com	2025-01-27 19:15:00+00	Claude	noreply@anthropic.com
+deploy	acd808bf85b5a9d8971f598186ced619196ffd0e	notifications-and-preferences	registry	Add notifications and user preferences for attendance tracking	{attendance-tracking}	{}	{}	2026-08-06 10:31:22.63818+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 10:00:00+00	Claude	noreply@anthropic.com
+deploy	5ce709b8eff5b3b920e7a675d78bee9dabd98367	parent-communication-system	registry	Add parent communication system with messages, recipients, and templates	{notifications-and-preferences}	{}	{}	2026-08-06 10:31:23.194458+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 11:00:00+00	Claude	noreply@anthropic.com
+deploy	fbe73787977942423bb4d7ba5dd152c0c1551e38	performance-optimization	registry	Add database indexes and performance optimizations for production readiness	{parent-communication-system}	{}	{}	2026-08-06 10:31:24.299077+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 15:00:00+00	Claude	noreply@anthropic.com
+deploy	d7d8aaecb2610865fd3801bb68ef57e474b29181	stripe-subscription-integration	registry	Add Stripe subscription integration for tenant billing	{enhanced-pricing-model}	{}	{}	2026-08-06 10:31:24.943331+00	Chris Prather	chris.prather@tamarou.com	2025-01-28 16:00:00+00	Claude	noreply@anthropic.com
+deploy	8eb88eeec3cb411430882061df8d5563af64ba1c	fix-multi-child-enrollments	registry	Fix multi-child enrollment constraints for cleaner architecture	{multi-child-data-model}	{}	{}	2026-08-06 10:31:25.13129+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 00:34:24+00	Chris Prather	chris.prather@tamarou.com
+deploy	4883848eccc158220c9e751882d20ae963d71f52	flexible-enrollment-architecture	registry	Create flexible enrollment architecture supporting family, individual, group, and corporate students	{fix-multi-child-enrollments}	{}	{}	2026-08-06 10:31:25.33096+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:09:59+00	Chris Prather	chris.prather@tamarou.com
+deploy	f6dbddd094284b0b7296c6e8258922882ae24b5d	remove-student-id-foreign-key	registry	Remove student_id foreign key constraint to support polymorphic student references	{flexible-enrollment-architecture}	{}	{}	2026-08-06 10:31:25.522166+00	Chris Prather	chris.prather@tamarou.com	2025-07-15 01:28:59+00	Chris Prather	chris.prather@tamarou.com
+deploy	ffe9a13ee38d1ffa2c706750718b34126adfe6e1	fix-waitlist-family-member-refs	registry	Fix waitlist student_id to reference family_members instead of users	{remove-student-id-foreign-key}	{}	{}	2026-08-06 10:31:25.726477+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 14:30:00+00	Claude	noreply@anthropic.com
+deploy	3c3d83d65febc9de2fbce70f02fa01b5483736e8	fix-waitlist-reorder	registry	Fix waitlist position reordering to avoid unique constraint violations	{waitlist-management}	{}	{}	2026-08-06 10:31:26.233482+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 12:30:00+00	Claude	noreply@anthropic.com
+deploy	300e4d9f1d6bafe1b45f937ea482260f3313760d	fix-waitlist-reorder-v2	registry	Improved waitlist position reordering to fully avoid constraint violations	{fix-waitlist-reorder}	{}	{}	2026-08-06 10:31:27.006644+00	Chris Prather	chris.prather@tamarou.com	2025-07-16 22:50:00+00	Claude	noreply@anthropic.com
+deploy	0903ffab54af2242711b1cb470a44753acf6c9d7	fix-waitlist-reorder-v3	registry	Remove problematic database trigger and handle position reordering in application code	{fix-waitlist-reorder-v2}	{}	{}	2026-08-06 10:31:27.847177+00	Chris Prather	chris.prather@tamarou.com	2025-07-17 00:00:00+00	Claude	noreply@anthropic.com
+deploy	acbd53f8d5ddfc205c3c1ca518ed92170803e32c	drop-transfer-business-rules	registry	Add drop and transfer business rules with admin approval workflow	{fix-multi-child-enrollments}	{}	{}	2026-08-06 10:31:28.648265+00	Chris Prather	chris.prather@tamarou.com	2025-09-18 00:00:00+00	Claude	noreply@anthropic.com
+deploy	41ae5ed8ebd0150b8a8c2987bdbfd98967252b18	remove-waitlist-position-constraint	registry	Remove unique constraint on waitlist position to allow status-based visibility	{fix-waitlist-reorder-v3}	{}	{}	2026-08-06 10:31:29.354344+00	Chris Prather	chris.prather@tamarou.com	2025-09-21 00:00:00+00	Claude	noreply@anthropic.com
+deploy	788f8edbabafb05aef3b90f4b634beb1aaab7b8b	installment-payment-schedules	registry	Add payment schedules and scheduled payments for installment processing	{payments}	{}	{}	2026-08-06 10:31:30.193474+00	Chris Prather	chris.prather@tamarou.com	2025-09-23 03:35:05+00	Chris Prather	chris.prather@tamarou.com
+deploy	2fc34cc17316d64ee48ef1c04e4d9c5e096b29ba	simplify-installment-schema-for-stripe	registry	Simplify database schema to use Stripe native scheduling and retry features	{installment-payment-schedules}	{}	{}	2026-08-06 10:31:30.968366+00	Chris Prather	chris.prather@tamarou.com	2025-09-24 18:00:00+00	Claude	noreply@anthropic.com
+deploy	f61a99336db06d9d07bd30abcf6e18e98d7609ac	unified-pricing-infrastructure	registry	Add unified tenant-to-tenant pricing infrastructure	{}	{}	{}	2026-08-06 10:31:31.193054+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 00:44:03+00	Chris Prather	chris.prather@tamarou.com
+deploy	eb5973974d4f4c06b6e5a93c84b5a66bfcd8f342	consolidate-pricing-relationships	registry	Consolidate pricing relationships into unified model	{unified-pricing-infrastructure}	{}	{}	2026-08-06 10:31:31.432287+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 16:07:15+00	Chris Prather	chris.prather@tamarou.com
+deploy	20f187ed4e2e4c35404fcb5f7d48df933cebfcd5	pricing-relationship-events	registry	Add event sourcing for pricing relationship audit trail	{consolidate-pricing-relationships}	{}	{}	2026-08-06 10:31:31.639323+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 19:55:59+00	Chris Prather	chris.prather@tamarou.com
+deploy	5f3d84a4d2158ce0ffcfeabc5772970faca7c3d3	remove-pricing-plan-relationship-fields	registry	Remove obsolete target_tenant_id and offering_tenant_id from pricing_plans	{}	{}	{}	2026-08-06 10:31:31.887276+00	Chris Prather	chris.prather@tamarou.com	2025-09-29 22:27:51+00	Chris Prather	chris.prather@tamarou.com
+deploy	a2248de7c1f81778ea19e6f9bc5c94e806e21268	passwordless-auth	registry	Passwordless auth: passkeys, magic links, API keys	{users,schema-based-multitennancy}	{}	{}	2026-08-06 10:31:32.329407+00	Chris Prather	chris.prather@tamarou.com	2026-03-25 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	afdf73989587e92e423e0b5f643361890a90a860	auth-notification-types	registry	Add auth notification types to notification_type enum	{notifications-and-preferences,passwordless-auth}	{}	{}	2026-08-06 10:31:32.963152+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 06:56:54+00	Chris Prather	chris.prather@tamarou.com
+deploy	c0834addb5a970c41dc185be91f226cba562e013	tenant-domains	registry	Custom domain management for tenants	{notifications-and-preferences}	{}	{}	2026-08-06 10:31:33.789635+00	Chris Prather	chris.prather@tamarou.com	2026-03-30 19:04:42+00	Chris Prather	chris.prather@tamarou.com
+deploy	5656344b5447eb9e8d5b274f18d9fbfffa20f8d4	magic-link-verification	registry	Add verified_at column for two-step magic link flow	{passwordless-auth}	{}	{}	2026-08-06 10:31:34.504328+00	Chris Prather	chris.prather@tamarou.com	2026-03-31 12:11:05+00	Chris Prather	chris.prather@tamarou.com
+deploy	c3c7ae6599f4db30315a79d7021519f29dafa31d	waitlist-accepted-status	registry	Add accepted status to waitlist check constraint	{waitlist-management}	{}	{}	2026-08-06 10:31:35.166145+00	Chris Prather	chris.prather@tamarou.com	2026-04-05 01:37:21+00	Chris Prather	chris.prather@tamarou.com
+deploy	b1024a8fd0df88c3fd8a543fb5a09512b3fa1cfb	seed-registry-storefront	registry	Seed registry tenant storefront (empty stub, deployed to production)	{events-and-sessions}	{}	{}	2026-08-06 10:31:35.735748+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 13:42:30+00	Chris Prather	chris.prather@tamarou.com
+deploy	0d0c296e547099f9f75884c8283a0077920abc8c	seed-registry-storefront-v2	registry	Seed registry tenant storefront with actual data	{seed-registry-storefront}	{}	{}	2026-08-06 10:31:36.465348+00	Chris Prather	chris.prather@tamarou.com	2026-04-07 14:44:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	3c41efd35c15d993a9e2b9e7621c7f14de92649e	registry-landing-page-template	registry	Customize registry tenant landing page for Jordan's user journey	{seed-registry-storefront-v2}	{}	{}	2026-08-06 10:31:37.231322+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	730dfd28d76922a358dc3e5eaeb144725df7111e	fix-utf8-mojibake	registry	Delete DB templates with mojibake so app reimports fixed versions	{registry-landing-page-template}	{}	{}	2026-08-06 10:31:37.945084+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 12:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	4a34ed08664b5ae39f7caacd4f663285efb88267	update-registry-landing-copy	registry	Update registry landing page copy and 3x2 card grid	{fix-utf8-mojibake}	{}	{}	2026-08-06 10:31:38.698262+00	Chris Prather	chris.prather@tamarou.com	2026-04-11 14:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	44c65bead55e0a35c5372aa2410a7fe5b3bf0e6b	program-publish-status	registry	Add status to projects and contact_person_id to locations for admin program setup	{summer-camp-module,tenant-domains}	{}	{}	2026-08-06 10:31:39.526871+00	Chris Prather	chris.prather@tamarou.com	2026-04-19 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	c2d827c1542f2cf88b9769412919a1ee176147e7	enrollment-confirmation-notification-type	registry	Add enrollment_confirmation notification type	{auth-notification-types}	{}	{}	2026-08-06 10:31:40.321819+00	Chris Prather	chris.prather@tamarou.com	2026-04-23 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	d8dd117aea69688b601f189b8a05f2cc9975b897	webhook-event-dedup	registry	Track processed Stripe webhook event IDs for deduplication	{payments}	{}	{}	2026-08-06 10:31:41.027804+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	bfb052f4957649f0ccf5c59096ee321a100f2886	enrollment-payment-dedup	registry	Unique index to make paid-enrollment finalization idempotent	{add-payment-to-enrollments}	{}	{}	2026-08-06 10:31:41.753324+00	Chris Prather	chris.prather@tamarou.com	2026-06-01 01:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	e9ff0519934e4fcea62f4734c5b9d3b20c09ef4c	fix-attendance-student-id-fkey	registry	Remove student_id FK from attendance_records to allow polymorphic family_member references	{attendance-tracking}	{}	{}	2026-08-06 10:31:42.509596+00	Chris Prather	chris.prather@tamarou.com	2026-06-08 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	3c299ff8324976d192be357e48699e64c975784f	fix-clone-schema-identifier-quoting	registry	Quote dest_schema consistently with quote_ident in clone_schema to support reserved-word schema names	{schema-based-multitennancy}	{}	{}	2026-08-06 10:31:43.299279+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	3207dcbdd391a3113f62367a901b0319137093bc	tenant-stripe-connect	registry	Add per-tenant Stripe Connect account and readiness flags for destination charges	{stripe-subscription-integration}	{}	{}	2026-08-06 10:31:43.989656+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	28e0bf2c6d92e23110f116d7ec4bd11d3a37c607	tenant-scoped-payments	registry	Move payment tables into tenant schemas and repoint enrollments.payment_id FK for tenant-local payment isolation	{payments,installment-payment-schedules,add-payment-to-enrollments,enrollment-payment-dedup,tenant-stripe-connect}	{}	{}	2026-08-06 10:31:44.786145+00	Chris Prather	chris.prather@tamarou.com	2026-06-10 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	28d74506683168469a7f47f7ba0500804400ebeb	seed-free-platform-plan	registry	Seed platform-scope Free (0%) fallback plan	{unified-pricing-infrastructure}	{}	{}	2026-08-06 10:31:45.534625+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	ab661862f6c5f4126610587fd3e7da46123c2f04	create-default-pricing-relationships	registry	Create active platform relationships so tenant plans are selectable	{remove-pricing-plan-relationship-fields,unified-pricing-infrastructure,seed-free-platform-plan}	{}	{}	2026-08-06 10:31:46.072697+00	Chris Prather	chris.prather@tamarou.com	2026-06-13 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	a3a7d4de067885cf24f3b965cee829661b4e7c63	tenant-platform-pricing-plan	registry	Add tenants.platform_pricing_plan_id FK and backfill existing tenants	{create-default-pricing-relationships}	{}	{}	2026-08-06 10:31:46.27966+00	Chris Prather	chris.prather@tamarou.com	2026-06-16 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	4f5c0e1ad6352f2a79bd35ab6532bea463f381dc	refund-application-fee-config	registry	Declare refund_application_fee on seeded platform + tenant plans	{seed-free-platform-plan}	{}	{}	2026-08-06 10:31:46.463542+00	Chris Prather	chris.prather@tamarou.com	2026-07-03 23:09:47+00	Chris Prather	chris.prather@tamarou.com
+deploy	f2e5326eff1970535911be0d1222e035d521c000	suspend-rateless-tenant-plans	registry	Stop offering tenant plans with no resolvable revenue-share rate	{create-default-pricing-relationships}	{}	{}	2026-08-06 10:31:46.661794+00	Chris Prather	chris.prather@tamarou.com	2026-08-03 23:18:43+00	Chris Prather	chris.prather@tamarou.com
+deploy	0efcbdec112780d02871150d379f0e2b07264241	pricing-plans-amount-cents	registry	Store pricing_plans money as integer cents; the rate lives only in pricing_configuration	{suspend-rateless-tenant-plans}	{}	{}	2026-08-06 10:31:46.882378+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 00:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	d685f3eb74071b32ce295c7722ef57a33c66f5d5	payments-amount-cents	registry	Store payments and payment_items money as integer cents	{pricing-plans-amount-cents}	{}	{}	2026-08-06 10:31:47.208388+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 12:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	723b2c3e0164207d1f004b5584857c3f892cb0cc	schedule-amounts-cents	registry	Store installment schedule money as integer cents	{payments-amount-cents}	{}	{}	2026-08-06 10:31:48.101206+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 13:00:00+00	Chris Prather	chris.prather@tamarou.com
+deploy	7299cb40a004b6904fadeecd2da45cb01f18da03	refund-amounts-cents	registry	Store refund money as integer cents	{schedule-amounts-cents}	{}	{}	2026-08-06 10:31:48.940495+00	Chris Prather	chris.prather@tamarou.com	2026-08-06 14:00:00+00	Chris Prather	chris.prather@tamarou.com
 \.
 
 
@@ -2812,7 +2821,7 @@ deploy	0efcbdec112780d02871150d379f0e2b07264241	pricing-plans-amount-cents	regis
 --
 
 COPY sqitch.projects (project, uri, created_at, creator_name, creator_email) FROM stdin;
-registry	\N	2026-08-06 07:02:49.089354+00	Chris Prather	chris.prather@tamarou.com
+registry	\N	2026-08-06 10:31:12.480553+00	Chris Prather	chris.prather@tamarou.com
 \.
 
 
@@ -2821,7 +2830,7 @@ registry	\N	2026-08-06 07:02:49.089354+00	Chris Prather	chris.prather@tamarou.co
 --
 
 COPY sqitch.releases (version, installed_at, installer_name, installer_email) FROM stdin;
-1.1	2026-08-06 07:02:49.08651+00	Chris Prather	chris.prather@tamarou.com
+1.1	2026-08-06 10:31:12.469818+00	Chris Prather	chris.prather@tamarou.com
 \.
 
 
@@ -3921,13 +3930,6 @@ CREATE INDEX idx_payment_schedules_stripe_subscription ON registry.payment_sched
 
 
 --
--- Name: idx_payments_amount; Type: INDEX; Schema: registry; Owner: postgres
---
-
-CREATE INDEX idx_payments_amount ON registry.payments USING btree (amount);
-
-
---
 -- Name: idx_payments_created_at; Type: INDEX; Schema: registry; Owner: postgres
 --
 
@@ -4929,5 +4931,5 @@ ALTER TABLE ONLY sqitch.tags
 -- PostgreSQL database dump complete
 --
 
-\unrestrict y57PtbDyvTQVHtnLVoJCzOBAJaXbifWIttpSbmZaGLHC18wpyacEKzFmIjejiwE
+\unrestrict CnROgHq9s2Fl1d5IilM82T6sg8OHf5hHIsAB839DCm87GCAuNrSNsqensR9YYea
 

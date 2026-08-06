@@ -100,12 +100,12 @@ my $session = Registry::DAO::Session->create($tdb, {
     metadata   => {},
 });
 $session->add_events($tdb, $event->id);
-my $PLAN_AMOUNT = 150.00;
+my $PLAN_AMOUNT_CENTS = 15_000;
 Registry::DAO::PricingPlan->create($tdb, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount_cents => int( $PLAN_AMOUNT * 100 ),
+    amount_cents => $PLAN_AMOUNT_CENTS,
 });
 
 # Parent + child in the tenant schema
@@ -251,7 +251,7 @@ subtest 'ready tenant: payment step passes gate and creates payment' => sub {
         'Stripe create_payment_intent_async was called exactly once';
 
     # Payment row must exist IN THE TENANT SCHEMA
-    my $pay_rows = $tdb->select('payments', ['id', 'user_id', 'amount', 'metadata'],
+    my $pay_rows = $tdb->select('payments', ['id', 'user_id', 'amount_cents', 'metadata'],
         { user_id => $parent->id })->hashes;
     is scalar @$pay_rows, 1, 'exactly one payment row in the tenant schema';
 
@@ -272,9 +272,8 @@ subtest 'Stripe params carry correct destination-charge and metadata keys' => su
     # Application fee derives from the fixture amount so the two cannot
     # drift; the round-half-up boundary itself is unit-tested in
     # t/dao/payment-intent-destination-charge.t.
-    my $expected_fee = Registry::DAO::Payment::application_fee_cents(
-        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT), 0.02);
-    is $expected_fee, 300, 'expected fee sanity check: 2% of $150.00 = 300 cents';
+    my $expected_fee = Registry::DAO::Payment::application_fee_cents($PLAN_AMOUNT_CENTS, 0.02);
+    is $expected_fee, 300, q{expected fee sanity check: 2% of 15000 cents = 300 cents};
     is $captured_params->{'application_fee_amount'}, $expected_fee,
         'application_fee_amount matches expected 2% fee';
 

@@ -14,16 +14,18 @@ SELECT 1 / (
     ) THEN 1 ELSE 0 END
 );
 
--- Verify past_due status is allowed
-INSERT INTO registry.payment_schedules (
-    enrollment_id, pricing_plan_id, total_amount, installment_amount,
-    installment_count, status
-) VALUES (
-    gen_random_uuid(), gen_random_uuid(), 100.00, 50.00, 2, 'past_due'
+-- Verify past_due status is allowed. Asserted against the constraint
+-- definition rather than by inserting a row: the money columns are NOT NULL
+-- and a later change renames them, so an INSERT here would fail once that
+-- change deploys.
+SELECT 1 / (
+    CASE WHEN EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'registry.payment_schedules'::regclass
+        AND conname = 'payment_schedules_status_check'
+        AND pg_get_constraintdef(oid) LIKE '%past_due%'
+    ) THEN 1 ELSE 0 END
 );
-
--- Clean up test record
-ROLLBACK;
 
 -- Verify scheduled_payments columns were removed
 SELECT 1 / (
@@ -36,16 +38,13 @@ SELECT 1 / (
 );
 
 -- Verify processing status is no longer allowed
-DO $$
-BEGIN
-    INSERT INTO registry.scheduled_payments (
-        payment_schedule_id, installment_number, amount, status
-    ) VALUES (
-        gen_random_uuid(), 1, 50.00, 'processing'
-    );
-    RAISE EXCEPTION 'Should not allow processing status';
-EXCEPTION
-    WHEN check_violation THEN
-        -- This is expected
-        NULL;
-END $$;
+SELECT 1 / (
+    CASE WHEN EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'registry.scheduled_payments'::regclass
+        AND conname = 'scheduled_payments_status_check'
+        AND pg_get_constraintdef(oid) NOT LIKE '%processing%'
+    ) THEN 1 ELSE 0 END
+);
+
+ROLLBACK;

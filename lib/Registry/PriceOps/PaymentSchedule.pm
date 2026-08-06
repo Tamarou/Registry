@@ -25,22 +25,21 @@ method create_for_enrollment ($db, $args) {
     my $pricing_plan_id = $args->{pricing_plan_id} or die "pricing_plan_id required";
     my $customer_id = $args->{customer_id} or die "customer_id required";
     my $payment_method_id = $args->{payment_method_id} or die "payment_method_id required";
-    my $total_amount = $args->{total_amount};
+    my $total_cents = $args->{total_amount_cents};
     my $installment_count = $args->{installment_count};
     my $frequency = $args->{frequency} || 'monthly';
 
     # Business validation
-    die "total_amount required" unless defined $total_amount;
+    die "total_amount_cents required" unless defined $total_cents;
     die "installment_count required" unless defined $installment_count;
     die "installment_count must be greater than 1" if $installment_count <= 1;
-    die "total_amount must be positive" if $total_amount <= 0;
+    die "total_amount_cents must be positive" if $total_cents <= 0;
 
     # Business rule: Calculate installment amount with proper rounding
-    my $installment_amount = $self->calculate_installment_amount($total_amount, $installment_count);
+    my $amount_cents = $self->calculate_installment_amount($total_cents, $installment_count);
 
     # Create Stripe subscription first (fail fast if Stripe is unavailable)
     my ($interval, $interval_count) = $self->stripe_interval_from_frequency($frequency);
-    my $amount_cents = int($installment_amount * 100);
 
     my $subscription;
     try {
@@ -66,8 +65,8 @@ method create_for_enrollment ($db, $args) {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan_id,
         stripe_subscription_id => $subscription->{id},
-        total_amount => $total_amount,
-        installment_amount => $installment_amount,
+        total_amount_cents => $total_cents,
+        installment_amount_cents => $amount_cents,
         installment_count => $installment_count,
         status => 'active'
     });
@@ -79,9 +78,11 @@ method create_for_enrollment ($db, $args) {
 }
 
 # Business Logic: Calculate installment amount with rounding rules
-method calculate_installment_amount ($total_amount, $installment_count) {
-    # Business rule: Round to 2 decimal places, handle remainder in last payment
-    return sprintf("%.2f", $total_amount / $installment_count);
+method calculate_installment_amount ($total_cents, $installment_count) {
+    # Business rule: round down to whole cents. A Stripe subscription charges a
+    # fixed amount every interval, so any remainder cannot be collected here;
+    # see calculate_installment_breakdown for the remainder it leaves behind.
+    return int($total_cents / $installment_count);
 }
 
 # Business Logic: Create payment tracking records (Stripe handles actual scheduling)
@@ -92,7 +93,7 @@ method create_scheduled_payment_trackers ($db, $schedule_dao, $subscription) {
         Registry::DAO::ScheduledPayment->create($db, {
             payment_schedule_id => $schedule_dao->id,
             installment_number => $i,
-            amount => $schedule_dao->installment_amount,
+            amount_cents => $schedule_dao->installment_amount_cents,
             status => 'pending' # Will be updated via webhooks
         });
     }

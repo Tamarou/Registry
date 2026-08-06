@@ -95,8 +95,8 @@ sub create_test_schedule ($subscription_id) {
         enrollment_id          => $enrollment_id,
         pricing_plan_id        => $pricing->id,
         stripe_subscription_id => $subscription_id,
-        total_amount           => 300.00,
-        installment_amount     => 100.00,
+        total_amount_cents       => 30000,
+        installment_amount_cents => 10000,
         installment_count      => 3,
         status                 => 'active',
     }, { returning => '*' })->hash;
@@ -105,7 +105,7 @@ sub create_test_schedule ($subscription_id) {
         $dao->db->insert('registry.scheduled_payments', {
             payment_schedule_id => $schedule->{id},
             installment_number  => $i,
-            amount              => 100.00,
+            amount_cents        => 10000,
             status              => 'pending',
         });
     }
@@ -276,8 +276,8 @@ subtest 'failed installment after successful first payment' => sub {
 subtest 'refund updates payment and enrollment status' => sub {
     # Create a completed payment record directly in the DB
     my $payment = $dao->db->insert('registry.payments', {
-        user_id  => $parent->id,
-        amount   => 300.00,
+        user_id      => $parent->id,
+        amount_cents => 30000,
         currency => 'USD',
         status   => 'completed',
         stripe_payment_intent_id => 'pi_test_refund_1',
@@ -290,7 +290,7 @@ subtest 'refund updates payment and enrollment status' => sub {
         status   => 'refunded',
         metadata => encode_json({
             refund_id     => 'rf_test_1',
-            refund_amount => 300.00,
+            refund_amount_cents => 30000,
             refund_reason => 'requested_by_customer',
         }),
     }, { id => $payment->{id} });
@@ -317,8 +317,8 @@ subtest 'refund updates payment and enrollment status' => sub {
     });
 
     my $payment2 = $dao->db->insert('registry.payments', {
-        user_id  => $parent2->id,
-        amount   => 300.00,
+        user_id      => $parent2->id,
+        amount_cents => 30000,
         currency => 'USD',
         status   => 'completed',
         stripe_payment_intent_id => 'pi_test_refund_2',
@@ -336,7 +336,7 @@ subtest 'refund updates payment and enrollment status' => sub {
         status   => 'partially_refunded',
         metadata => encode_json({
             refund_id     => 'rf_test_2',
-            refund_amount => 100.00,
+            refund_amount_cents => 10000,
             refund_reason => 'requested_by_customer',
         }),
     }, { id => $payment2->{id} });

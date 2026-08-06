@@ -132,7 +132,7 @@ my $schedule = $schedule_ops->create_for_enrollment($db, {
     pricing_plan_id => $pricing_plan->id,
     customer_id => 'cus_test_mock_customer',
     payment_method_id => 'pm_test_mock_payment_method',
-    total_amount => 300.00,
+    total_amount_cents => 30000,
     installment_count => 3
 });
 
@@ -144,7 +144,7 @@ subtest 'ScheduledPayment basic operations - Stripe tracking only' => sub {
     isa_ok $first_payment, 'Registry::DAO::ScheduledPayment';
     is $first_payment->payment_schedule_id, $schedule->id, 'Payment tracker linked to schedule';
     is $first_payment->installment_number, 1, 'Correct installment number';
-    is $first_payment->amount, '100.00', 'Correct payment amount';
+    is $first_payment->amount_cents, 10000, 'Correct payment amount';
     is $first_payment->status, 'pending', 'Payment tracker starts as pending';
 
     # Test payment_schedule relationship
@@ -199,7 +199,7 @@ subtest 'Stripe Smart Retries - No manual retry logic needed' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 150.00,
+        total_amount_cents => 15000,
         installment_count => 3,
     });
 
@@ -245,7 +245,7 @@ subtest 'Stripe subscription status tracking - No due date logic needed' => sub 
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 150.00,
+        total_amount_cents => 15000,
         installment_count => 2,
     });
 
@@ -277,7 +277,7 @@ subtest 'ScheduledPayment simplified class methods' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 600.00,
+        total_amount_cents => 60000,
         installment_count => 4,
     });
 
@@ -316,7 +316,7 @@ subtest 'Stripe handles payment processing - webhook simulation' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 200.00,
+        total_amount_cents => 20000,
         installment_count => 2,
     });
 
@@ -349,7 +349,7 @@ subtest 'Database constraints for simplified schema' => sub {
         $db->insert('scheduled_payments', {
             payment_schedule_id => $schedule->id,
             installment_number => 0,  # Should fail: must be > 0
-            amount => 100.00,
+            amount_cents => 10000,
         });
     };
     ok $@, 'Database rejects installment_number <= 0';
@@ -358,7 +358,7 @@ subtest 'Database constraints for simplified schema' => sub {
         $db->insert('scheduled_payments', {
             payment_schedule_id => $schedule->id,
             installment_number => 1,
-            amount => -50.00,  # Should fail: must be positive
+            amount_cents => -5000,  # Should fail: must be positive
         });
     };
     ok $@, 'Database rejects negative amount';
@@ -367,7 +367,7 @@ subtest 'Database constraints for simplified schema' => sub {
     my $test_payment_id = $db->insert('scheduled_payments', {
         payment_schedule_id => $schedule->id,
         installment_number => 5,
-        amount => 50.00,
+        amount_cents => 5000,
         status => 'completed'
     }, { returning => 'id' })->hash->{id};
 

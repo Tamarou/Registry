@@ -121,7 +121,7 @@ subtest 'PaymentSchedule creation' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 300.00,
+        total_amount_cents => 30000,
         installment_count => 3,
         frequency => 'monthly'
     });
@@ -130,9 +130,9 @@ subtest 'PaymentSchedule creation' => sub {
     isa_ok $schedule, 'Registry::DAO::PaymentSchedule';
     is $schedule->enrollment_id, $enrollment_id, 'Enrollment ID matches';
     is $schedule->pricing_plan_id, $pricing_plan->id, 'Pricing plan ID matches';
-    is $schedule->total_amount, '300.00', 'Total amount is correct';
+    is $schedule->total_amount_cents, 30000, 'Total amount is correct';
     is $schedule->installment_count, 3, 'Installment count is correct';
-    is $schedule->installment_amount, '100.00', 'Installment amount calculated correctly';
+    is $schedule->installment_amount_cents, 10000, 'Installment amount calculated correctly';
     is $schedule->status, 'active', 'Schedule starts as active';
     is $schedule->stripe_subscription_id, 'sub_test_mock_subscription', 'Stripe subscription ID stored';
 
@@ -143,12 +143,12 @@ subtest 'PaymentSchedule creation' => sub {
     # Check the scheduled payment tracker details
     my $first_payment = $scheduled_payments[0];
     is $first_payment->installment_number, 1, 'First payment has correct installment number';
-    is $first_payment->amount, '100.00', 'First payment has correct amount';
+    is $first_payment->amount_cents, 10000, 'First payment has correct amount';
     is $first_payment->status, 'pending', 'First payment starts as pending';
 
     my $second_payment = $scheduled_payments[1];
     is $second_payment->installment_number, 2, 'Second payment has correct installment number';
-    is $second_payment->amount, '100.00', 'Second payment has correct amount';
+    is $second_payment->amount_cents, 10000, 'Second payment has correct amount';
 };
 
 subtest 'PaymentSchedule validation' => sub {
@@ -160,7 +160,7 @@ subtest 'PaymentSchedule validation' => sub {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
             payment_method_id => 'pm_test_mock_payment_method',
-            total_amount => 300.00,
+            total_amount_cents => 30000,
             installment_count => 3,
             # Missing customer_id
         });
@@ -173,7 +173,7 @@ subtest 'PaymentSchedule validation' => sub {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
             customer_id => 'cus_test_mock_customer',
-            total_amount => 300.00,
+            total_amount_cents => 30000,
             installment_count => 3,
             # Missing payment_method_id
         });
@@ -187,7 +187,7 @@ subtest 'PaymentSchedule validation' => sub {
             pricing_plan_id => $pricing_plan->id,
             customer_id => 'cus_test_mock_customer',
             payment_method_id => 'pm_test_mock_payment_method',
-            total_amount => 300.00,
+            total_amount_cents => 30000,
             installment_count => 1,  # Invalid: must be > 1
         });
     };
@@ -200,11 +200,11 @@ subtest 'PaymentSchedule validation' => sub {
             pricing_plan_id => $pricing_plan->id,
             customer_id => 'cus_test_mock_customer',
             payment_method_id => 'pm_test_mock_payment_method',
-            total_amount => 0,  # Invalid: must be positive
+            total_amount_cents => 0,  # Invalid: must be positive
             installment_count => 3,
         });
     };
-    like $@, qr/total_amount must be positive/, 'Validates positive total amount';
+    like $@, qr/total_amount_cents must be positive/, 'Validates positive total amount';
 
     # Test missing required fields
     eval {
@@ -212,7 +212,7 @@ subtest 'PaymentSchedule validation' => sub {
             pricing_plan_id => $pricing_plan->id,
             customer_id => 'cus_test_mock_customer',
             payment_method_id => 'pm_test_mock_payment_method',
-            total_amount => 300.00,
+            total_amount_cents => 30000,
             installment_count => 3,
             # Missing enrollment_id
         });
@@ -227,7 +227,7 @@ subtest 'Webhook-based status management' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 450.00,
+        total_amount_cents => 45000,
         installment_count => 3,
     });
 
@@ -264,7 +264,7 @@ subtest 'PaymentSchedule Stripe integration' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 600.00,
+        total_amount_cents => 60000,
         installment_count => 4,
     });
 
@@ -291,7 +291,7 @@ subtest 'Class methods and queries' => sub {
         pricing_plan_id => $pricing_plan->id,
         customer_id => 'cus_test_mock_customer',
         payment_method_id => 'pm_test_mock_payment_method',
-        total_amount => 300.00,
+        total_amount_cents => 30000,
         installment_count => 3,
     });
 
@@ -315,8 +315,8 @@ subtest 'Database constraints for simplified schema' => sub {
         $db->insert('registry.payment_schedules', {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
-            total_amount => -100.00,  # Negative amount should fail
-            installment_amount => 50.00,
+            total_amount_cents => -10000,  # Negative amount should fail
+            installment_amount_cents => 5000,
             installment_count => 2,
             stripe_subscription_id => 'sub_test'
         });
@@ -327,8 +327,8 @@ subtest 'Database constraints for simplified schema' => sub {
         $db->insert('registry.payment_schedules', {
             enrollment_id => $enrollment_id,
             pricing_plan_id => $pricing_plan->id,
-            total_amount => 100.00,
-            installment_amount => 50.00,
+            total_amount_cents => 10000,
+            installment_amount_cents => 5000,
             installment_count => 1,  # Should fail constraint
             stripe_subscription_id => 'sub_test'
         });
@@ -339,8 +339,8 @@ subtest 'Database constraints for simplified schema' => sub {
     my $test_schedule_id = $db->insert('registry.payment_schedules', {
         enrollment_id => $enrollment_id,
         pricing_plan_id => $pricing_plan->id,
-        total_amount => 200.00,
-        installment_amount => 100.00,
+        total_amount_cents => 20000,
+        installment_amount_cents => 10000,
         installment_count => 2,
         stripe_subscription_id => 'sub_test_past_due',
         status => 'past_due'

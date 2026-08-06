@@ -94,8 +94,8 @@ my $schedule = Registry::DAO::PaymentSchedule->create($db, {
     enrollment_id => $enrollment_id,
     pricing_plan_id => $pricing_plan_id,
     stripe_subscription_id => 'sub_e2e_test',
-    total_amount => 300.00,
-    installment_amount => 100.00,
+    total_amount_cents => 30000,
+    installment_amount_cents => 10000,
     installment_count => 3,
     status => 'active'
 });
@@ -105,7 +105,7 @@ subtest 'End-to-end installment payment schedule creation' => sub {
 
     ok $schedule, 'Payment schedule created successfully';
     isa_ok $schedule, 'Registry::DAO::PaymentSchedule';
-    is $schedule->total_amount, '300.00', 'Total amount is correct';
+    is $schedule->total_amount_cents, 30000, 'Total amount is correct';
     is $schedule->installment_count, 3, 'Installment count is correct';
     is $schedule->status, 'active', 'Schedule starts as active';
 };
@@ -118,7 +118,7 @@ subtest 'End-to-end scheduled payment management' => sub {
     my $payment = Registry::DAO::ScheduledPayment->create($db, {
         payment_schedule_id => $schedule->id,
         installment_number => 2,
-        amount => 100.00,
+        amount_cents => 10000,
         status => 'pending'
     });
 

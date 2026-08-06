@@ -42,7 +42,7 @@ my $child = Registry::DAO::Family->add_child($db, $parent->id, {
 
 my $payment = Registry::DAO::Payment->create($db, {
     user_id  => $parent->id,
-    amount   => 100,
+    amount_cents => 10000,
     metadata => {
         enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
         tenant_slug      => undef,
@@ -83,7 +83,7 @@ subtest 'a collision the dedup index does not cover is not swallowed' => sub {
 
     my $repay = Registry::DAO::Payment->create($db, {
         user_id  => $parent->id,
-        amount   => 100,
+        amount_cents => 10000,
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
             tenant_slug      => undef,

@@ -97,8 +97,8 @@ my $schedule = Registry::DAO::PaymentSchedule->create( $db, {
     enrollment_id          => $enrollment_id,
     pricing_plan_id        => $plan->id,
     stripe_subscription_id => $SUB_ID,
-    total_amount           => 300.00,
-    installment_amount     => 100.00,
+    total_amount_cents           => 30000,
+    installment_amount_cents     => 10000,
     installment_count      => 3,
     status                 => 'active',
 } );

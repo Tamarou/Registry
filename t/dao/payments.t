@@ -45,43 +45,43 @@ my $pricing = Registry::DAO::PricingPlan->create($db, {
 
 subtest 'Create payment' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
-        user_id  => $user->id,
-        amount   => 100.50
+        user_id      => $user->id,
+        amount_cents => 10050
     });
-    
+
     ok $payment, 'Payment object created';
     isa_ok $payment, 'Registry::DAO::Payment', 'Payment is correct class';
     ok $payment->id, 'Payment created with ID';
     is $payment->user_id, $user->id, 'User ID matches';
-    is $payment->amount, '100.50', 'Amount matches';
+    cmp_ok $payment->amount_cents, '==', 10050, 'Amount matches';
     is $payment->status, 'pending', 'Default status is pending';
     is $payment->currency, 'USD', 'Default currency is USD';
 };
 
 subtest 'Add line items' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
-        user_id => $user->id,
-        amount  => 200
+        user_id      => $user->id,
+        amount_cents => 20000
     });
-    
+
     $payment->add_line_item($db, {
-        description => 'Child 1 - Session 1',
-        amount      => 100,
-        quantity    => 1,
-        metadata    => { child_id => 'abc123' }
+        description  => 'Child 1 - Session 1',
+        amount_cents => 10000,
+        quantity     => 1,
+        metadata     => { child_id => 'abc123' }
     });
-    
+
     $payment->add_line_item($db, {
-        description => 'Child 2 - Session 1',
-        amount      => 100,
-        quantity    => 1,
-        metadata    => { child_id => 'def456' }
+        description  => 'Child 2 - Session 1',
+        amount_cents => 10000,
+        quantity     => 1,
+        metadata     => { child_id => 'def456' }
     });
-    
+
     my $items = $payment->line_items($db);
     is scalar(@$items), 2, 'Two line items added';
-    is $items->[0]->{amount}, '100.00', 'First item amount correct';
-    is $items->[1]->{amount}, '100.00', 'Second item amount correct';
+    cmp_ok $items->[0]->{amount_cents}, '==', 10000, 'First item amount correct';
+    cmp_ok $items->[1]->{amount_cents}, '==', 10000, 'Second item amount correct';
 };
 
 subtest 'Calculate enrollment total' => sub {
@@ -98,7 +98,7 @@ subtest 'Calculate enrollment total' => sub {
     
     my $result = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
     
-    is $result->{total}, 201, 'Total calculated correctly (100.50 * 2)';
+    cmp_ok $result->{total}, '==', 20100, 'Total calculated correctly (10050 cents * 2)';
     is scalar(@{$result->{items}}), 2, 'Two items generated';
     is $result->{items}->[0]->{description}, 'Alice Smith - Test Session', 'First item description';
     is $result->{items}->[1]->{description}, 'Bob Smith - Test Session', 'Second item description';
@@ -107,15 +107,15 @@ subtest 'Calculate enrollment total' => sub {
 subtest 'Payment for user' => sub {
     # Create a few payments for the user
     Registry::DAO::Payment->create($db, {
-        user_id => $user->id,
-        amount  => 50,
-        status  => 'completed'
+        user_id      => $user->id,
+        amount_cents => 5000,
+        status       => 'completed'
     });
-    
+
     Registry::DAO::Payment->create($db, {
-        user_id => $user->id,
-        amount  => 75,
-        status  => 'pending'
+        user_id      => $user->id,
+        amount_cents => 7500,
+        status       => 'pending'
     });
     
     my $payments = Registry::DAO::Payment->for_user($db, $user->id);
@@ -133,72 +133,9 @@ subtest 'Payment for user' => sub {
     ok $is_ordered, 'Payments ordered by created_at DESC';
 };
 
-subtest '_to_cents converts dollars to integer cents' => sub {
-    can_ok( 'Registry::DAO::Payment', '_to_cents' );
-
-    my @cases = (
-        [ 0,       0    ],
-        [ 9.99,    999  ],
-        [ 100,     10000 ],
-        [ 100.50,  10050 ],
-        # Money columns are DECIMAL(10,2), so the DB never hands us a third
-        # decimal place. A half-cent is only reachable from a literal, and
-        # rounding it up is the same half-up rule application_fee_cents uses.
-        [ 0.025,   3     ],
-    );
-
-    for my $case (@cases) {
-        my ($dollars, $expected) = @$case;
-        is( Registry::DAO::Payment::_to_cents($dollars),
-            $expected,
-            "_to_cents($dollars) == $expected"
-        );
-    }
-};
-
-subtest '_to_cents does not undercharge on binary-float representation' => sub {
-    # DBD::Pg returns DECIMAL(10,2) as a string; "19.99" numifies to a hair
-    # under 19.99, so truncating toward zero bills a cent short. Postgres
-    # stored the amount exactly -- the cent is lost in Perl, on the way to
-    # Stripe, and the parent is undercharged.
-    my @cases = ( [ 19.99, 1999 ], [ 1.15, 115 ], [ 0.29, 29 ], [ 8.87, 887 ] );
-
-    for my $case (@cases) {
-        my ($dollars, $expected) = @$case;
-        is( Registry::DAO::Payment::_to_cents("$dollars"),
-            $expected,
-            "_to_cents($dollars) == $expected, not " . ($expected - 1)
-        );
-    }
-
-    # Sweep every two-decimal amount up to $100. Any drift is a real cent off
-    # a real invoice, so none is acceptable.
-    my @wrong;
-    for my $c ( 0 .. 10_000 ) {
-        my $dollars = sprintf( '%.2f', $c / 100 );
-        push @wrong, $dollars
-            if Registry::DAO::Payment::_to_cents($dollars) != $c;
-    }
-    is( scalar @wrong, 0, 'no drift across 10001 two-decimal amounts' )
-        or diag "first offenders: @wrong[ 0 .. 9 ]";
-};
-
-subtest 'create_payment_intent uses _to_cents for amount conversion' => sub {
-    # Build a payment and call create_payment_intent without Stripe keys.
-    # We only care that the amount field passed to Stripe equals _to_cents.
-    # Since no STRIPE_SECRET_KEY is set here, the call will die inside
-    # stripe_client(); we catch that and confirm the amount was prepared
-    # correctly by checking _to_cents directly.
-    my $payment = Registry::DAO::Payment->create($db, {
-        user_id => $user->id,
-        amount  => 9.99,
-    });
-
-    is( Registry::DAO::Payment::_to_cents( $payment->amount ),
-        999,
-        '_to_cents(9.99) == 999 - matches what create_payment_intent would pass to Stripe'
-    );
-};
+# The dollars-to-cents conversion that used to live here is gone: money is
+# stored and carried as integer cents end to end, so there is nothing left to
+# convert and no rounding to get wrong. See t/dao/payment-amount-cents.t.
 
 # Skip Stripe-specific tests if API key not set or SSL not available.
 # These tests require a live Stripe API connection and a valid key;
@@ -217,8 +154,8 @@ SKIP: {
 
     subtest 'Create payment intent' => sub {
         my $payment = Registry::DAO::Payment->create($db, {
-            user_id => $user->id,
-            amount  => 50
+            user_id      => $user->id,
+            amount_cents => 5000
         });
 
         my $intent_data = eval {
@@ -243,8 +180,8 @@ SKIP: {
 
     subtest 'Process payment' => sub {
         my $payment = Registry::DAO::Payment->create($db, {
-            user_id => $user->id,
-            amount  => 25
+            user_id      => $user->id,
+            amount_cents => 2500
         });
 
         # Would need a real payment intent ID from Stripe to test this properly
