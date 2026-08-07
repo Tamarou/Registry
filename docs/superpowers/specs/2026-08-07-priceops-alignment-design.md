@@ -132,6 +132,41 @@ The consequence for this milestone is a rule with teeth: **anything Stripe alrea
 call rather than rebuild.** Applied below, it deletes an accrual engine an earlier draft of
 this document had specified.
 
+### Whose Stripe account: the provider's
+
+Tenants own their own data. A plan a tenant authors is theirs, so it publishes to *their*
+connected account. Registry's own platform plans publish to the platform account. Stated
+once: **the provider's account holds the plan** — which is the horizontal recursion
+projected onto Stripe, and needs no special case for either direction.
+
+This has a consequence worth stating plainly rather than discovering in Leg 2b. Stripe
+objects do not cross accounts: a Price on a connected account cannot be referenced by a
+PaymentIntent created on the platform account. Tenant→family therefore moves from
+**destination charges to direct charges** — created on the tenant's account with
+`Stripe-Account`, with Registry's share as `application_fee_amount`.
+
+Today `Payment.pm:94-96` sends `transfer_data[destination]` and `on_behalf_of`, so the
+tenant is already the settlement merchant and already bears Stripe's fees. What changes is
+which account the charge object lives on, and with it the Customer, the Price, and the
+receipt.
+
+Three things fall out in our favour, which is usually the sign a boundary is in the right
+place:
+
+- **Dispute liability moves to the tenant**, where the service was delivered and the money
+  landed. Under destination charges the platform is on the hook for a chargeback after the
+  tenant has already been paid out — a risk this document otherwise had to flag and mitigate.
+- **Merchant of record stops being an open question.** With direct charges the tenant is
+  unambiguously the seller; sales-tax obligation follows them, not us.
+- **The missing-`tenant_id` webhook bug becomes structural rather than a metadata patch.**
+  Connected-account events arrive with `account: acct_…`, which identifies the tenant
+  without anyone remembering to set metadata. The five lifecycle handlers that currently
+  bail on `return unless $tenant_id` get their answer from the envelope.
+
+The cost is real and is scheduled as its own leg: the Payment Element needs
+`stripeAccount`, families become Customers on the tenant's account, the webhook endpoint
+must accept Connect events, and the money-path E2E suite is re-cut against direct charges.
+
 ## Acceptance criterion
 
 The milestone has one pass/fail test, and it is Pillar 1's own promise:
@@ -310,13 +345,23 @@ from `$raw <= 1` to `$raw <= 0.5`, with a message naming both readings, so the a
   it never infers. Stripe being the source of truth is what makes this job trivially
   correct instead of a second opinion. Step 1 closes the hole; this finds what the hole
   already ate.
-- **Disputes.** A `charge.dispute.created` branch that at minimum alerts. Destination
-  charges mean the tenant has already been paid when funds are clawed back.
+- **Charge model.** Tenant→family moves to direct charges on the tenant's connected
+  account, per "Whose Stripe account" above. `Payment.pm:64-96` stops sending
+  `transfer_data[destination]` and `on_behalf_of` and starts sending `Stripe-Account`;
+  `application_fee_amount` is unchanged. The Payment Element is initialised with
+  `stripeAccount`, families become Customers on the tenant's account, and the webhook
+  endpoint accepts Connect events. Registry→tenant stays on the platform account and does
+  not change.
+- **Disputes.** A `charge.dispute.created` branch that at minimum alerts. Under direct
+  charges the dispute is the tenant's, which is the point; the alert exists so we learn
+  about it rather than to make us liable.
 - Plus #247 (payment finalization spanning two schemas without a shared transaction),
-  #284, #289, #293, and the tenant-subscription lifecycle fix: pass `$tenant_id` through
-  to `create_subscription_with_config` (`TenantPayment.pm:340-344` vs `Subscription.pm:118`)
-  so the five handlers that bail on `return unless $tenant_id` can run, and give
-  `billing_status` at least one reader.
+  #284, #289, #293, and the tenant-subscription lifecycle fix. Registry→tenant subscriptions
+  are platform-account objects and still need `$tenant_id` passed through to
+  `create_subscription_with_config` (`TenantPayment.pm:340-344` vs `Subscription.pm:118`)
+  so the five handlers that bail on `return unless $tenant_id` can run; tenant→family
+  events get their tenant from the event's `account` field instead. `billing_status` gets
+  at least one reader.
 
 ## What gets deleted
 
@@ -347,17 +392,24 @@ replacement. `DAO::PricingRelationshipEvent` dies with them. Close #76.
 | 0 | Webhook atomicity; `update` → `save` on money paths | — |
 | 1 | Safe deletions: installments, misfiled tests, #296, discount form | — |
 | 2 | `pricing_plans` / `pricing_plan_versions` / `pricing_components`; migrate existing plans to v1 | 1 |
-| 2b | Publish projection: version → Stripe Product, component → Stripe Price; ids recorded; `Subscription.pm` and `Client/Stripe.pm` stop building inline `price_data` | 2 |
+| 2a | Charge model: tenant→family becomes direct charges on the connected account; Payment Element `stripeAccount`; Customers on the tenant's account; Connect webhooks | 0 |
+| 2b | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `Subscription.pm` and `Client/Stripe.pm` stop building inline `price_data` | 2, 2a |
 | 3 | `pricing_schedules`; migrate `pricing_relationships` + `platform_pricing_plan_id`; drop the FK; delete the two dead modules | 2 |
 | 4 | `Entitlement` + `Quote`; rewire the charge; delete `calculate_enrollment_total`; refuse-not-zero | 3 |
 | 5 | Quote columns on `payments`; fee recorded; `AdminDashboard.pm:36` corrected | 4 |
 | 6 | `Metering` + Stripe meter-event forwarding | 3 |
 | 7 | `percentage`/`recurring`: metered Price at publish, `invoice.*` handlers; drop `billing_periods` | 2b, 5, 6 |
 | 8 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds | 2 |
-| 9 | `Job::ReconcilePayments`; disputes; subscription lifecycle `tenant_id` | 0 |
+| 9 | `Job::ReconcilePayments`; disputes; subscription lifecycle tenant resolution | 0, 2a |
 
 Leg 0 ships alone and first: it can lose a paid enrollment today and depends on nothing
 else here.
+
+Leg 2a is the riskiest leg in the milestone — it is the only one that changes a path
+already carrying real charges, and it invalidates the money-path E2E suite rather than
+extending it. It gets its own branch and the re-cut suite is its gate. It sits early
+because every plan published to a connected account in 2b assumes it, and retrofitting the
+charge model afterwards would mean publishing the same Prices twice.
 
 ## Testing
 
@@ -381,7 +433,8 @@ Plus the money-movement tests: a webhook killed mid-processing leaves no claim (
 a `RevenueShare` die surfaces through the charge as a readable error with no second
 payment row and no spent idempotency token — twenty lines added to
 `t/dao/payment-intent-destination-charge.t`, closing a gap the review found where all five
-die paths are unit-covered and none is covered through a request.
+die paths are unit-covered and none is covered through a request. That file is renamed and
+re-cut in Leg 2a, since it asserts the destination-charge parameters by name.
 
 And the acceptance test above, which is the milestone gate.
 
@@ -419,8 +472,9 @@ making real failing HTTPS calls whose warnings land in output. Leg 1 deletes all
 - **`tiered` pricing.** Reserved in the `kind` vocabulary, rejected by the resolver. No named consumer.
 - **Admin UI for authoring platform plans.** Pillar 5 is satisfied by `./registry pricing`
   plus constraints. UI when a human who is not perigrin needs to author a plan.
-- **Sales tax and merchant of record.** No code, but the destination-charge design implies
-  the tenant and that should be written down before the first charge.
+- **Sales tax.** No code. Merchant of record is no longer open — direct charges make the
+  tenant the seller unambiguously — but what that obliges them to collect is theirs to
+  answer and ours to document, not to compute.
 - **Refunds (#286).** The resolver and `t/dao/refund-application-fee.t` stay as they are.
   Refunds get their design after this lands; the drop-approval workflow's own bug
   (`ProcessAdminDropDecision.pm:33` advances one step of six while
@@ -437,13 +491,12 @@ making real failing HTTPS calls whose warnings land in output. Leg 1 deletes all
    tenant load-bearing as the provider identity, which strengthens the case for collapsing
    the all-zeros row and the hardcoded `PricingPlanSelection.pm:14` constant into the real
    registry tenant. In scope for Leg 3 or deferred?
-3. **Which Stripe account holds a tenant's Prices.** Registry uses destination charges, so
-   a family's charge is created on the platform account with `transfer_data[destination]`
-   set to the tenant. That suggests a tenant's program Prices also live on the platform
-   account, keyed to the tenant by metadata — but a tenant running their own subscription
-   billing would want them on their connected account. The two are not interchangeable and
-   the answer decides what Leg 2b builds. Needs a test-mode spike before Leg 2b, not a
-   guess.
+3. **Existing tenants at the 2a cutover.** Direct charges are settled for new plans, but
+   `registry.tenants` already holds connected accounts onboarded under the destination
+   model. Whether every existing account has the capabilities a direct charge needs, and
+   what a tenant sees the day their receipts and dispute notifications start coming from
+   their own Stripe account rather than ours, is an operational question with no code
+   answer. Confirm against the real accounts in test mode before 2a merges.
 4. **Component-level currency and mixed-currency plans.** Currency lives on the component.
    A version with components in two currencies is expressible; whether it is *chargeable*
    depends on Stripe behaviour we have not tested. Recommend a CHECK enforcing one currency
