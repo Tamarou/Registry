@@ -49,7 +49,7 @@ The five pillars:
 
 | Pillar | Status | Evidence |
 |---|---|---|
-| 1. Model definition | absent | `registry.pricing_plans` (`sql/test-schema.sql:1200-1218`) has no version column and an `updated_at`; rows mutate in place. Editing `pricing_configuration.percentage` retroactively rewrites the apparent rate of every historical charge (`RevenueShare.pm:31-37`). Moving a tenant between plans rewrites the refund policy of all their past charges (`Payment.pm:114`). Nor is there any Stripe representation to be immutable instead: `stripe_price_id` and `stripe_product_id` appear nowhere in the schema, and `Subscription.pm:121-125` and `Client/Stripe.pm:118-120` build a throwaway Product and Price inline per subscription — so Stripe cannot group revenue by plan and a price change leaves no trace on either side. |
+| 1. Model definition | absent | `registry.pricing_plans` (`sql/test-schema.sql:1200-1218`) has no version column and an `updated_at`; rows mutate in place. Editing `pricing_configuration.percentage` retroactively rewrites the apparent rate of every historical charge (`RevenueShare.pm:31-37`). Moving a tenant between plans rewrites the refund policy of all their past charges (`Payment.pm:114`). Nor is there any Stripe representation to be immutable instead: `stripe_price_id` and `stripe_product_id` appear nowhere in the schema, and `Subscription.pm:121-125` builds a throwaway Product and Price inline per subscription — so Stripe cannot group revenue by plan and a price change leaves no trace on either side. `Service::Stripe:182-202` already implements the Product and Price API; it has no production caller. |
 | 2. Customer schedule | absent | `tenants.platform_pricing_plan_id` (`sql/deploy/tenant-platform-pricing-plan.sql:10`) is a single nullable FK — a pointer, not a schedule. #277 is this defect. `RevenueShare.pm:43-45` falls back to Free on NULL, and afterwards nothing distinguishes "charged 0% because Free" from "charged 2%". |
 | 3. Metering | absent; the one attempt is dead | `PricingRelationships::_get_usage_data` (`:241-248`, `:255-264`) filters `registry.payments` on a `tenant_id` column the table has never had; its subtest is `plan skip_all`. The actual revenue event — `application_fee_cents`, computed `Payment.pm:43-45`, shipped to Stripe `:96` — is persisted nowhere. #263. |
 | 4. Entitlement checking | violated, five live sites | The rate a studio pays is disclosed on the signup page only inside the plan's *name* string, because `templates/tenant-signup/pricing.html.ep:65-67` reads a `revenue_share_percent` key nothing writes; `t/user-journeys/alex/03-platform-billing.t:135-138` therefore asserts it by regexing the plan name. Plus `DAO/PricingPlan.pm:154,170` branching on `plan_type` strings, `RevenueShare.pm:43-45` selecting the Free plan by identity, and `__auto_select_plan` (#275). |
@@ -196,7 +196,18 @@ a charge, or issues a refund. Writing definitions is translation; moving money i
 | `PriceOps::Schedule` | 2 | provider → consumer → plan version, effective-dated. Creates the collecting Stripe object for recurring components. |
 | `PriceOps::Metering` | 3 | Every monetizable event, including those currently priced at zero. Forwards to Stripe as a meter event when a live component prices that type. |
 | `PriceOps::Entitlement` | 4 | Sole read path. Resolves Schedule → Model, returns a Quote. Never touches Stripe. Callers never name a plan. |
-| — | 5 | Not a module: `./registry pricing` CLI plus CHECK constraints that make an invalid plan unauthorable. |
+| — | 5 | Not a module: `./registry pricing` CLI plus CHECK constraints that make an invalid plan unauthorable. `Registry::Command::*` already establishes the shape, and its `run($cmd, $schema, @args)` signature already carries the schema argument the provider identity needs. |
+
+**The existing authoring workflow is in scope and is the larger half of Pillar 1.** Dropping
+`plan_scope`, `plan_type` and `pricing_model_type` invalidates six step classes and six
+templates that write exactly those three columns — `PricingPlanBasics.pm:18,20,47,49`,
+`PricingModel.pm:17`, `ReviewActivatePlan.pm:102-105,169-174`, `ResourceAllocation.pm:133`,
+`RequirementsRules.pm:145`, `PricingPlanSelection.pm:93,147`, `GenerateEvents.pm:100` — about
+1,028 lines plus `templates/pricing-plan-creation/`, and the `pricing_plans_plan_scope_check`
+constraint. The workflow is rewritten to author versions and components, not merely repointed.
+This is not optional polish: the milestone's own Pillar 5 test asserts that a plan authored
+through the CLI is identical to one authored through the workflow, which cannot hold while
+the workflow writes a vocabulary that no longer exists.
 
 **Everything else is money movement and stays outside PriceOps**: `DAO::Payment` (one
 payment row, exactly-once intent), `Controller::Webhooks` (atomic claim and process),
@@ -217,20 +228,22 @@ is precisely the string vocabulary Pillar 4 forbids application code from branch
 and `DAO/PricingPlan.pm:154,170` is the branch that goes.
 
 **`pricing_plan_versions`** — the immutable envelope. `plan_id`, `version`, `requirements`,
-`published_at`, `retired_at`, `stripe_product_id`. Immutability enforced by a `BEFORE UPDATE`
+`published_at`, `stripe_product_id`. Immutability enforced by a `BEFORE UPDATE`
 trigger rejecting changes to a published version, not by convention — and reinforced
 downstream, since the Stripe Price it publishes to is immutable by Stripe's own rules.
 
 **`pricing_components`** — child rows, immutable with their version, any number per version:
 
-- `kind` — `fixed` | `percentage` (`tiered` reserved, rejected by the resolver until it has a consumer)
+- `kind` — `fixed` | `percentage`
 - `cadence` — `one_time` | `recurring`; `period` (`month` | `year`) when recurring
 - `amount_cents` (fixed) or `rate` (percentage)
 - `currency` — **on the component, not the version**
 - `applies_to` — the metering event type this prices against
-- `label` — what the payer sees on the line item
 - `stripe_price_id` — filled in at publish. The component is the unit that maps one-to-one
   onto a Stripe Price, which is why the split lives here rather than on the version.
+
+The payer-facing line item is generated from the component, not stored on it. A stored label
+and a generator are two spellings of the same string that drift apart, which is #292.
 
 Composition is the point. "2% plus $20/month" is two rows; "5% affiliate share, one-time
 setup fee, monthly floor" is three; registry's own 2% is one row with `provider_id` =
@@ -328,6 +341,14 @@ wrappers over `quote(provider: registry, consumer: tenant)`. `_coerce_pct`'s gua
 from `$raw <= 1` to `$raw <= 0.5`, with a message naming both readings, so the ambiguous
 `1` fails at plan authoring rather than at payout.
 
+**Refunds resolve backwards, not forwards.** A refund prices an event that already happened,
+so `refund_application_fee_for_tenant` reads the terms stamped on the payment row rather
+than quoting afresh. `Payment.pm:114` resolves from the tenant's *current* plan today, which
+is why moving a tenant between plans rewrites the refund policy of every charge they have
+ever taken. Quoting a refund is the same bug in a new resolver; reading the stamp is the fix.
+This is the one place the quote is a read rather than a write, and it is the reason the quote
+columns exist.
+
 ### Money movement (not PriceOps)
 
 - **Webhook atomicity.** Claim and processing collapse into one transaction: BEGIN,
@@ -347,11 +368,25 @@ from `$raw <= 1` to `$raw <= 0.5`, with a message naming both readings, so the a
   already ate.
 - **Charge model.** Tenant→family moves to direct charges on the tenant's connected
   account, per "Whose Stripe account" above. `Payment.pm:64-96` stops sending
-  `transfer_data[destination]` and `on_behalf_of` and starts sending `Stripe-Account`;
-  `application_fee_amount` is unchanged. The Payment Element is initialised with
-  `stripeAccount`, families become Customers on the tenant's account, and the webhook
-  endpoint accepts Connect events. Registry→tenant stays on the platform account and does
+  `transfer_data[destination]` and `on_behalf_of`; `application_fee_amount` is unchanged.
+  The header itself is three lines in one place — `Service::Stripe::_request_async` builds
+  headers at `:28-32` and every method routes through it. The Payment Element is initialised
+  with `stripeAccount` (`templates/summer-camp-registration/payment.html.ep:144`), which
+  uses the *platform's* publishable key, so no per-tenant key is needed. Families become
+  Customers on the tenant's account. Registry→tenant stays on the platform account and does
   not change.
+- **Refunds move with the charge model.** `_refund_connect_params` (`Payment.pm:109-119`)
+  sends `reverse_transfer => 'true'`, which does not exist for a direct charge — there is no
+  transfer to reverse. It goes; `refund_application_fee` stays. `t/dao/refund-application-fee.t`
+  asserts `reverse_transfer` at `:271, :318, :346, :375, :416` and is re-cut in the same leg.
+  Refunds are a requirement of this milestone, not a follow-up: the charge model cannot move
+  without them, and #286 lands here.
+- **A single Stripe client.** `Registry::Client::Stripe` (198 lines) is deleted. Twenty-three
+  of its methods are pass-through to `Registry::Service::Stripe`, its remaining logic is
+  installment-specific, and its only two callers — `PriceOps/ScheduledPayment.pm:18` and
+  `PriceOps/PaymentSchedule.pm:19` — are already deleted by Leg 1. `Service::Stripe` becomes
+  the sole client. It is not renamed: roughly ten test files monkey-patch it by
+  fully-qualified name, and that is churn for a noun.
 - **Disputes.** A `charge.dispute.created` branch that at minimum alerts. Under direct
   charges the dispute is the tenant's, which is the point; the alert exists so we learn
   about it rather than to make us liable.
@@ -365,13 +400,17 @@ from `$raw <= 1` to `$raw <= 0.5`, with a message naming both readings, so the a
 
 ## What gets deleted
 
-Installments are cut. ~3,500 lines across `lib/` and `t/`, the `Webhooks.pm:69,204-295`
+Installments are cut. ~3,700 lines across `lib/` and `t/`, the `Webhooks.pm:69,204-295`
 branch, and forward migrations for `payment_schedules` and `scheduled_payments`. Close
 #295 and #279 as won't-do. Rationale: unreachable for eleven months, two independent
 breaks from working (an orphaned workflow step *and* a registry-scoped webhook classifier
 that cannot see tenant-schema rows), drifted from `Payment.pm` on four separate fixes, and
 never offered to a single parent. It also frees the name `Schedule`, which
 `PriceOps::PaymentSchedule` currently occupies for an unrelated meaning.
+
+`Registry::Client::Stripe` goes with them, in the same leg and for the same reason: it is a
+198-line delegation wrapper whose only callers are those two modules. Registry ends the
+milestone with one Stripe client.
 
 Also deleted: `t/dao/pricing-plan-clean-architecture.t` (#296),
 `t/e2e/installment-payment-enrollment.t` and
@@ -391,9 +430,9 @@ replacement. `DAO::PricingRelationshipEvent` dies with them. Close #76.
 |---|---|---|
 | 0 | Webhook atomicity; `update` → `save` on money paths | — |
 | 1 | Safe deletions: installments, misfiled tests, #296, discount form | — |
-| 2 | `pricing_plans` / `pricing_plan_versions` / `pricing_components`; migrate existing plans to v1 | 1 |
-| 2a | Charge model: tenant→family becomes direct charges on the connected account; Payment Element `stripeAccount`; Customers on the tenant's account; Connect webhooks | 0 |
-| 2b | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `Subscription.pm` and `Client/Stripe.pm` stop building inline `price_data` | 2, 2a |
+| 2 | `pricing_plans` / `pricing_plan_versions` / `pricing_components`; migrate existing plans to v1; rewrite the `pricing-plan-creation` workflow onto the new vocabulary | 1 |
+| 2a | Charge model: tenant→family becomes direct charges; refunds lose `reverse_transfer`; Payment Element `stripeAccount`; Customers on the tenant's account; Connect webhook endpoint and its secret | 0, 1 |
+| 2b | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `Subscription.pm` stops building inline `price_data` | 2, 2a |
 | 3 | `pricing_schedules`; migrate `pricing_relationships` + `platform_pricing_plan_id`; drop the FK; delete the two dead modules | 2 |
 | 4 | `Entitlement` + `Quote`; rewire the charge; delete `calculate_enrollment_total`; refuse-not-zero | 3 |
 | 5 | Quote columns on `payments`; fee recorded; `AdminDashboard.pm:36` corrected | 4 |
@@ -409,7 +448,20 @@ Leg 2a is the riskiest leg in the milestone — it is the only one that changes 
 already carrying real charges, and it invalidates the money-path E2E suite rather than
 extending it. It gets its own branch and the re-cut suite is its gate. It sits early
 because every plan published to a connected account in 2b assumes it, and retrofitting the
-charge model afterwards would mean publishing the same Prices twice.
+charge model afterwards would mean publishing the same Prices twice. It depends on Leg 1
+only because deleting installments is what frees `Registry::Client::Stripe`.
+
+**2a needs a Connect webhook endpoint before it needs any code.** Events from a connected
+account arrive at a Connect endpoint, which carries its own signing secret. Registry has
+exactly one, read from `$ENV{STRIPE_WEBHOOK_SECRET}` at `Webhooks.pm:14` and `Payment.pm:141`
+(and at `Client/Stripe.pm:18`, which Leg 1 deletes). Until a second endpoint and secret exist, a direct charge
+succeeds at Stripe and Registry never hears about it — the same failure mode as the webhook
+defect Leg 0 fixes, reintroduced by configuration. Register the endpoint and add the secret
+first; the code is the easy half.
+
+The tenant lookup 2a needs is already written: `Webhooks.pm:148-162` resolves a tenant from
+`stripe_connect_account_id` for `account.updated`. Payment events reuse it rather than
+inventing one.
 
 ## Testing
 
@@ -469,17 +521,16 @@ making real failing HTTPS calls whose warnings land in output. Leg 1 deletes all
 
 ## Out of scope
 
-- **`tiered` pricing.** Reserved in the `kind` vocabulary, rejected by the resolver. No named consumer.
+- **`tiered` pricing.** Not in the `kind` vocabulary. It is a fourth collection mechanism with
+  no named consumer; adding a `kind` later is an append, which is what an append-only model is for.
 - **Admin UI for authoring platform plans.** Pillar 5 is satisfied by `./registry pricing`
   plus constraints. UI when a human who is not perigrin needs to author a plan.
 - **Sales tax.** No code. Merchant of record is no longer open — direct charges make the
   tenant the seller unambiguously — but what that obliges them to collect is theirs to
   answer and ours to document, not to compute.
-- **Refunds (#286).** The resolver and `t/dao/refund-application-fee.t` stay as they are.
-  Refunds get their design after this lands; the drop-approval workflow's own bug
-  (`ProcessAdminDropDecision.pm:33` advances one step of six while
-  `templates/admin-drop-approval/complete.html.ep:7` reports success) is an operator-trust
-  bug and gets its own issue now.
+- **The drop-approval workflow bug.** `ProcessAdminDropDecision.pm:33` advances one step of
+  six while `templates/admin-drop-approval/complete.html.ep:7` reports success. An
+  operator-trust bug, unrelated to pricing; it gets its own issue now.
 
 ## Open questions
 
