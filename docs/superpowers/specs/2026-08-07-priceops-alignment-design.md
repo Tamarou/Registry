@@ -1906,9 +1906,10 @@ Two more, both perigrin's calls rather than a review's findings:
     narrower one: every guard is a read, then a decision, then a write, against a row nothing
     is holding, because `DAO/Payment.pm` contains zero `$db->begin` and zero `FOR UPDATE`.
     Both were worth keeping only once they were true.
-31. **Two of the folded-in findings turned out to be about zero, and they are the reason the
-    widened bar was the right call.** Neither is a PriceOps defect, both are money defects,
-    and under the old scope both would have been filed. An early-bird plan makes its children
+31. **Two more, and both are about zero — which is the argument for (30) rather than a
+    footnote to it.** They came from the same review round as (30)'s five and were left out
+    of that list. Neither is a PriceOps defect, both are money defects, and under the old bar
+    both would have been filed and forgotten. An early-bird plan makes its children
     *free* rather than unpriced, because an epoch integer is compared against a
     hyphen-stripped date string and the price comes back `undef` into a `defined` check that
     skips. And the platform's own share is *zero* rather than the advertised 2.5%, because
