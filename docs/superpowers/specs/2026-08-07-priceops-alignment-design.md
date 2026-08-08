@@ -1070,32 +1070,56 @@ one migration.
 ## Sequencing
 
 Legs are renumbered from the previous draft: the old 2a/2b lettering is gone, the old Leg 2
-is split in two, and the old Legs 6 and 7 collapse into one recording-only leg. Estimates are
-engineering days for one person and are ranges because several depend on how much of the E2E
-suite has to be re-cut rather than extended.
+is split in two, and the old Legs 6 and 7 collapse into one recording-only leg.
 
-| Leg | Content | Depends on | Days |
+**Estimates are in sessions, not days.** A session is one context window of focused work,
+250k-500k tokens, from a cold start to a commit. It is the honest unit for this project
+because it is the unit the work actually comes in: a session ends when the context is spent,
+not when a clock runs out, and what spends it is files read, edits made, and test output
+consumed. Day estimates for agent-assisted work have been wrong by large factors here in
+both directions, and they smuggle in an assumption about how many hours anyone sits down for.
+Sessions do not.
+
+Read the ratios rather than the total. What the table claims with confidence is that Leg 3 is
+five times Leg 10 and that Legs 3, 4 and 8 are where the milestone lives; the absolute count
+is the weaker claim. Ranges are wide where a leg's cost depends on how much of the E2E suite
+has to be re-cut rather than extended.
+
+| Leg | Content | Depends on | Sessions |
 |---|---|---|---|
-| 1 | Safe deletions: installments, `Client::Stripe`, `PriceOps/PricingPlan.pm`, misfiled tests, #296, discount form | — | 3-4 |
-| 0 | Webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed` | 1 | 3-4 |
-| 2 | **#294**: collapse `registry-platform` into `registry`; retire the all-zeros UUID as a provider identity, in `lib/` **and 21 test files including `t/lib/Test/Registry/Helpers.pm`** | 1 | 3-4 |
-| 3 | Charge model: **account configuration decided**; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` / `charge.dispute.*` handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; Connect webhook endpoint and its secret; Registry-initiated disconnect | 0, 1 | 9-12 |
-| 4 | `pricing_plan_versions` / `pricing_components` + immutability triggers; `pricing_plans` gains `provider_id` and `audience`, keeps `session_id`; **new `clone_schema` sqitch change with the skip list in every table-shaped loop**; normalize the two tenant table shapes, then migrate registry **and every tenant schema's** plans to v1; **repoint `PricingPlan->create` at the registry table**; `plan_scope`/`plan_type`/`pricing_configuration` kept nullable and dual-written by `PriceOps::Model->publish_version` | 2 | 8-11 |
-| 5 | Rewrite the `pricing-plan-creation` workflow and its templates onto the version/component vocabulary | 4 | 5-7 |
-| 6 | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `published_at` written last; **backfill-publish every v1 migrated in Leg 4**; `Subscription.pm` stops building inline `price_data` | 3, 4 | 3-4 |
-| 7 | `pricing_schedules` + the overlap exclusion constraint; migrate `pricing_relationships` + `platform_pricing_plan_id` (**column kept nullable and dual-written**), writing a schedule row for **every** tenant; drop `billing_periods` and `DAO::BillingPeriod`; delete the dead modules | 4 | 3-4 |
-| 8 | `Entitlement` + `Quote` + `Model->offered_versions`; rewire the charge; **`Schedule` creates direct-charge subscriptions with `application_fee_percent`** and an idempotency key; **subscription envelope dispatch**; omit-never-zero `application_fee_amount`; repoint `PricingPlanSelection` and `GenerateEvents`; delete `calculate_enrollment_total` and the `!$ENV{STRIPE_SECRET_KEY}` bypass; refuse-not-zero; `RevenueShare` becomes a wrapper | 6, 7 | 7-10 |
-| 9 | Quote columns on `payments` incl. `refund_application_fee`; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **drop the deprecated columns and the tenant-schema `pricing_plans`** | 8 | 4-5 |
-| 10 | `Metering`: record every monetizable event including zero-priced ones | 7 | 1-2 |
-| 11 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds | 4, 5 | 2-3 |
-| 12 | Dispute resolution surface: admin page, embedded components, AccountSession; `Job::ReconcilePayments` | 0, 3, 9 | 3-5 |
+| 1 | Safe deletions: installments, `Client::Stripe`, `PriceOps/PricingPlan.pm`, misfiled tests, #296, discount form | — | 2-3 |
+| 0 | Webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed` | 1 | 1-2 |
+| 2 | **#294**: collapse `registry-platform` into `registry`; retire the all-zeros UUID as a provider identity, in `lib/` **and 21 test files including `t/lib/Test/Registry/Helpers.pm`** | 1 | 2-3 |
+| 3 | Charge model: **account configuration decided**; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` / `charge.dispute.*` handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; Connect webhook endpoint and its secret; Registry-initiated disconnect | 0, 1 | 5-7 |
+| 4 | `pricing_plan_versions` / `pricing_components` + immutability triggers; `pricing_plans` gains `provider_id` and `audience`, keeps `session_id`; **new `clone_schema` sqitch change with the skip list in every table-shaped loop**; normalize the two tenant table shapes, then migrate registry **and every tenant schema's** plans to v1; **repoint `PricingPlan->create` at the registry table**; `plan_scope`/`plan_type`/`pricing_configuration` kept nullable and dual-written by `PriceOps::Model->publish_version` | 2 | 4-6 |
+| 5 | Rewrite the `pricing-plan-creation` workflow and its templates onto the version/component vocabulary | 4 | 3-4 |
+| 6 | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `published_at` written last; **backfill-publish every v1 migrated in Leg 4**; `Subscription.pm` stops building inline `price_data` | 3, 4 | 2-3 |
+| 7 | `pricing_schedules` + the overlap exclusion constraint; migrate `pricing_relationships` + `platform_pricing_plan_id` (**column kept nullable and dual-written**), writing a schedule row for **every** tenant; drop `billing_periods` and `DAO::BillingPeriod`; delete the dead modules | 4 | 2-3 |
+| 8 | `Entitlement` + `Quote` + `Model->offered_versions`; rewire the charge; **`Schedule` creates direct-charge subscriptions with `application_fee_percent`** and an idempotency key; **subscription envelope dispatch**; omit-never-zero `application_fee_amount`; repoint `PricingPlanSelection` and `GenerateEvents`; delete `calculate_enrollment_total` and the `!$ENV{STRIPE_SECRET_KEY}` bypass; refuse-not-zero; `RevenueShare` becomes a wrapper | 6, 7 | 4-6 |
+| 9 | Quote columns on `payments` incl. `refund_application_fee`; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **drop the deprecated columns and the tenant-schema `pricing_plans`** | 8 | 2-3 |
+| 10 | `Metering`: record every monetizable event including zero-priced ones | 7 | 1 |
+| 11 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds | 4, 5 | 1-2 |
+| 12 | Dispute resolution surface: admin page, embedded components, AccountSession; `Job::ReconcilePayments` | 0, 3, 9 | 2-3 |
 
-**52 to 72 days**, revised up from an earlier draft's 37-55 after a review costed the legs
-against the code they touch rather than the tables they name. Legs 2, 3 and 4 absorbed most
-of it: the all-zeros UUID has a test surface three times its `lib/` surface, Leg 3 accumulated
-five hardening items that are not optional once the tenant holds the account, and Leg 4 turned
-out to need a new `clone_schema` change, a shape normalization and a write cutover rather than
-one migration.
+**31 to 46 sessions** — 8 to 23M tokens, a spread wide enough that the token figure is
+context rather than a budget.
+
+Legs 3, 4 and 8 are 13 to 19 of that, over 40% in three legs, and the concentration is the
+useful signal: they are the charge model, the model tables and the resolver, and each is
+large because it touches code rather than because it adds a table. Leg 3 accumulated five
+hardening items that stop being optional once the tenant holds the account; Leg 4 needs a new
+`clone_schema` change, a shape normalization and a write cutover rather than one migration;
+Leg 8 is where every read path moves at once.
+
+The cheap legs at the bottom are cheap because Legs 4 and 7 will already have built what they
+need — Pillar 3 is one of the five pillars and `Metering` costs a single session. That is the
+sequencing paying off, not those legs being unimportant.
+
+Two things reliably cost more sessions than their diffs suggest, and the estimates above
+include them. A schema leg pays for a `make test-schema` regeneration and whatever the full
+suite then turns up, and the suite is ~76 minutes with output that has to be read. And Legs
+2 and 5 are wide-and-shallow — 21 test files, 1,412 lines of templates — which is the shape
+that spends a context window fastest, because it is all reading and no thinking.
 
 That number is the argument for shipping legs rather than a milestone: 1, 0, 2 and 3 are
 independently valuable. Leg 3 is the one with a deadline attached — it must merge before the
@@ -1501,9 +1525,16 @@ should be true and bad at naming *which function makes it true*.
     DELETE and BEFORE INSERT guards against a published parent. And the version trigger has to
     name the one transition it permits — NULL Stripe ids becoming non-NULL — or publishing is
     blocked by the immutability it depends on.
-22. **The estimate moved from 37-55 days to 52-72.** The earlier number costed legs by the
-    tables they named; this one costs them by the code they touch. Leg 2 alone reaches 21 test
-    files, and Leg 5 reaches 1,412 lines of templates that no earlier draft counted.
+22. **Estimates are in sessions, not engineering days.** Every earlier draft costed the
+    milestone in days — 37-55, then 52-72 after a review costed legs by the code they touch
+    rather than the tables they name. perigrin's objection is that days are wildly inaccurate
+    for this kind of work, and he is right: the unit assumed a fixed number of hours nobody
+    sits down for, and it was never what the work arrives in. The unit is now one context
+    window of focused work, 250k-500k tokens, cold start to commit. **31 to 46 sessions.**
+    The re-costing also changed the *shape* of the estimate, not just its units: work that is
+    wide and shallow (Leg 2's 21 test files, Leg 5's 1,412 lines of templates) is expensive in
+    sessions in a way it was not in days, because reading is what spends a context window,
+    while a small careful change like Leg 0 is cheaper than its risk suggested.
 
 ## Follow-ups this design creates
 
