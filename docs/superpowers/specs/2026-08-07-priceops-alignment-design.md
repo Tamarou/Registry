@@ -210,6 +210,22 @@ criterion is made executable as `t/e2e/author-a-new-plan.t`, gated on three thin
    as the `price_data` assertion under "Testing". A plan whose name has to be taught to the
    code is a plan that failed Pillar 1.
 
+**The "non-zero `application_fee_amount`" clause in point 2 currently fails, and that is the
+criterion working.** The seeded platform default plan carries `"percentage": 0.00`
+(`sql/deploy/seed-free-platform-plan.sql:24`), and `platform_default_fraction`
+(`RevenueShare.pm:55-72`) reads exactly that plan — it dies loudly if the row is missing but
+returns a perfectly valid zero if the row says zero. So a tenant with no linked plan is
+charged 0%, `TenantPayment.pm:121-127` displays "0% of processed revenue" at signup, and two
+marketing surfaces above it promise 2.5% (`templates/tenant-signup/index.html.ep:64`,
+`templates/registry/tenant-storefront-program-listing.html.ep:93`). This is a known deferral,
+not a discovery — `docs/specs/plan-driven-revenue-share.md:60,275,373` records the
+2%-vs-2.5% choice as open and the fix as a one-line data edit. Naming it here because a
+milestone called *ready to take money* cannot pass while the platform's share is zero, and
+because the tempting way to make the test green is to link the fixture tenant to a 2% plan
+and leave production at 0.00. **The fixture must not be given a rate production does not
+have.** Setting the launch rate is a decision, not work, and it belongs to Leg 11, where the
+CLI is what makes changing it something other than hand-typed SQL.
+
 Point 2 is written that way because the two obvious weaker assertions both pass while the
 milestone has failed. A subscription created with `trial_period_days`
 (`Subscription.pm:126`) exists, has the right amount, currency and interval, and has moved
@@ -1093,6 +1109,25 @@ columns exist.
   time. That is invisible today and wrong the moment a plan bills in two currencies, which
   this design explicitly supports. The quote knows the currency; Leg 9 is where it reaches
   the row, alongside the other quote columns.
+- **An unpriced child is silently free today, and "refuse-not-zero" is not a principle here,
+  it is a live bug.** `DAO/Payment.pm:522` calls `calculate_price({ date => time(), ... })`,
+  passing an epoch integer. `PricingPlan.pm:151-165` then compares that integer against a
+  cutoff string with the hyphens stripped: `2026-09-01` becomes `20260901`, `time()` does not
+  match the `YYYY-MM-DD` regex so it stays ~1.78e9, and `$today > $cutoff` is true. It has
+  been true since August 1970 and always will be. So `requirements_met` returns 0 for every
+  `early_bird` plan, `calculate_price` returns bare `undef`, and `calculate_enrollment_total`
+  reaches `if (defined $price_cents)` and **skips the child** — contributing nothing to
+  `$total`. A session whose first plan is early-bird enrolls every child for free, through
+  the live path at `WorkflowSteps/Payment.pm:38,68,113`. The same field has a second reader,
+  `is_early_bird_available` at `:181-193`, which parses the string to an epoch and gets it
+  right; two conventions for one column, one of them on the money path.
+
+  Leg 8 fixes this by deleting `calculate_enrollment_total` outright, but Leg 8 is most of
+  the milestone away, and this is live now. **Leg 0 takes the refusal half only**: an
+  undefined price is not a zero price, so `calculate_enrollment_total` refuses rather than
+  skipping. That preserves a genuinely free program — `calculate_price` returning `0` — and
+  ends the silent one. The comparison bug itself gets an issue and dies with the module in
+  Leg 8; there is no reason to repair a date parser scheduled for deletion.
 - Plus #284, #289, #293, and the tenant-subscription lifecycle fix. Registry→tenant subscriptions
   are platform-account objects and still need `$tenant_id` passed through to
   `create_subscription_with_config` (`TenantPayment.pm:340-344` vs `Subscription.pm:118`)
@@ -1226,7 +1261,7 @@ has to be re-cut rather than extended.
 | Leg | Content | Depends on | Sessions |
 |---|---|---|---|
 | 1 | Safe deletions: installments, `Client::Stripe`, `PriceOps/PricingPlan.pm`, misfiled tests, #296, discount form | — | 2-3 |
-| 0 | The money path becomes atomic and observable: webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed`; **`SELECT … FOR UPDATE` on the payment row so the #283 stale-intent guards hold under concurrency**; **capacity re-checked at capture**; **structured logging in `DAO/Payment.pm` and `Service/Stripe.pm` keyed on Stripe's `request_id`**, and the two silent `->catch(sub {})` blocks closed | 1 | 3-4 |
+| 0 | The money path becomes atomic and observable: webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed`; **`SELECT … FOR UPDATE` on the payment row so the #283 stale-intent guards hold under concurrency**; **capacity re-checked at capture**; **structured logging in `DAO/Payment.pm` and `Service/Stripe.pm` keyed on Stripe's `request_id`**, and the two silent `->catch(sub {})` blocks closed; **`calculate_enrollment_total` refuses an undefined price instead of skipping the child**, which is the live free-enrollment path | 1 | 3-4 |
 | 2 | **#294**: collapse `registry-platform` into `registry`; retire the all-zeros UUID as a provider identity, in `lib/` **and 21 test files including `t/lib/Test/Registry/Helpers.pm`** | 1 | 2-3 |
 | 3a | **Bump `Stripe-Version` off `2024-12-18.acacia` to a v2-aware version**, in `Service::Stripe.pm:15`, `t/stripe-live/service-version.t` and `DAO::Subscription.pm:71-103` (which sends none); **spike a chargeable full-dashboard v2 account in test mode** and report whether `t/lib/Test/Registry/StripeConnect.pm`'s KYC path has an equivalent; confirm whether `defaults.responsibilities` is updatable | 1 | 2-3 |
 | 3 | Charge model: **Accounts v2 (`losses`/`fees` = `stripe`, `dashboard` = `full`)**; `Service::Stripe` gains a JSON `/v2/` branch; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` and dispute-*recording* handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; **two webhook endpoints — Connect for v1 events, platform for `v2.core.account.*` thin events — and their secrets**; **a tenant `SELECT` by `stripe_connect_account_id`**; Registry-initiated disconnect | 0, 1, 3a | 4-6 |
@@ -1237,7 +1272,7 @@ has to be re-cut rather than extended.
 | 8 | `Entitlement` + `Quote` + `Model->offered_versions`; rewire the charge; **`Schedule` creates direct-charge subscriptions with `application_fee_percent`** and an idempotency key; **subscription envelope dispatch**; omit-never-zero `application_fee_amount`; repoint `PricingPlanSelection` and `GenerateEvents`; delete `calculate_enrollment_total` and the `!$ENV{STRIPE_SECRET_KEY}` bypass; refuse-not-zero; `RevenueShare` becomes a wrapper | 6, 7 | 4-6 |
 | 9 | Quote columns on `payments` incl. `refund_application_fee` **and the quote's currency, which no caller has ever passed**; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **add the Customer configuration to each tenant's `Account` and swap `customer` for `customer_account`**; **drop the deprecated columns, `tenants.stripe_customer_id`, and the tenant-schema `pricing_plans`**; check `sql/verify/stripe-subscription-integration.sql:9` | 8 | 3-4 |
 | 10 | **Create `metering_events`**; `Metering`: record every monetizable event including zero-priced ones | 7 | 1 |
-| 11 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds | 4, 5 | 1-2 |
+| 11 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds; **set the launch revenue-share rate, which is seeded at 0.00 and advertised at 2.5%** | 4, 5 | 1-2 |
 | 12 | Dispute resolution *surface*: admin page, embedded components, AccountSession; `Job::ReconcilePayments`; **widen the CSP at `Registry.pm:524,527`, which today allows only `js.stripe.com` and will block Connect's embedded components**. The `charge.dispute.*` handlers themselves are Leg 3 — Leg 12 is what a human sees | 0, 3, 9 | 2-3 |
 
 **32 to 51 sessions** — 8 to 26M tokens, a spread wide enough that the token figure is
@@ -1871,6 +1906,18 @@ Two more, both perigrin's calls rather than a review's findings:
     narrower one: every guard is a read, then a decision, then a write, against a row nothing
     is holding, because `DAO/Payment.pm` contains zero `$db->begin` and zero `FOR UPDATE`.
     Both were worth keeping only once they were true.
+31. **Two of the folded-in findings turned out to be about zero, and they are the reason the
+    widened bar was the right call.** Neither is a PriceOps defect, both are money defects,
+    and under the old scope both would have been filed. An early-bird plan makes its children
+    *free* rather than unpriced, because an epoch integer is compared against a
+    hyphen-stripped date string and the price comes back `undef` into a `defined` check that
+    skips. And the platform's own share is *zero* rather than the advertised 2.5%, because
+    `seed-free-platform-plan.sql:24` says `0.00` and `platform_default_fraction` faithfully
+    returns it. Both are documented above with their line numbers. Neither is expensive: the
+    first is a refusal guard in Leg 0 and a deletion in Leg 8, the second is a decision in
+    Leg 11 — and the milestone's own acceptance criterion already fails until the second is
+    made, which is the criterion doing its job rather than a gap in it. "Aligned with PriceOps
+    and charging nothing" was a state the old bar would have accepted.
 
 ## Follow-ups this design creates
 
