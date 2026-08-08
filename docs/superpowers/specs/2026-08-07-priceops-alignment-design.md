@@ -261,7 +261,11 @@ a charge, or issues a refund. Writing definitions is translation; moving money i
 `templates/pricing-plan-creation/`**, and the `pricing_plans_plan_scope_check` constraint. An
 earlier draft said 1,028 lines, which double-counted `PricingPlanSelection.pm` (excluded in
 the next paragraph) and ignored the templates entirely; the template half is the larger one.
-The workflow is rewritten to author versions and components, not merely repointed.
+If the workflow survives it is rewritten to author versions and components, not merely
+repointed — but whether it survives is Leg 5's open fork, decided after Leg 4 under
+"Sequencing". What is not in question is that the current vocabulary cannot stay: rewrite and
+delete both end it, and doing neither leaves an authoring path writing columns the charge
+path no longer reads.
 
 **Two more step classes read that vocabulary from other live workflows**, and an earlier draft
 filed both under the authoring workflow, which would have left them broken in place.
@@ -1062,6 +1066,33 @@ columns exist.
   Families stay subscribed to a tenant who left Registry. That is correct — the tenant is the
   merchant and the service is theirs — but it means our enrollment records go stale silently,
   and the handler should mark them rather than let a dashboard imply we still know.
+- **The charge path has no database-level concurrency control, and its guards are all in
+  Perl.** `Payment.pm` contains zero `$db->begin` and zero `FOR UPDATE` — a count, not an
+  impression. The application-level protections added in #283 are real and this is not a
+  claim that double-submit is unguarded: `WorkflowSteps/Payment.pm:26-31,180-181,254-261`
+  detects a stale intent, cancels the superseded one, and treats `already_completed` as
+  success. But every one of those is a read followed by a decision followed by a write, on a
+  row nothing is holding. Two requests interleaving between the read and the write get past
+  all of it. Leg 0 is already establishing "one transaction, one connection" for the webhook
+  half; the charge half needs the same discipline — `SELECT … FOR UPDATE` on the payment row
+  before deciding what to do with its intent. Capacity has the same shape and a worse
+  consequence now: it is checked once at quote time and never re-checked at capture, and
+  under direct charges the refund for an oversold seat comes out of the *tenant's* balance
+  rather than ours.
+- **Nothing on the money path logs anything.** `grep -c 'log->'` returns 0 for both
+  `DAO/Payment.pm` and `Service/Stripe.pm`. No request is logged, no response, and Stripe's
+  `request_id` — the identifier their support asks for first — is captured nowhere. Two
+  `->catch(sub {})` blocks swallow errors silently. This is tolerable while nobody is paying;
+  it is not tolerable the first time a parent's money goes somewhere unexpected and the only
+  record is what Stripe's dashboard chooses to show. Leg 0 adds structured logging to both,
+  keyed on `request_id`, because Leg 0 is where the money path stops being best-effort.
+- **The payment row's currency is always `'USD'`, and no caller has ever chosen it.**
+  `Payment.pm:15` declares `field $currency :param :reader = 'USD'` and `:195` writes it, so
+  the column is populated — this is not a dropped value. But the only non-installment caller,
+  `WorkflowSteps/Payment.pm:193`, passes no `currency`, so the default is the value every
+  time. That is invisible today and wrong the moment a plan bills in two currencies, which
+  this design explicitly supports. The quote knows the currency; Leg 9 is where it reaches
+  the row, alongside the other quote columns.
 - Plus #284, #289, #293, and the tenant-subscription lifecycle fix. Registry→tenant subscriptions
   are platform-account objects and still need `$tenant_id` passed through to
   `create_subscription_with_config` (`TenantPayment.pm:340-344` vs `Subscription.pm:118`)
@@ -1195,24 +1226,28 @@ has to be re-cut rather than extended.
 | Leg | Content | Depends on | Sessions |
 |---|---|---|---|
 | 1 | Safe deletions: installments, `Client::Stripe`, `PriceOps/PricingPlan.pm`, misfiled tests, #296, discount form | — | 2-3 |
-| 0 | Webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed` | 1 | 1-2 |
+| 0 | The money path becomes atomic and observable: webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed`; **`SELECT … FOR UPDATE` on the payment row so the #283 stale-intent guards hold under concurrency**; **capacity re-checked at capture**; **structured logging in `DAO/Payment.pm` and `Service/Stripe.pm` keyed on Stripe's `request_id`**, and the two silent `->catch(sub {})` blocks closed | 1 | 3-4 |
 | 2 | **#294**: collapse `registry-platform` into `registry`; retire the all-zeros UUID as a provider identity, in `lib/` **and 21 test files including `t/lib/Test/Registry/Helpers.pm`** | 1 | 2-3 |
 | 3a | **Bump `Stripe-Version` off `2024-12-18.acacia` to a v2-aware version**, in `Service::Stripe.pm:15`, `t/stripe-live/service-version.t` and `DAO::Subscription.pm:71-103` (which sends none); **spike a chargeable full-dashboard v2 account in test mode** and report whether `t/lib/Test/Registry/StripeConnect.pm`'s KYC path has an equivalent; confirm whether `defaults.responsibilities` is updatable | 1 | 2-3 |
 | 3 | Charge model: **Accounts v2 (`losses`/`fees` = `stripe`, `dashboard` = `full`)**; `Service::Stripe` gains a JSON `/v2/` branch; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` and dispute-*recording* handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; **two webhook endpoints — Connect for v1 events, platform for `v2.core.account.*` thin events — and their secrets**; **a tenant `SELECT` by `stripe_connect_account_id`**; Registry-initiated disconnect | 0, 1, 3a | 4-6 |
 | 4 | `pricing_plan_versions` / `pricing_components` + immutability triggers; `pricing_plans` gains `provider_id` and `audience`, keeps `session_id`; **new `clone_schema` sqitch change with the skip list in every table-shaped loop**; normalize the two tenant table shapes, then migrate registry **and every tenant schema's** plans to v1; **repoint `PricingPlan->create` at the registry table**; `plan_scope`/`plan_type`/`pricing_configuration` kept nullable and dual-written by `PriceOps::Model->publish_version` | 2 | 4-6 |
-| 5 | Rewrite the `pricing-plan-creation` workflow and its templates onto the version/component vocabulary | 4 | 3-4 |
+| 5 | Rewrite the `pricing-plan-creation` workflow and its templates onto the version/component vocabulary — **or delete it; decided after Leg 4, see below** | 4 | 0-4 |
 | 6 | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `published_at` written last; **backfill-publish every v1 migrated in Leg 4**; `Subscription.pm` stops building inline `price_data` | 3, 4 | 2-3 |
 | 7 | `pricing_schedules` + the overlap exclusion constraint; migrate `pricing_relationships` + `platform_pricing_plan_id` (**column kept nullable and dual-written**), writing a schedule row for **every** tenant; drop `billing_periods` and `DAO::BillingPeriod`; delete the dead modules | 4 | 2-3 |
 | 8 | `Entitlement` + `Quote` + `Model->offered_versions`; rewire the charge; **`Schedule` creates direct-charge subscriptions with `application_fee_percent`** and an idempotency key; **subscription envelope dispatch**; omit-never-zero `application_fee_amount`; repoint `PricingPlanSelection` and `GenerateEvents`; delete `calculate_enrollment_total` and the `!$ENV{STRIPE_SECRET_KEY}` bypass; refuse-not-zero; `RevenueShare` becomes a wrapper | 6, 7 | 4-6 |
-| 9 | Quote columns on `payments` incl. `refund_application_fee`; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **add the Customer configuration to each tenant's `Account` and swap `customer` for `customer_account`**; **drop the deprecated columns, `tenants.stripe_customer_id`, and the tenant-schema `pricing_plans`** | 8 | 3-4 |
+| 9 | Quote columns on `payments` incl. `refund_application_fee` **and the quote's currency, which no caller has ever passed**; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **add the Customer configuration to each tenant's `Account` and swap `customer` for `customer_account`**; **drop the deprecated columns, `tenants.stripe_customer_id`, and the tenant-schema `pricing_plans`**; check `sql/verify/stripe-subscription-integration.sql:9` | 8 | 3-4 |
 | 10 | **Create `metering_events`**; `Metering`: record every monetizable event including zero-priced ones | 7 | 1 |
 | 11 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds | 4, 5 | 1-2 |
-| 12 | Dispute resolution *surface*: admin page, embedded components, AccountSession; `Job::ReconcilePayments`. The `charge.dispute.*` handlers themselves are Leg 3 — Leg 12 is what a human sees | 0, 3, 9 | 2-3 |
+| 12 | Dispute resolution *surface*: admin page, embedded components, AccountSession; `Job::ReconcilePayments`; **widen the CSP at `Registry.pm:524,527`, which today allows only `js.stripe.com` and will block Connect's embedded components**. The `charge.dispute.*` handlers themselves are Leg 3 — Leg 12 is what a human sees | 0, 3, 9 | 2-3 |
 
-**33 to 49 sessions** — 8 to 25M tokens, a spread wide enough that the token figure is
-context rather than a budget.
+**32 to 51 sessions** — 8 to 26M tokens, a spread wide enough that the token figure is
+context rather than a budget. The ceiling moved up from 49 because the money-path hardening
+folded into Legs 0, 9 and 12 is real work; the floor moved *down* from 33 for a reason that is
+not a saving. Leg 5's range starts at zero because its content is a decision Leg 4 makes, not
+a quantity of work anyone has agreed to yet, and a floor that assumes the cheapest branch of
+an undecided fork is the least trustworthy number in the table.
 
-Legs 3a, 3, 4 and 8 are 14 to 21 of that, over 40% in four legs, and the concentration is the
+Legs 3a, 3, 4 and 8 are 14 to 21 of that, about 40% in four legs, and the concentration is the
 useful signal: they are the charge model, the model tables and the resolver, and each is
 large because it touches code rather than because it adds a table. Leg 3 accumulated five
 hardening items that stop being optional once the tenant holds the account; Leg 4 needs a new
@@ -1226,6 +1261,24 @@ the milestone's acceptance test can run at all. If the spike comes back saying a
 full-dashboard v2 account cannot be provisioned unattended, that is an argument to revisit
 `dashboard: full` — which is exactly the kind of finding that must arrive before Leg 3, not
 after it.
+
+**Leg 5's content is decided after Leg 4, and that deferral is the point.** The fork is
+between rewriting `workflows/pricing-plan-creation.yaml` — 862 lines of step classes and
+1,412 lines of templates — onto the version/component vocabulary, and deleting the surface
+outright. Deciding now would mean deciding from a line count. Leg 4 is what makes the real
+question legible: once `pricing_plan_versions` and `pricing_components` exist and
+`PricingPlan->create` points at the registry table, the gap between what the workflow's five
+steps collect and what a version needs is something to read rather than estimate. That gap is
+the criterion. If the steps map onto components with a rename and a reshape, rewrite. If the
+version model wants a different set of questions than the workflow asks, delete it and let
+Leg 11's CLI be the only authoring path until a tenant asks for one back.
+
+Two consequences, and they point opposite ways. The dual-write argument below survives either
+branch, because it needs the current writers *gone* and delete removes them as surely as
+rewrite does. Pillar 5's acceptance test does not survive: invariant 5 compares a CLI-authored
+plan against a workflow-authored one, so deleting the workflow deletes the second author and
+the invariant has to be rewritten as a CLI-only assertion. That rewrite is part of the cost of
+the delete branch, not a discount on it.
 
 The cheap legs at the bottom are cheap because Legs 4 and 7 will already have built what they
 need — Pillar 3 is one of the five pillars and `Metering` costs a single session. That is the
@@ -1282,6 +1335,36 @@ leave behind, and the worker is what runs the payment jobs. This is not caused b
 milestone, but this milestone is what makes it expensive — fourteen legs, seven migrations,
 each one a chance to serve new pricing code against old tables. Making a failed deploy fail
 the container is a one-line change and a prerequisite for shipping any leg to production.
+
+**And when a leg goes wrong there is currently no way back.** Three things are missing and
+each is cheap next to what it protects:
+
+*A revert that works.* Seven of the 64 scripts in `sql/revert/` do nothing — comments and a
+`BEGIN`/`COMMIT` wrapper around no statements — and two of those seven,
+`auth-notification-types.sql` and `seed-registry-storefront.sql`, do not even have the
+wrapper. `sqitch revert` against any of them succeeds and changes nothing, which is worse
+than failing.
+**Every migration in this milestone ships with a revert that is tested by reverting it**, and
+that test is part of the leg, not a follow-up. This is already in Testing as "a revert test
+per migration"; it is repeated here because the sequencing is where it will be skipped.
+
+*A backup taken before the leg, not after the problem.* `README.md:130` still has the backup
+item unchecked. A pricing migration that mangles rows is not recoverable from a revert script
+alone, because the revert restores the schema and not the data.
+
+*A named half-deployed state per leg.* Legs 4, 6, 7 and 9 cannot safely be left half-done —
+Leg 6's publish backfill in particular is non-transactional with no retry, so a partial run
+leaves some versions with Stripe ids and some without, and the ones without are unsellable.
+Every leg states what "stopped halfway" looks like and whether it is safe to sit there
+overnight. Where the answer is no, the work is either one transaction or idempotent enough to
+re-run from the start; Leg 6's backfill becomes the latter.
+
+The three Render services — web, worker and cron at `render.yaml:39,75,96` — all carry
+`autoDeploy: true` (`:69,94,110`) and only the web service runs migrations, so a merge deploys
+all three independently against a schema one of them just changed. There is no staging environment and no feature flag anywhere in this
+design. That is survivable for legs that only add tables; it is the reason Legs 8 and 9 —
+which move every read path and then drop the columns behind it — should be the two legs that
+get a manual deploy rather than an automatic one.
 
 The same rule covers the tenant-schema `pricing_plans` tables, and there the stakes are
 higher because those rows are a tenant's actual program prices rather than a nullable
@@ -1434,7 +1517,9 @@ One invariant test per pillar:
    columns — not byte-identical, which no two rows with distinct `id`s and `created_at`s
    can be. The comparison names the columns: `provider_id`, `audience`, and every
    component's kind, cadence, currency and amount. A rateless percentage plan is rejected
-   at authoring.
+   at authoring. This invariant assumes the workflow survives Leg 5; if Leg 5 deletes it,
+   there is no second author and this becomes a CLI-only assertion — the rateless rejection
+   and the constraint coverage, without the comparison.
 
 Plus one translator invariant: publishing a version twice is idempotent and creates exactly
 one Stripe Product, and no code path outside `PriceOps::Model` sends `price_data` — a grep
@@ -1527,8 +1612,14 @@ making real failing HTTPS calls whose warnings land in output. Leg 1 deletes all
 - **Stripe meter-event forwarding**, and with it usage-based pricing. `metering_events` is
   written from day one; only the forwarding waits, because no component kind here prices
   against a meter.
-- **Admin UI for authoring platform plans.** Pillar 5 is satisfied by `./registry pricing`
-  plus constraints. UI when a human who is not perigrin needs to author a plan.
+- **Admin UI for authoring *platform* plans.** Pillar 5 is satisfied by `./registry pricing`
+  plus CHECK constraints, which is Leg 11; a UI when a human who is not perigrin needs to
+  author a platform plan. An earlier draft dropped the word "platform" and so read as though
+  all authoring were out of scope, which contradicted Leg 5 sitting in the table. The two are
+  different surfaces with different authors: the platform plan is perigrin's and the CLI is
+  enough, while `pricing-plan-creation` is a *tenant's* path to authoring a program's prices
+  and is in scope. Whether Leg 5 rewrites that workflow or deletes it is deliberately
+  undecided until Leg 4 — see "Sequencing".
 - **Sales tax.** No code. Merchant of record is no longer open — direct charges make the
   tenant the seller unambiguously — but what that obliges them to collect is theirs to
   answer and ours to document, not to compute.
@@ -1673,11 +1764,15 @@ should be true and bad at naming *which function makes it true*.
     for this kind of work, and he is right: the unit assumed a fixed number of hours nobody
     sits down for, and it was never what the work arrives in. The unit is now one context
     window of focused work, 250k-500k tokens, cold start to commit. **33 to 49 sessions**
-    after (24) added Leg 3a.
+    after (24) added Leg 3a, and **32 to 51** after (29) and (30) — the ceiling raised by the
+    money-path work, the floor lowered only by Leg 5 becoming a fork.
     The re-costing also changed the *shape* of the estimate, not just its units: work that is
     wide and shallow (Leg 2's 21 test files, Leg 5's 1,412 lines of templates) is expensive in
     sessions in a way it was not in days, because reading is what spends a context window,
-    while a small careful change like Leg 0 is cheaper than its risk suggested.
+    while a small careful change is cheaper than its risk suggests. Leg 0 was the example of
+    that second point at 1-2 sessions and is no longer one: (30) gave it locking, a capacity
+    re-check and logging across two modules, so it now costs what a leg with four unrelated
+    concerns costs. The principle held; the example moved.
 23. **Accounts v2, `losses`/`fees` to Stripe, full dashboard** — (14) is answered, and the
     recommendation it carried is corrected. "v1 accounts with controller properties" was
     wrong twice: controller properties are the migration path for platforms already on v1,
@@ -1745,6 +1840,37 @@ should be true and bad at naming *which function makes it true*.
     `Webhooks.pm:148-162`; that method is a blind `UPDATE` returning `->rows` and yields no
     tenant identity, so Leg 3 writes a `SELECT`. And two counts were wrong: installments are
     ~3,000 lines, not ~3,700, and there are fourteen legs, not twelve.
+
+Two more, both perigrin's calls rather than a review's findings:
+
+29. **Leg 5 is rewrite-or-delete, decided after Leg 4.** The spec had the workflow rewritten
+    in the leg table and the CLI declared sufficient under "Out of scope", which is a
+    contradiction the completeness pass caught. Resolving it by picking now would have meant
+    picking from a line count; the diff that settles it does not exist until the version and
+    component tables do. So the fork is recorded rather than closed, with its criterion under
+    "Sequencing" and a `0-4` range that says plainly that nobody has agreed to the work. The
+    two branches are not symmetric: delete also rewrites acceptance invariant 5, which
+    compares the workflow's output against the CLI's and has nothing to compare against once
+    the workflow is gone.
+30. **The bar moved from "PriceOps aligned" to "ready to take money."** Five findings sat
+    outside PriceOps and inside the money path, and a correct pricing model over a charge path
+    with no row locks and no logs would have been aligned and still not safe to switch on.
+    Folded in rather than filed: row locking and a capacity re-check at capture, plus
+    structured logging keyed on Stripe's `request_id`, into Leg 0; the quote's currency into
+    Leg 9; the CSP widening into Leg 12; and the rollback subsection under "Money movement",
+    which is the one with no leg because it is a property of how every leg deploys. Two
+    sessions on the ceiling, 49 to 51.
+
+    Two of those findings were narrower than first reported, and the narrowing is the useful
+    part. **Currency is not dropped** — `Payment.pm:15` defaults it and `:195` writes it, so
+    the column is populated; what is missing is a caller that ever *chooses* it, since the
+    only non-installment one, `WorkflowSteps/Payment.pm:193`, passes none. A defaulted column
+    looks identical to a correct one until the first CAD plan. And **double-submit is not
+    unguarded** — #283's stale-intent checks are real and cited
+    (`WorkflowSteps/Payment.pm:26-31,180-181,254-261`). The claim that survives is the
+    narrower one: every guard is a read, then a decision, then a write, against a row nothing
+    is holding, because `DAO/Payment.pm` contains zero `$db->begin` and zero `FOR UPDATE`.
+    Both were worth keeping only once they were true.
 
 ## Follow-ups this design creates
 
