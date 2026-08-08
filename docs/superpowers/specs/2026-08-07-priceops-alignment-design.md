@@ -669,8 +669,7 @@ has zero connected accounts — so this is the last moment the choice is free.
 > "The information on this page applies only to platforms that already use legacy connected
 > account types (Standard, Express, or Custom accounts). If you're setting up a new Connect
 > platform, or your integration uses the Accounts v2 API, see the Interactive platform
-> guide." — and, on the same page: *"Stripe recommends that you use controller properties
-> instead of account types."*
+> guide."
 
 The spec's earlier text named **Standard** accounts throughout, following
 `docs/operations/sacp-stripe-connect-onboarding.md:3,11`. Standard is exactly right on the
@@ -678,19 +677,52 @@ properties this design depends on — Supported charge types: *Direct only*; Fra
 liability: *Connected account for direct charges*; Dashboard access: *Full* — but it is the
 deprecated spelling of them.
 
-**Recommendation: v1 Accounts with controller properties**, configured to reproduce
-Standard's shape (`controller.losses.payments=stripe`, `controller.fees.payer=account`,
-`controller.stripe_dashboard.type=full`). Registry keeps every property it is designing
-around and stops building on a surface Stripe has marked legacy. Accounts v2 is the further
-step and buys nothing this milestone needs.
+**Decision: the Accounts v2 API** (`/v2/core/accounts`), with
+`defaults.responsibilities.losses_collector = stripe`,
+`defaults.responsibilities.fees_collector = stripe`, and `dashboard = full`. That is
+Standard's shape expressed in the current vocabulary:
 
-This is a decision for perigrin, not one this document should make silently, because it is a
-liability and onboarding-UX choice as much as a technical one. It changes Leg 3's shape in
-one concrete place: **disconnect**. OAuth `/v1/oauth/deauthorize` and the
-`account.application.deauthorized` event are Standard-and-OAuth mechanisms — a
-controller-properties account returns `no_deauth_on_controlled_account` and uses the
-rejection API instead. Whichever is chosen, the disconnect bullet under "Money movement"
-describes the flow; only the endpoint differs.
+| What it settles | Value | Consequence |
+|---|---|---|
+| Negative-balance liability | `losses_collector: stripe` | Stripe monitors risk and pursues negative balances. Registry, which is one person, does not become a risk operation. |
+| Who pays Stripe's processing fees | `fees_collector: stripe` | Stripe bills the tenant directly; Registry's revenue share sits on top as the application fee. Registry never fronts processing costs and never has to bill them back. |
+| Dashboard | `dashboard: full` | The tenant gets a real Stripe Dashboard and Stripe's support. Registry is not tier-1 support for Stripe questions. **Immutable** — changing it means creating a new `Account`. |
+| KYC | derived: `requirements_collector: stripe` | Not settable in v2; it follows from the two above. Stripe collects and maintains verification, including when requirements change. |
+
+An earlier draft recommended **v1 Accounts with controller properties** instead, on the
+grounds that Accounts v2 "buys nothing this milestone needs." Both halves were wrong.
+Controller properties are the migration path for platforms *already on v1*; Stripe's
+guidance for a new platform is v2. And v2 buys this milestone the one thing its central
+claim needs.
+
+**A v2 `Account` holds multiple configurations, and Registry needs exactly two of them.**
+The **Merchant** configuration is the tenant collecting from families; the **Customer**
+configuration is the tenant paying Registry. Stripe is explicit that they compose: *"You can
+collect application fees from an `Account` with the Merchant configuration. Assigning the
+Customer configuration to it doesn't affect that ability."* Under v1 those are two objects
+and a map, and Registry already maintains both — `Subscription.pm:59-64` creates a Stripe
+`Customer` and writes `tenants.stripe_customer_id`, while `stripe_connect_account_id` holds
+the `Account`. So "a provider sells to a consumer, applied recursively" is not only
+expressible in Stripe's object model, it is what v2's `Account` *is*, and Registry is
+currently paying for the version that isn't. Leg 3 collapses the pair; `stripe_customer_id`
+is dropped in Leg 9 with the other superseded columns.
+
+Two costs, both real and both in Leg 3. `Service::Stripe::_request_async:26` hardcodes
+`https://api.stripe.com/v1/$endpoint` and form-encodes POST bodies at `:43`; v2 is a
+different path and takes JSON, so that method gets a second branch and Registry speaks two
+API versions. Only account creation and management move — PaymentIntents, Subscriptions and
+Invoices are v1 objects and stay there. And **disconnect** changes shape: OAuth
+`/v1/oauth/deauthorize` and the `account.application.deauthorized` event are
+Standard-and-OAuth mechanisms, and a v2 account uses the rejection API instead. The
+disconnect bullet under "Money movement" describes the flow correctly; only the endpoint
+differs.
+
+What this decision does *not* change: direct charges, `application_fee_amount`,
+`application_fee_percent`, the tenant owning the dispute, and the embedded dispute
+components. Stripe states embedded components work regardless of dashboard type, so Leg 12
+is unaffected. Had `dashboard: none` been chosen instead, embedded onboarding, account
+management and the notification banner would have become *mandatory* and moved into Leg 3 —
+which is the main reason not to choose it.
 
 ### Resolution
 
@@ -1090,13 +1122,13 @@ has to be re-cut rather than extended.
 | 1 | Safe deletions: installments, `Client::Stripe`, `PriceOps/PricingPlan.pm`, misfiled tests, #296, discount form | — | 2-3 |
 | 0 | Webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed` | 1 | 1-2 |
 | 2 | **#294**: collapse `registry-platform` into `registry`; retire the all-zeros UUID as a provider identity, in `lib/` **and 21 test files including `t/lib/Test/Registry/Helpers.pm`** | 1 | 2-3 |
-| 3 | Charge model: **account configuration decided**; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` / `charge.dispute.*` handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; Connect webhook endpoint and its secret; Registry-initiated disconnect | 0, 1 | 5-7 |
+| 3 | Charge model: **Accounts v2 (`losses`/`fees` = `stripe`, `dashboard` = `full`)**; `Service::Stripe` gains a JSON `/v2/` branch; the tenant's `Account` takes Merchant + Customer configurations, replacing the separate Stripe `Customer`; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` / `charge.dispute.*` handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; Connect webhook endpoint and its secret; Registry-initiated disconnect | 0, 1 | 5-7 |
 | 4 | `pricing_plan_versions` / `pricing_components` + immutability triggers; `pricing_plans` gains `provider_id` and `audience`, keeps `session_id`; **new `clone_schema` sqitch change with the skip list in every table-shaped loop**; normalize the two tenant table shapes, then migrate registry **and every tenant schema's** plans to v1; **repoint `PricingPlan->create` at the registry table**; `plan_scope`/`plan_type`/`pricing_configuration` kept nullable and dual-written by `PriceOps::Model->publish_version` | 2 | 4-6 |
 | 5 | Rewrite the `pricing-plan-creation` workflow and its templates onto the version/component vocabulary | 4 | 3-4 |
 | 6 | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `published_at` written last; **backfill-publish every v1 migrated in Leg 4**; `Subscription.pm` stops building inline `price_data` | 3, 4 | 2-3 |
 | 7 | `pricing_schedules` + the overlap exclusion constraint; migrate `pricing_relationships` + `platform_pricing_plan_id` (**column kept nullable and dual-written**), writing a schedule row for **every** tenant; drop `billing_periods` and `DAO::BillingPeriod`; delete the dead modules | 4 | 2-3 |
 | 8 | `Entitlement` + `Quote` + `Model->offered_versions`; rewire the charge; **`Schedule` creates direct-charge subscriptions with `application_fee_percent`** and an idempotency key; **subscription envelope dispatch**; omit-never-zero `application_fee_amount`; repoint `PricingPlanSelection` and `GenerateEvents`; delete `calculate_enrollment_total` and the `!$ENV{STRIPE_SECRET_KEY}` bypass; refuse-not-zero; `RevenueShare` becomes a wrapper | 6, 7 | 4-6 |
-| 9 | Quote columns on `payments` incl. `refund_application_fee`; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **drop the deprecated columns and the tenant-schema `pricing_plans`** | 8 | 2-3 |
+| 9 | Quote columns on `payments` incl. `refund_application_fee`; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **drop the deprecated columns, `tenants.stripe_customer_id`, and the tenant-schema `pricing_plans`** | 8 | 2-3 |
 | 10 | `Metering`: record every monetizable event including zero-priced ones | 7 | 1 |
 | 11 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds | 4, 5 | 1-2 |
 | 12 | Dispute resolution surface: admin page, embedded components, AccountSession; `Job::ReconcilePayments` | 0, 3, 9 | 2-3 |
@@ -1247,9 +1279,10 @@ One thing to fix while re-cutting the suite: `t/lib/Test/Registry/StripeConnect.
 creates a **Custom** account requesting `card_payments` and `transfers`, while production
 onboards **Standard** accounts (`docs/operations/sacp-stripe-connect-onboarding.md:3,11`).
 The suite has been exercising a different account type than production will use, and
-`transfers` is the destination-charge capability. The fixture moves to whatever "Account
-configuration" above settles on, requesting `card_payments` only — the fixture and the
-runbook must name the same thing, and today they do not.
+`transfers` is the destination-charge capability. The fixture moves to a v2 `Account` with
+the Merchant configuration and `card_payments` only, matching the decision above — the
+fixture and the runbook must name the same thing, and today neither of them names what
+Leg 3 will build.
 
 **Leg 3 needs a Connect webhook endpoint before it needs any code.** Events from a connected
 account arrive at a Connect endpoint, which carries its own signing secret. Registry has
@@ -1475,10 +1508,8 @@ things the earlier rounds had not looked for:
     have access and revocation follows — ordering is the whole feature. The account-initiated
     path is bookkeeping and a notification, because subscriptions are not canceled by a
     disconnect and their fees are no longer ours to clear.
-14. **Account configuration is an open decision for perigrin.** Stripe has deprecated
-    Standard/Express/Custom for new platforms. The recommendation is v1 accounts with
-    controller properties, but it is a liability and onboarding-UX choice as much as a
-    technical one, and it gates Leg 3. See "Account configuration".
+14. **Account configuration was an open decision for perigrin; it is now settled** — see
+    (23), which both answers it and corrects the recommendation this item made.
 15. **Creating the direct-charge subscription is work in this milestone, not an assumption
     of it.** `Subscription.pm:118-158` builds inline `price_data` on the *platform* account
     with no `application_fee_percent`; nothing today can create the recurring tenant→family
@@ -1535,6 +1566,21 @@ should be true and bad at naming *which function makes it true*.
     wide and shallow (Leg 2's 21 test files, Leg 5's 1,412 lines of templates) is expensive in
     sessions in a way it was not in days, because reading is what spends a context window,
     while a small careful change like Leg 0 is cheaper than its risk suggested.
+23. **Accounts v2, `losses`/`fees` to Stripe, full dashboard** — (14) is answered, and the
+    recommendation it carried is corrected. "v1 accounts with controller properties" was
+    wrong twice: controller properties are the migration path for platforms already on v1,
+    and the claim that v2 "buys nothing this milestone needs" was backwards. A v2 `Account`
+    carries Merchant and Customer configurations at once, which is this design's own
+    "provider sells to consumer" relation expressed in Stripe's object model — and Registry
+    is currently paying for the v1 version of it, maintaining a Stripe `Customer`
+    (`Subscription.pm:59-64`) alongside the connected `Account`. Leg 3 collapses the pair.
+    The configuration reproduces Standard's shape, which is what every property in this
+    design already assumed: Stripe carries negative-balance liability and KYC, Stripe bills
+    the tenant for processing fees with Registry's share on top as the application fee, and
+    the tenant keeps a full Stripe Dashboard and Stripe's support — which matters because
+    Registry is one person and the alternative makes him tier-1 support. The error was mine
+    and no review caught it: every lens I ran pointed at Registry's code, none at Stripe's
+    current documentation.
 
 ## Follow-ups this design creates
 
@@ -1549,9 +1595,15 @@ Not blockers, but they exist because of decisions made here and should not be di
   identity, but it leaves the literal in the codebase — and an unconstrained `created_by`
   will accept any uuid, including a tenant id, without complaint. Its own issue: a real
   system user, and the FK that would have caught this.
-- **Standard accounts can change their own payment-method settings** from their Stripe
-  Dashboard. Under direct charges that is their right, and it means the payment methods a
-  family is offered are not wholly ours to determine. Document it; do not fight it.
+- **Tenants can change their own payment-method settings** from their Stripe Dashboard — a
+  direct consequence of `dashboard: full`. Under direct charges that is their right, and it
+  means the payment methods a family is offered are not wholly ours to determine. Document
+  it; do not fight it.
+- **The Connect onboarding runbook names Standard accounts.**
+  `docs/operations/sacp-stripe-connect-onboarding.md:3,11` documents a flow this milestone
+  replaces. It is an operator-facing document, so a stale one is worse than none: it will be
+  followed. Rewrite it in Leg 3, against Accounts v2, in the same branch that changes the
+  fixture.
 - **A failed migration does not fail the deploy.** `docker-entrypoint.sh:20-24` warns and
   boots the app anyway, and `render.yaml:75`'s worker runs no migration at all. Not caused
   by this design, but seven migrations across twelve legs make it much likelier to bite, and
