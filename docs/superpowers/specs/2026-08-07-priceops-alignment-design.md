@@ -381,7 +381,9 @@ version of each plan with that audience. `PricingPlanSelection` is repointed at 
 **`pricing_schedules`** — replaces `pricing_relationships`, which already carries
 provider/consumer/status and needs versioning and effective dating. `provider_id`,
 `plan_version_id`, `effective_at`, `ends_at`, `status`. `tenants.platform_pricing_plan_id` is
-**dropped**, not kept in sync.
+superseded by it — but **not dropped when it is superseded**: it stays nullable and
+dual-written from Leg 7 until Leg 9, for the reason given under "Legs 4 and 7 do not drop the
+columns they replace."
 
 The consumer is `consumer_tenant_id` **plus** a nullable `consumer_user_id`, not one of two.
 `consumer_tenant_id` is always set and always FK-enforced: when the consumer is a tenant it
@@ -655,9 +657,11 @@ Leg 8 surprise:
 - **Every item on one subscription must share `currency`, `interval` and `interval_count`.**
   The per-(version, cadence) CHECK covers currency; it extends to cover period too.
 
-**Pillar 3 therefore ships as recording, not as billing.** `metering_events` is written
-from day one, including for zero-priced events, because the pillar's whole point is holding
-volume *before* anyone decides to charge for it and that data cannot be backfilled.
+**Pillar 3 therefore ships as recording, not as billing.** Leg 10 creates `metering_events`
+and starts writing it, including for zero-priced events, because the pillar's whole point is
+holding volume *before* anyone decides to charge for it and that data cannot be backfilled.
+"From day one" in an earlier draft was aspiration, not sequencing — day one is Leg 10, and
+every event before that leg is lost, which is the actual argument for not sliding it later.
 Forwarding those rows to Stripe as meter events is what waits, and it waits for a usage-based
 component kind to consume them.
 
@@ -686,8 +690,17 @@ Standard's shape expressed in the current vocabulary:
 |---|---|---|
 | Negative-balance liability | `losses_collector: stripe` | Stripe monitors risk and pursues negative balances. Registry, which is one person, does not become a risk operation. |
 | Who pays Stripe's processing fees | `fees_collector: stripe` | Stripe bills the tenant directly; Registry's revenue share sits on top as the application fee. Registry never fronts processing costs and never has to bill them back. |
-| Dashboard | `dashboard: full` | The tenant gets a real Stripe Dashboard and Stripe's support. Registry is not tier-1 support for Stripe questions. **Immutable** — changing it means creating a new `Account`. |
+| Dashboard | `dashboard: full` | The tenant gets a real Stripe Dashboard and Stripe's support. Registry is not tier-1 support for Stripe questions. |
 | KYC | derived: `requirements_collector: stripe` | Not settable in v2; it follows from the two above. Stripe collects and maintains verification, including when requirements change. |
+
+**Which of these can be walked back is the opposite of what an earlier draft claimed.** That
+draft marked `dashboard` immutable. It is not: `dashboard` is a documented parameter of
+`/v2/core/accounts/update`, and Stripe says *"We send the `v2.core.account.updated` event only
+for updates to top-level properties, such as `dashboard` or `display_name`."* The rows that
+deserve the warning are the two above it — the responsibilities pair is `required` at creation,
+and whether it can be changed afterwards is **not settled by the reference either way**. Leg 3a
+answers that with a test-mode account before Leg 3 creates a live one, because
+`losses_collector` is the single choice in this design with a company-shaped consequence.
 
 An earlier draft recommended **v1 Accounts with controller properties** instead, on the
 grounds that Accounts v2 "buys nothing this milestone needs." Both halves were wrong.
@@ -704,18 +717,59 @@ and a map, and Registry already maintains both — `Subscription.pm:59-64` creat
 `Customer` and writes `tenants.stripe_customer_id`, while `stripe_connect_account_id` holds
 the `Account`. So "a provider sells to a consumer, applied recursively" is not only
 expressible in Stripe's object model, it is what v2's `Account` *is*, and Registry is
-currently paying for the version that isn't. Leg 3 collapses the pair; `stripe_customer_id`
-is dropped in Leg 9 with the other superseded columns.
+currently paying for the version that isn't.
 
-Two costs, both real and both in Leg 3. `Service::Stripe::_request_async:26` hardcodes
-`https://api.stripe.com/v1/$endpoint` and form-encodes POST bodies at `:43`; v2 is a
-different path and takes JSON, so that method gets a second branch and Registry speaks two
-API versions. Only account creation and management move — PaymentIntents, Subscriptions and
-Invoices are v1 objects and stay there. And **disconnect** changes shape: OAuth
-`/v1/oauth/deauthorize` and the `account.application.deauthorized` event are
-Standard-and-OAuth mechanisms, and a v2 account uses the rejection API instead. The
-disconnect bullet under "Money movement" describes the flow correctly; only the endpoint
-differs.
+The mechanism has a name the spec had not written down, and code has to use it: *"Any API
+request with a `customer` parameter that accepts a `Customer` ID also has a
+`customer_account` parameter that accepts an `Account` ID."* Every Registry→tenant
+subscription and invoice call swaps `customer` for `customer_account`. The reason this is
+not optional under v1 is the sentence after it: *"If you use the Accounts v1 API, you can't
+pass an `Account` ID to an endpoint that expects a `Customer` ID."*
+
+**The collapse moves out of Leg 3 and into Leg 9**, with the column drop it was always paired
+with. Leg 3 is the one leg with a deadline — it must merge before the first tenant onboards —
+and the collapse is the one part of it that has no deadline: Stripe supports adding a
+configuration to an existing account afterwards, with *"Centralized identity data: When you
+add a configuration to an existing `Account` to enable additional functionality, you don't
+have to re-collect requirements that they already provided."* Nothing is lost by waiting and
+Leg 3 gets smaller, which is worth more on the leg that gates taking money.
+
+**The costs are four, not two, and they are the reason Leg 3 is the largest leg here.**
+
+*Transport.* `Service::Stripe::_request_async:26` hardcodes `https://api.stripe.com/v1/$endpoint`
+and form-encodes POST bodies at `:43`; v2 is a different path and takes JSON, so that method
+gets a second branch. Only account creation and management move — PaymentIntents,
+Subscriptions and Invoices are v1 objects and stay there.
+
+*API version.* `Service::Stripe.pm:15` pins `Stripe-Version` to `2024-12-18.acacia`, which
+predates Accounts v2 entirely — every v2 example in Stripe's current docs sends a
+`2026-07-29` version. The pin is not incidental: `t/stripe-live/service-version.t` exists
+solely to catch it drifting, and `DAO::Subscription.pm:71-103` is a *third* Stripe client
+that sends no version header at all. Bumping a pinned version is a change to every v1 call
+Registry makes, across a year and a half of Stripe releases, and it is not something to
+discover halfway through Leg 3. **It ships as its own leg, before Leg 3** — see Leg 3a.
+
+*OAuth is given up, and this is the one that surprised the fourth reviewer.* Stripe lists
+using *"OAuth to authenticate connected accounts"* among the cases where **"You must use
+Accounts v1"**. Choosing v2 therefore ends OAuth as an onboarding mechanism, and with it
+`/v1/oauth/deauthorize` and the `account.application.deauthorized` event. An earlier draft
+said a v2 account "uses the rejection API instead"; that was invented. See "disconnect" under
+"Money movement" for what actually replaces it.
+
+*The `t/stripe-live/` fixture may have no automatable replacement, and this is a risk to the
+gate rather than a cost.* `t/lib/Test/Registry/StripeConnect.pm:79-113` gets a chargeable
+account by creating `type: custom` and submitting KYC itself with Stripe's magic values —
+which works only because a Custom account makes the *platform* the requirements collector.
+Under `dashboard: full` the collector is Stripe, and there is no documented way for a
+platform to satisfy verification on the account's behalf. If that has no equivalent, the
+milestone's acceptance test cannot run unattended. **Leg 3a spikes this in test mode and
+reports before Leg 3 commits to the configuration** — it is cheaper to learn now than to
+finish Leg 3 and find the gate unrunnable.
+
+What this does *not* cost is production onboarding code, because there isn't any:
+`docs/operations/sacp-stripe-connect-onboarding.md:11-20` onboards a tenant by hand in the
+Stripe Dashboard, and no module in `lib/` creates a connected account. The only code that
+does is the test fixture above.
 
 What this decision does *not* change: direct charges, `application_fee_amount`,
 `application_fee_percent`, the tenant owning the dispute, and the embedded dispute
@@ -968,20 +1022,40 @@ columns exist.
   through the API."* By the time the event arrives, every call the handler wants to make is
   already refused.
 
-  So it splits by who initiates, and only one half is ours to fix.
+  **Under Accounts v2 there is no revoke endpoint and no deauthorized event, and the design
+  is better for it.** Both are OAuth mechanisms, and OAuth is on Stripe's list of cases where
+  *"You must use Accounts v1"*. The other candidate does not work either: `/v2/core/accounts/
+  {id}/close` returns `stripe_loss_liable_cannot_be_deleted` — *"Account with Stripe-owned
+  loss liability and dashboard cannot be deleted"* — which is precisely the configuration
+  chosen above. So Registry cannot revoke, close, or delete a tenant's account.
 
-  **Registry-initiated** is the path we control and the one to build: a "disconnect from
-  Registry" action that ends the tenant's schedule rows, clears `application_fee_percent`
-  from every subscription on that account *while we still have access*, and only then calls
-  the revoke endpoint. Ordering is the whole feature.
+  That is the correct outcome rather than a missing feature. With `losses_collector: stripe`
+  and `dashboard: full`, the account is the tenant's property and their relationship with
+  Stripe; Registry is a platform they granted access to, not the owner of their merchant
+  identity. Disconnect is therefore entirely a Registry-side operation, and it is the same
+  list of work minus the last step:
 
-  **Account-initiated** — the tenant clicks Remove in their own Dashboard — leaves us no
-  window at all. The `account.application.deauthorized` handler still earns its place, but
-  its job is bookkeeping and honesty, not collection: end the schedule rows, mark the tenant
-  disconnected, and notify them that Stripe has left our fee on their subscriptions and
-  that they can clear it themselves (*"After disconnect, a connected account can clear the
-  `application_fee_percent` parameter from existing Subscriptions through the API"*). A
-  platform that keeps quiet here is one that keeps collecting from someone who left.
+  **Registry-initiated** is a "disconnect from Registry" action that ends the tenant's
+  schedule rows, clears `application_fee_percent` from every subscription Registry created on
+  that account, stops the charge path from resolving that tenant, and clears
+  `stripe_connect_account_id`. The ordering argument in the earlier draft — clear the fees
+  *before* revoking — evaporates along with the revoke call, but clearing the fees does not:
+  a subscription left with `application_fee_percent` set keeps paying Registry after the
+  relationship ends, and nothing external stops it.
+
+  **Account-initiated is an open question Leg 3a must answer, not a handler we can specify.**
+  With OAuth gone there is no `account.application.deauthorized` to hook, and whether a
+  full-dashboard v2 account offers the tenant any "remove this platform" affordance at all is
+  not stated in the reference. Two possibilities, and Leg 3a's spike distinguishes them: if
+  there is no such affordance, the account-initiated case does not exist and only the
+  Registry-initiated path is needed; if there is one, the signal is capability loss on
+  `account.updated` rather than a dedicated event, and detection becomes reconciliation —
+  which is what `Job::ReconcilePayments` in Leg 12 is already for. **Do not write a handler
+  for an event that may not fire.** What survives either way is the obligation: tell the
+  tenant that our fee is still attached to their subscriptions and that they can clear it
+  themselves (*"After disconnect, a connected account can clear the `application_fee_percent`
+  parameter from existing Subscriptions through the API"*). A platform that keeps quiet here
+  is one that keeps collecting from someone who left.
 
   Also worth recording, because it reads as a bug when discovered live:
   *"Subscriptions aren't automatically canceled when you disconnect from the platform."*
@@ -1062,7 +1136,8 @@ new argument.
 
 ## What gets deleted
 
-Installments are cut. ~3,700 lines across `lib/` and `t/`, the `Webhooks.pm:69-71,204-289`
+Installments are cut. ~3,000 lines across `lib/` and `t/` (twelve files dedicated to
+`payment_schedules`/`scheduled_payments`, 3,016 lines), the `Webhooks.pm:69-71,204-289`
 branch, and forward migrations for `payment_schedules` and `scheduled_payments`. Close
 #295 and #279 as won't-do. Rationale: unreachable for eleven months, two independent
 breaks from working (an orphaned workflow step *and* a registry-scoped webhook classifier
@@ -1122,26 +1197,35 @@ has to be re-cut rather than extended.
 | 1 | Safe deletions: installments, `Client::Stripe`, `PriceOps/PricingPlan.pm`, misfiled tests, #296, discount form | — | 2-3 |
 | 0 | Webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed` | 1 | 1-2 |
 | 2 | **#294**: collapse `registry-platform` into `registry`; retire the all-zeros UUID as a provider identity, in `lib/` **and 21 test files including `t/lib/Test/Registry/Helpers.pm`** | 1 | 2-3 |
-| 3 | Charge model: **Accounts v2 (`losses`/`fees` = `stripe`, `dashboard` = `full`)**; `Service::Stripe` gains a JSON `/v2/` branch; the tenant's `Account` takes Merchant + Customer configurations, replacing the separate Stripe `Customer`; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` / `charge.dispute.*` handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; Connect webhook endpoint and its secret; Registry-initiated disconnect | 0, 1 | 5-7 |
+| 3a | **Bump `Stripe-Version` off `2024-12-18.acacia` to a v2-aware version**, in `Service::Stripe.pm:15`, `t/stripe-live/service-version.t` and `DAO::Subscription.pm:71-103` (which sends none); **spike a chargeable full-dashboard v2 account in test mode** and report whether `t/lib/Test/Registry/StripeConnect.pm`'s KYC path has an equivalent; confirm whether `defaults.responsibilities` is updatable | 1 | 2-3 |
+| 3 | Charge model: **Accounts v2 (`losses`/`fees` = `stripe`, `dashboard` = `full`)**; `Service::Stripe` gains a JSON `/v2/` branch; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; `charge.refunded` and dispute-*recording* handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; **two webhook endpoints — Connect for v1 events, platform for `v2.core.account.*` thin events — and their secrets**; **a tenant `SELECT` by `stripe_connect_account_id`**; Registry-initiated disconnect | 0, 1, 3a | 4-6 |
 | 4 | `pricing_plan_versions` / `pricing_components` + immutability triggers; `pricing_plans` gains `provider_id` and `audience`, keeps `session_id`; **new `clone_schema` sqitch change with the skip list in every table-shaped loop**; normalize the two tenant table shapes, then migrate registry **and every tenant schema's** plans to v1; **repoint `PricingPlan->create` at the registry table**; `plan_scope`/`plan_type`/`pricing_configuration` kept nullable and dual-written by `PriceOps::Model->publish_version` | 2 | 4-6 |
 | 5 | Rewrite the `pricing-plan-creation` workflow and its templates onto the version/component vocabulary | 4 | 3-4 |
 | 6 | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `published_at` written last; **backfill-publish every v1 migrated in Leg 4**; `Subscription.pm` stops building inline `price_data` | 3, 4 | 2-3 |
 | 7 | `pricing_schedules` + the overlap exclusion constraint; migrate `pricing_relationships` + `platform_pricing_plan_id` (**column kept nullable and dual-written**), writing a schedule row for **every** tenant; drop `billing_periods` and `DAO::BillingPeriod`; delete the dead modules | 4 | 2-3 |
 | 8 | `Entitlement` + `Quote` + `Model->offered_versions`; rewire the charge; **`Schedule` creates direct-charge subscriptions with `application_fee_percent`** and an idempotency key; **subscription envelope dispatch**; omit-never-zero `application_fee_amount`; repoint `PricingPlanSelection` and `GenerateEvents`; delete `calculate_enrollment_total` and the `!$ENV{STRIPE_SECRET_KEY}` bypass; refuse-not-zero; `RevenueShare` becomes a wrapper | 6, 7 | 4-6 |
-| 9 | Quote columns on `payments` incl. `refund_application_fee`; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **drop the deprecated columns, `tenants.stripe_customer_id`, and the tenant-schema `pricing_plans`** | 8 | 2-3 |
-| 10 | `Metering`: record every monetizable event including zero-priced ones | 7 | 1 |
+| 9 | Quote columns on `payments` incl. `refund_application_fee`; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **add the Customer configuration to each tenant's `Account` and swap `customer` for `customer_account`**; **drop the deprecated columns, `tenants.stripe_customer_id`, and the tenant-schema `pricing_plans`** | 8 | 3-4 |
+| 10 | **Create `metering_events`**; `Metering`: record every monetizable event including zero-priced ones | 7 | 1 |
 | 11 | Pillar 5: `./registry pricing` CLI + CHECK constraints; retire hand-typed SQL seeds | 4, 5 | 1-2 |
-| 12 | Dispute resolution surface: admin page, embedded components, AccountSession; `Job::ReconcilePayments` | 0, 3, 9 | 2-3 |
+| 12 | Dispute resolution *surface*: admin page, embedded components, AccountSession; `Job::ReconcilePayments`. The `charge.dispute.*` handlers themselves are Leg 3 — Leg 12 is what a human sees | 0, 3, 9 | 2-3 |
 
-**31 to 46 sessions** — 8 to 23M tokens, a spread wide enough that the token figure is
+**33 to 49 sessions** — 8 to 25M tokens, a spread wide enough that the token figure is
 context rather than a budget.
 
-Legs 3, 4 and 8 are 13 to 19 of that, over 40% in three legs, and the concentration is the
+Legs 3a, 3, 4 and 8 are 14 to 21 of that, over 40% in four legs, and the concentration is the
 useful signal: they are the charge model, the model tables and the resolver, and each is
 large because it touches code rather than because it adds a table. Leg 3 accumulated five
 hardening items that stop being optional once the tenant holds the account; Leg 4 needs a new
 `clone_schema` change, a shape normalization and a write cutover rather than one migration;
 Leg 8 is where every read path moves at once.
+
+**Leg 3a is a spike and a version bump, and it is deliberately in front of the deadline
+leg.** Both halves are cheap to do early and expensive to discover late: a pinned API version
+touches every Stripe call Registry makes, and the account-fixture question decides whether
+the milestone's acceptance test can run at all. If the spike comes back saying a
+full-dashboard v2 account cannot be provisioned unattended, that is an argument to revisit
+`dashboard: full` — which is exactly the kind of finding that must arrive before Leg 3, not
+after it.
 
 The cheap legs at the bottom are cheap because Legs 4 and 7 will already have built what they
 need — Pillar 3 is one of the five pillars and `Metering` costs a single session. That is the
@@ -1182,7 +1266,7 @@ function is named the window silently becomes a single-write window. The owner h
 `UnifiedPricingEngine.pm:97,130` sets it on two paths, and `TenantPayment.pm:429` writes
 `platform_pricing_plan_id` at tenant signup. Once those are gone, nothing writes the
 columns `RevenueShare.pm:61,117` still selects on — and it does not fall back, it dies with
-*"This is a deployment bug"* (`:67,:123`). So from Leg 5 through Leg 9, `publish_version`
+*"This is a deployment bug"* (`:67-68`, `:123-124`). So from Leg 5 through Leg 9, `publish_version`
 writes the legacy `pricing_plans` row alongside the version, mapping `audience` back to
 `plan_scope`, and the tenant-signup step writes both a schedule row and
 `platform_pricing_plan_id`. Leg 9 deletes the second write and the columns in the same
@@ -1195,7 +1279,7 @@ against an old schema, which for a pricing leg means the resolver querying a tab
 does not exist on a live checkout. The worker is worse: `render.yaml:75` defines it with no
 migration step at all, so it boots against whatever schema the web service happened to
 leave behind, and the worker is what runs the payment jobs. This is not caused by this
-milestone, but this milestone is what makes it expensive — twelve legs, seven migrations,
+milestone, but this milestone is what makes it expensive — fourteen legs, seven migrations,
 each one a chance to serve new pricing code against old tables. Making a failed deploy fail
 the container is a one-line change and a prerequisite for shipping any leg to production.
 
@@ -1208,8 +1292,10 @@ drops them. **The `clone_schema` exclusion moves to Leg 4** for the same reason 
 direction: it must land with the tables, or a tenant onboarded in the gap between Leg 4 and
 Leg 7 is created with clones of the new tables and immediately violates the invariant.
 
-Leg 0 ships alone and first: it can lose a paid enrollment today and depends on nothing
-else here.
+Leg 0 ships second, immediately after Leg 1, and nothing waits on it: it can lose a paid
+enrollment today, and Leg 1 is only ahead of it because of the nested-transaction problem
+above. An earlier draft said "Leg 0 ships alone and first: depends on nothing else here",
+which survived the renumbering it contradicted.
 
 **Why the quote stamp is not Leg 1.** It is the change that closes the most money bugs —
 the unrecorded fee, the retroactive rate, the refund policy that follows a tenant between
@@ -1292,16 +1378,27 @@ succeeds at Stripe and Registry never hears about it — the same failure mode a
 defect Leg 0 fixes, reintroduced by configuration. Register the endpoint and add the secret
 first; the code is the easy half.
 
-The tenant lookup Leg 3 needs is already written: `Webhooks.pm:148-162` resolves a tenant from
-`stripe_connect_account_id` for `account.updated`. Payment events reuse it rather than
-inventing one.
+**And it needs two endpoints, not one, because v2 accounts split their events across
+scopes.** Stripe: *"v2 `Account` objects trigger both v1 and v2 `Events`, which can have
+different scopes. For events triggered by connected accounts, v2 `Events` use the **Your
+account** scope, while v1 `Events` use the **Connected accounts** scope, even when triggered
+by the same v2 `Account`."* So v1 `account.updated` and the direct charges arrive on the
+Connect endpoint, and `v2.core.account.*` arrives on the platform endpoint as a thin event.
+A Leg 3 that registers only the Connect endpoint will silently never see the v2 half.
+
+**The tenant lookup Leg 3 needs does not exist yet.** An earlier draft said it was already
+written and pointed at `Webhooks.pm:148-162`. That method does not resolve a tenant: it is a
+blind `UPDATE registry.tenants … WHERE stripe_connect_account_id = ?` whose only output is
+`->rows`, used to log a miss. It never produces the tenant identity — the slug — that a
+payment handler needs to reach tenant-schema rows through `connect_schema`. Leg 3 writes that
+lookup, and it is a `SELECT`, not a reuse.
 
 ## Testing
 
 Strict TDD per `CLAUDE.md`; 100% pass rate; pristine output. Full suite is
 `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lr t/` (~76 min).
 
-**Seven of the twelve legs add a migration, and `prove` will not see any of them.** Tests
+**Seven of the fourteen legs add a migration, and `prove` will not see any of them.** Tests
 build their database from a pre-generated dump: `Test::Registry::DB` loads
 `sql/test-schema.sql` when it exists and only falls back to a sqitch deploy when it does
 not (`t/lib/Test/Registry/DB.pm:13-16,63-68`). `make test` regenerates the dump because the
@@ -1376,6 +1473,17 @@ does run but which `plan skip_all`s without a real `sk_test_` key
 gate is `.github/workflows/stripe-e2e.yml` being green, not the suite. Everything else in
 this section runs in the normal suite against an ephemeral Postgres; the live test proves
 only the one thing an ephemeral Postgres cannot, which is that Stripe moved money.
+
+**That workflow cannot currently fail, and until it can, this milestone has no gate at all.**
+Its own header says so — `.github/workflows/stripe-e2e.yml:2`: *"Informational only --
+continue-on-error means failures never block merges."* Both real-Stripe steps carry
+`continue-on-error: true` (`:83`, `:91`), and `main` has no branch protection rule, so a red
+run is a red X nobody is required to look at. The design has spent fourteen legs arriving at
+a single criterion that is first evaluated on a workflow structurally incapable of reporting
+failure. **Removing `continue-on-error` and protecting `main` is part of Leg 3a**, not a
+follow-up: it costs minutes, and every leg after it is worth less without it. The reason it
+belongs in 3a specifically is that 3a is the first leg with a real-Stripe result worth
+gating on.
 
 The suite is not pristine today: `t/dao/scheduled-payment.t:22`,
 `t/dao/payment-schedule-race-condition.t:24`, `t/dao/payment-schedule.t:21` and
@@ -1507,7 +1615,10 @@ things the earlier rounds had not looked for:
     every call the handler wants to make is already refused. Fees are cleared while we still
     have access and revocation follows — ordering is the whole feature. The account-initiated
     path is bookkeeping and a notification, because subscriptions are not canceled by a
-    disconnect and their fees are no longer ours to clear.
+    disconnect and their fees are no longer ours to clear. **Half of this is superseded by
+    (24):** the conclusion that disconnect is Registry-initiated survives and is now
+    structural rather than a preference, but there is no revocation to order against and no
+    deauthorized event to handle.
 14. **Account configuration was an open decision for perigrin; it is now settled** — see
     (23), which both answers it and corrects the recommendation this item made.
 15. **Creating the direct-charge subscription is work in this milestone, not an assumption
@@ -1561,7 +1672,8 @@ should be true and bad at naming *which function makes it true*.
     rather than the tables they name. perigrin's objection is that days are wildly inaccurate
     for this kind of work, and he is right: the unit assumed a fixed number of hours nobody
     sits down for, and it was never what the work arrives in. The unit is now one context
-    window of focused work, 250k-500k tokens, cold start to commit. **31 to 46 sessions.**
+    window of focused work, 250k-500k tokens, cold start to commit. **33 to 49 sessions**
+    after (24) added Leg 3a.
     The re-costing also changed the *shape* of the estimate, not just its units: work that is
     wide and shallow (Leg 2's 21 test files, Leg 5's 1,412 lines of templates) is expensive in
     sessions in a way it was not in days, because reading is what spends a context window,
@@ -1581,6 +1693,58 @@ should be true and bad at naming *which function makes it true*.
     Registry is one person and the alternative makes him tier-1 support. The error was mine
     and no review caught it: every lens I ran pointed at Registry's code, none at Stripe's
     current documentation.
+24. **(23) was right about the decision and wrong about four of its consequences**, all found
+    by pointing the next review at Stripe's documentation instead of at Registry. The decision
+    stands; these do not:
+    - **Choosing v2 gives up OAuth.** Stripe lists *"OAuth to authenticate connected
+      accounts"* among the cases where **"You must use Accounts v1."** This costs Registry
+      nothing today — onboarding is done by hand in the Dashboard
+      (`docs/operations/sacp-stripe-connect-onboarding.md:11-20`) and no module in `lib/`
+      creates a connected account — but it removes `/v1/oauth/deauthorize` and
+      `account.application.deauthorized`, which (13) had built the disconnect design on.
+    - **"A v2 account uses the rejection API instead" was invented.** There is no revoke path:
+      `/v2/core/accounts/{id}/close` returns `stripe_loss_liable_cannot_be_deleted` for
+      exactly the configuration chosen here. Disconnect becomes Registry-side only, which is
+      right — the account belongs to the tenant. The account-*initiated* half is now an open
+      question for Leg 3a rather than a handler, because writing a handler for an event that
+      may never fire is worse than admitting we do not know yet.
+    - **`dashboard` was marked immutable and is not.** It is a parameter of
+      `/v2/core/accounts/update`, and Stripe sends `v2.core.account.updated` *"only for
+      updates to top-level properties, such as `dashboard` or `display_name`."* The row that
+      might deserve the warning is `defaults.responsibilities`, and the reference does not
+      settle it — so Leg 3a confirms it against a test-mode account rather than the spec
+      guessing a second time.
+    - **The API version pin makes all of this unreachable.** `Service::Stripe.pm:15` sends
+      `2024-12-18.acacia`, which predates v2; Stripe's current v2 examples send `2026-07-29`.
+      That bump is a change to every v1 call Registry makes and belongs in its own leg, which
+      is what Leg 3a is.
+25. **Leg 3a exists to move discovery in front of the deadline.** Leg 3 is the only leg that
+    must merge before the first tenant onboards, and it had accumulated two items whose
+    outcome could invalidate it: the version bump, and whether a chargeable full-dashboard v2
+    account can be provisioned unattended. `t/lib/Test/Registry/StripeConnect.pm:79-113` gets
+    one today only because `type: custom` makes the platform the requirements collector, and
+    `dashboard: full` gives that job to Stripe. If there is no equivalent, the milestone's
+    acceptance test cannot run unattended and `dashboard: full` has to be reconsidered — a
+    finding that is cheap before Leg 3 and expensive after it.
+26. **The milestone's only gate could not fail.** `.github/workflows/stripe-e2e.yml` carries
+    `continue-on-error: true` on both real-Stripe steps and says so in its own header, and
+    `main` has no branch protection. Fourteen legs converging on one acceptance criterion,
+    evaluated by a workflow that cannot report failure. Fixed in Leg 3a, which is the first
+    leg with a real-Stripe result worth gating on.
+27. **The Customer-configuration collapse moves from Leg 3 to Leg 9.** It is the only part of
+    Leg 3 with no deadline, and Stripe supports adding a configuration later without
+    re-collecting requirements. It also joins the column it obsoletes:
+    `tenants.stripe_customer_id` was already dropping in Leg 9. Named the mechanism while
+    moving it — `customer_account`, not `customer` — because "collapses the pair" is not
+    something an implementer can type.
+28. **Four smaller corrections, recorded rather than quietly fixed.** `tenants.platform_
+    pricing_plan_id` was described as **dropped** in the data model and dual-written
+    everywhere else — a Leg 7 author reading only the data model would have broken collection
+    for two legs. "Leg 0 ships alone and first" survived the renumbering that put Leg 1 ahead
+    of it. The tenant lookup Leg 3 needs was said to be "already written" at
+    `Webhooks.pm:148-162`; that method is a blind `UPDATE` returning `->rows` and yields no
+    tenant identity, so Leg 3 writes a `SELECT`. And two counts were wrong: installments are
+    ~3,000 lines, not ~3,700, and there are fourteen legs, not twelve.
 
 ## Follow-ups this design creates
 
@@ -1601,11 +1765,22 @@ Not blockers, but they exist because of decisions made here and should not be di
   it; do not fight it.
 - **The Connect onboarding runbook names Standard accounts.**
   `docs/operations/sacp-stripe-connect-onboarding.md:3,11` documents a flow this milestone
-  replaces. It is an operator-facing document, so a stale one is worse than none: it will be
-  followed. Rewrite it in Leg 3, against Accounts v2, in the same branch that changes the
-  fixture.
+  replaces — and since it is the *only* onboarding mechanism Registry has, rewriting it is
+  not documentation tidying, it is how the new configuration actually gets used. It is
+  operator-facing, so a stale one is worse than none: it will be followed. Rewrite it in
+  Leg 3, against Accounts v2, in the same branch that changes the fixture.
+- **`sql/verify/stripe-subscription-integration.sql:9` asserts `tenants.stripe_customer_id`
+  exists**, and Leg 9 drops it. A sqitch verify script for an earlier change breaking on a
+  later change is a deploy-time failure in the one place with no test coverage. Check it
+  while writing Leg 9's migration.
+- **Mixed-interval subscriptions may have superseded one of the four Stripe restrictions
+  above.** The constraint that every item on a subscription shares `interval` and
+  `interval_count` is stated here as absolute; Stripe has since added mixed-interval
+  subscriptions under flexible billing mode. The design is *more* restrictive than Stripe
+  requires, which is safe, so this is a possible simplification rather than a defect —
+  confirm before Leg 8 designs the per-(version, cadence) CHECK around it.
 - **A failed migration does not fail the deploy.** `docker-entrypoint.sh:20-24` warns and
   boots the app anyway, and `render.yaml:75`'s worker runs no migration at all. Not caused
-  by this design, but seven migrations across twelve legs make it much likelier to bite, and
+  by this design, but seven migrations across fourteen legs make it much likelier to bite, and
   the failure mode is new pricing code querying a table that is not there. Its own issue,
   fixed before the first leg deploys.
