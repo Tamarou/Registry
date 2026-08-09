@@ -1757,6 +1757,33 @@ argument for the name staying.
   balance will not cover it, where a destination-charge refund on the platform's own balance
   normally would not. `succeeded` is not the only success, and a test asserting it is a test
   that will go red in production rather than in CI.
+- **An earlier draft drew that conclusion for the test suite and not for the state machine,
+  which is where it bites.** `Payment::refund` (`Payment.pm:455-482`) and `refund_async`
+  (`:578-601`) never read `$refund->{status}`. They pick between `refunded` and
+  `partially_refunded` off locally computed arithmetic — `$refund_cents >= $amount_cents` —
+  and the only non-terminal exit is an exception. A `pending` Refund is a 200 response, so it
+  takes the terminal branch: Registry writes a completed refund for money that has not moved.
+  Stripe holds it *"until your Stripe balance becomes sufficient"*, and under direct charges
+  that balance is the tenant's. If it is still short when the pending-refund window expires,
+  Stripe fails the refund (`failure_reason: insufficient_funds`), returns the money to the
+  tenant's balance, and emits **`refund.failed`** with the guidance that a human must arrange
+  another way to pay the customer. Registry subscribes to no such event — Leg 3's list carries
+  `charge.refunded`, the dispute events, `account.updated` and
+  `application_fee.created`/`.refunded`, and `refund.failed`/`refund.updated` appear nowhere in
+  this document. Leg 12's `ReconcilePayments` cannot cover it either: it scans
+  `status IN ('pending','processing','failed')` and retrieves the PaymentIntent, so a row
+  already written `refunded` is outside the scan and a PaymentIntent retrieve is not a refund
+  retrieve. Net: the family drops, the admin approves, the refund silently never pays, and the
+  database, the admin UI and the parent's dashboard all read `refunded` with nothing that ever
+  corrects them. **So Leg 3 sets the row from Stripe's answer**: `succeeded` is terminal,
+  `pending` writes `refund_pending` — the same non-terminal value Leg 0 already introduces for
+  the crash window between COMMIT and the capacity refund, because it means the same thing on
+  both paths, a refund initiated and not yet confirmed — and only `refund.failed`/`refund.updated`,
+  subscribed in the same leg, or the reconciler move it off. This is not exotic: Stripe's own
+  Connect guidance for this shape is *"conduct a balance check before initiating a refund to
+  make sure that the connected account has sufficient funds."* `requires_action` is deliberately
+  **not** handled — Stripe documents it for Konbini, PromptPay, Boleto and bank transfers, none
+  of which the Payment Element card path reaches — so the `pending` branch alone carries the fix.
 - **An approved refund never reaches Stripe today, and no leg here fixed that.** The design
   spends four bullets on how refunds *should* be issued and never checks whether anything
   issues them. `DropRequest.pm:68` writes `refund_status => 'pending'` when an admin approves
@@ -1978,6 +2005,10 @@ argument for the name staying.
   `none` for not-applicable). Widening is the better answer — `denied` means an admin said no
   and `refund_failed` means Stripe said no, and collapsing them loses the distinction an
   operator needs — but either way the constraint is part of Leg 3, not a discovery in it.
+  **The widened list is four values, not three: `refund_pending` goes in with them**, for the
+  refund Stripe accepted but has not paid (see the refund bullets above). A vocabulary
+  argument that reasoned about this column at length and still shipped only terminal values is
+  the same omission twice.
 - **The Stripe destination account is selected by an attacker-writable POST parameter.** This
   is the largest single hole in the money path and no earlier round found it, because every
   round looked at the payment step and none looked at how the payment step's input arrives.
@@ -2193,6 +2224,29 @@ argument for the name staying.
   `charge.dispute.closed` handlers that project Stripe's `amount_refunded` and
   `application_fee_amount` back onto the row ship with Leg 3, because that is the leg that
   hands the tenant the button.
+- **Projecting the fee is not reversing it, and an earlier draft prescribed the first as the
+  remedy for the second.** The bullet above names "the application fee is never reversed" as
+  the defect and then answers it with handlers that *record* `application_fee_amount` — which
+  leaves the money exactly where the defect says it is. Nothing on the webhook path can reverse
+  a fee: `refund_application_fee_for_tenant` has one call site in the whole tree,
+  `Payment.pm:114` inside `_refund_connect_params`, whose only callers are `Payment::refund`
+  and `refund_async`. A tenant-initiated Dashboard refund reaches none of them, and Stripe
+  forbids the tenant from doing it themselves — *"an application fee can be refunded only by
+  the application that created the charge"* — so Registry is the only party able to return that
+  money and no leg does. Meanwhile the design creates a column that promises it will:
+  `refund_application_fee boolean NOT NULL DEFAULT true`, and the deployed
+  `refund-application-fee-config` change sets the key `true` on the seeded plans, so the live
+  policy for every tenant today is *give the fee back*. **So Leg 3's `charge.refunded` handler
+  acts as well as records**: after projecting, if the payment's refund policy resolves true, it
+  reverses the fee proportionally. Two clauses, because the handler ships in Leg 3 and the
+  stamp does not exist until Leg 9a — it calls `refund_application_fee_for_tenant($db, $slug)`
+  until 9a and `refund_application_fee_for_payment($db, $payment)` after, and **9a repoints
+  this caller in the same commit as the rename**. No new column is needed for the handle: the
+  fee is found with `GET /v1/application_fees?charge=…`, already named for the Leg 13 gate.
+  The handler must be idempotent against Stripe redelivering `charge.refunded`, or a retried
+  webhook reverses a partial fee twice. The harm is small per event — 2% of a refunded seat —
+  and it accrues to Registry at the tenant's expense, which is precisely why it would never
+  generate a complaint to find it by.
 - **The signature parser keeps one `v1`, and Leg 3 makes that a rotation hazard.**
   `Webhooks.pm:171-178` assigns `$sigs{v1} = $value` inside the loop, so a header carrying
   several `v1=` signatures — which is what Stripe sends during a secret rollover — is checked
@@ -2326,14 +2380,44 @@ argument for the name staying.
   `PriceOps/ScheduledPayment.pm:23,51` — and every one of them is followed by
   `return unless $subscription_id`. So the field becomes `undef`, the guard fires, and the
   handler returns success having done nothing. No exception, no log line, no failed webhook
-  for Stripe to retry: renewals simply stop being recorded while the dashboard shows every
-  event delivered `200`. **Three of the five die with Leg 1's installment deletion, not two:**
+  for Stripe to retry. **Three of the five die with Leg 1's installment deletion, not two:**
   `Webhooks.pm:213` sits inside `_is_installment_payment_event` (`:204-227`), which resolves a
   `Registry::DAO::PaymentSchedule` against a table Leg 1 drops, so it goes with the rest of the
   installment machinery. The other two — `Subscription.pm:316,329` — are rewritten in
   **Leg 3a**, in the same commit as the version bump, because a bump
   that lands without them is worse than no bump at all. This is the single best illustration
   of why the pin was moved into its own leg ahead of the deadline.
+- **Two corrections to the paragraph above, and the first inverts what Leg 3a has to do.**
+  *(a) `Stripe-Version` is a request header and cannot break a webhook handler.*
+  `Service/Stripe.pm:15` holds the pin and `:25-32` attaches it as `'Stripe-Version' => $api_version`
+  on outbound calls; that governs the shape of responses to *Registry's own API requests*. All
+  five readers consume webhook **event payloads** — `Webhooks.pm` decodes `$self->req->body`
+  and hands `$event->{data}` down; `Subscription.pm:314-316,327-329` read
+  `$event_data->{object}` before making any API call; `ScheduledPayment.pm:23,51` receive the
+  same. Stripe: *"webhook endpoints either have a specific API version set or use the default
+  API version of the Stripe account."* Payload shape is set by the **endpoint's own
+  `api_version`**, which nothing in this repository and nothing in this document ever sets —
+  `api_version`, `webhook_endpoints` and `enabled_events` return one field and one comment
+  across `lib/ bin/ t/ docs/`, and zero hits in these 4,200 lines. So merging Leg 3a as
+  written does not break the invoice handlers, and — the part that matters — **rewriting
+  `Subscription.pm:316,329` to the basil path while the delivering endpoint still emits
+  acacia-shaped payloads manufactures the exact silent-undef failure the rewrite is prescribed
+  to prevent.** Leg 3a therefore bumps the *endpoint* first, by Stripe's documented
+  cutover — create a second endpoint at `api_version: 2026-07-29.dahlia`, dual-run, flip,
+  disable the old — and the reader rewrite lands with it, in that order. Leg 3's two new
+  endpoints are created with the version stated explicitly rather than inheriting an account
+  default that can move under the platform, because Leg 8's `invoice.paid` handler — the one
+  that writes the settled `payments` row — is being authored against dahlia shapes. And the
+  leg's test asserts the delivered `event.api_version` equals the pin;
+  `t/stripe-live/service-version.t:19-36` makes one `create_customer` call and asserts a `cus_`
+  id comes back, so it exercises the outbound header and cannot see this class of defect at all.
+  *(b) The harm was overstated as "renewals stop being recorded."* They are recorded either
+  way: `Subscription.pm:211-217` INSERTs the full `encode_json($event_data)` into
+  `registry.subscription_events` **before** any handler dispatches. What is lost is
+  `update_billing_status` writing `registry.tenants.billing_status` — a column written in five
+  places and read in none, its only non-write occurrence the `%TENANT_COLUMNS` allowlist at
+  `Tenant.pm:141`. Nothing branches on it, no money moves, no access is gated. The durable
+  defect is the unowned endpoint-version step, not the write-only column.
 - **v2 thin events are not shaped like v1 events, and the existing handler would throw on
   one.** Leg 3 registers a platform endpoint for `v2.core.account.*`, and a v2 event body is
   `{"object": "v2.core.event", "type": …, "related_object": {"id": …, "url": …}}` — there is
@@ -2425,13 +2509,27 @@ row (`plan_version_id`, fee, rate) makes a Stripe charge id resolvable back to w
 
 Three pieces, all in Leg 12:
 
-1. **Route and page.** `$admin->get('/dashboard/disputes')` following the existing pattern at
-   `Registry.pm:676-703`, a method on `Controller::AdminDashboard`, a template in
+1. **Route and page.** `$admin_only->get('/dashboard/disputes')` following the pattern at
+   `Registry.pm:705-715`, a method on `Controller::AdminDashboard`, a template in
    `templates/admin_dashboard/`. Admin pages here are plain controller-to-template, not
-   workflow-driven, so this is the small kind of change.
-2. **AccountSession endpoint.** A short-lived session scoped to the requesting tenant's
-   connected account. It is an authorization boundary: the session must be minted from the
-   tenant on the session, never from a parameter.
+   workflow-driven, so this is the small kind of change. **The bridge is `$admin_only`, not
+   `$admin`, and an earlier draft named the wrong one** — it cited `Registry.pm:676-703`, which
+   is the `require_role('admin','staff')` block this document declares a money bug three legs
+   earlier when it moves drop approval off it. `Registry.pm:705-715` is a second `under('/admin')`
+   at `require_role('admin')` carrying the comment *"so that staff cannot reach these routes
+   even though staff can reach other `/admin/*` routes"*; it is what domain management already
+   uses, and `admin_only` appeared nowhere in this document before now. `staff` is the live
+   instructor role, not a vestige — `GenerateEvents.pm:222` and `Schedule.pm:224` select
+   teachers by it — and `Controller::AdminDashboard` does no internal role gating, so the
+   bridge choice is the entire boundary. This correction is unconditional: it applies to the
+   list-view branch and the embedded branch alike, since both mount a route.
+2. **AccountSession endpoint.** On the same `$admin_only` bridge. A short-lived session scoped
+   to the requesting tenant's connected account. It is an authorization boundary: the session
+   must be minted from the tenant on the session, never from a parameter — and, because
+   `dispute_management` lets the holder *accept* a dispute, which is a one-click irreversible
+   forfeit of the disputed amount plus Stripe's fee against the tenant's own balance under
+   `losses_collector: stripe`, role is as much of that boundary as tenant is. This piece exists
+   only in the embedded branch of the fork above.
 3. **The `charge.dispute.created` alert — the notification only.** Recording and notifying
    are two things and they belong to different legs. **Leg 3 records**: it registers the
    Connect endpoint and writes the dispute reference against the payment row, because the
@@ -2613,30 +2711,30 @@ See (37).
 | Leg | Content | Depends on | Sessions |
 |---|---|---|---|
 | 1 | Safe deletions: installments, `Client::Stripe`, `PriceOps/PricingPlan.pm`, `Family::sibling_discount_eligible`, misfiled tests, #296, discount form; **the `seti_test` signup bypass**; **retire the seeded Registry Plus hybrid plan** so nothing on the menu needs a kind this milestone does not build; **a sqitch change dropping `payment_schedules`/`scheduled_payments` from `registry` and every tenant schema**, with its verify and revert — a deployed change is retired by a new change, not by deleting a file — **and the four already-deployed verify scripts that name those tables, three of which fail hard**; **`t/dao/tenant-payment-schema-isolation.t`, which seeds both dropped tables at `:43,170-206` to test the schema-move guard and has to be rewritten or deleted in this commit**; **the revert-test harness** the whole milestone then uses, which belongs to the first leg to ship a migration and that is this one | — | 4-5 |
-| 0 | The money path becomes atomic and observable: webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed`; **`SELECT … FOR UPDATE` on the payment row so the #283 stale-intent guards hold under concurrency**; **capacity re-checked at capture, inside that same `FOR UPDATE` block, with the branch for "capacity is gone" written out** — a `waitlisted` enrollment and `status => 'refund_pending'` inside the transaction, the Stripe refund issued **after** COMMIT under `Idempotency-Key: refund:capacity:<payment_id>`, because a refund inside the transaction is not undone by the ROLLBACK this leg's correctness rests on and a redelivered webhook then refunds a partial twice; **an idempotency-key parameter on `Service::Stripe::create_refund`**, which has none today while `create_payment_intent_async` does; **structured logging in `DAO/Payment.pm`, `Service/Stripe.pm` and `DAO/Subscription.pm` keyed on Stripe's `request_id`**, and the two silent `->catch(sub {})` blocks closed; **`calculate_enrollment_total` refuses an undefined price instead of skipping the child**, which is the live free-enrollment path; **`metadata[registry_idempotency_token]` on every Stripe object Registry creates, in all three clients** — which cannot be backfilled later — **plus a request timeout on `Subscription.pm`'s bare user agent**; **a unique index on `payments.stripe_payment_intent_id` and the status-aware replacement for `enrollments_session_student_type_unique`, both written with the per-tenant loop — and both resolved out of `pg_index`/`pg_constraint` by table and column set rather than by name, because `clone_schema` builds tenant tables with `LIKE … INCLUDING ALL` and Postgres regenerates index and unique-constraint names to its defaults, so the tenant copy of that constraint is called something else**; **rewrite the payment-row reuse guard at `WorkflowSteps/Payment.pm:152-154`** — the status test becomes an allow-list of `pending`/`processing` so re-enrolling after a refund cannot drive the refunded row back to `completed`, the run-data `payment_id` is refused unless it is a plain scalar, and the row is reused only when `$existing->metadata->{workflow_run_id}` equals `$run->id`, a linkage `create_payment` already writes at `:198` and has never read back; **`DAO::Subscription`'s tenant write joins the same transaction as the Stripe create, reads `trial_end` defensively, and cancels a subscription whose id it cannot record** — today a Solo signup dies in `DateTime->from_epoch` and leaves a live subscription Registry cannot see; **the server-owned run-data keys become unwritable by the client** — one helper re-derives `__tenant_slug`, `user_id` and `payment_id` on every step rather than only in `new_run` (`Workflows.pm:52-58` vs `:351`), because today a POST parameter on any passthrough step picks the Stripe destination account, `on_behalf_of` and the fee rate, and `Workflows.pm:270`'s `!$run->data->{user_id}` guard makes a planted identity permanent by declining to correct it; **a run-data value bound for a `WHERE` clause must be a scalar** — `expand_form_params` turns `payment_id[!=]=…` into a SQL::Abstract operator hashref that reaches `WorkflowSteps/Payment.pm:165,167` as the entire WHERE clause and rewrites or empties every *other* payment row in the tenant; **`MultiChildSessionSelection` requires `%selections` keys to be a subset of `selected_child_ids`** (`:57-64` trusts any `session_for_<id>` parameter, and the capacity and age checks at `:93-112` iterate the other array); **`TenantPayment::get_subscription_config` takes the run it is already holding instead of calling `$workflow->latest_run($db)`**, which returns the newest signup run on the platform and bills this visitor on a stranger's plan selection | 1 | 9-11 |
+| 0 | The money path becomes atomic and observable: webhook atomicity in one transaction on one connection (**#247** is a prerequisite, not a follow-up); `update` → `save` via a mutating `mark_completed`; **`SELECT … FOR UPDATE` on the payment row so the #283 stale-intent guards hold under concurrency**; **capacity re-checked at capture, inside that same `FOR UPDATE` block, with the branch for "capacity is gone" written out** — a `waitlisted` enrollment and `status => 'refund_pending'` inside the transaction, the Stripe refund issued **after** COMMIT under `Idempotency-Key: refund:capacity:<payment_id>`, because a refund inside the transaction is not undone by the ROLLBACK this leg's correctness rests on and a redelivered webhook then refunds a partial twice — **and the re-check's predicate stated, because the only primitive in the tree gets it wrong**: `Enrollment->count_for_session` (`:213-223`) is a bare `COUNT(*) … status IN ('active','pending')` with no self-exclusion, and by the time the webhook runs this payment's own `active` rows usually exist already (`finalize_enrollment` runs on *both* settlement paths, `WorkflowSteps/Payment.pm:267` and `Webhooks.pm:142`, and the parent-return path is the ordinary card, not just 3DS), so a naive re-check counts its own row and refunds a correctly-enrolled child on the last seat — the re-check counts `active`/`pending` rows for the session **excluding those whose `payment_id` is this payment**, runs **before** `finalize_enrollment`, and compares `count + (this payment's items for this session)` against capacity, which is also what stops a two-sibling cart passing `9 >= 10` and overselling on whichever path settles first; **an idempotency-key parameter on `Service::Stripe::create_refund`**, which has none today while `create_payment_intent_async` does; **structured logging in `DAO/Payment.pm`, `Service/Stripe.pm` and `DAO/Subscription.pm` keyed on Stripe's `request_id`**, and the two silent `->catch(sub {})` blocks closed; **`calculate_enrollment_total` refuses an undefined price instead of skipping the child**, which is the live free-enrollment path; **`metadata[registry_idempotency_token]` on every Stripe object Registry creates, in all three clients** — which cannot be backfilled later — **plus a request timeout on `Subscription.pm`'s bare user agent**; **a unique index on `payments.stripe_payment_intent_id` and the status-aware replacement for `enrollments_session_student_type_unique`, both written with the per-tenant loop — and both resolved out of `pg_index`/`pg_constraint` by table and column set rather than by name, because `clone_schema` builds tenant tables with `LIKE … INCLUDING ALL` and Postgres regenerates index and unique-constraint names to its defaults, so the tenant copy of that constraint is called something else** — **and the two already-deployed verify scripts that name the constraint, both of which `RAISE EXCEPTION` rather than going vacuous**: `sql/verify/flexible-enrollment-architecture.sql:8-18` asserts it exists, and `sql/verify/fix-multi-child-enrollments.sql:21-31` asserts one of it and `enrollments_session_family_member_unique`, the second of which `flexible-enrollment-architecture.sql:37-48` already asserts is gone, so there is no fallback name to save it; **rewrite the payment-row reuse guard at `WorkflowSteps/Payment.pm:152-154`** — the status test becomes an allow-list of `pending`/`processing` so re-enrolling after a refund cannot drive the refunded row back to `completed`, the run-data `payment_id` is refused unless it is a plain scalar, and the row is reused only when `$existing->metadata->{workflow_run_id}` equals `$run->id`, a linkage `create_payment` already writes at `:198` and has never read back; **`DAO::Subscription`'s tenant write joins the same transaction as the Stripe create, reads `trial_end` defensively, and cancels a subscription whose id it cannot record** — today a Solo signup dies in `DateTime->from_epoch` and leaves a live subscription Registry cannot see; **the server-owned run-data keys become unwritable by the client** — one helper re-derives `__tenant_slug`, `user_id` and `payment_id` on every step rather than only in `new_run` (`Workflows.pm:52-58` vs `:351`), because today a POST parameter on any passthrough step picks the Stripe destination account, `on_behalf_of` and the fee rate, and `Workflows.pm:270`'s `!$run->data->{user_id}` guard makes a planted identity permanent by declining to correct it; **a run-data value bound for a `WHERE` clause must be a scalar** — `expand_form_params` turns `payment_id[!=]=…` into a SQL::Abstract operator hashref that reaches `WorkflowSteps/Payment.pm:165,167` as the entire WHERE clause and rewrites or empties every *other* payment row in the tenant; **`MultiChildSessionSelection` requires `%selections` keys to be a subset of `selected_child_ids`** (`:57-64` trusts any `session_for_<id>` parameter, and the capacity and age checks at `:93-112` iterate the other array); **`TenantPayment::get_subscription_config` takes the run it is already holding instead of calling `$workflow->latest_run($db)`**, which returns the newest signup run on the platform and bills this visitor on a stranger's plan selection | 1 | 9-11 |
 | 2 | **#294**: collapse `registry-platform` into `registry`; retire the all-zeros UUID as a provider identity, in `lib/` **and 21 test files including `t/lib/Test/Registry/Helpers.pm`**. The data migration's column surface is exactly `registry.tenants` (the row), `tenant_users.tenant_id`, `tenant_profiles.tenant_id` and `pricing_relationships.provider_id` (3 rows); `message_templates.created_by` (3 rows) is left alone. Resolve the `registry` tenant by slug — it is created by `sql/deploy/tenant-on-boarding.sql:23-28`, so it always exists. **`message_templates.created_by` is left alone deliberately: the same literal is doing duty as a system-user sentinel there, and repointing it at a tenant id would be silently meaningless.** **Supersede the two deployed verify scripts that read the literal** — five line-hits across `create-default-pricing-relationships.sql` (`:9-10`, `:13-16`, `:19-26`, whose fail-on-zero-rows idiom becomes a division by zero the moment the row is gone) and `unified-pricing-infrastructure.sql:47-49` (vacuous rather than red); `pricing-relationship-events.sql:25` was counted here in an earlier draft and is not a hit — that literal is a probe argument to a function | 1 | 3-4 |
-| 3a | **Pin `Stripe-Version` to `2026-07-29.dahlia`** — off `2024-12-18.acacia`, across *three* release trains; it is a GA version on the dahlia train, the one Stripe's own v2 Accounts and event-destination docs send, and **not** a preview channel, which an earlier round asserted and this one disproved — in `Service::Stripe.pm:15`, `t/stripe-live/service-version.t` and `DAO::Subscription.pm:71-103` (which sends none); **keep Stripe.js on the evergreen `js.stripe.com/v3`**, which is not deprecated and whose six dahlia breaking changes all miss Registry's client surface; **rewrite the two surviving `invoice.subscription` readers the `2025-03-31.basil` release breaks** — `Subscription.pm:316,329`, each followed by a `return unless`, so the bump silently stops every invoice handler (the other three, including `Webhooks.pm:213` inside `_is_installment_payment_event`, die with Leg 1); **spike a chargeable full-dashboard v2 account in test mode**, with the exit criteria and decision owner named below; **make the acceptance gate capable of failing, in three ordered steps** — the repository has *no* Actions secrets (`gh api …/actions/secrets` returns `total_count: 0`), so `t/stripe-live/` skips itself and `stripe-e2e.yml` exits `NOTESTS` green: **perigrin provisions the three secrets** (`sk_test_`, `pk_test_`, webhook signing secret), **then a fail-fast step asserts `STRIPE_SECRET_KEY` begins with `sk_test_` before `prove` runs**, and only then does `continue-on-error` come off `stripe-e2e.yml` and `main` get branch protection — removing it first changes nothing, because the masked steps are genuine passes; **and correct `.github/workflows/ci.yml:128`**, whose "Real keys live in the stripe-e2e workflow" comment is false and is the likeliest source of this document's own earlier assumption | 1 | 4-6 |
-| 3 | Charge model: **Accounts v2 (`losses`/`fees` = `stripe`, `dashboard` = `full`)**; `Service::Stripe` gains a JSON `/v2/` branch; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; **the refund path is made reachable at all** — `ValidateDropRequest` propagates `refund_requested`, `_process_immediate_drop` (defined at `:263`, called at `:259`) takes the refund flag instead of hardcoding `'none'`, `Payment::refund` accounts partials against a running total **and caps at `amount_cents - sum(prior refunds)`**, its **idempotency key is derived from the `drop_request_id` rather than from payment-id-plus-amount, which two children at the same price collide on**, and `Job::ProcessRefunds` claims the rows that then exist; **a second migration widening `enrollments_refund_status_check`** (`sql/test-schema.sql:838`), which allows only `none`/`pending`/`approved`/`processed`/`denied` and would raise inside the Minion job *after* Stripe refunded; **the drop-approval route moves under an `admin`-only `under`** — `Registry.pm:678-680,690` currently lets any instructor approve a refund; `charge.refunded` and dispute-*recording* handlers; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; **two webhook endpoints — Connect for v1 events *and* the family v2 `account.*` events, platform for `v2.core.account.*` thin events — and their secrets**; **a tenant `SELECT` by `stripe_connect_account_id`**; **a separate parse path for v2 thin events, which carry `related_object` and no `data.object`**; `application_fee.created`/`.refunded` subscribed; **set the launch revenue-share rate — a business decision perigrin has not made, filed as its own blocking task inside this leg rather than as a line in a row**, and it shares this leg's deadline; **the rate is a literal in three places outside `templates/` and changing it without them fails the deploy** — `bin/post-deploy-smoke-test.sh:61` greps the live landing page for `2.5%` and its failure kills the server so Render rolls back (`docker-entrypoint.sh:63-71`), `t/playwright/deploy-validation.spec.js:54` asserts the same string under `.github/workflows/deploy-validation.yml:57`, and `t/playwright/jordan-landing-journey.spec.js:96` asserts `2.5% revenue share`; **Connect onboarding creates the account Leg 6 publishes onto**; Registry-initiated disconnect **steps 3 and 4 only** (1 and 2 need tables from Legs 7 and 8); **rewrite `docs/operations/sacp-stripe-connect-onboarding.md`**; **fix the recurring scheduler, because `ProcessRefunds` is a poller and nothing in the repository can re-enqueue it** — the Render cron has failed every run across its whole log-retention window on a missing `MOJO_SECRET` (`render.yaml:96-110` omits the `fromService` block the worker has at `:87-91`; `Registry.pm:36` dies), `./registry job <task>` is not a resolvable command (Minion's is `./registry minion job -e <task>`), and `setup_recurring_jobs` (`Registry.pm:830-898`, called once from `:479`) never re-arms; plus one test asserting every task name enqueued anywhere in `lib/` or `docker-entrypoint.sh` exists in the `add_task` registry | 0, 1, 3a | 10-13 |
+| 3a | **Pin `Stripe-Version` to `2026-07-29.dahlia`** — off `2024-12-18.acacia`, across *three* release trains; it is a GA version on the dahlia train, the one Stripe's own v2 Accounts and event-destination docs send, and **not** a preview channel, which an earlier round asserted and this one disproved — in `Service::Stripe.pm:15`, `t/stripe-live/service-version.t` and `DAO::Subscription.pm:71-103` (which sends none); **keep Stripe.js on the evergreen `js.stripe.com/v3`**, which is not deprecated and whose six dahlia breaking changes all miss Registry's client surface; **bump the *webhook endpoint's* `api_version` to `2026-07-29.dahlia` before anything else in this leg**, by Stripe's documented cutover (second endpoint at the new version, dual-run, flip, disable the old) — the request header governs API responses only, and the delivered payload shape is set by the endpoint, which nothing in the repository or in this document has ever set; **then rewrite the two surviving `invoice.subscription` readers the `2025-03-31.basil` release breaks** — `Subscription.pm:316,329`, each followed by a `return unless` (the other three, including `Webhooks.pm:213` inside `_is_installment_payment_event`, die with Leg 1) — **in that order, because doing it the other way round makes `$subscription_id` undef on every live delivery**, which is the silent failure the rewrite exists to prevent; **and the leg's test asserts the delivered `event.api_version`**, not only the outbound header, which `t/stripe-live/service-version.t:19-36` cannot see; **spike a chargeable full-dashboard v2 account in test mode**, with the exit criteria and decision owner named below; **make the acceptance gate capable of failing, in three ordered steps** — the repository has *no* Actions secrets (`gh api …/actions/secrets` returns `total_count: 0`), so `t/stripe-live/` skips itself and `stripe-e2e.yml` exits `NOTESTS` green: **perigrin provisions the three secrets** (`sk_test_`, `pk_test_`, webhook signing secret), **then a fail-fast step asserts `STRIPE_SECRET_KEY` begins with `sk_test_` before `prove` runs**, and only then does `continue-on-error` come off `stripe-e2e.yml` and `main` get branch protection — removing it first changes nothing, because the masked steps are genuine passes; **and correct `.github/workflows/ci.yml:128`**, whose "Real keys live in the stripe-e2e workflow" comment is false and is the likeliest source of this document's own earlier assumption | 1 | 5-7 |
+| 3 | Charge model: **Accounts v2 (`losses`/`fees` = `stripe`, `dashboard` = `full`)**; `Service::Stripe` gains a JSON `/v2/` branch; tenant→family becomes direct charges; `Stripe-Account` in `Service::Stripe` (refusing, not falling back); refunds lose `reverse_transfer` and gain an idempotency key; **the refund path is made reachable at all** — `ValidateDropRequest` propagates `refund_requested`, `_process_immediate_drop` (defined at `:263`, called at `:259`) takes the refund flag instead of hardcoding `'none'`, `Payment::refund` accounts partials against a running total **and caps at `amount_cents - sum(prior refunds)`**, its **idempotency key is derived from the `drop_request_id` rather than from payment-id-plus-amount, which two children at the same price collide on**, and `Job::ProcessRefunds` claims the rows that then exist; **a second migration widening `enrollments_refund_status_check`** (`sql/test-schema.sql:838`), which allows only `none`/`pending`/`approved`/`processed`/`denied` and would raise inside the Minion job *after* Stripe refunded — **and the widened list includes the non-terminal `refund_pending`**; **`Payment::refund`/`refund_async` set the row from `$refund->{status}` instead of from local arithmetic**, because a direct-charge refund Stripe holds `pending` against a thin tenant balance is a 200 response that today writes a completed refund for money that has not moved, **with `refund.failed`/`refund.updated` subscribed** so the row leaves `refund_pending`; **the drop-approval route moves under an `admin`-only `under`** — `Registry.pm:678-680,690` currently lets any instructor approve a refund, and `Registry.pm:705-715`'s `$admin_only` is the bridge to use; `charge.refunded` and dispute-*recording* handlers, **the `charge.refunded` one reversing the application fee proportionally and idempotently when the refund policy resolves true** — projecting `application_fee_amount` records the loss and leaves Registry holding a fee on a refunded charge, and only the platform can reverse it — **finding the fee with `GET /v1/application_fees?charge=…`** and calling `refund_application_fee_for_tenant` until Leg 9a renames it; multi-`v1` signature and multi-secret; `account.updated` ordering guard; **`payments.stripe_account_id`**; Payment Element `stripeAccount`; **two webhook endpoints — Connect for v1 events *and* the family v2 `account.*` events, platform for `v2.core.account.*` thin events — their secrets, and `api_version: 2026-07-29.dahlia` stated explicitly on both rather than inherited from an account default that can move under the platform**; **a tenant `SELECT` by `stripe_connect_account_id`**; **a separate parse path for v2 thin events, which carry `related_object` and no `data.object`**; `application_fee.created`/`.refunded` subscribed; **set the launch revenue-share rate — a business decision perigrin has not made, filed as its own blocking task inside this leg rather than as a line in a row**, and it shares this leg's deadline; **the rate is a literal in three places outside `templates/` and changing it without them fails the deploy** — `bin/post-deploy-smoke-test.sh:61` greps the live landing page for `2.5%` and its failure kills the server so Render rolls back (`docker-entrypoint.sh:63-71`), `t/playwright/deploy-validation.spec.js:54` asserts the same string under `.github/workflows/deploy-validation.yml:57`, and `t/playwright/jordan-landing-journey.spec.js:96` asserts `2.5% revenue share`; **Connect onboarding creates the account Leg 6 publishes onto**; Registry-initiated disconnect **steps 3 and 4 only** (1 and 2 need tables from Legs 7 and 8); **rewrite `docs/operations/sacp-stripe-connect-onboarding.md`**; **fix the recurring scheduler, because `ProcessRefunds` is a poller and nothing in the repository can re-enqueue it** — the Render cron has failed every run across its whole log-retention window on a missing `MOJO_SECRET` (`render.yaml:96-110` omits the `fromService` block the worker has at `:87-91`; `Registry.pm:36` dies), `./registry job <task>` is not a resolvable command (Minion's is `./registry minion job -e <task>`), and `setup_recurring_jobs` (`Registry.pm:830-898`, called once from `:479`) never re-arms; plus one test asserting every task name enqueued anywhere in `lib/` or `docker-entrypoint.sh` exists in the `add_task` registry | 0, 1, 3a | 11-14 |
 | 4 | `pricing_plan_versions` / `pricing_components` + immutability triggers; `pricing_plans` gains `provider_id` and `audience`, keeps `session_id`; **new `clone_schema` sqitch change with the skip list in every table-shaped loop**; normalize the two tenant table shapes, then migrate registry **and every tenant schema's** plans to v1, **taking a component's `amount_cents` from `pricing_plans.amount_cents` and never from the dollar-valued `pricing_configuration` keys**, which are stale and whose names mean cents in the code; **repoint the writer *and every reader* in one commit** — `PricingPlan->create` (which also becomes a thin wrapper over `publish_version`, so a post-Leg-4 plan has a v1 child and Leg 8 can resolve it), `find`, `find_by_id`, `get_pricing_plans`, `ProgramListing.pm:102` and `ProgramSetupOverview.pm:35`, the last gaining `provider_id = ?` it never needed as a private table; `plan_scope`/`plan_type`/`pricing_configuration` kept nullable and dual-written by `PriceOps::Model->publish_version`; **the per-kind publish CHECK** (`stripe_price_id` required for `fixed`, NULL for `percentage`) **and a CHECK constraining a `percentage` component's fraction to four decimal places**, because Stripe's `application_fee_percent` takes two decimals of a percent and anything finer is silently rounded at charge time; **the storefront stops being a second pricing engine** — `ProgramListing.pm:149-154`'s `min(amount_cents)` over unfiltered rows is deleted, not repointed, and the listing reads the same resolver the checkout does; **refuse to migrate a plan carrying sibling terms**; every column addition loops over **every tenant schema**, not just `registry` | 2 | 8-10 |
 | 5a | **Decide the `pricing-plan-creation` fork** against the criterion below. **The output artifact is named: a decision entry appended to this document's decision log, and Leg 5's issue body rewritten to the single branch that won** — a fork resolved only in conversation leaves Leg 5 unfileable, which is the whole reason 5a exists. A Leg 4 exit task | 4 | 1 |
 | 5 | Execute the branch 5a chose: rewrite the `pricing-plan-creation` workflow and its templates onto the version/component vocabulary, **or delete it**. Either branch also closes the two entry points into it (`ProgramSetupOverview.pm:75`, `templates/pricing-plan-creation/complete.html.ep:51`) and the plan-creation call at `ReviewActivatePlan.pm:101-115` that passes **no `session_id`** | 5a | 1-4 |
 | 6 | Publish projection: version → Stripe Product, component → Stripe Price **on the provider's account**; ids recorded; `published_at` written last; **backfill-publish every v1 migrated in Leg 4** on the predicate Leg 4's CHECK already states — **percentage-only versions unconditionally**, since they need no Price, and **versions carrying a `fixed` component only where the provider has a connected account**; the rest stay drafts and the leg `log`s the count rather than skipping silently; **every Stripe create in the backfill carries an idempotency key derived from the version and component ids**, because the backfill calls Stripe mid-migration and a re-run after a partial failure must not double-create Products and Prices; `Subscription.pm` stops building inline `price_data`, **and `handle_setup_completion` creates no Stripe Subscription at all when the published version has no recurring `fixed` component**, which is the Solo path | 3, 4 | 3-4 |
 | 7 | `pricing_schedules` + **`CREATE EXTENSION IF NOT EXISTS btree_gist SCHEMA public`** — the schema clause is load-bearing and production-only: without it the extension lands in `registry` under the majority `SET search_path` template, `clone_schema`'s unfiltered `pg_proc` loop re-declares its ~212 `LANGUAGE C` functions into every new tenant schema, and the non-superuser Render role gets `permission denied for language c`, so tenant onboarding stops in production while CI (superuser) stays green — + the overlap exclusion constraint; migrate `pricing_relationships` + `platform_pricing_plan_id` (**both kept and dual-written — the table *and its DAO class* have a live reader until Leg 8**), writing a schedule row for **every** tenant; delete `UnifiedPricingEngine`, `PriceOps::PricingRelationships`, `DAO::PricingRelationshipEvent` and `DAO::BillingPeriod` — **but not `DAO::PricingRelationship`**, which `PricingPlanSelection.pm:10` `use`s at compile time; **drop `registry.pricing_relationship_events` with all four objects that came with it** — the view `pricing_relationship_current_state` and the functions `get_next_aggregate_version`, `ensure_event_sequence` and `get_relationship_state_at` — **and supersede `sql/verify/pricing-relationship-events.sql`, which reads the table, the view and one function**; **delete `t/dao/pricing-relationships-integration.t` and `t/dao/pricing-relationship-events.t` in the same commit** — they `use` the deleted modules at compile time and exercise the dropped table through them, and their `plan skip_all` calls are inside subtests so a runtime skip cannot save either | 4 | 3-4 |
 | 8 | `Entitlement` + `Quote` + `Model->offered_versions`; rewire the charge; **`Schedule` creates direct-charge subscriptions with `application_fee_percent` = the plan's fraction × 100** and an idempotency key; **the family Customer and payment method that subscription needs, which no leg previously owned** — a SetupIntent (or `setup_future_usage` on the enrollment intent) issued with `Stripe-Account`, the Customer created on the tenant's account, and a tenant-schema column holding one customer id per connected account; **an `invoice.paid` handler that writes the settled `payments` row**, without which Leg 13's replay assertion has nothing to count; **subscription envelope dispatch**; omit-never-zero `application_fee_amount`; repoint `PricingPlanSelection` **and `templates/tenant-signup/pricing.html.ep` with it, in the same commit** — the template reads `pricing_configuration`, `amount_cents` and `formatted_price` off a plan row that stops existing — **and the three readers of the `selected_pricing_plan` key that step writes** (`TenantPayment.pm:111-112` inside `get_subscription_config`, `TenantPayment.pm:429-430` which writes `platform_pricing_plan_id`, and `TenantSignupReview.pm:12`), none of which any earlier draft named; and `GenerateEvents`; delete `calculate_enrollment_total` and the `!$ENV{STRIPE_SECRET_KEY}` bypass; refuse-not-zero; **move the `stripe_connect_ready` gate into `prepare_payment_data`** — not `process`, whose own refusal re-enters the quote at `:136`, and not `_render_data`, which is one of the two callers rather than the chokepoint; `prepare_payment_data` (`:61`) is the single function both render paths reach (`_render_data:97-99`, `prepare_template_data:80-81`), and the two act paths (`:38`, `:113`) refuse loudly instead; **`Waitlist->accept_offer` (`:187-226`) quotes** rather than creating an enrollment with no payment row, which is today the automated way a paid spot is given away; `customer.subscription.updated`/`.deleted` handlers, because `dashboard: full` lets a tenant cancel a Registry-created subscription; **`proration_behavior: 'none'` passed on every mutating request**, since it is a request parameter and not a stored setting; `RevenueShare` becomes a wrapper; **disconnect steps 1 and 2**, whose objects first exist here | 6, 7 | 12-15 |
-| 9a | Quote columns on `payments` incl. `refund_application_fee` **and the quote's currency, which no caller has ever passed**; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **rewrite `t/lib/Test/Registry/Helpers.pm` against `Entitlement`** — this is the leg that breaks it, not 5 or 7; **add the Customer configuration to each tenant's `Account` and swap `customer` for `customer_account`** — reversible via `configuration.customer.applied: false`, so this is a decision that can be unwound, not a one-way door; **remove the second write and the last readers of everything 9b drops, and ship no `DROP`** — `TenantPayment.pm:429-430` (`platform_pricing_plan_id`), `Subscription.pm:62-64` (`tenants.stripe_customer_id`), `DAO::PricingRelationship` — **whose deletion breaks five test files**: `t/dao/pricing-relationship.t` is a dedicated test of the class and dies with it, while `t/dao/pricing-plan-selection-workflow-step.t:11`, `t/controller/tenant-pricing-display.t:18` and `t/dao/tenant-signup-pricing-integration.t:11` use it as a fixture and are rewritten onto the schedule, and `t/controller/tenant-create-session.t:35` calls the class with **no `use` line at all**, so it fails at runtime rather than at load; **`t/playwright/setup_payment_test_data.pl:87` selects on `plan_scope = 'tenant'`** and CI runs it. **Gate: the dual-write tests are deleted and the full suite plus `stripe-e2e` are green with the second write removed** | 8 | 4-5 |
+| 9a | Quote columns on `payments` incl. `refund_application_fee` **and the quote's currency, which no caller has ever passed**; **the rename to `refund_application_fee_for_payment` repoints both callers in this commit — `_refund_connect_params` and Leg 3's `charge.refunded` fee reversal**; `Payment` fields and `save` column list extended; fee recorded; `DAO/AdminDashboard.pm:36` corrected; **rewrite `t/lib/Test/Registry/Helpers.pm` against `Entitlement`** — this is the leg that breaks it, not 5 or 7; **add the Customer configuration to each tenant's `Account` and swap `customer` for `customer_account`** — reversible via `configuration.customer.applied: false`, so this is a decision that can be unwound, not a one-way door; **remove the second write and the last readers of everything 9b drops, and ship no `DROP`** — `TenantPayment.pm:429-430` (`platform_pricing_plan_id`), `Subscription.pm:62-64` (`tenants.stripe_customer_id`), `DAO::PricingRelationship` — **whose deletion breaks five test files**: `t/dao/pricing-relationship.t` is a dedicated test of the class and dies with it, while `t/dao/pricing-plan-selection-workflow-step.t:11`, `t/controller/tenant-pricing-display.t:18` and `t/dao/tenant-signup-pricing-integration.t:11` use it as a fixture and are rewritten onto the schedule, and `t/controller/tenant-create-session.t:35` calls the class with **no `use` line at all**, so it fails at runtime rather than at load; **`t/playwright/setup_payment_test_data.pl:87` selects on `plan_scope = 'tenant'`** and CI runs it. **Gate: the dual-write tests are deleted and the full suite plus `stripe-e2e` are green with the second write removed** | 8 | 4-5 |
 | 9b | The drops, one deploy after 9a and not before, because `sqitch` is never reverted and the previous image is guaranteed to run against this schema: **the deprecated columns, `tenants.stripe_customer_id`, the tenant-schema `pricing_plans`, and `pricing_relationships` + `billing_periods`**; **supersede the nine deployed verify scripts that read the dropped columns and tables** — `sql/verify/stripe-subscription-integration.sql:9` is the one the follow-up list already knew about and is one of nine, and two of the nine (`create-default-pricing-relationships.sql`, `unified-pricing-infrastructure.sql`) were already superseded once in Leg 2 and need it again here for a different object. **Gate: 9a has been live through one full deploy cycle** | 9a | 1-2 |
 | 10 | **Create `metering_events`** and the `Metering->record` API; **add `pricing_components.applies_to` with the event vocabulary this leg defines** as a metering-side label only — **resolution step 4 stays unfiltered, and this leg does not touch it**; instrument **enrollment created and payment captured only** — every other candidate event is a separate argument about what is monetizable and is not in this leg | 7, 8 | 2-3 |
 | 11 | Pillar 5 **for the model only**: a `./registry pricing` command with `author`, `add-component`, `publish` and `show` subcommands (`Registry.pm:50` already registers the namespace); retire hand-typed SQL seeds. **The CHECK constraints are Leg 4's** — this leg adds none. The schedule and storefront change-classes are deferred — see "Out of scope" | 4, 5, 6 | 2-3 |
-| 12 | Dispute resolution *surface* — **scope is an open perigrin decision between a list view plus deep link (2-3) and the embedded build costed here (3-5); see "Account configuration"**: admin page, embedded components, AccountSession, **and the `charge.dispute.created` tenant notification** on top of Leg 3's recording handler; `Job::ReconcilePayments` **plus the `Service::Stripe` search method it needs, which does not exist** — and it runs on the scheduler Leg 3 repairs, since a drift sweep has no triggering event and cannot be enqueued on demand; **widen the CSP at `Registry.pm:524,527`, which today allows only `js.stripe.com` and will block Connect's embedded components** | 0, 3, 9a | 3-5 |
+| 12 | Dispute resolution *surface* — **scope is an open perigrin decision between a list view plus deep link (2-3) and the embedded build costed here (3-5); see "Account configuration"**: admin page **on the `$admin_only` bridge (`Registry.pm:705-715`), not the staff-inclusive `$admin` one Leg 3 moves drop approval off — unconditional across both branches of the fork**, embedded components, AccountSession, **and the `charge.dispute.created` tenant notification** on top of Leg 3's recording handler; `Job::ReconcilePayments` **plus the `Service::Stripe` search method it needs, which does not exist** — and it runs on the scheduler Leg 3 repairs, since a drift sweep has no triggering event and cannot be enqueued on demand; **widen the CSP at `Registry.pm:524,527`, which today allows only `js.stripe.com` and will block Connect's embedded components** | 0, 3, 9a | 3-5 |
 | 13 | **The acceptance test**: `t/stripe-live/author-a-new-plan.t` — author, publish, enroll, charge, refund, on a live test-mode Connect account, asserting `livemode: false` on every object, **asserting the application fee the way Point 2 says it has to be asserted — off the `application_fee.created` event, with a bounded poll of `GET /v1/application_fees?charge=…` as the fallback, because `expand[]=application_fee` is not available on a PaymentIntent-created charge**, replaying a webhook against the unique index, and covering both the PaymentIntent and Subscription paths. **It authors its own fixtures end to end — including the `pricing_schedules` row that entitles its test tenant, which no earlier leg writes for a tenant created inside a test.** It lands last of all because it asserts against both the model (Leg 11) and the charge (Leg 8) | 8, 11, 12 | 1-2 |
 
-**71 to 97 sessions** — a spread wide enough that any token figure derived from it is context
+**73 to 99 sessions** — a spread wide enough that any token figure derived from it is context
 rather than a budget. Leg 5's floor moves from 0 to 1: even the delete branch has to close the
 two entry points that would otherwise 404 and decide what replaces `ReviewActivatePlan`'s plan
 creation, so zero was never a legal answer to a fork whose cheap branch is still a branch.
 
-**The number has moved eight times — 31-46, 33-49, 32-51, 39-58, 57-81, 65-90, 66-91, now
-71-97 — and the movement, not the number, is the finding.** Trace each move and none of them is a re-costing
+**The number has moved nine times — 31-46, 33-49, 32-51, 39-58, 57-81, 65-90, 66-91, 71-97,
+now 73-99 — and the movement, not the number, is the finding.** Trace each move and none of them is a re-costing
 of work already listed: 31-46 → 33-49 added Leg 3a; → 32-51 turned Leg 5 into a fork and added
 Leg 12 scope; → 39-58 added seven sessions of newly-discovered scope; → 57-81 added a leg (13),
 split another (5a), and raised Legs 0, 3, 3a, 4, 8, 10, 11 and 12 on work the rows had not
@@ -2647,7 +2745,9 @@ Leg 0 by two for the run-data trust boundary (a key *set*, a scalar-only `WHERE`
 constraints that have to be resolved by column set because `clone_schema` renames them), raises
 Leg 8 by three for the family Customer and `invoice.paid` handler that recurring collection
 needs and no leg owned, and splits Leg 9 into 9a and 9b because a `sqitch` schema is never
-reverted while a Render image always is.
+reverted while a Render image always is; → 73-99 raises Leg 3a by one for a webhook-endpoint
+version cutover no leg owned, and Leg 3 by one for two refund behaviours its handlers were
+specified to record rather than perform.
 **Every rise is scope discovery, which means the estimate is not converged rather than merely
 pessimistic.**
 
@@ -2658,7 +2758,7 @@ about half the total because they are where the code is, and new work keeps land
 stable ratio alongside a **14% rise in one round and 67% across two** (39 → 57 → 65 at the
 floor) is not convergence; it is the same distribution over a larger number. An earlier draft
 called that "a 46% rise across two rounds," which was one round's figure wearing two rounds'
-label. The honest statement is that 71-97 is the
+label. The honest statement is that 73-99 is the
 current floor of what is known, not an estimate that has stopped moving, and the number should
 be re-read after Leg 3a's spike reports — because that spike is the one input that can change
 Leg 3's configuration rather than merely its length.
@@ -2700,7 +2800,26 @@ is that the findings are increasingly *about this document* — its own rules br
 prose — rather than about code the document had not read. That is what running out of code to
 find looks like, and it is not the same as being finished.
 
-Legs 3a, 3, 4 and 8 are 34 to 44 of that, about half the milestone in four legs, and the
+**Round 13 broke that: six confirmed, nine refuted, and the number moved for the first time in
+three rounds.** The prediction above was wrong in the useful direction. Two of the six are the
+same self-consistency shape 11 and 12 produced — a verify sweep that omits Leg 0 one round after
+(44) named that exact failure mode, and a dispute route mounted on the bridge Leg 3 moves drop
+approval *off* — and both cost nothing. But four are not, and three of those are money: an
+application fee the design promises to return and no leg can, a `pending` refund written to the
+database as a completed one with no event subscribed that could correct it, and a capacity
+re-check that counts its own enrollment and refunds a child who is properly enrolled. The
+fourth inverted a leg: Leg 3a's stated cause for existing was a request header that cannot
+reach the code it was said to break, and the remedy it prescribed would have created that
+failure rather than prevented it. **What separates round 13 from 11 and 12 is not the count but
+the direction of the reading**: those rounds re-read the document against itself, and this one
+re-read it against Stripe's semantics — who may reverse a fee, what a `pending` refund does when
+the window expires, which version governs a delivered payload. Each of the three money findings
+is a place where the document had read Stripe's documentation for an adjacent question and
+carried the answer one step too far. That is a class this document has not yet exhausted, and
+two more sessions is a cheap price for learning that the previous two rounds' quiet was about
+where we were looking.
+
+Legs 3a, 3, 4 and 8 are 36 to 46 of that, about half the milestone in four legs, and the
 concentration is the
 useful signal: they are the charge model, the model tables and the resolver, and each is
 large because it touches code rather than because it adds a table. Leg 3 accumulated the
@@ -3170,6 +3289,15 @@ by the same v2 `Account`."* So v1 `account.updated` and the direct charges arriv
 Connect endpoint, and `v2.core.account.*` arrives on the platform endpoint as a thin event.
 A Leg 3 that registers only the Connect endpoint will silently never see the v2 half.
 
+**Both are registered with `api_version` set, and until this round no leg owned that field at
+all.** A webhook endpoint created without one inherits the account default, and the delivered
+payload is rendered at *that* version regardless of what `Stripe-Version` the platform sends on
+its own requests. Leg 3 is writing a `v2.core.account.*` parse path and Leg 8 an `invoice.paid`
+handler that produces the settled `payments` row; both are being authored against
+`2026-07-29.dahlia` shapes, so both endpoints state `api_version: 2026-07-29.dahlia` explicitly.
+The existing platform endpoint is a separate problem and belongs to Leg 3a, which bumps it by
+Stripe's dual-endpoint cutover ahead of rewriting the readers that depend on the new shape.
+
 **The tenant lookup Leg 3 needs does not exist yet.** An earlier draft said it was already
 written and pointed at `Webhooks.pm:148-162`. That method does not resolve a tenant: it is a
 blind `UPDATE registry.tenants … WHERE stripe_connect_account_id = ?` whose only output is
@@ -3226,6 +3354,21 @@ name in the caller** covers it verbatim.
 
 Counted against the drops this milestone makes:
 
+- **Leg 0** replaces `enrollments_session_student_type_unique` with a partial unique index, and
+  this leg was missing from the sweep for the same reason Leg 7 was: it is not shaped like a
+  migration leg, so nobody greps it. The replacement has to be partial on active statuses, and
+  Postgres can only express that as an index, so the constraint name leaves
+  `information_schema.table_constraints` whatever the new object is called. Two verify scripts
+  name it and **both `RAISE EXCEPTION` rather than going vacuous**:
+  `flexible-enrollment-architecture.sql:8-18` asserts it exists, and
+  `fix-multi-child-enrollments.sql:21-31` asserts one of it and
+  `enrollments_session_family_member_unique` — and the alternate cannot save it, because
+  `flexible-enrollment-architecture.sql:10` drops that one and `:37-48` asserts it is gone.
+  Note where this does *not* fire: `sqitch.conf`'s `[deploy] verify = true` runs each change's
+  verify at its own point in the plan, when the constraint still exists. Only the
+  no-argument `sqitch verify` at `t/database/migration-verification.t:24-27,62-64` re-runs
+  every script against the final schema, and that is a `prove -lr t/` file, so the leg turns a
+  test red whose name gives no hint that pricing work broke it.
 - **Leg 1** drops `payment_schedules`/`scheduled_payments`. Four verify scripts name them, and
   three fail hard rather than vacuously: `installment-payment-schedules.sql:13,21` selects from
   both tables, `simplify-installment-schema-for-stripe.sql:24` casts
@@ -3262,16 +3405,18 @@ Counted against the drops this milestone makes:
   `consolidate-pricing-relationships.sql:8-18`, `tenant-platform-pricing-plan.sql:11`, and
   `stripe-subscription-integration.sql:9` — the one the follow-up list already knew about.
 
-That is **fourteen distinct files and sixteen per-leg obligations** —
+That is **sixteen distinct files and eighteen per-leg obligations** —
 `create-default-pricing-relationships.sql` and `unified-pricing-infrastructure.sql` are each
 stranded twice, by Leg 2 and again by Leg 9b, and have to be superseded in both legs because the
 first supersession does not know what the second one drops. So "check
-`sql/verify/stripe-subscription-integration.sql:9`" understates the obligation by thirteen
+`sql/verify/stripe-subscription-integration.sql:9`" understates the obligation by fifteen
 files. The rule: **a leg that drops a database object greps `sql/verify/` for its name in the
 same commit**, and supersedes each hit the way sqitch expects — a new change whose verify
 asserts the new shape, with the old script edited to match the schema as of the end of the
 plan. This is per-leg work, not a follow-up, and it is why Legs 1, 2, 7 and 9 are re-costed
-below.
+below. Leg 0's two are the exception that is stated rather than absorbed silently: they are
+two constraint-name assertions against a migration the leg already ships, not five objects and
+a view like Leg 7's, so they sit inside its existing 9-11 rather than adding to it.
 
 **Each change also gets a revert test, and there is no harness for one.** The rollback
 subtest in that same file is `pass("Skipping rollback tests - focus on deploy and verify")`
@@ -3405,6 +3550,11 @@ And two for the dispute surface, both security-shaped rather than feature-shaped
 AccountSession is minted only for the connected account of the tenant on the session — a
 request naming another tenant's account is refused, not served — and a tenant with no
 connected account gets an empty state rather than an error or another tenant's disputes.
+**A third, because those two are tenant-scoped and say nothing about role:** a session whose
+`user_type` is `staff` gets 403 from both the disputes page and the AccountSession endpoint.
+That test already exists in another form and runs green —
+`t/controller/tenant-domains.t:108-110` sets a `staff` session and asserts 403 against the
+same `$admin_only` bridge — so this is a copy, not a new pattern.
 
 And the acceptance test above, which is the milestone gate. It needs the CLI from Leg 11 to
 author the plan and the subscription creation from Leg 8 to collect against it, so it lands
@@ -3670,8 +3820,8 @@ should be true and bad at naming *which function makes it true*.
     after (24) added Leg 3a, **32 to 51** after (29) and (30), **39 to 58** after (32)
     through (36), **57 to 81** after the round that added Legs 5a and 13 and re-costed
     3a, 3, 4 and 8 against what they had actually accumulated, **65 to 90** after (38)
-    through (41), **66 to 91** after (42) through (45), and **71 to 97** after (46) through
-    (49). That is seven revisions, and an earlier draft called them "all upward," which
+    through (41), **66 to 91** after (42) through (45), **71 to 97** after (46) through
+    (49), and **73 to 99** after (56) and (59). That is eight revisions, and an earlier draft called them "all upward," which
     is wrong twice: the 52-72 → 33-49 step was the change of unit, not a re-costing, and
     32-51 lowered the floor while raising the ceiling. What is true is narrower and still the
     point — **every revision since the unit changed has raised the ceiling**, five in a row,
@@ -3764,7 +3914,7 @@ should be true and bad at naming *which function makes it true*.
     drops had to sit a deploy apart (9a, 9b). A leg count that keeps rising is scope discovery,
     and it is recorded here rather than silently corrected in the table.
 
-Two more are perigrin's calls rather than a review's findings. The twenty-four after them (31-54)
+Two more are perigrin's calls rather than a review's findings. The thirty after them (31-60)
 are what the later adversarial review rounds forced, listed in the order the rounds ran
 rather than by weight:
 
@@ -3798,6 +3948,28 @@ rather than by weight:
     with `status => 'waitlisted'` and the payment is refunded. That is one more path to test,
     and it is the path that runs on the day a popular session fills between checkout and
     webhook — which is precisely when it is least acceptable for the answer to be undefined.
+
+    **And the branch is only as good as the predicate that reaches it, which this decision also
+    did not supply.** The only capacity primitive in the tree, `Enrollment->count_for_session`
+    (`:213-223`), is `COUNT(*) … status IN ('active','pending')` with no self- or
+    payment-exclusion — it is what the pre-checkout check uses at
+    `MultiChildSessionSelection.pm:93-100`. But `finalize_enrollment` inserts this payment's own
+    rows as `active` (`Payment.pm:350,360`), and it runs on **both** settlement paths — the
+    parent-return callback at `WorkflowSteps/Payment.pm:267` and the webhook at
+    `Webhooks.pm:142` — with `Enrollment.pm:95`'s named `ON CONFLICT` arbiter making the second
+    call a no-op. The parent-return path is not the 3DS exception:
+    `templates/summer-camp-registration/payment.html.ep:164-169` calls `confirmPayment` with a
+    `return_url` and no `redirect: 'if_required'`, so ordinary cards redirect back too. So on
+    the last seat of a session the second path counts its own committed row, reads "capacity is
+    gone," and refunds a child who is legitimately enrolled — and because the arbiter also makes
+    the `waitlisted` insert a no-op against the existing `active` row, the end state is an active
+    enrollment plus a refund, which is a free seat rather than a waitlisted one. The same missing
+    predicate produces the mirror error on whichever path settles first: a two-sibling cart
+    passing `9 >= 10` and overselling. Hence the predicate in the Leg 0 row — exclude this
+    payment's rows, run before `finalize_enrollment`, and add this payment's items for the
+    session back in before comparing. Neither existing test would catch either error:
+    `t/controller/payment-intent-webhook.t:106` and `t/integration/tenant-paid-enrollment.t:355`
+    exercise both paths but never against a full session, so Leg 0's tests need one that does.
 
     **An earlier draft of this decision put that refund *inside* the transaction, and it was
     the one place in this document where a rule the document states twice was broken by the
@@ -3914,7 +4086,7 @@ rather than by weight:
     them is the kind of claim that gets repeated until someone believes it.
 37. **The document is too long for what it is, and the length is kept deliberately — for
     now.** A review round measured roughly 450 to 500 removable lines with no decision lost:
-    items 5-54 of this list are a changelog rather than a set of standing decisions, and the
+    items 5-60 of this list are a changelog rather than a set of standing decisions, and the
     thirty-odd "an earlier draft said…" passages in the body each carry a conclusion that is
     load-bearing wrapped in a refutation that is not. The recommendation is correct as
     written. It is declined at this stage for one reason: **the refutations are the only
@@ -4011,11 +4183,13 @@ rather than by weight:
     `pricing-relationship-events.sql:25` was miscounted under Leg 2 — the all-zeros literal
     there is a probe argument to a function, not the tenant — and
     `unified-pricing-infrastructure.sql:47-49` reads the tenant with a plain `SELECT`, so it
-    goes vacuous rather than red. The corrected count is **fourteen distinct files and sixteen
+    goes vacuous rather than red. The corrected count is **sixteen distinct files and eighteen
     per-leg obligations**, not thirteen; the sentence saying it understated the obligation by
-    twelve files understated it by one more. **The rule (38) stated was right and the way it was
+    twelve files understated it by three more. **The rule (38) stated was right and the way it was
     applied was not: "grep `sql/verify/` for the name" has to run in every leg that drops
-    anything, not in the legs a reviewer happens to think of as migration legs.**
+    anything, not in the legs a reviewer happens to think of as migration legs.** (This entry
+    was filed at fourteen and sixteen, counting Leg 7. See (55): the next round found Leg 0
+    missing from the same sweep, which is why the figures here read sixteen and eighteen.)
 45. **A launch-rate change fails the production deploy, and this is a sequencing constraint
     rather than a test to update.** `bin/post-deploy-smoke-test.sh:61` greps the live landing
     page for the literal `2.5%`; `docker-entrypoint.sh:63-71` kills the server when the smoke
@@ -4147,6 +4321,90 @@ rather than by weight:
     silent since. Leg 3 owns the repair because it ships the first job whose failure is a money
     failure. This is (50)'s shape one layer up: green everywhere a test can see, dead in
     production, and the only signal is the customer asking again.
+
+55. **Leg 0 is the second leg the verify sweep missed, and (44) was the entry filed about the
+    first.** Leg 0 replaces `enrollments_session_student_type_unique` with a partial unique
+    index — which Postgres can only express as an index, so the constraint name leaves
+    `information_schema.table_constraints` — and two deployed verify scripts assert that name
+    with `RAISE EXCEPTION`. The alternate name in the second script's `IN` list is no escape:
+    an earlier change drops it and asserts it gone. Nor does `[deploy] verify = true` catch it,
+    because sqitch runs each verify at its own point in the plan, when the constraint still
+    exists; only the no-argument `sqitch verify` in `t/database/migration-verification.t` re-runs
+    every script against the final schema, and that file is in `prove -lr t/`. The count in (44)
+    moves to sixteen files and eighteen obligations. **What makes this worth its own entry is
+    that (44) named the failure mode exactly — "not in the legs a reviewer happens to think of
+    as migration legs" — and the next round found another leg the same reviewers had not thought
+    of.** A rule stated is not a rule applied; the sweep is only correct when it is re-derived
+    from the drops, not from the legs that look like migrations. Costed at zero: two
+    constraint-name assertions against a migration Leg 0 already ships.
+
+56. **Projecting a fee is not reversing it.** The `dashboard: full` bullet named "the
+    application fee is never reversed" as the defect and prescribed handlers that *record*
+    `application_fee_amount` as the remedy — recording the loss the sentence above it had just
+    identified. `refund_application_fee_for_tenant` has exactly one call site in the tree, inside
+    `_refund_connect_params`, reachable only from `Payment::refund`/`refund_async`; a
+    tenant-initiated Dashboard refund reaches none of them, and Stripe forbids the tenant from
+    reversing the fee themselves. So Registry is the only party that can and no leg did, while
+    `refund_application_fee NOT NULL DEFAULT true` promises otherwise for every tenant. Leg 3's
+    handler now acts. Small per event, invisible by construction — it accrues *to* Registry, so
+    the party losing money is the one who cannot see it.
+
+57. **A `pending` refund is not a refund, and the document said so about the test suite only.**
+    The direct-charge bullet already recorded that a refund can come back `pending` against a
+    thin connected-account balance, and drew from it exactly one conclusion: don't assert
+    `succeeded` in the re-cut suite. The state machine kept writing terminal. `Payment::refund`
+    picks `refunded`/`partially_refunded` off local arithmetic and never reads
+    `$refund->{status}`, so a 200 with `pending` becomes a completed refund in the database,
+    and no leg subscribes `refund.failed` — the event Stripe emits when the pending window
+    expires and a human has to arrange another way to pay. The non-terminal value is
+    `refund_pending`, which Leg 0 already introduces for the crash window and which means the
+    same thing here, so this adds a subscription and a status read rather than a vocabulary.
+    **The tell was in the reasoning, not the code**: the passage that widens
+    `enrollments_refund_status_check` argues at length about the vocabulary and still shipped
+    only terminal values.
+
+58. **The dispute surface was mounted on the bridge this document calls a money bug.** Leg 12
+    specified `$admin->get('/dashboard/disputes')` and cited `Registry.pm:676-703` as the
+    pattern — the `require_role('admin','staff')` block that Leg 3 moves drop approval *off*,
+    three legs earlier, for exactly this reason. `Registry.pm:705-715` is a second
+    `under('/admin')` at `require_role('admin')`, carrying a comment explaining that it exists
+    so staff cannot reach it; it is what domain management uses and `admin_only` appeared
+    nowhere in this document. The two dispute security tests were both tenant-scoped, so the
+    defect would have shipped green. The route correction is unconditional across both branches
+    of the Leg 12 fork; the AccountSession half — where `dispute_management` lets the holder
+    *accept* a dispute — exists only in the embedded branch. **Citing a line range is not the
+    same as reading it**, and this document cited one it had already condemned.
+
+59. **`Stripe-Version` is a request header, so Leg 3a's stated cause was wrong and its
+    prescribed fix was backwards.** The leg argued that pinning dahlia "breaks every invoice
+    handler, silently," and therefore the `invoice.subscription` readers must be rewritten in
+    the same commit. But the pin rides on Registry's outbound requests, and all five readers
+    consume webhook payloads, whose shape is set by the **endpoint's** `api_version` — a field
+    nothing in the repository and nothing in these 4,200 lines had ever set. So the bump alone
+    breaks nothing, and rewriting the readers to the basil path while the endpoint still emits
+    acacia payloads *manufactures* the silent-undef failure the rewrite was prescribed to
+    prevent. Leg 3a bumps the endpoint first, by Stripe's dual-endpoint cutover, and Leg 3
+    states `api_version` explicitly on both new endpoints rather than inheriting an account
+    default that can move under the platform — which Leg 8's `invoice.paid` handler depends on.
+    Two corrections travel with it: the harm was never "renewals stop being recorded"
+    (`subscription_events` is written before dispatch) but a write-only `billing_status`
+    column, and the existing live test asserts the outbound header and structurally cannot see
+    this class of defect. **The document had read the right documentation for the wrong
+    channel.**
+
+60. **A capacity re-check with no stated predicate re-checks the wrong thing.** (30) added the
+    re-check and (53) fixed its transaction ordering; neither said what to count. The only
+    primitive in the tree counts `active`/`pending` rows for the session with no self- or
+    payment-exclusion, and this payment's own rows are usually already `active` by the time the
+    webhook runs, because `finalize_enrollment` runs on both settlement paths and the ordinary
+    card redirects the parent back before Stripe's webhook lands. So a naive re-check counts its
+    own row, reads "capacity is gone," and refunds a correctly-enrolled child — on the last seat
+    of a full session, which is the popular session on the tenant's best day. The `ON CONFLICT`
+    arbiter then makes the compensating `waitlisted` insert a no-op, so the end state is an
+    active enrollment plus a refund: a free seat. The same silence produces the mirror error on
+    whichever path settles first, a two-sibling cart overselling. **This is the branch-with-no-
+    predicate shape**: two rounds specified when the branch runs and what it writes, and neither
+    specified the question it asks.
 
 ## Follow-ups this design creates
 
