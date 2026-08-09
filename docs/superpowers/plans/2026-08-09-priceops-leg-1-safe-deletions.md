@@ -51,7 +51,7 @@ Three stranded callers the spec's Leg 1 row does not name, found by grep:
 
 | Path | Responsibility |
 |---|---|
-| `t/database/revert-round-trip.t` | Deploy → dump → revert tip → redeploy → dump → diff. Fails when a revert script does not restore the schema. |
+| `t/database/revert-round-trip.t` | For each listed change: deploy to its parent → clone a tenant schema → dump → deploy the change → revert it → dump → diff. Fails when a revert script does not restore the schema. |
 | `sql/deploy/drop-installment-schedules.sql` | Drops `payment_schedules` and `scheduled_payments` from `registry` and every tenant schema. |
 | `sql/revert/drop-installment-schedules.sql` | Recreates both tables exactly as they stand at the plan tip, in `registry` and every tenant schema. |
 | `sql/verify/drop-installment-schedules.sql` | Asserts both tables are absent everywhere. |
@@ -62,7 +62,9 @@ Three stranded callers the spec's Leg 1 row does not name, found by grep:
 
 **Deleted:** 5 library modules, 2 more library modules, 10 test files (enumerated in Tasks 2-4).
 
-**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
+**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `sql/revert/refund-amounts-cents.sql` (the bug Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
+
+Note the one exception to "never edit a deployed change": `sql/revert/refund-amounts-cents.sql`. The Global Constraint forbids editing a deployed change's **deploy** script, and it stands. Revert scripts are outside `script_hash` (`App::Sqitch::Plan::Change.pm:164-169`), so editing one changes nothing about what is already deployed — see Task 1 Step 3.
 
 **Deliberately untouched:**
 
@@ -78,6 +80,7 @@ Three stranded callers the spec's Leg 1 row does not name, found by grep:
 **Files:**
 - Create: `t/database/revert-round-trip.t`
 - Modify: `t/database/migration-verification.t:46-49`
+- Modify: `sql/revert/refund-amounts-cents.sql:43` — the harness fails on its first subject; see Step 3.
 
 **Interfaces:**
 - Consumes: `Test::Registry::DB::_find_pg_tool($tool)` (`t/lib/Test/Registry/DB.pm:23-33`) — returns an executable path for `pg_dump`/`psql`, searching `$tool`, `/usr/bin/$tool`, and `/usr/lib/postgresql/{17,16,15,14}/bin/$tool`.
@@ -94,7 +97,7 @@ subtest 'Verify migration rollback' => sub {
 
 That is the #296 defect shape: a green assertion that asserts nothing. It is replaced by a pointer at the real harness.
 
-**CI appears to contradict "nothing proves a revert script works" — it does not.** `.github/workflows/ci.yml:262-275` has a step named `Test schema rollback`, and it is the same lie in a different file. Its revert is `carton exec sqitch revert -n 3 ... || true` (`:270`), so a revert script that errors is swallowed; it then redeploys and compares nothing, so a revert that silently leaves the schema wrong is indistinguishable from one that works. And the whole `database-compatibility` job is gated on `:199`, `github.event_name == 'schedule' || contains(github.event.head_commit.modified, 'sql/') || ...` — `head_commit` is null on `pull_request`, and `contains()` tests list membership, so no file path is ever equal to the string `sql/`. The job runs on the nightly schedule and nowhere else. **Do not edit `ci.yml` in this leg** — it is not in the spec's Leg 1 row, and it is on the issue list.
+**CI appears to contradict "nothing proves a revert script works" — it does not.** `.github/workflows/ci.yml:262-276` has a step named `Test schema rollback`, and it is the same lie in a different file. Its revert is `carton exec sqitch revert -n 3 ... || true` (`:271`), so a revert script that errors is swallowed; it then redeploys and compares nothing, so a revert that silently leaves the schema wrong is indistinguishable from one that works. And the whole `database-compatibility` job is gated on `:200`, `github.event_name == 'schedule' || contains(github.event.head_commit.modified, 'sql/') || ...` — `head_commit` is null on `pull_request`, and `contains()` tests list membership, so no file path is ever equal to the string `sql/`. The job runs on the nightly schedule and nowhere else. **Do not edit `ci.yml` in this leg** — it is not in the spec's Leg 1 row, and it is on the issue list.
 
 **Scope note:** the harness compares `pg_dump --schema-only`. It grades **schema** round-trips. A data-only change (Task 7) is invisible to it, is deliberately kept off `@CHANGES`, and gets its own test.
 
@@ -111,7 +114,9 @@ That is the #296 defect shape: a green assertion that asserts nothing. It is rep
 
 3. **The comparison is over sorted lines, not the raw dump.** `pg_dump` prints columns in `attnum` order, and a revert that re-adds a dropped column puts it at the end of the table rather than back in its original position — Postgres offers no way to place it. The tip's own revert does this today: `sql/revert/refund-amounts-cents.sql` restores `refund_amount_requested` and `refund_amount` after the columns that followed them, so a raw diff fails on the current tip before this leg changes anything. Sorting the filtered lines compares the *multiset* of schema statements: a missing or altered column, index, constraint, trigger or comment still fails; pure attnum drift does not. Verified: raw comparison fails on today's tip, sorted comparison passes.
 
-Also note `pg_dump` 18 emits a random `\restrict <key>` / `\unrestrict <key>` pair per invocation. The token is not a comment, so a comment filter does not remove it and every run would differ. `--restrict-key` pins it.
+Also note `pg_dump` emits a random `\restrict <key>` / `\unrestrict <key>` pair per invocation. The token is not a comment, so a comment filter does not remove it and every run would differ. `--restrict-key` pins it.
+
+`--restrict-key` is not an 18-only flag. The `\restrict` mechanism was backported to 17.6, 16.10, 15.14 and 14.19 as the fix for CVE-2025-8714, and the flag arrived with it. Verified by `pg_dump --help | grep -c -- '--restrict-key'` returning `1` on locally installed 14.23, 15.18, 16.14, 17.10 and 18.4. CI installs `postgresql-client` from Ubuntu with `apt-get update` first (`ci.yml:41-44`), so it gets a patched minor and the flag is present. A client older than those minors would fail with `unrecognized option`; if that ever happens, the fix is to upgrade the client, not to drop the flag — without it every dump differs and the test can never pass.
 
 - [ ] **Step 1: Write the harness**
 
@@ -165,8 +170,15 @@ sub dump_schema () {
 }
 
 my $sqitch = App::Sqitch->new();
+my $n      = 0;
 
 for my $change (@CHANGES) {
+    # One tenant schema per change, so a second entry on @CHANGES does not
+    # collide on tenants_slug_key (sql/test-schema.sql:3269-3273).  Earlier
+    # iterations' schemas stay behind and appear in both dumps, which is
+    # harmless -- the comparison is before-vs-after, not against a fixture.
+    my $slug = sprintf 'rt_%d_%d', $$, $n++;
+
     subtest "$change reverts cleanly" => sub {
         # 'NAME^' resolves to the change before NAME.  Legal because the caret
         # follows a letter; '@^' would not be (see the header note).
@@ -177,18 +189,19 @@ for my $change (@CHANGES) {
         # only 'registry' and 'sqitch'.  clone_schema is what provisioning
         # actually uses, so it is what the revert has to satisfy.  It copies
         # triggers as a separate step that LIKE ... INCLUDING ALL does not.
-        my $slug = 'rt_' . $$;
-        {
-            # clone_schema sets the connection's search_path to the new schema
-            # (Tenant.pm:157), so give it a connection of its own and discard it.
-            my $pg = Mojo::Pg->new($uri);
-            $pg->db->query('INSERT INTO registry.tenants (name, slug) VALUES (?, ?)',
-                "Round Trip $$", $slug);
-            $pg->db->query('SELECT clone_schema(?)', $slug);
-        }
+        #
+        # Call it schema-qualified: the function lives in 'registry'
+        # (fix-clone-schema-identifier-quoting.sql:7 sets the search_path for
+        # its own creation), and a bare Mojo::Pg connection searches
+        # '"$user", public', where it is not found.
+        my $db = Mojo::Pg->new($uri)->db;
+        $db->query('INSERT INTO registry.tenants (name, slug) VALUES (?, ?)',
+            "Round Trip $n", $slug);
+        $db->query('SELECT registry.clone_schema(?)', $slug);
 
         my $before = dump_schema();
-        ok scalar @$before, "schema dumped at $change^ with a cloned tenant schema";
+        ok scalar( grep { /\Q$slug\E\./ } @$before ),
+            "dump at $change^ includes the cloned tenant schema $slug";
 
         $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', $change );
         $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', "$change^", '-y' );
@@ -206,35 +219,54 @@ done_testing;
 
 `is_deeply` rather than `is`: on failure it names the first differing element instead of printing six hundred lines of schema twice.
 
+The first assertion greps for the slug rather than asserting the dump is merely non-empty. A non-empty dump proves nothing: if `clone_schema` silently did nothing, the tenant half of every migration would go ungraded and this test would still be green — which is the failure mode the whole file exists to prevent.
+
 The tenant is created by direct `INSERT` plus `clone_schema` rather than by `Registry::DAO::Tenant->provision`, because `provision` also copies users and seed data (`Tenant.pm:171`) and needs a `Registry::DAO::User` to exist. None of that changes the schema, which is the only thing this test reads.
 
-- [ ] **Step 2: Run it and confirm it passes**
+- [ ] **Step 2: Run it and watch it fail — this is the red step**
 
 Run: `carton exec prove -lv t/database/revert-round-trip.t`
-Expected: PASS, one subtest — `refund-amounts-cents reverts cleanly` — containing two assertions. Takes roughly two minutes: the subtest deploys the plan up to the change's parent, then deploys and reverts one change, and runs `pg_dump` twice.
 
-- [ ] **Step 3: Prove the harness can fail (the genuine red step)**
+Expected: **FAIL**, and the failure is real rather than staged. Takes roughly fifty seconds: the subtest deploys the plan up to the change's parent, then deploys and reverts one change, and runs `pg_dump` twice. The output is:
 
-A passing harness that cannot fail is worth nothing. Temporarily append a canary to that change's revert script:
-
-```bash
-echo "ALTER TABLE registry.payments ADD COLUMN revert_harness_canary integer;" \
-  >> sql/revert/refund-amounts-cents.sql
 ```
+ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema rt_2972935_0
+not ok 2 - deploying refund-amounts-cents and reverting it restores the schema exactly
+#     Structures begin differing at:
+#          $got->[2420] = 'COMMENT ON COLUMN rt_2972935_0.enrollments.refund_status IS ...'
+#     $expected->[2420] = 'COMMENT ON COLUMN rt_2972935_0.enrollments.refund_amount IS 'Amount refunded for dropped enrollment';'
+```
+
+Exactly one line is in the "before" dump and missing from the "after" dump, and nothing is present in "after" that was not in "before". **Do not stage a canary to prove the harness can fail.** It already failed, on its first subject, on a bug that has been deployed since the cents conversion — which is a better red step than any injected one, and it skips the risk of leaving a canary behind in a deployed script.
+
+**The bug.** `sql/deploy/drop-transfer-business-rules.sql:66` put a comment on `registry.enrollments.refund_amount`. `clone_schema` copies tables with `CREATE TABLE ... (LIKE src INCLUDING ALL)` (`fix-clone-schema-identifier-quoting.sql:367`), and `INCLUDING ALL` includes `INCLUDING COMMENTS`, so every tenant schema carries that comment too. `sql/revert/refund-amounts-cents.sql` restores the comment for `registry` at `:17-18` but its tenant loop (`:31-54`) re-adds the column and stops. Revert a tenant schema and the comment is gone for good.
+
+- [ ] **Step 3: Fix the tenant loop in the revert script**
+
+Editing a **revert** script is safe in a way editing a deploy script is not. Sqitch's modification detection compares `script_hash`, which is the SHA-1 of the **deploy** script alone (`local/lib/perl5/App/Sqitch/Plan/Change.pm:164-169`, `builder => '_deploy_hash'`), so changing a revert script does not mark the change as modified and nothing needs redeploying anywhere. This revert has never run in production; the fix only changes what happens the first time it does.
+
+In `sql/revert/refund-amounts-cents.sql`, after `:43`:
+
+```sql
+        EXECUTE format('ALTER TABLE %I.enrollments DROP COLUMN refund_amount_cents', s);
+```
+
+add:
+
+```sql
+        EXECUTE format(
+            'COMMENT ON COLUMN %I.enrollments.refund_amount
+                IS ''Amount refunded for dropped enrollment''', s);
+```
+
+Doubled single quotes because the whole statement is a `format` string literal. The text must match `drop-transfer-business-rules.sql:66` exactly — a comment that differs by one character is a diff like any other.
+
+Fix only the revert. The **deploy**'s tenant loop is asymmetric the same way — it comments `registry.enrollments.refund_amount_cents` at `:21` and not the tenant copies — but that asymmetry is invisible to this harness (both dumps lack the comment) and correcting it would edit a deployed deploy script, which the Global Constraints forbid. It goes on the issue list instead.
+
+- [ ] **Step 4: Run it again and confirm it passes**
 
 Run: `carton exec prove -lv t/database/revert-round-trip.t`
-Expected: FAIL — "deploying refund-amounts-cents and reverting it restores the schema exactly" fails, because the reverted schema carries a `revert_harness_canary` line the pre-change schema does not.
-
-- [ ] **Step 4: Restore the revert script**
-
-This step edits a **deployed** migration script, so leaving the canary in would ship a schema mutation to production. Restore it and prove the restore worked before going further:
-
-```bash
-git checkout sql/revert/refund-amounts-cents.sql
-git diff --exit-code sql/revert/refund-amounts-cents.sql
-```
-
-Expected: `git diff --exit-code` exits 0 and prints nothing. A non-zero exit means the canary — or some other edit — is still in the file; stop and fix it before continuing. Do not rely on Step 4's PASS to catch this: the harness compares the *reverted* schema against the *pre-change* schema, and a canary that both dumps happen to share would pass.
+Expected: PASS, one subtest — `refund-amounts-cents reverts cleanly` — containing two assertions.
 
 Run: `carton exec prove -lv t/database/revert-round-trip.t`
 Expected: PASS.
@@ -266,15 +298,21 @@ Expected: PASS, and `migration-verification.t` now reports one fewer subtest.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add t/database/revert-round-trip.t t/database/migration-verification.t
-git commit -m "Add a revert-test harness and retire the rollback subtest that skipped
+git add t/database/revert-round-trip.t t/database/migration-verification.t \
+        sql/revert/refund-amounts-cents.sql
+git commit -m "Add a revert-test harness and fix the bug it found on its first subject
 
 The rollback subtest passed by calling pass(). The new harness takes a list of
 sqitch changes and, for each one, deploys an ephemeral database to that
-change's parent, deploys the change, reverts it, and diffs the schema dumps --
-so a revert script that does not restore the schema fails here rather than in
-production. A leg that ships a migration adds its change name to the list in
-the same commit."
+change's parent, provisions a tenant schema with clone_schema, deploys the
+change, reverts it, and diffs the schema dumps -- so a revert script that does
+not restore the schema fails here rather than in production. A leg that ships a
+migration adds its change name to the list in the same commit.
+
+It failed immediately. refund-amounts-cents restores the refund_amount column
+comment for registry but not for tenant schemas, which get the comment from
+clone_schema's LIKE ... INCLUDING ALL, so reverting a tenant schema dropped it
+permanently. The revert's tenant loop now restores it."
 ```
 
 ---
@@ -474,7 +512,7 @@ Delete the whole subtest at `:146-166`, `'a dollar-denominated discount is scale
 
 Keep the final subtest at `:168-182` — it calls `$plan->calculate_price`, which lives on the surviving DAO.
 
-**What goes with it:** `calculate_plan_price` (`PriceOps/PricingPlan.pm:87-118`) is the only code in the tree that scales a `sibling_discount` from dollars to cents (`:112`), and this subtest is its only test. Both disappear together. That is not a coverage gap — Task 4 deletes the rest of the sibling-discount surface for the same reason, that nothing reaches it. `Registry::DAO::PricingPlan::calculate_price` (`:136-147`) handles `percentage_discount` only and is unaffected.
+**What goes with it:** `calculate_plan_price` (`PriceOps/PricingPlan.pm:87-118`) is the only code in the tree that scales a `sibling_discount` from dollars to cents (`:112`), and this subtest is its only test. Both disappear together. That is not a coverage gap — Task 4 deletes the rest of the sibling-discount surface for the same reason, that nothing reaches it. `Registry::DAO::PricingPlan::calculate_price` (`:136-149`) handles `percentage_discount` only and is unaffected.
 
 - [ ] **Step 3a: Fix the comment in the stripe-live fixture**
 
@@ -986,11 +1024,11 @@ The harness grades only what is on that list. Skipping this append is the failur
 
 - [ ] **Step 1a: Check what the drop would destroy in production**
 
-`DROP TABLE` is not reversible for rows. The revert below recreates both tables empty. Before merging, count what is there:
+`DROP TABLE` is not reversible for rows. The revert below recreates both tables empty. Before merging, count what is there. Run this **read-only** against the Render production database `dpg-ckq1i8o5vl2c73d61070-a` (registry-db), the same target Task 7 Step 1 uses:
 
-```bash
-psql "$PRODUCTION_DB_URL" -Atc "SELECT count(*) FROM registry.payment_schedules"
-psql "$PRODUCTION_DB_URL" -Atc "SELECT count(*) FROM registry.scheduled_payments"
+```sql
+SELECT (SELECT count(*) FROM registry.payment_schedules)  AS schedules,
+       (SELECT count(*) FROM registry.scheduled_payments) AS payments;
 ```
 
 Expected: `0` and `0`. Issue #295 says installments are unreachable, and Task 2 has already established that no code path creates a schedule — but "unreachable now" and "never reached" are different claims, and only the count settles it. **Non-zero means stop and report to perigrin**; this leg's premise is that these tables hold nothing, and dropping rows a customer paid against is not a decision this plan gets to make.
@@ -1384,7 +1422,9 @@ Run:
 grep -rln "payment_schedules\|scheduled_payments" sql/ lib/ t/ templates/ workflows/
 ```
 
-Expected exactly: the three `sql/deploy/` scripts in the original chain, `sql/deploy/tenant-scoped-payments.sql`, the three `sql/revert/` scripts in the original chain, the three new `drop-installment-schedules` scripts, and `sql/test-schema.sql` (regenerated next). **No `lib/`, no `t/`, no `sql/verify/` apart from the new one.**
+Expected exactly: the three `sql/deploy/` scripts in the original chain, `sql/deploy/tenant-scoped-payments.sql`, the three `sql/revert/` scripts in the original chain, the three new `drop-installment-schedules` scripts, `sql/verify/simplify-installment-schema-for-stripe.sql`, and `sql/test-schema.sql` (regenerated next). **No `lib/`, no `t/`.**
+
+`sql/verify/simplify-installment-schema-for-stripe.sql` is on the list because Step 6 leaves the table names in its explanatory comment, not in an assertion. That is the only `sql/verify/` match besides the new one; the other three superseded scripts (Steps 5, 7, 8) no longer name the tables at all. If a *fourth* verify script appears, or if that file matches on a line that is not a comment, the supersession is incomplete.
 
 - [ ] **Step 11: Regenerate the test schema dump**
 
@@ -1685,6 +1725,7 @@ my $customer_rel_id = $db->query(
           (provider_id, consumer_id, pricing_plan_id, status)
       SELECT provider_id, consumer_id, ?, 'active'
         FROM registry.pricing_relationships
+       ORDER BY id
        LIMIT 1
       RETURNING id}, $customer_plan_id
 )->hash->{id};
@@ -1789,17 +1830,17 @@ Strictly sequential. Each arrow is a real dependency, not a preference.
 
 ```
 1 (harness) → 2 (installment code) → 6 (installment tables) → 7 (plan retirement)
-                    └───────────→ 3 (Stripe client, PriceOps plan)
+                    └───────────→ 3 (Stripe client, PriceOps plan) → 4 (discount surface, #296)
 
-                    4 (discount surface, #296) ┐
-                    5 (seti_test bypass)       ┘ independent of everything above
+                    5 (seti_test bypass) — independent of everything above
 ```
 
 - Task 1 before Task 6: the migration must land under a harness that already exists and is already proven able to fail.
 - Task 2 before Task 6: code that reads a table is deleted before the table is dropped, so no commit leaves a tree that cannot run its own tests.
 - Task 6 before Task 7: Task 7's change is appended after Task 6's in `sql/sqitch.plan`, and Task 6's Step 15 closes the installment issues that Task 7's commit would otherwise be mistaken for closing.
 - Task 2 before Task 3: this one is real, not conventional. Task 3 Step 1's grep is the gate that says both modules are unreferenced, and until Task 2 lands they are both still referenced — `InstallmentPayment.pm:12,78,95,178` names `Registry::PriceOps::PricingPlan`, and `PriceOps/ScheduledPayment.pm:12,18` and `PriceOps/PaymentSchedule.pm:12,19` name `Registry::Client::Stripe`. Run Task 3 first and its own gate fails.
-- Tasks 4 and 5 touch files disjoint from every other task. They are ordered by convention, not necessity.
+- Task 3 before Task 4: also real. Task 4 Step 6's grep is the gate that says no discount key survives without both a writer and a reader, and `lib/Registry/PriceOps/PricingPlan.pm:100,130` match its pattern until Task 3 Step 2 deletes that file. Run Task 4 first and the gate reports two matches that are not on its table, which reads as a miss.
+- Task 5 touches files disjoint from every other task. Its position is convention, not necessity.
 
 ## Coverage Gaps This Leg Opens
 
