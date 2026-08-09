@@ -559,6 +559,19 @@ repair — permanently unschedulable and permanently unfixable. So: create the S
 record every id, and set `published_at` last, gated on every component that *has* a Stripe
 Price having recorded its id.
 
+**Those N calls cannot use the synchronous idiom, and nothing else in this document says so.**
+`Service::Stripe`'s sync wrappers begin at `Stripe.pm:254` and cover intents, refunds,
+customers, setup intents and subscriptions — there is no Product or Price among them, only
+`create_product_async` (`:195`) and `create_price_async` (`:182`) — and `_await` (`:248-266`)
+dies by design with *"use the _async variant there"* when it is called under a running event
+loop. `publish_version` has callers on both sides of that line: `GenerateEvents.pm:97` runs
+inside the daemon's loop, and Leg 6's backfill runs from a script with none. So
+`publish_version` returns a promise, the workflow step hands that promise back — the engine
+already takes one, and `WorkflowRun.pm:95-98` documents why in a comment — and the backfill
+`->wait`s on it. The failure mode if this is missed is loud rather than silent
+(`GenerateEvents.pm:73` catches and re-renders the form with `_await`'s message in it), which
+is why it is a sentence here and not a leg.
+
 **"Up to three" and "every component that has a Price" are the load-bearing words, and an
 earlier draft had neither.** It gated publication on *every* component holding a non-NULL
 `stripe_price_id` and had `Entitlement` refuse to quote a version with any NULL. **A
@@ -1598,6 +1611,19 @@ argument for the name staying.
   handler quietly reading the wrong schema. And it reverts at COMMIT, so a nested `begin`
   inside the handler would end the setting early. The rule is one `begin` at the top of
   `stripe()` and no other transaction below it, asserted by the Leg 0 tests.
+
+  **Reverting at COMMIT has a second edge, and this leg walks into it.** The capacity refund
+  below is issued *after* COMMIT and then records its result — by which time the path is back
+  to the pool default of `registry, public`. `Payment::save` updates the unqualified
+  `payments` (`Payment.pm:425-435`, `sub table` at `:38`), `registry.payments` is a real table
+  (`sql/deploy/payments.sql:7`), and `$db->update` checks no row count, so the write lands in
+  the wrong schema, matches nothing, and returns quietly — while the comment three lines above
+  it (`Payment.pm:423-424`) says a refund whose DB record was not updated "must fail loudly".
+  So post-COMMIT work re-establishes the tenant path with a **session-level**
+  `set_config('search_path', $1, false)`: one statement, not a transaction, so it does not
+  touch the one-`begin` rule above. The crash test asserts against `<tenant>.payments` by its
+  qualified name, because an assertion that reads whatever `payments` resolves to is an
+  assertion this bug passes.
 
   Set the path to **`<tenant>, public`**, matching what `connect_schema` produces
   (`DAO.pm:39`: `search_path([$schema, 'public'])`) rather than widening it to include
@@ -3117,6 +3143,27 @@ control-flow shape the framework does not have, and no amount of reading the doc
 that.** It took reading `WorkflowRun.pm`. The estimate does not move; the corrected fix is one
 conditional in `ProcessAdminDropDecision` and is smaller than the guard it replaces.
 
+**Round 18 was run against the text round 17 corrected, and it is where the loop stops.** Five
+MAJOR raised across six lenses, five refuted, zero survivors — two consecutive empty rounds
+against a document that changed between them. Three refutations ended by conceding a clause,
+and all three are folded above: the deny-guard retraction reached the passage it retracts (two
+lenses found that independently, which is the signal that a correction landing in three places
+out of four is still a defect); the post-COMMIT capacity refund re-establishes the tenant
+`search_path` at session level, because `SET LOCAL` reverts at COMMIT and `Payment::save` is
+unqualified — a reviewer proved that one with a probe rather than an argument, and the file's
+own "must fail loudly" comment made it worth a sentence; and `publish_version` is
+promise-returning, because `Service::Stripe` has no synchronous Product or Price wrapper and
+`_await` refuses to run under the daemon's loop.
+
+What separates round 18 from round 17 is not the count, which is the same, but where the
+remaining findings live. Every one of the five was killed on blast radius or on reachability,
+not on being wrong about the code — and the three that produced text produced *sentences*, not
+legs, migrations or estimate movement. The loop is now returning editorial staleness and
+unnamed framework constraints rather than money defects, and the last two money defects it
+found (rounds 15 and 16) both came out of the document's own prior fixes. That is convergence
+in the only sense that is checkable: the reviewers concede no major issues, twice, and the
+corrections have stopped costing anything.
+
 Legs 3a, 3, 4 and 8 are 37 to 47 of that, about half the milestone in four legs, and the
 concentration is the
 useful signal: they are the charge model, the model tables and the resolver, and each is
@@ -4127,11 +4174,16 @@ making real failing HTTPS calls whose warnings land in output. Leg 1 deletes all
   enrollment, records the request approved, marks the refund pending, and a background job
   refunds the family.
 
-  Leg 3 does not have to fix the advance. It has to make the chain **safe to advance**, which
-  is three lines: `ProcessEnrollmentDrop` and `CompleteDropRequest` return early unless
-  `$data->{action} eq 'approve'`, and `CompleteDropRequest` writes `denied` rather than its
-  hardcoded `'approved'` when it does not. The deferred issue then names this as its
-  prerequisite: **the advance must not be fixed before the deny guard exists.** One more thing
+  Leg 3 does not have to fix the advance. It has to make the chain **safe to advance**, and
+  the guard goes at the *entry*: `ProcessAdminDropDecision` writes `denied` to the drop
+  request itself and never calls `new_run` (`:33`), dropping the hardcoded
+  `admin_approved => 1` (`:25`) with it. **An earlier draft of this paragraph put the guard in
+  the steps — "`ProcessEnrollmentDrop` and `CompleteDropRequest` return early unless
+  `$data->{action} eq 'approve'`" — and that shape is not one this framework can execute.**
+  An early return still advances `latest_step_id` (`WorkflowRun.pm:120-122`) and `next_step`
+  is stripped as transient (`:81-84`), so guarding two of six steps leaves the rest running on
+  a denial; (75) sets out the reasoning. The deferred issue then names the surviving guard as
+  its prerequisite: **the advance must not be fixed before the deny guard exists.** One more thing
   goes in the same commit while the file is open — `ProcessEnrollmentDrop.pm:29-30` reads
   `$data->{admin_user}` and `ProcessAdminDropDecision.pm:24` supplies `admin_user_id`, so
   `$admin_id` is `undef` and `dropped_by` lands NULL on every drop the chain ever processes.
@@ -5112,8 +5164,9 @@ rather than by weight:
     issue names that as its prerequisite. `ProcessAdminTransferDecision.pm:31` has the same
     shape, moves no money, and joins the deferred issue rather than Leg 3.
 
-    **The guard this entry first prescribed does not work, and the reason is a framework fact
-    this document had never written down.** It said "`ProcessEnrollmentDrop` and
+    **The guard first prescribed for this — in the "Out of scope" entry above, now corrected
+    in place — does not work, and the reason is a framework fact this document had never
+    written down.** It said "`ProcessEnrollmentDrop` and
     `CompleteDropRequest` return early unless `$data->{action} eq 'approve'`," which is wrong
     twice. An ordinary early return does not hold the chain: `_persist_step_result` advances
     `latest_step_id` unless the result carries `stay`, `redirect`, or `next_step` equal to the
