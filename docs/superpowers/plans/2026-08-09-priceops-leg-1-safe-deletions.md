@@ -31,11 +31,15 @@ Copied from the spec. Every task's requirements implicitly include this section.
 
 ## Declared Deviations From The Spec
 
-Two places where this plan does something other than what the spec's Leg 1 row says. Both are deliberate.
+Four places where this plan does something other than what the spec says. All four are deliberate.
 
 1. **The `seti_test` replacement is an env guard, not a `t/lib/` move.** The spec says to "move what the tests need into `t/lib/`". That is unnecessary: `TenantPayment::process` already has an environment-guarded no-keys branch that produces a byte-identical result hash to the `seti_test` branch, and `t/controller/tenant-create-session.t` already passes through it today (verified: the payment template renders `<input type="hidden" name="setup_intent_id" value="">` at `templates/tenant-signup/payment.html.ep:91`, and `process_workflow` applies server-issued hidden values on top of caller data at `t/lib/Test/Registry/Helpers.pm:168`, so that test's `seti_test_123` never reaches the step). The replacement is therefore: delete both `seti_test` branches, add the one-line `BEGIN { delete @ENV{...} }` the codebase already uses, and drop the dead form keys. Smaller diff, same coverage, and it removes an unguarded production bypass rather than relocating it.
 
 2. **Superseded verify scripts go vacuous, not corrected.** The spec says the old scripts are "edited to match the schema as of the end of the plan". Taken literally that means asserting the tables are absent, which **fails** at the script's own deploy point under `[deploy] verify = true`, where the tables are present. The correct edit is to remove every assertion naming a dropped object, leaving a comment that points at the retiring change. `sql/verify/drop-installment-schedules.sql` is where the absence gets asserted.
+
+3. **`t/dao/pricing-plan-clean-architecture.t` is truncated, not deleted.** Spec `:2813` lists it under "Also deleted", and spec `:2869-2870` tells the Leg 9a implementer its `use Registry::DAO::PricingRelationship` at `:16` "needs no action: Leg 1 already deletes the file". Task 4 Step 1 keeps the file with its first subtest only. The reason is in that step and is not repeated here; what matters at this level is that **Leg 9a's stated premise is now false.** The file survives, so a Leg 9a worker looking for the sixth reader of `PricingRelationship` will find the file still on disk. The outcome is still safe — the truncated file's `use` list is `Test::More`, `Registry::DAO`, `Registry::DAO::PricingPlan` and nothing else, so there is no reader left to fix — but Leg 9a must be told to re-check rather than trust the spec sentence.
+
+4. **The harness runs deploy-then-revert, the opposite of the direction the spec pins.** Spec `:3878-3879` says "deploy to the change, revert one, deploy again, compare the schema". That compares the schema *at* the change across a revert/redeploy cycle. Task 1 compares the schema at `change^` across a deploy/revert cycle instead. The argument is at Task 1 `:125` and is load-bearing for Task 6: for a change whose deploy is a `DROP`, the spec's direction is vacuous. Named here because the spec sentence is pinned and a reader auditing plan-against-spec should not have to discover the difference in a task body.
 
 ## Spec Gaps This Plan Closes
 
@@ -60,9 +64,9 @@ Three stranded callers the spec's Leg 1 row does not name, found by grep:
 | `sql/verify/retire-registry-plus-plan.sql` | Asserts no active relationship offers the hybrid plan. |
 | `t/database/retire-registry-plus-plan.t` | Asserts the data revert round-trips (the schema harness cannot see data changes). |
 
-**Deleted:** 5 library modules, 2 more library modules, 10 test files (enumerated in Tasks 2-4).
+**Deleted:** 5 library modules, 2 more library modules, 9 test files — all nine in Task 2 (`:351-366`). Tasks 3 and 4 delete no test file. `t/dao/pricing-plan-clean-architecture.t` is **truncated, not deleted**; it appears in the Modified list below and nowhere else.
 
-**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `sql/revert/refund-amounts-cents.sql` (the bug Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
+**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-clean-architecture.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `docs/operations/sacp-stripe-connect-onboarding.md` (one table row, Task 6 Step 10), `sql/revert/refund-amounts-cents.sql` (the bug Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
 
 Note the one exception to "never edit a deployed change": `sql/revert/refund-amounts-cents.sql`. The Global Constraint forbids editing a deployed change's **deploy** script, and it stands. Revert scripts are outside `script_hash` (`App::Sqitch::Plan::Change.pm:164-169`), so editing one changes nothing about what is already deployed — see Task 1 Step 3.
 
@@ -84,7 +88,7 @@ Note the one exception to "never edit a deployed change": `sql/revert/refund-amo
 
 **Interfaces:**
 - Consumes: `Test::Registry::DB::_find_pg_tool($tool)` (`t/lib/Test/Registry/DB.pm:23-33`) — returns an executable path for `pg_dump`/`psql`, searching `$tool`, `/usr/bin/$tool`, and `/usr/lib/postgresql/{17,16,15,14}/bin/$tool`.
-- Produces: the `@CHANGES` list in `t/database/revert-round-trip.t`. Tasks 6 and 7 each append their change name to that list in the same commit that adds the change to `sql/sqitch.plan`; that append is the whole registration mechanism.
+- Produces: the `@CHANGES` list in `t/database/revert-round-trip.t`. **Task 6 appends its change name** to that list in the same commit that adds the change to `sql/sqitch.plan`; that append is the whole registration mechanism. **Task 7 does not, and must not** — its change is data-only, so both `pg_dump --schema-only` dumps would match no matter what its deploy did. See Task 7 Step 4. Any future change that alters no schema object belongs off this list and needs its own data test.
 
 **Why this is first:** every later leg ships migrations, and today nothing proves a revert script works. `t/database/migration-verification.t:46-49` currently reads:
 
@@ -101,9 +105,19 @@ That is the #296 defect shape: a green assertion that asserts nothing. It is rep
 
 **Scope note:** the harness compares `pg_dump --schema-only`. It grades **schema** round-trips. A data-only change (Task 7) is invisible to it, is deliberately kept off `@CHANGES`, and gets its own test.
 
-**`@CHANGES` starts with one entry, and that is a deliberate boundary, not an oversight.** The spec's requirement (`:3455`) is that every migration *this milestone adds* ships with a tested revert — it does not commission a retrospective audit of already-deployed reverts, and Leg 1's row does not list one. That boundary has a known cost, worth naming because it is the second real defect this harness would find if pointed at its neighbours: `sql/revert/payments-amount-cents.sql:11,16,31,38` re-adds the column as `amount DECIMAL(10,2) NOT NULL DEFAULT 0`, where `sql/deploy/payments.sql:10,33` declared it plain `NOT NULL`, and it never drops the default afterwards. Post-revert, an `INSERT` that omits `amount` books a zero payment instead of raising. `sql/revert/pricing-plans-amount-cents.sql:17,41` and `sql/revert/schedule-amounts-cents.sql` have the same shape. A sorted schema diff catches all three the moment they are added to `@CHANGES` — but adding them means fixing three more deployed revert scripts inside a leg scoped to safe deletions. They go on the issue list. If Leg 1 should absorb them instead, adding the three names to `@CHANGES` and repeating Task 1's red/green/commit shape for each is the whole change.
+**`@CHANGES` starts with one entry, and that is a deliberate boundary, not an oversight.** The spec's requirement (`:3455`) is that every migration *this milestone adds* ships with a tested revert — it does not commission a retrospective audit of already-deployed reverts, and Leg 1's row does not list one. That boundary has a known cost, worth naming because it is the second real defect this harness would find if pointed at its neighbours: `sql/revert/payments-amount-cents.sql:11,16,31,38` re-adds the column as `amount DECIMAL(10,2) NOT NULL DEFAULT 0`, where `sql/deploy/payments.sql:10,33` declared it plain `NOT NULL`, and it never drops the default afterwards. Post-revert, an `INSERT` that omits `amount` books a zero payment instead of raising.
 
-**What it does not grade, stated up front so nobody reads a green tick as more than it is.** An adversarial pass injected eighteen defects into revert scripts and the harness caught thirteen, including every constraint, index, trigger, type, default, nullability and table-presence defect in both the `registry` schema and the cloned tenant schema. The five it missed fall into three kinds:
+The three sibling cents changes are not equivalent to each other, and the difference decides what is worth absorbing. All four sit consecutively at `sql/sqitch.plan:64-67`, so any of them is gradeable by pointing `@CHANGES` at it:
+
+| Change | What its revert restores | What the column was | Verdict |
+| --- | --- | --- | --- |
+| `pricing-plans-amount-cents` | `NOT NULL DEFAULT 0` (`:17,41`) — **then drops the default** (`:26,51`) | `amount DECIMAL(10,2) NOT NULL` (`unified-pricing-infrastructure.sql:23`) | round-trips clean; nothing to fix |
+| `payments-amount-cents` | `NOT NULL DEFAULT 0` (`:11,16,31,38`), never dropped | bare `NOT NULL` (`payments.sql:10,33`) | real defect, on money tables this leg **keeps** |
+| `schedule-amounts-cents` | `NOT NULL DEFAULT 0` (`:11,12,26,44,45,63`), never dropped | bare `NOT NULL` (`installment-payment-schedules.sql:15,16,32`) | real defect, on tables **Task 6 drops** |
+
+So only one of the three is worth absorbing: `payments-amount-cents`. Adding its name to `@CHANGES` and repeating Task 1's red/green/commit shape once is the whole change. `pricing-plans-amount-cents` has no defect to find, and fixing `schedule-amounts-cents` would repair a revert script for `payment_schedules` and `scheduled_payments`, which Task 6 deletes at `sql/deploy/drop-installment-schedules.sql`. Both go on the issue list regardless. **This is a scope decision for perigrin, not for the implementer** — execute the leg with `@CHANGES` at one entry unless told otherwise.
+
+**What it does not grade, stated up front so nobody reads a green tick as more than it is.** An adversarial pass injected nineteen defects into revert scripts and the harness caught fourteen, including every constraint, index, trigger, type, default, nullability and table-presence defect in both the `registry` schema and the cloned tenant schema. The nineteenth is worth naming because it is the one the slug choice buys: changing a `format('... %I ...', s)` to `%s` in `sql/revert/refund-amounts-cents.sql` is caught loudly — `ERROR: syntax error at or near "order"` — and is caught **only** because the fixture slug needs quoting. Under a slug like `rt_123_0` that mutation round-trips clean and the harness grades nothing about identifier quoting, in a codebase where `Tenant.pm:163-169` already carries a comment about `"user"` and `"order"` as tenant slugs. The five it misses fall into three kinds:
 
 | Blind spot | Why | Bearing on this leg |
 |---|---|---|
@@ -184,14 +198,36 @@ sub dump_schema () {
 }
 
 my $sqitch = App::Sqitch->new();
-my $n      = 0;
+
+# One tenant schema per change, so a second entry on @CHANGES does not collide
+# on tenants_slug_key (sql/test-schema.sql:3269-3273).  Earlier iterations'
+# schemas stay behind and appear in both dumps, which is harmless -- the
+# comparison is before-vs-after, not against a fixture.
+#
+# The slugs are SQL reserved words on purpose.  A slug like 'rt_123_0' needs no
+# quoting anywhere, so a migration that interpolates the schema name with %s
+# where it should use %I round-trips clean and the harness grades nothing about
+# quoting.  Reserved words are the only quoting-hostile slugs clone_schema
+# survives: fix-clone-schema-identifier-quoting.sql:314 runs
+# PERFORM set_config('search_path', dest_schema, true) on the UNQUOTED name and
+# then strips the 'registry.' prefix from FK, trigger and view definitions
+# (:386,406,455,468) so that search_path re-resolves them.  A reserved word
+# case-folds to itself, so the fold is the identity and only DDL syntax needs
+# quoting, which quote_ident supplies.  A mixed-case slug does not fold to
+# itself, and clone_schema dies partway with
+#   relation "RT_Mixed_1234.pricing_relationship_events_sequence_number_seq"
+#   does not exist
+# Do not "improve" this list with mixed case or hyphens.  Both were tried
+# against live Postgres; both break the harness rather than the migrations.
+my @SLUGS = qw( order user group table check );
+@CHANGES <= @SLUGS
+    or die sprintf 'revert-round-trip needs one reserved-word slug per change: %d changes, %d slugs',
+        scalar @CHANGES, scalar @SLUGS;
+
+my $n = 0;
 
 for my $change (@CHANGES) {
-    # One tenant schema per change, so a second entry on @CHANGES does not
-    # collide on tenants_slug_key (sql/test-schema.sql:3269-3273).  Earlier
-    # iterations' schemas stay behind and appear in both dumps, which is
-    # harmless -- the comparison is before-vs-after, not against a fixture.
-    my $slug = sprintf 'rt_%d_%d', $$, $n++;
+    my $slug = $SLUGS[ $n++ ];
 
     subtest "$change reverts cleanly" => sub {
         # 'NAME^' resolves to the change before NAME.  Legal because the caret
@@ -213,9 +249,13 @@ for my $change (@CHANGES) {
             "Round Trip $n", $slug);
         $db->query('SELECT registry.clone_schema(?)', $slug);
 
+        # Quoted, because pg_dump renders a reserved-word schema as
+        # "order".enrollments -- an unquoted /\Qorder\E\./ matches nothing and
+        # this assertion would fail on every run.  Verified by running both
+        # forms against one dump in the same process.
         my $before = dump_schema();
-        ok scalar( grep { /\Q$slug\E\./ } @$before ),
-            "dump at $change^ includes the cloned tenant schema $slug";
+        ok scalar( grep { /"\Q$slug\E"\./ } @$before ),
+            qq{dump at $change^ includes the cloned tenant schema "$slug"};
 
         $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', $change );
         $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', "$change^", '-y' );
@@ -233,7 +273,9 @@ done_testing;
 
 `is_deeply` rather than `is`: on failure it names the first differing element instead of printing six hundred lines of schema twice.
 
-The first assertion greps for the slug rather than asserting the dump is merely non-empty. A non-empty dump proves nothing: if `clone_schema` silently did nothing, the tenant half of every migration would go ungraded and this test would still be green — which is the failure mode the whole file exists to prevent.
+The first assertion greps for the slug rather than asserting the dump is merely non-empty. A non-empty dump proves nothing: if `clone_schema` silently did nothing, the tenant half of every migration would go ungraded and this test would still be green — which is the failure mode the whole file exists to prevent. It greps for `"order".` and not `order.` because that is what `pg_dump` writes; the two forms were run against one dump in the same process and the unquoted one matched nothing.
+
+The reserved-word slug is the single most load-bearing choice in this file, and it is cheap to undo by accident. `Registry::DAO::Tenant` already quotes tenant slugs as identifiers, and `Tenant.pm:163-169` names `"user"` and `"order"` in a comment as the reason — so a tenant slug that needs quoting is a supported case in production, not a contrivance. A migration that reaches for `%s` where it needs `%I` is therefore a real production bug, and it is invisible to a harness whose only tenant schema is `rt_123_0`. Every reserved word in `@SLUGS` was run through `clone_schema` against live Postgres and each produced 43 tables, identical to the `rt_*` control.
 
 The tenant is created by direct `INSERT` plus `clone_schema` rather than by `Registry::DAO::Tenant->provision`, because `provision` also copies users and seed data (`Tenant.pm:171`) and needs a `Registry::DAO::User` to exist. None of that changes the schema, which is the only thing this test reads.
 
@@ -244,12 +286,16 @@ Run: `carton exec prove -lv t/database/revert-round-trip.t`
 Expected: **FAIL**, and the failure is real rather than staged. Takes roughly fifty seconds: the subtest deploys the plan up to the change's parent, then deploys and reverts one change, and runs `pg_dump` twice. The output is:
 
 ```
-ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema rt_2972935_0
-not ok 2 - deploying refund-amounts-cents and reverting it restores the schema exactly
-#     Structures begin differing at:
-#          $got->[2420] = 'COMMENT ON COLUMN rt_2972935_0.enrollments.refund_status IS ...'
-#     $expected->[2420] = 'COMMENT ON COLUMN rt_2972935_0.enrollments.refund_amount IS 'Amount refunded for dropped enrollment';'
+    ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema "order"
+    not ok 2 - deploying refund-amounts-cents and reverting it restores the schema exactly
+    #     Structures begin differing at:
+    #          $got->[2411] = 'COMMENT ON COLUMN "order".enrollments.refund_status IS 'Status of refund processing for dropped enrollment';
+    #     '
+    #     $expected->[2411] = 'COMMENT ON COLUMN "order".enrollments.refund_amount IS 'Amount refunded for dropped enrollment';
+    #     '
 ```
+
+The index is `2411` and not some other number only because `"` sorts before letters, so the quoted schema name lands where it does in the sorted multiset. Do not assert on the index — it moves whenever a migration is added ahead of this one. It is quoted here so the reader can recognise the run, not so anyone can match on it.
 
 Exactly one line is in the "before" dump and missing from the "after" dump, and nothing is present in "after" that was not in "before". **Do not stage a canary to prove the harness can fail.** It already failed, on its first subject, on a bug that has been deployed since the cents conversion — which is a better red step than any injected one, and it skips the risk of leaving a canary behind in a deployed script.
 
@@ -280,10 +326,16 @@ Fix only the revert. The **deploy**'s tenant loop is asymmetric the same way —
 - [ ] **Step 4: Run it again and confirm it passes**
 
 Run: `carton exec prove -lv t/database/revert-round-trip.t`
-Expected: PASS, one subtest — `refund-amounts-cents reverts cleanly` — containing two assertions.
+Expected: PASS, one subtest — `refund-amounts-cents reverts cleanly` — containing two assertions:
 
-Run: `carton exec prove -lv t/database/revert-round-trip.t`
-Expected: PASS.
+```
+    ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema "order"
+    ok 2 - deploying refund-amounts-cents and reverting it restores the schema exactly
+ok 1 - refund-amounts-cents reverts cleanly
+Result: PASS
+```
+
+That is a transcript, not a prediction: this file's harness was run against live Postgres with the reserved-word fixture, red before the Step 3 edit and green after it, and the edit was then reverted so the red step still reproduces for whoever executes this plan.
 
 - [ ] **Step 5: Replace the fake rollback subtest**
 
@@ -586,7 +638,7 @@ Stripe client in the tree, which is where later legs add methods."
 ### Task 4: Delete the orphaned discount surface and the silent-pass test
 
 **Files:**
-- Delete: `t/dao/pricing-plan-clean-architecture.t`
+- Modify: `t/dao/pricing-plan-clean-architecture.t` (cut `:50-209`; **do not delete the file** — Step 1)
 - Modify: `lib/Registry/DAO/Family.pm:67-82` (delete `sibling_discount_eligible`)
 - Modify: `t/dao/family.t:219-252`
 - Modify: `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm:2,11,45-94,163-167`
@@ -595,16 +647,31 @@ Stripe client in the tree, which is where later legs add methods."
 - Modify: `templates/pricing-plan-creation/review-activate.html.ep:163-185`
 
 **Interfaces:**
-- Consumes: nothing.
+- Consumes: **Task 3 must have landed.** Step 6's grep is this task's gate, and `lib/Registry/PriceOps/PricingPlan.pm:100,130` — both `my $cutoff_date = $requirements->{early_bird_cutoff_date};` — match its pattern until Task 3 Step 2 deletes that file. Run Task 4 first and the gate reports two matches that are not on its table, which reads as a miss.
 - Produces: the `requirements-rules` workflow step keeps every non-discount field it has today. Leg 5's authoring rewrite starts from that reduced form.
 
-**Why these three go together:** all three are code that produces or asserts values nothing reads. `sibling_discount_eligible` has only test callers. The discount form writes `early_bird_enabled`, `early_bird_discount`, `early_bird_cutoff_date`, `family_discount_enabled`, `family_discount_type`, `family_discount_amount`, `min_children`, `volume_discount_enabled`, `volume_tiers` — and the calculators read different keys entirely (`percentage_discount` at `lib/Registry/DAO/PricingPlan.pm:143`, `sibling_discount` at the now-deleted `PriceOps/PricingPlan.pm:112`). `volume_discount_enabled` and `volume_tiers` have zero readers anywhere. `pricing-plan-clean-architecture.t` is issue #296: four of its five subtests wrap their work in an `eval` and fall through to `pass("Skipping test due to database issue")` at `:61,83,129,198`.
+**Why these three go together:** all three are code that produces or asserts values nothing reads. `sibling_discount_eligible` has only test callers. The discount form writes `early_bird_enabled`, `early_bird_discount`, `early_bird_cutoff_date`, `family_discount_enabled`, `family_discount_type`, `family_discount_amount`, `min_children`, `volume_discount_enabled`, `volume_tiers` — and the calculators read different keys entirely (`percentage_discount` at `lib/Registry/DAO/PricingPlan.pm:143`, `sibling_discount` at the now-deleted `PriceOps/PricingPlan.pm:112`). `volume_discount_enabled` and `volume_tiers` have zero readers anywhere. `pricing-plan-clean-architecture.t` is issue #296: the file has four subtests (`:24,50,90,145`), and three of them wrap their work in an `eval` and fall through to a bare `pass(...)`. There are four such `pass` sites — `:61,83,129,198` — because the second subtest has two, and returns at the first.
 
-- [ ] **Step 1: Cut the four silent-pass subtests, keep the one real guard**
+- [ ] **Step 1: Cut the three silent-pass subtests, keep the one that runs**
 
-**Do not delete the file.** The first subtest, `:23-48`, is not one of the four — it asserts seven times for real (`:37,40,41,44,45,46,47`), constructing a `Registry::DAO::PricingPlan` in memory and checking with `->can` that `target_tenant_id` and `offering_tenant_id` are absent while `plan_name`, `amount_cents`, `plan_scope` and `requirements` are present. It touches no database. Spec `:4100-4102` is explicit about what that is: *"that test is the guard for the relationship-agnostic-plans invariant, and the invariant was violated by a later migration while the guard sat dead."* Deleting the file destroys the only part of the guard that was ever alive, and the loss would not be on this plan's Coverage Gaps list.
+**Do not delete the file.** Run it first and the reason is on the screen:
 
-Cut `:50-209` — the four `eval`-and-`pass` subtests — and with them the `use` lines and the `$db` handle that existed only to feed them. The result is the whole file:
+```
+$ STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/dao/pricing-plan-clean-architecture.t
+ok 1 - PricingPlan should not have relationship fields    # 7 assertions, all real
+ok 2 - Create PricingPlan without relationship fields     # 1 - Skipping test due to database issue
+ok 3 - Relationships handled by PricingRelationship       # 1 - Skipping test due to database issue
+ok 4 - Platform plans without embedded relationships      # 1 - Skipping test due to database issue
+All tests successful.
+```
+
+They skip because `:21` is `my $db = Test::Registry::DB->new->db;` — the `Test::Registry::DB` object is discarded on that line, the ephemeral server is reaped, and every subsequent query dies with *terminating connection due to administrator command*. That is why the first subtest survives: `:23-48` constructs a `Registry::DAO::PricingPlan` **in memory** and checks with `->can` that `target_tenant_id` and `offering_tenant_id` are absent while `plan_name`, `amount_cents`, `plan_scope` and `requirements` are present (`:37,40,41,44,45,46,47`). It never touches the database, so the dead handle cannot reach it.
+
+**Be precise about what is kept and what is lost, because they are not the same guard.** Spec `:4100-4102` says *"that test is the guard for the relationship-agnostic-plans invariant, and the invariant was violated by a later migration while the guard sat dead."* A migration cannot violate a `->can` check on a Perl class — the assertion that a migration could break is `:87`, `is($result->rows, 0, 'Database should not have target_tenant_id or offering_tenant_id columns')`, and it is inside the range this step cuts. It is also one of the three that never runs. So this step keeps the only assertions that execute and cuts the one the spec sentence is actually about.
+
+That is not a coverage gap, and the reason belongs here rather than on the Coverage Gaps list: the migration-level invariant is guarded at the migration. `sql/verify/remove-pricing-plan-relationship-fields.sql:11-19` raises if either column exists, and `t/database/migration-verification.t:24-27` re-runs every verify script against the final schema, so a later migration re-adding either column fails the suite whether or not `:87` exists.
+
+Cut `:50-209` — the three `eval`-and-`pass` subtests — and with them the `use` lines and the `$db` handle that existed only to feed them. `:210` is `done_testing();` and stays. The result is the whole file:
 
 ```perl
 #!/usr/bin/env perl
@@ -847,7 +914,7 @@ instead of asserting anything."
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `TenantPayment::process` dispatches on three conditions only — a real `setup_intent_id`, `collect_payment_method` with no Stripe keys configured, and the bare page load. No branch keys on the value of a client-supplied string.
+- Produces: `TenantPayment::process` keeps four terminal outcomes after the cut, and later legs need all four by name: a real `setup_intent_id` → `handle_setup_completion` (`:49-51`); `collect_payment_method` with **no** Stripe keys configured → the direct-provision branch returning `{ next_step => 'complete', tenant_created => 1, ... }` (`:58-71`); `collect_payment_method` with keys present → `return $self->create_setup_intent($db, $run, $form_data)` (`:73`) — **this is the live production path to Stripe and the only one that reaches it**; and the bare page load (`:77-80`). Only the `seti_test` arm goes. No branch keys on the value of a client-supplied string.
 
 **The defect:** `TenantPayment.pm:43` and `:295` both branch on `$form_data->{setup_intent_id} =~ /^seti_test/` — a client-supplied string with no environment guard. In production, where both Stripe keys are set, a POST carrying `setup_intent_id=seti_test_anything` provisions a tenant with a fake subscription. The no-keys branch immediately below produces a byte-identical result hash and **is** environment-guarded, so it can never fire in production.
 
@@ -1063,7 +1130,7 @@ server-issued values win, so its seti_test_123 never reached the step."
 - Create: `sql/deploy/drop-installment-schedules.sql`, `sql/revert/drop-installment-schedules.sql`, `sql/verify/drop-installment-schedules.sql`
 - Modify: `sql/sqitch.plan` (append one line)
 - Modify: `sql/verify/installment-payment-schedules.sql`, `sql/verify/simplify-installment-schema-for-stripe.sql`, `sql/verify/schedule-amounts-cents.sql`, `sql/verify/tenant-scoped-payments.sql:26`
-- Modify: `t/dao/tenant-payment-schema-isolation.t:3,7,11,38-39,43,93-223`
+- Modify: `t/dao/tenant-payment-schema-isolation.t:3,7,11,39-40,43,93-223`
 - Regenerate: `sql/test-schema.sql`
 
 **Interfaces:**
@@ -1451,7 +1518,7 @@ It seeds both dropped tables and must change in this same commit. Five edits, **
        for my $tbl (qw(payments payment_items)) {
    ```
 
-3. **`:38-39` — fix the comment that names the dropped tables.** Replace:
+3. **`:39-40` — fix the comment that names the dropped tables.** The block runs `:37-40`; `:38` is *"These must be green both before AND after the migration is written because"* and stays. Replace:
 
    ```perl
    # clone_schema copies all registry tables (including payments/payment_items/
@@ -1530,7 +1597,7 @@ What it catches: a missing column, a wrong type or default, a missing index, a c
 - [ ] **Step 13: Run the isolation test and the DAO suite**
 
 Run: `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/dao/tenant-payment-schema-isolation.t`
-Expected: PASS with **two** fewer subtests — both migration-replay subtests go, not just the schedule-guard one. The three structural subtests and the `#237` behavioural block at the end all still run.
+Expected: PASS with **two** fewer subtests — both migration-replay subtests go, not just the schedule-guard one. The file has four `subtest` blocks before the cut (`:42,52,125,170`); the two structural ones (`:42,52`) and the `#237` behavioural block at the end all still run.
 
 Run: `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lr t/dao/ t/integration/`
 Expected: PASS.
@@ -1621,24 +1688,37 @@ This is a data change against production. Spec `:644` requires it explicitly: *"
 Run this **read-only** against the Render production database `dpg-ckq1i8o5vl2c73d61070-a` (registry-db):
 
 ```sql
-SELECT t.slug, t.name, pp.plan_name
+SELECT t.slug, t.name, pp.plan_name, pp.plan_scope,
+       EXISTS (
+           SELECT 1
+             FROM registry.pricing_relationships pr
+            WHERE pr.pricing_plan_id = pp.id
+              AND pr.provider_id     = '00000000-0000-0000-0000-000000000000'
+              AND pr.status          = 'active'
+       ) AS platform_offered
   FROM registry.tenants t
   JOIN registry.pricing_plans pp ON pp.id = t.platform_pricing_plan_id
  WHERE pp.plan_type = 'hybrid';
 ```
 
-Expected: zero rows. **Any row means a tenant is subscribed to Plus — stop and report to perigrin before continuing.** Suspending a plan someone is billed on is not a safe deletion, and Leg 1 would need a migration path this plan does not contain.
+Expected: zero rows. Filter on `plan_type` only and select the other two, so this stays broader than the migration's own guard and you see everything the guard would hide. Read the result by the two selected columns:
+
+| `plan_scope` | `platform_offered` | What it means |
+| --- | --- | --- |
+| `tenant` | `t` | A tenant is subscribed to Plus. **Stop and report to perigrin before continuing** — the Step 3 pre-flight will abort the deploy on exactly this row, and Leg 1 has no migration path off it. |
+| `tenant` | `f` | A tenant bought Registry through a reseller. Outside the predicate; the deploy proceeds. Report it anyway — the billing path collects the reseller's percentage and none of the base fee. |
+| `customer` | either | A tenant has been sold a hybrid plan for its own programs. Outside the predicate; does not block. Worth reporting: the billing path cannot price it. |
 
 Then, for context on what the `UPDATE` will touch, list the menu rows:
 
 ```sql
-SELECT pr.id, pr.status, pp.plan_name, pp.plan_scope
+SELECT pr.id, pr.status, pr.provider_id, pp.plan_name, pp.plan_scope
   FROM registry.pricing_relationships pr
   JOIN registry.pricing_plans pp ON pp.id = pr.pricing_plan_id
  WHERE pp.plan_type = 'hybrid';
 ```
 
-Expected: one `active` row, `plan_name = 'Registry Plus - $100/month + 1%'`, `plan_scope = 'tenant'`. A row with `plan_scope = 'customer'` is a tenant-authored plan and must **not** be suspended — see Step 3.
+Expected: one `active` row, `plan_name = 'Registry Plus - $100/month + 1%'`, `plan_scope = 'tenant'`, `provider_id = 00000000-0000-0000-0000-000000000000`. Only rows matching all three go into the `UPDATE`. A row with `plan_scope = 'customer'`, or with any other `provider_id`, is a tenant's own plan and must **not** be suspended — see Step 3.
 
 Read-only queries only. Do not deploy anything to production from this task.
 
@@ -1655,6 +1735,12 @@ carton exec sqitch add retire-registry-plus-plan \
 - [ ] **Step 3: Write the deploy script**
 
 **`plan_type = 'hybrid'` alone is not a safe predicate — it must be paired with `plan_scope = 'tenant'`,** exactly as `suspend-rateless-tenant-plans.sql:29` pairs them. `plan_scope` defaults to `'customer'` (`sql/deploy/unified-pricing-infrastructure.sql:17-18`), and a tenant authoring a plan through the pricing workflow picks both fields: `lib/Registry/DAO/WorkflowSteps/PricingPlanBasics.pm:76-81` offers `hybrid` in the plan-type list and `:88-92` lets the same author set any `plan_scope`. So a customer-scoped hybrid plan is a thing a tenant can create in the product, today, and it is not what this change retires — the seeded Plus row is `plan_scope = 'tenant'` (`sql/deploy/unified-pricing-infrastructure.sql:128-140`). Without the guard this migration reaches into a tenant's own pricing and suspends it.
+
+**`plan_scope = 'tenant'` is still not enough, and this is the subtler half.** A *tenant*-scoped hybrid plan is equally a thing a tenant can create — `PricingPlanBasics.pm:88-92` offers `tenant` to every plan author with the description *"For other organizations using your platform"*, and `ReviewActivatePlan.pm:102` persists the choice verbatim. That is the reseller case, and it lands squarely inside the two-column predicate. What the change actually means to retire is one entry on **the platform's own signup menu**, and that menu is defined by three filters, not two: `PricingPlanSelection.pm:85-86,93` selects relationships with `provider_id => PLATFORM_UUID` and `status => 'active'`, then keeps only plans whose `plan_scope eq 'tenant'`. `PLATFORM_UUID` is `'00000000-0000-0000-0000-000000000000'` (`:14`), and it is private to that file — `PriceOps::PricingRelationships::create` passes `provider_id => $provider` straight through (`:76-77`) from a free parameter, so a reseller's B2B relationship carries the reseller's id.
+
+Hence the third condition, `pr.provider_id = '00000000-0000-0000-0000-000000000000'`, in all three places that carry the predicate: the deploy's pre-flight `DO` block, the deploy's `UPDATE`, and the verify. Three, not two — a pre-flight that stays broad while the `UPDATE` narrows is a check that aborts the deploy over a row the change never touches, and the operator has no way to satisfy it. This was reproduced, not reasoned: with only the two guards, a planted B2B relationship whose provider is an ordinary tenant comes back `status = 'suspended'` stamped `suspended_by_migration` after `sqitch deploy`, and the verify then fails permanently red — the exact failure mode the `plan_scope` guard was added to prevent, on the axis it did not cover.
+
+Note this narrows the predicate; it does not widen it. Switching to `pricing_model_type = 'hybrid'` was considered and rejected in an earlier round because Registry's own Studio and Empire tiers are `plan_type => 'standard', pricing_model_type => 'hybrid', plan_scope => 'tenant'` (`t/controller/tenant-pricing-display.t:80-84,109-113`) and would be suspended by it. Adding `provider_id` leaves them untouched — they are `plan_type = 'standard'` and never enter the predicate at all.
 
 Overwrite `sql/deploy/retire-registry-plus-plan.sql`:
 
@@ -1674,6 +1760,13 @@ SET client_min_messages = 'warning';
 -- and running this migration.  Re-assert it inside the transaction that does the
 -- work, the way tenant-scoped-payments.sql:116-124 does.  Suspending the offer a
 -- tenant is actively billed on is not a safe deletion.
+--
+-- The EXISTS narrows this to plans the UPDATE below will actually suspend.  A
+-- pre-flight wider than the statement it guards aborts the deploy over a row the
+-- change never touches: a tenant buying Registry through a reseller has a
+-- tenant-scoped hybrid plan as its platform plan, that plan's offer belongs to
+-- the reseller, and no edit to this file short of deleting the check would let
+-- the deploy through.  Guard what you are about to change, not what it resembles.
 DO $$
 DECLARE
     subscribed text;
@@ -1683,7 +1776,14 @@ BEGIN
       FROM registry.tenants t
       JOIN registry.pricing_plans pp ON pp.id = t.platform_pricing_plan_id
      WHERE pp.plan_type  = 'hybrid'
-       AND pp.plan_scope = 'tenant';
+       AND pp.plan_scope = 'tenant'
+       AND EXISTS (
+           SELECT 1
+             FROM registry.pricing_relationships pr
+            WHERE pr.pricing_plan_id = pp.id
+              AND pr.provider_id     = '00000000-0000-0000-0000-000000000000'
+              AND pr.status          = 'active'
+       );
 
     IF subscribed IS NOT NULL THEN
         RAISE EXCEPTION
@@ -1712,6 +1812,7 @@ UPDATE registry.pricing_relationships pr
  WHERE pp.id = pr.pricing_plan_id
    AND pp.plan_type = 'hybrid'
    AND pp.plan_scope = 'tenant'
+   AND pr.provider_id = '00000000-0000-0000-0000-000000000000'
    AND pr.status = 'active';
 
 COMMIT;
@@ -1720,6 +1821,8 @@ COMMIT;
 - [ ] **Step 4: Write the revert script**
 
 **The stamp is a handle, not a licence.** `metadata->>'suspended_by_migration' = 'retire-registry-plus-plan'` says *this change is the one that suspended the row* — it does not say the row is still suspended. An operator who cancels a suspended relationship afterwards leaves the stamp in place, and an unconditional `SET status = 'active'` would resurrect it into the signup menu on the next revert. Add `AND status = 'suspended'`: revert what this change did, to rows still in the state it left them.
+
+The cost of that narrowing is a stamp with no owner: a row cancelled after suspension keeps `suspended_by_migration` forever, because the revert now skips it and nothing else ever strips the key. That is deliberate, not an oversight to fix later. The stamp is inert — the deploy only writes rows at `status = 'active'`, so a cancelled row is never re-stamped and never double-counted, and the key is descriptive history rather than live state. Do not add a cleanup pass; a second `UPDATE` that strips the stamp from non-suspended rows would erase the only record of why they were suspended in the first place.
 
 Overwrite `sql/revert/retire-registry-plus-plan.sql`:
 
@@ -1788,18 +1891,21 @@ BEGIN
         RETURN;
     END IF;
 
-    -- plan_scope = 'tenant' matches the deploy.  Unguarded, this asserts that no
-    -- tenant ever authors a customer-scoped hybrid plan -- an assertion a tenant
-    -- can falsify from the product, turning CI permanently red.
+    -- All three conditions match the deploy, and all three are load-bearing.
+    -- Drop plan_scope and this asserts no tenant ever authors a customer-scoped
+    -- hybrid plan; drop provider_id and it asserts no tenant ever resells a
+    -- tenant-scoped one.  Either is an assertion a tenant can falsify from the
+    -- product, turning CI permanently red with no code change that fixes it.
     IF EXISTS (
         SELECT 1
           FROM registry.pricing_relationships pr
           JOIN registry.pricing_plans pp ON pp.id = pr.pricing_plan_id
-         WHERE pp.plan_type  = 'hybrid'
-           AND pp.plan_scope = 'tenant'
-           AND pr.status     = 'active'
+         WHERE pp.plan_type   = 'hybrid'
+           AND pp.plan_scope  = 'tenant'
+           AND pr.provider_id = '00000000-0000-0000-0000-000000000000'
+           AND pr.status      = 'active'
     ) THEN
-        RAISE EXCEPTION 'a tenant-scoped hybrid pricing plan is still offered by an active relationship';
+        RAISE EXCEPTION 'the platform still offers a tenant-scoped hybrid pricing plan on an active relationship';
     END IF;
 END $$;
 
@@ -1824,21 +1930,31 @@ Create `t/database/retire-registry-plus-plan.t`:
 use 5.42.0;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Exception;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
+
+use constant PLATFORM_UUID => '00000000-0000-0000-0000-000000000000';
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
 my $uri    = $pgsql->uri;
 my $sqitch = App::Sqitch->new();
 
-# Deploy up to this change's parent so a fixture can be planted before it runs.
+# Deploy up to this change's parent so fixtures can be planted before it runs.
 # 'NAME^' is sqitch's one-before offset.  Naming the change under test rather
 # than whichever change happens to precede it keeps this correct when a later
-# leg appends to the plan.
-$sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', 'retire-registry-plus-plan^' );
+# leg appends to the plan.  lives_ok, not a bare run: App::Sqitch->run dies on
+# a non-zero exit, and an unwrapped die reports as 'test exited with 2' rather
+# than naming the step that broke.  t/database/migration-verification.t:40 uses
+# the same wrapper for the same reason.
+lives_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', 'retire-registry-plus-plan^' ) }
+    'deploy to the parent change succeeds';
 
 my $db = Mojo::Pg->new($uri)->db;
+
+# Every fixture below exists to kill a specific mutation of the three scripts.
+# The table in the prose above says which.  Do not drop one without checking it.
 
 # A customer-scoped hybrid plan is something a tenant can author through
 # PricingPlanBasics.  The migration must leave it alone.
@@ -1848,22 +1964,85 @@ my $customer_plan_id = $db->query(
       RETURNING id}
 )->hash->{id};
 
-my $customer_rel_id = $db->query(
-    q{INSERT INTO registry.pricing_relationships
-          (provider_id, consumer_id, pricing_plan_id, status)
-      SELECT provider_id, consumer_id, ?, 'active'
-        FROM registry.pricing_relationships
-       ORDER BY id
-       LIMIT 1
-      RETURNING id}, $customer_plan_id
+# A tenant-scoped hybrid plan, but offered by a reseller rather than by the
+# platform.  PricingPlanBasics.pm:88-92 lets any author pick 'tenant', and
+# PriceOps::PricingRelationships::create passes provider_id straight through,
+# so this row is reachable from the product.  It is outside the platform's
+# signup menu and must survive.
+my $b2b_plan_id = $db->query(
+    q{INSERT INTO registry.pricing_plans (plan_name, plan_type, pricing_model_type, plan_scope)
+      VALUES ('Reseller tenant-scoped hybrid', 'hybrid', 'hybrid', 'tenant')
+      RETURNING id}
 )->hash->{id};
 
-sub active_hybrid_ids ($scope) {
+# The Studio/Empire shape: plan_type 'standard', pricing_model_type 'hybrid'.
+# If the predicate ever drifts to pricing_model_type, this row goes dark.
+my $standard_plan_id = $db->query(
+    q{INSERT INTO registry.pricing_plans (plan_name, plan_type, pricing_model_type, plan_scope)
+      VALUES ('Studio-shaped tier', 'standard', 'hybrid', 'tenant')
+      RETURNING id}
+)->hash->{id};
+
+# The seeded Plus plan -- the one thing this change exists to retire.  Find it
+# by the migration's own predicate rather than by name or by hard-coded id.
+my $plus_plan_id = $db->query(
+    q{SELECT pp.id FROM registry.pricing_plans pp
+        JOIN registry.pricing_relationships pr ON pr.pricing_plan_id = pp.id
+       WHERE pp.plan_type = 'hybrid' AND pp.plan_scope = 'tenant'
+         AND pr.provider_id = ? AND pr.status = 'active'
+       LIMIT 1}, PLATFORM_UUID
+)->hash->{id};
+ok $plus_plan_id, 'the seed still contains a platform-offered tenant-scoped hybrid plan';
+
+# A reseller tenant, so a relationship can carry a provider that is not the
+# platform.  Created outright rather than found, so the fixture does not depend
+# on which other tenants the seed happens to contain.
+my $reseller_id = $db->query(
+    q{INSERT INTO registry.tenants (name, slug) VALUES ('Reseller Fixture', 'reseller_fixture')
+      RETURNING id}
+)->hash->{id};
+
+# provider_id references tenants(id) and consumer_id references users(id)
+# (consolidate-pricing-relationships.sql:12-13), so consumer_id is copied off a
+# seeded row rather than inventing a user.  provider defaults to the platform.
+sub plant_relationship ($plan_id, %opt) {
+    # exists, not //: `metadata => undef` is the whole point of one caller below,
+    # and `$opt{metadata} // '{}'` would silently turn that NULL into '{}' and
+    # leave the COALESCE mutation alive.  Defaulting an explicit undef away is
+    # the bug this fixture exists to catch.
+    my $metadata = exists $opt{metadata} ? $opt{metadata} : '{}';
+    return $db->query(
+        q{INSERT INTO registry.pricing_relationships
+              (provider_id, consumer_id, pricing_plan_id, status, metadata)
+          SELECT ?, consumer_id, ?, 'active', ?::jsonb
+            FROM registry.pricing_relationships
+           ORDER BY id LIMIT 1
+          RETURNING id},
+        $opt{provider} // PLATFORM_UUID, $plan_id, $metadata
+    )->hash->{id};
+}
+
+my $customer_rel_id = plant_relationship($customer_plan_id);
+my $standard_rel_id = plant_relationship($standard_plan_id);
+my $b2b_rel_id      = plant_relationship( $b2b_plan_id, provider => $reseller_id );
+
+# Squarely inside the predicate, but with metadata explicitly NULL.  Without
+# COALESCE in the deploy, `NULL || '{...}'::jsonb` is NULL, so this row would be
+# suspended without a stamp and the revert could never find it again.
+my $null_meta_rel_id = plant_relationship( $plus_plan_id, metadata => undef );
+
+sub rel_status ($id) {
+    return $db->query( q{SELECT status FROM registry.pricing_relationships WHERE id = ?}, $id )
+        ->hash->{status};
+}
+
+sub retired_ids {
     return $db->query(
         q{SELECT pr.id FROM registry.pricing_relationships pr
             JOIN registry.pricing_plans pp ON pp.id = pr.pricing_plan_id
-           WHERE pp.plan_type = 'hybrid' AND pp.plan_scope = ? AND pr.status = 'active'
-           ORDER BY pr.id}, $scope
+           WHERE pp.plan_type = 'hybrid' AND pp.plan_scope = 'tenant'
+             AND pr.provider_id = ? AND pr.status = 'active'
+           ORDER BY pr.id}, PLATFORM_UUID
     )->arrays->flatten->to_array;
 }
 
@@ -1875,32 +2054,95 @@ sub stamped_ids {
     )->arrays->flatten->to_array;
 }
 
-my $before = active_hybrid_ids('tenant');
-ok scalar @$before, 'the seed offers a tenant-scoped hybrid plan before the change runs';
+my $before = retired_ids();
+ok scalar @$before >= 2,
+    'the platform offers the seeded tenant-scoped hybrid plan plus the NULL-metadata fixture';
 
-$sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', 'retire-registry-plus-plan' );
+# --- the in-transaction pre-flight -------------------------------------------
+# Subscribe a tenant to the plan about to be retired.  The deploy must refuse,
+# and must leave no trace: no suspended rows, no sqitch.changes entry.
+$db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = 'registry'},
+    $plus_plan_id );
 
-is_deeply active_hybrid_ids('tenant'), [],
-    'no active relationship offers a tenant-scoped hybrid plan';
+dies_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', 'retire-registry-plus-plan' ) }
+    'the deploy refuses to run while a tenant is subscribed to the plan';
+is_deeply retired_ids(), $before,
+    'the refused deploy suspended nothing';
+is $db->query( q{SELECT count(*) FROM sqitch.changes WHERE change = 'retire-registry-plus-plan'} )
+      ->array->[0], 0,
+    'the refused deploy recorded no change';
+
+$db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = 'registry'} );
+
+# A tenant buying Registry through a reseller: its platform plan is a
+# tenant-scoped hybrid plan, so it matches the pre-flight's first two conditions
+# and only the EXISTS keeps it out.  Left set for the rest of the run -- the
+# deploy below has to succeed with this row in place.
+$db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE id = ?},
+    $b2b_plan_id, $reseller_id );
+
+# --- the deploy proper -------------------------------------------------------
+lives_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', 'retire-registry-plus-plan' ) }
+    'the deploy runs once no tenant is subscribed to a platform-offered one';
+
+is_deeply retired_ids(), [],
+    'no active platform relationship offers a tenant-scoped hybrid plan';
 is_deeply stamped_ids(), $before,
     'the change stamped exactly the rows it suspended';
-is_deeply active_hybrid_ids('customer'), [$customer_rel_id],
+is rel_status($customer_rel_id), 'active',
     'a tenant-authored customer-scoped hybrid plan is left active';
+is rel_status($b2b_rel_id), 'active',
+    "a reseller's own tenant-scoped hybrid offer is left active";
+is rel_status($standard_rel_id), 'active',
+    'a standard plan with pricing_model_type hybrid is left active';
+ok scalar( grep { $_ eq $null_meta_rel_id } @{ stamped_ids() } ),
+    'a row whose metadata was NULL comes back stamped, not NULL';
 
-$sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', 'retire-registry-plus-plan^', '-y' );
+# --- the revert --------------------------------------------------------------
+# A row this change suspended, then cancelled by a human afterwards.  The
+# revert's status guard must leave it cancelled: the stamp is a handle for
+# finding the row, not a licence to overwrite whatever it says now.
+$db->query( q{UPDATE registry.pricing_relationships SET status = 'cancelled' WHERE id = ?},
+    $before->[0] );
 
-is_deeply active_hybrid_ids('tenant'), $before,
-    'reverting re-activates exactly the rows the change suspended';
-is_deeply stamped_ids(), [],
-    'reverting removes the migration stamp';
+lives_ok { $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', 'retire-registry-plus-plan^', '-y' ) }
+    'the revert runs';
+
+is rel_status( $before->[0] ), 'cancelled',
+    'the revert does not resurrect a row cancelled after suspension';
+is_deeply retired_ids(), [ grep { $_ ne $before->[0] } @$before ],
+    'reverting re-activates every row the change suspended and no other';
+# Not [] -- the cancelled row keeps its stamp, because the revert's status guard
+# skips it and nothing else strips the key.  Step 4 says why that is deliberate.
+# Asserting [] here would quietly re-introduce the resurrection bug: the only way
+# to make it true is to drop the guard.
+is_deeply stamped_ids(), [ $before->[0] ],
+    'reverting strips the stamp from every row it re-activated, and only those';
 
 done_testing;
 ```
 
+**Why the fixture block is this long.** Every one of these rows kills a mutation that the shorter version left alive. Mutation-testing the three scripts against the earlier six-assertion test caught 3 of 9; the two guards this task argues hardest for — the pre-flight `DO` block and the revert's `AND status = 'suspended'` — could both be deleted outright with the suite still green. That is the #296 shape again, one level up: the test passed, so the guards read as covered.
+
+| Mutation | Old test | Fixture that now kills it |
+| --- | --- | --- |
+| deploy's whole pre-flight `DO` block deleted | green | the `platform_pricing_plan_id` subscriber + `dies_ok` |
+| pre-flight drops its `EXISTS` narrowing | n/a | the reseller tenant left on `$b2b_plan_id` across the successful deploy |
+| revert drops `AND status = 'suspended'` | green | `$before->[0]` cancelled after suspension |
+| deploy drops `COALESCE(pr.metadata, ...)` | green | `$null_meta_rel_id` |
+| deploy drops `AND pr.status = 'active'` | green | stamp set is compared by id, not by count |
+| deploy's `plan_type` → `pricing_model_type` | green | `$standard_rel_id` (Studio shape) |
+| deploy drops `AND pr.provider_id = ...` | n/a | `$b2b_rel_id` |
+| deploy drops `AND pp.plan_scope = 'tenant'` | caught | `$customer_rel_id` |
+| verify drops `AND pp.plan_scope = 'tenant'` | caught | `$customer_rel_id` |
+| revert drops the `metadata - 'suspended_by_migration'` | caught | `stamped_ids()` after revert |
+
+The `deploy made a no-op` sanity mutation fails the first assertion, which confirms the harness can fail at all — a mutation table is worthless without that control.
+
 - [ ] **Step 7: Run the new test and watch the first assertion**
 
 Run: `carton exec prove -lv t/database/retire-registry-plus-plan.t`
-Expected: PASS, six assertions. **The load-bearing one is the first**: if `@$before` is empty the test fails at "the seed offers a tenant-scoped hybrid plan before the change runs", and that is the intended behaviour — a migration that suspends nothing means the seed data changed and this plan's premise needs rechecking. Every later assertion would pass vacuously against an empty set, which is why the precondition is asserted rather than assumed.
+Expected: PASS, seventeen assertions. **The load-bearing ones are the two preconditions — `ok $plus_plan_id` and `ok scalar @$before >= 2` — and they sit ahead of every assertion about the change itself for that reason.** `ok $plus_plan_id` fails if the seed no longer contains a platform-offered tenant-scoped hybrid plan, and every fixture below it is planted against that id, so nothing after it means anything once it goes. `ok scalar @$before >= 2` then fails if the seeded row and the NULL-metadata fixture are not both inside the predicate. Either failure means the seed data changed and this plan's premise needs rechecking, not that the test needs loosening — an empty `$before` would let every later assertion pass vacuously against an empty set, which is why both are asserted rather than assumed.
 
 - [ ] **Step 8: Regenerate the test schema dump**
 
@@ -1972,15 +2214,16 @@ Strictly sequential. Each arrow is a real dependency, not a preference.
 
 ## Coverage Gaps This Leg Opens
 
-Named here so they are found by reading, not by an incident.
+Named here so they are found by reading, not by an incident. Both are Task 6's.
 
-1. **Webhook deduplication is untested** from Task 2 until Leg 0 restores it against the enrollment path. The subtest that covered it needed a payment schedule to exist.
-2. **The `tenant-scoped-payments` schedule pre-flight guard is untested** from Task 6 onward. The guard remains deployed and correct; there is simply no longer a table whose rows could trip it. Nothing in the milestone re-creates one.
-3. **The `tenant-scoped-payments` row-move path is untested** from Task 6 onward. Task 6 Step 9 deletes the whole migration-replay section of `t/dao/tenant-payment-schema-isolation.t` (`:93-223`) because both of its subtests re-run a `DO` block that names the dropped tables. That block also moved existing rows into the tenant schemas, and nothing else in the tree exercises it. The migration stays deployed; it is the only test of it that goes. This is on the issue list rather than being fixed here — restoring it means writing a fixture for a migration whose tables no longer exist.
+**Webhook deduplication is deliberately not on this list.** An earlier draft had it, and it was wrong. The dedup subtest Task 2 deletes graded the *installment* path, which goes away entirely; dedup on the surviving path is covered today by `t/controller/payment-intent-webhook.t:97` and `:103`. The full argument is in Task 2 — do not re-add it here or write a replacement test for it.
+
+1. **The `tenant-scoped-payments` schedule pre-flight guard is untested** from Task 6 onward. The guard remains deployed and correct; there is simply no longer a table whose rows could trip it. Nothing in the milestone re-creates one.
+2. **The `tenant-scoped-payments` row-move path is untested** from Task 6 onward. Task 6 Step 9 deletes the whole migration-replay section of `t/dao/tenant-payment-schema-isolation.t` (`:93-223`) because both of its subtests re-run a `DO` block that names the dropped tables. That block also moved existing rows into the tenant schemas, and nothing else in the tree exercises it. The migration stays deployed; it is the only test of it that goes. This is on the issue list rather than being fixed here — restoring it means writing a fixture for a migration whose tables no longer exist.
 
 ## Self-Review
 
-**Spec coverage.** Every item in the spec's Leg 1 row (`:2964`) maps to a task: installments → 2; `Client::Stripe` and `PriceOps/PricingPlan.pm` → 3; misfiled tests → 2 (spec `:2815` names them as `t/controller/admin-installment-payment-dashboard.t`, "both DAO CRUD misfiled under names" — installment tests, so they go with the installment deletion, not with the discount surface); `Family::sibling_discount_eligible`, #296, discount form → 4; `seti_test` signup bypass → 5; the Registry Plus retirement → 7; the sqitch change dropping both tables with its verify and revert, the four stranded verify scripts, and `t/dao/tenant-payment-schema-isolation.t` → 6; the revert-test harness → 1. Three items the spec's row does not name are covered anyway: the three `seti_test` test consumers (Task 5), `review-activate.html.ep:163-185` (Task 4), and the four early-bird/sibling assertions in `t/dao/pricing-plan-workflow.t:216-222,242` (Task 4).
+**Spec coverage.** Every item in the spec's Leg 1 row (`:2964`) maps to a task: installments → 2; `Client::Stripe` and `PriceOps/PricingPlan.pm` → 3; misfiled tests → 2 (spec `:2815` names them as `t/controller/admin-installment-payment-dashboard.t`, "both DAO CRUD misfiled under names" — installment tests, so they go with the installment deletion, not with the discount surface); `Family::sibling_discount_eligible`, #296, discount form → 4; `seti_test` signup bypass → 5; the Registry Plus retirement → 7; the sqitch change dropping both tables with its verify and revert, the four stranded verify scripts, and `t/dao/tenant-payment-schema-isolation.t` → 6; the revert-test harness → 1. Three items the spec's row does not name are covered anyway: the three `seti_test` test consumers (Task 5), `review-activate.html.ep:163-185` (Task 4), and `t/dao/pricing-plan-workflow.t:216-222,242` (Task 4) — where `:216-222` are seven discount keys posted *into* `RequirementsRules->process`, not assertions, and `:242` is the single assertion that reads one back (`early_bird_discount`). The word `sibling` does not appear in that file at all.
 
 **Placeholders.** None. Every code step carries the actual Perl or SQL. Every line range was read before being cited.
 
