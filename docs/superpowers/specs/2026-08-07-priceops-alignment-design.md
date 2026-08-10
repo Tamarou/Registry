@@ -3570,7 +3570,9 @@ new one — the smoke test then fails, the entrypoint kills the server, Render r
 next deploy does the same, and the pipeline is wedged until someone updates the row by hand.
 The rate change therefore cannot ship before the importer fix. Costed at one session in Leg 3
 for the importer plus the repair; the per-leg cost of the third point is zero, since it changes
-what a test asserts rather than what the leg builds.
+what a test asserts rather than what the leg builds. (77) finishes what this paragraph starts:
+the three assertions stop carrying the literal at all and read the rate from the database, so
+after Leg 3 there is no commit left to coordinate.
 
 Leg 0 ships second, immediately after Leg 1, and nothing waits on it: it can lose a paid
 enrollment today, and Leg 1 is only ahead of it because of the nested-transaction problem
@@ -4331,7 +4333,9 @@ should be true and bad at naming *which function makes it true*.
     through (36), **57 to 81** after the round that added Legs 5a and 13 and re-costed
     3a, 3, 4 and 8 against what they had actually accumulated, **65 to 90** after (38)
     through (41), **66 to 91** after (42) through (45), **71 to 97** after (46) through
-    (49), **73 to 99** after (56) and (59), and **75 to 101** after (66) and (68). That is nine revisions, and an earlier draft called them "all upward," which
+    (49), **73 to 99** after (56) and (59), and **75 to 101** after (66) and (68). (77) is the
+first decision since the unit changed that does not move the range: it redirects work already
+budgeted in Leg 3's rate-change session rather than adding any. That is nine revisions, and an earlier draft called them "all upward," which
     is wrong twice: the 52-72 → 33-49 step was the change of unit, not a re-costing, and
     32-51 lowered the floor while raising the ceiling. What is true is narrower and still the
     point — **every revision since the unit changed has raised the ceiling**, five in a row,
@@ -5056,7 +5060,8 @@ rather than by weight:
     deployed row rather than the file. **This one also inverts (45)**: changing the rate literal
     without fixing the importer first leaves the landing page serving the old copy while the
     smoke test greps for the new one, so the entrypoint kills the server on every deploy and the
-    pipeline wedges until a human edits the row. Costed at one session in Leg 3.
+    pipeline wedges until a human edits the row. Costed at one session in Leg 3. (77) then
+    removes the literal from those assertions entirely, so this inversion applies once.
 
 69. **Leg 0 writes a status Leg 0's own next call rejects.** The capacity refund commits
     `payments.status = 'refund_pending'` and then calls `Payment::refund`, which opens with
@@ -5200,6 +5205,51 @@ rather than by weight:
     not, because a default overridden by four enumerations is not a default anyone will apply,
     and the same four enumerations are what a leg author reads to decide whether they are
     writing a migration at all.
+
+77. **Three revenue-share rates are live at once, and no row is marked as the one we charge.**
+    A probe against a fresh test database returns `platform_default_fraction` = **0** — that
+    resolver reads the platform-scope `Registry Free` row seeded by
+    `seed-free-platform-plan.sql` at `"percentage": 0.00`. The rate a tenant is actually billed
+    is **2%**, from `Registry Revenue Share - 2%`
+    (`unified-pricing-infrastructure.sql:112`, `"percentage": 0.02`), which every tenant is
+    backfilled onto by `tenant-platform-pricing-plan.sql:19-25`. The marketing copy says
+    **2.5%**, in `tenant-storefront-program-listing.html.ep:93`,
+    `tenant-signup/index.html.ep:64` and — per (68) — in the deployed `templates` rows that
+    actually render. A fourth number reaches a real screen: `TenantPayment.pm:119-126` builds
+    its description from `platform_default_fraction`, so the signup pricing step reads
+    `0% of processed revenue. No monthly fee.` whenever no plan is selected yet, and
+    `t/dao/tenant-payment-plan-link.t:44` asserts that on purpose.
+
+    **The launch rate is 2.5%, and the code moves to meet the copy** — the seed goes
+    `0.02` → `0.025` and live rows are repaired, rather than three copy sites moving to 2%.
+    Registry has said 2.5% in public since the landing page shipped.
+
+    **The assertions stop hard-coding it.** `deploy-validation.spec.js:54`,
+    `jordan-landing-journey.spec.js:96` and `bin/post-deploy-smoke-test.sh:61` each carry the
+    literal `2.5%` today; each instead derives the expected string from the database. The
+    source they read is a **new named accessor, `platform_launch_fraction($db)`** in
+    `Registry::PriceOps::RevenueShare`, failing loud like its two siblings. It cannot reuse
+    `platform_default_fraction`, whose docstring already claims to be "the single source the
+    signup display reads so the displayed and charged rates cannot diverge" (`:49-52`) but
+    which resolves the *no-plan fallback* — asserting against it would require the landing page
+    to advertise 0%. Backing the accessor means **marking the launch plan explicitly**
+    (`metadata->>'launch_rate' = 'true'`) instead of re-deriving it from
+    `tenant-platform-pricing-plan.sql`'s `ORDER BY created_at LIMIT 1`; a heuristic is not
+    something three assertions and a charge path should each re-implement.
+
+    `deploy-validation.spec.js` runs against live tinyartempire.com with no database fixture
+    (`playwright.config.js:46-50`), so it reads the production rate through a read-only
+    `DEPLOY_VALIDATION_DB_URL` repo secret, following the `execSync` → Perl → JSON pattern
+    `jordan-landing-journey.spec.js:9-19` already uses. The alternative considered and rejected
+    was publishing the rate on `/health` (`Registry.pm:626-641`, which already opens a DB
+    connection): cheaper, but it adds a production endpoint field to serve a test.
+
+    **This is what finally retires (45).** Written honestly the DB-derived assertions go red
+    the moment they exist, because 2.5% ≠ 2% today — so they land in the same commit as the
+    rate move, in Leg 3, behind (68)'s importer fix. That is one more coordinated commit, and
+    then the rate is a one-line data edit forever, which is what
+    `tenant-platform-pricing-plan.sql:16` has claimed since it was written. Costed inside
+    Leg 3's existing rate-change session.
 
 ## Follow-ups this design creates
 
