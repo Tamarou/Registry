@@ -67,9 +67,9 @@ Three stranded callers the spec's Leg 1 row does not name, found by grep:
 
 **Deleted:** 5 library modules, 2 more library modules, 9 test files — all nine in Task 2 (`:351-366`). Tasks 3 and 4 delete no test file. `t/dao/pricing-plan-clean-architecture.t` is **truncated, not deleted**; it appears in the Modified list below and nowhere else.
 
-**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `schemas/requirements-and-rules.json`, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-clean-architecture.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `docs/operations/sacp-stripe-connect-onboarding.md` (one table row, Task 6 Step 10), `sql/revert/refund-amounts-cents.sql` (the bug Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
+**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `schemas/requirements-and-rules.json`, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-clean-architecture.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `docs/operations/sacp-stripe-connect-onboarding.md` (one table row, Task 6 Step 10), `sql/revert/payments-amount-cents.sql` and `sql/revert/refund-amounts-cents.sql` (the two bugs Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
 
-Note the one exception to "never edit a deployed change": `sql/revert/refund-amounts-cents.sql`. The Global Constraint forbids editing a deployed change's **deploy** script, and it stands. Revert scripts are outside `script_hash` (`App::Sqitch::Plan::Change.pm:164-169`), so editing one changes nothing about what is already deployed — see Task 1 Step 3.
+Note the two exceptions to "never edit a deployed change": `sql/revert/payments-amount-cents.sql` and `sql/revert/refund-amounts-cents.sql`. The Global Constraint forbids editing a deployed change's **deploy** script, and it stands. Revert scripts are outside `script_hash` (`App::Sqitch::Plan::Change.pm:164-169`), so editing one changes nothing about what is already deployed — see Task 1 Steps 3 and 4.
 
 **Deliberately untouched:**
 
@@ -85,11 +85,22 @@ Note the one exception to "never edit a deployed change": `sql/revert/refund-amo
 **Files:**
 - Create: `t/database/revert-round-trip.t`
 - Modify: `t/database/migration-verification.t:46-49`
-- Modify: `sql/revert/refund-amounts-cents.sql:43` — the harness fails on its first subject; see Step 3.
+- Modify: `sql/revert/payments-amount-cents.sql:11,16,31,38` — the harness fails on its first subject; see Step 3.
+- Modify: `sql/revert/refund-amounts-cents.sql:43` — and on its second; see Step 4.
 
 **Interfaces:**
 - Consumes: `Test::Registry::DB::_find_pg_tool($tool)` (`t/lib/Test/Registry/DB.pm:23-33`) — returns an executable path for `pg_dump`/`psql`, searching `$tool`, `/usr/bin/$tool`, and `/usr/lib/postgresql/{17,16,15,14}/bin/$tool`.
-- Produces: the `@CHANGES` list in `t/database/revert-round-trip.t`. **Task 6 appends its change name** to that list in the same commit that adds the change to `sql/sqitch.plan`; that append is the whole registration mechanism. **Task 7 does not, and must not** — its change is data-only, so both `pg_dump --schema-only` dumps would match no matter what its deploy did. See Task 7 Step 4. Any future change that alters no schema object belongs off this list and needs its own data test.
+- Produces: the `@CHANGES` list in `t/database/revert-round-trip.t`, which this task leaves holding two entries in this order:
+
+  ```perl
+  my @CHANGES = qw(
+      payments-amount-cents
+      refund-amounts-cents
+  );
+  ```
+
+  **The list must stay ascending in `sql/sqitch.plan` order.** Each iteration deploys `--to "$change^"` and leaves the database sitting at that parent, so the next iteration's `--to` has to be a forward move; a descending list would ask sqitch to deploy backwards and the run would not do what the test claims. `payments-amount-cents` is `sql/sqitch.plan:65` and `refund-amounts-cents` is `:67`, so appending is the natural operation and the order takes care of itself. Verified by running the two-entry list: iteration 2 printed `Deploying changes through schedule-amounts-cents`, a forward move.
+- Produces: **Task 6 appends its change name** to that list in the same commit that adds the change to `sql/sqitch.plan`; that append is the whole registration mechanism. **Task 7 does not, and must not** — its change is data-only, so both `pg_dump --schema-only` dumps would match no matter what its deploy did. See Task 7 Step 4. Any future change that alters no schema object belongs off this list and needs its own data test.
 
 **Why this is first:** every later leg ships migrations, and today nothing proves a revert script works. `t/database/migration-verification.t:46-49` currently reads:
 
@@ -106,17 +117,25 @@ That is the #296 defect shape: a green assertion that asserts nothing. It is rep
 
 **Scope note:** the harness compares `pg_dump --schema-only`. It grades **schema** round-trips. A data-only change (Task 7) is invisible to it, is deliberately kept off `@CHANGES`, and gets its own test.
 
-**`@CHANGES` starts with one entry, and that is a deliberate boundary, not an oversight.** The spec's requirement (`:3455`) is that every migration *this milestone adds* ships with a tested revert — it does not commission a retrospective audit of already-deployed reverts, and Leg 1's row does not list one. That boundary has a known cost, worth naming because it is the second real defect this harness would find if pointed at its neighbours: `sql/revert/payments-amount-cents.sql:11,16,31,38` re-adds the column as `amount DECIMAL(10,2) NOT NULL DEFAULT 0`, where `sql/deploy/payments.sql:10,33` declared it plain `NOT NULL`, and it never drops the default afterwards. Post-revert, an `INSERT` that omits `amount` books a zero payment instead of raising.
+**`@CHANGES` carries two entries, and the second one is a scope decision perigrin has already made.** The spec's requirement (`:3455`) is that every migration *this milestone adds* ships with a tested revert — it does not commission a retrospective audit of already-deployed reverts, and Leg 1's row does not list one. Grading `payments-amount-cents` is therefore outside the letter of the requirement and inside its intent: it is the only already-deployed revert that is both broken and sitting on the money tables this leg keeps.
 
-The three sibling cents changes are not equivalent to each other, and the difference decides what is worth absorbing. All four sit consecutively at `sql/sqitch.plan:64-67`, so any of them is gradeable by pointing `@CHANGES` at it:
+The three sibling cents changes are not equivalent to each other, and the difference is what makes one of them worth absorbing and the other two not. All four sit consecutively at `sql/sqitch.plan:64-67`, so any of them is gradeable by adding its name:
 
 | Change | What its revert restores | What the column was | Verdict |
 | --- | --- | --- | --- |
 | `pricing-plans-amount-cents` | `NOT NULL DEFAULT 0` (`:17,41`) — **then drops the default** (`:26,51`) | `amount DECIMAL(10,2) NOT NULL` (`unified-pricing-infrastructure.sql:23`) | round-trips clean; nothing to fix |
-| `payments-amount-cents` | `NOT NULL DEFAULT 0` (`:11,16,31,38`), never dropped | bare `NOT NULL` (`payments.sql:10,33`) | real defect, on money tables this leg **keeps** |
-| `schedule-amounts-cents` | `NOT NULL DEFAULT 0` (`:11,12,26,44,45,63`), never dropped | bare `NOT NULL` (`installment-payment-schedules.sql:15,16,32`) | real defect, on tables **Task 6 drops** |
+| `payments-amount-cents` | `NOT NULL DEFAULT 0` (`:11,16,31,38`), never dropped; and no index | bare `NOT NULL` (`payments.sql:10,33`), plus `idx_payments_amount` (`performance-optimization.sql:68`) | three defects, on money tables this leg **keeps** — **absorbed here** |
+| `schedule-amounts-cents` | `NOT NULL DEFAULT 0` (`:11,12,26,44,45,63`), never dropped | bare `NOT NULL` (`installment-payment-schedules.sql:15,16,32`) | same defect, on tables **Task 6 drops** — issue list only |
 
-So only one of the three is worth absorbing: `payments-amount-cents`. Adding its name to `@CHANGES` and repeating Task 1's red/green/commit shape once is the whole change. `pricing-plans-amount-cents` has no defect to find, and fixing `schedule-amounts-cents` would repair a revert script for `payment_schedules` and `scheduled_payments`, which Task 6 deletes at `sql/deploy/drop-installment-schedules.sql`. Both go on the issue list regardless. **This is a scope decision for perigrin, not for the implementer** — execute the leg with `@CHANGES` at one entry unless told otherwise.
+`pricing-plans-amount-cents` has no defect to find, and repairing `schedule-amounts-cents` would fix a revert script for `payment_schedules` and `scheduled_payments`, which Task 6 deletes at `sql/deploy/drop-installment-schedules.sql` — work with a lifetime of about four tasks. Both go on the issue list regardless.
+
+**The `payments-amount-cents` revert has three defects, not the one that is visible by reading it.** The list below is what the harness actually reported; each was measured, not inferred.
+
+1. **A default that outlives its purpose.** `ADD COLUMN ... NOT NULL` needs a value for the existing rows, so the script supplies `DEFAULT 0` — and then never removes it, on all four columns (`registry.payments`, `registry.payment_items`, and both tenant copies). `payments.sql:10,33` declared these bare `NOT NULL`. Post-revert, an `INSERT` that omits the amount books a zero payment instead of raising. The sibling `sql/revert/pricing-plans-amount-cents.sql:26,51` already carries the correct idiom — `ALTER TABLE ... ALTER COLUMN amount DROP DEFAULT` after the backfill — so the fix is to copy a pattern that exists three files over, not to invent one.
+
+2. **A dropped index that is never rebuilt.** `performance-optimization.sql:68` created `idx_payments_amount ON registry.payments(amount)`. The deploy's `DROP COLUMN amount` (`sql/deploy/payments-amount-cents.sql:20`, and `:45` for tenants) took the index with it, and nothing creates an equivalent on `amount_cents`. The revert restores the column without the index, so the schema it claims to restore is short of one index per schema. **This one is not merely a revert defect — the index is missing from production right now**; `sql/test-schema.sql:3936-3957` shows the four surviving indexes on `registry.payments` and no `amount` among them. The revert fix here does not address production; that goes on the issue list.
+
+3. **Column-order drift that the current comparison cannot absorb.** `amount` was declared mid-table (`payments.sql:10`, with `error_message` last at `:19`); Postgres cannot put a re-added column back in its original position, so it lands at the end and `error_message` acquires a trailing comma it did not have. The sorted comparison exists to tolerate exactly this drift and does not, because the comma is part of the line. `refund-amounts-cents` never exposed this: the columns its revert re-adds were appended by a later migration and were already last, so re-adding them at the end restores the original order. Step 1's `dump_schema` therefore normalizes the trailing comma away. Measured: with the first two defects repaired but the comma left in, the two dumps still disagreed on `error_message text`; with the comma normalized, the delta is zero.
 
 **What it does not grade, stated up front so nobody reads a green tick as more than it is.** An adversarial pass injected nineteen defects into revert scripts and the harness caught fourteen, including every constraint, index, trigger, type, default, nullability and table-presence defect in both the `registry` schema and the cloned tenant schema. The nineteenth is worth naming because it is the one the slug choice buys: changing a `format('... %I ...', s)` to `%s` in `sql/revert/refund-amounts-cents.sql` is caught loudly — `ERROR: syntax error at or near "order"` — and is caught **only** because the fixture slug needs quoting. Under a slug like `rt_123_0` that mutation round-trips clean and the harness grades nothing about identifier quoting, in a codebase where `Tenant.pm:163-169` already carries a comment about `"user"` and `"order"` as tenant slugs. The five it misses fall into three kinds:
 
@@ -143,6 +162,8 @@ Sorting is what buys immunity to `attnum` drift, and relocation-blindness is the
 
 3. **The comparison is over sorted lines, not the raw dump.** `pg_dump` prints columns in `attnum` order, and a revert that re-adds a dropped column puts it at the end of the table rather than back in its original position — Postgres offers no way to place it. The tip's own revert does this today: `sql/revert/refund-amounts-cents.sql` restores `refund_amount_requested` and `refund_amount` after the columns that followed them, so a raw diff fails on the current tip before this leg changes anything. Sorting the filtered lines compares the *multiset* of schema statements: a missing or altered column, index, constraint, trigger or comment still fails; pure attnum drift does not. Verified: raw comparison fails on today's tip, sorted comparison passes.
 
+   Sorting alone is not quite enough, and the second entry on `@CHANGES` is what exposes the gap. A column line ends in a comma unless it is the table's last column, so a re-added column landing at the end gives the previous last column a comma it did not have — attnum drift leaking straight through the sort as a pair of differences. `refund-amounts-cents` never showed this because the columns its revert re-adds were appended by a later migration and were already last. `payments-amount-cents` does: `payments.sql:10` declares `amount` third and `:19` makes `error_message` last. `dump_schema` therefore strips the optional trailing comma along with the newline before sorting. Verified: with that change the round trip is exact in both directions; without it the two dumps disagree on `error_message text`.
+
 Also note `pg_dump` emits a random `\restrict <key>` / `\unrestrict <key>` pair per invocation. The token is not a comment, so a comment filter does not remove it and every run would differ. `--restrict-key` pins it.
 
 `--restrict-key` is not an 18-only flag. The `\restrict` mechanism was backported to 17.6, 16.10, 15.14 and 14.19 as the fix for CVE-2025-8714, and the flag arrived with it. Verified by `pg_dump --help | grep -c -- '--restrict-key'` returning `1` on locally installed 14.23, 15.18, 16.14, 17.10 and 18.4. CI installs `postgresql-client` from Ubuntu with `apt-get update` first (`ci.yml:41-44`), so it gets a patched minor and the flag is present. A client older than those minors would fail with `unrecognized option`; if that ever happens, the fix is to upgrade the client, not to drop the flag — without it every dump differs and the test can never pass.
@@ -164,16 +185,24 @@ use Test::PostgreSQL;
 use Mojo::Pg;
 use Test::Registry::DB ();
 
-# Changes graded here, in plan order.  A leg that ships a migration appends its
-# change name in the same commit; that is the whole registration mechanism.
-# Pinning '@HEAD^' instead would grade only whichever change happens to be last,
-# and Task 7's data-only change -- which round-trips trivially under a schema
-# dump -- would then mask Task 6's hundred-line revert.
+# Changes graded here.  A leg that ships a migration appends its change name in
+# the same commit; that is the whole registration mechanism.  Pinning '@HEAD^'
+# instead would grade only whichever change happens to be last, and Task 7's
+# data-only change -- which round-trips trivially under a schema dump -- would
+# then mask Task 6's hundred-line revert.
 #
-# refund-amounts-cents is the plan tip as this file is written.  It is a real
-# subject rather than a placeholder: its revert re-adds two dropped columns and
-# so exercises the attnum tolerance the sorted comparison exists for.
+# ASCENDING IN sql/sqitch.plan ORDER, and that is load-bearing rather than
+# tidy.  Each iteration deploys '--to $change^' and leaves the database at that
+# parent, so the next iteration's '--to' must be a forward move.  A list out of
+# plan order asks sqitch to deploy backwards and the run stops meaning what the
+# assertions claim.  payments-amount-cents is sqitch.plan:65, refund is :67.
+#
+# Both are real subjects rather than placeholders.  payments-amount-cents sits
+# on the money tables this milestone keeps and its revert is broken three ways
+# (see the task notes).  refund-amounts-cents re-adds two dropped columns and so
+# exercises the attnum tolerance the sorted comparison exists for.
 my @CHANGES = qw(
+    payments-amount-cents
     refund-amounts-cents
 );
 
@@ -191,16 +220,24 @@ my $pg_dump = Test::Registry::DB::_find_pg_tool('pg_dump');
 # re-adds a dropped column cannot put it back in its original position.  Sorting
 # compares the multiset of schema statements, so a missing or altered column,
 # index, constraint, trigger or comment still fails and attnum drift does not.
+#
+# The trailing comma has to come off for that to hold.  A column line's comma
+# means "not the last column in this table", so a re-added column landing at the
+# end gives the previous last column a comma it did not have -- attnum drift
+# leaking through the sort as a pair of phantom differences.  Strip the optional
+# comma and the newline together so both forms normalize to the same string;
+# stripping the comma alone would take the newline with it on comma lines only
+# and reintroduce the same phantom from the other side.
 sub dump_schema () {
     my @lines = qx{$pg_dump --schema-only --no-owner --no-privileges --restrict-key=rt --exclude-schema=sqitch '$uri'};
     $? == 0 or die 'pg_dump failed';
     # Drop comment lines and blanks: pg_dump emits version banners that vary.
-    return [ sort grep { !/^--/ && /\S/ } @lines ];
+    return [ sort map { s/,?\s*$//r } grep { !/^--/ && /\S/ } @lines ];
 }
 
 my $sqitch = App::Sqitch->new();
 
-# One tenant schema per change, so a second entry on @CHANGES does not collide
+# One tenant schema per change, so entries after the first do not collide
 # on tenants_slug_key (sql/test-schema.sql:3269-3273).  Earlier iterations'
 # schemas stay behind and appear in both dumps, which is harmless -- the
 # comparison is before-vs-after, not against a fixture.
@@ -280,31 +317,150 @@ The reserved-word slug is the single most load-bearing choice in this file, and 
 
 The tenant is created by direct `INSERT` plus `clone_schema` rather than by `Registry::DAO::Tenant->provision`, because `provision` also copies users and seed data (`Tenant.pm:171`) and needs a `Registry::DAO::User` to exist. None of that changes the schema, which is the only thing this test reads.
 
-- [ ] **Step 2: Run it and watch it fail — this is the red step**
+- [ ] **Step 2: Run it and watch both subtests fail — this is the red step**
 
 Run: `carton exec prove -lv t/database/revert-round-trip.t`
 
-Expected: **FAIL**, and the failure is real rather than staged. Takes roughly fifty seconds: the subtest deploys the plan up to the change's parent, then deploys and reverts one change, and runs `pg_dump` twice. The output is:
+Expected: **FAIL, twice**, and both failures are real rather than staged. `Files=1, Tests=2, 55 wallclock secs` on the run this transcript came from: each subtest deploys the plan up to its change's parent, deploys and reverts one change, and runs `pg_dump` twice.
+
+**Do not stage a canary to prove the harness can fail.** It fails on both of its subjects, on bugs that have been deployed since the cents conversion — a better red step than any injected one, and it skips the risk of leaving a canary behind in a deployed script.
+
+`is_deeply` prints only the *first* differing element, so each transcript below is thinner than the defect behind it. The full symmetric difference for each subtest was measured separately and is given underneath, because the fixes are graded against the whole of it and not against the one line `is_deeply` happens to name.
+
+**Subtest 1, `payments-amount-cents`:**
 
 ```
-    ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema "order"
+# Subtest: payments-amount-cents reverts cleanly
+Adding registry tables to db:postgresql://postgres@127.0.0.1:15440/test
+    ok 1 - dump at payments-amount-cents^ includes the cloned tenant schema "order"
+    not ok 2 - deploying payments-amount-cents and reverting it restores the schema exactly
+    #     Structures begin differing at:
+    #          $got->[974] = '    amount numeric(10,2) DEFAULT 0 NOT NULL'
+    #     $expected->[974] = '    amount numeric(10,2) NOT NULL'
+```
+
+`Adding registry tables to db:...` is sqitch initialising its own registry on the ephemeral database, and it lands on stdout inside the subtest. It is not TAP and `prove` reports no parse error for it — verified on this run — but it is the reason the "nothing may write to stdout" rule above is about *migrations* and not about sqitch itself.
+
+Measured delta — four lines present after the revert that were not there before:
+
+```
+    amount numeric(10,2) DEFAULT 0 NOT NULL      (x4: registry.payments, registry.payment_items,
+                                                  "order".payments, "order".payment_items)
+```
+
+and two lines lost:
+
+```
+CREATE INDEX idx_payments_amount ON registry.payments USING btree (amount);
+CREATE INDEX payments_amount_idx ON "order".payments USING btree (amount);
+```
+
+The dump is two lines shorter after the revert than before: the four `DEFAULT 0` lines replace four bare `NOT NULL` lines one for one, and the two indexes are simply gone. The tenant index is named `payments_amount_idx` rather than `idx_payments_amount` because `performance-optimization.sql:68` named the registry one explicitly while `clone_schema`'s `LIKE ... INCLUDING ALL` let Postgres generate the tenant copy's name — which is the name the fix in Step 3 has to reproduce, and it reproduces it by creating the index unnamed rather than by spelling it out.
+
+**Subtest 2, `refund-amounts-cents`:**
+
+```
+# Subtest: refund-amounts-cents reverts cleanly
+    ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema "user"
     not ok 2 - deploying refund-amounts-cents and reverting it restores the schema exactly
     #     Structures begin differing at:
-    #          $got->[2411] = 'COMMENT ON COLUMN "order".enrollments.refund_status IS 'Status of refund processing for dropped enrollment';
-    #     '
-    #     $expected->[2411] = 'COMMENT ON COLUMN "order".enrollments.refund_amount IS 'Amount refunded for dropped enrollment';
-    #     '
+    #          $got->[3568] = 'COMMENT ON COLUMN "order".enrollments.refund_status IS 'Status of refund processing for dropped enrollment';'
+    #     $expected->[3568] = 'COMMENT ON COLUMN "order".enrollments.refund_amount IS 'Amount refunded for dropped enrollment';'
 ```
 
-The index is `2411` and not some other number only because `"` sorts before letters, so the quoted schema name lands where it does in the sorted multiset. Do not assert on the index — it moves whenever a migration is added ahead of this one. It is quoted here so the reader can recognise the run, not so anyone can match on it.
+Measured delta — nothing added, and **two** lines lost:
 
-Exactly one line is in the "before" dump and missing from the "after" dump, and nothing is present in "after" that was not in "before". **Do not stage a canary to prove the harness can fail.** It already failed, on its first subject, on a bug that has been deployed since the cents conversion — which is a better red step than any injected one, and it skips the risk of leaving a canary behind in a deployed script.
+```
+COMMENT ON COLUMN "order".enrollments.refund_amount IS 'Amount refunded for dropped enrollment';
+COMMENT ON COLUMN "user".enrollments.refund_amount IS 'Amount refunded for dropped enrollment';
+```
 
-**The bug.** `sql/deploy/drop-transfer-business-rules.sql:66` put a comment on `registry.enrollments.refund_amount`. `clone_schema` copies tables with `CREATE TABLE ... (LIKE src INCLUDING ALL)` (`fix-clone-schema-identifier-quoting.sql:367`), and `INCLUDING ALL` includes `INCLUDING COMMENTS`, so every tenant schema carries that comment too. `sql/revert/refund-amounts-cents.sql` restores the comment for `registry` at `:17-18` but its tenant loop (`:31-54`) re-adds the column and stops. Revert a tenant schema and the comment is gone for good.
+Two and not one because subtest 1's tenant schema is still standing when subtest 2 runs — the schemas accumulate, so every tenant schema created so far loses the comment. That is not a flaw in the fixture; it is a second sample of the same tenant loop, for free.
 
-- [ ] **Step 3: Fix the tenant loop in the revert script**
+Do not match on the element indices — `974` and `3568` here. Each depends on how many lines sort ahead of the difference, so both move whenever a migration is added anywhere ahead of the change, and `3568` moved from `2411` the moment `payments-amount-cents` joined the list and left a second tenant schema standing. They are quoted so a reader can recognise the run, not so anyone can assert on them.
 
-Editing a **revert** script is safe in a way editing a deploy script is not. Sqitch's modification detection compares `script_hash`, which is the SHA-1 of the **deploy** script alone (`local/lib/perl5/App/Sqitch/Plan/Change.pm:164-169`, `builder => '_deploy_hash'`), so changing a revert script does not mark the change as modified and nothing needs redeploying anywhere. This revert has never run in production; the fix only changes what happens the first time it does.
+**The two bugs.**
+
+*`payments-amount-cents`* — the three defects catalogued in the task notes above: a `DEFAULT 0` left behind on four columns, `idx_payments_amount` and its tenant twin never rebuilt, and the column-order drift that Step 1's comma normalization already absorbs. Step 3 fixes the first two; the third needs no script change, which is why it does not appear in the measured delta.
+
+*`refund-amounts-cents`* — `sql/deploy/drop-transfer-business-rules.sql:66` put a comment on `registry.enrollments.refund_amount`. `clone_schema` copies tables with `CREATE TABLE ... (LIKE src INCLUDING ALL)` (`fix-clone-schema-identifier-quoting.sql:367`), and `INCLUDING ALL` includes `INCLUDING COMMENTS`, so every tenant schema carries that comment too. `sql/revert/refund-amounts-cents.sql` restores the comment for `registry` at `:17-18` but its tenant loop (`:31-54`) re-adds the column and stops. Revert a tenant schema and the comment is gone for good.
+
+**Editing a revert script is safe in a way editing a deploy script is not**, and Steps 3 and 4 both rely on it. Sqitch's modification detection compares `script_hash`, which is the SHA-1 of the **deploy** script alone (`local/lib/perl5/App/Sqitch/Plan/Change.pm:164-169`, `builder => '_deploy_hash'`), so changing a revert script does not mark the change as modified and nothing needs redeploying anywhere. Neither of these reverts has run in production; the fixes only change what happens the first time they do.
+
+**Both fixes land before the next run, in one green step.** The usual red/green/commit rhythm would put a commit between them, and that commit would be of a red suite — subtest 2 still fails while only subtest 1 is fixed. Two defects found by one new test is one unit of work.
+
+- [ ] **Step 3: Fix the defaults and the index in the payments revert**
+
+In `sql/revert/payments-amount-cents.sql`, the registry half currently reads:
+
+```sql
+ALTER TABLE registry.payments
+    ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) NOT NULL DEFAULT 0;
+UPDATE registry.payments SET amount = amount_cents::DECIMAL / 100;
+ALTER TABLE registry.payments DROP COLUMN amount_cents;
+
+ALTER TABLE registry.payment_items
+    ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) NOT NULL DEFAULT 0;
+UPDATE registry.payment_items SET amount = amount_cents::DECIMAL / 100;
+ALTER TABLE registry.payment_items DROP COLUMN amount_cents;
+```
+
+Replace it with:
+
+```sql
+-- DEFAULT 0 is scaffolding: ADD COLUMN ... NOT NULL needs a value for the
+-- existing rows.  payments.sql:10,33 declared these columns bare NOT NULL, so
+-- the default is dropped once the backfill has run -- otherwise an INSERT that
+-- omits the amount books a zero payment instead of raising.
+ALTER TABLE registry.payments
+    ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) NOT NULL DEFAULT 0;
+UPDATE registry.payments SET amount = amount_cents::DECIMAL / 100;
+ALTER TABLE registry.payments ALTER COLUMN amount DROP DEFAULT;
+ALTER TABLE registry.payments DROP COLUMN amount_cents;
+
+-- performance-optimization.sql:68 indexed this column, and DROP COLUMN in the
+-- deploy took the index with it.  Restoring the column without the index leaves
+-- the schema short of what the revert claims to restore.
+CREATE INDEX IF NOT EXISTS idx_payments_amount ON registry.payments(amount);
+
+ALTER TABLE registry.payment_items
+    ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) NOT NULL DEFAULT 0;
+UPDATE registry.payment_items SET amount = amount_cents::DECIMAL / 100;
+ALTER TABLE registry.payment_items ALTER COLUMN amount DROP DEFAULT;
+ALTER TABLE registry.payment_items DROP COLUMN amount_cents;
+```
+
+`ALTER COLUMN ... DROP DEFAULT` after the backfill is the idiom `sql/revert/pricing-plans-amount-cents.sql:26,51` already uses; this is copying it, not inventing it.
+
+In the same file's tenant loop, add a `DROP DEFAULT` for each table and recreate the tenant index, so the block becomes:
+
+```sql
+        EXECUTE format(
+            'ALTER TABLE %I.payments
+                ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) NOT NULL DEFAULT 0', s);
+        EXECUTE format(
+            'UPDATE %I.payments SET amount = amount_cents::DECIMAL / 100', s);
+        EXECUTE format('ALTER TABLE %I.payments ALTER COLUMN amount DROP DEFAULT', s);
+        EXECUTE format('ALTER TABLE %I.payments DROP COLUMN amount_cents', s);
+
+        -- Unnamed, so Postgres generates payments_amount_idx -- the same name
+        -- clone_schema's LIKE ... INCLUDING ALL gave the tenant copy.
+        EXECUTE format('CREATE INDEX ON %I.payments (amount)', s);
+
+        EXECUTE format(
+            'ALTER TABLE %I.payment_items
+                ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) NOT NULL DEFAULT 0', s);
+        EXECUTE format(
+            'UPDATE %I.payment_items SET amount = amount_cents::DECIMAL / 100', s);
+        EXECUTE format('ALTER TABLE %I.payment_items ALTER COLUMN amount DROP DEFAULT', s);
+        EXECUTE format('ALTER TABLE %I.payment_items DROP COLUMN amount_cents', s);
+```
+
+The tenant index is created **unnamed**. Naming it `idx_payments_amount` would collide with nothing — index names are per-schema — but it would not match what the tenant schema actually had, because that copy was made by `LIKE ... INCLUDING ALL`, which generates `payments_amount_idx` from the table and column names. Spelling out the generated name would work too and would be one more thing to keep in step with Postgres; letting Postgres generate it is the same rule that produced the original.
+
+Fix only the revert. The **deploy** dropped `idx_payments_amount` in production and nothing has rebuilt it on `amount_cents` — a live missing index, not a revert defect — but repairing that means editing a deployed deploy script, which the Global Constraints forbid. It goes on the issue list.
+
+- [ ] **Step 4: Fix the tenant loop in the refund revert**
 
 In `sql/revert/refund-amounts-cents.sql`, after `:43`:
 
@@ -324,21 +480,29 @@ Doubled single quotes because the whole statement is a `format` string literal. 
 
 Fix only the revert. The **deploy**'s tenant loop is asymmetric the same way — it comments `registry.enrollments.refund_amount_cents` at `:21` and not the tenant copies — but that asymmetry is invisible to this harness (both dumps lack the comment) and correcting it would edit a deployed deploy script, which the Global Constraints forbid. It goes on the issue list instead.
 
-- [ ] **Step 4: Run it again and confirm it passes**
+- [ ] **Step 5: Run it again and confirm it passes**
 
 Run: `carton exec prove -lv t/database/revert-round-trip.t`
-Expected: PASS, one subtest — `refund-amounts-cents reverts cleanly` — containing two assertions:
+Expected: PASS, two subtests, two assertions each:
 
 ```
-    ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema "order"
+# Subtest: payments-amount-cents reverts cleanly
+    ok 1 - dump at payments-amount-cents^ includes the cloned tenant schema "order"
+    ok 2 - deploying payments-amount-cents and reverting it restores the schema exactly
+ok 1 - payments-amount-cents reverts cleanly
+# Subtest: refund-amounts-cents reverts cleanly
+    ok 1 - dump at refund-amounts-cents^ includes the cloned tenant schema "user"
     ok 2 - deploying refund-amounts-cents and reverting it restores the schema exactly
-ok 1 - refund-amounts-cents reverts cleanly
+ok 2 - refund-amounts-cents reverts cleanly
+1..2
+All tests successful.
+Files=1, Tests=2, 61 wallclock secs
 Result: PASS
 ```
 
-That is a transcript, not a prediction: this file's harness was run against live Postgres with the reserved-word fixture, red before the Step 3 edit and green after it, and the edit was then reverted so the red step still reproduces for whoever executes this plan.
+That is a transcript, not a prediction. The file exactly as Step 1 writes it was run against live Postgres with the reserved-word fixture: red on both subtests before the Step 3 and Step 4 edits, green on both after them, and the symmetric difference in each direction is zero for each change. Both edits were then reverted so the red step still reproduces for whoever executes this plan.
 
-- [ ] **Step 5: Replace the fake rollback subtest**
+- [ ] **Step 6: Replace the fake rollback subtest**
 
 In `t/database/migration-verification.t`, replace lines 46-49. Do not widen the range upward: `:43` is the closing brace of the for-loop inside the preceding subtest, `:44` is that subtest's closing `};`, and `:45` is blank. Lines 46-49 are the whole of the rollback subtest and nothing else:
 
@@ -357,17 +521,17 @@ with:
 # schema dumps.  Asserting it again here would only duplicate a full deploy.
 ```
 
-- [ ] **Step 6: Run both database tests**
+- [ ] **Step 7: Run both database tests**
 
 Run: `carton exec prove -lv t/database/`
 Expected: PASS, and `migration-verification.t` now reports one fewer subtest.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add t/database/revert-round-trip.t t/database/migration-verification.t \
-        sql/revert/refund-amounts-cents.sql
-git commit -m "Add a revert-test harness and fix the bug it found on its first subject
+        sql/revert/payments-amount-cents.sql sql/revert/refund-amounts-cents.sql
+git commit -m "Add a revert-test harness and fix the two bugs it found
 
 The rollback subtest passed by calling pass(). The new harness takes a list of
 sqitch changes and, for each one, deploys an ephemeral database to that
@@ -376,10 +540,22 @@ change, reverts it, and diffs the schema dumps -- so a revert script that does
 not restore the schema fails here rather than in production. A leg that ships a
 migration adds its change name to the list in the same commit.
 
-It failed immediately. refund-amounts-cents restores the refund_amount column
-comment for registry but not for tenant schemas, which get the comment from
-clone_schema's LIKE ... INCLUDING ALL, so reverting a tenant schema dropped it
-permanently. The revert's tenant loop now restores it."
+It failed on both of its subjects, immediately.
+
+payments-amount-cents re-added amount as NOT NULL DEFAULT 0 where the column
+was declared bare NOT NULL and never dropped the default, so a post-revert
+INSERT that omitted the amount would book a zero payment instead of raising;
+and it restored the column without idx_payments_amount, which the deploy's
+DROP COLUMN had taken with it. The revert now drops the default after the
+backfill and recreates the index in both the registry and tenant schemas.
+
+refund-amounts-cents restores the refund_amount column comment for registry but
+not for tenant schemas, which get the comment from clone_schema's
+LIKE ... INCLUDING ALL, so reverting a tenant schema dropped it permanently.
+The revert's tenant loop now restores it.
+
+Both fixes are to revert scripts. sqitch's script_hash covers the deploy script
+alone, so neither change is marked modified and nothing needs redeploying."
 ```
 
 ---
@@ -1234,10 +1410,13 @@ Then register the change with Task 1's harness, in this same commit. In `t/datab
 
 ```perl
 my @CHANGES = qw(
+    payments-amount-cents
     refund-amounts-cents
     drop-installment-schedules
 );
 ```
+
+Append, do not insert. The list is ascending in `sql/sqitch.plan` order because each iteration leaves the database at its change's parent and the next one has to move forward; this change is added at the plan's end, so the end of the list is also the correct position. Task 1's Produces block states the rule.
 
 The harness grades only what is on that list. Skipping this append is the failure mode Task 1's list exists to prevent, and it is silent — the suite stays green and the hundred-line revert script below is never run.
 
@@ -1663,7 +1842,7 @@ Expected: `0`.
 Run: `carton exec prove -lv t/database/`
 Expected: PASS. `revert-round-trip.t` now grades `drop-installment-schedules` — because Step 1 appended it to `@CHANGES`; if that append was missed, this step passes and grades nothing.
 
-What it catches: a missing column, a wrong type or default, a missing index, a constraint whose `pg_get_constraintdef` text differs, a missing trigger, a missing comment. Column *order* it does not — the comparison is over sorted lines. The tenant half is graded too: the harness provisions a `clone_schema` tenant before the first dump (Task 1 Step 1), so a tenant schema left without its copies, left without the two `updated_at` triggers, or given its copies twice all fail here rather than in production.
+What it catches: a missing column, a wrong type or default, a missing index, a constraint whose `pg_get_constraintdef` text differs, a missing trigger, a missing comment. Column *order* it does not — the comparison is over sorted lines. The tenant half is graded too: the harness provisions a `clone_schema` tenant before the first dump (Task 1 Step 1), so a tenant schema left without its copies, left without the two `updated_at` triggers, or given its copies twice all fail here rather than in production. Three of them, in fact — this is the third entry on `@CHANGES` and each earlier iteration's schema is still standing, so the tenant loop below is exercised against `"order"`, `"user"` and `"group"` in the same run.
 
 - [ ] **Step 13: Run the isolation test and the DAO suite**
 
