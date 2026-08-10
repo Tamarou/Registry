@@ -31,19 +31,25 @@ Copied from the spec. Every task's requirements implicitly include this section.
 
 ## Declared Deviations From The Spec
 
-Four places where this plan does something other than what the spec says. All four are deliberate.
+Five places where this plan does something other than what the spec says. All five are deliberate.
 
 1. **The `seti_test` replacement is an env guard, not a `t/lib/` move.** The spec says to "move what the tests need into `t/lib/`". That is unnecessary: `TenantPayment::process` already has an environment-guarded no-keys branch that produces a byte-identical result hash to the `seti_test` branch, and `t/controller/tenant-create-session.t` already passes through it today (verified: the payment template renders `<input type="hidden" name="setup_intent_id" value="">` at `templates/tenant-signup/payment.html.ep:91`, and `process_workflow` applies server-issued hidden values on top of caller data at `t/lib/Test/Registry/Helpers.pm:168`, so that test's `seti_test_123` never reaches the step). The replacement is therefore: delete both `seti_test` branches, add the one-line `BEGIN { delete @ENV{...} }` the codebase already uses, and drop the dead form keys. Smaller diff, same coverage, and it removes an unguarded production bypass rather than relocating it.
 
+   One consequence to state rather than leave implicit: this makes the no-keys mock at `TenantPayment.pm:56-71` load-bearing. It was one of two paths to a fake subscription; after Task 5 it is the only one, and both alex journeys plus `t/controller/tenant-create-session.t` depend on it. **No leg in this milestone owns its removal** — the spec's Leg 1 row names only the `seti_test` bypass, and no later leg's row names the env-guarded branch. It is environment-guarded and so cannot fire in production, which is why keeping it is safe; but "a mock provisioning path with no owning leg" goes on this plan's issue list rather than being discovered by whoever eventually wires real Stripe into tenant signup.
+
 2. **Superseded verify scripts go vacuous, not corrected.** The spec says the old scripts are "edited to match the schema as of the end of the plan". Taken literally that means asserting the tables are absent, which **fails** at the script's own deploy point under `[deploy] verify = true`, where the tables are present. The correct edit is to remove every assertion naming a dropped object, leaving a comment that points at the retiring change. `sql/verify/drop-installment-schedules.sql` is where the absence gets asserted.
 
-3. **`t/dao/pricing-plan-clean-architecture.t` is truncated, not deleted.** Spec `:2813` lists it under "Also deleted", and spec `:2869-2870` tells the Leg 9a implementer its `use Registry::DAO::PricingRelationship` at `:16` "needs no action: Leg 1 already deletes the file". Task 4 Step 1 keeps the file with its first subtest only. The reason is in that step and is not repeated here; what matters at this level is that **Leg 9a's stated premise is now false.** The file survives, so a Leg 9a worker looking for the sixth reader of `PricingRelationship` will find the file still on disk. The outcome is still safe — the truncated file's `use` list is `Test::More`, `Registry::DAO`, `Registry::DAO::PricingPlan` and nothing else, so there is no reader left to fix — but Leg 9a must be told to re-check rather than trust the spec sentence.
+3. **`t/dao/pricing-plan-clean-architecture.t` is truncated, not deleted.** Spec `:2813` lists it under "Also deleted", and spec `:2869-2870` tells the Leg 9a implementer its `use Registry::DAO::PricingRelationship` at `:16` "needs no action: Leg 1 already deletes the file". Task 4 Step 1 keeps the file with its first subtest only. The reason is in that step and is not repeated here; what matters at this level is that **Leg 9a's stated premise is now false.** The file survives, so a Leg 9a worker looking for the sixth reader of `PricingRelationship` will find the file still on disk. The outcome is still safe — the truncated file's `use` list is `Test::More`, `Registry::DAO`, `Registry::DAO::PricingPlan` and nothing else, so there is no `PricingRelationship` reader left to fix — but Leg 9a must be told to re-check rather than trust the spec sentence.
 
-4. **The harness runs deploy-then-revert, the opposite of the direction the spec pins.** Spec `:3878-3879` says "deploy to the change, revert one, deploy again, compare the schema". That compares the schema *at* the change across a revert/redeploy cycle. Task 1 compares the schema at `change^` across a deploy/revert cycle instead. The argument is at Task 1 `:125` and is load-bearing for Task 6: for a change whose deploy is a `DROP`, the spec's direction is vacuous. Named here because the spec sentence is pinned and a reader auditing plan-against-spec should not have to discover the difference in a task body.
+   Leg 9a is not the only leg the survivor could reach. The retained subtest also asserted `plan_scope`, one of the three `pricing_plans` columns **Leg 9b** drops (spec `:3854-3855`), which would have handed Leg 9b a red assertion in a file this plan promises it need not touch. Task 4 Step 1 cuts that line too, so what survives depends on nothing any later leg removes. Both directions were checked against the truncated file's actual contents, not against its `use` list alone.
+
+4. **The harness runs deploy-then-revert, the opposite of the direction the spec pins.** Spec `:3880-3881` says "deploy to the change, revert one, deploy again, compare the schema". That compares the schema *at* the change across a revert/redeploy cycle. Task 1 compares the schema at `change^` across a deploy/revert cycle instead. The argument is Task 1's first counter-intuitive note, and is load-bearing for Task 6: for a change whose deploy is a `DROP`, the spec's direction is vacuous. Named here because the spec sentence is pinned and a reader auditing plan-against-spec should not have to discover the difference in a task body.
+
+5. **`@CHANGES` grades one already-deployed change the spec never asked for.** Spec `:3455` requires a tested revert for every migration *this milestone adds*; `payments-amount-cents` was deployed long before it. It is on the list anyway, as a scope decision perigrin has already made, because it is the only already-deployed revert that is both broken and sitting on money tables this leg keeps. The full argument — including why its two sibling cents changes are *not* absorbed — is under Task 1's `@CHANGES` discussion. Named here so that plan-against-spec reads as a deliberate widening rather than as scope creep.
 
 ## Spec Gaps This Plan Closes
 
-Three stranded callers the spec's Leg 1 row does not name, found by grep:
+Four stranded callers the spec's Leg 1 row does not name, found by grep:
 
 - **The `seti_test` test consumers.** `t/controller/tenant-create-session.t:66`, `t/user-journeys/alex/01-acquire-tenant.t:82-85,199-208,331-348`, `t/user-journeys/alex/03-platform-billing.t:77-78,164-172,214,216`. Exactly the shape the spec's own stranded-caller rule warns about.
 - **`templates/pricing-plan-creation/review-activate.html.ep:163-186`** reads the seven discount keys the orphaned form writes. The spec names the form and the step class but not this reader.
@@ -65,7 +71,7 @@ Three stranded callers the spec's Leg 1 row does not name, found by grep:
 | `sql/verify/retire-registry-plus-plan.sql` | Asserts no active relationship offers the hybrid plan. |
 | `t/database/retire-registry-plus-plan.t` | Asserts the data revert round-trips (the schema harness cannot see data changes). |
 
-**Deleted:** 5 library modules, 2 more library modules, 9 test files — all nine in Task 2 (`:351-366`). Tasks 3 and 4 delete no test file. `t/dao/pricing-plan-clean-architecture.t` is **truncated, not deleted**; it appears in the Modified list below and nowhere else.
+**Deleted:** 5 library modules, 2 more library modules, 9 test files — all nine in Task 2, named in its Files block and removed by the single `git rm` in its Step 1. (Self-references in this document are by task and step, not by line: a plan edits itself every round and its own line numbers do not survive that.) Tasks 3 and 4 delete no test file. `t/dao/pricing-plan-clean-architecture.t` is **truncated, not deleted**; it appears in the Modified list below and nowhere else.
 
 **Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `schemas/requirements-and-rules.json`, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-clean-architecture.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `docs/operations/sacp-stripe-connect-onboarding.md` (one table row, Task 6 Step 10), `sql/revert/payments-amount-cents.sql` and `sql/revert/refund-amounts-cents.sql` (the two bugs Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
 
@@ -99,8 +105,8 @@ Note the two exceptions to "never edit a deployed change": `sql/revert/payments-
   );
   ```
 
-  **The list must stay ascending in `sql/sqitch.plan` order.** Each iteration deploys `--to "$change^"` and leaves the database sitting at that parent, so the next iteration's `--to` has to be a forward move; a descending list would ask sqitch to deploy backwards and the run would not do what the test claims. `payments-amount-cents` is `sql/sqitch.plan:65` and `refund-amounts-cents` is `:67`, so appending is the natural operation and the order takes care of itself. Verified by running the two-entry list: iteration 2 printed `Deploying changes through schedule-amounts-cents`, a forward move.
-- Produces: **Task 6 appends its change name** to that list in the same commit that adds the change to `sql/sqitch.plan`; that append is the whole registration mechanism. **Task 7 does not, and must not** — its change is data-only, so both `pg_dump --schema-only` dumps would match no matter what its deploy did. See Task 7 Step 4. Any future change that alters no schema object belongs off this list and needs its own data test.
+  **The list must stay ascending in `sql/sqitch.plan` order.** Each iteration deploys `--to "$change^"` and leaves the database sitting at that parent, so the next iteration's `--to` has to be a forward move. A descending list does not quietly grade the wrong thing — it is a **hard abort**: sqitch refuses with `Cannot deploy to an earlier change; use "revert" instead` and the file dies on the first out-of-order entry. That is the good failure mode, and it means a mis-ordered list is caught on the first CI run rather than living as a silent gap. `payments-amount-cents` is `sql/sqitch.plan:65` and `refund-amounts-cents` is `:67`, so appending is the natural operation and the order takes care of itself. Verified by running the two-entry list: iteration 2 printed `Deploying changes through schedule-amounts-cents`, a forward move.
+- Produces: **Task 6 appends its change name** to that list in the same commit that adds the change to `sql/sqitch.plan`; that append is the whole registration mechanism. **Task 7 does not, and must not** — its change is data-only, so both `pg_dump --schema-only` dumps would match no matter what its deploy did. See Task 7 Step 6. Any future change that alters no schema object belongs off this list and needs its own data test.
 
 **Why this is first:** every later leg ships migrations, and today nothing proves a revert script works. `t/database/migration-verification.t:46-49` currently reads:
 
@@ -117,7 +123,7 @@ That is the #296 defect shape: a green assertion that asserts nothing. It is rep
 
 **Scope note:** the harness compares `pg_dump --schema-only`. It grades **schema** round-trips. A data-only change (Task 7) is invisible to it, is deliberately kept off `@CHANGES`, and gets its own test.
 
-**`@CHANGES` carries two entries, and the second one is a scope decision perigrin has already made.** The spec's requirement (`:3455`) is that every migration *this milestone adds* ships with a tested revert — it does not commission a retrospective audit of already-deployed reverts, and Leg 1's row does not list one. Grading `payments-amount-cents` is therefore outside the letter of the requirement and inside its intent: it is the only already-deployed revert that is both broken and sitting on the money tables this leg keeps.
+**`@CHANGES` carries two entries, and the second one is a scope decision perigrin has already made. It is Deviation 5.** The spec's requirement (`:3455`) is that every migration *this milestone adds* ships with a tested revert — it does not commission a retrospective audit of already-deployed reverts, and Leg 1's row does not list one. Grading `payments-amount-cents` is therefore outside the letter of the requirement and inside its intent: it is the only already-deployed revert that is both broken and sitting on the money tables this leg keeps.
 
 The three sibling cents changes are not equivalent to each other, and the difference is what makes one of them worth absorbing and the other two not. All four sit consecutively at `sql/sqitch.plan:64-67`, so any of them is gradeable by adding its name:
 
@@ -141,13 +147,18 @@ The three sibling cents changes are not equivalent to each other, and the differ
 
 | Blind spot | Why | Bearing on this leg |
 |---|---|---|
-| Sequence / identity current value | `pg_dump --schema-only` emits the sequence definition but no `setval` — the position lives in the data section | None. `grep -n "SERIAL\|IDENTITY\|nextval" sql/deploy/installment-payment-schedules.sql sql/deploy/simplify-installment-schema-for-stripe.sql` returns nothing; Task 6's tables are UUID-keyed. |
-| `GRANT` / `REVOKE` | `--no-privileges` strips them, and it is there on purpose — role names differ between a `Test::PostgreSQL` instance and production, so leaving them in makes the dump machine-dependent | None. No migration in this milestone grants. |
-| An object relocated between two tables | The comparison is a sorted multiset of lines (see point 3 below), and `    x integer,` reads identically whichever `CREATE TABLE` it sits under | None. Task 6 drops and recreates whole tables; it moves nothing between them. |
+| Sequence / identity current value | `pg_dump --schema-only` emits the sequence definition but no `setval` — the position lives in the data section | None, for any of the three graded changes. `grep -n "SERIAL\|IDENTITY\|nextval" sql/deploy/installment-payment-schedules.sql sql/deploy/simplify-installment-schema-for-stripe.sql` returns nothing and Task 6's tables are UUID-keyed; the same grep over the deploy and revert of both absorbed changes — `payments-amount-cents` and `refund-amounts-cents` — also returns nothing. |
+| `GRANT` / `REVOKE` | `--no-privileges` strips them, and it is there on purpose — role names differ between a `Test::PostgreSQL` instance and production, so leaving them in makes the dump machine-dependent | None. No migration in this milestone grants, and neither absorbed change does either — same grep, no `GRANT` or `REVOKE` in any of the four scripts. |
+| An object relocated between two tables | The comparison is a sorted multiset of lines (see point 3 below), and `    x integer,` reads identically whichever `CREATE TABLE` it sits under | None, and the absorbed changes are immune for a second reason worth knowing. Task 6 drops and recreates whole tables and moves nothing between them. The two cents reverts do re-add columns, which is the shape that would exploit this hole — but each `ADD COLUMN` is paired with an `UPDATE %I.<table> SET amount = amount_cents…` against the same table, so a script that named the wrong table would fail at deploy time with `column amount_cents does not exist` rather than round-trip clean past a sorted diff. |
 
 Sorting is what buys immunity to `attnum` drift, and relocation-blindness is the price. That trade is worth taking — drift is guaranteed and relocation is not in this milestone — but it is a real hole, and a later leg that moves a column between tables must not lean on this harness to grade it.
 
-**Nothing the harness deploys may write to stdout.** `$sqitch->run` inherits the test's file handles, and the test's stdout *is* the TAP stream. A migration that prints a row mid-run produces `Parse errors: Tests out of sequence` and a failing file even though every assertion passed. This is why every deploy and revert script in this plan opens with `SET client_min_messages = 'warning'`, and why a `RAISE NOTICE` added for debugging must come back out before commit.
+**Be precise about what a migration may print, because the obvious rule is not the true one.** `$sqitch->run` inherits the test's file handles and the test's stdout *is* the TAP stream, so it is tempting to say nothing may write to stdout at all. Two measurements say otherwise, and both matter to what the scripts below look like.
+
+- **Only TAP-shaped stdout breaks the parse.** A psql-shaped result block on stdout — ` count `, `-------`, `     3`, `(1 row)` — parses clean; the same is true of sqitch's own `Adding registry tables to db:…`, which Step 2's transcript shows landing mid-subtest with no complaint. A line that reads `ok 1 - …` produces `Parse errors: Tests out of sequence.  Found (1) but expected (2)`. The hazard is a line that *looks* like TAP, not stdout as such. Measured with a two-subtest probe: the psql-shaped subtest passed, the TAP-shaped one raised the parse error.
+- **`SET client_min_messages = 'warning'` is not what protects the parse.** `RAISE NOTICE` goes to **stderr**, never stdout. Measured: a script raising a notice sent ` answer / 42 / (1 row)` to stdout and `NOTICE:  A NOTICE LINE` to stderr. So the `SET` at the top of every deploy and revert script in this plan buys **stderr hygiene** — it keeps `NOTICE` chatter out of the run so the project's pristine-output rule holds — and buys nothing at all against TAP. It stays for that reason, which is a good enough one.
+
+The operative rule for a migration is therefore: do not print a line that could be mistaken for TAP, and take a `RAISE NOTICE` added for debugging back out before commit because the output must be pristine, not because the parser would trip on it.
 
 **Two requirements the spec pins, which drive the shape below.**
 
@@ -339,7 +350,7 @@ Adding registry tables to db:postgresql://postgres@127.0.0.1:15440/test
     #     $expected->[974] = '    amount numeric(10,2) NOT NULL'
 ```
 
-`Adding registry tables to db:...` is sqitch initialising its own registry on the ephemeral database, and it lands on stdout inside the subtest. It is not TAP and `prove` reports no parse error for it — verified on this run — but it is the reason the "nothing may write to stdout" rule above is about *migrations* and not about sqitch itself.
+`Adding registry tables to db:...` is sqitch initialising its own registry on the ephemeral database, and it lands on stdout inside the subtest. `prove` reports no parse error for it — verified on this run — which is the concrete instance of the rule above: stdout is not the hazard, a TAP-shaped line on stdout is. Leave this line alone; it is expected on the first run against a fresh database.
 
 Measured delta — four lines present after the revert that were not there before:
 
@@ -483,7 +494,7 @@ Fix only the revert. The **deploy**'s tenant loop is asymmetric the same way —
 - [ ] **Step 5: Run it again and confirm it passes**
 
 Run: `carton exec prove -lv t/database/revert-round-trip.t`
-Expected: PASS, two subtests, two assertions each:
+Expected: PASS, two subtests, two assertions each. **The block below is filtered to the assertion lines; Step 2's red transcript is not.** A real run also carries sqitch's own progress output interleaved with these lines — the `Adding registry tables to db:…` that Step 2's transcript keeps and annotates, plus a `Deploying changes …` or `Reverting changes …` line per sqitch invocation. None of it is a symptom; do not read its presence as a difference from this block.
 
 ```
 # Subtest: payments-amount-cents reverts cleanly
@@ -618,7 +629,9 @@ with:
 
 - [ ] **Step 3: Delete the four orphaned webhook methods**
 
-Delete these four methods from `lib/Registry/Controller/Webhooks.pm` in full, along with their leading comments:
+**Delete `lib/Registry/Controller/Webhooks.pm:204-289` as one contiguous cut.** Four orphaned methods live in that range, and the four ranges below are an inventory of what the block contains — not a set of separate deletions. Taking them one at a time leaves the blank separators at `:228`, `:256` and `:276` behind: three dangling blank lines where the methods used to be. The single cut takes them with it.
+
+Every comment these methods carry sits inside a method body, so there is nothing above `:204` to sweep up — `:203` is blank and `:202` closes the preceding method. After the cut that blank at `:203` sits directly above the class's closing `}` at `:290`, one separator, which is how the rest of the file separates members.
 
 - `_is_installment_payment_event` (`:204-227`)
 - `_process_installment_payment_event` (`:229-255`)
@@ -757,7 +770,7 @@ The blank line is not a nicety. `:145` and `:167` are both blank — they are th
 
 Keep the final subtest at `:168-182` — it calls `$plan->calculate_price`, which lives on the surviving DAO.
 
-**What goes with it:** `calculate_plan_price` (`PriceOps/PricingPlan.pm:87-118`) is the only code in the tree that scales a `sibling_discount` from dollars to cents (`:112`), and this subtest is its only test. Both disappear together. That is not a coverage gap — Task 4 deletes the rest of the sibling-discount surface for the same reason, that nothing reaches it. `Registry::DAO::PricingPlan::calculate_price` (`:136-149`) handles `percentage_discount` only and is unaffected.
+**What goes with it:** `calculate_plan_price` (`PriceOps/PricingPlan.pm:87-121`) is the only code in the tree that scales a `sibling_discount` from dollars to cents (`:112`), and this subtest is its only test. Both disappear together. That is not a coverage gap — Task 4 deletes the rest of the sibling-discount surface for the same reason, that nothing reaches it. `Registry::DAO::PricingPlan::calculate_price` (`:136-149`) handles `percentage_discount` only and is unaffected.
 
 - [ ] **Step 3a: Fix the comment in the stripe-live fixture**
 
@@ -817,7 +830,7 @@ Stripe client in the tree, which is where later legs add methods."
 ### Task 4: Delete the orphaned discount surface and the silent-pass test
 
 **Files:**
-- Modify: `t/dao/pricing-plan-clean-architecture.t` (cut `:50-209`; **do not delete the file** — Step 1)
+- Modify: `t/dao/pricing-plan-clean-architecture.t` (cut `:46` and `:50-209`; **do not delete the file** — Step 1)
 - Modify: `lib/Registry/DAO/Family.pm:66-82` (delete `sibling_discount_eligible`)
 - Modify: `t/dao/family.t:219-252`
 - Modify: `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm:2,11,45-94,163-167`
@@ -827,7 +840,7 @@ Stripe client in the tree, which is where later legs add methods."
 - Modify: `schemas/requirements-and-rules.json:75-100` (Step 5b)
 
 **Interfaces:**
-- Consumes: **Task 3 must have landed.** Step 6's grep is this task's gate, and `lib/Registry/PriceOps/PricingPlan.pm:100,130` — both `my $cutoff_date = $requirements->{early_bird_cutoff_date};` — match its pattern until Task 3 Step 2 deletes that file. Run Task 4 first and the gate reports two matches that are not on its table, which reads as a miss.
+- Consumes: **Task 3 must have landed.** Step 6's grep is this task's gate, and six lines match its pattern until Task 3 Step 2 removes them: `lib/Registry/PriceOps/PricingPlan.pm:100,112,114,130` (deleted with the file) and `t/dao/pricing-plan-amount-cents.t:147,155` (cut with the `:146-167` subtest). Run Task 4 first and the gate reports six matches that are not on its table, which reads as a miss.
 - Produces: the `requirements-rules` workflow step keeps every non-discount field it has today. Leg 5's authoring rewrite starts from that reduced form.
 
 **Why these three go together:** all three are code that produces or asserts values nothing reads. `sibling_discount_eligible` has only test callers. The discount form writes `early_bird_enabled`, `early_bird_discount`, `early_bird_cutoff_date`, `family_discount_enabled`, `family_discount_type`, `family_discount_amount`, `min_children`, `volume_discount_enabled`, `volume_tiers` — and the calculators read different keys entirely (`percentage_discount` at `lib/Registry/DAO/PricingPlan.pm:143`, `sibling_discount` at the now-deleted `PriceOps/PricingPlan.pm:112`). `volume_discount_enabled` and `volume_tiers` have zero readers anywhere. The step's **outcome definition** describes the same form a second time and names three further discount fields — `early_bird_discount`, `bulk_discount_threshold`, `bulk_discount_percentage` — that not even the form ever wrote; Step 5b takes those. `pricing-plan-clean-architecture.t` is issue #296: the file has four subtests (`:24,50,90,145`), and three of them wrap their work in an `eval` and fall through to a bare `pass(...)`. There are four such `pass` sites — `:61,83,129,198` — because the second subtest has two, and returns at the first.
@@ -845,13 +858,17 @@ ok 4 - Platform plans without embedded relationships      # 1 - Skipping test du
 All tests successful.
 ```
 
-They skip because `:21` is `my $db = Test::Registry::DB->new->db;` — the `Test::Registry::DB` object is discarded on that line, the ephemeral server is reaped, and every subsequent query dies with *terminating connection due to administrator command*. That is why the first subtest survives: `:23-48` constructs a `Registry::DAO::PricingPlan` **in memory** and checks with `->can` that `target_tenant_id` and `offering_tenant_id` are absent while `plan_name`, `amount_cents`, `plan_scope` and `requirements` are present (`:37,40,41,44,45,46,47`). It never touches the database, so the dead handle cannot reach it.
+They skip because `:21` is `my $db = Test::Registry::DB->new->db;` — the `Test::Registry::DB` object is discarded on that line, the ephemeral server is reaped, and every subsequent query dies with *terminating connection due to administrator command*. That is why the first subtest survives: `:23-48` constructs a `Registry::DAO::PricingPlan` **in memory** and checks with `->can` that `target_tenant_id` and `offering_tenant_id` are absent while `plan_name`, `amount_cents`, `plan_scope` and `requirements` are present (`:37,40,41,44,45,46,47` — of which `:46` is the one line inside this subtest that the step below also cuts). It never touches the database, so the dead handle cannot reach it.
 
-**Be precise about what is kept and what is lost, because they are not the same guard.** Spec `:4100-4102` says *"that test is the guard for the relationship-agnostic-plans invariant, and the invariant was violated by a later migration while the guard sat dead."* A migration cannot violate a `->can` check on a Perl class — the assertion that a migration could break is `:87`, `is($result->rows, 0, 'Database should not have target_tenant_id or offering_tenant_id columns')`, and it is inside the range this step cuts. It is also one of the three that never runs. So this step keeps the only assertions that execute and cuts the one the spec sentence is actually about.
+**Be precise about what is kept and what is lost, because they are not the same guard.** Spec `:4102-4104` says *"that test is the guard for the relationship-agnostic-plans invariant, and the invariant was violated by a later migration while the guard sat dead."* A migration cannot violate a `->can` check on a Perl class — the assertion that a migration could break is `:87`, `is($result->rows, 0, 'Database should not have target_tenant_id or offering_tenant_id columns')`, and it is inside the range this step cuts. It is also one of the three that never runs. So this step keeps the only assertions that execute and cuts the one the spec sentence is actually about.
 
 That is not a coverage gap, and the reason belongs here rather than on the Coverage Gaps list: the migration-level invariant is guarded at the migration. `sql/verify/remove-pricing-plan-relationship-fields.sql:11-19` raises if either column exists, and `t/database/migration-verification.t:24-27` re-runs every verify script against the final schema, so a later migration re-adding either column fails the suite whether or not `:87` exists.
 
-Cut `:50-209` — the three `eval`-and-`pass` subtests — and with them the `use` lines and the `$db` handle that existed only to feed them. `:210` is `done_testing();` and stays. The result is the whole file:
+Cut `:50-209` — the three `eval`-and-`pass` subtests — and with them the `use` lines and the `$db` handle that existed only to feed them. `:210` is `done_testing();` and stays.
+
+**Cut `:46` as well, from inside the subtest that is being kept.** It is `ok($plan->can('plan_scope'), 'PricingPlan should have plan_scope field');`, and `plan_scope` is one of the three `pricing_plans` columns Leg 9b drops (spec `:3854-3855`). The field it checks is `Registry::DAO::PricingPlan.pm:13`, `field $plan_scope :param :reader = 'customer';` — which goes when the column does, at which point this assertion turns red and Leg 9b has to come back to a file that Deviation 3 promises it will not have to touch. The other six assertions are about fields nothing in this milestone removes. One line out now is cheaper than a cross-leg obligation, and it costs no coverage: `plan_scope`'s existence is not what this test is for.
+
+The result is the whole file:
 
 ```perl
 #!/usr/bin/env perl
@@ -890,16 +907,15 @@ subtest 'PricingPlan should not have relationship fields' => sub {
     # These fields SHOULD exist (core plan definition)
     ok($plan->can('plan_name'), 'PricingPlan should have plan_name field');
     ok($plan->can('amount_cents'), 'PricingPlan should have amount_cents field');
-    ok($plan->can('plan_scope'), 'PricingPlan should have plan_scope field');
     ok($plan->can('requirements'), 'PricingPlan should have requirements field');
 };
 
 done_testing();
 ```
 
-Dropping `use Test::Registry::DB;` takes the `Test::PostgreSQL` spin-up with it — verified, the reduced file runs in 3 wallclock seconds against no database and reports `1..7` inside its one subtest, `Result: PASS`.
+Dropping `use Test::Registry::DB;` takes the `Test::PostgreSQL` spin-up with it — verified, the reduced file runs in 3 wallclock seconds against no database, `Result: PASS`. That run was of the seven-assertion form, before the `plan_scope` line came out; the file above reports `1..6` inside its one subtest.
 
-The deleted `:16` was the tree's only `use Registry::DAO::PricingRelationship;`, so confirm that module still has callers:
+The deleted `:16` is one of nine live `use Registry::DAO::PricingRelationship;` lines in the tree, and the only one this task removes. That is not enough to strand the module — three of the nine are under `lib/` — but confirm it rather than assume it:
 
 Run: `grep -rn "PricingRelationship" lib/ t/`
 Expected: matches under `lib/` remain. If none do, stop and report — the module would then be dead too, which is out of this task's scope.
@@ -921,7 +937,7 @@ In `t/dao/family.t`, delete the whole `'Sibling discount eligibility'` subtest, 
 
 `:217` closes the preceding subtest and `:253` opens the next one, so `:219-251` plus the blank line at `:252` is a clean cut; take `:219-252`.
 
-**That cut breaks the next subtest, and the grep gate in Step 6 will not tell you.** Those two `Enrollment->create` calls are the only enrollments in the whole file for any of `$parent1`'s family members. `'Family member relations'` — the subtest immediately below, at `:253` before the cut — calls `$child->enrollments($db)` on `$children->[0]`, which is `Registry::DAO::Enrollment->find($db, { family_member_id => $id })` (`lib/Registry/DAO/FamilyMember.pm:108-110`). `Registry::DAO::Object::find` returns `wantarray ? $c->to_array->@* : $c->first` (`lib/Registry/DAO/Object.pm:18`), and `$c->first` on no rows is `undef`. Verified by running the cut: `not ok 2 - Can retrieve enrollments` and `not ok 3 - 'Enrollments is array' isa 'ARRAY'`, `Failed test 'Family member relations'`.
+**That cut breaks the next subtest, and the grep gate in Step 6 will not tell you.** Those two `Enrollment->create` calls are the only enrollments created for any of `$parent1`'s family members *before* `'Family member relations'` runs. The file has two more at `:276` and `:306`, but both are in `'Flexible enrollment architecture'` (`:267`), which runs afterwards and cannot help the subtest above it. `'Family member relations'` — the subtest immediately below, at `:253` before the cut — calls `$child->enrollments($db)` on `$children->[0]`, which is `Registry::DAO::Enrollment->find($db, { family_member_id => $id })` (`lib/Registry/DAO/FamilyMember.pm:108-110`). `Registry::DAO::Object::find` returns `wantarray ? $c->to_array->@* : $c->first` (`lib/Registry/DAO/Object.pm:18`), and `$c->first` on no rows is `undef`. Verified by running the cut: `not ok 2 - Can retrieve enrollments` and `not ok 3 - 'Enrollments is array' isa 'ARRAY'`, `Failed test 'Family member relations'`.
 
 So the surviving subtest has to seed its own enrollment. In `'Family member relations'`, insert this between the `is($family->id, ...)` assertion and the `my $enrollments = ...` line:
 
@@ -1086,15 +1102,15 @@ grep -rn "early_bird_\|family_discount_\|min_children\|volume_discount_enabled\|
 
 **`schemas/` is in the directory list on purpose**, and so are `discount_rules`, `bulk_discount_` and `sibling_discount` in the pattern. Without `schemas/` the gate cannot see the outcome definition Step 5b edits, and `bulk_discount_threshold` / `bulk_discount_percentage` match none of the other alternations — so a gate scoped to the nine form keys would report all-clear over a live schema still declaring three discount fields. `sibling_discount` is in for the opposite reason: it has a survivor, and the gate should show it rather than leave the reader wondering whether it was missed.
 
-**Run this gate only after Task 3 has landed.** `lib/Registry/PriceOps/PricingPlan.pm:100,112,114,130` match the pattern and are not survivors — Task 3 Step 2 deletes that file. Running the gate before Task 3 produces four matches that are not on the table below and the check reads as a miss.
+**Run this gate only after Task 3 has landed.** Six lines match the pattern and are not survivors: `lib/Registry/PriceOps/PricingPlan.pm:100,112,114,130`, which Task 3 Step 2 deletes with the file, and `t/dao/pricing-plan-amount-cents.t:147,155`, which the same step cuts with the `:146-167` subtest. Running the gate before Task 3 produces six matches that are not on the table below and the check reads as a miss.
 
 Expected: **matches remain, and every one must be on this list.** The nine keys this task removes are the ones the orphaned *form* wrote. `early_bird_cutoff_date` and `min_children` are also named by two surviving `PricingPlan` methods that key on `plan_type`, not on the form:
 
 | Survivor | Why it stays |
 |---|---|
 | `lib/Registry/DAO/PricingPlan.pm:154,155,170,172` | `requirements_met`, which **is** live: `calculate_price` calls it at `:138`. Its two `plan_type` branches (`'early_bird'` at `:154`, `'family'` at `:170`) read `early_bird_cutoff_date` and `min_children` off `requirements`. Reached through `plan_type`, which the enhanced-pricing-model migration backfills, not through the deleted form. Out of scope for Leg 1. |
-| `lib/Registry/DAO/PricingPlan.pm:181,183,186` | `is_early_bird_available`. **This method has zero callers** — `grep -rn "is_early_bird_available" lib/ t/ templates/ workflows/ schemas/` returns exactly one line, its own declaration at `:181`. It is dead, and it stays dead in Leg 1 anyway: the spec assigns the early-bird surface to a later leg (spec `:2699` already names the epoch-vs-string comparison bug inside `:181-193`), and deleting a public method on a live DAO is not a safe deletion in the sense this task means. It is on the issue backlog. `:181` shows up in the grep only because `early_bird_` matches inside the method name. |
-| `t/dao/pricing-plans.t:69,76,86,92,139,155,172,198,206` | tests both methods — including the dead one, which is why deleting it is a later leg's job and not a one-line cut. |
+| `lib/Registry/DAO/PricingPlan.pm:181,183,186` | `is_early_bird_available`. **This method has zero callers and zero tests** — `grep -rn "is_early_bird_available" lib/ t/ templates/ workflows/ schemas/` returns exactly one line, its own declaration at `:181`. It is dead, and it stays dead in Leg 1 anyway: the spec assigns the early-bird surface to a later leg, and deleting a public method on a live DAO is not a safe deletion in the sense this task means. Note what the spec actually says about it — `:2698-2700` singles this method out as the reader that "parses the string to an epoch and **gets it right**"; the epoch-vs-string bug it is being contrasted against is in `requirements_met`, the row above. Removal is on the issue backlog and no leg currently owns it. `:181` shows up in the grep only because `early_bird_` matches inside the method name. |
+| `t/dao/pricing-plans.t:69,76,86,92,139,155,172,198,206` | fixtures and assertions for `requirements_met`, reached through `calculate_price` (`:159,163,175,178`). It never names `is_early_bird_available` — that method has no test at all, which is a fact for whichever leg removes it, not a reason to keep it here. |
 | `t/dao/tenant-summer-camp.t:172,173,183,184` | an **inert** fixture, not a live path. `:168` of that file is `plan_type => 'standard'`, so neither `requirements_met` branch can fire and `:172`'s `early_bird_cutoff_date` is never read. `:173` writes `sibling_discount => 15.00` and `:183-184` reads it back. After Task 3 deletes `PriceOps/PricingPlan.pm:112` nothing in production reads that key either — but the assertion is not thereby worthless: it round-trips a `requirements` JSONB value through create-and-reload, which is live behaviour. Leave the file alone. Filing the inert `early_bird_cutoff_date` key as cleanup is enough. |
 
 Twenty matching lines, no more — seven, nine and four, exactly as the table enumerates them. Anything **not** on that list is a miss — in particular any match under `templates/`, under `workflows/`, under `schemas/`, or in `RequirementsRules.pm`, all of which must be gone.
@@ -1181,6 +1197,8 @@ Run: `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/
 Expected: FAIL. The POST still carries `setup_intent_id=seti_test_acquire_$$`, so dispatch reaches `handle_setup_completion`, which constructs `Registry::DAO::Subscription` and dies with `STRIPE_SECRET_KEY not set`.
 
 This is the red step: it demonstrates that the `seti_test` branch, not the no-keys branch, is what those tests exercise today.
+
+**Steps 3, 4 and 5 all cut `TenantPayment.pm`, and every range in them is a line number in the file as it stands now. Apply them bottom-up.** Step 3 removes 8 lines and Step 4 a further 14, so running them in written order leaves Step 4 stale by 8 and Step 5 stale by 22 — the same hazard Task 2 Step 5 calls out within a single step, here spread across three. The order to edit in is: Step 5 item 1 (`:373`), Step 5 item 2 (`:308`), Step 4 (`:294-307`), then Step 3 (`:40-47`). Both Step 5 edits replace one line with one line, so neither shifts anything below it, and the two deletions then come off in descending order. Read all three steps before touching the file.
 
 - [ ] **Step 3: Delete the bypass in `process`**
 
@@ -1980,7 +1998,7 @@ carton exec sqitch add retire-registry-plus-plan \
   --note 'Stop offering the seeded Registry Plus hybrid plan'
 ```
 
-`--note`, not `-n`, for the reason given under Task 6 Step 2: `carton` swallows `-n` as an abbreviation of its own `--noverbose`.
+`--note`, not `-n`, for the reason given under Task 6 Step 1: `carton` swallows `-n` as an abbreviation of its own `--noverbose`.
 
 - [ ] **Step 3: Write the deploy script**
 
@@ -2107,9 +2125,9 @@ Two things this verify has to survive, and neither is optional.
 
 **It must carry the same `plan_scope = 'tenant'` guard as the deploy.** A verify runs twice: once at its own point in the plan, and again against the finished schema, because `t/database/migration-verification.t:26` runs a bare `sqitch verify`. An unguarded predicate is therefore not merely imprecise — it is a standing assertion that no tenant anywhere has an active customer-scoped hybrid plan, forever. The first tenant to author one through `PricingPlanBasics.pm:76-92` turns CI red and there is no code change that fixes it short of editing this file.
 
-**It must not strand at Leg 9b.** Spec `:3852-3859` enumerates nine verify scripts that read `pricing_relationships`, `plan_scope` or `plan_type` and are all superseded when Leg 9b drops them; `:3861` puts the total at sixteen files. A verify written here that reads all three joins that list as a tenth. Guard the body and it goes vacuous rather than red when they are gone, which is what the ABOUTME already claims.
+**It must not strand at Leg 9b.** Spec `:3856-3861` enumerates nine verify scripts that read `pricing_relationships`, `plan_scope` or `plan_type` and are all superseded when Leg 9b drops them; `:3863` puts the total at sixteen files. A verify written here that reads all three joins that list as a tenth. Guard the body and it goes vacuous rather than red when they are gone, which is what the ABOUTME already claims.
 
-**The table guard alone is not enough.** Spec `:3852-3853` says Leg 9b drops *"`plan_scope`/`plan_type`/`pricing_configuration`, `pricing_relationships`, `billing_periods`…"* — three columns of `pricing_plans` as well as the table. `to_regclass('registry.pricing_relationships')` only covers the table. If Leg 9b drops the columns in a different change from the table, there is a plan point where `pricing_relationships` still exists and `pp.plan_type` does not, and this verify fails with `column pp.plan_type does not exist` at exactly the moment it is supposed to be going quiet. Leg 9b's internal change ordering is not this plan's to fix, so guard against both and stop caring what order it picks.
+**The table guard alone is not enough.** Spec `:3854-3855` says Leg 9b drops *"`plan_scope`/`plan_type`/`pricing_configuration`, `pricing_relationships`, `billing_periods`…"* — three columns of `pricing_plans` as well as the table. `to_regclass('registry.pricing_relationships')` only covers the table. If Leg 9b drops the columns in a different change from the table, there is a plan point where `pricing_relationships` still exists and `pp.plan_type` does not, and this verify fails with `column pp.plan_type does not exist` at exactly the moment it is supposed to be going quiet. Leg 9b's internal change ordering is not this plan's to fix, so guard against both and stop caring what order it picks.
 
 Overwrite `sql/verify/retire-registry-plus-plan.sql`:
 
@@ -2124,7 +2142,7 @@ BEGIN;
 DO $$
 BEGIN
     -- Leg 9b drops pricing_relationships AND pricing_plans.plan_type/plan_scope
-    -- (spec :3852-3853).  Every verify runs again against the final schema
+    -- (spec :3854-3855).  Every verify runs again against the final schema
     -- (t/database/migration-verification.t:26), so this one goes vacuous instead
     -- of erroring.  Check the columns as well as the table: if Leg 9b drops them
     -- in separate changes, there is a point where the table is still here and the
@@ -2446,20 +2464,24 @@ customer-scoped fixture is untouched."
 
 ## Task Dependency Order
 
-Strictly sequential. Each arrow is a real dependency, not a preference.
+Execute in numeric order. Each arrow is a real dependency, not a preference; where no arrow joins two tasks, the numbering between them is convention.
 
 ```
-1 (harness) → 2 (installment code) → 6 (installment tables) → 7 (plan retirement)
-                    └───────────→ 3 (Stripe client, PriceOps plan) → 4 (discount surface, #296)
+1 (harness) ─────────────────┐
+                             ↓
+2 (installment code) → 6 (installment tables) → 7 (plan retirement)
+        └───────────→ 3 (Stripe client, PriceOps plan) → 4 (discount surface, #296)
 
-                    5 (seti_test bypass) — independent of everything above
+5 (seti_test bypass) — independent of everything above
 ```
+
+There is deliberately no `1 → 2` arrow. Task 1 gates Task 6, the task that ships a migration — not Task 2, which touches no SQL. Task 2's own Interfaces block says it: *"Consumes: nothing from Task 1."*
 
 - Task 1 before Task 6: the migration must land under a harness that already exists and is already proven able to fail.
 - Task 2 before Task 6: code that reads a table is deleted before the table is dropped, so no commit leaves a tree that cannot run its own tests.
 - Task 6 before Task 7: Task 7's change is appended after Task 6's in `sql/sqitch.plan`, and Task 6's Step 15 closes the installment issues that Task 7's commit would otherwise be mistaken for closing.
 - Task 2 before Task 3: this one is real, not conventional. Task 3 Step 1's grep is the gate that says both modules are unreferenced, and until Task 2 lands they are both still referenced — `InstallmentPayment.pm:12,78,95,178` names `Registry::PriceOps::PricingPlan`, and `PriceOps/ScheduledPayment.pm:12,18` and `PriceOps/PaymentSchedule.pm:12,19` name `Registry::Client::Stripe`. Run Task 3 first and its own gate fails.
-- Task 3 before Task 4: also real. Task 4 Step 6's grep is the gate that says no discount key survives without both a writer and a reader, and `lib/Registry/PriceOps/PricingPlan.pm:100,130` match its pattern until Task 3 Step 2 deletes that file. Run Task 4 first and the gate reports two matches that are not on its table, which reads as a miss.
+- Task 3 before Task 4: also real. Task 4 Step 6's grep is the gate that says no discount key survives without both a writer and a reader, and six lines match its pattern until Task 3 Step 2 removes them — `lib/Registry/PriceOps/PricingPlan.pm:100,112,114,130` (that step deletes the file) and `t/dao/pricing-plan-amount-cents.t:147,155` (that step cuts the subtest holding them). Run Task 4 first and the gate reports six matches that are not on its table, which reads as a miss.
 - Task 5 touches files disjoint from every other task. Its position is convention, not necessity.
 
 ## Coverage Gaps This Leg Opens
