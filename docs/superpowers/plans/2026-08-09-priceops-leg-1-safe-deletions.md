@@ -46,7 +46,8 @@ Four places where this plan does something other than what the spec says. All fo
 Three stranded callers the spec's Leg 1 row does not name, found by grep:
 
 - **The `seti_test` test consumers.** `t/controller/tenant-create-session.t:66`, `t/user-journeys/alex/01-acquire-tenant.t:82-85,199-208,331-348`, `t/user-journeys/alex/03-platform-billing.t:77-78,164-172,214,216`. Exactly the shape the spec's own stranded-caller rule warns about.
-- **`templates/pricing-plan-creation/review-activate.html.ep:163-185`** reads the seven discount keys the orphaned form writes. The spec names the form and the step class but not this reader.
+- **`templates/pricing-plan-creation/review-activate.html.ep:163-186`** reads the seven discount keys the orphaned form writes. The spec names the form and the step class but not this reader.
+- **`schemas/requirements-and-rules.json:76-100`** is the step's outcome definition — `workflows/pricing-plan-creation.yaml:27` binds it by name — and it declares a `discount_rules` group with three more discount fields. The spec names neither it nor the fact that outcome definitions are a second, independently-served description of every form.
 - **`t/dao/pricing-plan-workflow.t:216-222,242`** posts the discount keys straight into `RequirementsRules->process` and asserts on what comes back. Deleting the step's discount blocks without touching this file leaves a failing assertion.
 
 ## File Structure
@@ -66,7 +67,7 @@ Three stranded callers the spec's Leg 1 row does not name, found by grep:
 
 **Deleted:** 5 library modules, 2 more library modules, 9 test files — all nine in Task 2 (`:351-366`). Tasks 3 and 4 delete no test file. `t/dao/pricing-plan-clean-architecture.t` is **truncated, not deleted**; it appears in the Modified list below and nowhere else.
 
-**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-clean-architecture.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `docs/operations/sacp-stripe-connect-onboarding.md` (one table row, Task 6 Step 10), `sql/revert/refund-amounts-cents.sql` (the bug Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
+**Modified:** `lib/Registry/Controller/Webhooks.pm`, `lib/Registry/DAO/Family.pm`, `lib/Registry/DAO/PricingPlan.pm` (comment only), `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm`, `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, two `templates/pricing-plan-creation/` templates, `schemas/requirements-and-rules.json`, `t/controller/payment-failures.t`, `t/dao/family.t`, `t/dao/pricing-plan-amount-cents.t`, `t/dao/pricing-plan-clean-architecture.t`, `t/dao/pricing-plan-workflow.t`, `t/dao/tenant-payment-schema-isolation.t`, `t/controller/tenant-create-session.t`, two `t/user-journeys/alex/` files, `t/stripe-live/service-version.t` (comment only — never executed), `t/database/migration-verification.t`, `docs/operations/sacp-stripe-connect-onboarding.md` (one table row, Task 6 Step 10), `sql/revert/refund-amounts-cents.sql` (the bug Task 1's harness finds), `sql/sqitch.plan`, four `sql/verify/` scripts, `sql/test-schema.sql`.
 
 Note the one exception to "never edit a deployed change": `sql/revert/refund-amounts-cents.sql`. The Global Constraint forbids editing a deployed change's **deploy** script, and it stands. Revert scripts are outside `script_hash` (`App::Sqitch::Plan::Change.pm:164-169`), so editing one changes nothing about what is already deployed — see Task 1 Step 3.
 
@@ -532,7 +533,7 @@ its refund subtest; the other three needed a payment schedule to exist."
 
 **Files:**
 - Delete: `lib/Registry/Client/Stripe.pm`, `lib/Registry/PriceOps/PricingPlan.pm`
-- Modify: `t/dao/pricing-plan-amount-cents.t:11,146-166`
+- Modify: `t/dao/pricing-plan-amount-cents.t:11,146-167`
 - Modify: `t/stripe-live/service-version.t:16-18` (comment only — edit it, never run it)
 - Modify: `lib/Registry/DAO/PricingPlan.pm:196-198`
 
@@ -574,7 +575,9 @@ Delete the import at `:11`:
 use Registry::PriceOps::PricingPlan;
 ```
 
-Delete the whole subtest at `:146-166`, `'a dollar-denominated discount is scaled before it meets a cents price'`. It is the only user of `my $ops = Registry::PriceOps::PricingPlan->new;` (`:158`, used at `:160,162,164`).
+Delete the whole subtest at `:146-166`, `'a dollar-denominated discount is scaled before it meets a cents price'`, **and the blank line at `:167` with it — cut `:146-167`.** It is the only user of `my $ops = Registry::PriceOps::PricingPlan->new;` (`:158`, used at `:160,162,164`).
+
+The blank line is not a nicety. `:145` and `:167` are both blank — they are the separators on either side of the subtest — so cutting only `:146-166` leaves two consecutive blanks where one belongs. This was measured, not reasoned: a worker who followed the earlier `:146-166` range produced exactly that artifact.
 
 Keep the final subtest at `:168-182` — it calls `$plan->calculate_price`, which lives on the surviving DAO.
 
@@ -639,18 +642,19 @@ Stripe client in the tree, which is where later legs add methods."
 
 **Files:**
 - Modify: `t/dao/pricing-plan-clean-architecture.t` (cut `:50-209`; **do not delete the file** — Step 1)
-- Modify: `lib/Registry/DAO/Family.pm:67-82` (delete `sibling_discount_eligible`)
+- Modify: `lib/Registry/DAO/Family.pm:66-82` (delete `sibling_discount_eligible`)
 - Modify: `t/dao/family.t:219-252`
 - Modify: `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm:2,11,45-94,163-167`
 - Modify: `t/dao/pricing-plan-workflow.t:216-222,242,292-294,411`
-- Modify: `templates/pricing-plan-creation/requirements-rules.html.ep:77-171,344-355`
-- Modify: `templates/pricing-plan-creation/review-activate.html.ep:163-185`
+- Modify: `templates/pricing-plan-creation/requirements-rules.html.ep:9,77-171,344-355`
+- Modify: `templates/pricing-plan-creation/review-activate.html.ep:163-186`
+- Modify: `schemas/requirements-and-rules.json:75-100` (Step 5b)
 
 **Interfaces:**
 - Consumes: **Task 3 must have landed.** Step 6's grep is this task's gate, and `lib/Registry/PriceOps/PricingPlan.pm:100,130` — both `my $cutoff_date = $requirements->{early_bird_cutoff_date};` — match its pattern until Task 3 Step 2 deletes that file. Run Task 4 first and the gate reports two matches that are not on its table, which reads as a miss.
 - Produces: the `requirements-rules` workflow step keeps every non-discount field it has today. Leg 5's authoring rewrite starts from that reduced form.
 
-**Why these three go together:** all three are code that produces or asserts values nothing reads. `sibling_discount_eligible` has only test callers. The discount form writes `early_bird_enabled`, `early_bird_discount`, `early_bird_cutoff_date`, `family_discount_enabled`, `family_discount_type`, `family_discount_amount`, `min_children`, `volume_discount_enabled`, `volume_tiers` — and the calculators read different keys entirely (`percentage_discount` at `lib/Registry/DAO/PricingPlan.pm:143`, `sibling_discount` at the now-deleted `PriceOps/PricingPlan.pm:112`). `volume_discount_enabled` and `volume_tiers` have zero readers anywhere. `pricing-plan-clean-architecture.t` is issue #296: the file has four subtests (`:24,50,90,145`), and three of them wrap their work in an `eval` and fall through to a bare `pass(...)`. There are four such `pass` sites — `:61,83,129,198` — because the second subtest has two, and returns at the first.
+**Why these three go together:** all three are code that produces or asserts values nothing reads. `sibling_discount_eligible` has only test callers. The discount form writes `early_bird_enabled`, `early_bird_discount`, `early_bird_cutoff_date`, `family_discount_enabled`, `family_discount_type`, `family_discount_amount`, `min_children`, `volume_discount_enabled`, `volume_tiers` — and the calculators read different keys entirely (`percentage_discount` at `lib/Registry/DAO/PricingPlan.pm:143`, `sibling_discount` at the now-deleted `PriceOps/PricingPlan.pm:112`). `volume_discount_enabled` and `volume_tiers` have zero readers anywhere. The step's **outcome definition** describes the same form a second time and names three further discount fields — `early_bird_discount`, `bulk_discount_threshold`, `bulk_discount_percentage` — that not even the form ever wrote; Step 5b takes those. `pricing-plan-clean-architecture.t` is issue #296: the file has four subtests (`:24,50,90,145`), and three of them wrap their work in an `eval` and fall through to a bare `pass(...)`. There are four such `pass` sites — `:61,83,129,198` — because the second subtest has two, and returns at the first.
 
 - [ ] **Step 1: Cut the three silent-pass subtests, keep the one that runs**
 
@@ -726,7 +730,7 @@ Expected: matches under `lib/` remain. If none do, stop and report — the modul
 
 - [ ] **Step 2: Delete `sibling_discount_eligible` and its two test callers**
 
-In `lib/Registry/DAO/Family.pm`, delete `:67-82` — the sub and the comment that introduces it:
+In `lib/Registry/DAO/Family.pm`, delete `:66-82` — the separator line, the sub, and the comment that introduces it:
 
 ```perl
     # Get sibling discount eligibility
@@ -734,6 +738,8 @@ In `lib/Registry/DAO/Family.pm`, delete `:67-82` — the sub and the comment tha
 ```
 
 `:67` is the comment, `:68` the `sub` line, `:82` its closing brace. Take the comment too: it describes only this sub, and `:83` is the class's own closing `}`, so leaving the comment behind strands it against the end of the file.
+
+Take `:66` as well, and note what it is: **not an empty line but four spaces.** It is the separator between `has_multiple_children` (which ends at `:65`) and the sub being deleted. Cut `:67-82` alone and that whitespace-only line is left dangling directly against the class's closing `}` — a trailing-whitespace artifact where nothing separates any more. This was measured on a worker who followed the earlier `:67-82` range. The result of `:66-82` is `    }` at what was `:65` followed immediately by `}`, which is how a class ends when its last member is its last member.
 
 In `t/dao/family.t`, delete the whole `'Sibling discount eligibility'` subtest, `:219-251`. The two `sibling_discount_eligible` calls at `:237` and `:249` are the subtest's **only** assertions — deleting just those two lines leaves a subtest whose body creates a session and two enrollments and then asserts nothing, which `Test::More` reports as `No tests run for subtest`, a failure. The whole block goes, including its setup and the two `Registry::DAO::Enrollment->create` calls that exist to make the second assertion true.
 
@@ -813,11 +819,23 @@ In `templates/pricing-plan-creation/requirements-rules.html.ep`, delete two rang
 
 Deleting only the inner field groups (`:82-98`, `:121-162`) is wrong: it strands the two section `<div class="border-b pb-6">` wrappers, their `<h3>` headings, and the `onclick="toggleEarlyBird()"` / `onclick="toggleFamilyDiscount()"` checkboxes at `:86` and `:125`, which would then call functions that no longer exist.
 
+3. `:9` — the standfirst still promises what the page no longer offers:
+   ```
+           <p class="text-gray-600 mb-6">Set eligibility requirements, discounts, and renewal policies.</p>
+   ```
+   Replace with:
+   ```
+           <p class="text-gray-600 mb-6">Set eligibility requirements, trial terms, and renewal policies.</p>
+   ```
+   This is user-facing copy, not a comment: after the `:77-171` cut the form has no discount field on it at all, and the sentence tells the admin to look for one. Same correction as the `RequirementsRules.pm:2` ABOUTME in Step 3, one layer up.
+
 - [ ] **Step 5: Delete the stranded reader in the review template**
 
-In `templates/pricing-plan-creation/review-activate.html.ep`, delete `:163-185` — the whole `<% if ($summary->{requirements}) { %>` block that displays `$reqs->{early_bird_enabled}`, `early_bird_discount`, `early_bird_cutoff_date`, `family_discount_enabled`, `family_discount_amount`, `family_discount_type`, and `min_children`. Once the form stops writing those keys, this block is a reader for data that no longer exists.
+In `templates/pricing-plan-creation/review-activate.html.ep`, delete `:163-186` — the whole `<% if ($summary->{requirements}) { %>` block that displays `$reqs->{early_bird_enabled}`, `early_bird_discount`, `early_bird_cutoff_date`, `family_discount_enabled`, `family_discount_amount`, `family_discount_type`, and `min_children`, plus the blank line that followed it. Once the form stops writing those keys, this block is a reader for data that no longer exists.
 
 The whole block, not just the two `<% if %>` bodies: `:163` opens the guard, `:164` binds `my $reqs`, `:165` opens the `<dl>`, `:184` closes it and `:185` closes the guard. Deleting only `:166-183` leaves an empty `<dl>` inside a guard whose only remaining statement is an unused `my $reqs`. `:187` starts the `$summary->{rules}` block, which stays.
+
+Take `:186` too. `:162` and `:186` are both blank — the separators either side of the block — so a `:163-185` cut leaves two consecutive blanks between the `<h3>` at `:161` and the `$summary->{rules}` guard. Measured on a worker who followed the earlier range, not inferred.
 
 - [ ] **Step 5a: Fix the stranded caller in `t/dao/pricing-plan-workflow.t`**
 
@@ -851,25 +869,59 @@ This file drives `RequirementsRules->process` directly and asserts on what it st
    ```
    `:215` (`location_restrictions`) and `:223` (`auto_renew`) stay; the hash remains well-formed.
 
+- [ ] **Step 5b: Delete the discount group from the outcome definition**
+
+The form template is not the only description of this form. `schemas/requirements-and-rules.json` is the step's **outcome definition**, and it is bound to the very step this task is editing — `workflows/pricing-plan-creation.yaml:27` reads `outcome-definition: Requirements and Rules`, and `schemas/requirements-and-rules.json:2` reads `"name": "Requirements and Rules"`. Leave it alone and the form's authoritative field list still declares three discount fields after every other trace of them is gone.
+
+That list is live, not documentation. `lib/Registry/Command/schema.pm:73-88` globs `schemas/*.json` and calls `Registry::DAO::OutcomeDefinition::import_from_file` on each; that sub **updates** an existing row by name (`lib/Registry/DAO/OutcomeDefinition.pm:67-83`) rather than skipping it, so an edited file does reach the database on the next `registry schema load`. The stored schema is then served by `GET /outcome/definition/:id` (`lib/Registry.pm:740`) and consumed by `public/js/form-builder.js`, which renders fields from it.
+
+Delete `:76-100` — the whole `discount_rules` group object:
+
+```json
+    {
+      "id": "discount_rules",
+      "type": "object",
+      "label": "Discount Rules",
+      "required": false,
+      "properties": {
+        "early_bird_discount": { ... },
+        "bulk_discount_threshold": { ... },
+        "bulk_discount_percentage": { ... }
+      }
+    }
+```
+
+**Then fix `:75`.** `discount_rules` is the last element of the `fields` array (`:101` is `  ]`), so the group that precedes it, which closes at `:75` with `    },`, becomes the last element and its trailing comma becomes a syntax error. Change `:75` from `    },` to `    }`. Deleting `:76-100` on its own leaves the file invalid JSON and `import_from_file` swallows the failure into a `carp` (`:92-95`), returning undef — the import prints `Failed to import schema from 'requirements-and-rules.json'` and keeps going, so a broken file does not fail the command.
+
+Note the field names: `bulk_discount_threshold` and `bulk_discount_percentage` are not among the nine keys the form wrote, and `early_bird_discount` here is a **flat** field inside `discount_rules`, not the `requirements->{early_bird_discount}` the step class stored. This group is a third, independent statement of the same dead idea. Nothing reads any of the three — `grep -rn "discount_rules\|bulk_discount" lib/ t/ templates/ workflows/` returns nothing.
+
+Run: `perl -MJSON::PP -e 'JSON::PP->new->decode(do { local (@ARGV, $/) = "schemas/requirements-and-rules.json"; <> }); print "valid JSON\n"'`
+Expected: `valid JSON`
+
+No `registry schema load`. That command takes its DAO from `$self->app->dao` and writes the **dev** database, which this plan's Global Constraints forbid. The file is the source of truth; the row is refreshed by whoever next runs the importer against a database they own.
+
 - [ ] **Step 6: Confirm no discount key survives without both a writer and a reader**
 
 Run:
 
 ```bash
-grep -rn "early_bird_\|family_discount_\|min_children\|volume_discount_enabled\|volume_tiers\|discount_types" lib/ t/ templates/ workflows/
+grep -rn "early_bird_\|family_discount_\|min_children\|volume_discount_enabled\|volume_tiers\|discount_types\|discount_rules\|bulk_discount_\|sibling_discount" lib/ t/ templates/ workflows/ schemas/
 ```
 
-**Run this gate only after Task 3 has landed.** `lib/Registry/PriceOps/PricingPlan.pm:100,130` match the pattern and are not survivors — Task 3 Step 2 deletes that file. Running the gate before Task 3 produces two matches that are not on the table below and the check reads as a miss.
+**`schemas/` is in the directory list on purpose**, and so are `discount_rules`, `bulk_discount_` and `sibling_discount` in the pattern. Without `schemas/` the gate cannot see the outcome definition Step 5b edits, and `bulk_discount_threshold` / `bulk_discount_percentage` match none of the other alternations — so a gate scoped to the nine form keys would report all-clear over a live schema still declaring three discount fields. `sibling_discount` is in for the opposite reason: it has a survivor, and the gate should show it rather than leave the reader wondering whether it was missed.
 
-Expected: **matches remain, and every one must be on this list.** The nine keys this task removes are the ones the orphaned *form* wrote. `early_bird_cutoff_date` and `min_children` are also read by two surviving `PricingPlan` methods that key on `plan_type`, not on the form:
+**Run this gate only after Task 3 has landed.** `lib/Registry/PriceOps/PricingPlan.pm:100,112,114,130` match the pattern and are not survivors — Task 3 Step 2 deletes that file. Running the gate before Task 3 produces four matches that are not on the table below and the check reads as a miss.
+
+Expected: **matches remain, and every one must be on this list.** The nine keys this task removes are the ones the orphaned *form* wrote. `early_bird_cutoff_date` and `min_children` are also named by two surviving `PricingPlan` methods that key on `plan_type`, not on the form:
 
 | Survivor | Why it stays |
 |---|---|
-| `lib/Registry/DAO/PricingPlan.pm:154,155,170,172,181,183,186` | `requirements_met` and `is_early_bird_available`. Both are live readers reached through `plan_type eq 'early_bird'` / `'family'`, which the enhanced-pricing-model migration backfills. Out of scope for Leg 1. `:181` is the `method is_early_bird_available` declaration itself — the pattern `early_bird_` matches inside the method name, so the line shows up in the grep. |
-| `t/dao/pricing-plans.t:69,76,86,92,139,155,172,198,206` | tests those two methods. |
-| `t/dao/tenant-summer-camp.t:172` | a fixture for the same `plan_type` path. |
+| `lib/Registry/DAO/PricingPlan.pm:154,155,170,172` | `requirements_met`, which **is** live: `calculate_price` calls it at `:138`. Its two `plan_type` branches (`'early_bird'` at `:154`, `'family'` at `:170`) read `early_bird_cutoff_date` and `min_children` off `requirements`. Reached through `plan_type`, which the enhanced-pricing-model migration backfills, not through the deleted form. Out of scope for Leg 1. |
+| `lib/Registry/DAO/PricingPlan.pm:181,183,186` | `is_early_bird_available`. **This method has zero callers** — `grep -rn "is_early_bird_available" lib/ t/ templates/ workflows/ schemas/` returns exactly one line, its own declaration at `:181`. It is dead, and it stays dead in Leg 1 anyway: the spec assigns the early-bird surface to a later leg (spec `:2699` already names the epoch-vs-string comparison bug inside `:181-193`), and deleting a public method on a live DAO is not a safe deletion in the sense this task means. It is on the issue backlog. `:181` shows up in the grep only because `early_bird_` matches inside the method name. |
+| `t/dao/pricing-plans.t:69,76,86,92,139,155,172,198,206` | tests both methods — including the dead one, which is why deleting it is a later leg's job and not a one-line cut. |
+| `t/dao/tenant-summer-camp.t:172,173,183,184` | an **inert** fixture, not a live path. `:168` of that file is `plan_type => 'standard'`, so neither `requirements_met` branch can fire and `:172`'s `early_bird_cutoff_date` is never read. `:173` writes `sibling_discount => 15.00` and `:183-184` reads it back. After Task 3 deletes `PriceOps/PricingPlan.pm:112` nothing in production reads that key either — but the assertion is not thereby worthless: it round-trips a `requirements` JSONB value through create-and-reload, which is live behaviour. Leave the file alone. Filing the inert `early_bird_cutoff_date` key as cleanup is enough. |
 
-Seventeen matching lines, no more — seven, nine and one, exactly as the table enumerates them. Anything **not** on that list is a miss — in particular any match under `templates/`, under `workflows/`, or in `RequirementsRules.pm`, all of which must be gone.
+Twenty matching lines, no more — seven, nine and four, exactly as the table enumerates them. Anything **not** on that list is a miss — in particular any match under `templates/`, under `workflows/`, under `schemas/`, or in `RequirementsRules.pm`, all of which must be gone.
 
 `t/e2e/admin-program-management.t` does **not** appear, despite writing `pricing => { standard => 180.00, early_bird => 150.00 }` at `:138,148`. Its key is `early_bird`, with no trailing underscore, so the pattern `early_bird_` never matches it. It is named here only so nobody adds it to the table on sight of the file.
 
@@ -890,12 +942,13 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A lib/Registry t/dao templates/pricing-plan-creation
+git add -A lib/Registry t/dao templates/pricing-plan-creation schemas/requirements-and-rules.json
 git commit -m "Delete the orphaned discount surface and the test that passed by skipping (#296)
 
 The requirements-rules form wrote nine discount keys. The calculators read
 different keys; volume_discount_enabled and volume_tiers had no reader at all.
-The review template displayed the orphaned keys, so it goes with the form.
+The review template displayed the orphaned keys, so it goes with the form, and
+the step's outcome definition declared three more that nothing ever wrote.
 Family::sibling_discount_eligible had only test callers.
 
 pricing-plan-clean-architecture.t called pass() four times with an explanation
@@ -907,14 +960,16 @@ instead of asserting anything."
 ### Task 5: Delete the `seti_test` signup bypass
 
 **Files:**
-- Modify: `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm:40-47,294-307,373`
+- Modify: `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm:40-47,294-307,308,373`
 - Modify: `t/controller/tenant-create-session.t:65-67`
 - Modify: `t/user-journeys/alex/01-acquire-tenant.t:5,82-85,199-208,331-348`
 - Modify: `t/user-journeys/alex/03-platform-billing.t:5,77-78,164-172,214,216`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `TenantPayment::process` keeps four terminal outcomes after the cut, and later legs need all four by name: a real `setup_intent_id` → `handle_setup_completion` (`:49-51`); `collect_payment_method` with **no** Stripe keys configured → the direct-provision branch returning `{ next_step => 'complete', tenant_created => 1, ... }` (`:58-71`); `collect_payment_method` with keys present → `return $self->create_setup_intent($db, $run, $form_data)` (`:73`) — **this is the live production path to Stripe and the only one that reaches it**; and the bare page load (`:77-80`). Only the `seti_test` arm goes. No branch keys on the value of a client-supplied string.
+- Produces: `TenantPayment::process` keeps four terminal outcomes after the cut, and later legs need all four by name: a real `setup_intent_id` → `handle_setup_completion` (`:41-43`); `collect_payment_method` with **no** Stripe keys configured → the direct-provision branch returning `{ next_step => 'complete', tenant_created => 1, ... }` (`:50-63`, the return at `:62`); `collect_payment_method` with keys present → `return $self->create_setup_intent($db, $run, $form_data);` (`:65`) — **this is the live production path to Stripe and the only one that reaches it**; and the bare page load (`:68-72`). Only the `seti_test` arm goes. No branch keys on the value of a client-supplied string.
+
+  Those four ranges are **post-edit** line numbers, and they were measured on a worktree that had actually executed Steps 3 and 4 — not computed by subtracting deleted lines from the pre-edit file. An earlier draft of this block did compute them, and all four were wrong. If you are reading this before running the steps, the pre-edit locations are `:43` and `:295` (the two `seti_test` branches) and `TenantPayment.pm:371-373` (the `_provision_tenant` comment).
 
 **The defect:** `TenantPayment.pm:43` and `:295` both branch on `$form_data->{setup_intent_id} =~ /^seti_test/` — a client-supplied string with no environment guard. In production, where both Stripe keys are set, a POST carrying `setup_intent_id=seti_test_anything` provisions a tenant with a fake subscription. The no-keys branch immediately below produces a byte-identical result hash and **is** environment-guarded, so it can never fire in production.
 
@@ -969,7 +1024,7 @@ In `lib/Registry/DAO/WorkflowSteps/TenantPayment.pm`, delete `:40-47`. The block
 
 - [ ] **Step 4: Delete the bypass in `handle_setup_completion`**
 
-Delete `:294-307` — the block below is `:294-306`, plus the blank at `:307`, on the same reasoning: `:293` is already blank and `:308` is `# For non-test modes, validate the setup_intent_id matches what was stored`.
+Delete `:294-307` — the block below is `:294-306`, plus the blank at `:307`, on the same reasoning: `:293` is already blank and `:308` is `# For non-test modes, validate the setup_intent_id matches what was stored`. Stop at `:308`; **Step 5 rewrites that comment**, which this deletion makes false.
 
 ```perl
         # Test mode: setup_intent_id starts with 'seti_test' — skip Stripe validation.
@@ -987,19 +1042,35 @@ Delete `:294-307` — the block below is `:294-306`, plus the blank at `:307`, o
         }
 ```
 
-- [ ] **Step 5: Correct the `_provision_tenant` comment**
+- [ ] **Step 5: Correct the two comments the deletion makes false**
 
-`:373` currently reads:
+Two comments in this file describe a test mode that Steps 3 and 4 remove. Both go, **bottom-up**:
 
-```perl
-    # scenarios (no-Stripe mock, seti_test mock, real-Stripe).
-```
+1. `:373` currently reads:
 
-Replace with:
+   ```perl
+       # scenarios (no-Stripe mock, seti_test mock, real-Stripe).
+   ```
 
-```perl
-    # scenarios (no-Stripe mock, real-Stripe).
-```
+   Replace with:
+
+   ```perl
+       # scenarios (no-Stripe mock, real-Stripe).
+   ```
+
+2. `:308` — the line Step 4 deliberately stops just short of — currently reads:
+
+   ```perl
+           # For non-test modes, validate the setup_intent_id matches what was stored
+   ```
+
+   Replace with:
+
+   ```perl
+           # Validate the setup_intent_id matches what was stored
+   ```
+
+   The qualifier is the whole point: after Step 4 this file has no test mode, so "for non-test modes" describes a distinction that no longer exists and implies a branch a reader will go looking for. `grep -n "test mode\|test_mode\|non-test" lib/Registry/DAO/WorkflowSteps/TenantPayment.pm` should return nothing once both edits land. Do not delete the comment outright — the validation it introduces is still real and still needs saying.
 
 - [ ] **Step 6: Stop the alex journeys posting the deleted key**
 
@@ -2223,7 +2294,7 @@ Named here so they are found by reading, not by an incident. Both are Task 6's.
 
 ## Self-Review
 
-**Spec coverage.** Every item in the spec's Leg 1 row (`:2964`) maps to a task: installments → 2; `Client::Stripe` and `PriceOps/PricingPlan.pm` → 3; misfiled tests → 2 (spec `:2815` names them as `t/controller/admin-installment-payment-dashboard.t`, "both DAO CRUD misfiled under names" — installment tests, so they go with the installment deletion, not with the discount surface); `Family::sibling_discount_eligible`, #296, discount form → 4; `seti_test` signup bypass → 5; the Registry Plus retirement → 7; the sqitch change dropping both tables with its verify and revert, the four stranded verify scripts, and `t/dao/tenant-payment-schema-isolation.t` → 6; the revert-test harness → 1. Three items the spec's row does not name are covered anyway: the three `seti_test` test consumers (Task 5), `review-activate.html.ep:163-185` (Task 4), and `t/dao/pricing-plan-workflow.t:216-222,242` (Task 4) — where `:216-222` are seven discount keys posted *into* `RequirementsRules->process`, not assertions, and `:242` is the single assertion that reads one back (`early_bird_discount`). The word `sibling` does not appear in that file at all.
+**Spec coverage.** Every item in the spec's Leg 1 row (`:2964`) maps to a task: installments → 2; `Client::Stripe` and `PriceOps/PricingPlan.pm` → 3; misfiled tests → 2 (spec `:2815` names them as `t/controller/admin-installment-payment-dashboard.t`, "both DAO CRUD misfiled under names" — installment tests, so they go with the installment deletion, not with the discount surface); `Family::sibling_discount_eligible`, #296, discount form → 4; `seti_test` signup bypass → 5; the Registry Plus retirement → 7; the sqitch change dropping both tables with its verify and revert, the four stranded verify scripts, and `t/dao/tenant-payment-schema-isolation.t` → 6; the revert-test harness → 1. Four items the spec's row does not name are covered anyway: the three `seti_test` test consumers (Task 5), `review-activate.html.ep:163-186` (Task 4), `schemas/requirements-and-rules.json:76-100` (Task 4 Step 5b — the outcome definition bound to the edited step, which the spec never considers as a surface), and `t/dao/pricing-plan-workflow.t:216-222,242` (Task 4) — where `:216-222` are seven discount keys posted *into* `RequirementsRules->process`, not assertions, and `:242` is the single assertion that reads one back (`early_bird_discount`). The word `sibling` does not appear in that file at all.
 
 **Placeholders.** None. Every code step carries the actual Perl or SQL. Every line range was read before being cited.
 
