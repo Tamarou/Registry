@@ -8,6 +8,8 @@
 
 **Tech Stack:** Perl 5.42, Object::Pad, Mojolicious, Mojo::Pg, Minion, PostgreSQL, Sqitch, `Test::PostgreSQL`, `prove`.
 
+**Editing rule, from round 10 of review onward:** only defects that change what an executing worker *does* are corrected here — line numbers and ranges, step ordering, code, SQL, commands, gate patterns and their match counts, `git add` file lists, and safety constraints. Inaccuracies in explanatory prose are recorded in `2026-08-09-priceops-leg-1-deferred-findings.md` and deliberately left in place. Nine rounds of review established that rewriting argument introduces new defects at roughly the rate it removes them; the executable content is what this document is for.
+
 ## Global Constraints
 
 Copied from the spec. Every task's requirements implicitly include this section.
