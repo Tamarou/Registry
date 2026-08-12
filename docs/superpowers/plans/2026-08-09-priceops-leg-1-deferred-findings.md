@@ -72,17 +72,29 @@ The reason is measured. Across review rounds 6-9 the plan accumulated 78 verifie
 **Actually:** harmless — no file under `t/database/` loads a Stripe-key-reading module.
 **Why deferred:** the command works as written. Recorded so nobody "fixes" it into inconsistency later.
 
-### Task 6 Step 10 — "If a fourth verify script appears"
-**Found:** round 10, lens A
-**Says:** a fourth verify script appearing signals incomplete supersession.
-**Actually:** the expected list holds two `sql/verify/` entries, so the signal is a *third*.
-**Why deferred:** the enumerated list above the sentence is correct and is what the worker checks — and round 10 added an explicit count to that list.
-
 ### Coverage Gaps item 3 — "nothing enters the method at all"
 **Found:** round 10, lens D
 **Says:** after this leg nothing enters `handle_setup_completion`.
 **Actually:** true of the test suite, not the code — the `:50` arm survives and a real `setup_intent_id` reaches it. The item's own heading ("loses its last test entry") is the accurate version.
 **Why deferred:** it is a coverage note, not an instruction.
+
+### Task 6 Step 11 — "a failed dump leaves zero bytes"
+**Found:** round 11, lens B
+**Says:** a failed `pg_dump` leaves `sql/test-schema.sql` empty, on which the gate returns `0`.
+**Actually:** true, but `generate_dump` also `die`s, so `make test-schema` exits non-zero first. Reaching the empty-file state requires ignoring that.
+**Why deferred:** the companion check round 10 added catches the state either way.
+
+### Task 6 Step 12 — "Three of them, in fact"
+**Found:** round 11, lens B
+**Says:** reads as though the tenant loop runs three times per change.
+**Actually:** it runs once per change, across three changes.
+**Why deferred:** the argument it supports (the loop is graded against real tenant schemas) is correct.
+
+### Task 7 preamble — the −38/−77 dump offsets
+**Found:** round 11, lens B
+**Says:** the regeneration shifts the cited lines by −38 and −77.
+**Actually:** correct for the four cited line numbers, but the drop also removes index, trigger, constraint and FK blocks the arithmetic does not account for.
+**Why deferred:** nothing reads the regenerated dump by line; Step 8 checks it with `grep -c`.
 
 ---
 

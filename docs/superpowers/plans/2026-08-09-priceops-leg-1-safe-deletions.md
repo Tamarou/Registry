@@ -26,7 +26,7 @@ Copied from the spec. Every task's requirements implicitly include this section.
 - 100% pass rate, pristine output. No new warnings, no unexpected diagnostics.
 - Object::Pad methods take no explicit `$self`. Use the `isa` operator, not `ref eq`.
 - Every file starts with two `# ABOUTME: ` comment lines.
-- **`grep -c` exits 1 when the count is zero.** Several steps here expect `0` from a `grep -c`; that is a *pass*, and it also returns a non-zero status. Under `set -e`, or in a chained command, it aborts. Append `|| true` if you wrap these, and read the printed number rather than the exit code.
+- **`grep` exits 1 when it finds nothing — including `grep -c`, which prints `0` and still exits 1.** Several steps here expect `0` from a `grep -c`; that is a *pass*, and it also returns a non-zero status. Under `set -e`, or in a chained command, it aborts. Append `|| true` if you wrap these, and read the printed number rather than the exit code.
 - Comments are evergreen — no "recently changed", no "was previously".
 - **Never run `t/stripe-live/`** (hits real Stripe) or **`t/playwright/`** (the ambient `STRIPE_PUBLISHABLE_KEY` is a `pk_live_` key and must never reach a browser). Editing those files is fine; executing them is not. **A bare `prove -lr t/` runs all five of their `.t` files** — four under `t/stripe-live/` and `t/playwright/setup_registration_test_data.t` — so every wide run in this plan names its directories instead. The `t/stripe-live/` four are self-protecting (`plan skip_all` without an `sk_test_` key) and the one playwright `.t` is inert (`Test::Registry::DB`, ephemeral Postgres, no browser, no Stripe, no network — verified), but the rule is absolute and the command must not depend on either fact.
 - Local test invocation uses a placeholder that must **not** start with `sk_test_`:
@@ -728,6 +728,8 @@ Leave `use Test::Registry::Fixtures;` (`:15`) alone. It is unused today and was 
 - [ ] **Step 6: Run the affected tests**
 
 Run: `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/controller/payment-failures.t t/controller/webhooks.t t/controller/payment-intent-webhook.t`
+Expected: PASS, pristine.
+
 Then re-run Step 4's grep, which could not gate anything when it ran:
 
 ```bash
@@ -736,7 +738,7 @@ grep -rn "PaymentSchedule\|ScheduledPayment\|InstallmentPayment\|_is_installment
 
 Expected now: **no matches at all.** At Step 4 it still tolerated hits in `payment-failures.t` ("fixed in the next step"), so nothing ever confirmed Step 5 finished the job — a skipped item there leaves a comment naming a deleted module and two dead `local $ENV{STRIPE_*}` lines, and every other gate in this leg stays silent about it.
 
-Expected: PASS, pristine. `payment-intent-webhook.t` is in the list because Step 2 rewrites the `if`/`elsif`/`else` chain it drives; it is the fastest check that the surviving two branches still dispatch.
+`payment-intent-webhook.t` is in that list because Step 2 rewrites the `if`/`elsif`/`else` chain it drives; it is the fastest check that the surviving two branches still dispatch.
 
 - [ ] **Step 7: Run the wider controller and DAO suites**
 
@@ -973,7 +975,13 @@ Dropping `use Test::Registry::DB;` takes the `Test::PostgreSQL` spin-up with it 
 The deleted `:16` is one of nine live `use Registry::DAO::PricingRelationship;` lines in the tree, and the only one this task removes. That is not enough to strand the module — three of the nine are under `lib/` — but confirm it rather than assume it:
 
 Run: `grep -rn "PricingRelationship" lib/ t/`
-Expected: matches under `lib/` remain, **and `t/dao/pricing-plan-clean-architecture.t` must NOT appear among the `t/` matches** — if it does, `:16` survived the cut and the `use` list above is wrong. If no `lib/` matches remain, stop and report: the module would then be dead too, which is out of this task's scope.
+Expected: matches under `lib/` remain. Then check the cut mechanically rather than by eye — that grep prints 80-odd `t/` lines and the discriminating one is buried mid-list:
+
+```bash
+grep -c PricingRelationship t/dao/pricing-plan-clean-architecture.t
+```
+
+Expected: `0` (and exit 1, which is a pass — see the Global Constraints). Non-zero means `:16` survived the cut and the `use` list above is wrong — if it does, `:16` survived the cut and the `use` list above is wrong. If no `lib/` matches remain, stop and report: the module would then be dead too, which is out of this task's scope.
 
 - [ ] **Step 2: Delete `sibling_discount_eligible` and its two test callers**
 
@@ -1548,7 +1556,7 @@ SELECT current_database() AS db,
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
  WHERE c.relkind = 'r'
    AND c.relname IN ('payment_schedules', 'scheduled_payments')
- ORDER BY 1, 2;
+ ORDER BY 2, 3;
 ```
 
 `query_to_xml` runs each count as a read-only subquery, which is what lets one statement cover a schema list that is not known until it runs.
@@ -1946,9 +1954,9 @@ Run:
 grep -rln "payment_schedules\|scheduled_payments" sql/ lib/ t/ templates/ workflows/
 ```
 
-Expected exactly **twelve files** — count them, do not just skim the list. A stub verify left in place by skipping Step 4 passes at its own deploy point AND under `migration-verification.t:26`'s bare `sqitch verify`, so the change ships with no verify at all and the suite stays green; the only signal is this list coming back with eleven entries instead of twelve. The twelve are: the three `sql/deploy/` scripts in the original chain, `sql/deploy/tenant-scoped-payments.sql`, the three `sql/revert/` scripts in the original chain, the three new `drop-installment-schedules` scripts, `sql/verify/simplify-installment-schema-for-stripe.sql`, and `sql/test-schema.sql` (regenerated next). **No `lib/`, no `t/`.**
+Expected exactly **twelve files**, and `sql/verify/drop-installment-schedules.sql` must be one of them. **Check for that name; the count alone is not a signal.** It is twelve only here, at Step 10's own position — re-run this grep after Step 11 and the correct answer becomes eleven, because the regenerated `sql/test-schema.sql` no longer names the tables. Eleven is also what a skipped Step 4 gives you *here*. The name is what discriminates. A stub verify left in place by skipping Step 4 passes at its own deploy point AND under `migration-verification.t:26`'s bare `sqitch verify`, so the change ships with no verify at all and the suite stays green; the only signal is this list coming back with eleven entries instead of twelve. The twelve are: the three `sql/deploy/` scripts in the original chain, `sql/deploy/tenant-scoped-payments.sql`, the three `sql/revert/` scripts in the original chain, the three new `drop-installment-schedules` scripts, `sql/verify/simplify-installment-schema-for-stripe.sql`, and `sql/test-schema.sql` (regenerated next). **No `lib/`, no `t/`.**
 
-`sql/verify/simplify-installment-schema-for-stripe.sql` is on the list because Step 6 leaves the table names in its explanatory comment, not in an assertion. That is the only `sql/verify/` match besides the new one; the other three superseded scripts (Steps 5, 7, 8) no longer name the tables at all. If a *fourth* verify script appears, or if that file matches on a line that is not a comment, the supersession is incomplete.
+`sql/verify/simplify-installment-schema-for-stripe.sql` is on the list because Step 6 leaves the table names in its explanatory comment, not in an assertion. That is the only `sql/verify/` match besides the new one; the other three superseded scripts (Steps 5, 7, 8) no longer name the tables at all. If a *third* verify script appears, or if that file matches on a line that is not a comment, the supersession is incomplete.
 
 The grep above does not cover `docs/`, and one document there goes stale with this step. `docs/operations/sacp-stripe-connect-onboarding.md:92` is a live operator runbook whose pre-flight table tells the operator that `tenant-scoped-payments` aborts when *"`registry.scheduled_payments` rows reference payments tagged to a tenant"*. After this task there is no such table and that row can never fire. Delete that one table row and leave the payer-residency row, which is unaffected — the guard itself stays deployed and correct (see Coverage Gaps), but the runbook must stop telling an operator to expect an error that cannot happen. It is committed with the rest of this task in Step 14.
 
