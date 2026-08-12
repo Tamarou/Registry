@@ -32,7 +32,7 @@ Copied from the spec. Every task's requirements implicitly include this section.
 - Local test invocation uses a placeholder that must **not** start with `sk_test_`:
   `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/...`
 - Do not touch the dev database. All schema work happens in ephemeral `Test::PostgreSQL` instances.
-- **Production is read-only in this leg, and two steps read it.** Task 6 Step 1a and Task 7 Step 1 run counts against the Render production database `dpg-ckq1i8o5vl2c73d61070-a` (registry-db). Go through the Render MCP tool — `mcp__render__query_render_postgres` with `postgresId: dpg-ckq1i8o5vl2c73d61070-a` — never `psql "$DATABASE_URL"` and never the ephemeral instance. This matters because **the wrong database returns the answer the step expects**: a dev or test database has no installment rows either, so `0` looks like confirmation. Both queries carry `current_database()` so the transcript proves which database answered. No task deploys anything to production.
+- **Production is read-only in this leg, and two steps read it.** Task 6 Step 1a and Task 7 Step 1 run counts against the Render production database `dpg-ckq1i8o5vl2c73d61070-a` (registry-db). Go through the Render MCP tool — `mcp__render__query_render_postgres` with `postgresId: dpg-ckq1i8o5vl2c73d61070-a` — never `psql "$DATABASE_URL"` and never the ephemeral instance. This matters because **the wrong database returns the answer the step expects**: a dev or test database has no installment rows either, so `0` looks like confirmation. Task 6 Step 1a's count and Task 7 Step 1's menu query each select `current_database()`, and Task 7 Step 1 opens with a standalone identity probe because its first query expects zero rows — where a column would prove nothing. Keep that output; it is the evidence of which database answered. No task deploys anything to production.
 - Full suite is ~76 minutes. Run it once, at the end (Task 7), not per-task.
 
 ## Declared Deviations From The Spec
@@ -728,6 +728,14 @@ Leave `use Test::Registry::Fixtures;` (`:15`) alone. It is unused today and was 
 - [ ] **Step 6: Run the affected tests**
 
 Run: `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/controller/payment-failures.t t/controller/webhooks.t t/controller/payment-intent-webhook.t`
+Then re-run Step 4's grep, which could not gate anything when it ran:
+
+```bash
+grep -rn "PaymentSchedule\|ScheduledPayment\|InstallmentPayment\|_is_installment_payment_event\|_process_installment_payment_event" lib/ t/ templates/ workflows/
+```
+
+Expected now: **no matches at all.** At Step 4 it still tolerated hits in `payment-failures.t` ("fixed in the next step"), so nothing ever confirmed Step 5 finished the job — a skipped item there leaves a comment naming a deleted module and two dead `local $ENV{STRIPE_*}` lines, and every other gate in this leg stays silent about it.
+
 Expected: PASS, pristine. `payment-intent-webhook.t` is in the list because Step 2 rewrites the `if`/`elsif`/`else` chain it drives; it is the fastest check that the surviving two branches still dispatch.
 
 - [ ] **Step 7: Run the wider controller and DAO suites**
@@ -738,14 +746,12 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add lib/Registry/DAO/PaymentSchedule.pm lib/Registry/DAO/ScheduledPayment.pm \
-        lib/Registry/DAO/WorkflowSteps/InstallmentPayment.pm \
-        lib/Registry/PriceOps/PaymentSchedule.pm lib/Registry/PriceOps/ScheduledPayment.pm \
-        lib/Registry/Controller/Webhooks.pm t/controller/payment-failures.t \
-        t/controller/admin-installment-payment-dashboard.t t/controller/installment-payment-webhooks.t \
-        t/controller/subscription-webhook-routing.t t/dao/payment-schedule-race-condition.t \
-        t/dao/payment-schedule.t t/dao/scheduled-payment.t t/e2e/installment-payment-enrollment.t \
-        t/integration/installment-webhook-processing.t t/unit/installment-breakdown.t
+# Step 1's `git rm` already staged all fourteen deletions. Naming them again
+# here is a pathspec error -- `git add` is all-or-nothing, so it would exit 128
+# and stage NOTHING, and the `git commit` below would then record the deletions
+# without the two edits, leaving a tree whose Webhooks.pm still says
+# `use Registry::DAO::PaymentSchedule;`.  Stage only what Steps 2-5 modified.
+git add lib/Registry/Controller/Webhooks.pm t/controller/payment-failures.t
 git commit -m "Delete the installment machinery (#295)
 
 Installments were reachable only through a webhook branch: no workflow YAML
@@ -855,13 +861,14 @@ Replace with:
 - [ ] **Step 5: Run the tests**
 
 Run: `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/dao/pricing-plan-amount-cents.t`
-Expected: PASS with one fewer subtest.
+Expected: PASS, seven subtests, **the last one named `'a percentage discount cannot leave a fractional cent behind'`**. Check that name. "PASS with one fewer subtest" is also what the top-down mutation Step 3 warns about produces — it leaves the percentage subtest's body running under the dollar subtest's name, and every other gate in this task stays silent.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add lib/Registry/Client/Stripe.pm lib/Registry/PriceOps/PricingPlan.pm \
-        lib/Registry/DAO/PricingPlan.pm t/dao/pricing-plan-amount-cents.t \
+# Step 2's `git rm` already staged both deletions; naming them again makes this
+# a pathspec error that stages nothing (see Task 2 Step 8).
+git add lib/Registry/DAO/PricingPlan.pm t/dao/pricing-plan-amount-cents.t \
         t/stripe-live/service-version.t
 git commit -m "Delete Client::Stripe and PriceOps::PricingPlan
 
@@ -966,7 +973,7 @@ Dropping `use Test::Registry::DB;` takes the `Test::PostgreSQL` spin-up with it 
 The deleted `:16` is one of nine live `use Registry::DAO::PricingRelationship;` lines in the tree, and the only one this task removes. That is not enough to strand the module — three of the nine are under `lib/` — but confirm it rather than assume it:
 
 Run: `grep -rn "PricingRelationship" lib/ t/`
-Expected: matches under `lib/` remain. If none do, stop and report — the module would then be dead too, which is out of this task's scope.
+Expected: matches under `lib/` remain, **and `t/dao/pricing-plan-clean-architecture.t` must NOT appear among the `t/` matches** — if it does, `:16` survived the cut and the `use` list above is wrong. If no `lib/` matches remain, stop and report: the module would then be dead too, which is out of this task's scope.
 
 - [ ] **Step 2: Delete `sibling_discount_eligible` and its two test callers**
 
@@ -1188,7 +1195,9 @@ Expected: PASS.
 ```bash
 git add lib/Registry/DAO/Family.pm lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm \
         t/dao/family.t t/dao/pricing-plan-clean-architecture.t t/dao/pricing-plan-workflow.t \
-        templates/pricing-plan-creation schemas/requirements-and-rules.json
+        templates/pricing-plan-creation/requirements-rules.html.ep \
+        templates/pricing-plan-creation/review-activate.html.ep \
+        schemas/requirements-and-rules.json
 git commit -m "Delete the orphaned discount surface and the subtests that passed by skipping (#296)
 
 The requirements-rules form wrote nine discount keys. The calculators read
@@ -1379,7 +1388,7 @@ $t->post_ok($payment_url => form => {
 })->status_is(302);
 ```
 
-Note the trailing semicolon — `03`'s original `:172` has one and `01`'s `:208` does not. Four comment lines out of five, which is the arithmetic the offset table above depends on. Legacy note: dropping `setup_intent_id => 'seti_test_billing_' . $$,` (`:171`) and rewriting the five comment lines at `:164-168` the same way. Note that file's POST ends `})->status_is(302);` with a semicolon and no `header_like` chain — do not paste `01`'s version over it.
+Note the trailing semicolon — `03`'s original `:172` has one and `01`'s `:208` does not. Four comment lines out of five, which is the arithmetic the offset table above depends on.
 
 - [ ] **Step 7: Update the funnel-documentation comments**
 
@@ -1531,7 +1540,8 @@ The harness grades only what is on that list. Skipping this append is the failur
 **Count every schema, not just `registry`.** The deploy below drops `%I.payment_schedules` and `%I.scheduled_payments` in every tenant schema too, and `registry` is the one schema where an app-created row *cannot* be: every DAO wrote the table name unqualified — **before Task 2 deleted these files**, `DAO/PaymentSchedule.pm:21` `sub table { 'payment_schedules' }`, `:68` `$db->update('scheduled_payments', …)`, `DAO/ScheduledPayment.pm:22`, and `PriceOps/ScheduledPayment.pm:92,113,122` (`FROM payment_schedules`, `FROM scheduled_payments`, `UPDATE payment_schedules`) — so on a tenant-scoped connection they all resolved through `search_path` into the tenant schema. Those paths are gone by the time this step runs; the line numbers are at HEAD, for anyone checking the argument against history. `tenant-scoped-payments.sql:255-284` creates those copies with `LIKE … INCLUDING ALL` (empty) and `:144-169` explicitly refuses to move schedule rows into them. A tenant schema is therefore the only place a row could have come from, and a `registry`-only count would return `0, 0` while saying nothing about it.
 
 ```sql
-SELECT n.nspname AS schema, c.relname AS tbl,
+SELECT current_database() AS db,
+       n.nspname AS schema, c.relname AS tbl,
        (xpath('/row/c/text()', query_to_xml(
            format('SELECT count(*) AS c FROM %I.%I', n.nspname, c.relname),
            false, true, '')))[1]::text::bigint AS rows
@@ -1936,7 +1946,7 @@ Run:
 grep -rln "payment_schedules\|scheduled_payments" sql/ lib/ t/ templates/ workflows/
 ```
 
-Expected exactly: the three `sql/deploy/` scripts in the original chain, `sql/deploy/tenant-scoped-payments.sql`, the three `sql/revert/` scripts in the original chain, the three new `drop-installment-schedules` scripts, `sql/verify/simplify-installment-schema-for-stripe.sql`, and `sql/test-schema.sql` (regenerated next). **No `lib/`, no `t/`.**
+Expected exactly **twelve files** — count them, do not just skim the list. A stub verify left in place by skipping Step 4 passes at its own deploy point AND under `migration-verification.t:26`'s bare `sqitch verify`, so the change ships with no verify at all and the suite stays green; the only signal is this list coming back with eleven entries instead of twelve. The twelve are: the three `sql/deploy/` scripts in the original chain, `sql/deploy/tenant-scoped-payments.sql`, the three `sql/revert/` scripts in the original chain, the three new `drop-installment-schedules` scripts, `sql/verify/simplify-installment-schema-for-stripe.sql`, and `sql/test-schema.sql` (regenerated next). **No `lib/`, no `t/`.**
 
 `sql/verify/simplify-installment-schema-for-stripe.sql` is on the list because Step 6 leaves the table names in its explanatory comment, not in an assertion. That is the only `sql/verify/` match besides the new one; the other three superseded scripts (Steps 5, 7, 8) no longer name the tables at all. If a *fourth* verify script appears, or if that file matches on a line that is not a comment, the supersession is incomplete.
 
@@ -1950,15 +1960,21 @@ The grep above does not cover `docs/`, and one document there goes stale with th
 make test-schema
 ```
 
+**Expect about 157 changed lines you did not cause.** `Test::Registry::DB::generate_dump` shells `pg_dump` with no `--restrict-key` and no seed pinning, so every run re-rolls the `\restrict` token and every seeded UUID and timestamp. Measured at HEAD with no source change: `157 insertions(+), 157 deletions(-)`. That churn is inherent to the target, it is committed along with the real diff, and it is not something to strip or investigate. The real diff is the dropped tables.
+
 `sql/test-schema.sql` is a build product of `sql/deploy/*.sql` and `sql/sqitch.plan` (see the `Makefile` rule). Confirm the two tables are gone from it:
 
 Run: `grep -c "payment_schedules" sql/test-schema.sql`
 Expected: `0`.
 
+Then confirm the dump is a dump and not an empty file: `grep -c "CREATE TABLE registry.payments" sql/test-schema.sql`, expected `1`. `generate_dump` truncates the target before `pg_dump` writes to it, so a failed dump leaves zero bytes — on which the first grep also returns `0`. Without the second check the gate cannot tell "tables dropped" from "dump destroyed", and committing an empty `test-schema.sql` silently moves every later test onto the slow sqitch-deploy path.
+
 - [ ] **Step 12: Run the migration tests, including the harness**
 
 Run: `carton exec prove -lv t/database/`
-Expected: PASS. `revert-round-trip.t` now grades `drop-installment-schedules` — because Step 1 appended it to `@CHANGES`; if that append was missed, this step passes and grades nothing.
+Expected: **`Files=2, Tests=6`**, and `revert-round-trip.t` must print `ok 3 - drop-installment-schedules reverts cleanly`. **If it prints `Tests=5`, Step 1's `@CHANGES` append was missed** — and "All tests successful" is what you get either way, so read the count, not the verdict.
+
+That one line is load-bearing. Measured: a deploy that drops from `registry` and omits the tenant loop — a plausible slip on a 26-line script — leaves both tables standing in every tenant schema, and `migration-verification.t` stays green because a migration-only database has no tenant schema to look at. `revert-round-trip.t` is the only thing in the tree that catches it, and it catches nothing at all if the append was skipped.
 
 What it catches: a missing column, a wrong type or default, a missing index, a constraint whose `pg_get_constraintdef` text differs, a missing trigger, a missing comment. Column *order* it does not — the comparison is over sorted lines. The tenant half is graded too: the harness provisions a `clone_schema` tenant before the first dump (Task 1 Step 1), so a tenant schema left without its copies, left without the two `updated_at` triggers, or given its copies twice all fail here rather than in production. Three of them, in fact — this is the third entry on `@CHANGES` and each earlier iteration's schema is still standing, so the tenant loop below is exercised against `"order"`, `"user"` and `"group"` in the same run.
 
@@ -1973,7 +1989,11 @@ Expected: PASS.
 - [ ] **Step 14: Commit**
 
 ```bash
-git add sql/ t/database/revert-round-trip.t t/dao/tenant-payment-schema-isolation.t \
+git add sql/deploy/drop-installment-schedules.sql sql/revert/drop-installment-schedules.sql \
+        sql/verify/drop-installment-schedules.sql sql/sqitch.plan sql/test-schema.sql \
+        sql/verify/installment-payment-schedules.sql sql/verify/simplify-installment-schema-for-stripe.sql \
+        sql/verify/schedule-amounts-cents.sql sql/verify/tenant-scoped-payments.sql \
+        t/database/revert-round-trip.t t/dao/tenant-payment-schema-isolation.t \
         docs/operations/sacp-stripe-connect-onboarding.md
 git commit -m "Drop the installment schedule tables
 
@@ -2057,6 +2077,14 @@ This is a data change against production. Spec `:644` requires it explicitly: *"
 
 Run this **read-only** against the Render production database `dpg-ckq1i8o5vl2c73d61070-a` (registry-db):
 
+**Run this first, and keep its output with the rest.** The query below expects *zero rows*, so a `current_database()` column in it would prove nothing — no rows, no evidence. This one always returns a row:
+
+```sql
+SELECT current_database() AS db, count(*) AS tenants FROM registry.tenants;
+```
+
+Expected: `db` is the production database name, and `tenants` is non-zero. If `db` is a local or ephemeral name, stop — everything below is being asked of the wrong database, and both of the counts below return the answer you are hoping for whichever database answers them.
+
 ```sql
 SELECT t.slug, t.name, pp.plan_name, pp.plan_scope,
        EXISTS (
@@ -2082,7 +2110,8 @@ Expected: zero rows. Filter on `plan_type` only and select the other two, so thi
 Then, for context on what the `UPDATE` will touch, list the menu rows:
 
 ```sql
-SELECT pr.id, pr.status, pr.provider_id, pp.plan_name, pp.plan_scope
+SELECT current_database() AS db,
+       pr.id, pr.status, pr.provider_id, pp.plan_name, pp.plan_scope
   FROM registry.pricing_relationships pr
   JOIN registry.pricing_plans pp ON pp.id = pr.pricing_plan_id
  WHERE pp.plan_type = 'hybrid';
@@ -2579,7 +2608,9 @@ Known pre-existing pristine-output violations that are **not** this leg's to fix
 - [ ] **Step 11: Commit**
 
 ```bash
-git add sql/ t/database/retire-registry-plus-plan.t
+git add sql/deploy/retire-registry-plus-plan.sql sql/revert/retire-registry-plus-plan.sql \
+        sql/verify/retire-registry-plus-plan.sql sql/sqitch.plan sql/test-schema.sql \
+        t/database/retire-registry-plus-plan.t
 git commit -m "Retire the seeded Registry Plus hybrid plan
 
 Its 1% is charged on every customer payment through RevenueShare; nothing
