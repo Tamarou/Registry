@@ -598,7 +598,7 @@ alone, so neither change is marked modified and nothing needs redeploying."
 - Delete: `lib/Registry/DAO/PaymentSchedule.pm`, `lib/Registry/DAO/ScheduledPayment.pm`, `lib/Registry/DAO/WorkflowSteps/InstallmentPayment.pm`, `lib/Registry/PriceOps/PaymentSchedule.pm`, `lib/Registry/PriceOps/ScheduledPayment.pm`
 - Delete: `t/controller/admin-installment-payment-dashboard.t`, `t/controller/installment-payment-webhooks.t`, `t/controller/subscription-webhook-routing.t`, `t/dao/payment-schedule-race-condition.t`, `t/dao/payment-schedule.t`, `t/dao/scheduled-payment.t`, `t/e2e/installment-payment-enrollment.t`, `t/integration/installment-webhook-processing.t`, `t/unit/installment-breakdown.t`
 - Modify: `lib/Registry/Controller/Webhooks.pm:8,69-72,204-289`
-- Modify: `t/controller/payment-failures.t:3,13,16,22-24,26-30,34-36,71-79,92-272,274`
+- Modify: `t/controller/payment-failures.t:2,3,13,16,22-24,26-30,34-36,71-79,92-272,274`
 
 **Interfaces:**
 - Consumes: nothing from Task 1.
