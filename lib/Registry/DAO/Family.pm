@@ -63,21 +63,4 @@ class Registry::DAO::Family {
         my $count = $db->select('family_members', 'COUNT(*)', { family_id => $family_id })->array->[0];
         return $count > 1;
     }
-    
-    # Get sibling discount eligibility
-    sub sibling_discount_eligible ($class, $db, $family_id, $session_id) {
-        $db = $db->db if $db isa Registry::DAO;
-        # Count active enrollments for this family in the session
-        my $sql = q{
-            SELECT COUNT(DISTINCT fm.id) 
-            FROM family_members fm
-            JOIN enrollments e ON e.family_member_id = fm.id
-            WHERE fm.family_id = ?
-            AND e.session_id = ?
-            AND e.status IN ('active', 'pending')
-        };
-        
-        my $enrolled_count = $db->query($sql, $family_id, $session_id)->array->[0];
-        return $enrolled_count >= 2;
-    }
 }

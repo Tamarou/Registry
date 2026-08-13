@@ -1,5 +1,5 @@
 # ABOUTME: Workflow step for defining eligibility requirements and business rules
-# ABOUTME: Configures discounts, eligibility criteria, and renewal policies
+# ABOUTME: Configures eligibility criteria, trial terms, and renewal policies
 
 use 5.42.0;
 use utf8;
@@ -8,7 +8,6 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::WorkflowStep) {
     use Carp qw( croak );
-    use DateTime;
 
     method process ($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -40,56 +39,6 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
                 ? @{$form_data->{prerequisite_programs}}
                 : split(/,/, $form_data->{prerequisite_programs});
             $requirements->{prerequisite_programs} = \@prereqs;
-        }
-
-        # Early bird discount
-        if ($form_data->{early_bird_enabled}) {
-            $requirements->{early_bird_enabled} = 1;
-            $requirements->{early_bird_discount} = $form_data->{early_bird_discount} || 0;
-            $requirements->{early_bird_cutoff_date} = $form_data->{early_bird_cutoff_date};
-
-            # Validate cutoff date
-            if ($requirements->{early_bird_cutoff_date}) {
-                try {
-                    my $dt = DateTime->new(
-                        year => substr($requirements->{early_bird_cutoff_date}, 0, 4),
-                        month => substr($requirements->{early_bird_cutoff_date}, 5, 2),
-                        day => substr($requirements->{early_bird_cutoff_date}, 8, 2),
-                    );
-                    # Date is valid
-                }
-                catch ($e) {
-                    return {
-                        stay => 1,
-                        errors => ["Invalid early bird cutoff date format"]
-                    };
-                }
-            }
-        }
-
-        # Family/group discounts
-        if ($form_data->{family_discount_enabled}) {
-            $requirements->{family_discount_enabled} = 1;
-            $requirements->{min_children} = int($form_data->{min_children} || 2);
-            $requirements->{family_discount_type} = $form_data->{family_discount_type} || 'percentage';
-            $requirements->{family_discount_amount} = $form_data->{family_discount_amount} || 0;
-        }
-
-        # Volume discounts
-        if ($form_data->{volume_discount_enabled}) {
-            $requirements->{volume_discount_enabled} = 1;
-            $requirements->{volume_tiers} = [];
-
-            # Process volume tiers
-            if ($form_data->{volume_tiers}) {
-                for my $tier (@{$form_data->{volume_tiers}}) {
-                    push @{$requirements->{volume_tiers}}, {
-                        min_quantity => $tier->{min_quantity},
-                        max_quantity => $tier->{max_quantity},
-                        discount => $tier->{discount}
-                    };
-                }
-            }
         }
 
         # Seasonal availability
@@ -160,11 +109,6 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
                 { value => 'limited', label => 'Limited features' },
                 { value => 'basic', label => 'Basic features only' },
             ],
-
-            discount_types => [
-                { value => 'percentage', label => 'Percentage off' },
-                { value => 'fixed', label => 'Fixed amount off' },
-            ]
         };
     }
 

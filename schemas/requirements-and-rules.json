@@ -72,31 +72,6 @@
           "placeholder": "Describe how plan changes are handled"
         }
       }
-    },
-    {
-      "id": "discount_rules",
-      "type": "object",
-      "label": "Discount Rules",
-      "required": false,
-      "properties": {
-        "early_bird_discount": {
-          "type": "number",
-          "label": "Early Bird Discount (%)",
-          "min": "0",
-          "max": "100"
-        },
-        "bulk_discount_threshold": {
-          "type": "number",
-          "label": "Bulk Discount Threshold",
-          "min": "1"
-        },
-        "bulk_discount_percentage": {
-          "type": "number",
-          "label": "Bulk Discount (%)",
-          "min": "0",
-          "max": "100"
-        }
-      }
     }
   ]
 }
