@@ -66,3 +66,4 @@ payments-amount-cents [pricing-plans-amount-cents] 2026-08-06T12:00:00Z Chris Pr
 schedule-amounts-cents [payments-amount-cents] 2026-08-06T13:00:00Z Chris Prather <chris.prather@tamarou.com> # Store installment schedule money as integer cents
 refund-amounts-cents [schedule-amounts-cents] 2026-08-06T14:00:00Z Chris Prather <chris.prather@tamarou.com> # Store refund money as integer cents
 drop-installment-schedules [schedule-amounts-cents tenant-scoped-payments] 2026-08-13T13:50:16Z Chris Prather <chris.prather@tamarou.com> # Drop the installment schedule tables from registry and every tenant schema
+retire-registry-plus-plan [suspend-rateless-tenant-plans] 2026-08-13T14:37:13Z Chris Prather <chris.prather@tamarou.com> # Stop offering the seeded Registry Plus hybrid plan
