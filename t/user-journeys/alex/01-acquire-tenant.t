@@ -3,6 +3,9 @@
 # ABOUTME: billable tenant.  Stage 1 walks the full funnel over HTTP with realistic data.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+# The payment step provisions directly when no Stripe keys are configured.
+# Ambient keys would send it to create_setup_intent and a live API call.
+BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 use 5.42.0;
 use utf8;
@@ -79,10 +82,9 @@ $t->app->helper(dao => sub { $dao });
 #   review      — 'terms_accepted' required by the controller (Workflows.pm)
 #                 BEFORE calling step->process; the step itself accepts empty
 #                 body but the controller gate refuses without it.
-#   payment     — 'collect_payment_method' + 'setup_intent_id' (seti_test...)
-#                 trigger the test-mode provision path in TenantPayment.pm:43-46.
-#                 The seti_test branch wins on dispatch order before the no-keys
-#                 branch, so Stripe env keys are irrelevant to this POST.
+#   payment     — 'collect_payment_method' with no Stripe keys in the
+#                 environment triggers the direct-provision path in
+#                 TenantPayment.pm.  The BEGIN block above unsets the keys.
 # ---------------------------------------------------------------------------
 
 # Realistic identity: Portland-Art-Collective-style, $$-suffixed for uniqueness.
@@ -196,15 +198,13 @@ my $payment_url = $t->tx->res->headers->location;
 # -- Step: payment (GET) --------------------------------------------------
 $t->get_ok($payment_url)->status_is(200);
 
-# -- Step: payment (POST via seti_test seam) ------------------------------
-# POST collect_payment_method=1 + setup_intent_id=seti_test_... dispatches
-# to handle_setup_completion -> _provision_tenant (TenantPayment.pm:43-46,
-# 283-294).  The seti_test branch wins on dispatch order before the no-keys
-# branch, so Stripe env keys are irrelevant to this POST.
+# -- Step: payment (POST, no Stripe keys configured) ----------------------
+# collect_payment_method=1 with no Stripe keys in the environment provisions
+# directly (TenantPayment.pm, the !STRIPE_PUBLISHABLE_KEY && !STRIPE_SECRET_KEY
+# branch).  The BEGIN block at the top of this file guarantees the condition.
 # Expected: 302 -> /tenant-signup/<run-id>/complete
 $t->post_ok($payment_url => form => {
     collect_payment_method => 1,
-    setup_intent_id        => 'seti_test_acquire_' . $$,
 })->status_is(302)
   ->header_like(Location => qr{/tenant-signup/[^/]+/complete$},
                 'payment POST redirects to complete step');
@@ -328,12 +328,12 @@ subtest 'tenant storefront serves at <slug>.localhost' => sub {
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 4: billing fields are set correctly for the seti_test path.
+# Assertion 4: billing fields are set correctly on the direct-provision path.
 # _provision_tenant writes billing_status='trial' and stripe_subscription_id
 # = 'sub_test_...' when subscription data carries a stripe_subscription_id
-# (set by handle_setup_completion on the seti_test branch).
+# (set by process on the no-Stripe-keys branch).
 # ---------------------------------------------------------------------------
-subtest 'tenant row carries billing fields from seti_test path' => sub {
+subtest 'tenant row carries billing fields from direct-provision path' => sub {
     my $tenant_row = $db->query(
         q{SELECT billing_status, stripe_subscription_id
           FROM registry.tenants WHERE slug = ?},
@@ -342,10 +342,10 @@ subtest 'tenant row carries billing fields from seti_test path' => sub {
     ok $tenant_row, 'tenant row accessible for billing assertions';
 
     is $tenant_row->{billing_status}, 'trial',
-        'billing_status is "trial" on the seti_test provision path';
+        'billing_status is "trial" on the direct-provision path';
 
     like $tenant_row->{stripe_subscription_id}, qr/^sub_test_/,
-        'stripe_subscription_id starts with sub_test_ (seti_test seam)';
+        'stripe_subscription_id starts with sub_test_ (direct-provision path)';
 };
 
 $test_db->cleanup_test_database;

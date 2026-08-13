@@ -37,14 +37,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             };
         }
         
-        # Handle payment method collection with setup intent (testing scenario)
-        if ($form_data->{collect_payment_method} && $form_data->{setup_intent_id}) {
-            # Special case for testing: if we have both flags, go directly to completion
-            if ($form_data->{setup_intent_id} =~ /^seti_test/) {
-                return $self->handle_setup_completion($db, $run, $form_data);
-            }
-        }
-        
         # Handle setup intent completion
         if ($form_data->{setup_intent_id}) {
             return $self->handle_setup_completion($db, $run, $form_data);
@@ -291,21 +283,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
         my $setup_data = $run->data->{payment_setup} || {};
 
-        # Test mode: setup_intent_id starts with 'seti_test' — skip Stripe validation.
-        if ($form_data->{setup_intent_id} && $form_data->{setup_intent_id} =~ /^seti_test/) {
-            my $mock_subscription = {
-                stripe_subscription_id => 'sub_test_' . time(),
-                trial_ends_at => time() + (30 * 24 * 60 * 60), # 30 days from now
-                status => 'trialing',
-            };
-
-            $run->update_data($db, { subscription => $mock_subscription });
-
-            my $result = $self->_provision_tenant($db, $run);
-            return { next_step => 'complete', tenant_created => 1, %$result };
-        }
-        
-        # For non-test modes, validate the setup_intent_id matches what was stored
+        # Validate the setup_intent_id matches what was stored
         if ($setup_data->{setup_intent_id} && $setup_data->{setup_intent_id} ne $form_data->{setup_intent_id}) {
             return {
                 next_step => $self->id,
@@ -370,7 +348,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # sends invitation emails for invite_pending team members, stores tenant info in
     # run data, and returns a result hash with tenant/organization_name/subdomain/
     # admin_email keys.  This is the single provisioning path for all completion
-    # scenarios (no-Stripe mock, seti_test mock, real-Stripe).
+    # scenarios (no-Stripe mock, real-Stripe).
     method _provision_tenant($db, $run) {
         my $data = $run->data;
         my $profile = $data->{profile} || {};
