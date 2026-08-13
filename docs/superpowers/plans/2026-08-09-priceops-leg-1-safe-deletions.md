@@ -1264,6 +1264,8 @@ BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 Make the identical addition after `:5` in `t/user-journeys/alex/03-platform-billing.t`.
 
+**Add the three lines directly against the existing `BEGIN`, with no blank line between them.** The offset table below is +3, and a blank separator makes it +4 — which throws every range in Steps 6, 7 and 8 off by one. Measured: with the separator the files come out at 352 and 312 lines; without it, 351 and 311, which is what the table assumes.
+
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/user-journeys/alex/01-acquire-tenant.t t/user-journeys/alex/03-platform-billing.t`
