@@ -889,7 +889,7 @@ agent; retiring that one is Leg 0's."
 - Modify: `lib/Registry/DAO/Family.pm:66-82` (delete `sibling_discount_eligible`)
 - Modify: `t/dao/family.t:219-252`
 - Modify: `lib/Registry/DAO/WorkflowSteps/RequirementsRules.pm:2,11,45-94,163-167`
-- Modify: `t/dao/pricing-plan-workflow.t:216-222,242,292-294,411`
+- Modify: `t/dao/pricing-plan-workflow.t:211,216-222,242,292-294,411`
 - Modify: `templates/pricing-plan-creation/requirements-rules.html.ep:9,77-171,344-355`
 - Modify: `templates/pricing-plan-creation/review-activate.html.ep:163-186`
 - Modify: `schemas/requirements-and-rules.json:75-100` (Step 5b)
