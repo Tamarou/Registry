@@ -29,6 +29,7 @@ use Test::Registry::DB ();
 my @CHANGES = qw(
     payments-amount-cents
     refund-amounts-cents
+    drop-installment-schedules
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
