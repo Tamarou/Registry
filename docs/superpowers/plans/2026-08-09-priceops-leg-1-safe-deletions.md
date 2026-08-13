@@ -2642,7 +2642,8 @@ schema and an unguarded one would go red the first time a tenant did that.
 The schema revert harness diffs pg_dump --schema-only and is blind to a
 data-only change, so this one is deliberately kept off its list and carries
 its own round-trip test -- which compares row ids, not counts, and asserts the
-customer-scoped fixture is untouched.MSG
+customer-scoped fixture is untouched.
+MSG
 ```
 
 ---
