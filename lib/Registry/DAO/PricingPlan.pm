@@ -194,8 +194,8 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     }
     
     # Get installment amount, in cents. Integer division drops the remainder,
-    # so the installments can sum to less than the plan price -- see
-    # Registry::PriceOps::PricingPlan for the breakdown that carries it.
+    # so the installments can sum to less than the plan price. Nothing collects
+    # installments today; no leg drops these registry.pricing_plans columns.
     method installment_amount_cents {
         return $amount_cents unless $installments_allowed && $installment_count;
         return int($amount_cents / $installment_count);

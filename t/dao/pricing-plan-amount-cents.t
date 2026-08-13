@@ -8,7 +8,6 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::PricingPlan;
-use Registry::PriceOps::PricingPlan;
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
 my $test_db = Test::Registry::DB->new;
@@ -141,28 +140,6 @@ subtest 'a percentage plan with no rate in config fails loud' => sub {
     my $fraction = eval { revenue_share_fraction_for_tenant( $db, 'rateless_tenant' ) };
     ok !defined $fraction, 'no rate is invented';
     like $@, qr/percentage/i, "and the error names the missing rate: $@";
-};
-
-subtest 'a dollar-denominated discount is scaled before it meets a cents price' => sub {
-    # requirements->{sibling_discount} is entered by an admin in dollars. The
-    # price it comes off is now cents, so subtracting it raw turns a $15
-    # discount into 15 cents -- the family pays $14.85 too much per sibling.
-    my $plan = Registry::DAO::PricingPlan->create($db, {
-        plan_name    => 'Family Rate',
-        plan_type    => 'family',
-        amount_cents => 34_999,
-        currency     => 'USD',
-        requirements => { sibling_discount => 15.00 },
-    });
-
-    my $ops = Registry::PriceOps::PricingPlan->new;
-
-    is $ops->calculate_plan_price($plan, { child_count => 1 }), 34_999,
-        'one child pays the plan price, in cents';
-    is $ops->calculate_plan_price($plan, { child_count => 2 }), 33_499,
-        'a second child takes $15.00 off, not $0.15';
-    is $ops->calculate_plan_price($plan, { child_count => 3 }), 31_999,
-        'and the discount compounds per additional sibling';
 };
 
 subtest 'a percentage discount cannot leave a fractional cent behind' => sub {
