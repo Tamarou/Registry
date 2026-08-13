@@ -12,7 +12,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup, coding conven
 make dev-server  # or: carton exec morbo ./registry
 
 # Run the full test suite
-make test  # or: carton exec prove -lr t/
+make test
 
 # Run a specific test file
 carton exec prove -lv t/dao/workflows.t
