@@ -2621,7 +2621,11 @@ Known pre-existing pristine-output violations that are **not** this leg's to fix
 git add sql/deploy/retire-registry-plus-plan.sql sql/revert/retire-registry-plus-plan.sql \
         sql/verify/retire-registry-plus-plan.sql sql/sqitch.plan sql/test-schema.sql \
         t/database/retire-registry-plus-plan.t
-git commit -m "Retire the seeded Registry Plus hybrid plan
+# NOTE: this message contains `$100`, and `git commit -m "..."` in double quotes
+# lets the shell expand `$1` -- which is unset, so the message silently becomes
+# "00/month". Measured. Write it to a file and use -F, or single-quote it.
+git commit -F - <<'MSG'
+Retire the seeded Registry Plus hybrid plan
 
 Its 1% is charged on every customer payment through RevenueShare; nothing
 collects the $100/month base. An active relationship offering one is a plan
@@ -2638,7 +2642,7 @@ schema and an unguarded one would go red the first time a tenant did that.
 The schema revert harness diffs pg_dump --schema-only and is blind to a
 data-only change, so this one is deliberately kept off its list and carries
 its own round-trip test -- which compares row ids, not counts, and asserts the
-customer-scoped fixture is untouched."
+customer-scoped fixture is untouched.MSG
 ```
 
 ---
