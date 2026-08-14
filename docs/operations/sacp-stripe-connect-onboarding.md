@@ -84,12 +84,11 @@ once in test mode (step 5) before going live.
 
 Perform these steps in order. Do not skip the row-count check — the
 `tenant-scoped-payments` migration moves rows out of `registry.payments` into
-per-tenant payment tables and will abort loudly on two pre-flight conditions:
+per-tenant payment tables and will abort loudly on a pre-flight condition:
 
 | Pre-flight | Error trigger | Remediation |
 |---|---|---|
 | Payer-residency | A registry-resident tenant payment's payer does not exist in the tenant schema | `SELECT copy_user(dest_schema => '<slug>', user_id => '<id>');` for each missing user |
-| Schedule guard | `registry.scheduled_payments` rows reference payments tagged to a tenant | Manual investigation required; contact perigrin before proceeding |
 
 **Expected prod state before deploy:** approximately zero tenant-tagged payment
 rows in `registry.payments` (pre-alpha). Confirm actual counts with perigrin by
@@ -153,8 +152,8 @@ aborts by design.
    test tenant using Stripe test card `4242 4242 4242 4242`.
 3. In the Stripe dashboard (test mode), confirm the resulting charge shows:
    - `transfer_data.destination` set to the test connected account
-   - `application_fee_amount` equal to 2.5% of the charge amount (rounded
-     to the nearest cent, half-up)
+   - `application_fee_amount` equal to the tenant's plan rate (2% at launch)
+     of the charge amount (rounded to the nearest cent, half-up)
    - `on_behalf_of` set to the same connected account
 4. Confirm the `payment_intent.succeeded` event arrived on the platform webhook
    (not the connected account's webhook).
@@ -165,3 +164,79 @@ aborts by design.
 
 Once all five checks pass, the feature is validated and SACP can be switched
 from test to live keys.
+
+---
+
+## 6. Platform rate and refund behavior
+
+### Revenue share rate
+
+The application fee charged on each destination charge is calculated from the
+tenant's linked pricing plan. The relevant field is
+`pricing_configuration->>'percentage'` on the `registry.pricing_plans` row
+linked to the tenant via `platform_pricing_plan_id`. The platform free plan
+(scope `platform`, `metadata->>'default'='true'`) is the fallback when no plan
+is linked. At launch the single percentage plan carries a 2% rate.
+
+Rate resolution is performed by
+`Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant`, which
+returns the fraction (e.g. `0.02` for 2%) used by `_connect_params` to compute
+`application_fee_amount` in integer cents, rounded half-up.
+
+### Refund policy config
+
+Whether the platform returns its application fee when a tenant payment is
+refunded is controlled by `pricing_configuration.refund_application_fee` on
+the tenant's linked pricing plan. This is a JSON boolean stored in the plan's
+`pricing_configuration` jsonb column; the default is `true` (the platform
+refunds its fee). The `reverse_transfer` flag is always sent for
+destination-charge refunds regardless of this setting.
+
+Seeded at deploy time by the `refund-application-fee-config` sqitch change:
+both the platform default plan and all tenant percentage plans receive
+`refund_application_fee: true` explicitly, making the policy visible even
+though an absent or null key also defaults to `true`.
+
+Resolved at refund time by
+`Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db,
+$tenant_slug)`, which returns `1` (refund the fee) or `0` (keep the fee).
+`Registry::DAO::Payment::_refund_connect_params` maps those to the string
+booleans `'true'`/`'false'` required by Stripe's form-encoded API.
+
+### Charge idempotency
+
+Every payment row carries `metadata.idempotency_token`, a UUID seeded by
+`gen_random_uuid()` inside `Registry::DAO::Payment->create`. Intent creation
+sends this token to Stripe as the `Idempotency-Key: pi-create:<token>` header.
+
+Behavior by scenario:
+
+- Repeated agreeTerms submit: the workflow step reuses the existing payment row
+  (same token, same Stripe key). Stripe deduplicates and returns the original
+  PaymentIntent. At most one charge is created for a given submission sequence.
+- Retry after a decline: `rotate_idempotency_token` replaces the token with a
+  fresh UUID and persists it before creating the new intent. The fresh key
+  guarantees a genuinely new charge on the next attempt.
+
+---
+
+## 7. Pre-launch Stripe test suite
+
+A gated suite exercises the real Stripe Connect API against a live `sk_test_`
+key. It lives under `t/stripe-live/` and currently includes
+`connect-helper.t` and `helpers.t`. The paid-enrollment end-to-end suite lands
+as Leg C3.
+
+To run:
+
+```bash
+STRIPE_SECRET_KEY=<sk_test_...> carton exec prove -lr t/stripe-live/
+```
+
+The suite skips cleanly when `STRIPE_SECRET_KEY` is unset or absent.
+`Test::Registry::StripeConnect::available()` checks that the key matches
+`^sk_test_`, and every network helper calls the same guard before making a
+request -- a live key aborts rather than falls through.
+
+Run this suite once in test mode before switching SACP from test to live keys
+(see step 5).

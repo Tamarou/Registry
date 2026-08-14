@@ -33,7 +33,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
 
         # This month's revenue (if payment tracking is available)
         my $month_start = DateTime->now->truncate(to => 'month')->strftime('%Y-%m-%d %H:%M:%S%z');
-        my $monthly_revenue = $db->select('payments', 'SUM(amount)', {
+        my $monthly_revenue = $db->select('payments', 'SUM(amount_cents)', {
             status => 'completed',
             created_at => { '>=' => $month_start }
         })->array->[0] || 0;

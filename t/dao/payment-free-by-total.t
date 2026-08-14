@@ -45,7 +45,7 @@ my $session = Registry::DAO::Session->create( $db, {
 } );
 $session->add_events( $db, $event->id );
 Registry::DAO::PricingPlan->create( $db, {
-    session_id => $session->id, plan_name => 'Free', plan_type => 'standard', amount => 0.00,
+    session_id => $session->id, plan_name => 'Free', plan_type => 'standard', amount_cents => 0,
 } );
 
 my $workflow = Registry::DAO::Workflow->create( $db, {

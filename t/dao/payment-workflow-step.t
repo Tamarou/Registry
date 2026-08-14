@@ -82,7 +82,7 @@ Registry::DAO::PricingPlan->create($db, {
     session_id => $session->id,
     plan_name => 'Standard',
     plan_type => 'standard',
-    amount => 150.00
+    amount_cents => 15000
 });
 
 # Create workflow
@@ -179,8 +179,8 @@ subtest 'Payment step data preparation' => sub {
 
     is $result->{next_step}, $payment_step->id, 'Stays on payment step';
     ok $result->{data}, 'Payment data prepared';
-    is $result->{data}->{total}, 300, 'Total calculated correctly (150 * 2)';
-    is scalar(@{$result->{data}->{items}}), 2, 'Two line items prepared';
+    cmp_ok $result->{data}{step_data}{total}, '==', 30000, 'Total calculated correctly (15000 cents * 2)';
+    is scalar(@{$result->{data}{step_data}{items}}), 2, 'Two line items prepared';
 };
 
 subtest 'Payment creation without Stripe' => sub {
@@ -214,7 +214,7 @@ subtest 'Payment creation without Stripe' => sub {
     my $payment_data = $payment_step->prepare_payment_data($db, $run);
 
     ok $payment_data, 'Payment data prepared';
-    is $payment_data->{total}, 150, 'Correct total for single enrollment';
+    cmp_ok $payment_data->{total}, '==', 15000, 'Correct total for single enrollment';
     is scalar(@{$payment_data->{items}}), 1, 'One line item';
 
     # We can't test actual payment creation without Stripe or fixing the User foreign key issue
@@ -244,16 +244,17 @@ subtest 'Calculate enrollment totals' => sub {
 
     my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
 
-    is $payment_info->{total}, 300, 'Total is $300 for two enrollments';
+    cmp_ok $payment_info->{total}, '==', 30000, 'Total is 30000 cents for two enrollments';
     is scalar(@{$payment_info->{items}}), 2, 'Two line items generated';
 
+    # Money is integer cents end to end, so these compare as integers.
     my $item1 = $payment_info->{items}->[0];
-    is $item1->{amount}, '150.00', 'First item is $150';
+    cmp_ok $item1->{amount_cents}, '==', 15000, 'First item is 15000 cents';
     like $item1->{description}, qr/Alice Smith/, 'First item mentions Alice';
     like $item1->{description}, qr/Test Session/, 'First item mentions session';
 
     my $item2 = $payment_info->{items}->[1];
-    is $item2->{amount}, '150.00', 'Second item is $150';
+    cmp_ok $item2->{amount_cents}, '==', 15000, 'Second item is 15000 cents';
     like $item2->{description}, qr/Bob Smith/, 'Second item mentions Bob';
 };
 
@@ -304,7 +305,7 @@ subtest 'Enrollment creation on successful payment' => sub {
     eval {
         my $test_payment = Registry::DAO::Payment->create($db, {
             user_id => $parent->id,
-            amount => 100.00,
+            amount_cents => 10000,
             metadata => { test => 'direct_payment' }
         });
         diag "Direct payment creation succeeded: " . $test_payment->id;
@@ -340,7 +341,7 @@ subtest 'Enrollment creation on successful payment' => sub {
     if ($payment_id) {
         my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
         ok $payment, 'Payment record created';
-        is $payment->amount, 150, 'Payment amount correct';
+        cmp_ok $payment->amount_cents, '==', 15000, 'Payment amount correct';
         is $payment->user_id, $parent->id, 'Payment linked to correct user';
     }
 

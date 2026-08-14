@@ -11,7 +11,7 @@ use Mojo::JSON qw(encode_json decode_json);
 
 field $id :param :reader = undef;
 field $user_id :param :reader = undef;
-field $amount :param :reader = 0;
+field $amount_cents :param :reader = 0;
 field $currency :param :reader = 'USD';
 field $status :param :reader = 'pending';
 field $stripe_payment_intent_id :param :reader = undef;
@@ -36,9 +36,6 @@ field $_stripe_client = undef;
     }
     
     sub table { 'payments' }
-
-    # Convert a dollar amount to integer cents for Stripe API calls.
-    sub _to_cents ($dollars) { int($dollars * 100) }
 
     # Platform revenue share, collected at charge time as a Stripe application
     # fee on the destination charge. The fraction is resolved from the tenant's
@@ -74,7 +71,7 @@ field $_stripe_client = undef;
     # guarantees readiness before any tenant intent is created, so routing on
     # account presence (not re-checking readiness booleans) keeps this method
     # total. tenants has no jsonb columns; plain ->hash is sufficient.
-    sub _connect_params ($db, $metadata, $amount) {
+    sub _connect_params ($db, $metadata, $amount_cents) {
         $db = $db->db if $db isa Registry::DAO;
         my $meta = ref $metadata eq 'HASH' ? $metadata : {};
         my $slug = $meta->{tenant_slug};
@@ -96,16 +93,44 @@ field $_stripe_client = undef;
         return (
             'transfer_data[destination]' => $acct,
             on_behalf_of                 => $acct,
-            application_fee_amount       => application_fee_cents(_to_cents($amount), $fraction),
+            application_fee_amount       => application_fee_cents($amount_cents, $fraction),
+        );
+    }
+
+    # Connect refunds: for a destination charge the tenant received the tuition, so
+    # the transfer must be reversed; whether the platform also returns its
+    # application fee is governed by the tenant's plan. Registry/platform payments
+    # (no tenant_slug, or tenant_slug eq 'registry') are unchanged -- neither
+    # parameter is sent and Stripe defaults apply.
+    #
+    # Stripe's form-encoded API (Stripe.pm posts `form => $data`) requires string
+    # booleans ('true'/'false'). Sending numeric 1/0 yields an "Invalid boolean"
+    # API error on every refund, so these values must always be strings.
+    method _refund_connect_params ($db) {
+        my $slug = ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef;
+        return () unless $slug && $slug ne 'registry';
+        $db = $db->db if $db isa Registry::DAO;
+        my $refund_fee =
+            Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db, $slug);
+        return (
+            reverse_transfer       => 'true',
+            refund_application_fee => $refund_fee ? 'true' : 'false',
         );
     }
 
     sub create ($class, $db, $data) {
-        # Handle JSON encoding for metadata
-        if (exists $data->{metadata} && ref $data->{metadata}) {
-            $data->{metadata} = { -json => $data->{metadata} };
-        }
-        
+        my $raw_db = ($db isa Registry::DAO) ? $db->db : $db;
+
+        # Ensure metadata is always a hashref with a stable idempotency token.
+        # Token is set BEFORE the -json wrapping so it survives the ADJUST
+        # decode round-trip on reload (Payment->find). UUID comes from the DB's
+        # gen_random_uuid() to stay consistent with the schema idiom.
+        $data->{metadata} = {} unless ref $data->{metadata} eq 'HASH';
+        $data->{metadata}{idempotency_token} //= $raw_db->query(
+            'SELECT gen_random_uuid()::text AS uuid'
+        )->hash->{uuid};
+        $data->{metadata} = { -json => $data->{metadata} };
+
         return $class->SUPER::create($db, $data);
     }
     
@@ -141,50 +166,86 @@ field $_stripe_client = undef;
         return $_stripe_client;
     }
     
-    method create_payment_intent ($db, $args = {}) {
-        my $description = $args->{description} // 'Registry Program Enrollment';
-        my $receipt_email = $args->{receipt_email};
-        
-        # Create payment intent with Stripe
-        my $intent;
-        try {
-            # Stripe's API is form-encoded; nested hashes must be flattened to
-            # bracket notation (metadata[key]=value). Mojo's form generator
-            # would otherwise turn a nested hashref into a bogus multipart
-            # upload and the metadata would never reach Stripe. Metadata
-            # values must be strings, so refs (e.g. enrollment_items) are
-            # snapshotted only in the DB metadata column, not sent to Stripe.
-            $intent = $self->stripe_client->create_payment_intent({
-                amount        => _to_cents($amount),
-                currency      => $currency,
-                description   => $description,
-                receipt_email => $receipt_email,
-                _stripe_metadata_params($user_id, $self->id, $metadata),
-                _connect_params($db, $metadata, $amount),
-            });
-        }
-        catch ($e) {
-            $error_message = $e;
-            $status = 'failed';
-            $self->update($db, {
-                error_message => $error_message,
-                status => $status
-            });
-            die "Failed to create payment intent: $e";
-        }
-        
-        # Update payment record with Stripe intent ID
+    # The Stripe idempotency key for creating this payment's intent. Fails
+    # loudly if the token is missing: a payment without one would send the
+    # same bare "pi-create:" key as every other tokenless payment, and Stripe
+    # would silently replay another payment's intent. Payment->create always
+    # seeds the token, so this only fires for rows built outside it.
+    method _charge_idempotency_key {
+        die "Payment $id has no idempotency_token in metadata - "
+          . "was it created outside Payment->create?"
+            unless ref $metadata eq 'HASH' && defined $metadata->{idempotency_token};
+        return 'pi-create:' . $metadata->{idempotency_token};
+    }
+
+    # Request body for a PaymentIntent create call.
+    #
+    # Stripe's API is form-encoded; nested hashes must be flattened to bracket
+    # notation (metadata[key]=value). Mojo's form generator would otherwise turn
+    # a nested hashref into a bogus multipart upload and the metadata would
+    # never reach Stripe. Metadata values must be strings, so refs (e.g.
+    # enrollment_items) are snapshotted only in the DB metadata column, not sent
+    # to Stripe.
+    #
+    # Shared by the sync and async wrappers so the Connect routing, application
+    # fee, and idempotency key are derived in exactly one place.
+    method _intent_params ($db, $args) {
+        return {
+            amount            => $amount_cents,
+            currency          => $currency,
+            description       => $args->{description} // 'Registry Program Enrollment',
+            receipt_email     => $args->{receipt_email},
+            _idempotency_key  => $self->_charge_idempotency_key,
+            _stripe_metadata_params($user_id, $self->id, $metadata),
+            _connect_params($db, $metadata, $amount_cents),
+        };
+    }
+
+    # Stamp the created intent onto the payment row and hand back the pair the
+    # checkout form needs.
+    method _record_intent ($db, $intent) {
         $stripe_payment_intent_id = $intent->{id};
         $self->update($db, {
             stripe_payment_intent_id => $stripe_payment_intent_id
         });
-        
+
         return {
             client_secret => $intent->{client_secret},
             payment_intent_id => $intent->{id},
         };
     }
+
+    method _record_intent_failure ($db, $error) {
+        $error_message = $error;
+        $status = 'failed';
+        $self->update($db, {
+            error_message => $error_message,
+            status => $status
+        });
+        die "Failed to create payment intent: $error";
+    }
+
+    method create_payment_intent ($db, $args = {}) {
+        my $intent;
+        try {
+            $intent = $self->stripe_client->create_payment_intent(
+                $self->_intent_params($db, $args)
+            );
+        }
+        catch ($e) {
+            $self->_record_intent_failure($db, $e);
+        }
+
+        return $self->_record_intent($db, $intent);
+    }
     
+    method _record_retrieval_failure ($db, $error) {
+        $error_message = $error;
+        $status = 'failed';
+        $self->save($db);
+        return { success => 0, error => $error };
+    }
+
     method process_payment ($db, $payment_intent_id) {
         # Retrieve payment intent from Stripe
         my $intent;
@@ -192,31 +253,92 @@ field $_stripe_client = undef;
             $intent = $self->stripe_client->retrieve_payment_intent($payment_intent_id);
         }
         catch ($e) {
-            $error_message = $e;
-            $status = 'failed';
-            $self->save($db);
-            return { success => 0, error => $e };
+            return $self->_record_retrieval_failure($db, $e);
         }
-        
+
+        return $self->_apply_intent($db, $intent, $payment_intent_id);
+    }
+
+    # Interpret a retrieved PaymentIntent against this payment row and move the
+    # row's status accordingly. Shared by the sync and async wrappers: the
+    # ownership and captured-amount guards are the security-critical part of the
+    # money path and must not be able to drift apart between the two callers.
+    method _apply_intent ($db, $intent, $payment_intent_id) {
+        # The posted intent id is client-controlled: only honor an intent that
+        # belongs to THIS payment row -- either the id stored at creation time
+        # or an intent stamped with our payment_id in its Stripe metadata.
+        # Without this check, any succeeded intent id from anywhere on the
+        # platform could complete an unrelated (and more expensive) enrollment.
+        # Do not mutate status on mismatch: a forged id must not be able to
+        # flip a payment to failed either.
+        my $intent_id = $intent->{id} // $payment_intent_id;
+        my $owned =
+            ( defined $stripe_payment_intent_id && $intent_id eq $stripe_payment_intent_id )
+            || ( ( $intent->{metadata}{payment_id} // '' ) eq $id );
+        unless ($owned) {
+            return {
+                success => 0,
+                error   => 'Payment intent does not belong to this payment',
+            };
+        }
+
+        # A captured payment must not be demoted by a superseded intent. The
+        # ownership check above cannot tell them apart: every intent ever minted
+        # for this row is stamped with our payment_id (_stripe_metadata_params),
+        # so the one cancelled after a declined first attempt still passes.
+        # Letting it reach the else-branch flips a paid row to 'failed', which
+        # sends the caller on to mint a replacement intent and offer a live card
+        # form to a parent who has already paid.
+        #
+        # Reported as its own outcome rather than a failure: the payment is
+        # fine, and the caller should carry on to completion, not show an error.
+        if ( $status eq 'completed' && $intent->{status} ne 'succeeded' ) {
+            return {
+                success           => 0,
+                already_completed => 1,
+                error             => 'Payment is already completed',
+            };
+        }
+
         # Update payment status based on intent status
         if ($intent->{status} eq 'succeeded') {
+            # The captured amount must match this row before completing: a
+            # stale intent from before a cart refresh must not settle the
+            # refreshed (differently-priced) cart. Intents without an amount
+            # (internal fixtures) pass; real Stripe intents always carry one.
+            # No status mutation on mismatch -- this is a refusal, not a
+            # payment failure.
+            if ( defined $intent->{amount} && $intent->{amount} != $amount_cents ) {
+                return {
+                    success => 0,
+                    error   => 'Payment intent amount does not match payment record',
+                };
+            }
+
             $status = 'completed';
             $completed_at = \'NOW()';
             $stripe_payment_method_id = $intent->{payment_method};
             $self->save($db);
-            
+
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
             $status = 'processing';
             $self->save($db);
-            
+
             return { success => 0, processing => 1 };
         } else {
             $status = 'failed';
             $error_message = $intent->{last_payment_error}->{message} // 'Payment failed';
             $self->save($db);
-            
-            return { success => 0, error => $error_message };
+
+            # Surface the raw intent status: the caller must distinguish a true
+            # decline (requires_payment_method) from a customer mid-3DS
+            # (requires_action) before deciding to mint a replacement intent.
+            return {
+                success       => 0,
+                error         => $error_message,
+                intent_status => $intent->{status},
+            };
         }
     }
     
@@ -266,13 +388,13 @@ field $_stripe_client = undef;
         $db = $db->db if $db isa Registry::DAO;
         
         die "Description required" unless defined $args->{description};
-        die "Amount required" unless defined $args->{amount};
-        
+        die "Amount required" unless defined $args->{amount_cents};
+
         my $item = {
             payment_id => $self->id,
             enrollment_id => $args->{enrollment_id},
             description => $args->{description},
-            amount => $args->{amount},
+            amount_cents => $args->{amount_cents},
             quantity => $args->{quantity} // 1,
             metadata => encode_json($args->{metadata} // {}),
         };
@@ -292,27 +414,59 @@ field $_stripe_client = undef;
         return $items;
     }
     
+    # Persist the current in-memory field values back to the database row.
+    # Called by state-mutation methods (refund, process_payment) after they
+    # update fields like $status, $metadata, $completed_at, and $error_message.
+    #
+    # Intentionally bypasses the inherited Registry::DAO::Object::update(), which
+    # silently carps and continues on database errors. Refund and payment state
+    # must fail loudly: a Stripe refund that succeeds but whose DB record was not
+    # updated would leave money in an inconsistent state.
+    method save ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        $db->update($self->table, {
+            status                   => $status,
+            stripe_payment_intent_id => $stripe_payment_intent_id,
+            stripe_payment_method_id => $stripe_payment_method_id,
+            metadata                 => { -json => ($metadata // {}) },
+            completed_at             => $completed_at,
+            error_message            => $error_message,
+        }, { id => $id });
+    }
+
+    # Replace the idempotency token with a fresh UUID and persist immediately.
+    # Call this before retrying a declined intent so the retry is a genuinely
+    # new Stripe charge rather than a duplicate of the failed one.
+    method rotate_idempotency_token ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        $metadata->{idempotency_token} = $db->query(
+            'SELECT gen_random_uuid()::text AS uuid'
+        )->hash->{uuid};
+        $self->save($db);
+    }
+
     method refund ($db, $args = {}) {
         die "Cannot refund non-completed payment" unless $status eq 'completed';
         die "No payment intent to refund" unless $stripe_payment_intent_id;
         
-        my $refund_amount = $args->{amount} // $amount;
+        my $refund_cents = $args->{amount_cents} // $amount_cents;
         my $reason = $args->{reason} // 'requested_by_customer';
-        
+
         my $refund;
         try {
             $refund = $self->stripe_client->create_refund({
                 payment_intent => $stripe_payment_intent_id,
-                amount => _to_cents($refund_amount),
-                reason => $reason,
+                amount         => $refund_cents,
+                reason         => $reason,
+                $self->_refund_connect_params($db),
             });
         }
         catch ($e) {
             die "Refund failed: $e";
         }
-        
+
         # Update payment status
-        if ($refund_amount >= $amount) {
+        if ($refund_cents >= $amount_cents) {
             $status = 'refunded';
         } else {
             $status = 'partially_refunded';
@@ -320,14 +474,14 @@ field $_stripe_client = undef;
         
         # Update metadata to track refund
         $metadata->{refund_id} = $refund->{id};
-        $metadata->{refund_amount} = $refund_amount;
+        $metadata->{refund_amount_cents} = $refund_cents;
         $metadata->{refund_reason} = $reason;
-        
+
         $self->save($db);
-        
+
         return $refund;
     }
-    
+
     sub for_user ($class, $db, $user_id) {
         $db = $db->db if $db isa Registry::DAO;
         my $payments = $db->select(
@@ -365,18 +519,18 @@ field $_stripe_client = undef;
             
             # Use the first pricing plan or find the best price
             my $pricing = $pricing_plans->[0];
-            my $price = $pricing->calculate_price({
+            my $price_cents = $pricing->calculate_price({
                 child_count => 1,
                 date => time(),
                 %$child
             });
-            
-            if (defined $price) {
-                $total += $price;
-                
+
+            if (defined $price_cents) {
+                $total += $price_cents;
+
                 push @$items, {
                     description => "$child->{first_name} $child->{last_name} - " . $session->name,
-                    amount => $price,
+                    amount_cents => $price_cents,
                     metadata => {
                         child_id => $child->{id},
                         session_id => $session_id,
@@ -391,88 +545,52 @@ field $_stripe_client = undef;
         };
     }
     
-    # Async payment methods for better performance
+    # Async payment methods. These are what the web request path uses: a
+    # blocking Stripe call inside the running IOLoop can never settle, because
+    # Mojo::Promise::wait is a no-op once its loop is already running.
     method create_payment_intent_async ($db, $args = {}) {
-        my $description = $args->{description} // 'Registry Program Enrollment';
-        my $receipt_email = $args->{receipt_email};
-        
-        return $self->stripe_client->create_payment_intent_async({
-            amount        => _to_cents($amount),
-            currency      => $currency,
-            description   => $description,
-            receipt_email => $receipt_email,
-            _stripe_metadata_params($user_id, $self->id, $metadata),
-            _connect_params($db, $metadata, $amount),
-        })->then(sub ($intent) {
-            # Update payment record with Stripe intent ID
-            $stripe_payment_intent_id = $intent->{id};
-            $self->update($db, {
-                stripe_payment_intent_id => $stripe_payment_intent_id
-            });
-            return $intent;
-        })->catch(sub ($error) {
-            $error_message = $error;
-            $status = 'failed';
-            $self->save($db);
-            die "Failed to create payment intent: $error";
-        });
+        return $self->stripe_client->create_payment_intent_async(
+            $self->_intent_params($db, $args)
+        )->then(
+            sub ($intent) { $self->_record_intent($db, $intent) },
+            sub ($error)  { $self->_record_intent_failure($db, $error) },
+        );
     }
     
+    # Two-argument then: the rejection handler must see only a failed retrieval.
+    # A single trailing ->catch would also swallow anything _apply_intent threw
+    # and mis-record it as a Stripe transport failure.
     method process_payment_async ($db, $payment_intent_id) {
         return $self->stripe_client->retrieve_payment_intent_async($payment_intent_id)
-            ->then(sub ($intent) {
-                # Update payment status based on intent status
-                if ($intent->{status} eq 'succeeded') {
-                    $status = 'completed';
-                    $completed_at = \'NOW()';
-                } elsif ($intent->{status} eq 'processing') {
-                    $status = 'processing';
-                } elsif ($intent->{status} eq 'requires_payment_method') {
-                    $status = 'failed';
-                    $error_message = 'Payment method required';
-                } else {
-                    $status = 'failed';
-                    $error_message = 'Payment failed with status: ' . $intent->{status};
-                }
-                
-                $self->save($db);
-                
-                return { 
-                    success => $status eq 'completed' ? 1 : 0, 
-                    status => $status,
-                    intent => $intent 
-                };
-            })
-            ->catch(sub ($error) {
-                $error_message = $error;
-                $status = 'failed';
-                $self->save($db);
-                return { success => 0, error => $error };
-            });
+            ->then(
+                sub ($intent) { $self->_apply_intent($db, $intent, $payment_intent_id) },
+                sub ($error)  { $self->_record_retrieval_failure($db, $error) },
+            );
     }
     
     method refund_async ($db, $args = {}) {
         die "Payment must be completed before refunding" unless $status eq 'completed';
         die "No Stripe payment intent ID" unless $stripe_payment_intent_id;
         
-        my $refund_amount = $args->{amount} // $amount;
+        my $refund_cents = $args->{amount_cents} // $amount_cents;
         my $reason = $args->{reason} // 'requested_by_customer';
-        
+
         return $self->stripe_client->create_refund_async({
             payment_intent => $stripe_payment_intent_id,
-            amount => _to_cents($refund_amount),
-            reason => $reason,
+            amount         => $refund_cents,
+            reason         => $reason,
+            $self->_refund_connect_params($db),
         })->then(sub ($refund) {
             # Update payment status
-            if ($refund_amount >= $amount) {
+            if ($refund_cents >= $amount_cents) {
                 $status = 'refunded';
             } else {
                 $status = 'partially_refunded';
             }
-            
+
             # Update metadata to track refund
             $metadata->{refund_id} = $refund->{id};
-            $metadata->{refund_amount} = $refund_amount;
+            $metadata->{refund_amount_cents} = $refund_cents;
             $metadata->{refund_reason} = $reason;
             
             $self->save($db);

@@ -446,7 +446,7 @@ my $dao = $test_db->db;
         
         Registry::DAO::Payment->create($dao->db, {
             user_id => $enrollment->{parent_id},  # Use parent_id as the paying user
-            amount => $amount,
+            amount_cents => $amount,
             currency => 'USD',
             status => 'completed',
             stripe_payment_intent_id => "pi_test_$payment_count",
@@ -566,7 +566,7 @@ Program Director
         require Registry::DAO::Payment;
         Registry::DAO::Payment->create($dao->db, {
             user_id => $new_enrollment->parent_id,
-            amount => 18000, # Standard rate
+            amount_cents => 18000, # Standard rate
             currency => 'USD',
             status => 'completed',
             stripe_payment_intent_id => "pi_test_waitlist_" . $new_enrollment->id,
@@ -596,7 +596,7 @@ Program Director
             (SELECT COUNT(*) FROM enrollments WHERE status IN ('active', 'pending')) as active_enrollments,
             (SELECT COUNT(*) FROM projects) as active_programs,
             (SELECT COUNT(*) FROM waitlist WHERE status IN ('waiting', 'offered')) as waitlist_entries,
-            (SELECT SUM(amount) FROM payments WHERE status = 'completed') as total_revenue
+            (SELECT SUM(amount_cents) FROM payments WHERE status = 'completed') as total_revenue
     })->hash;
     
     ok $dashboard_stats, 'Admin dashboard data retrieved';
@@ -681,8 +681,8 @@ Program Director
     my $financial_check = $dao->db->query(q{
         SELECT 
             COUNT(DISTINCT e.id) as paid_enrollments,
-            SUM(p.amount) as total_payments,
-            AVG(p.amount) as average_payment
+            SUM(p.amount_cents) as total_payments,
+            AVG(p.amount_cents) as average_payment
         FROM enrollments e
         JOIN payments p ON e.parent_id = p.user_id
         WHERE e.status = 'active' AND p.status = 'completed'

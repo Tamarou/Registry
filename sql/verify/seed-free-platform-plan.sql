@@ -9,6 +9,6 @@ SELECT 1/COUNT(*) FROM registry.pricing_plans
 WHERE plan_scope = 'platform'
   AND metadata->>'default' = 'true'
   AND pricing_model_type = 'percentage'
-  AND amount = 0.00;
+  AND (pricing_configuration->>'percentage')::NUMERIC = 0;
 
 ROLLBACK;

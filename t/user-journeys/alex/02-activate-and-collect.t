@@ -12,6 +12,7 @@ use Test::More import => [qw( done_testing is like ok subtest )];
 defer { done_testing };
 
 use Mojo::JSON     qw(encode_json);
+use Mojo::Promise;
 use Digest::SHA    qw(hmac_sha256_hex);
 use Mojo::Home;
 use YAML::XS qw(Load);
@@ -60,7 +61,7 @@ $ENV{DB_URL} = $test_db->uri;
 # Fixtures
 # ---------------------------------------------------------------------------
 
-my $PLAN_AMOUNT = 150.00;
+my $PLAN_AMOUNT_CENTS = 15_000;
 
 # Import all non-draft workflows into the registry schema first.  Tenant
 # provisioning copies registry workflows via copy_workflow, so the registry
@@ -164,7 +165,7 @@ Registry::DAO::PricingPlan->create($tenant_db, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => $PLAN_AMOUNT,
+    amount_cents => $PLAN_AMOUNT_CENTS,
 });
 
 # ---------------------------------------------------------------------------
@@ -412,13 +413,16 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
     my $step   = $run->next_step($tenant_db);
     is $step->slug, 'payment', 'run is still on payment step (gate refusal did not advance it)';
 
-    # Intercept create_payment_intent; capture params and return a fixture intent.
+    # Intercept the async intent seam; capture params and return a fixture
+    # intent. The controller renders only once this promise settles, so the
+    # request also exercises the render_later path.
     {
         no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub {
+        local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self_stripe, $params) = @_;
             $captured_params = $params;
-            return { id => 'pi_journey', client_secret => 'cs_journey' };
+            return Mojo::Promise->resolve(
+                { id => 'pi_journey', client_secret => 'cs_journey' });
         };
 
         # When payment intent is created, the step stays on the payment page
@@ -430,10 +434,15 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
             workflow_process_step_url($reg_wf, $run, $step),
             \%tenant_host,
             form => { agreeTerms => 1 }
-        )->status_is(200, 'payment step renders Stripe form after passing gate');
+        )->status_is(200, 'payment step renders Stripe form after passing gate')
+         ->content_like(qr/id="payment-form"/,
+            'the card-entry form the parent has to use is on the page')
+         ->content_like(qr/cs_journey/,
+            'the fresh client_secret reaches the Stripe Elements init');
     }
 
-    ok $captured_params, 'Stripe create_payment_intent was called and params captured';
+    ok $captured_params,
+        'Stripe create_payment_intent_async was called and params captured';
 
     # Connect routing params
     is $captured_params->{'transfer_data[destination]'}, 'acct_journey',
@@ -441,10 +450,9 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
     is $captured_params->{'on_behalf_of'}, 'acct_journey',
         'on_behalf_of is the connected account id';
 
-    # Application fee: 2% (tenant's linked plan) of $150 = $3.00 = 300 cents
-    my $expected_fee = Registry::DAO::Payment::application_fee_cents(
-        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT), 0.02);
-    is $expected_fee, 300, 'sanity: expected fee is 300 cents (2% of $150)';
+    # Application fee: 2% (tenant's linked plan) of 15000 cents = 300 cents
+    my $expected_fee = Registry::DAO::Payment::application_fee_cents($PLAN_AMOUNT_CENTS, 0.02);
+    is $expected_fee, 300, q{sanity: expected fee is 300 cents (2% of 15000 cents)};
     is $captured_params->{'application_fee_amount'}, $expected_fee,
         'application_fee_amount matches platform 2% fee';
 

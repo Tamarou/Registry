@@ -39,7 +39,7 @@ subtest 'Create pricing relationship' => sub {
         plan_name => 'Test Plan',
         plan_type => 'standard',
         pricing_model_type => 'fixed',
-        amount => 100.00,
+        amount_cents => 10000,
         plan_scope => 'customer',
     });
 
@@ -83,7 +83,7 @@ subtest 'Platform billing relationships' => sub {
         plan_name => 'Platform Standard',
         plan_type => 'subscription',
         pricing_model_type => 'fixed',
-        amount => 200.00,
+        amount_cents => 20000,
         plan_scope => 'platform',
     });
 
@@ -120,7 +120,7 @@ subtest 'B2C enrollment relationships' => sub {
         plan_name => 'Summer Camp Fee',
         plan_type => 'enrollment',
         pricing_model_type => 'fixed',
-        amount => 500.00,
+        amount_cents => 50000,
         plan_scope => 'customer',
         # session_id => '123e4567-e89b-12d3-a456-426614174000', # Would be from a real session
     });
@@ -174,7 +174,8 @@ subtest 'B2B corporate relationships' => sub {
         plan_name => 'Corporate Discount Plan',
         plan_type => 'partnership',
         pricing_model_type => 'percentage',
-        amount => 0.15,  # 15% discount
+        amount_cents => 0,  # a percentage plan has no dollar amount
+        pricing_configuration => { percentage => 0.15 },  # 15% discount
         plan_scope => 'tenant',
     });
 
@@ -214,7 +215,7 @@ subtest 'Find relationships' => sub {
         plan_name => 'Test Plan',
         plan_type => 'standard',
         pricing_model_type => 'fixed',
-        amount => 50.00,
+        amount_cents => 5000,
     });
 
     # Create multiple relationships
@@ -264,7 +265,7 @@ subtest 'Status transitions' => sub {
         plan_name => 'Test Plan',
         plan_type => 'standard',
         pricing_model_type => 'fixed',
-        amount => 100.00,
+        amount_cents => 10000,
     });
 
     my $relationship = Registry::DAO::PricingRelationship->create($db, {
@@ -304,7 +305,7 @@ subtest 'Relationship helpers' => sub {
         plan_name => 'Test Plan',
         plan_type => 'standard',
         pricing_model_type => 'fixed',
-        amount => 100.00,
+        amount_cents => 10000,
     });
 
     my $relationship = Registry::DAO::PricingRelationship->create($db, {

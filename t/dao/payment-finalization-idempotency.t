@@ -42,7 +42,7 @@ my $child = Registry::DAO::Family->add_child($db, $parent->id, {
 
 my $payment = Registry::DAO::Payment->create($db, {
     user_id  => $parent->id,
-    amount   => 100,
+    amount_cents => 10000,
     metadata => {
         enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
         tenant_slug      => undef,
@@ -70,6 +70,35 @@ subtest 'second finalize (dual-path) does not duplicate' => sub {
     my $notes = $db->select('notifications', '*',
         { user_id => $parent->id, type => 'enrollment_confirmation' })->hashes;
     is scalar(@$notes), 1, 'still exactly one confirmation notification';
+};
+
+subtest 'a collision the dedup index does not cover is not swallowed' => sub {
+    # Dropping an enrollment cancels the row in place; nothing deletes it. So a
+    # parent re-registering the same child for the same session collides with
+    # enrollments_session_student_type_unique, which the payment dedup index does
+    # not cover. Stripe has already captured by the time finalize runs, so a
+    # skipped insert here means money taken, no enrollment row, no exception,
+    # and a confirmation email sent anyway. It has to raise.
+    $db->update('enrollments', { status => 'cancelled' }, { payment_id => $payment->id });
+
+    my $repay = Registry::DAO::Payment->create($db, {
+        user_id  => $parent->id,
+        amount_cents => 10000,
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
+            tenant_slug      => undef,
+        },
+    });
+
+    my $ok = eval { $repay->finalize_enrollment($db); 1 };
+    my $err = $@;
+
+    ok !$ok, 'finalize raises instead of dropping the insert on the floor';
+    like $err, qr/enrollments_session_student_type_unique/,
+        'the error names the constraint that actually fired';
+
+    my $rows = $db->select('enrollments', '*', { payment_id => $repay->id })->hashes;
+    is scalar(@$rows), 0, 'no enrollment row for the new payment (the raise is the only signal)';
 };
 
 done_testing;

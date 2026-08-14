@@ -19,11 +19,13 @@ use Registry::DAO::Event;
 use Registry::DAO::Location;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
+use Test::Registry::Async qw( settle );
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::Controller::Webhooks;
 use Registry::Service::Stripe;
 use Test::Registry::DB;
+use Mojo::Promise;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
 
@@ -98,12 +100,12 @@ my $session = Registry::DAO::Session->create($tdb, {
     metadata   => {},
 });
 $session->add_events($tdb, $event->id);
-my $PLAN_AMOUNT = 150.00;
+my $PLAN_AMOUNT_CENTS = 15_000;
 Registry::DAO::PricingPlan->create($tdb, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => $PLAN_AMOUNT,
+    amount_cents => $PLAN_AMOUNT_CENTS,
 });
 
 # Parent + child in the tenant schema
@@ -180,7 +182,7 @@ subtest 'gate refusal: unready tenant blocks paid enrollment' => sub {
 
     my $run    = make_e2e_run();
     my $step   = get_payment_step();
-    my $result = $step->process($tdb, { agreeTerms => 1 }, $run);
+    my $result = settle($step->process($tdb, { agreeTerms => 1 }, $run));
 
     ok $result->{errors}, 'gate returned errors';
     like $result->{errors}[0], qr/not yet available/i,
@@ -230,23 +232,26 @@ my $result;
 
 {
     no warnings 'redefine';
-    local *Registry::Service::Stripe::create_payment_intent = sub {
+    # The step drives Stripe through the async seam; a blocking call in the web
+    # path can never settle inside the daemon's running event loop.
+    local *Registry::Service::Stripe::create_payment_intent_async = sub {
         my ($self_stripe, $params) = @_;
         $captured_stripe_called++;
         $captured_params = $params;
-        return { id => 'pi_e2e', client_secret => 'cs_e2e' };
+        return Mojo::Promise->resolve({ id => 'pi_e2e', client_secret => 'cs_e2e' });
     };
 
-    $result = $step->process($tdb, { agreeTerms => 1 }, $run);
+    $result = settle($step->process($tdb, { agreeTerms => 1 }, $run));
 }
 
 subtest 'ready tenant: payment step passes gate and creates payment' => sub {
     ok !$result->{errors}, 'no gate error when tenant is Stripe Connect ready'
         or diag explain $result->{errors};
-    ok $captured_stripe_called, 'Stripe create_payment_intent was called exactly once';
+    is $captured_stripe_called, 1,
+        'Stripe create_payment_intent_async was called exactly once';
 
     # Payment row must exist IN THE TENANT SCHEMA
-    my $pay_rows = $tdb->select('payments', ['id', 'user_id', 'amount', 'metadata'],
+    my $pay_rows = $tdb->select('payments', ['id', 'user_id', 'amount_cents', 'metadata'],
         { user_id => $parent->id })->hashes;
     is scalar @$pay_rows, 1, 'exactly one payment row in the tenant schema';
 
@@ -267,9 +272,8 @@ subtest 'Stripe params carry correct destination-charge and metadata keys' => su
     # Application fee derives from the fixture amount so the two cannot
     # drift; the round-half-up boundary itself is unit-tested in
     # t/dao/payment-intent-destination-charge.t.
-    my $expected_fee = Registry::DAO::Payment::application_fee_cents(
-        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT), 0.02);
-    is $expected_fee, 300, 'expected fee sanity check: 2% of $150.00 = 300 cents';
+    my $expected_fee = Registry::DAO::Payment::application_fee_cents($PLAN_AMOUNT_CENTS, 0.02);
+    is $expected_fee, 300, q{expected fee sanity check: 2% of 15000 cents = 300 cents};
     is $captured_params->{'application_fee_amount'}, $expected_fee,
         'application_fee_amount matches expected 2% fee';
 

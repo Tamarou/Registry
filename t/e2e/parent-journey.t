@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is ok like is_deeply diag )];
+use Test::More import => [qw( done_testing is ok like is_deeply diag cmp_ok )];
 defer { done_testing };
 
 use Registry::DAO;
@@ -126,7 +126,7 @@ my $dao = $test_db->db;
     my $family_member = $dao->find( FamilyMember => { id => $enrollment->student_id });
     my $payment = Registry::DAO::Payment->create($dao->db, {
         user_id => $family_member->family_id,
-        amount => 25000, # $250.00 in cents
+        amount_cents => 25000,
         currency => 'USD',
         status => 'completed',
         stripe_payment_intent_id => 'pi_test_12345',
@@ -139,7 +139,7 @@ my $dao = $test_db->db;
     
     ok $payment, 'Payment record created successfully';
     is $payment->status, 'completed', 'Payment completed successfully';
-    is $payment->amount, '25000.00', 'Payment amount correct';
+    cmp_ok $payment->amount_cents, q{==}, 25000, q{Payment amount correct};
 }
 
 {    # Step 6: Attendance Tracking Over Time

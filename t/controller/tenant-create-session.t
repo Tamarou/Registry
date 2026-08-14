@@ -62,9 +62,6 @@ END {
             admin_email      => 'alice@example.com',
             admin_username   => 'Alice',
             terms_accepted   => '1',
-            # Mock payment data to satisfy workflow
-            setup_intent_id  => 'seti_test_123',
-            payment_method_id => 'pm_test_123',
             collect_payment_method => '1',
             # Pricing plan selection - using Registry Standard plan (ID will be looked up)
             selected_plan_id => $standard_plan ? $standard_plan->id : 'cb4e92cf-193a-4832-b785-608c4b02dac8',

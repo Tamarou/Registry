@@ -51,7 +51,7 @@ subtest 'Integration test setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount => 50000,  # $500.00 in cents
+        amount_cents => 50000,  # $500.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 30,
@@ -130,7 +130,7 @@ subtest 'Full tenant signup integration test' => sub {
 
     my $enterprise_plan = $pricing_result->{data}->{pricing_plans}->[0];
     is $enterprise_plan->{plan_name}, 'Registry Enterprise', 'Enterprise plan available';
-    is $enterprise_plan->{amount}, 50000, 'Plan amount correct';
+    is $enterprise_plan->{amount_cents}, 50000, 'Plan amount correct';
 
     # Select the enterprise plan through the run (which merges returned data)
     my $selection_result = $run->process($dao->db, $pricing_step_obj, {
@@ -145,7 +145,7 @@ subtest 'Full tenant signup integration test' => sub {
 
     ok $stored_plan, 'Pricing plan stored in workflow data';
     is $stored_plan->{plan_name}, 'Registry Enterprise', 'Correct plan name stored';
-    is $stored_plan->{amount}, 50000, 'Correct amount stored';
+    is $stored_plan->{amount_cents}, 50000, 'Correct amount stored';
 
     # Step 2: Test payment step uses selected plan
     my $payment_step_obj = $workflow->get_step($dao->db, { slug => 'payment' });

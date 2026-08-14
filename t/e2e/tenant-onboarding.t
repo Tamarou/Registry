@@ -106,7 +106,7 @@ subtest 'tenant has programs and sessions' => sub {
         session_id => $session->id,
         plan_name  => 'Standard',
         plan_type  => 'standard',
-        amount     => 300.00,
+        amount_cents => 30000,
     });
 
     ok $session, 'Session created with events and pricing';

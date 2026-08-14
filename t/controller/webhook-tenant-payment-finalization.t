@@ -104,7 +104,7 @@ $session->add_events($tdb, $event->id);
 # Create the tenant payment with enrollment_items and tenant_slug metadata.
 my $tenant_payment = Registry::DAO::Payment->create($tdb, {
     user_id  => $parent->id,
-    amount   => 150,
+    amount_cents => 15000,
     status   => 'pending',
     metadata => {
         enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
@@ -357,7 +357,7 @@ subtest 'registry-schema payment without tenant_slug finalizes on registry conne
 
     my $reg_payment = Registry::DAO::Payment->create($db, {
         user_id  => $reg_parent->id,
-        amount   => 75,
+        amount_cents => 7500,
         status   => 'pending',
         metadata => {
             enrollment_items => [ { session_id => $reg_session->id, child_id => $reg_child->id } ],

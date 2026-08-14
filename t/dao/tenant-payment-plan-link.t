@@ -31,7 +31,7 @@ my $step = Registry::DAO::WorkflowSteps::TenantPayment->create($db, {
 
 # Resolve the seeded 2% revenue-share plan to select during signup.
 my $selected_plan = $db->query(q{
-    SELECT id, plan_name, amount, currency, pricing_configuration
+    SELECT id, plan_name, amount_cents, currency, pricing_configuration
       FROM registry.pricing_plans
      WHERE plan_scope = 'tenant'
        AND pricing_model_type = 'percentage'
@@ -79,7 +79,7 @@ subtest 'provisioning persists the selected plan link' => sub {
             selected_pricing_plan => {
                 id            => $selected_plan->{id},
                 plan_name     => $selected_plan->{plan_name},
-                amount        => $selected_plan->{amount},
+                amount_cents  => $selected_plan->{amount_cents},
                 currency      => $selected_plan->{currency},
             },
         },

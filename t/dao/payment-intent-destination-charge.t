@@ -14,6 +14,7 @@ use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
 use Registry::Service::Stripe;
 use Mojo::Promise;
+use Test::Registry::Async qw( settle );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -95,7 +96,7 @@ ok !Registry::DAO::Payment->can('REVENUE_SHARE_PERCENT'),
 subtest 'tenant payment with connect account -> destination charge params' => sub {
     my $payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [],
@@ -159,7 +160,7 @@ subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => 
 
     my $payment = Registry::DAO::Payment->create($free_db, {
         user_id  => $free_parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $free_slug,
             enrollment_items => [],
@@ -200,7 +201,7 @@ subtest 'platform payment without tenant_slug -> no connect params' => sub {
 
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $platform_user->id,
-        amount   => 50.00,
+        amount_cents => 5000,
         metadata => { some_key => 'some_value' },
     });
 
@@ -253,7 +254,7 @@ subtest 'retry intent carries same connect params as original' => sub {
     # Create a real payment with tenant_slug in metadata so _connect_params can look it up.
     my $real_payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [],
@@ -274,17 +275,27 @@ subtest 'retry intent carries same connect params as original' => sub {
         # Leave Registry::DAO::Payment::find REAL so the payment (and its
         # metadata) is reloaded from the DB and round-trips through the
         # jsonb -> ADJUST decode path before _connect_params reads tenant_slug.
-        local *Registry::DAO::Payment::process_payment =
-            sub { { success => 0, error => 'Card declined' } };
-        local *Registry::Service::Stripe::create_payment_intent = sub {
+        # intent_status must be the terminal decline state: only
+        # requires_payment_method / canceled earn a fresh intent, so
+        # omitting it would skip the retry branch this subtest exists to
+        # cover.
+        local *Registry::DAO::Payment::process_payment_async = sub {
+            Mojo::Promise->resolve({
+                success       => 0,
+                error         => 'Card declined',
+                intent_status => 'requires_payment_method',
+            });
+        };
+        local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self, $params) = @_;
             $retry_captured = $params;
-            return { id => 'pi_dc_retry', client_secret => 'cs_dc_retry' };
+            return Mojo::Promise->resolve(
+                { id => 'pi_dc_retry', client_secret => 'cs_dc_retry' });
         };
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
-        $step->handle_payment_callback($tenant_db, $run, {
+        settle($step->handle_payment_callback($tenant_db, $run, {
             payment_intent_id => 'pi_dc_initial',
-        });
+        }));
     }
 
     ok $retry_captured, 'retry intent was requested';
@@ -300,7 +311,7 @@ subtest 'retry intent carries same connect params as original' => sub {
 subtest 'async create_payment_intent_async carries connect params for tenant payment' => sub {
     my $payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [],

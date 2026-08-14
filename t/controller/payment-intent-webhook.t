@@ -47,7 +47,7 @@ my $child = Registry::DAO::Family->add_child($db, $parent->id, {
 # Payment as create_payment would leave it: enrollment_items + tenant snapshot.
 my $payment = Registry::DAO::Payment->create($db, {
     user_id  => $parent->id,
-    amount   => 100,
+    amount_cents => 10000,
     status   => 'pending',
     metadata => {
         enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
@@ -107,6 +107,57 @@ subtest 'distinct event for the same payment stays idempotent (#205)' => sub {
     post_webhook(pi_event('evt_pi_2'))->status_is(200);
     is enrollment_count(), 1, 'still one enrollment';
     is confirmation_count(), 1, 'still one confirmation';
+};
+
+subtest 'amount mismatch fails loudly and does not finalize (Leg W1)' => sub {
+    # A distinct child so this payment's enrollment is genuinely new (the
+    # earlier subtests already enrolled $child in $session; a duplicate
+    # session/child enrollment would dedupe and never attribute to payment2).
+    my $child2 = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'PI Kid Two', birth_date => '2019-02-02', grade => '2',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+
+    # A fresh payment for this scenario: the intent's captured amount must
+    # match the row before the enrollment snapshot is granted.
+    my $payment2 = Registry::DAO::Payment->create($db, {
+        user_id  => $parent->id,
+        amount_cents => 10000,
+        status   => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $child2->id } ],
+            tenant_slug      => undef,
+        },
+    });
+
+    my sub pi2_event ($event_id, $amount) {
+        return {
+            id   => $event_id,
+            type => 'payment_intent.succeeded',
+            data => { object => {
+                id       => 'pi_' . $payment2->id,
+                amount   => $amount,
+                metadata => { payment_id => $payment2->id },
+            } },
+        };
+    }
+
+    my sub p2_enrollments {
+        scalar @{ $db->select('enrollments', '*', { payment_id => $payment2->id })->hashes };
+    }
+
+    # Mismatched amount: row is $100 (10000 cents), event claims 12345.
+    post_webhook(pi2_event('evt_pi_amt_bad', 12345))->status_is(500);
+    is p2_enrollments(), 0, 'no enrollment granted for a mismatched amount';
+    my $after_bad = Registry::DAO::Payment->find($db, { id => $payment2->id });
+    isnt $after_bad->status, 'completed', 'payment not completed on mismatch';
+
+    # The failed event's claim was released, and a matching delivery (Stripe
+    # retry after the row healed, or the true intent's event) finalizes.
+    post_webhook(pi2_event('evt_pi_amt_good', 10000))->status_is(200);
+    is p2_enrollments(), 1, 'matching amount finalizes exactly as before';
+    my $after_good = Registry::DAO::Payment->find($db, { id => $payment2->id });
+    is $after_good->status, 'completed', 'payment completed on matching amount';
 };
 
 done_testing;

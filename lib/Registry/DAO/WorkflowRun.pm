@@ -2,8 +2,9 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
-    use Mojo::JSON qw(to_json);
-    use Carp       qw( croak );
+    use Mojo::JSON    qw(to_json);
+    use Mojo::Promise ();
+    use Carp          qw( croak );
 
     field $id :param      = 0;
     field $user_id :param = 0;
@@ -91,6 +92,18 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
         my $step_result = $step->process( $db, $new_data, $self );
 
+        # A step that performs network I/O (the payment step talking to Stripe)
+        # returns a promise instead of a hashref, because blocking inside the
+        # daemon's event loop never settles. Persisting its outcome has to wait
+        # for it; every other step is unaffected and stays synchronous.
+        return $step_result->then( sub ($resolved) {
+            $self->_persist_step_result( $db, $step, $resolved );
+        }) if $step_result isa Mojo::Promise;
+
+        return $self->_persist_step_result( $db, $step, $step_result );
+    }
+
+    method _persist_step_result ( $db, $step, $step_result ) {
         # Don't persist validation errors or advance the step pointer on
         # failure. The controller inspects these keys and redirects; the
         # user retries the same step.

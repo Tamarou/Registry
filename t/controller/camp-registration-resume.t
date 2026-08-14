@@ -85,7 +85,7 @@ $dao->create(PricingPlan => {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 300.00,
+    amount_cents => 30000,
 });
 
 my ($workflow) = $dao->find(Workflow => { slug => 'summer-camp-registration' });

@@ -88,7 +88,7 @@ $dao->create(PricingPlan => {
     session_id => $open_session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 300.00,
+    amount_cents => 30000,
 });
 
 # Full session (capacity 2, with 2 enrollments)
@@ -116,7 +116,7 @@ $dao->create(PricingPlan => {
     session_id => $full_session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 300.00,
+    amount_cents => 30000,
 });
 
 # Fill the full session with 2 enrollments
