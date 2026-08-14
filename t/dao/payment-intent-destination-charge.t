@@ -96,7 +96,7 @@ ok !Registry::DAO::Payment->can('REVENUE_SHARE_PERCENT'),
 subtest 'tenant payment with connect account -> destination charge params' => sub {
     my $payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [],
@@ -160,7 +160,7 @@ subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => 
 
     my $payment = Registry::DAO::Payment->create($free_db, {
         user_id  => $free_parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $free_slug,
             enrollment_items => [],
@@ -201,7 +201,7 @@ subtest 'platform payment without tenant_slug -> no connect params' => sub {
 
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $platform_user->id,
-        amount   => 50.00,
+        amount_cents => 5000,
         metadata => { some_key => 'some_value' },
     });
 
@@ -254,7 +254,7 @@ subtest 'retry intent carries same connect params as original' => sub {
     # Create a real payment with tenant_slug in metadata so _connect_params can look it up.
     my $real_payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [],
@@ -311,7 +311,7 @@ subtest 'retry intent carries same connect params as original' => sub {
 subtest 'async create_payment_intent_async carries connect params for tenant payment' => sub {
     my $payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
-        amount   => 100.00,
+        amount_cents => 10000,
         metadata => {
             tenant_slug      => $slug,
             enrollment_items => [],

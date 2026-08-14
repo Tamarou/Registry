@@ -30,7 +30,7 @@
                             <strong>Reason:</strong> <%= $request->{reason} %>
                         </div>
 
-                        % if ($request->{refund_amount_requested}) {
+                        % if ($request->{refund_amount_requested_cents}) {
                             <div class="text-xs text-green-700 mt-1">
                                 <strong>Refund Amount:</strong> <%= $request->{refund_amount_display} %>
                             </div>

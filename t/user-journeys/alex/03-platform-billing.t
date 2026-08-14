@@ -3,6 +3,9 @@
 # ABOUTME: platform subscription established during signup.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+# The payment step provisions directly when no Stripe keys are configured.
+# Ambient keys would send it to create_setup_intent and a live API call.
+BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 use 5.42.0;
 use utf8;
@@ -74,8 +77,8 @@ $t->app->helper(dao => sub { $dao });
 #   review      — 'terms_accepted' required by the controller (Workflows.pm:337-
 #                 358) BEFORE calling step->process; the step itself accepts
 #                 empty body but the controller gate refuses without it.
-#   payment     — 'collect_payment_method' + 'setup_intent_id' (seti_test…)
-#                 trigger the test-mode provision path.
+#   payment     — 'collect_payment_method' with no Stripe keys in the
+#                 environment triggers the direct-provision path.
 # ---------------------------------------------------------------------------
 
 # -- Step: land (starts the run) -------------------------------------------
@@ -161,14 +164,12 @@ like $payment_url, qr{/tenant-signup/[^/]+/payment}, 'redirected to payment step
 # -- Step: payment (GET) --------------------------------------------------
 $t->get_ok($payment_url)->status_is(200);
 
-# -- Step: payment (POST via seti_test seam) ------------------------------
-# POST collect_payment_method=1 + setup_intent_id=seti_test_… dispatches to
-# handle_setup_completion -> _provision_tenant (TenantPayment.pm:43-46, 283-
-# 294).  The seti_test branch wins on dispatch order before the no-keys
-# branch, so Stripe env keys are irrelevant to this POST.
+# -- Step: payment (POST, no Stripe keys configured) ----------------------
+# collect_payment_method=1 with no Stripe keys in the environment provisions
+# directly (TenantPayment.pm, the !STRIPE_PUBLISHABLE_KEY && !STRIPE_SECRET_KEY
+# branch).  The BEGIN block at the top of this file guarantees the condition.
 $t->post_ok($payment_url => form => {
     collect_payment_method => 1,
-    setup_intent_id        => 'seti_test_billing_' . $$,
 })->status_is(302);
 
 my $complete_url = $t->tx->res->headers->location;
@@ -211,9 +212,9 @@ subtest 'provisioned tenant row carries billing fields' => sub {
     ok $tenant_row, 'provisioned tenant row found in registry.tenants';
 
     like $tenant_row->{stripe_subscription_id}, qr/^sub_test_/,
-        'stripe_subscription_id starts with sub_test_ (seti_test provision path)';
+        'stripe_subscription_id starts with sub_test_ (direct-provision path)';
     is $tenant_row->{billing_status}, 'trial',
-        'billing_status is "trial" on the seti_test path';
+        'billing_status is "trial" on the direct-provision path';
     ok defined($tenant_row->{trial_ends_at}),
         'trial_ends_at is set (not NULL)';
 };

@@ -52,7 +52,7 @@ $session->add_events($dao->db, $event->id);
 
 $dao->create(PricingPlan => {
     session_id => $session->id, plan_name => 'Standard',
-    plan_type => 'standard', amount => 300.00,
+    plan_type => 'standard', amount_cents => 30000,
 });
 
 # Create 5 enrollments (3 active, 1 pending, 1 cancelled)

@@ -2,7 +2,7 @@ use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
 
-use Test::More import => [qw( done_testing is ok fail subtest )];
+use Test::More import => [qw( done_testing is ok fail subtest cmp_ok )];
 defer { done_testing };
 
 use Registry::DAO;
@@ -64,7 +64,7 @@ subtest 'Admin drop request workflow' => sub {
     is $drop_request->status, 'pending', 'Drop request has pending status';
 
     # Test admin approval
-    $drop_request->approve($dao->db, $admin_user, 'Approved for testing', 50.00);
+    $drop_request->approve($dao->db, $admin_user, 'Approved for testing', 5000);
 
     # Verify request was processed
     my $updated_request = Registry::DAO::DropRequest->find($dao->db, { id => $drop_request->id });
@@ -78,7 +78,7 @@ subtest 'Admin drop request workflow' => sub {
     ok defined $updated_enrollment->dropped_at, 'Drop timestamp recorded';
     is $updated_enrollment->dropped_by, $admin_user->id, 'Admin who processed drop recorded';
     is $updated_enrollment->refund_status, 'pending', 'Refund status set to pending';
-    is $updated_enrollment->refund_amount, '50.00', 'Refund amount recorded';
+    cmp_ok $updated_enrollment->refund_amount_cents, '==', 5000, 'Refund amount recorded';
 };
 
 subtest 'Admin drop request denial workflow' => sub {

@@ -24,7 +24,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     field $dropped_at :param :reader = undef;
     field $dropped_by :param :reader = undef;
     field $refund_status :param :reader = 'none';
-    field $refund_amount :param :reader = undef;
+    field $refund_amount_cents :param :reader = undef;
     field $transfer_to_session_id :param :reader = undef;
     field $transfer_status :param :reader = 'none';
 

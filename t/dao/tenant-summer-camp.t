@@ -166,7 +166,7 @@ my $pricing = Test::Registry::Fixtures::create_pricing($tenant_dao, {
     session_id             => $camp_session->id,
     plan_name              => 'Standard Camp Pricing',
     plan_type              => 'standard',
-    amount                 => 349.99,
+    amount_cents           => 34999,
     currency               => 'USD',
     requirements           => {
         early_bird_cutoff_date => '2025-05-15',
@@ -175,7 +175,7 @@ my $pricing = Test::Registry::Fixtures::create_pricing($tenant_dao, {
 });
 
 ok $pricing, 'Created pricing in tenant schema';
-is $pricing->amount, 349.99, 'Pricing amount set correctly';
+is $pricing->amount_cents, 34999, 'Pricing amount set correctly';
 is $pricing->plan_name, 'Standard Camp Pricing',
   'Pricing plan_name set correctly';
 is $pricing->plan_type, 'standard',
@@ -185,7 +185,7 @@ is $pricing->requirements->{sibling_discount}, 15.00,
 
 # Test pricing helper methods
 my $calculated_price = $pricing->calculate_price();
-is $calculated_price, 349.99,
+is $calculated_price, 34999,
   'calculate_price returns correct amount in tenant schema';
 
 # Test session pricing relationship - need to check if this method exists

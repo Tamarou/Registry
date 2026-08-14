@@ -208,18 +208,11 @@ subtest 'Step 4: Requirements and Rules' => sub {
         class => 'Registry::DAO::WorkflowSteps::RequirementsRules',
     );
 
-    # Test with eligibility and discounts
+    # Test with eligibility requirements and rules
     my $result = $step->process($db, {
         min_age => 5,
         max_age => 18,
         location_restrictions => '10001,10002,10003',
-        early_bird_enabled => 1,
-        early_bird_discount => 15,
-        early_bird_cutoff_date => '2024-12-01',
-        family_discount_enabled => 1,
-        min_children => 2,
-        family_discount_type => 'percentage',
-        family_discount_amount => 10,
         auto_renew => 'yes',
         renewal_notice_days => 30,
         cancellation_notice_days => 7,
@@ -239,7 +232,6 @@ subtest 'Step 4: Requirements and Rules' => sub {
     my $run_data = $fresh_run->data;
     ok($run_data->{requirements_rules}, 'Requirements and rules stored');
     is($run_data->{requirements_rules}{requirements}{min_age}, 5, 'Min age stored');
-    is($run_data->{requirements_rules}{requirements}{early_bird_discount}, 15, 'Early bird discount stored');
     is($run_data->{requirements_rules}{rules}{trial_days}, 14, 'Trial days stored');
 };
 
@@ -289,9 +281,6 @@ subtest 'Step 5: Review and Activate' => sub {
         },
         requirements_rules => {
             requirements => {
-                early_bird_enabled => 1,
-                early_bird_discount => 20,
-                early_bird_cutoff_date => '2024-11-01'
             },
             rules => {
                 auto_renew => 1,
@@ -315,7 +304,8 @@ subtest 'Step 5: Review and Activate' => sub {
     ok($plan, 'Pricing plan created in database');
     is($plan->plan_name, 'Enterprise Plan', 'Plan name matches');
     is($plan->pricing_model_type, 'hybrid', 'Pricing model type matches');
-    is($plan->amount + 0, 500, 'Amount matches'); # Convert to numeric for comparison
+    # The form collects dollars; the column stores cents.
+    is($plan->amount_cents + 0, 50000, 'Amount matches'); # Convert to numeric for comparison
 
     # Verify resource allocation in pricing_configuration
     my $config = $plan->pricing_configuration;
@@ -407,7 +397,6 @@ subtest 'Integration: Complete Workflow Flow' => sub {
     # ok($created_plan, 'Integration test plan created');
     # is($created_plan->plan_name, 'Integration Test Plan', 'Plan name persisted');
     # is($created_plan->pricing_configuration->{resources}{classes_per_month}, 20, 'Resource quota persisted');
-    # is($created_plan->requirements->{family_discount_amount}, 20, 'Family discount persisted');
 };
 
 done_testing();

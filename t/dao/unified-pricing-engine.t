@@ -59,7 +59,7 @@ subtest 'Platform pricing plans exist' => sub {
     my $standard = $plans->[2];
     is($standard->{plan_name}, 'Registry Standard - $200/month', 'Standard plan exists');
     is($standard->{pricing_model_type}, 'fixed', 'Standard is fixed type');
-    is($standard->{amount}, '200.00', 'Standard plan amount is $200');
+    is($standard->{amount_cents}, 20000, 'Standard plan amount is $200');
 
     # Verify hybrid plan
     my $hybrid = $plans->[0];

@@ -117,7 +117,7 @@ my $UUID_RE = qr/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 subtest 'AC3: auto-generated token survives -json/ADJUST round-trip on reload' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $b2_user_id,
-        amount   => 10.00,
+        amount_cents => 1000,
         metadata => {},
     });
 
@@ -135,7 +135,7 @@ subtest 'explicit idempotency_token on create is preserved, not overwritten' => 
     my $explicit = 'explicit-token-b2-test';
     my $payment  = Registry::DAO::Payment->create($db, {
         user_id  => $b2_user_id,
-        amount   => 20.00,
+        amount_cents => 2000,
         metadata => { idempotency_token => $explicit },
     });
 
@@ -147,7 +147,7 @@ subtest 'explicit idempotency_token on create is preserved, not overwritten' => 
 subtest 'AC1: both create_payment_intent calls send identical "pi-create:<token>" key' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $b2_user_id,
-        amount   => 30.00,
+        amount_cents => 3000,
         metadata => {},
     });
 
@@ -179,7 +179,7 @@ subtest 'AC1: both create_payment_intent calls send identical "pi-create:<token>
 subtest 'AC2: rotate_idempotency_token changes token, persists, next intent uses new key' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $b2_user_id,
-        amount   => 40.00,
+        amount_cents => 4000,
         metadata => {},
     });
 
@@ -275,7 +275,7 @@ Registry::DAO::PricingPlan->create($b3db, {
     session_id => $b3_session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 100.00,
+    amount_cents => 10000,
 });
 
 my $b3_parent = Registry::DAO::User->create($b3db, {
@@ -502,8 +502,8 @@ sub get_b3_step {
 
         settle($step->process($b3db, { agreeTerms => 1 }, $run));
         my $payment_id = $run->data->{payment_id};
-        my $amount1    = Registry::DAO::Payment->find($b3db, { id => $payment_id })->amount;
-        cmp_ok $amount1, '==', 100, 'first submit: single-child cart totals 100';
+        my $amount1    = Registry::DAO::Payment->find($b3db, { id => $payment_id })->amount_cents;
+        cmp_ok $amount1, q{==}, 10000, q{first submit: single-child cart totals 10000 cents};
 
         # Parent goes back and adds a second child before resubmitting.
         my $m4_child2 = Registry::DAO::Family->add_child($b3db, $b3_parent->id, {
@@ -534,7 +534,7 @@ sub get_b3_step {
 
         is $run->data->{payment_id}, $payment_id, 'same payment row reused';
         my $refreshed = Registry::DAO::Payment->find($b3db, { id => $payment_id });
-        cmp_ok $refreshed->amount, '==', 200, 'amount refreshed to the new cart total';
+        cmp_ok $refreshed->amount_cents, q{==}, 20000, q{amount refreshed to the new cart total};
         is scalar @keys, 2, 'one intent creation per submit';
         isnt $keys[1], $keys[0],
             'changed cart rotated the idempotency key (fresh charge, not a doomed replay)';
@@ -568,7 +568,7 @@ sub get_b3_step {
 
         is scalar @keys, 1,
             'no replacement intent minted while the customer is mid-authentication';
-        ok $result->{data}{processing},
+        ok $result->{data}{step_data}{processing},
             'callback surfaces an in-progress state, not a decline retry';
         my $token = Registry::DAO::Payment->find($b3db, { id => $run->data->{payment_id} })
             ->metadata->{idempotency_token};
@@ -622,7 +622,7 @@ subtest 'W1: process_payment rejects a succeeded intent whose amount mismatches 
 
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $b2_user_id,
-        amount                   => 100,
+        amount_cents             => 10000,
         status                   => 'pending',
         stripe_payment_intent_id => 'pi_w1_guard',
         metadata                 => {},

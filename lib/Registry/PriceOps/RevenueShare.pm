@@ -17,26 +17,19 @@ use Registry::DAO;
 # regardless of the calling connection's search_path.
 #
 # Resolution order:
-#   1. tenant.platform_pricing_plan_id is set  -> use that plan's percentage,
-#      falling back to the plan's amount column when percentage is absent/null
+#   1. tenant.platform_pricing_plan_id is set  -> use that plan's percentage
 #   2. FK is NULL or tenant row absent          -> use the platform Free plan (0.00)
 #   3. Free plan missing                        -> die (deployment bug)
-#   4. Resolved percentage non-numeric          -> die (data bug)
+#   4. Resolved percentage absent or non-numeric -> die (data bug)
 sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     $db = $db->db if $db isa Registry::DAO;
 
-    # Step 1: look up the tenant's explicitly linked plan rate. When the plan's
-    # pricing_configuration has no 'percentage' key, fall back to the plan's
-    # amount column -- but only on a percentage-model plan, where amount IS the
-    # rate. On a 'fixed' plan amount is dollars ($200/month), and reading it as
-    # a rate yields fraction 200: a 20000% fee. Anything else resolves to NULL
-    # and dies in _coerce_pct rather than inventing a rate.
+    # Step 1: look up the tenant's explicitly linked plan rate.
+    # pricing_configuration->>'percentage' is the only source. The money column
+    # holds money, never a rate -- a plan with no rate declared resolves to NULL
+    # and dies in _coerce_pct rather than having one inferred from its price.
     my $row = $db->query(q{
-        SELECT COALESCE(
-                 p.pricing_configuration->>'percentage',
-                 CASE WHEN p.pricing_model_type = 'percentage'
-                      THEN p.amount::text END
-               ) AS pct
+        SELECT p.pricing_configuration->>'percentage' AS pct
           FROM registry.tenants t
           JOIN registry.pricing_plans p
             ON p.id = t.platform_pricing_plan_id
@@ -56,19 +49,14 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
 #
 # The platform's default ("Free") revenue-share fraction -- the fallback when a
 # tenant has no linked plan, and the single source the signup display reads so
-# the displayed and charged rates cannot diverge. Falls back to the plan's
-# amount column when percentage is absent/null. Dies (deployment bug) if the
+# the displayed and charged rates cannot diverge. Dies (deployment bug) if the
 # seeded platform default plan is missing -- the same fail-loud behavior as the
 # charge path, never a silent 0%.
 sub platform_default_fraction ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
     my $free_row = $db->query(q{
-        SELECT COALESCE(
-                 pricing_configuration->>'percentage',
-                 CASE WHEN pricing_model_type = 'percentage'
-                      THEN amount::text END
-               ) AS pct
+        SELECT pricing_configuration->>'percentage' AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
@@ -154,8 +142,7 @@ sub _coerce_refund_flag ($raw) {
 # Validates and coerces a raw percentage string to a number. Dies on malformed input.
 sub _coerce_pct ($raw, $context) {
     die "Revenue-share percentage is undefined for $context - the plan carries no "
-      . "'percentage' in pricing_configuration and is not a percentage-model plan, "
-      . "so it has no revenue-share rate."
+      . "'percentage' in pricing_configuration, so it has no revenue-share rate."
         unless defined $raw;
 
     die "Revenue-share percentage '$raw' is not numeric for $context - check pricing_configuration."

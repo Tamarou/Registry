@@ -42,7 +42,7 @@ my $consumer_user = Registry::DAO::User->create($db, {
 my $platform_plan = Registry::DAO::PricingPlan->create($db, {
     plan_name => 'Test Platform Plan',
     plan_type => 'subscription',
-    amount => 200.00,
+    amount_cents => 20000,
     plan_scope => 'platform',
 });
 my $plan_id = $platform_plan->id;
@@ -139,7 +139,7 @@ subtest 'Record plan change' => sub {
     my $alternative_plan = Registry::DAO::PricingPlan->create($db, {
         plan_name => 'Test Platform Plan Premium',
         plan_type => 'subscription',
-        amount => 400.00,
+        amount_cents => 40000,
         plan_scope => 'platform',
     });
     my $new_plan_id = $alternative_plan->id;

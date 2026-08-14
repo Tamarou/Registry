@@ -239,7 +239,7 @@ sub _get_usage_data ($db, $relationship, $period) {
     if ($config->{applies_to} && $config->{applies_to} eq 'customer_payments') {
         # Query payments for the tenant during the period
         my $result = $db->query(q{
-            SELECT COALESCE(SUM(amount), 0) as total
+            SELECT COALESCE(SUM(amount_cents), 0) as total
             FROM registry.payments
             WHERE tenant_id = ?
               AND created_at >= ?
@@ -255,7 +255,7 @@ sub _get_usage_data ($db, $relationship, $period) {
         my $result = $db->query(q{
             SELECT
                 COUNT(*) as count,
-                COALESCE(SUM(amount), 0) as volume
+                COALESCE(SUM(amount_cents), 0) as volume
             FROM registry.payments
             WHERE tenant_id = ?
               AND created_at >= ?
@@ -282,11 +282,14 @@ sub _calculate_amount ($plan, $usage_data) {
     my $model = $plan->pricing_model_type;
     my $config = $plan->pricing_configuration || {};
 
+    # billing_periods.calculated_amount is still dollars, so convert here.
     if ($model eq 'fixed') {
-        return $plan->amount;
+        return $plan->amount_cents / 100;
     }
     elsif ($model eq 'percentage') {
-        my $percentage = $config->{percentage} || ($plan->amount / 100);
+        # The rate lives only in pricing_configuration; a plan's price is not a
+        # rate, and inferring one from it is how a 2% fee becomes 200%.
+        my $percentage = $config->{percentage} || 0;
         my $applies_to = $config->{applies_to} || 'customer_payments';
         my $base_amount = $usage_data->{$applies_to} || 0;
         return sprintf("%.2f", $base_amount * $percentage);
@@ -300,7 +303,7 @@ sub _calculate_amount ($plan, $usage_data) {
         return sprintf("%.2f", ($per_transaction * $count) + ($volume * $percentage));
     }
     elsif ($model eq 'hybrid') {
-        my $base = $config->{monthly_base} || $plan->amount;
+        my $base = $config->{monthly_base} || $plan->amount_cents / 100;
         my $percentage = $config->{percentage} || 0;
         my $applies_to = $config->{applies_to} || 'customer_payments';
         my $variable = ($usage_data->{$applies_to} || 0) * $percentage;

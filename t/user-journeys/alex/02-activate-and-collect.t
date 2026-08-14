@@ -61,7 +61,7 @@ $ENV{DB_URL} = $test_db->uri;
 # Fixtures
 # ---------------------------------------------------------------------------
 
-my $PLAN_AMOUNT = 150.00;
+my $PLAN_AMOUNT_CENTS = 15_000;
 
 # Import all non-draft workflows into the registry schema first.  Tenant
 # provisioning copies registry workflows via copy_workflow, so the registry
@@ -165,7 +165,7 @@ Registry::DAO::PricingPlan->create($tenant_db, {
     session_id => $session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => $PLAN_AMOUNT,
+    amount_cents => $PLAN_AMOUNT_CENTS,
 });
 
 # ---------------------------------------------------------------------------
@@ -434,7 +434,11 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
             workflow_process_step_url($reg_wf, $run, $step),
             \%tenant_host,
             form => { agreeTerms => 1 }
-        )->status_is(200, 'payment step renders Stripe form after passing gate');
+        )->status_is(200, 'payment step renders Stripe form after passing gate')
+         ->content_like(qr/id="payment-form"/,
+            'the card-entry form the parent has to use is on the page')
+         ->content_like(qr/cs_journey/,
+            'the fresh client_secret reaches the Stripe Elements init');
     }
 
     ok $captured_params,
@@ -446,10 +450,9 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
     is $captured_params->{'on_behalf_of'}, 'acct_journey',
         'on_behalf_of is the connected account id';
 
-    # Application fee: 2% (tenant's linked plan) of $150 = $3.00 = 300 cents
-    my $expected_fee = Registry::DAO::Payment::application_fee_cents(
-        Registry::DAO::Payment::_to_cents($PLAN_AMOUNT), 0.02);
-    is $expected_fee, 300, 'sanity: expected fee is 300 cents (2% of $150)';
+    # Application fee: 2% (tenant's linked plan) of 15000 cents = 300 cents
+    my $expected_fee = Registry::DAO::Payment::application_fee_cents($PLAN_AMOUNT_CENTS, 0.02);
+    is $expected_fee, 300, q{sanity: expected fee is 300 cents (2% of 15000 cents)};
     is $captured_params->{'application_fee_amount'}, $expected_fee,
         'application_fee_amount matches platform 2% fee';
 

@@ -10,7 +10,7 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
     field $requested_by :param :reader;
     field $reason :param :reader;
     field $refund_requested :param :reader = 0;
-    field $refund_amount_requested :param :reader = undef;
+    field $refund_amount_requested_cents :param :reader = undef;
     field $status :param :reader = 'pending';
     field $admin_notes :param :reader = '';
     field $processed_by :param :reader = undef;
@@ -44,7 +44,7 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
     }
 
     # Approve the drop request
-    method approve($db, $admin_user, $notes = '', $refund_amount = undef) {
+    method approve($db, $admin_user, $notes = '', $refund_cents = undef) {
         my $admin_id = blessed($admin_user) ? $admin_user->id : $admin_user->{id};
 
         # Start transaction to ensure atomicity
@@ -65,8 +65,8 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
             drop_reason => $reason,
             dropped_at => \'now()',
             dropped_by => $admin_id,
-            refund_status => $refund_amount ? 'pending' : 'not_applicable',
-            refund_amount => $refund_amount ? sprintf('%.2f', $refund_amount) : undef
+            refund_status => $refund_cents ? 'pending' : 'not_applicable',
+            refund_amount_cents => $refund_cents
         });
 
         $tx->commit;
@@ -147,7 +147,7 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
                 dr.requested_by,
                 dr.reason,
                 dr.refund_requested,
-                dr.refund_amount_requested,
+                dr.refund_amount_requested_cents,
                 dr.status,
                 dr.admin_notes,
                 dr.processed_by,
@@ -252,8 +252,8 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
             }
 
             # Format refund amount for display
-            if ($request->{refund_amount_requested}) {
-                $request->{refund_amount_display} = sprintf('$%.2f', $request->{refund_amount_requested} / 100);
+            if ($request->{refund_amount_requested_cents}) {
+                $request->{refund_amount_display} = sprintf('$%.2f', $request->{refund_amount_requested_cents} / 100);
             }
 
             # Convert timestamps for display

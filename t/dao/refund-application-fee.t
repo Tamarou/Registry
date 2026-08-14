@@ -166,7 +166,7 @@ subtest 'missing platform default plan with NULL FK causes die (A1)' => sub {
 
     my $free_plan = $db->query(q{
         SELECT id, plan_scope, plan_name, plan_type, pricing_model_type,
-               amount, currency, installments_allowed, requirements,
+               amount_cents, currency, installments_allowed, requirements,
                pricing_configuration, metadata
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
@@ -191,12 +191,12 @@ subtest 'missing platform default plan with NULL FK causes die (A1)' => sub {
     $db->query(q{
         INSERT INTO registry.pricing_plans
             (id, plan_scope, plan_name, plan_type, pricing_model_type,
-             amount, currency, installments_allowed, requirements,
+             amount_cents, currency, installments_allowed, requirements,
              pricing_configuration, metadata)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb)
     }, $free_plan->{id}, $free_plan->{plan_scope}, $free_plan->{plan_name},
        $free_plan->{plan_type}, $free_plan->{pricing_model_type},
-       $free_plan->{amount}, $free_plan->{currency},
+       $free_plan->{amount_cents}, $free_plan->{currency},
        $free_plan->{installments_allowed}, $free_plan->{requirements},
        $free_plan->{pricing_configuration}, $free_plan->{metadata});
 
@@ -251,7 +251,7 @@ subtest 'tenant refund honors plan opt-out (refund_application_fee=false)' => su
 
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
-        amount                   => 100.00,
+        amount_cents             => 10000,
         status                   => 'completed',
         stripe_payment_intent_id => 'pi_tenant_optout',
         metadata                 => { tenant_slug => $a2_slug },
@@ -277,7 +277,7 @@ subtest 'tenant refund honors plan opt-out (refund_application_fee=false)' => su
     is $row->{status}, 'refunded', 'save() persisted status=refunded';
     my $saved_meta = ref $row->{metadata} ? $row->{metadata} : decode_json($row->{metadata} // '{}');
     is  $saved_meta->{refund_id},          're_optout_fake', 'save() persisted refund_id in metadata';
-    cmp_ok $saved_meta->{refund_amount}, '==', 100,        'save() persisted refund_amount in metadata';
+    cmp_ok $saved_meta->{refund_amount_cents}, q{==}, 10000, q{save() persisted refund_amount_cents in metadata};
 
     $db->query(q{
         UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
@@ -298,7 +298,7 @@ subtest 'tenant refund with absent refund_application_fee key defaults to 1' => 
 
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
-        amount                   => 100.00,
+        amount_cents             => 10000,
         status                   => 'completed',
         stripe_payment_intent_id => 'pi_tenant_default',
         metadata                 => { tenant_slug => $a2_slug },
@@ -326,7 +326,7 @@ subtest 'tenant refund with absent refund_application_fee key defaults to 1' => 
 subtest 'registry (non-tenant) payment refund sends no Connect params' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
-        amount                   => 50.00,
+        amount_cents             => 5000,
         status                   => 'completed',
         stripe_payment_intent_id => 'pi_registry_only',
         metadata                 => {},
@@ -355,7 +355,7 @@ subtest 'registry (non-tenant) payment refund sends no Connect params' => sub {
 subtest 'tenant_slug=registry is treated as platform payment (no Connect params)' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
-        amount                   => 75.00,
+        amount_cents             => 7500,
         status                   => 'completed',
         stripe_payment_intent_id => 'pi_registry_slug_gate',
         metadata                 => { tenant_slug => 'registry' },
@@ -390,7 +390,7 @@ subtest 'refund_async sends the same Connect params as refund (sync)' => sub {
 
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
-        amount                   => 100.00,
+        amount_cents             => 10000,
         status                   => 'completed',
         stripe_payment_intent_id => 'pi_async_tenant',
         metadata                 => { tenant_slug => $a2_slug },

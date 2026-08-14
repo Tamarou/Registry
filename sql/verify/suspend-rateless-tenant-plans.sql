@@ -13,10 +13,7 @@ BEGIN
       JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
      WHERE pr.status = 'active'
        AND p.plan_scope = 'tenant'
-       AND COALESCE(
-             p.pricing_configuration->>'percentage',
-             CASE WHEN p.pricing_model_type = 'percentage' THEN p.amount::text END
-           ) IS NULL;
+       AND p.pricing_configuration->>'percentage' IS NULL;
 
     IF rateless_count > 0 THEN
         RAISE EXCEPTION '% selectable tenant plan(s) still have no revenue-share rate',

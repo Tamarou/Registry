@@ -5,7 +5,7 @@ BEGIN;
 SET client_min_messages = 'warning';
 SET search_path TO registry, public;
 
--- For each tenant schema: verify the four payment tables exist and that
+-- For each tenant schema: verify the payment tables exist and that
 -- enrollments.payment_id's FK references the tenant's own payments table
 -- (not registry.payments).
 --
@@ -23,7 +23,7 @@ BEGIN
         CONTINUE WHEN to_regnamespace(quote_ident(s)) IS NULL;
 
         -- Verify each payment table exists in the tenant schema.
-        FOREACH tbl IN ARRAY ARRAY['payments','payment_items','payment_schedules','scheduled_payments'] LOOP
+        FOREACH tbl IN ARRAY ARRAY['payments','payment_items'] LOOP
             IF to_regclass(format('%I.%I', s, tbl)) IS NULL THEN
                 RAISE EXCEPTION 'Tenant % is missing payment table %', s, tbl;
             END IF;

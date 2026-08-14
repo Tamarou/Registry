@@ -23,7 +23,9 @@ class Registry::DAO::WorkflowSteps::AdminDropDecision :isa(Registry::DAO::Workfl
             };
         }
 
-        # Validate refund amount for approvals
+        # Validate refund amount for approvals. The form posts dollars; this is
+        # the boundary where they become the cents everything downstream uses.
+        my $refund_cents;
         if ($action eq 'approve' && defined $refund_amount) {
             unless ($refund_amount =~ /^\d+(\.\d{2})?$/ && $refund_amount >= 0) {
                 return {
@@ -35,14 +37,15 @@ class Registry::DAO::WorkflowSteps::AdminDropDecision :isa(Registry::DAO::Workfl
                     }
                 };
             }
+            $refund_cents = int($refund_amount * 100 + 0.5);
         }
 
         # Decision collected successfully -- domain data at top level for persistence
         return {
-            next_step       => 'process-decision',
-            action          => $action,
-            admin_notes     => $admin_notes,
-            refund_amount   => $refund_amount,
+            next_step           => 'process-decision',
+            action              => $action,
+            admin_notes         => $admin_notes,
+            refund_amount_cents => $refund_cents,
         };
     }
 }

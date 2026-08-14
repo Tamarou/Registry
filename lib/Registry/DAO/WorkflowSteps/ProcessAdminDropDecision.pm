@@ -11,7 +11,7 @@ class Registry::DAO::WorkflowSteps::ProcessAdminDropDecision :isa(Registry::DAO:
     method process ($db, $data, $run = undef) {
         my $action = $data->{action};
         my $admin_notes = $data->{admin_notes};
-        my $refund_amount = $data->{refund_amount};
+        my $refund_amount_cents = $data->{refund_amount_cents};
         my $drop_request_id = $data->{drop_request_id};
         my $admin_user_id = $data->{admin_user_id};
 
@@ -20,7 +20,7 @@ class Registry::DAO::WorkflowSteps::ProcessAdminDropDecision :isa(Registry::DAO:
             drop_request_id => $drop_request_id,
             action => $action,
             admin_notes => $admin_notes,
-            refund_amount => $refund_amount,
+            refund_amount_cents => $refund_amount_cents,
             admin_user_id => $admin_user_id,
             admin_approved => 1  # Flag to indicate this came from admin approval
         };

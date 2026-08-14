@@ -51,7 +51,7 @@ subtest 'Test data setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount => 10000,  # $100.00 in cents
+        amount_cents => 10000,  # $100.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 14,
@@ -74,7 +74,7 @@ subtest 'Test data setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount => 20000,  # $200.00 in cents
+        amount_cents => 20000,  # $200.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 30,
@@ -101,7 +101,7 @@ subtest 'Test data setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount => 50000,  # $500.00 in cents
+        amount_cents => 50000,  # $500.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 30,
@@ -214,7 +214,7 @@ subtest 'PricingPlanSelection step functionality' => sub {
     # Verify plan data structure
     my $basic_plan = $plans->[0];
     ok $basic_plan->{id}, 'Plan has ID';
-    is $basic_plan->{amount}, 10000, 'Plan amount correct';
+    is $basic_plan->{amount_cents}, 10000, 'Plan amount correct';
     is $basic_plan->{currency}, 'USD', 'Plan currency correct';
     ok $basic_plan->{pricing_configuration}, 'Plan has pricing configuration';
     ok $basic_plan->{pricing_configuration}->{features}, 'Plan has features list';
@@ -252,7 +252,7 @@ subtest 'Plan selection processing' => sub {
     ok $stored_plan, 'Pricing plan stored in workflow data';
     is $stored_plan->{id}, $professional_plan->{id}, 'Correct plan ID stored';
     is $stored_plan->{plan_name}, 'Registry Professional', 'Correct plan name stored';
-    is $stored_plan->{amount}, 20000, 'Correct amount stored';
+    is $stored_plan->{amount_cents}, 20000, 'Correct amount stored';
     ok $stored_plan->{pricing_configuration}, 'Pricing configuration stored';
 };
 
@@ -289,7 +289,7 @@ subtest 'Error handling' => sub {
         plan_name => 'Inactive Plan',
         plan_type => 'standard',
         plan_scope => 'tenant',
-        amount => 15000,
+        amount_cents => 15000,
         currency => 'USD',
         pricing_configuration => { trial_days => 14 }
     });

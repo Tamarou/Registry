@@ -187,11 +187,14 @@ method _calculate_amount ($plan, $usage_data) {
     my $model = $plan->pricing_model_type;
     my $config = $plan->pricing_configuration || {};
 
+    # billing_periods.calculated_amount is still dollars, so convert here.
     if ($model eq 'fixed') {
-        return $plan->amount;
+        return $plan->amount_cents / 100;
     }
     elsif ($model eq 'percentage') {
-        my $percentage = $config->{percentage} || ($plan->amount / 100);
+        # The rate lives only in pricing_configuration; a plan's price is not a
+        # rate, and inferring one from it is how a 2% fee becomes 200%.
+        my $percentage = $config->{percentage} || 0;
         my $applies_to = $config->{applies_to} || 'customer_payments';
         my $base_amount = $usage_data->{$applies_to} || 0;
         return sprintf("%.2f", $base_amount * $percentage);
@@ -208,7 +211,7 @@ method _calculate_amount ($plan, $usage_data) {
         return sprintf("%.2f", $fixed_fee + $percentage_fee);
     }
     elsif ($model eq 'hybrid') {
-        my $base = $config->{monthly_base} || $plan->amount;
+        my $base = $config->{monthly_base} || $plan->amount_cents / 100;
         my $percentage = $config->{percentage} || 0;
         my $applies_to = $config->{applies_to} || 'customer_payments';
         my $variable_amount = ($usage_data->{$applies_to} || 0) * $percentage;

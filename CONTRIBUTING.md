@@ -138,8 +138,6 @@ make dev-server
 ```bash
 # Run all tests
 make test
-# or
-carton exec prove -lr t/
 
 # Run specific test
 carton exec prove -lv t/dao/workflows.t
@@ -253,6 +251,19 @@ carton exec sqitch deploy
 carton exec sqitch revert
 carton exec sqitch deploy
 ```
+
+Then register the change with the revert harness: append its name to `@CHANGES`
+in `t/database/revert-round-trip.t`, in `sql/sqitch.plan` order, in the same
+commit that appends to the plan. The harness deploys each listed change, reverts
+it, and diffs `pg_dump --schema-only` either side, so an unregistered revert
+script is never exercised.
+
+Skipping the append is silent -- the suite still prints `All tests successful`
+and only the test count moves, so read the count.
+
+One exclusion: a data-only change is invisible to a schema dump, so listing it
+buys an assertion that cannot fail. Keep it off `@CHANGES` and give it its own
+round-trip test; `t/database/retire-registry-plus-plan.t` is the worked example.
 
 ### 3. Adding New Workflow Steps
 

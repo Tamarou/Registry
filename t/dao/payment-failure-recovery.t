@@ -117,13 +117,15 @@ subtest 'recoverable failure re-renders form with a fresh client_secret' => sub 
 
     ok($result->{errors}, 'error array included');
     like($result->{errors}[0], qr/declined/i, 'message surfaces the decline reason');
-    ok($result->{data}{show_stripe_form},
+    # step_data is the key the template reads out of the stash; rendering data
+    # returned flat is dropped by the controller before it ever gets there.
+    ok($result->{data}{step_data}{show_stripe_form},
        'form stays visible so retry is possible');
-    is($result->{data}{client_secret}, 'pi_new_secret_123',
+    is($result->{data}{step_data}{client_secret}, 'pi_new_secret_123',
        'fresh PaymentIntent client_secret delivered');
-    is($result->{data}{payment_id}, $payment_id,
+    is($result->{data}{step_data}{payment_id}, $payment_id,
        'payment record is reused, not orphaned');
-    ok($result->{data}{retry}, 'retry flag set for template UX');
+    ok($result->{data}{step_data}{retry}, 'retry flag set for template UX');
 };
 
 subtest 'if a new intent cannot be issued, still surface an error' => sub {

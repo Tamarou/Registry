@@ -335,10 +335,10 @@ test.describe('Lifecycle: Morgan -> Nancy -> Amara', () => {
     expect(eventRows.length, 'at least one event generated').toBeGreaterThan(0);
     state.eventId = eventRows[0].id;
 
-    // Verify pricing plan with amount=0 exists (issue #218 free plan)
+    // Verify pricing plan with amount_cents=0 exists (issue #218 free plan)
     const pricingRows = queryJson(
       testDB, state.slug,
-      'SELECT id FROM pricing_plans WHERE session_id = ? AND amount = 0',
+      'SELECT id FROM pricing_plans WHERE session_id = ? AND amount_cents = 0',
       state.sessionId
     );
     expect(pricingRows.length, 'free ($0) pricing plan exists for session').toBeGreaterThan(0);

@@ -91,7 +91,7 @@ Registry::DAO::PricingPlan->create($tenant_db, {
     session_id => $paid_session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount     => 150.00,
+    amount_cents => 15000,
 });
 
 # Free session: $0 enrollment
@@ -107,7 +107,7 @@ Registry::DAO::PricingPlan->create($tenant_db, {
     session_id => $free_session->id,
     plan_name  => 'Free',
     plan_type  => 'standard',
-    amount     => 0.00,
+    amount_cents => 0,
 });
 
 # Build the workflow in the tenant schema

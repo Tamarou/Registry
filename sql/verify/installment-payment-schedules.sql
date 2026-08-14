@@ -1,25 +1,13 @@
+-- ABOUTME: Superseded verify for the original installment schedule tables.
+-- ABOUTME: Those tables are dropped by drop-installment-schedules; this asserts nothing.
+
 -- Verify registry:installment-payment-schedules on pg
 
 BEGIN;
 
-SET search_path TO registry, public;
-
--- Verify payment_schedules table exists with correct structure
-SELECT id, enrollment_id, pricing_plan_id, stripe_subscription_id, total_amount,
-       installment_amount, installment_count,
-       status, created_at, updated_at
-FROM registry.payment_schedules
-WHERE FALSE;
-
--- Verify scheduled_payments table exists with correct structure
-SELECT id, payment_schedule_id, payment_id, installment_number,
-       amount, status, paid_at, failed_at,
-       failure_reason, created_at, updated_at
-FROM registry.scheduled_payments
-WHERE FALSE;
-
--- Verify indexes exist
-SELECT 1/count(*) FROM pg_class WHERE relname = 'idx_payment_schedules_enrollment';
-SELECT 1/count(*) FROM pg_class WHERE relname = 'idx_scheduled_payments_schedule';
+-- Every object this change created is dropped by drop-installment-schedules,
+-- whose verify asserts their absence.  Asserting anything here would have to be
+-- true both at this point in the plan, where the tables exist, and at the end,
+-- where they do not -- and nothing about these tables is true at both points.
 
 ROLLBACK;
