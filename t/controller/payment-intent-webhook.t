@@ -160,4 +160,73 @@ subtest 'amount mismatch fails loudly and does not finalize (Leg W1)' => sub {
     is $after_good->status, 'completed', 'payment completed on matching amount';
 };
 
+subtest 'a die mid-finalization leaves no partial enrollment and no claim (Leg 0 Task 1)' => sub {
+    # Two children in one cart, so finalization has a midpoint to die at. Without
+    # a transaction the first enrollment is already committed when the second
+    # dies, and nothing takes it back -- that is the defect this task closes.
+    my @kids = map {
+        Registry::DAO::Family->add_child($db, $parent->id, {
+            child_name => "PI Atomic $_", birth_date => '2017-03-0' . $_, grade => '4',
+            medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+        })
+    } (1, 2);
+
+    my $payment3 = Registry::DAO::Payment->create($db, {
+        user_id  => $parent->id,
+        amount_cents => 20000,
+        status   => 'pending',
+        metadata => {
+            enrollment_items => [ map { { session_id => $session->id, child_id => $_->id } } @kids ],
+            tenant_slug      => undef,
+        },
+    });
+
+    my sub pi3_event ($event_id) {
+        return {
+            id   => $event_id,
+            type => 'payment_intent.succeeded',
+            data => { object => {
+                id       => 'pi_' . $payment3->id,
+                amount   => 20000,
+                metadata => { payment_id => $payment3->id },
+            } },
+        };
+    }
+
+    my sub p3_enrollments {
+        scalar @{ $db->select('enrollments', '*', { payment_id => $payment3->id })->hashes };
+    }
+
+    my sub claim_rows ($event_id) {
+        scalar @{ $db->query(
+            'SELECT 1 FROM registry.webhook_events WHERE stripe_event_id = ?', $event_id
+        )->arrays };
+    }
+
+    # Die on the second item only: the first has already been written by then.
+    {
+        my $real  = \&Registry::DAO::Enrollment::create_for_payment;
+        my $calls = 0;
+        no warnings 'redefine';
+        local *Registry::DAO::Enrollment::create_for_payment = sub {
+            die "probe: finalization failed partway\n" if ++$calls == 2;
+            return $real->(@_);
+        };
+
+        post_webhook(pi3_event('evt_pi_atomic'))->status_is(500);
+    }
+
+    is p3_enrollments(), 0,
+        'the first item is rolled back with the second -- no partial enrollment';
+    is claim_rows('evt_pi_atomic'), 0,
+        'the claim does not survive the failure';
+
+    my $after = Registry::DAO::Payment->find($db, { id => $payment3->id });
+    isnt $after->status, 'completed', 'payment not completed on a partial failure';
+
+    # Stripe's retry must be able to re-claim the same event id and succeed.
+    post_webhook(pi3_event('evt_pi_atomic'))->status_is(200);
+    is p3_enrollments(), 2, 'the retry finalizes the whole cart';
+};
+
 done_testing;

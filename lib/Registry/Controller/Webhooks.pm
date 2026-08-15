@@ -37,12 +37,51 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Process the event
         my $dao = $self->app->dao;
 
-        # Deduplicate by Stripe event id. Stripe may deliver the same event more
-        # than once; claim it atomically so a redelivery is acknowledged with
-        # 200 but never processed twice. On a processing failure below we release
-        # the claim so Stripe's retry can reprocess the event.
+        # One connection for the whole settlement. $dao->db is a single field
+        # computed once, so every statement below lands on the same backend --
+        # which is what lets the claim and the work share a transaction. A
+        # handle acquired anywhere else is a different backend and cannot see
+        # this transaction's uncommitted rows or its search_path.
+        my $db       = $dao->db;
         my $event_id = $event->{id};
-        my $claimed = $dao->db->query(
+
+        # Resolve the tenant before the transaction opens. The slug lives in our
+        # own snapshotted metadata (the Connect `account` field is absent on
+        # destination-charge events, which are platform events), and only
+        # payment_intent.succeeded carries one -- account.updated and the
+        # subscription branch stay in the registry schema.
+        #
+        # This lookup IS the validation. set_config accepts a nonexistent schema
+        # without complaint and only fails later, at the first unqualified table
+        # reference, so an unknown slug has to be refused before it gets there.
+        my $slug;
+        if ( $event->{type} eq 'payment_intent.succeeded' ) {
+            my $raw = $event->{data}{object}{metadata}{tenant_slug};
+            $slug = $raw if defined $raw && length $raw && $raw ne 'registry';
+
+            if ( defined $slug
+                && !$db->select( 'registry.tenants', ['id'], { slug => $slug } )->hash )
+            {
+                $self->app->log->error(
+                    "Webhook event $event_id names unknown tenant slug '$slug'");
+                $self->render( status => 500, text => 'Unknown tenant' );
+                return;
+            }
+        }
+
+        # Anything doable before the transaction happens before the transaction.
+        # get_subscription is a blocking Stripe call on a user agent with no
+        # request timeout; inside the block it would hold the claim open for the
+        # length of a network round trip.
+        my $subscription = $self->_prefetch_subscription($dao, $event);
+
+        # Claim and work are one transaction on one connection. A failure rolls
+        # the claim back with the work, so Stripe's retry re-claims and
+        # reprocesses -- no compensating delete, which could not run here anyway
+        # once the transaction is aborted.
+        my $tx = $db->begin;
+
+        my $claimed = $db->query(
             q{INSERT INTO registry.webhook_events (stripe_event_id, event_type)
               VALUES (?, ?) ON CONFLICT (stripe_event_id) DO NOTHING},
             $event_id, $event->{type}
@@ -54,31 +93,50 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        $self->render_later;
+
         try {
+            # Transaction-local, so it reverts at COMMIT and cannot ride back
+            # into the connection pool the way a session-level setting would.
+            # Bound as a parameter: Postgres validates the GUC rather than
+            # splicing it into SQL text.
+            $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" )
+                if defined $slug;
+
             # One-time program payment finalized by Stripe (e.g. 3DS/redirect
             # cards confirmed off-site). Idempotent with the parent-return path.
             if ($event->{type} eq 'payment_intent.succeeded') {
-                $self->_process_payment_intent_succeeded($dao, $event);
+                $self->_process_payment_intent_succeeded($db, $event);
             }
             # Mirror connected account capability changes to the tenant row so
             # the paid-enrollment readiness gate reflects Stripe's current view.
             elsif ($event->{type} eq 'account.updated') {
-                $self->_process_account_updated($dao, $event);
+                $self->_process_account_updated($db, $event);
             }
             else {
                 # Handle tenant billing events (existing logic)
                 my $subscription_dao = Registry::DAO::Subscription->new(db => $dao);
                 $subscription_dao->process_webhook_event(
-                    $dao->db,
+                    $db,
                     $event->{id},
                     $event->{type},
-                    $event->{data}
+                    $event->{data},
+                    $subscription,
                 );
             }
+
+            # received_at to processed_at is the latency of the money path.
+            $db->query(
+                q{UPDATE registry.webhook_events SET processed_at = now()
+                  WHERE stripe_event_id = ?}, $event_id
+            );
+
+            $tx->commit;
         }
         catch ($e) {
-            # Release the claim so Stripe's retry can reprocess this event.
-            $dao->db->delete('registry.webhook_events', { stripe_event_id => $event_id });
+            # No claim release here: $tx goes out of scope and rolls the claim
+            # back with the work. A delete would also fail -- the transaction is
+            # already aborted and rejects every further statement.
             $self->app->log->error("Webhook processing failed: $e");
             $self->render(status => 500, text => 'Webhook processing failed');
             return;
@@ -87,29 +145,36 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         $self->render(status => 200, text => 'OK');
     }
 
+    # Subscription lookups for invoice events are the one blocking Stripe call
+    # on this path. Fetch it up front so the settlement transaction never waits
+    # on the network; process_webhook_event falls back to fetching it itself
+    # when this returns undef, which keeps its other callers working unchanged.
+    method _prefetch_subscription ($dao, $event) {
+        return undef
+            unless $event->{type} eq 'invoice.payment_failed'
+            || $event->{type} eq 'invoice.payment_succeeded';
+
+        my $subscription_id = $event->{data}{object}{subscription} or return undef;
+
+        return Registry::DAO::Subscription->new(db => $dao)
+            ->get_subscription($subscription_id);
+    }
+
     # Finalize a one-time program payment when Stripe confirms the intent. This
     # is the safety net for cards finalized off-site (3DS / redirect) where the
     # parent may never return to the success page. finalize_enrollment is
     # idempotent, so this is safe alongside the parent-return callback.
-    method _process_payment_intent_succeeded ($dao, $event) {
+    # $db arrives inside the caller's transaction with search_path already
+    # pointing at the tenant, so every unqualified name below resolves there.
+    method _process_payment_intent_succeeded ($db, $event) {
         my $intent     = $event->{data}{object} // {};
         my $payment_id = $intent->{metadata}{payment_id};
         return unless $payment_id;    # not a Registry one-time payment -- ignore
 
-        # The tenant is resolved from our own snapshotted metadata. The Connect
-        # `account` field is absent on destination-charge payment_intent events
-        # (they are platform events), so metadata is the source of truth.
         my $slug = $intent->{metadata}{tenant_slug};
 
-        # The payment row lives in the schema the registration ran under. A
-        # one-time payment without a tenant slug is a registry-schema payment
-        # (platform/test); anything else must resolve, or we fail loudly so
-        # Stripe retries rather than silently dropping a paid enrollment.
-        my $tdao = ($slug && $slug ne 'registry') ? $dao->connect_schema($slug) : $dao;
-        my $tdb  = $tdao->db;
-
         require Registry::DAO::Payment;
-        my $payment = Registry::DAO::Payment->find($tdb, { id => $payment_id });
+        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
         die "payment_intent.succeeded: payment $payment_id not found"
           . ($slug ? " in tenant schema '$slug'" : ' in registry schema') . "\n"
             unless $payment;
@@ -129,23 +194,23 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
 
         unless (($payment->status // '') eq 'completed') {
-            $payment->update($tdb, {
+            $payment->update($db, {
                 status                   => 'completed',
                 stripe_payment_intent_id => $intent->{id},
             });
         }
 
-        $payment->finalize_enrollment($tdb);
+        $payment->finalize_enrollment($db);
     }
 
     # Connect sends account.updated when a connected account's capabilities
     # change. Mirror charges_enabled/details_submitted onto the tenant so the
     # paid-enrollment readiness gate reflects Stripe's current view.
-    method _process_account_updated ($dao, $event) {
+    method _process_account_updated ($db, $event) {
         my $account = $event->{data}{object} // {};
         my $acct_id = $account->{id} or return;
 
-        my $updated = $dao->db->query(
+        my $updated = $db->query(
             q{UPDATE registry.tenants
               SET stripe_charges_enabled = ?, stripe_details_submitted = ?
               WHERE stripe_connect_account_id = ?},

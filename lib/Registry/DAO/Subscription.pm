@@ -210,7 +210,11 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         return $self->_stripe_request('DELETE', "/subscriptions/$subscription_id", \%form_data);
     }
 
-    method process_webhook_event($db, $event_id, $event_type, $event_data) {
+    # $subscription is the invoice's subscription, already fetched from Stripe by
+    # the caller. The webhook controller pre-fetches it so the blocking call does
+    # not happen inside its settlement transaction; callers that pass nothing get
+    # the original behaviour, with the handlers fetching it themselves.
+    method process_webhook_event($db, $event_id, $event_type, $event_data, $subscription = undef) {
         # Store webhook event for processing
         my $result = $db->query(
             'INSERT INTO registry.subscription_events (stripe_event_id, event_type, event_data) VALUES (?, ?, ?) ON CONFLICT (stripe_event_id) DO NOTHING RETURNING id',
@@ -234,10 +238,10 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
                 $self->_handle_trial_ending($db, $event_data);
             }
             elsif ($event_type eq 'invoice.payment_failed') {
-                $self->_handle_payment_failed($db, $event_data);
+                $self->_handle_payment_failed($db, $event_data, $subscription);
             }
             elsif ($event_type eq 'invoice.payment_succeeded') {
-                $self->_handle_payment_succeeded($db, $event_data);
+                $self->_handle_payment_succeeded($db, $event_data, $subscription);
             }
             
             # Mark event as processed
@@ -311,12 +315,13 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         $self->update_billing_status($db, $tenant_id, 'trial', $subscription);
     }
 
-    method _handle_payment_failed($db, $event_data) {
+    method _handle_payment_failed($db, $event_data, $subscription = undef) {
         my $invoice = $event_data->{object};
         my $subscription_id = $invoice->{subscription};
-        
-        # Get subscription to find tenant
-        my $subscription = $self->get_subscription($subscription_id);
+
+        # Get subscription to find tenant, unless the caller already fetched it
+        # outside its transaction.
+        $subscription //= $self->get_subscription($subscription_id);
         my $tenant_id = $subscription->{metadata}->{tenant_id};
         
         return unless $tenant_id;
@@ -324,12 +329,13 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         $self->update_billing_status($db, $tenant_id, 'past_due');
     }
 
-    method _handle_payment_succeeded($db, $event_data) {
+    method _handle_payment_succeeded($db, $event_data, $subscription = undef) {
         my $invoice = $event_data->{object};
         my $subscription_id = $invoice->{subscription};
-        
-        # Get subscription to find tenant
-        my $subscription = $self->get_subscription($subscription_id);
+
+        # Get subscription to find tenant, unless the caller already fetched it
+        # outside its transaction.
+        $subscription //= $self->get_subscription($subscription_id);
         my $tenant_id = $subscription->{metadata}->{tenant_id};
         
         return unless $tenant_id;
