@@ -53,13 +53,22 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             my %selections;  # child_id => session_id
             my @errors;
 
-            # Collect selections from form; template emits session_for_<child_id>
+            # Collect selections from form; template emits session_for_<child_id>.
+            # The capacity and age checks below iterate the selected children, so
+            # a selection for anyone else would be enrolled unchecked -- and
+            # unpriced, since Payment totals the children snapshot. Selections
+            # must be a subset of the children this run actually chose.
+            my %is_selected = map { $_ => 1 } @$selected_child_ids;
             for my $key (keys %$form_data) {
                 if ($key =~ /^session_for_(.+)$/) {
                     my $child_id = $1;
                     my $session_id = $form_data->{$key};
-                    
+
                     if ($session_id && $session_id ne 'none') {
+                        unless ($is_selected{$child_id}) {
+                            push @errors, "Session selected for a child that is not part of this registration";
+                            next;
+                        }
                         $selections{$child_id} = $session_id;
                     }
                 }

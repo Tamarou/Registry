@@ -50,7 +50,7 @@ subtest 'no-plan get_subscription_config is plan-driven (Free 0%)' => sub {
         data        => { profile => { organization_name => 'NoPlan Org' } },
     });
 
-    my $config = $step->get_subscription_config($db);
+    my $config = $step->get_subscription_config($db, $run);
     is $config->{revenue_share_percent}, 0,
         'revenue_share_percent is 0 (from the platform Free plan)';
     like $config->{description}, qr/\b0%/,

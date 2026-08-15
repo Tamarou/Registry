@@ -49,16 +49,37 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         }
         
         my $run = $workflow->new_run( $dao->db, $config );
-        my $data = $self->req->params->to_hash;
-        
-        # Add tenant context to workflow run data if present
-        my $tenant_slug = $self->tenant;
-        if ($tenant_slug && $tenant_slug ne 'registry') {
-            $data->{__tenant_slug} = $tenant_slug;
-        }
-        
+        my $data = $self->_apply_server_owned_data( $self->req->params->to_hash );
+
         $run->process( $dao->db, $first_step, $data );
         return $run;
+    }
+
+    # Request params are merged into a run's data verbatim, on every step, so
+    # any key the server owns has to be re-derived from the request rather than
+    # trusted. __tenant_slug alone selects the Stripe destination account,
+    # on_behalf_of, and the revenue-share rate; user_id decides whose enrollment
+    # and whose charge this is. Both are dropped when there is nothing to derive
+    # -- an absent session is not a licence to invent a user.
+    method _apply_server_owned_data ($data) {
+        my $tenant_slug = $self->tenant;
+        if ( $tenant_slug && $tenant_slug ne 'registry' ) {
+            $data->{__tenant_slug} = $tenant_slug;
+        }
+        else {
+            delete $data->{__tenant_slug};
+        }
+
+        my $current_user = $self->stash('current_user');
+        my $user_id = ref $current_user ? $current_user->{id} : undef;
+        if ($user_id) {
+            $data->{user_id} = $user_id;
+        }
+        else {
+            delete $data->{user_id};
+        }
+
+        return $data;
     }
 
     method index() {
@@ -381,6 +402,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     # Run a step and render whatever it hands back. Shared by the POST path and
     # by the Stripe return leg, which arrives as a GET.
     method _process_step ( $run, $step, $data ) {
+        $self->_apply_server_owned_data($data);
+
         my $result = $run->process( $self->dao->db, $step, $data );
 
         # Steps that talk to Stripe hand back a promise rather than a hashref;

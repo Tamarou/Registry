@@ -74,7 +74,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
     method prepare_payment_data($db, $run) {
         # Get tenant subscription pricing configuration
-        my $subscription_config = $self->get_subscription_config($db);
+        my $subscription_config = $self->get_subscription_config($db, $run);
         
         # Get organization info from workflow data
         my $org_data = $run->data->{profile} || {};
@@ -93,10 +93,10 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         };
     }
 
-    method get_subscription_config($db) {
-        # Get selected pricing plan from workflow data
-        my $workflow = $self->workflow($db);
-        my $run = $workflow->latest_run($db);
+    # The run is passed in, never looked up: latest_run is scoped to the
+    # workflow alone, so re-resolving it here would price this visitor's signup
+    # from whichever run on the platform happens to be newest.
+    method get_subscription_config($db, $run) {
         my $selected_plan;
 
         # Check if we have a run and it has pricing plan data
@@ -314,7 +314,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         # Create subscription with trial
         my $subscription;
         eval {
-            my $config = $self->get_subscription_config($db);
+            my $config = $self->get_subscription_config($db, $run);
             $subscription = $subscription_dao->create_subscription_with_config(
                 $setup_data->{stripe_customer_id},
                 $setup_intent->{payment_method},

@@ -151,7 +151,7 @@ subtest 'Full tenant signup integration test' => sub {
     my $payment_step_obj = $workflow->get_step($dao->db, { slug => 'payment' });
 
     # Get payment configuration
-    my $payment_config = $payment_step_obj->get_subscription_config($dao->db);
+    my $payment_config = $payment_step_obj->get_subscription_config($dao->db, $run);
 
     is $payment_config->{plan_name}, 'Registry Enterprise', 'Payment uses selected plan name';
     is $payment_config->{monthly_amount}, 50000, 'Payment uses selected plan amount';
@@ -194,7 +194,7 @@ subtest 'Backwards compatibility test' => sub {
 
     # Test that payment step falls back to default configuration
     my $legacy_payment_obj = $legacy_workflow->get_step($dao->db, { slug => 'payment' });
-    my $legacy_config = $legacy_payment_obj->get_subscription_config($dao->db);
+    my $legacy_config = $legacy_payment_obj->get_subscription_config($dao->db, $legacy_run);
 
     is $legacy_config->{plan_name}, 'Solo', 'Falls back to default plan name';
     is $legacy_config->{monthly_amount}, 0, 'Falls back to default amount (free)';
