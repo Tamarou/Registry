@@ -36,6 +36,13 @@ my $payment_step = Registry::DAO::WorkflowSteps::TenantPayment->create($db, {
     description => 'Payment step'
 });
 
+# A run with no selected_pricing_plan: the Solo/Free fallback the two
+# configuration subtests below exercise.
+my $no_plan_run = Registry::DAO::WorkflowRun->create($db, {
+    workflow_id => $workflow->id,
+    data => encode_json({})
+});
+
 subtest 'TenantPayment workflow step creation' => sub {
     plan tests => 3;
     
@@ -47,7 +54,7 @@ subtest 'TenantPayment workflow step creation' => sub {
 subtest 'Subscription configuration' => sub {
     plan tests => 6;
 
-    my $config = $payment_step->get_subscription_config($db);
+    my $config = $payment_step->get_subscription_config($db, $no_plan_run);
 
     ok($config, 'Configuration returned');
     is($config->{plan_name}, 'Solo', 'Plan name correct');
@@ -66,7 +73,7 @@ subtest 'Solo tier revenue share percent is plan-driven (Free 0%)' => sub {
         'REVENUE_SHARE_PERCENT constant removed from TenantPayment'
     );
 
-    my $config = $payment_step->get_subscription_config($db);
+    my $config = $payment_step->get_subscription_config($db, $no_plan_run);
 
     # The no-plan fallback rate comes from the platform Free plan (0%), not 2.5.
     is( $config->{revenue_share_percent}, 0,
@@ -161,6 +168,61 @@ subtest 'Validation error handling' => sub {
     ok($result, 'Result returned even with missing data');
     # Should have default values for missing organization name
     is($result->{billing_summary}->{organization_name}, 'Your Organization', 'Default organization name used');
+};
+
+subtest 'Subscription config follows the run in hand, not the newest run' => sub {
+    plan tests => 4;
+
+    my $mine = Registry::DAO::WorkflowRun->create($db, {
+        workflow_id => $workflow->id,
+        data => encode_json({
+            profile => {
+                organization_name => 'My Organization',
+                billing_email     => 'me@example.org',
+            },
+            selected_pricing_plan => {
+                plan_name    => 'Studio',
+                amount_cents => 4900,
+                currency     => 'USD',
+                pricing_configuration => {
+                    trial_days  => 14,
+                    description => 'Studio plan',
+                },
+            },
+        })
+    });
+
+    # Another visitor starts a signup after mine and picks a different plan.
+    my $theirs = Registry::DAO::WorkflowRun->create($db, {
+        workflow_id => $workflow->id,
+        data => encode_json({
+            selected_pricing_plan => {
+                plan_name    => 'Empire',
+                amount_cents => 19900,
+                currency     => 'USD',
+                pricing_configuration => {},
+            },
+        })
+    });
+
+    # latest_run orders by created_at, and two rows written in the same instant
+    # would tie; make theirs unambiguously the newest.
+    $db->query(
+        q{UPDATE workflow_runs SET created_at = created_at + interval '1 minute' WHERE id = ?},
+        $theirs->id
+    );
+
+    my $data = $payment_step->prepare_payment_data($db, $mine);
+    is($data->{subscription_config}{plan_name}, 'Studio',
+        'payment page prices my run with my plan');
+    is($data->{subscription_config}{monthly_amount}, 4900,
+        'and with my amount');
+    is($data->{billing_summary}{plan_details}{plan_name}, 'Studio',
+        'billing summary agrees');
+
+    my $config = eval { $payment_step->get_subscription_config($db, $mine) };
+    is(($config ? $config->{plan_name} : undef), 'Studio',
+        'get_subscription_config prices the run it is handed');
 };
 
 done_testing();
