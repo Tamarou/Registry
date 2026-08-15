@@ -407,4 +407,34 @@ subtest 'Session capacity constraints' => sub {
     is $available1->[0]->{session}->id, $session1->id, 'Available session is session1';
 };
 
+subtest 'session_for_<id> for a child that was never selected' => sub {
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        user_id => $parent->id,
+        selected_child_ids => [$child1->id],   # only child1 was chosen
+        location_id => $location->id,
+        program_id => $project->id,
+    });
+
+    my $step = $workflow->get_step($db, { slug => 'session-selection' });
+
+    # session2 is at capacity from the subtest above. Because child2 is absent
+    # from selected_child_ids, neither the capacity nor the age loop -- both of
+    # which iterate the selected children -- ever looks at him, and Payment
+    # prices the children array rather than enrollment_items, so he would
+    # enroll unchecked and unpriced.
+    my $result = $step->process($db, {
+        action => 'select_sessions',
+        "session_for_" . $child1->id => $session1->id,
+        "session_for_" . $child2->id => $session2->id,
+    }, $run);
+
+    ok $result->{errors}, 'submission with an unselected child is rejected';
+    ok $result->{stay}, 'run stays on the session-selection step';
+    ok !$run->data->{enrollment_items},
+        'no enrollment items are stored';
+    ok !$run->data->{session_selections},
+        'no session selections are stored';
+};
+
 done_testing;
