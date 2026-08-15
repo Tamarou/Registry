@@ -328,7 +328,13 @@ my $pi_succeeded_event = {
 };
 
 subtest 'webhook finalizes payment and creates enrollment in tenant schema' => sub {
-    $wh->_process_payment_intent_succeeded($dao, $pi_succeeded_event);
+    # $tdb, not $dao: stripe() owns tenant routing now -- it resolves the slug
+    # and sets a transaction-local search_path -- and the handler settles on
+    # whatever connection it is handed. That routing is covered end to end over
+    # HTTP in t/controller/webhook-tenant-payment-finalization.t; what this
+    # integration test asserts is that finalization writes the whole settlement
+    # into the tenant schema and nothing into registry.
+    $wh->_process_payment_intent_succeeded($tdb, $pi_succeeded_event);
 
     # Payment completed in tenant schema
     my $payment = Registry::DAO::Payment->find($tdb, { id => $webhook_payment_id });
@@ -357,7 +363,7 @@ subtest 'webhook finalizes payment and creates enrollment in tenant schema' => s
 
 subtest 'finalization is idempotent: second webhook call yields exactly one enrollment' => sub {
     # Second call -- same event, fresh handler invocation
-    $wh->_process_payment_intent_succeeded($dao, $pi_succeeded_event);
+    $wh->_process_payment_intent_succeeded($tdb, $pi_succeeded_event);
 
     my $enrollments = $tdb->select('enrollments', '*',
         { payment_id => $webhook_payment_id })->hashes;
