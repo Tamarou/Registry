@@ -130,6 +130,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 - Modify: `lib/Registry/Controller/Webhooks.pm:44-49` (the claim), `:79-81` (the release — **deleted**, see Step 7), `:102` (the slug read, hoisted by Step 3), `:108-109` (the connection hop), `:131-138`
 - Modify: `lib/Registry/DAO/Subscription.pm` (Step 6 hoists `get_subscription` out of the block; it is reached from `process_webhook_event`, not from `Webhooks.pm` directly)
 - Test: `t/controller/payment-intent-webhook.t`
+- Test (**breaks, and must be re-pointed**): `t/controller/webhook-tenant-payment-finalization.t`. Moving the tenant routing out of `_process_payment_intent_succeeded` changes that method's contract, and this file calls it **directly** six times with a registry-scoped DAO. Its first subtest is the *only* coverage of tenant routing, so re-point that one at a real signed POST through `stripe()` — handing the handler a pre-scoped connection makes the subtest pass while asserting nothing about which schema was chosen, which is the coverage the task is supposed to preserve. The other five call the handlers to test handler behaviour and only need the registry handle. **Grep for direct callers of any method whose signature this leg changes before starting a task** — a Files list that names only the source file has omitted a test whose assumptions the change invalidates three times now in this milestone.
 
 **Interfaces:**
 - Consumes: Task 0's `processed_at`.
