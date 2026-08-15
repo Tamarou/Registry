@@ -18,7 +18,7 @@ Copied from Leg 1, plus this leg's own.
 
 - **A deployed change is retired by a new change, not by deleting a file.** Never `git rm` a file under `sql/deploy/`, `sql/revert/`, or `sql/verify/` named in `sql/sqitch.plan`, and never edit a deployed change's **deploy** script. Editing a **verify** script is safe — sqitch hashes the deploy script only.
 - **A migration registers with the revert harness in the same commit that appends to `sql/sqitch.plan`** — append its change name to `@CHANGES` in `t/database/revert-round-trip.t`, in plan order. Skipping it is silent: the suite still prints `All tests successful` and only the test count moves. Read the count.
-- **`@SLUGS` in that harness holds exactly five reserved-word slugs and three are used.** This leg's two migrations bring it to five — the ceiling. The next migration-bearing leg must extend the list, and the replacements must also be SQL reserved words; mixed case and hyphens were tried against live Postgres and break `clone_schema`, not the migrations.
+- **`@SLUGS` in that harness holds five reserved-word slugs and three are used; this leg takes it to six.** Task 0 appends a sixth (`default`, verified to clone — 41 tables — and to render quoted in `pg_dump`), and this leg's **three** migrations then consume all six. The harness asserts `@CHANGES <= @SLUGS` at `:87` and pairs them positionally at `:94`. The next migration-bearing leg must extend the list again, and the replacements must also be SQL reserved words; mixed case and hyphens were tried against live Postgres and break `clone_schema`, not the migrations. (`limit` is a verified fallback if a seventh is ever wanted.)
 - **`clone_schema` regenerates index and unique-constraint names.** `LIKE … INCLUDING ALL` means the tenant copy of `enrollments_session_student_type_unique` is called `enrollments_session_id_student_id_student_type_key`. Resolve existing objects out of `pg_index`/`pg_constraint` by table and column set, never by name. Creating a *new* object by name in the tenant loop is safe — the name does not exist yet.
 - **Never `DROP CONSTRAINT IF EXISTS` in the tenant loop.** It converts the abort into a silent skip, leaving a status-blind constraint in force in exactly the schema that holds money.
 - **`SET LOCAL` silently does nothing outside a transaction** and reverts at COMMIT. One `begin` at the top of the settlement path and no other transaction below it.
@@ -38,7 +38,7 @@ Copied from Leg 1, plus this leg's own.
 
 ## Declared Deviations From The Spec
 
-Eight places where this plan does something other than what the spec's Leg 0 row says. All eight are deliberate, and six exist because the row is wrong about the code. Each was verified by reading or running, not inferred.
+Thirteen places where this plan does something other than what the spec's Leg 0 row says. All thirteen are deliberate, and six exist because the row is wrong about the code. Each was verified by reading or running, not inferred. Items 9-13 were argued in task bodies for two rounds without being listed here, which is exactly the failure this section exists to prevent.
 
 1. **The capacity refund calls `refund_async`, not `Payment::refund`.** The spec names `Payment::refund` at `:4540`, `:4544`, `:4857` and in the row. That method reaches `create_refund` → `_await`, which dies with *"Synchronous Stripe call did not settle - it was likely made inside a running event loop"* (`Service/Stripe.pm:246-249`). Both settlement paths run under the IOLoop — the webhook is a controller action, and `_settle_callback` runs inside a `->then` (`WorkflowSteps/Payment.pm:263-264`). The spec knows this rule; it applies it to `publish_version` in Leg 6 at `:3154` and never back-propagates it. `refund_async` (`:571-601`) carries the identical guard at `:572` and the identical whole-payment default at `:575`.
 
@@ -55,6 +55,16 @@ Eight places where this plan does something other than what the spec's Leg 0 row
 7. **`mark_completed` is a behaviour change, not a refactor.** The spec says a literal swap "writes back the loaded `'pending'` and a NULL `completed_at`" (`:1643`). The webhook never writes `completed_at` today (`Webhooks.pm:132-135` writes two columns), while the callback path does (`Payment.pm:318-321`) — so webhook-settled payments currently have `completed_at IS NULL`, and this leg starts populating it. `save` also rewrites the whole metadata blob, a wider write than `update`'s patch.
 
 8. **The demotion is an `UPDATE`-then-`INSERT`, not a fourth parameter on `create_for_payment`.** The sub hardcodes its arbiter (`Enrollment.pm:94-96`) and takes `($class, $db, $data)` — there is no slot for a conflict action, and `finalize_enrollment` is its only caller. The spec offers this alternative itself at `:4505` and it is the smaller diff.
+
+9. **Task 1 erases the subscription-event failure marker, and this leg accepts that only if it is compensated.** `Subscription::process_webhook_event` writes `processing_status = 'failed'` to `registry.subscription_events` and *then* dies (`Subscription.pm:250-258`). Today that marker survives because there is no transaction; under Task 1 the ROLLBACK takes it with the claim. Task 1's last negative scenario requires the write to be moved outside the transaction or re-issued after rollback. Same weight as Deviation 7 and it was undeclared for two rounds.
+
+10. **Post-COMMIT work uses a tenant-scoped DAO, not the spec's session-level `set_config`.** The spec mandates `set_config('search_path', $1, false)` at `:1618-1628`, reasoning correctly that `Payment::save` writes unqualified `payments` and `registry.payments` is a real table, so a wrong-path write matches nothing and returns quietly. Both of the spec's own options fail here: session-level poisons the connection pool (Mojo::Pg re-applies `search_path` only on new handles), and a caller-owned second transaction cannot span `refund_async`'s internal `->then`. `$dao->connect_schema($slug)->db` is neither — Mojo::Pg sets the path at handle open. The spec's compensating assertion is retained in full: assert against `<tenant>.payments` **by qualified name**.
+
+11. **Task 1b is new structural work the row does not contain.** The row and spec `:1584-1628` scope atomicity to the webhook. A transaction on the callback path is this leg's second-largest change. It is required — `->begin` is 0 across all four money-path files, and spec `:4497-4500` does demand the capacity gate on both callers, which cannot be honoured without a container on both — but it is scope the row does not name.
+
+12. **The idempotency token keeps its shipped name.** The row says `metadata[registry_idempotency_token]`; the live key is `idempotency_token` (`Payment.pm:129`, flattened to Stripe by `_stripe_metadata_params:51-62`). It predates #314 and is already on live Stripe objects, so renaming is a live-data change. Adopting the shipped name is the smaller diff.
+
+13. **Task 7b passes the tenant id through from `TenantPayment.pm:318-322`.** The row asks only that the tenant write join the transaction, read `trial_end` defensively, and cancel what it cannot record. The pass-through comes from a different spec bullet (`:2708-2711`) that names no leg. Without it the row's own item is dead code, since `Subscription.pm:131` and `:144` both sit under `if ($tenant_id)`.
 
 ## Spec Citations Corrected
 
@@ -91,17 +101,18 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 - [ ] **Step 1: Extend `@SLUGS` to six** by appending `default`, and verify the new slug actually clones before relying on it: create a schema of that name through `registry.clone_schema('default')` against an ephemeral `Test::PostgreSQL` and assert it succeeds. If it does not, pick another reserved word and repeat — do not proceed on an unverified slug.
 - [ ] **Step 2: `carton exec -- sqitch add webhook-events-processed-at --note '…'`.**
-- [ ] **Step 3: Write the deploy** — `ALTER TABLE registry.webhook_events ADD COLUMN processed_at timestamptz;` Nullable: rows claimed but not yet finished have no value, and that is the state Task 9's runbook looks for.
+- [ ] **Step 3: Write the deploy** — `ALTER TABLE registry.webhook_events ADD COLUMN processed_at timestamptz;`
+      **Be honest about what this column is for.** An earlier draft justified it as state tracking — "rows claimed but not yet finished have no value, and that is the state Task 9's runbook looks for." Both halves are false. Task 1 makes that state unreachable: with the claim inside the transaction, the release deleted and the stamp before COMMIT, `processed_at IS NOT NULL` is equivalent to the row existing, and nothing else writes the table (2 references, both in `Webhooks.pm`). And Task 9's runbook queries `payments` for `refund_pending` per tenant schema; it never reads `webhook_events`. The column's real value is **received→processed latency** — the leg is titled "Observable" and `received_at` alone cannot give you that. Keep it for that reason or drop this task; do not keep it for a reason that is not true. Contrast `registry.subscription_events` (`sql/test-schema.sql:1377-1386`), which carries `processed_at` *and* `processing_status`, and is load-bearing precisely because its claim survives a failure.
 - [ ] **Step 4: Write the revert and verify.**
 - [ ] **Step 5: Append the change to `@CHANGES` in the same commit** that appends to `sql/sqitch.plan`. Skipping this is silent — the suite still prints `All tests successful` and only the count moves.
-- [ ] **Step 6: Run `t/database/`.** Baseline is `Files=3, Tests=24, PASS`; expected **`Tests=26`** — the harness adds two assertions per change. A count of 24 means the `@CHANGES` append was skipped.
+- [ ] **Step 6: Run `t/database/`.** Baseline is `Files=3, Tests=24, PASS`; expected **`Tests=25`**. One change adds **+1**, not +2: `prove` counts one test point per `subtest`, and `revert-round-trip.t:96` wraps each change in exactly one, with its two assertions inside. Measured by appending a real fourth entry and reading `Tests=4`. A count of 24 means the `@CHANGES` append was skipped.
 - [ ] **Step 7: Commit.**
 
 **Acceptance Criteria**
 
 ### Positive Scenarios
 - [ ] The column exists (`grep -cF 'processed_at' sql/deploy/webhook-events-processed-at.sql || true` -- at least 1)
-- [ ] The harness grades it — `t/database/` goes **`Tests=24` → `Tests=26`**
+- [ ] The harness grades it — `t/database/` goes **`Tests=24` → `Tests=25`**
 - [ ] `@CHANGES` is at 4 and `@SLUGS` is at 6:
       `carton exec perl -0777 -ne 'while(/my \@(CHANGES|SLUGS)\s*=\s*qw\(([^)]*)\)/gs){my@w=split " ",$2; print "$1 = ",scalar(@w),"\n"}' t/database/revert-round-trip.t`
       Reads `CHANGES = 3 / SLUGS = 5` now, must read `CHANGES = 4 / SLUGS = 6`.
@@ -115,7 +126,8 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 ### Task 1: One transaction, one connection — the webhook path
 
 **Files:**
-- Modify: `lib/Registry/Controller/Webhooks.pm:44-49` (the claim), `:79-81` (the release — **deleted**, see Step 7), `:108-109` (the connection hop), `:131-138`
+- Modify: `lib/Registry/Controller/Webhooks.pm:44-49` (the claim), `:79-81` (the release — **deleted**, see Step 7), `:102` (the slug read, hoisted by Step 3), `:108-109` (the connection hop), `:131-138`
+- Modify: `lib/Registry/DAO/Subscription.pm` (Step 6 hoists `get_subscription` out of the block; it is reached from `process_webhook_event`, not from `Webhooks.pm` directly)
 - Test: `t/controller/payment-intent-webhook.t`
 
 **Interfaces:**
@@ -128,22 +140,23 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 - [ ] **Step 1: Write the failing test** — a webhook delivery that dies mid-finalization must leave no claim in `registry.webhook_events` and no partial enrollment. Assert both.
 - [ ] **Step 2: Run it and watch it fail.** `STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lv t/controller/payment-intent-webhook.t`. Baseline: `Files=1, Tests=4, PASS` — so the new assertion takes it to `Tests=5`. Expected: the claim survives the rollback.
-- [ ] **Step 3: Resolve the slug to a tenant row before `begin`.** That lookup *is* the validation; a slug that resolves to no tenant never reaches `set_config`. Verified: `set_config` happily accepts a nonexistent schema and only fails later, at the first unqualified table reference.
-- [ ] **Step 4: Open the transaction, and move the claim inside it.** This is the leg's headline act and it is a code change, not a consequence of the other steps: `my $tx = $db->begin;` at the top of `stripe()`, with the `INSERT … ON CONFLICT DO NOTHING` claim from `:45-49` now inside the block, on the same `$db`. Without this step the remaining steps produce a handler with `set_config` and no transaction — at which point `SET LOCAL` silently does nothing, per the Global Constraint.
-- [ ] **Step 5: Replace the `connect_schema` hop with `SELECT set_config('search_path', ?, true)`** inside the transaction, bound as a parameter so the slug never reaches SQL text. Set it to `<tenant>, public` — do not widen with `registry`. Binding is genuinely safe, not merely conventional: Postgres validates the GUC rather than splicing it, and `'acme, public; DROP TABLE registry.payments'` is rejected with `invalid value for parameter "search_path"`.
-- [ ] **Step 6: Move `Subscription::get_subscription` out of the block.** It is the only blocking Stripe call inside it (`Subscription.pm:319`, `:332`), and it runs on a user agent with no request timeout. Anything doable before `begin` happens before `begin`.
-- [ ] **Step 7: Delete the catch-block release at `:81`.** With the claim inside the transaction the ROLLBACK removes it, and the old release now runs on a poisoned handle: reproduced, the catch-block `DELETE` dies with `current transaction is aborted, commands ignored until end of transaction block`. The rollback leaves 0 claim rows on its own. Deleting this is required, not tidying.
+- [ ] **Step 3: Hoist the slug extraction into `stripe()`, above the `begin`.** This step exists because Steps 3 and 4 were mutually impossible in an earlier draft: `$slug` is read from `$event->{data}{object}{metadata}{tenant_slug}` at `:102`, inside `_process_payment_intent_succeeded`, which does not run until `:61`. Read it from the already-decoded event in `stripe()` instead, then resolve it to a tenant row — that lookup *is* the validation, and a slug resolving to no tenant never reaches `set_config`. Verified: `set_config` accepts a nonexistent schema silently and only fails later, at the first unqualified table reference. **Only `payment_intent.succeeded` carries a slug**; `account.updated` and the subscription branch have none, and for those the path stays `registry` with no `set_config` at all.
+- [ ] **Step 4: Open the transaction, and move the claim inside it.** This is the leg's headline act and it is a code change, not a consequence of the other steps: `my $tx = $db->begin;` in `stripe()` after Step 3's extraction, with the `INSERT … ON CONFLICT DO NOTHING` claim from `:45-49` now inside the block, on the same `$db`. Without this step the remaining steps produce a handler with `set_config` and no transaction — at which point `SET LOCAL` silently does nothing, per the Global Constraint.
+- [ ] **Step 5: Replace the `connect_schema` hop with `SELECT set_config('search_path', ?, true)`** inside the transaction, bound as a parameter so the slug never reaches SQL text, and pass the resulting `$tdb` down to `_process_payment_intent_succeeded`. Set it to `<tenant>, public` — do not widen with `registry`. Binding is genuinely safe, not merely conventional: Postgres validates the GUC rather than splicing it, and `'acme, public; DROP TABLE registry.payments'` is rejected with `invalid value for parameter "search_path"`.
+- [ ] **Step 6: Move `Subscription::get_subscription` out of the block** — this edits `lib/Registry/DAO/Subscription.pm`, which is why that file is on the Files list. It is the only blocking Stripe call inside the transaction (`Subscription.pm:319`, `:332`), it runs on a user agent with no request timeout, and it is reached five handlers deep from `process_webhook_event` (`:226-240`) with the id read from `$event->{data}`. Pre-fetch it before `begin` and pass it in. Anything doable before `begin` happens before `begin`.
+- [ ] **Step 7: Delete the catch-block release at `:81`.** With the claim inside the transaction the ROLLBACK removes it, and the old release now runs on a poisoned handle: reproduced, the catch-block `DELETE` dies with `current transaction is aborted, commands ignored until end of transaction block`. Proven that the rollback is sufficient *and* that redelivery still works — after a mid-flight die the claim count is 0 and the redelivery re-claims with `rows=1`, so the claim is genuinely rolled back, not merely invisible. Deleting this is required, not tidying.
 - [ ] **Step 8: Stamp `processed_at` and COMMIT.**
-- [ ] **Step 9: Re-establish the path for post-COMMIT work in a second short transaction,** using `set_config('search_path', ?, true)` again — **not** a session-level `false`. A session-level set survives back into the connection pool: `Mojo::Pg` applies `search_path` only when it opens a *new* DBI handle (the queue-reuse `return $dbh if $dbh->ping` precedes the `SET search_path` block), so a reused handle keeps whatever the last request left behind. Reproduced: after a session-level `set_config`, the same pid comes back out of the pool with `search_path=acme` and unqualified `payments` resolving to the wrong tenant. Transaction-local reverts at COMMIT on its own — verified, the path returns to `registry, public` unprompted.
-- [ ] **Step 10: Run the test and the controller suite.** Expected: PASS.
-- [ ] **Step 11: Commit.**
+- [ ] **Step 9: Do post-COMMIT work on a tenant-scoped DAO, not under a search-path override.** `$dao->connect_schema($slug)->db` returns a handle whose `search_path` Mojo::Pg set at open (`DAO.pm:39`), which is the one mechanism that is neither pool-poisoning nor transaction-bound. Do **not** use a session-level `set_config(…, false)`: it survives back into the pool, because Mojo::Pg's queue-reuse `return $dbh if $dbh->ping` precedes its `SET search_path` block — reproduced, the same pid comes back out with `search_path=acme` and unqualified `payments` resolving to the wrong tenant. And do **not** use a second short transaction: Task 5b's `refund_async` writes inside its own `->then` after a Stripe round-trip, so a caller-owned transaction either closes too early (the write lands on `registry` and affects 0 rows, silently) or is held across the network, which the Global Constraint forbids.
+- [ ] **Step 10: Add `$self->render_later` before returning.** `stripe()` does not call it today; the render only survives because `Mojolicious::Routes::_render` finds no `webhooks/stripe` template and `mojo.routed` suppresses the croak. Once this action returns a promise that is one added default template away from a silent double-render.
+- [ ] **Step 11: Run the test and the controller suite.** Expected: PASS.
+- [ ] **Step 12: Commit.**
 
 **Acceptance Criteria**
 
 ### Positive Scenarios
 - [ ] One `begin` on this path (`grep -c -- '->begin' lib/Registry/Controller/Webhooks.pm || true` -- **0 now**, 1 after). The pattern is live, not dead: it returns 1 against `lib/Registry/DAO/Message.pm`.
-- [ ] `connect_schema` no longer appears in the webhook path (`grep -cF connect_schema lib/Registry/Controller/Webhooks.pm || true` -- **1 now**, 0 after)
-- [ ] The slug is bound, never interpolated, **in both places** (`grep -cF "set_config('search_path', ?" lib/Registry/Controller/Webhooks.pm || true` -- **0 now, exactly 2 after**). Two, not "at least 1": Step 5 writes one and Step 9 writes the other, and "at least 1" passes when Step 9 is skipped — which is the specific bug this task exists to avoid.
+- [ ] `connect_schema` is gone from the **transaction** path but retained for post-COMMIT work (`grep -cF connect_schema lib/Registry/Controller/Webhooks.pm || true` -- **1 now, still 1 after**). Written `-- 0`, as an earlier draft had it, this criterion **fails a correct implementation**: Step 9 needs exactly this call to get a tenant-scoped handle. Grade it by where the surviving call sits — after the COMMIT, not before the work.
+- [ ] The slug is bound, never interpolated (`grep -cF "set_config('search_path', ?" lib/Registry/Controller/Webhooks.pm || true` -- **0 now, exactly 1 after**). One, not two: Step 9 no longer uses `set_config` at all.
 - [ ] The catch-block release is gone (`grep -cF 'webhook_events' lib/Registry/Controller/Webhooks.pm || true` -- **2 now**; after, the remaining hits must not include a `DELETE` in a catch)
 - [ ] Webhook suite passes and grows (`Tests=4` → `Tests=5`)
 
@@ -151,14 +164,15 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 - [ ] **A `begin` on a second handle is the real hazard, not a nested one.** A nested `begin` on the *same* handle is loud — it dies with `Already in a transaction at Mojo/Pg/Transaction.pm line 20`. What is silent is a `begin` on a **different** handle: a separate transaction that sees neither the uncommitted rows nor the search path. `Waitlist.pm:195` and `:234` are the live examples of that shape. Assert one transaction on one handle.
 - [ ] **A slug that resolves to no tenant must not reach `set_config`.** Deliver a webhook whose metadata names a nonexistent tenant; assert it is refused before the transaction opens, not inside it.
 - [ ] **The claim must be released by the ROLLBACK, not by the catch block.** Assert that a die inside the block leaves no row in `webhook_events` even if the catch never runs.
-- [ ] **A session-level search path must not survive into the pool.** Assert that after the request, a fresh handle from the same pool resolves unqualified `payments` to `registry`, not to the tenant.
+- [ ] **A session-level search path must not survive into the pool.** Assert that after the request, a fresh handle from the same pool resolves unqualified `payments` to `registry`, not to the tenant. (Control, measured: with a session-level `false` the reused handle comes back on `acme, public` and counts 1; with the transaction-local form it comes back on `registry, public` and counts 0.)
+- [ ] **The subscription branch's failure marker must not vanish with the rollback.** `Subscription.pm:250-258` writes `processing_status = 'failed'` to `registry.subscription_events` and *then* dies. Under this task that die unwinds a transaction wrapping the branch, so the ROLLBACK erases the marker along with the claim — a behaviour change from today, where it survives because there is no transaction. Assert the marker is still written, by moving that write outside the transaction or re-writing it after rollback. See Declared Deviation 9.
 
 ---
 
 ### Task 1b: The callback path gets a transaction
 
 **Files:**
-- Modify: `lib/Registry/DAO/WorkflowSteps/Payment.pm:263-264` (the `->then`), `:267-284` (`_settle_callback`)
+- Modify: `lib/Registry/DAO/WorkflowSteps/Payment.pm:263-264` (the `->then`), `:267-378` (`_settle_callback` — the whole method; an earlier draft cited `:267-284`, which stops 94 lines short and hides the decline branch)
 
 **Interfaces:**
 - Consumes: nothing from Task 1; the two paths are independent containers.
@@ -166,7 +180,11 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 **Why this task exists.** Measured across the money path, `grep -c -- '->begin'` is **0** in `Controller/Webhooks.pm`, `Controller/Workflows.pm`, `DAO/Payment.pm` and `DAO/WorkflowSteps/Payment.pm`. Task 1 builds a container on the webhook path only, but `_apply_intent` (Task 3) and `finalize_enrollment` (Task 5b) are reached from **both**. Without this task, those two tasks ship statements on this path that read like locks and are not — reproduced: two concurrent settlements under AutoCommit both act, the same code inside a transaction yields exactly one.
 
-**Two facts that constrain the shape.** `_settle_callback` is synchronous today — it returns a hashref (`:279-284`) — and must start returning a promise, which is safe because `_process_step` calls `render_later` (`Workflows.pm:412-420`) so the request is still open, and Mojo::Promise adopts a returned promise. And the transaction must open **inside** the `->then`, not before `process_payment_async`: opening it earlier holds a payment row lock across a Stripe network round-trip (`Payment.pm:563-569`) under the IOLoop.
+**This whole shape has been prototyped end to end and it works.** Implemented in the real file and driven over HTTP through `_process_step` with a genuinely deferred Stripe response, the ordering is exactly settle → COMMIT → post-COMMIT → render, and the six callback-path suites stay green at an unchanged `Files=6, Tests=30`.
+
+**One correction to the worry that motivated this task.** `_settle_callback` is *mostly* synchronous — four of its five branches return a hashref (`:279-284`) — but the declined-card branch at `:341` **already returns a promise** (`return $cancel->then(...)`). So Mojo::Promise adoption through `handle_payment_callback`'s `->then` at `:264` is already proven in the shipped tree; the work is making the success branch match, not introducing a new mechanism. Note the consequence for the gate below: "assert the return value is a promise" passes today on the decline path, so it must be asserted on the **success** path specifically.
+
+**The transaction must open inside the `->then`,** not before `process_payment_async`: opening it earlier holds a payment row lock across a Stripe network round-trip (`Payment.pm:563-569`) under the IOLoop.
 
 - [ ] **Step 1: Write the failing test** — two concurrent settlements of the same payment on the callback path; assert exactly one finalizes.
 - [ ] **Step 2: Run it.** Expected: both proceed.
@@ -185,7 +203,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 ### Negative Scenarios
 - [ ] **A transaction opened before the Stripe call holds a row lock across the network.** Assert the `begin` follows the `->then`, not precedes `process_payment_async`.
-- [ ] **A synchronous return breaks the post-COMMIT chain.** If `_settle_callback` returns a hashref, Task 5b's refund cannot be sequenced after COMMIT. Assert the return value is a promise.
+- [ ] **A synchronous return breaks the post-COMMIT chain.** If `_settle_callback` returns a hashref, Task 5b's refund cannot be sequenced after COMMIT. Assert the return value is a promise **on the success branch** — the decline branch at `:341` already returns one, so an unqualified assertion passes before any work is done.
 - [ ] **A `begin` on a handle other than the one doing the work is invisible.** `$c->dao` is uncached, so `Workflows.pm:407` and `:427` already hold two different connections. Assert the transaction and the work share a handle.
 
 ---
@@ -194,7 +212,8 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 **Files:**
 - Create: `mark_completed` on `lib/Registry/DAO/Payment.pm` (near `save`, `:425-435`)
-- Modify: `lib/Registry/Controller/Webhooks.pm:132-135`, `lib/Registry/DAO/Payment.pm:206-216`, `:218-226`
+- Modify (the two completed-writes): `lib/Registry/Controller/Webhooks.pm:132-135`, `lib/Registry/DAO/Payment.pm:316-321`
+- Modify (`update` → `save` only, **not** `mark_completed`): `lib/Registry/DAO/Payment.pm:206-216`, `:218-226`
 
 **Interfaces:**
 - Consumes: Task 1's transaction.
@@ -202,14 +221,19 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 **Why not a literal swap.** All `Payment` fields are `:param :reader` with no writer (`:12-23`), so `save` writes back whatever was loaded. `update` (`Object.pm:38-49`) returns a *new* object and patches two columns; `save` (`:425-435`) writes six, including `metadata => { -json => ... }` unconditionally.
 
-**Two behaviour changes to state, not hide.** The webhook does not write `completed_at` today; the callback path does (`Payment.pm:318-321`). After this task, webhook-settled payments get one — correct, and a data-shape change. And the webhook begins rewriting the metadata blob on every delivery, which is a new interleaving surface with `WorkflowSteps/Payment.pm:162-165`.
+**There are exactly two completed-writes on the money path, and only they take `mark_completed`.** `Webhooks.pm:133` and `Payment.pm:318`. Verified across `lib/`: nothing else writes `status = 'completed'` on this path (`AdminDashboard.pm:37` is a query filter; the `transfer_status => 'completed'` hits are unrelated).
+
+**The other two cited sites must NOT become `mark_completed`.** `Payment.pm:206-216` is `_record_intent`, which stamps an intent id on a still-**pending** row; `:218-226` is `_record_intent_failure`, which sets `status = 'failed'` and dies. Neither writes `completed`. Pointing them at `mark_completed` would mark a payment completed at intent-creation time, and again on failure — a money bug inside the task whose purpose is to make settlement honest. They are on the Files list for the spec's separate `update` → `save` instruction (`:1630-1633`) and nothing more.
+
+**Two behaviour changes to state, not hide.** The webhook does not write `completed_at` today; the callback path does (`Payment.pm:318-321`). After this task, webhook-settled payments get one — correct, and a data-shape change. And the webhook begins rewriting the metadata blob on every delivery, which is a new interleaving surface with the competing metadata write at `WorkflowSteps/Payment.pm:169-177` (`$updated_meta` → `$raw_db->update('payments', { … metadata => { -json => … } })`).
 
 - [ ] **Step 1: Write the failing test** — after a webhook settlement, `completed_at` is set and `metadata` is unchanged from what the callback wrote.
 - [ ] **Step 2: Run it.** Expected: `completed_at` is NULL.
 - [ ] **Step 3: Add `mark_completed`** — mutate `status`, `stripe_payment_intent_id`, `completed_at`, then `save`.
-- [ ] **Step 4: Swap the three call sites.**
-- [ ] **Step 5: Run the payment and webhook suites.** Expected: PASS.
-- [ ] **Step 6: Commit.**
+- [ ] **Step 4: Swap the two completed-writes** — `Webhooks.pm:132-135` and `Payment.pm:316-321` — to `mark_completed`.
+- [ ] **Step 5: Separately, convert `_record_intent` and `_record_intent_failure` from `update` to `save`,** leaving their status semantics exactly as they are. This is the spec's `update` → `save` item, not the `mark_completed` item.
+- [ ] **Step 6: Run the payment and webhook suites.** Expected: PASS.
+- [ ] **Step 7: Commit.**
 
 **Acceptance Criteria**
 
@@ -220,13 +244,14 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 ### Negative Scenarios
 - [ ] **A literal `save` swap writes back the loaded `pending`.** Assert the status after settlement is `completed`, not the loaded value.
 - [ ] **The metadata blob must survive.** Assert `enrollment_items` is intact after the webhook writes, since `save` rewrites the whole column.
+- [ ] **`mark_completed` must not reach the intent-recording sites.** Assert that creating a payment intent leaves `status = 'pending'` and `completed_at IS NULL`, and that a failed intent leaves `status = 'failed'`. This is the scenario that catches "swap the three call sites" being read literally.
 
 ---
 
 ### Task 3: `SELECT … FOR UPDATE` on the payment row
 
 **Files:**
-- Modify: `lib/Registry/Controller/Webhooks.pm:123-136`, `lib/Registry/DAO/Payment.pm:266-343` (`_apply_intent`), `lib/Registry/DAO/WorkflowSteps/Payment.pm:164-166`
+- Modify: `lib/Registry/Controller/Webhooks.pm:112` (the `Payment->find` that must take the lock; the checks it feeds are at `:123-136`), `lib/Registry/DAO/Payment.pm:266-343` (`_apply_intent`), `lib/Registry/DAO/WorkflowSteps/Payment.pm:164-166`
 
 **Interfaces:**
 - Consumes: Task 1's transaction **and Task 1b's**. A lock outside one is released immediately.
@@ -271,7 +296,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 - Create: a per-child share resolver on `Payment`
 
 **Interfaces:**
-- Consumes: nothing from 1-3, but must precede Task 5.
+- Consumes: nothing from 1-3, but must precede Task 5b.
 - Produces: `refund_async` accepts `refund_pending`; `create_refund_async` accepts `_idempotency_key`; a resolver taking `(child_id, session_id)` that Leg 3 reuses with a per-enrollment argument.
 
 **Why this precedes the capacity branch.** Task 5 writes `payments.status = 'refund_pending'` and then calls the method whose first line is `die … unless $status eq 'completed'`. The refund never reaches Stripe. The guard rewrite and the key must be in the same commit as the first `refund_pending` write.
@@ -316,9 +341,9 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 - [ ] **Step 1: Write the failing test** — a session at capacity, a payment captured for the last seat by someone else first; assert the predicate says it does not fit.
 - [ ] **Step 2: Run it.** Expected: the predicate does not exist; the count includes this payment's own rows.
-- [ ] **Step 3: Take session locks, sorted.** `SELECT id FROM sessions WHERE id = ANY(?) ORDER BY id FOR UPDATE`, over the **distinct** session ids in the cart. Verified against live Postgres: `EXPLAIN` puts `LockRows` **above** `Sort (Sort Key: id)`, so rows are locked in sorted order; run concurrently, the unsorted form deadlocks and the sorted form does not. `MultiChildSessionSelection.pm:87` already computes `@unique_sessions` — reuse it rather than re-deriving. If cart ids are also sorted in Perl anywhere, plain `sort` matches Postgres `uuid` ordering, because canonical lowercase hex sorts identically to the 16-byte comparison and Postgres always emits lowercase.
-- [ ] **Step 4: Add the predicate as a new sub** — count `active`/`pending` rows for the session **excluding those whose `payment_id` is this payment**, and compare `count + (this payment's items for this session)` against capacity. Leave `count_for_session` alone; the transfer-path callers want the unfiltered count. **A NULL *or zero* capacity is unlimited** — return early, do not compare. Zero is not hypothetical: there is **no CHECK constraint on `sessions.capacity`**, so `0` is storable, and nine live sites already read it as unlimited (`ValidateTargetCapacity.pm:22`, `SelectTargetSession.pm:20`, `MultiChildSessionSelection.pm:102`, `:106`, `:213`, `:236`, `:303`, `:309`). A predicate written `return unless defined $capacity` refunds every capacity-0 session at capture while all nine pre-checks wave the enrollment through. This is the same `defined`-versus-truthy distinction Task 8 turns the other way, and the two must not be conflated: an undefined **price** is a refusal, an undefined **capacity** is permission.
-- [ ] **Step 5: Run the gate before `finalize_enrollment`**, not after. `finalize_enrollment` writes this payment's rows as `active`, so a re-check after it counts itself.
+- [ ] **Step 3: Take session locks, sorted, inside `finalize_enrollment`.** `SELECT id FROM sessions WHERE id = ANY(?) ORDER BY id FOR UPDATE`, over the **distinct** session ids in the cart, derived from `$metadata->{enrollment_items}` (`Payment.pm:351-354`; `$item->{session_id}` at `:360`) — that is the cart, in the one method both settlement paths call. Verified against live Postgres: `EXPLAIN` puts `LockRows` **above** `Sort (Sort Key: id)`, so rows are locked in sorted order; run concurrently, the unsorted form deadlocks and the sorted form does not. If cart ids are also sorted in Perl anywhere, plain `sort` matches Postgres `uuid` ordering, because canonical lowercase hex sorts identically to the 16-byte comparison and Postgres always emits lowercase. **Do not** try to reuse `MultiChildSessionSelection.pm:87`'s `@unique_sessions`: it is a lexical inside the sibling-rule branch (`:85-92`) of a pre-checkout workflow-step class, does not exist on the ordinary path, and has no `%selections` in scope here.
+- [ ] **Step 4: Add the predicate as a new sub** — count `active`/`pending` rows for the session **excluding those whose `payment_id` is this payment**, and compare `count + (this payment's items for this session)` against capacity. Leave `count_for_session` alone; the transfer-path callers want the unfiltered count. **A NULL *or zero* capacity is unlimited** — return early, do not compare. Zero is not hypothetical: there is **no CHECK constraint on `sessions.capacity`**, so `0` is storable, and nine live sites already read it as unlimited — `ValidateTargetCapacity.pm:22`, `SelectTargetSession.pm:20`, `Enrollment.pm:302`, `MultiChildSessionSelection.pm:102`, `:106`, `:213`, `:236`, `:303`, `:309`. A predicate written `return unless defined $capacity` refunds every capacity-0 session at capture while all nine pre-checks wave the enrollment through. This is the same `defined`-versus-truthy distinction Task 8 turns the other way, and the two must not be conflated: an undefined **price** is a refusal, an undefined **capacity** is permission.
+- [ ] **Step 5: Run the gate ahead of the enrollment writes, inside the same method.** `finalize_enrollment` writes this payment's rows as `active` in the loop at `:360` onward, so a re-check after that loop counts itself. Gate first, then write. The two call sites (`Webhooks.pm:138`, `WorkflowSteps/Payment.pm:279`) are unchanged by this task.
 - [ ] **Step 6: Run the payment suite.** Expected: PASS.
 - [ ] **Step 7: Commit.**
 
@@ -326,8 +351,9 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 ### Positive Scenarios
 - [ ] Locks are sorted (`grep -cF 'ORDER BY id' lib/Registry/DAO/Payment.pm || true` -- 0 now, at least 1 after)
-- [ ] `count_for_session`'s body is unchanged. **Count changed lines, not context** — `git diff origin/main -- lib/Registry/DAO/Enrollment.pm | grep -c 'count_for_session'` matches unchanged context lines and gives a false positive; demonstrated by touching a line three away from the call site at `:301`, which this task and Task 6 both edit. Use:
-      `git diff origin/main -- lib/Registry/DAO/Enrollment.pm | grep '^[+-][^+-]' | grep -cF count_for_session || true` -- **0**
+- [ ] `count_for_session`'s body is unchanged. Two grep forms both fail here and neither should be used. Counting all diff lines matches unchanged **context** and gives a false positive (demonstrated by touching a line three away from the call site at `:301`, which this task and Task 6 both edit). Counting only changed lines fixes that but is **blind in the other direction**: the sub is `Enrollment.pm:214-223` and its body (`215-222`) never contains the string `count_for_session`, so editing the body while leaving the signature alone scores 0 and passes. Diff the sub itself:
+      `diff <(git show origin/main:lib/Registry/DAO/Enrollment.pm | sed -n '/sub count_for_session/,/^    }/p') <(sed -n '/sub count_for_session/,/^    }/p' lib/Registry/DAO/Enrollment.pm) | wc -l`
+      -- **0 now, 0 after.**
 - [ ] The predicate excludes this payment's own rows (the test above)
 
 ### Negative Scenarios
@@ -341,20 +367,24 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 ### Task 5b: The capacity-gone branch — demote, then refund after COMMIT
 
 **Files:**
-- Modify: `lib/Registry/DAO/Payment.pm:350-385`, `lib/Registry/DAO/Enrollment.pm`
-- Modify: `lib/Registry/DAO/WorkflowSteps/Payment.pm:279`, `lib/Registry/Controller/Webhooks.pm:138`
+- Modify: `lib/Registry/DAO/Payment.pm:350-385` (`finalize_enrollment`), `lib/Registry/DAO/Enrollment.pm`
+- Modify: `lib/Registry/Controller/Webhooks.pm` (the post-COMMIT refund call site only — **not** `:138`, which does not change)
 
 **Interfaces:**
 - Consumes: Task 5a's predicate, Task 4's `refund_pending` guard and per-child share.
 - Produces: capacity is re-checked at capture on both settlement paths, and the loser is demoted and refunded.
 
+**The gate lives inside `finalize_enrollment`, and the two call sites do not change.** `Webhooks.pm:138` and `WorkflowSteps/Payment.pm:279` are identical one-line `$payment->finalize_enrollment($db)` calls, and `finalize_enrollment` already derives the cart from `$metadata->{enrollment_items}` at `:351-354` and reads `$item->{session_id}` at `:360`. It is the only place holding the session ids, and both paths route through it. An earlier draft put the lock inside and the gate at the callers, which runs the count **unlocked** — the exact race the lock exists to close.
+
 **The demotion must land *with* the branch,** because a branch that inserts is silently a no-op: the arbiter at `Enrollment.pm:94-96` is `DO NOTHING` on exactly the three columns `finalize_enrollment` already wrote.
 
-- [ ] **Step 1: Write the failing test** — the loser of a last-seat race is waitlisted and refunded, not enrolled.
+**The refund must be issued on a tenant-scoped handle, not under a search-path override.** `refund_async` does its own write — `$self->save($db)` at `:596`, **inside its own `->then`**, after the Stripe round-trip — so the caller cannot wrap it in a transaction. Proved against live Postgres: with the post-COMMIT handle back on `registry, public`, that save runs `UPDATE payments` and affects **0 rows**, silently, because `save` discards `->rows`. Stripe refunds the customer, the row stays `refund_pending` forever, and `metadata.refund_id` is never recorded. Pass a `$dao->connect_schema($slug)->db` instead: that DAO's Mojo::Pg sets `search_path` at handle open (`DAO.pm:39`), so the write lands in the tenant with no transaction and no `set_config`. This is why the callback path never had the bug — `$self->dao->db` is already tenant-scoped there.
+
+- [ ] **Step 1: Write the failing test** — the loser of a last-seat race is waitlisted and refunded, not enrolled. Assert the refund bookkeeping by its **qualified** name (`<tenant>.payments`); an assertion that reads whatever unqualified `payments` resolves to is one this bug passes.
 - [ ] **Step 2: Run it.** Expected: both enroll; the session oversells.
-- [ ] **Step 3: Write the capacity-gone branch** — `UPDATE` the enrollment to `waitlisted`, then `INSERT` only on zero rows; set `payments.status = 'refund_pending'`. (`enrollments_status_check` at `sql/test-schema.sql:839` permits `waitlisted`, and `payments.status` carries no CHECK constraint, so both writes are legal.)
-- [ ] **Step 4: Commit the transaction, then refund.** Call `refund_async` with `Idempotency-Key: refund:capacity:<payment_id>` and the per-child share from Task 4 — after COMMIT, never inside.
-- [ ] **Step 5: Wire both callers** — `WorkflowSteps/Payment.pm:279` (the `finalize_enrollment($db)` call inside `_settle_callback`; `:267` is the method's *signature*) and `Webhooks.pm:138`. The second short-circuits when this payment already holds `active` rows for the session.
+- [ ] **Step 3: Write the capacity-gone branch inside `finalize_enrollment`** — `UPDATE` the enrollment to `waitlisted`, then `INSERT` only on zero rows; set `payments.status = 'refund_pending'`. (`enrollments_status_check` at `sql/test-schema.sql:839` permits `waitlisted`, and `payments.status` carries no CHECK constraint, so both writes are legal.)
+- [ ] **Step 4: Commit the transaction, then refund on a tenant-scoped handle.** Call `refund_async($tenant_db, …)` with `Idempotency-Key: refund:capacity:<payment_id>` and the per-child share from Task 4 — after COMMIT, never inside, and never on the post-COMMIT `registry`-scoped handle.
+- [ ] **Step 5: Put a `->catch` on the post-COMMIT chain that logs and still renders success.** Without it a *failed* refund turns a fully-settled delivery into a 500 — measured on both paths. On the webhook that means Stripe retries a delivery whose claim is already committed, gets `200 (duplicate)`, never retries the refund, and counts a 500 against an endpoint it will eventually disable. On the callback path `_persist_step_result` sits downstream of the promise (`WorkflowRun::process:99-101`), so the run pointer never advances: the parent is charged, enrolled, demoted, and left on "Workflow error". Process death is the rare case; refund *failure* is the common one.
 - [ ] **Step 6: Run the payment, webhook and integration suites.** Expected: PASS.
 - [ ] **Step 7: Commit.**
 
@@ -362,11 +392,14 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 ### Positive Scenarios
 - [ ] The loser of a last-seat race is waitlisted and refunded (the test above)
-- [ ] Both callers run the gate
+- [ ] The refund's own status write lands in the tenant schema — assert `<tenant>.payments.status = 'refunded'` **by qualified name**, and assert `registry.payments` gained no row
+- [ ] Both paths reach the gate without either call site changing
 
 ### Negative Scenarios
 - [ ] **A plain `waitlisted` insert is discarded in silence.** Assert the row's status actually changed, not that a statement ran.
 - [ ] **The refund must be issued after COMMIT.** A refund inside the transaction is not undone by the ROLLBACK the leg's correctness rests on, and the redelivered webhook then refunds a partial twice. Assert ordering.
+- [ ] **A 0-row UPDATE is the failure mode, not an exception.** `save` discards `->rows`. Assert the row actually changed rather than that the call returned.
+- [ ] **A failed refund must not fail the delivery.** Assert a rejecting `refund_async` still renders 2xx on the webhook path and still advances the run on the callback path.
 - [ ] **A process death between COMMIT and refund strands a `refund_pending` row.** This is accepted and handled by Task 9's runbook, not by code. Assert the row is findable, not that it cannot happen.
 
 ---
@@ -379,7 +412,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 - Regenerate: `sql/test-schema.sql`
 
 **Interfaces:**
-- Consumes: Task 5 (the partial index encodes the status vocabulary the gate uses).
+- Consumes: Task 0 (which extended `@SLUGS` to six and already appended one change) and Tasks 5a/5b (the partial index encodes the status vocabulary the gate uses).
 - Produces: two graded migrations. Both go on `@CHANGES` — neither is data-only.
 
 **Resolve by column set, never by name.** Reproduced against ephemeral Postgres: `registry` holds `enrollments_session_student_type_unique`, the tenant copy is `enrollments_session_id_student_id_student_type_key`. Resolve through `pg_constraint` on `(conrelid, contype='u', conkey)` and `ALTER TABLE … DROP CONSTRAINT <resolved>`. Never `IF EXISTS` — it turns the abort into a silent skip in the schema that holds money.
@@ -401,13 +434,14 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 - [ ] **Step 5: Strip the two verify scripts.**
 - [ ] **Step 6: Re-cut `payment-finalization-idempotency.t:75-102` and fix `Enrollment.pm:77`.**
 - [ ] **Step 7: `make test-schema`.** Do **not** grade this by line count. Measured on an unchanged tree, regeneration rewrites **322 lines** (not the ~157 an earlier draft claimed) and is **non-deterministic** — two consecutive runs differ in every seed row, because each carries fresh UUIDs, fresh timestamps and a new `\restrict` token. DDL churn on an unchanged tree is exactly **0**, so that is the signal: `git diff -- sql/test-schema.sql | grep '^[+-][^+-]' | grep -cE '^[+-](CREATE|ALTER|DROP|COMMENT)'` -- **0 before this task, non-zero after**. Commit the whole regenerated file.
-- [ ] **Step 8: Run `t/database/`.** Baseline measured: `Files=3, Tests=24, PASS`. Expected after this task: **`Tests=26`**, and the harness must print `ok N - payment-intent-unique reverts cleanly` and one for the other. `Files` stays 3 either way — it is 3 today, so it grades nothing. A missing `ok` line means the `@CHANGES` append was skipped; read the count, not the verdict.
+      **Know what this gate cannot see.** It detects index, constraint and table churn, because those render at line start. A bare `ALTER TABLE … ADD COLUMN` is **invisible to it** — measured, its entire contribution to the dump is an indented column line inside `CREATE TABLE` plus a `COPY` header, neither of which starts with `CREATE|ALTER|DROP|COMMENT`. It fires correctly for *this* task (two `CREATE UNIQUE INDEX`es, and dropping the constraint removes an `ALTER TABLE ONLY registry.enrollments` line at `sql/test-schema.sql:2834-2835`), but it cannot confirm Task 0's column reached the dump. Do not reuse it as a general rule.
+- [ ] **Step 8: Run `t/database/`.** **`prove` counts one test point per `subtest`, not per assertion** — `revert-round-trip.t:96` wraps each change in one subtest, so a change adds **+1**, measured by appending a real fourth entry and reading `Tests=4`. Baseline entering this task is therefore **`Tests=25`** (24 originally, plus Task 0's one), and two changes take it to **`Tests=27`**. The harness must also print `ok N - payment-intent-unique reverts cleanly` and one for the other. `Files` stays 3 either way — it is 3 today, so it grades nothing. A missing `ok` line means the `@CHANGES` append was skipped; read the count, not the verdict.
 - [ ] **Step 9: Commit.**
 
 **Acceptance Criteria**
 
 ### Positive Scenarios
-- [ ] Both changes are on `@CHANGES` and the harness grades them — `t/database/` goes **`Tests=24` → `Tests=26`**
+- [ ] Both changes are on `@CHANGES` and the harness grades them — `t/database/` goes **`Tests=25` → `Tests=27`** (one prove-counted test per change; the two assertions live inside the subtest)
 - [ ] Neither migration names a constraint it did not create (`grep -cF 'DROP CONSTRAINT IF EXISTS' sql/deploy/enrollment-status-aware-unique.sql || true` -- 0. Without `|| true` this exits **2** before the file exists, not 0 — the file is created by this very task.)
 - [ ] `@CHANGES` is at 6 and `@SLUGS` is at 6. A line grep cannot count these — the lists span lines. Runnable form:
       `carton exec perl -0777 -ne 'while(/my \@(CHANGES|SLUGS)\s*=\s*qw\(([^)]*)\)/gs){my@w=split " ",$2; print "$1 = ",scalar(@w),"\n"}' t/database/revert-round-trip.t`
@@ -424,7 +458,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 ### Task 7a: Both Stripe clients keep their response, and get timeouts
 
 **Files:**
-- Modify: `lib/Registry/DAO/Subscription.pm:16-20` (the `ADJUST` block), `:96` (the `warn`-and-return), `:102`; `lib/Registry/Service/Stripe.pm:25-69`, `:67`
+- Modify: `lib/Registry/DAO/Subscription.pm:16-20` (the `ADJUST` block), `:98-99` (the `warn`-and-return), `:102`; `lib/Registry/Service/Stripe.pm:25-69`, `:67`
 - Modify (logging callers): `lib/Registry/DAO/Payment.pm`, `lib/Registry/Service/Stripe.pm`, `lib/Registry/DAO/Subscription.pm`
 
 **Interfaces:**
@@ -435,7 +469,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 **`request_id` needs a client change first.** Both clients discard the response: `Stripe.pm:67` returns `decode_json($res->body)`, `Subscription.pm:102` returns `$tx->result->json`. There is no way to log a request id from a caller today.
 
-**`Subscription.pm:96` warns and returns undef on a non-2xx.** Every caller then treats a failed API call as an empty result. Whatever this task does about logging, that path must become distinguishable from success — a caller cannot tell "Stripe said no" from "Stripe said nothing".
+**`Subscription.pm:98-99` warns and returns undef on a non-2xx.** Every caller then treats a failed API call as an empty result. Whatever this task does about logging, that path must become distinguishable from success — a caller cannot tell "Stripe said no" from "Stripe said nothing". (The spec cites this as `:96` at `:2616`; `:96` is the third fallback in the message chain at `:94-97`, and the `warn`/`return` pair is `:98-99`, inside the guard block `:89-100`. Add this to the Spec Citations Corrected table's shape when reading that section.)
 
 - [ ] **Step 1: Write the failing tests** — a timeout is configured; a non-2xx is distinguishable from an empty success; a request id reaches the log.
 - [ ] **Step 2: Run them.** Expected: no timeout, `undef` for both failure modes, silence.
@@ -467,9 +501,9 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 - Consumes: Task 7a's two-value return.
 - Produces: `create_subscription_with_config` receives a tenant id and records the subscription without dying on a trial-less plan.
 
-**Read this before touching `:131`.** `metadata[tenant_id]` is never set on any Subscription, because `:131-133` sits inside `if ($tenant_id)` and the sole production caller (`TenantPayment.pm:318-322`) passes three arguments to a four-parameter signature. That disables **five** webhook handlers (`_handle_subscription_updated` `:263`, `_handle_subscription_deleted` `:280`, `_handle_trial_ending` `:296`, `_handle_payment_failed` `:314`, `_handle_payment_succeeded` `:327`). It is **five, not eight** — `grep -c 'return unless $tenant_id'` returns 8 because three of those hits are UUID-format guards *inside* handlers already counted (`:270`, `:287`, `:303`). Count `method _handle`, not grep hits.
+**Read this before touching `:131`.** `metadata[tenant_id]` is never set on any Subscription, because `:131-133` sits inside `if ($tenant_id)` and the sole production caller (`TenantPayment.pm:318-322`) passes three arguments to a four-parameter signature. That disables **five** webhook handlers (`_handle_subscription_updated` `:263`, `_handle_subscription_deleted` `:280`, `_handle_trial_ending` `:296`, `_handle_payment_failed` `:314`, `_handle_payment_succeeded` `:327`). It is **five, not eight** — `grep -cF 'return unless $tenant_id' lib/Registry/DAO/Subscription.pm || true` returns 8 because three of those hits are UUID-format guards *inside* handlers already counted (`:270`, `:287`, `:303`). Count `method _handle`, not grep hits. (The `-F` is required here too: this pattern contains `$tenant_id`, so written bare it reads **0** under ugrep and 8 under GNU grep. The sentence explaining why a count misleads was itself miscounted for two rounds.)
 
-**Passing the tenant id through, alone, arms a live bug.** The *same* `if ($tenant_id)` guards the metadata at `:131` **and** the tenant write at `:144`. That block calls `DateTime->from_epoch(epoch => $subscription->{trial_end})` at `:145`. Solo passes `trial_days => 0` (`TenantPayment.pm:116`), Stripe returns `trial_end: null`, and `from_epoch` dies on undef — **after** the POST at `:140` has already created a live subscription, with no `stripe_subscription_id` recorded anywhere. The `// 30` at `:139` cannot rescue it; it defaults an *undefined* `trial_days`, and Solo's is a defined zero. Today the bug is unreachable only because the metadata is never set. Enabling one enables the other.
+**Passing the tenant id through, alone, arms a live bug.** The *same* `if ($tenant_id)` guards the metadata at `:131` **and** the tenant write at `:144`. That block calls `DateTime->from_epoch(epoch => $subscription->{trial_end})` at `:145`. Solo passes `trial_days => 0` (`TenantPayment.pm:116`), Stripe returns `trial_end: null`, and `from_epoch` dies on undef — **after** the POST at `:140` has already created a live subscription, with no `stripe_subscription_id` recorded anywhere. The `// 30` at **`TenantPayment.pm:139`** cannot rescue it; it defaults an *undefined* `trial_days`, and Solo's is a defined zero. (Note the file change mid-sentence: `:140`, `:144` and `:145` above are `Subscription.pm`; `:116` and `:139` are `TenantPayment.pm`.) Today the bug is unreachable only because the metadata is never set. Enabling one enables the other.
 
 So the order is: **fix `:145` first, then pass the id through.** Both in this task, `:145` in the earlier commit.
 
@@ -499,36 +533,44 @@ So the order is: **fix `:145` first, then pass the id through.** Both in this ta
 ### Task 7c: Idempotency tokens on created objects, and the two silent catches
 
 **Files:**
-- Modify: `lib/Registry/Service/Stripe.pm:91` (SetupIntent), `:104` (Customer), `:121` (PaymentMethod), `:147` (Subscription), `:173` (Refund), `:182` (Price), `:195` (Product); `lib/Registry/DAO/WorkflowSteps/Payment.pm:197`, `:338`
+- Modify: `lib/Registry/Service/Stripe.pm:91` (SetupIntent), `:104` (Customer), `:121` (PaymentMethod), `:147` (Subscription), `:173` (Refund), `:182` (Price), `:195` (Product)
+- Modify: `lib/Registry/DAO/Subscription.pm:59` (Customer), `:140` (Subscription), `:181` (SetupIntent), and `_stripe_request` at `:71`
+- Modify: `lib/Registry/DAO/WorkflowSteps/Payment.pm:197`, `:338`
 
 **Interfaces:**
 - Consumes: Task 4's `_idempotency_key` threading, Task 7a's return shape.
-- Produces: every Stripe object Registry creates carries the token in metadata under one key name.
+- Produces: every Stripe object Registry creates — **through either client** — carries the token in metadata under one key name, and every creating POST carries an `Idempotency-Key` header.
 
-**Seven creators are unstamped, not four.** Only `create_payment_intent_async:72` extracts `_idempotency_key` today. The rest are SetupIntent `:91`, Customer `:104`, PaymentMethod `:121`, Subscription `:147`, Refund `:173`, Price `:182`, Product `:195`. Either stamp all seven or narrow the Produces line — the earlier draft claimed "every Stripe object Registry creates" while listing four.
+**Ten creators across two clients, not seven across one.** `Service/Stripe.pm` has seven unstamped (`:91`, `:104`, `:121`, `:147`, `:173`, `:182`, `:195`); only `create_payment_intent_async:72` extracts `_idempotency_key` today. **`DAO/Subscription.pm` has three more** — `:59` a Customer, `:140` a Subscription, `:181` a SetupIntent — and `grep -c 'Idempotency-Key'` on that file returns **0**: `_stripe_request` (`:71`) has no key parameter at all.
 
-**Use the key name that shipped.** The spec calls it `registry_idempotency_token`; what #314 actually writes is `idempotency_token`. Pick one and make all seven agree. Renaming the shipped one is a data-shape change on live rows and needs saying out loud; adopting the shipped name is the smaller diff.
+The spec is explicit that this is not optional (`:2624-2632`): *"With no timeout and no key, a dropped connection on `:140` leaves Registry with no subscription id and Stripe with a live subscription… **Leg 0 covers all three clients or the guarantee it is named for is not a guarantee.**"* An earlier draft of this task recounted the creators inside one client and never asked whether the client set was complete — which left this task's own third Negative Scenario grading work no step performed.
+
+**Use the key name that shipped.** The spec calls it `registry_idempotency_token`; the live name is `idempotency_token` (`Payment.pm:129`, reaching Stripe via `_stripe_metadata_params:51-62`, which flattens every scalar metadata key to `metadata[...]`). Note this **predates #314** — that PR did not touch `DAO/Payment.pm` — so the key is already live on Stripe objects today and renaming it is a live-data change. Adopt the shipped name.
 
 **The two silent catches are not in the three named files** — they are `WorkflowSteps/Payment.pm:197` and `:338`, and both sit immediately before a replacement-intent mint, so what they swallow is a double-charge window, not just telemetry.
 
-- [ ] **Step 1: Write the failing tests** — each created object carries the token; a failed cancel is recorded rather than swallowed.
-- [ ] **Step 2: Run them.** Expected: no token on six of seven, silence on both catches.
-- [ ] **Step 3: Stamp the token on all seven creators,** deleting `_idempotency_key` from the payload before the POST exactly as `create_payment_intent_async:72-76` does — Stripe 400s on unknown form parameters.
-- [ ] **Step 4: Close the two catches** — log the failure and re-raise or record it; do not proceed silently to mint a replacement.
-- [ ] **Step 5: Run the affected suites.** Expected: PASS.
-- [ ] **Step 6: Commit.**
+- [ ] **Step 1: Write the failing tests** — each created object carries the token; a Subscription-client POST carries an `Idempotency-Key`; a failed cancel is recorded rather than swallowed.
+- [ ] **Step 2: Run them.** Expected: no token on nine of ten, no header at all from the second client, silence on both catches.
+- [ ] **Step 3: Stamp the token on all seven `Service/Stripe.pm` creators,** deleting `_idempotency_key` from the payload before the POST exactly as `create_payment_intent_async:72-76` does — Stripe 400s on unknown form parameters.
+- [ ] **Step 4: Give `_stripe_request` a key parameter** and thread it through `Subscription.pm`'s three creating POSTs (`:59`, `:140`, `:181`), stamping the same token in metadata.
+- [ ] **Step 5: Close the two catches** — log the failure and re-raise or record it; do not proceed silently to mint a replacement.
+- [ ] **Step 6: Run the affected suites.** Expected: PASS.
+- [ ] **Step 7: Commit.**
 
 **Acceptance Criteria**
 
 ### Positive Scenarios
-- [ ] The token reaches every creator (`grep -cF _idempotency_key lib/Registry/Service/Stripe.pm || true` -- **1 now** (`:74`), at least 8 after)
-- [ ] One key name across the codebase (`grep -rcF idempotency_token lib/ | grep -v ':0' ` -- every hit uses the same spelling)
+- [ ] The token reaches every creator in the first client (`grep -cF _idempotency_key lib/Registry/Service/Stripe.pm || true` -- **1 now** (`:74`), at least 8 after)
+- [ ] The second client sends the header at all (`grep -cF 'Idempotency-Key' lib/Registry/DAO/Subscription.pm || true` -- **0 now**, at least 1 after). This is the whole of finding B-F1; without it the task's third Negative Scenario grades nothing.
+- [ ] One key name across the codebase. **`grep -F idempotency_token` cannot grade this** — it matches `registry_idempotency_token` as a substring, so the wrong spelling passes the gate that exists to catch it. Use:
+      `grep -rhoE '[a-z_]*idempotency_token' lib/ | sort -u`
+      -- reads exactly `idempotency_token` and `rotate_idempotency_token` now; must read the same two after, and **never** `registry_idempotency_token`.
 - [ ] Neither catch is empty (`grep -cF 'catch(sub ($cancel_err) { })' lib/Registry/DAO/WorkflowSteps/Payment.pm || true` -- **2 now**, 0 after. `-F` is load-bearing: `$c` is read as an anchor by ugrep and the criterion silently reads 0 before any work.)
 
 ### Negative Scenarios
-- [ ] **`_idempotency_key` must not reach Stripe as a form parameter.** Assert it is deleted from every one of the seven payloads.
+- [ ] **`_idempotency_key` must not reach Stripe as a form parameter.** Assert it is deleted from every one of the ten payloads.
 - [ ] **A swallowed cancel is a double-charge window.** Assert a failed cancel prevents the replacement mint, or records it loudly.
-- [ ] **A dropped connection must not leave an orphan subscription.** With no key and no timeout, a retry creates a second live Subscription; assert the id is recorded or the subscription is cancelled.
+- [ ] **A dropped connection must not leave an orphan subscription.** With no key and no timeout, a retry creates a second live Subscription. Assert the second client sends a key — 7b's cancel-on-failure does **not** cover this case, because a dropped connection leaves no id to cancel with.
 
 ---
 
@@ -566,7 +608,7 @@ So the order is: **fix `:145` first, then pass the id through.** Both in this ta
 - Modify: `docs/operations/sacp-stripe-connect-onboarding.md` (after `:204`)
 
 **Interfaces:**
-- Consumes: Task 4.
+- Consumes: Task 5b — it is 5b that writes the `refund_pending` state this runbook clears. (Task 4 supplies the guard that lets a `refund_pending` row be refunded at all, but the stranded row itself comes from 5b.)
 - Produces: a runbook section. There is no automated reader until Leg 3, so this leg writes the procedure rather than implying one exists.
 
 - [ ] **Step 1: Add `### Clearing a stranded refund_pending payment`** after the refund-policy subsection, stating: the state arises only from a post-COMMIT failure; Stripe's redelivery does **not** heal it, because the dedup claim committed in the same transaction dedups the retry away by design; and there is no automated reader until Leg 3.
@@ -589,7 +631,7 @@ So the order is: **fix `:145` first, then pass the id through.** Both in this ta
 
 ## Task Dependency Order
 
-Thirteen tasks. Execute in the order listed. Every arrow is a real dependency.
+Fourteen tasks. Execute in the order listed. Every arrow is a real dependency.
 
 ```
 0 (processed_at migration) ─── Task 1 stamps a column that must exist first
@@ -625,10 +667,11 @@ Thirteen tasks. Execute in the order listed. Every arrow is a real dependency.
 - **7a/7b/7c and 8 are disjoint** from the transaction work and can be worked in parallel by a second worker; 7c and 9 need Task 4 first.
 
 ## Coverage Gaps This Leg Opens
-
 1. **#247's empty-items half stays open.** `Payment.pm:355`'s `return unless @$items` still marks a payment `completed` with zero enrollments and returns 200. Atomicity does not make a no-op loud. Filed rather than fixed here.
 2. **The oversell window narrows but does not close.** `Enrollment::enroll_children` (`:103-121`, the live free path, called at `WorkflowSteps/Payment.pm:384`) and `Waitlist::accept_offer` (`:187-226`, its own transaction, inserts `pending` with no capacity read) take no session lock. An admin lowering `sessions.capacity` is likewise unserialized. The spec names both at `:4521-4522` and then does not put them in the leg.
 3. **`refund_pending` has no automated reader until Leg 3 — and the two jobs the spec names do not exist.** `grep -rln 'ProcessRefunds\|ReconcilePayments'` matches only the spec and this plan; `lib/Registry/Job/` holds `WorkflowExecutor`, `DomainVerification`, `AttendanceCheck`, `ProcessWaitlist`, `WaitlistExpiration`. The string `refund_pending` appears nowhere under `lib/ t/ sql/`. Both jobs are Leg 3 deliverables (spec `:2968`). Task 9 writes the manual clearance procedure instead of implying automation exists.
 4. **`sql/revert/enrollment-payment-dedup.sql:17` is already a silent no-op** for tenants cloned after that change — it drops `enrollments_payment_dedup` by name, and the tenant copy is `enrollments_session_id_student_id_payment_id_idx`. Pre-existing, found while mapping this leg, not introduced here. It is invisible because that change is not on `@CHANGES`.
 5. **`Subscription.pm` has no live-key guard.** `Payment.pm:147-151` refuses an `sk_live_` key unless `MOJO_MODE=production`; `Subscription.pm:18` takes `$ENV{STRIPE_SECRET_KEY}` with no such check. An earlier draft of Task 7a added the guard, which is a real safety gap but is nowhere in the spec's Leg 0 row — adding it would have been undeclared scope. Filed rather than smuggled in.
 6. **The reuse guard's `workflow_run_id` ownership check has no migration behind it.** Task 3 reads `$existing->metadata->{workflow_run_id}`, a key `create_payment` writes into a JSON blob. Nothing constrains it, so a row written before this leg has no such key and will simply fail the ownership check — the safe direction, but it means the guard is advisory on historical rows.
+7. **`stripe()` never calls `render_later`.** The post-COMMIT render reaches the client today only by accident: `Mojolicious::Routes::_render` finds no `webhooks/stripe` template, and `mojo.routed` (`Routes.pm:161`) suppresses the croak that would otherwise fire. Verified by rendering `202` from a promise callback and observing it at the test. Task 1 should add an explicit `$self->render_later` before returning the promise — the current behaviour is one added default template away from silently double-rendering. Recorded here because it is pre-existing, but it becomes load-bearing the moment Task 1 returns a promise from that action.
+8. **`t/database/revert-round-trip.t:67-68`'s comment cites `sql/test-schema.sql:3269-3273` for `tenants_slug_key`;** those lines are now `workflow_runs_pkey`. Stale comment in a file Tasks 0 and 6 both edit. Not worth a step; noted so a worker does not trust it.
