@@ -560,11 +560,33 @@ field $_stripe_client = undef;
     # Two-argument then: the rejection handler must see only a failed retrieval.
     # A single trailing ->catch would also swallow anything _apply_intent threw
     # and mis-record it as a Stripe transport failure.
-    method process_payment_async ($db, $payment_intent_id) {
+    #
+    # $settle runs the caller's own settlement inside the same transaction as
+    # _apply_intent's completed-write. Both are money writes on the same row and
+    # splitting them across transactions leaves the window this exists to close:
+    # a failure after the status write but before the enrollment strands a row
+    # marked paid with nothing delivered. The transaction cannot open any
+    # earlier -- retrieve_payment_intent_async is a network round trip, and
+    # holding a payment row locked across it is exactly what the leg forbids.
+    #
+    # Called without $settle the method behaves as before, so callers that only
+    # want the intent applied are unaffected.
+    method process_payment_async ($db, $payment_intent_id, $settle = undef) {
         return $self->stripe_client->retrieve_payment_intent_async($payment_intent_id)
             ->then(
-                sub ($intent) { $self->_apply_intent($db, $intent, $payment_intent_id) },
-                sub ($error)  { $self->_record_retrieval_failure($db, $error) },
+                sub ($intent) {
+                    my $tx     = $db->begin;
+                    my $result = $self->_apply_intent($db, $intent, $payment_intent_id);
+                    my $out    = $settle ? $settle->($result) : $result;
+                    $tx->commit;
+                    return $out;
+                },
+                sub ($error)  {
+                    # Nothing was applied, so there is no pair of writes to keep
+                    # together; the failure record is a single statement.
+                    my $result = $self->_record_retrieval_failure($db, $error);
+                    return $settle ? $settle->($result) : $result;
+                },
             );
     }
     

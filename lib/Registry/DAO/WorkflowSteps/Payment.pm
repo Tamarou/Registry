@@ -259,9 +259,12 @@ method handle_payment_callback ($db, $run, $form_data) {
     my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
     die "Payment $payment_id not found" unless $payment;
 
-    # Process the payment
-    return $payment->process_payment_async($db, $form_data->{payment_intent_id})
-        ->then(sub ($result) { $self->_settle_callback($db, $run, $payment, $result) });
+    # Settle inside the transaction process_payment_async opens around its own
+    # completed-write, rather than chaining a second ->then after it: the status
+    # write and the enrollment are one piece of work, and a failure between them
+    # used to leave a row marked paid with no enrollment behind it.
+    return $payment->process_payment_async($db, $form_data->{payment_intent_id},
+        sub ($result) { $self->_settle_callback($db, $run, $payment, $result) });
 }
 
 method _settle_callback ($db, $run, $payment, $result) {

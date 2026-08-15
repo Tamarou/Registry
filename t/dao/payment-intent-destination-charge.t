@@ -279,13 +279,19 @@ subtest 'retry intent carries same connect params as original' => sub {
         # requires_payment_method / canceled earn a fresh intent, so
         # omitting it would skip the retry branch this subtest exists to
         # cover.
-        local *Registry::DAO::Payment::process_payment_async = sub {
-            Mojo::Promise->resolve({
-                success       => 0,
-                error         => 'Card declined',
-                intent_status => 'requires_payment_method',
-            });
-        };
+        # The third argument is the caller's settlement, which real
+        # process_payment_async runs inside its own transaction; a stub that
+        # drops it never reaches the retry branch this subtest covers.
+        local *Registry::DAO::Payment::process_payment_async =
+            sub ($self, $db, $intent_id, $settle = undef) {
+                my $result = {
+                    success       => 0,
+                    error         => 'Card declined',
+                    intent_status => 'requires_payment_method',
+                };
+                return Mojo::Promise->resolve(
+                    $settle ? $settle->($result) : $result);
+            };
         local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self, $params) = @_;
             $retry_captured = $params;
