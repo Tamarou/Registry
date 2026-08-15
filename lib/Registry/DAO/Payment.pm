@@ -265,7 +265,30 @@ field $_stripe_client = undef;
     # row's status accordingly. Shared by the sync and async wrappers: the
     # ownership and captured-amount guards are the security-critical part of the
     # money path and must not be able to drift apart between the two callers.
+    # Take the row lock and re-read the status under it, before anything is
+    # decided from that status. Both settlement paths reach here, and both
+    # read-decide-write: without the lock two concurrent settlements can each
+    # read 'pending', each conclude they should act, and each write.
+    #
+    # The lock is only a lock inside a transaction -- outside one Postgres
+    # releases it as the statement ends. process_payment_async opens that
+    # transaction immediately before calling this, and the webhook opens its own
+    # around the whole settlement.
+    #
+    # Re-reading matters as much as locking: $status was loaded before the
+    # Stripe round trip, so deciding on the in-memory copy would decide on a
+    # value that another settlement may have moved while we waited on the
+    # network.
+    method _lock_and_refresh ($db) {
+        my $locked = __CLASS__->find($db, { id => $id }, { for => 'update' })
+            or return 0;
+        $status = $locked->status;
+        return 1;
+    }
+
     method _apply_intent ($db, $intent, $payment_intent_id) {
+        $self->_lock_and_refresh($db);
+
         # The posted intent id is client-controlled: only honor an intent that
         # belongs to THIS payment row -- either the id stored at creation time
         # or an intent stamped with our payment_id in its Stripe metadata.

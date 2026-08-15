@@ -104,6 +104,29 @@ method _render_data ($db, $run, %extra) {
 # renders as an operator, turning `WHERE id = ?` into `WHERE id != ?` and
 # pointing the reuse UPDATE/DELETE at every other payment in the tenant. There
 # is no sanitised reading of a client-chosen operator, so refuse it outright.
+# A run reuses its own still-open payment row, and nothing else.
+#
+# The old test was `status ne 'completed'` -- a deny-list of one, which admitted
+# every other status there is. A refunded or partially_refunded row driven back
+# through this step was reused and re-completed, turning a refund into a charge.
+#
+# Status alone is not enough either. workflow_run_id has been written onto every
+# payment row since creation (see create_payment below) and never read back, so
+# two runs' rows are indistinguishable while both are pending. A row with no
+# stamp predates the linkage and is refused rather than assumed to be ours --
+# the safe direction, and the reason this is advisory on historical rows.
+sub _reusable_payment_row ($class, $payment, $run_id) {
+    return 0 unless $payment;
+
+    my $status = $payment->status // '';
+    return 0 unless $status eq 'pending' || $status eq 'processing';
+
+    my $owner = ( $payment->metadata // {} )->{workflow_run_id} // '';
+    return 0 unless length $owner && length $run_id && $owner eq $run_id;
+
+    return 1;
+}
+
 method _run_payment_id ($run) {
     my $payment_id = $run->data->{payment_id};
     die "Invalid payment_id in workflow data" if ref $payment_id;
@@ -163,7 +186,7 @@ method create_payment ($db, $run, $form_data) {
     my $supersede = Mojo::Promise->resolve;
     if ($existing_payment_id) {
         my $existing = Registry::DAO::Payment->find($db, { id => $existing_payment_id });
-        if ($existing && $existing->status ne 'completed') {
+        if (__PACKAGE__->_reusable_payment_row($existing, $run->id)) {
             # Refresh amount and enrollment snapshot in DB; preserve idempotency_token
             my $raw_db = ($db isa Registry::DAO) ? $db->db : $db;
             my $updated_meta = {

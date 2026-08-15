@@ -174,7 +174,14 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $slug = $intent->{metadata}{tenant_slug};
 
         require Registry::DAO::Payment;
-        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
+        # FOR UPDATE: this path carries its own copy of the amount and completed
+        # checks rather than calling _apply_intent, so it needs its own lock --
+        # locking one site and not the other leaves the two racing each other.
+        # Safe as a find-by-id: { for => 'update' } occupies the $order slot and
+        # silently drops the default ORDER BY, which is immaterial for a unique
+        # key and would not be on a filter that matches more than one row.
+        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id },
+            { for => 'update' });
         die "payment_intent.succeeded: payment $payment_id not found"
           . ($slug ? " in tenant schema '$slug'" : ' in registry schema') . "\n"
             unless $payment;
