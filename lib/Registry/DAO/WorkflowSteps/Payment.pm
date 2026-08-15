@@ -98,6 +98,18 @@ method _render_data ($db, $run, %extra) {
     return { step_data => { %{ $self->prepare_payment_data($db, $run) }, %extra } };
 }
 
+# The run's payment_id is bound straight into a WHERE clause, so it must be a
+# plain scalar. Run data is merged from request params, and a bracketed name
+# (payment_id[!=]=<uuid>) expands to { '!=' => <uuid> } -- which SQL::Abstract
+# renders as an operator, turning `WHERE id = ?` into `WHERE id != ?` and
+# pointing the reuse UPDATE/DELETE at every other payment in the tenant. There
+# is no sanitised reading of a client-chosen operator, so refuse it outright.
+method _run_payment_id ($run) {
+    my $payment_id = $run->data->{payment_id};
+    die "Invalid payment_id in workflow data" if ref $payment_id;
+    return $payment_id;
+}
+
 method create_payment ($db, $run, $form_data) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
     
@@ -143,7 +155,7 @@ method create_payment ($db, $run, $form_data) {
     # a second payment row or a second Stripe charge -- the stable
     # idempotency_token on the existing row ensures Stripe deduplicates too.
     # ponytail: reuse check; completed payments start a new row (second purchase)
-    my $existing_payment_id = $run->data->{payment_id};
+    my $existing_payment_id = $self->_run_payment_id($run);
     my $payment;
     # Cancelling the superseded intent has to finish before the replacement is
     # minted, so it is threaded through the chain rather than fired and
@@ -242,7 +254,7 @@ method create_payment ($db, $run, $form_data) {
 }
 
 method handle_payment_callback ($db, $run, $form_data) {
-    my $payment_id = $run->data->{payment_id} or die "No payment_id in workflow data";
+    my $payment_id = $self->_run_payment_id($run) or die "No payment_id in workflow data";
 
     my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
     die "Payment $payment_id not found" unless $payment;
