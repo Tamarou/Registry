@@ -106,7 +106,8 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 - [ ] **Step 4: Write the revert and verify.**
 - [ ] **Step 5: Append the change to `@CHANGES` in the same commit** that appends to `sql/sqitch.plan`. Skipping this is silent — the suite still prints `All tests successful` and only the count moves.
 - [ ] **Step 6: Run `t/database/`.** Baseline is `Files=3, Tests=24, PASS`; expected **`Tests=25`**. One change adds **+1**, not +2: `prove` counts one test point per `subtest`, and `revert-round-trip.t:96` wraps each change in exactly one, with its two assertions inside. Measured by appending a real fourth entry and reading `Tests=4`. A count of 24 means the `@CHANGES` append was skipped.
-- [ ] **Step 7: Commit.**
+- [ ] **Step 7: Regenerate the test schema — `make test-schema`.** Without this the migration exists and `sql/test-schema.sql` does not know it, so every suite built from the dump still has the old table. Task 1 writes `processed_at` and dies with `column "processed_at" of relation "webhook_events" does not exist`, taking the whole webhook suite down with it. Found by executing Task 1: the plan's only `make test-schema` was in Task 6, six tasks too late for the column Task 1 depends on. Confirm the column reached the dump — `awk '/^CREATE TABLE registry.webhook_events/,/^\);/' sql/test-schema.sql` must show `processed_at`. **Do not** grade this with Task 6's DDL-churn expression: measured here, it reads **0** for this change, because a bare `ADD COLUMN` renders as an indented column line and nothing at line start.
+- [ ] **Step 8: Commit.**
 
 **Acceptance Criteria**
 
@@ -155,7 +156,8 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 ### Positive Scenarios
 - [ ] One `begin` on this path (`grep -c -- '->begin' lib/Registry/Controller/Webhooks.pm || true` -- **0 now**, 1 after). The pattern is live, not dead: it returns 1 against `lib/Registry/DAO/Message.pm`.
-- [ ] `connect_schema` is gone from the **transaction** path but retained for post-COMMIT work (`grep -cF connect_schema lib/Registry/Controller/Webhooks.pm || true` -- **1 now, still 1 after**). Written `-- 0`, as an earlier draft had it, this criterion **fails a correct implementation**: Step 9 needs exactly this call to get a tenant-scoped handle. Grade it by where the surviving call sits — after the COMMIT, not before the work.
+- [ ] `connect_schema` is gone from this path (`grep -cF connect_schema lib/Registry/Controller/Webhooks.pm || true` -- **1 now, 0 after**), and returns in Task 5b as **0 → 1**.
+      **This gate spans two tasks and both earlier versions of it were wrong.** Round 1 wrote `1 → 0`, correct here but failing once 5b lands. Round 2 "corrected" it to `1 → 1` on the reasoning that Step 9 needs the call — but Step 9 describes *how post-COMMIT work must be done*, and **Task 1 has no post-COMMIT work**: the refund that needs a tenant-scoped handle is Task 5b's. Executing Task 1 reads 0. Grade Task 1 at 0 and Task 5b at 1; when 5b lands, grade the surviving call by position — after the COMMIT, never before the work.
 - [ ] The slug is bound, never interpolated (`grep -cF "set_config('search_path', ?" lib/Registry/Controller/Webhooks.pm || true` -- **0 now, exactly 1 after**). One, not two: Step 9 no longer uses `set_config` at all.
 - [ ] The catch-block release is gone (`grep -cF 'webhook_events' lib/Registry/Controller/Webhooks.pm || true` -- **2 now**; after, the remaining hits must not include a `DELETE` in a catch)
 - [ ] Webhook suite passes and grows (`Tests=4` → `Tests=5`)
@@ -393,6 +395,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 ### Positive Scenarios
 - [ ] The loser of a last-seat race is waitlisted and refunded (the test above)
 - [ ] The refund's own status write lands in the tenant schema — assert `<tenant>.payments.status = 'refunded'` **by qualified name**, and assert `registry.payments` gained no row
+- [ ] The tenant-scoped handle for the post-COMMIT refund exists (`grep -cF connect_schema lib/Registry/Controller/Webhooks.pm || true` -- **0 entering this task, 1 after**; Task 1 removed the transaction-path call and this task reintroduces it after the COMMIT)
 - [ ] Both paths reach the gate without either call site changing
 
 ### Negative Scenarios
