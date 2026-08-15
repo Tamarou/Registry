@@ -194,10 +194,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
 
         unless (($payment->status // '') eq 'completed') {
-            $payment->update($db, {
-                status                   => 'completed',
-                stripe_payment_intent_id => $intent->{id},
-            });
+            $payment->mark_completed($db, $intent->{id});
         }
 
         $payment->finalize_enrollment($db);

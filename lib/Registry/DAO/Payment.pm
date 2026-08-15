@@ -203,11 +203,14 @@ field $_stripe_client = undef;
 
     # Stamp the created intent onto the payment row and hand back the pair the
     # checkout form needs.
+    # save rather than update: the inherited update() carps and continues on a
+    # database error, so a Stripe intent that exists but was never recorded
+    # would pass silently and the parent would be charged against a row that
+    # does not know its own intent id. Note this stays 'pending' -- recording an
+    # intent is not completing a payment.
     method _record_intent ($db, $intent) {
         $stripe_payment_intent_id = $intent->{id};
-        $self->update($db, {
-            stripe_payment_intent_id => $stripe_payment_intent_id
-        });
+        $self->save($db);
 
         return {
             client_secret => $intent->{client_secret},
@@ -215,13 +218,12 @@ field $_stripe_client = undef;
         };
     }
 
+    # save for the same reason as _record_intent: a failure that the database
+    # never learned about must not be swallowed on the way to the die below.
     method _record_intent_failure ($db, $error) {
         $error_message = $error;
         $status = 'failed';
-        $self->update($db, {
-            error_message => $error_message,
-            status => $status
-        });
+        $self->save($db);
         die "Failed to create payment intent: $error";
     }
 
@@ -315,10 +317,8 @@ field $_stripe_client = undef;
                 };
             }
 
-            $status = 'completed';
-            $completed_at = \'NOW()';
             $stripe_payment_method_id = $intent->{payment_method};
-            $self->save($db);
+            $self->mark_completed($db, $stripe_payment_intent_id // $intent->{id});
 
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
@@ -432,6 +432,23 @@ field $_stripe_client = undef;
             completed_at             => $completed_at,
             error_message            => $error_message,
         }, { id => $id });
+    }
+
+    # The one way a payment reaches 'completed'.  Both settlement paths call it,
+    # so a webhook-settled payment and a callback-settled one end up the same
+    # shape -- before this, only the callback path stamped completed_at and the
+    # webhook left it NULL on an otherwise identical row.
+    #
+    # Not a swap for the intent-recording writes: _record_intent stamps an id on
+    # a still-pending row and _record_intent_failure marks a failure.  Neither
+    # completes anything, and routing them through here would complete a payment
+    # at intent-creation time and again on failure.
+    method mark_completed ($db, $payment_intent_id) {
+        $status                   = 'completed';
+        $stripe_payment_intent_id = $payment_intent_id;
+        $completed_at             = \'NOW()';
+        $self->save($db);
+        return $self;
     }
 
     # Replace the idempotency token with a fresh UUID and persist immediately.

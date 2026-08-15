@@ -229,4 +229,49 @@ subtest 'a die mid-finalization leaves no partial enrollment and no claim (Leg 0
     is p3_enrollments(), 2, 'the retry finalizes the whole cart';
 };
 
+subtest 'webhook settlement stamps completed_at and preserves metadata (Leg 0 Task 2)' => sub {
+    # The webhook wrote two columns and never completed_at, so a webhook-settled
+    # payment was indistinguishable from one still pending on that column while
+    # a callback-settled one carried a timestamp. Same event, two shapes.
+    my $child3 = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'PI Stamp', birth_date => '2016-04-04', grade => '5',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+
+    my $payment4 = Registry::DAO::Payment->create($db, {
+        user_id  => $parent->id,
+        amount_cents => 10000,
+        status   => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $child3->id } ],
+            tenant_slug      => undef,
+        },
+    });
+
+    my $before = $db->select('payments', ['completed_at'], { id => $payment4->id })->hash;
+    is $before->{completed_at}, undef, 'completed_at starts NULL';
+
+    post_webhook({
+        id   => 'evt_pi_stamp',
+        type => 'payment_intent.succeeded',
+        data => { object => {
+            id       => 'pi_' . $payment4->id,
+            amount   => 10000,
+            metadata => { payment_id => $payment4->id },
+        } },
+    })->status_is(200);
+
+    my $after = $db->select('payments', ['completed_at'], { id => $payment4->id })->hash;
+    ok defined $after->{completed_at},
+        'a webhook-settled payment carries completed_at, like a callback-settled one';
+
+    # save() rewrites the whole metadata column rather than patching it, so the
+    # enrollment snapshot has to survive the wider write.
+    my $refreshed = Registry::DAO::Payment->find($db, { id => $payment4->id });
+    is ref $refreshed->metadata->{enrollment_items}, 'ARRAY',
+        'the enrollment snapshot survives the metadata rewrite';
+    is scalar @{ $refreshed->metadata->{enrollment_items} }, 1,
+        'and still holds its one item';
+};
+
 done_testing;
