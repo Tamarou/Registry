@@ -370,6 +370,37 @@ field $_stripe_client = undef;
     # payment_intent.succeeded webhook; the caller passes a $db connected to the
     # tenant schema the enrollments live in. Enrollment items and the tenant are
     # snapshotted into metadata at create_payment time.
+    # Lock every session in the cart, in id order, before any capacity decision
+    # is made about them.
+    #
+    # Sorted is the whole point. A multi-session cart takes one lock per item,
+    # and iterating the cart in its own order means two carts holding the same
+    # pair of sessions can each take one and wait for the other. Postgres
+    # applies ORDER BY before locking -- LockRows sits above Sort in the plan --
+    # so a single sorted statement takes them in a total order every cart
+    # agrees on. Verified by execution: the unsorted form deadlocks two
+    # concurrent carts, the sorted form does not.
+    #
+    # DISTINCT because a cart with two children in one session would otherwise
+    # name it twice.
+    method _lock_cart_sessions ($db, $items) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my %seen;
+        my @session_ids =
+            sort grep { !$seen{$_}++ }
+            grep { defined && length }
+            map  { $_->{session_id} } @$items;
+
+        return unless @session_ids;
+
+        $db->query(
+            'SELECT id FROM sessions WHERE id = ANY(?) ORDER BY id FOR UPDATE',
+            \@session_ids
+        );
+        return;
+    }
+
     method finalize_enrollment ($db) {
         my $items =
             ( ref $metadata eq 'HASH' && ref $metadata->{enrollment_items} eq 'ARRAY' )
@@ -379,6 +410,8 @@ field $_stripe_client = undef;
 
         require Registry::DAO::Enrollment;
         require Registry::DAO::Notification;
+
+        $self->_lock_cart_sessions($db, $items);
 
         for my $item (@$items) {
             my $session_id = $item->{session_id} or next;

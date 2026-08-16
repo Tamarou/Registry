@@ -211,6 +211,48 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
     
     # Count enrollments for a session by status
+    # Does this payment's share of a session still fit, re-checked at capture?
+    #
+    # Separate from count_for_session on purpose. This one excludes the
+    # payment's own rows, because finalize_enrollment writes them as 'active'
+    # and a re-check that counted them would see the payment competing with
+    # itself and refund a seat it had just been granted. count_for_session's
+    # other callers are on transfer paths with no payment in hand and want the
+    # unfiltered count.
+    #
+    # The comparison is count + this payment's items for the session, not count
+    # alone: two siblings arriving together into one remaining seat is 9 + 2
+    # against 10, and comparing the count gives 9 >= 10 and admits both.
+    #
+    # NULL or zero capacity is unlimited. Zero is not hypothetical -- no CHECK
+    # constraint forbids it, and nine live sites already read capacity with a
+    # truthiness test. A `defined` check here would refund every capacity-0
+    # session at capture while all nine waved the enrollment through.
+    #
+    # Correct only with the session row locked and inside a transaction; the
+    # caller takes that lock before calling.
+    sub payment_fits_session ($class, $db, $payment, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $capacity = $db->query(
+            'SELECT capacity FROM sessions WHERE id = ?', $session_id
+        )->hash->{capacity};
+        return 1 unless $capacity;    # NULL or 0 -- unlimited
+
+        my $taken = $db->query(
+            q{SELECT COUNT(*) FROM enrollments
+               WHERE session_id = ?
+                 AND status IN ('active', 'pending')
+                 AND (payment_id IS NULL OR payment_id != ?)},
+            $session_id, $payment->id
+        )->array->[0] // 0;
+
+        my $items = $payment->metadata->{enrollment_items} // [];
+        my $wants = grep { ( $_->{session_id} // '' ) eq $session_id } @$items;
+
+        return $taken + $wants <= $capacity ? 1 : 0;
+    }
+
     sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {
         $db = $db->db if $db isa Registry::DAO;
 
