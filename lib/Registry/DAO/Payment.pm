@@ -485,10 +485,59 @@ field $_stripe_client = undef;
         $self->save($db);
     }
 
+    # One child's share of a family cart.
+    #
+    # A payment is a cart, and refunding "the payment" because one child lost a
+    # seat returns every sibling's money too. The line items carry
+    # (child_id, session_id) in metadata -- calculate_enrollment_total writes
+    # both on every row -- so a child's share is the sum of the items matching
+    # that pair.
+    #
+    # Deliberately not payment_items.enrollment_id: line items are written
+    # before the charge and enrollments only exist after settlement, so that
+    # column cannot be populated at the natural write point.
+    #
+    # Refuses rather than defaulting. A silent fallback to the cart total is
+    # precisely the mistake this exists to prevent, and it is the expensive
+    # direction to be wrong in.
+    method refund_share_for ($db, $child_id, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # COUNT as well as SUM: no matching line item and a matching one worth
+        # nothing are different answers, and only the first is an error.
+        my $row = $db->query(
+            q{SELECT COUNT(*) AS n, COALESCE(SUM(amount_cents), 0) AS cents
+                FROM payment_items
+               WHERE payment_id = ?
+                 AND metadata->>'child_id'   = ?
+                 AND metadata->>'session_id' = ?},
+            $id, $child_id, $session_id
+        )->hash;
+
+        die "refund_share_for: no line item for child $child_id in session "
+          . "$session_id on payment $id\n"
+            unless $row->{n};
+
+        return $row->{cents};
+    }
+
+    # Money has moved for exactly two statuses: a completed payment, and one the
+    # capacity gate has marked refund_pending on its way to refunding it. The
+    # gate writes that status inside its transaction and calls a refund after
+    # the COMMIT, so a guard that only admits 'completed' means the refund it
+    # just decided on never reaches Stripe.
+    #
+    # An allow-list rather than a widened deny-list: 'pending' and 'failed' rows
+    # were never charged, and refunding one would send money that never arrived.
+    sub _refundable_status ($class, $status) {
+        return ( $status // '' ) =~ /\A (?: completed | refund_pending ) \z/x ? 1 : 0;
+    }
+
     method refund ($db, $args = {}) {
-        die "Cannot refund non-completed payment" unless $status eq 'completed';
+        die "Cannot refund a payment with status '$status'"
+            unless __CLASS__->_refundable_status($status);
         die "No payment intent to refund" unless $stripe_payment_intent_id;
-        
+
         my $refund_cents = $args->{amount_cents} // $amount_cents;
         my $reason = $args->{reason} // 'requested_by_customer';
 
@@ -499,6 +548,8 @@ field $_stripe_client = undef;
                 amount         => $refund_cents,
                 reason         => $reason,
                 $self->_refund_connect_params($db),
+                $args->{idempotency_key}
+                    ? ( _idempotency_key => $args->{idempotency_key} ) : (),
             });
         }
         catch ($e) {
@@ -631,9 +682,10 @@ field $_stripe_client = undef;
     }
     
     method refund_async ($db, $args = {}) {
-        die "Payment must be completed before refunding" unless $status eq 'completed';
+        die "Cannot refund a payment with status '$status'"
+            unless __CLASS__->_refundable_status($status);
         die "No Stripe payment intent ID" unless $stripe_payment_intent_id;
-        
+
         my $refund_cents = $args->{amount_cents} // $amount_cents;
         my $reason = $args->{reason} // 'requested_by_customer';
 
@@ -642,6 +694,8 @@ field $_stripe_client = undef;
             amount         => $refund_cents,
             reason         => $reason,
             $self->_refund_connect_params($db),
+            $args->{idempotency_key}
+                ? ( _idempotency_key => $args->{idempotency_key} ) : (),
         })->then(sub ($refund) {
             # Update payment status
             if ($refund_cents >= $amount_cents) {
