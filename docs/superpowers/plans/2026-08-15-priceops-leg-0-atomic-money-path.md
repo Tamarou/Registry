@@ -322,7 +322,7 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 
 ### Positive Scenarios
 - [ ] Both guards accept `refund_pending` (`grep -cF "unless \$status eq 'completed'" lib/Registry/DAO/Payment.pm || true` -- **2 now** (`:449`, `:572`), 0 after). `-F` is load-bearing and this criterion is the reason the Global Constraint exists: without it `$status` is read as an anchor, the count is 0 before any work, and the gate can never fail.
-- [ ] `create_refund_async` threads a key (`grep -cF _idempotency_key lib/Registry/Service/Stripe.pm || true` -- **1 now** (`:74`), at least 3 after)
+- [ ] `create_refund_async` threads a key (`grep -cF _idempotency_key lib/Registry/Service/Stripe.pm || true` -- **1 now** (`:74`), **exactly 2 after**). Two, not "at least 3": `create_refund` delegates to `create_refund_async` (`return $self->_await($self->create_refund_async($params))`), so the params — key included — reach the one extraction that exists. A second extraction in the sync method would be dead code. Assert the sync path carries the key by exercising it, not by counting greps; "needs no extraction" and "has no key" look identical from outside.
 - [ ] `t/dao/refund-application-fee.t` still passes unchanged (baseline measured: `Files=1, Tests=15, PASS`)
 
 ### Negative Scenarios
