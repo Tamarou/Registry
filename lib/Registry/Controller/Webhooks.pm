@@ -254,7 +254,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 if $intent->{amount} != $row_cents;
         }
 
-        unless (($payment->status // '') eq 'completed') {
+        # "Not completed" is not the same question as "not settled". A refunded
+        # or refund_pending row reaching mark_completed here is the double-refund
+        # path: re-completed, re-demoted by the capacity gate below, and refunded
+        # again. Redelivery makes this reachable without any concurrency, because
+        # a retry carries a different event id and the dedup claim lets it past.
+        unless ( Registry::DAO::Payment->_money_has_moved( $payment->status ) ) {
             $payment->mark_completed($db, $intent->{id});
         }
 

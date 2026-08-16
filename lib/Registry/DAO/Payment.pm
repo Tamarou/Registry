@@ -241,7 +241,39 @@ field $_stripe_client = undef;
         return $self->_record_intent($db, $intent);
     }
     
+    # Has money already moved for this row?
+    #
+    # Before this leg the money path only ever held 'completed', so a
+    # completed-only test was sufficient everywhere. The capacity gate added
+    # refund_pending, and refunding adds refunded/partially_refunded -- three
+    # states in which the charge has been made and, in two of them, given back.
+    # Every place that used to ask "is this completed?" to mean "has this been
+    # settled?" has to ask this instead, or a later delivery walks a refunded
+    # row back to completed and settles it again.
+    sub _money_has_moved ($class, $status) {
+        return ( $status // '' )
+            =~ /\A (?: completed | refunded | partially_refunded | refund_pending ) \z/x
+            ? 1 : 0;
+    }
+
     method _record_retrieval_failure ($db, $error) {
+        # Re-read under the lock before writing a failure. This runs when Stripe
+        # could not be reached, which says nothing about the row -- and another
+        # settlement may have completed it while this one was waiting on the
+        # network. Downgrading then leaves a live enrollment against a failed
+        # payment. The success branch takes this lock; the failure branch was
+        # reasoned out of it on the grounds that "nothing was applied", which is
+        # true of Stripe and false of the database.
+        $self->_lock_and_refresh($db);
+
+        if ( __CLASS__->_money_has_moved($status) ) {
+            return {
+                success           => 0,
+                already_completed => 1,
+                error             => $error,
+            };
+        }
+
         $error_message = $error;
         $status = 'failed';
         $self->save($db);
@@ -317,11 +349,17 @@ field $_stripe_client = undef;
         #
         # Reported as its own outcome rather than a failure: the payment is
         # fine, and the caller should carry on to completion, not show an error.
-        if ( $status eq 'completed' && $intent->{status} ne 'succeeded' ) {
+        # Widened from `completed` to every status in which money has moved.
+        # A refunded row reaching the succeeded branch below is driven back to
+        # completed, re-demoted by the capacity gate, and refunded a second time
+        # -- with only Stripe's 24-hour key retention standing between that and
+        # a genuine double refund. A refund_pending row is walked back before
+        # its refund has even been issued.
+        if ( __CLASS__->_money_has_moved($status) ) {
             return {
                 success           => 0,
                 already_completed => 1,
-                error             => 'Payment is already completed',
+                error             => "Payment is already settled (status '$status')",
             };
         }
 
