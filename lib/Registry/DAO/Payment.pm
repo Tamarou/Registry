@@ -452,6 +452,7 @@ field $_stripe_client = undef;
         $self->_lock_cart_sessions($db, $items);
 
         my $owed_cents = 0;
+        my @owed_children;
 
         for my $item (@$items) {
             my $session_id = $item->{session_id} or next;
@@ -462,17 +463,25 @@ field $_stripe_client = undef;
             unless (
                 Registry::DAO::Enrollment->payment_fits_session($db, $self, $session_id)
             ) {
-                Registry::DAO::Enrollment->demote_to_waitlisted($db, {
-                    session_id       => $session_id,
-                    family_member_id => $item->{child_id},
-                    parent_id        => $user_id,
-                    payment_id       => $id,
-                });
+                # Only count a debt for a child this pass actually moved. A
+                # redelivery re-runs the whole cart, and a child waitlisted by an
+                # earlier delivery has already been owed for -- and possibly
+                # already refunded.
+                my $newly_demoted =
+                    Registry::DAO::Enrollment->demote_to_waitlisted($db, {
+                        session_id       => $session_id,
+                        family_member_id => $item->{child_id},
+                        parent_id        => $user_id,
+                        payment_id       => $id,
+                    });
 
-                # Only this child's share: the cart may hold siblings whose
-                # seats are fine, and refunding the payment would take their
-                # money back too.
-                $owed_cents += $self->refund_share_for($db, $item->{child_id}, $session_id);
+                if ($newly_demoted) {
+                    # Only this child's share: the cart may hold siblings whose
+                    # seats are fine, and refunding the payment would take their
+                    # money back too.
+                    $owed_cents += $self->refund_share_for($db, $item->{child_id}, $session_id);
+                    push @owed_children, $item->{child_id};
+                }
                 next;
             }
 
@@ -511,10 +520,26 @@ field $_stripe_client = undef;
         if ($owed_cents) {
             $status = 'refund_pending';
             $metadata->{refund_owed_cents} = $owed_cents;
+            # The children this debt is for. The idempotency key is derived from
+            # this list, so the key and the amount always come from the same
+            # source: a debt for a different set of children is a different
+            # refund and gets a different key, while a redelivery of the same
+            # set replays the same one and Stripe deduplicates it.
+            $metadata->{refund_owed_children} = [ sort @owed_children ];
             $self->save($db);
         }
 
         return $owed_cents;
+    }
+
+    # Stable for one debt, distinct across debts. A key held constant per
+    # payment while the amount is recomputed makes Stripe reject the second,
+    # differently-priced refund with an idempotency_error -- which both callers
+    # catch and log, so the refund silently never happens.
+    method capacity_refund_key {
+        my $children = ( $metadata // {} )->{refund_owed_children} // [];
+        return "refund:capacity:$id" unless @$children;
+        return "refund:capacity:$id:" . join( ',', @$children );
     }
 
     method add_line_item ($db, $args) {
@@ -678,6 +703,11 @@ field $_stripe_client = undef;
         $metadata->{refund_amount_cents} = $refund_cents;
         $metadata->{refund_reason} = $reason;
 
+            # The debt is paid: clear it, or every later settlement reads an
+            # unpaid debt and refunds the same money again.
+            delete $metadata->{refund_owed_cents};
+            delete $metadata->{refund_owed_children};
+
         $self->save($db);
 
         return $refund;
@@ -818,6 +848,11 @@ field $_stripe_client = undef;
             $metadata->{refund_id} = $refund->{id};
             $metadata->{refund_amount_cents} = $refund_cents;
             $metadata->{refund_reason} = $reason;
+
+            # The debt is paid: clear it, or every later settlement reads an
+            # unpaid debt and refunds the same money again.
+            delete $metadata->{refund_owed_cents};
+            delete $metadata->{refund_owed_children};
             
             $self->save($db);
             return $refund;

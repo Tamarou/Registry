@@ -304,7 +304,7 @@ method handle_payment_callback ($db, $run, $form_data) {
             return $settled->refund_async($db, {
                 amount_cents    => $owed,
                 reason          => 'requested_by_customer',
-                idempotency_key => 'refund:capacity:' . $payment->id,
+                idempotency_key => $settled->capacity_refund_key,
             })->then( sub { $out } )
               # A refund failure must not fail the settlement that already
               # committed: the parent is charged, enrolled or waitlisted, and

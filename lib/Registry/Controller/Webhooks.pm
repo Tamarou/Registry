@@ -189,7 +189,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             reason          => 'requested_by_customer',
             # Stable per payment, so a redelivery that somehow reaches here
             # cannot refund twice within Stripe's key retention window.
-            idempotency_key => "refund:capacity:$payment_id",
+            idempotency_key => $payment->capacity_refund_key,
         })->then(sub {
             $self->render(status => 200, text => 'OK');
         })->catch(sub ($err) {

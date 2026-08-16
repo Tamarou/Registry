@@ -223,16 +223,32 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
 
         my $student_id = $data->{student_id} // $data->{family_member_id};
 
+        # Returns whether this call actually moved someone off a seat. A
+        # redelivery re-runs the whole cart, and a child already waitlisted by
+        # an earlier pass has already been accounted for -- re-owing a refund
+        # for them charges the tenant twice for one lost seat.
         my $changed = $db->update(
             $class->table,
             { status => 'waitlisted' },
             {   session_id => $data->{session_id},
                 student_id => $student_id,
                 payment_id => $data->{payment_id},
+                status     => { '!=' => 'waitlisted' },
             },
         )->rows;
 
         return 1 if $changed;
+
+        # Nothing updated: either there is no row yet, or there is one and it is
+        # already waitlisted. Only the first is a new demotion.
+        my $existing = $db->select(
+            $class->table, ['status'],
+            {   session_id => $data->{session_id},
+                student_id => $student_id,
+                payment_id => $data->{payment_id},
+            },
+        )->hash;
+        return 0 if $existing;
 
         $class->create_for_payment($db, { %$data, status => 'waitlisted' });
         return 1;
