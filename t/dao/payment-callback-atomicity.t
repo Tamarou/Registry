@@ -16,12 +16,14 @@ use Registry::DAO::Payment;
 use Registry::DAO::Family;
 use Registry::Service::Stripe;
 use Mojo::Promise;
+use Mojo::Pg;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_callback_atomicity';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $uri     = $test_db->uri;
 
 # --- fixtures: a real payment row, because _apply_intent genuinely writes to it
 my $loc = $dao->create(Location => {
@@ -147,6 +149,66 @@ subtest 'a clean settlement still completes and enrolls' => sub {
     is $result->{next_step}, 'complete', 'the run advances to completion';
     is status_of($payment), 'completed', 'payment is completed';
     is enrollments_for($payment), 1, 'exactly one enrollment created';
+};
+
+subtest 'the settlement holds the payment row while it decides' => sub {
+    # The lock tests elsewhere call Payment->find with { for => 'update' } from
+    # the test itself, which proves Postgres honours FOR UPDATE and nothing
+    # about whether production asks for it. Mutation testing showed both locks
+    # could be deleted with the whole suite green. This probes from inside the
+    # real settlement instead: if _lock_and_refresh is doing its job, a second
+    # backend cannot take the row while finalize_enrollment runs.
+    # Its own child: the shared one is already enrolled in this session by the
+    # subtest above, and enrollments_session_student_type_unique would reject a
+    # second row for the pair before the probe ever ran.
+    my $probe_child = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'CB Lock Kid', birth_date => '2017-05-05', grade => '4',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id,
+                                    child_id   => $probe_child->id } ],
+            tenant_slug => undef },
+    });
+    my $run = run_for($payment);
+    my ( $payment_locked, $session_locked );
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async =
+        sub { Mojo::Promise->resolve( intent_for($payment) ) };
+
+    my $real = \&Registry::DAO::Payment::finalize_enrollment;
+    local *Registry::DAO::Payment::finalize_enrollment = sub ($self, $fdb) {
+        my $out = $real->( $self, $fdb );
+        # We are inside the settlement transaction here, after the row lock and
+        # the session lock have been taken. NOWAIT turns "would block" into an
+        # immediate error so the probe cannot hang the suite.
+        my $other = Mojo::Pg->new($uri)->db;
+        $payment_locked = !eval {
+            $other->query(
+                'SELECT id FROM registry.payments WHERE id = ? FOR UPDATE NOWAIT',
+                $payment->id );
+            1;
+        };
+        $session_locked = !eval {
+            $other->query(
+                'SELECT id FROM registry.sessions WHERE id = ? FOR UPDATE NOWAIT',
+                $session->id );
+            1;
+        };
+        return $out;
+    };
+
+    settle( $step->handle_payment_callback( $db, $run, {
+        payment_intent_id => 'pi_cb_locked',
+    } ) );
+
+    ok $payment_locked,
+        'the payment row is held by the settlement, not merely read';
+    ok $session_locked,
+        'and so is the session whose capacity it is about to decide on';
 };
 
 done_testing;

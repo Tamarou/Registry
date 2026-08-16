@@ -89,6 +89,8 @@ sub mock_payment_with_outcome ($process_result, %more) {
     # superseded one and rotates the idempotency token. undef here means
     # there is no prior intent to cancel, so no stripe_client is needed.
     $mock->set_always('stripe_payment_intent_id', undef);
+    # metadata is read by the post-COMMIT capacity-refund check.
+    $mock->set_always('metadata', {});
     $mock->set_always('rotate_idempotency_token', 1);
     if (exists $more{retry_intent}) {
         $mock->set_always('create_payment_intent_async',
@@ -204,6 +206,8 @@ subtest 'successful payment still transitions to complete' => sub {
     # A successful callback finalizes the enrollment; stub it so the mock
     # doesn't warn about the un-mocked call.
     $mock->set_always('finalize_enrollment', 1);
+    # And the post-COMMIT capacity-refund check reads metadata for an owed debt.
+    $mock->set_always('metadata', {});
 
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };

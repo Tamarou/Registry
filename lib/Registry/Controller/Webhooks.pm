@@ -5,6 +5,7 @@ use Object::Pad;
 class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use JSON;
     use Digest::SHA qw(hmac_sha256_hex);
+    use Mojo::Promise;
 
     method stripe() {
         # Verify webhook signature -- STRIPE_WEBHOOK_SECRET is mandatory.
@@ -184,12 +185,23 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $owed = ( $payment->metadata // {} )->{refund_owed_cents};
         return $self->render(status => 200, text => 'OK') unless $owed;
 
-        return $payment->refund_async($tdb, {
-            amount_cents    => $owed,
-            reason          => 'requested_by_customer',
-            # Stable per payment, so a redelivery that somehow reaches here
-            # cannot refund twice within Stripe's key retention window.
-            idempotency_key => $payment->capacity_refund_key,
+        # Started from a resolved promise so a *synchronous* throw becomes a
+        # rejection this chain's ->catch can see. refund_async dies before
+        # returning a promise in several real ways -- the status guard, a
+        # missing intent id, stripe_client refusing a live key or failing SSL
+        # init -- and a bare ->catch on the returned promise never sees any of
+        # them. The exception escapes the action and Mojolicious renders a 500
+        # on an already-committed settlement, which is precisely what the
+        # always-2xx rule below exists to prevent.
+        return Mojo::Promise->resolve->then(sub {
+            $payment->refund_async($tdb, {
+                amount_cents    => $owed,
+                reason          => 'requested_by_customer',
+                # Derived from the children this debt is for, so the key and the
+                # amount always come from the same source: a redelivery of the
+                # same debt replays the same key and Stripe deduplicates it.
+                idempotency_key => $payment->capacity_refund_key,
+            });
         })->then(sub {
             $self->render(status => 200, text => 'OK');
         })->catch(sub ($err) {

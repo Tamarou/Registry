@@ -301,10 +301,18 @@ method handle_payment_callback ($db, $run, $form_data) {
             my $owed    = $settled && ( $settled->metadata // {} )->{refund_owed_cents};
             return $out unless $owed;
 
-            return $settled->refund_async($db, {
-                amount_cents    => $owed,
-                reason          => 'requested_by_customer',
-                idempotency_key => $settled->capacity_refund_key,
+            # Started from a resolved promise so a synchronous throw from
+            # refund_async -- the status guard, a missing intent id, a
+            # stripe_client that will not build -- becomes a rejection the
+            # ->catch below can see. Otherwise it propagates out of this ->then
+            # with no handler, rejecting the whole chain, and the run is
+            # stranded on the payment step with the money already taken.
+            return Mojo::Promise->resolve->then(sub {
+                $settled->refund_async($db, {
+                    amount_cents    => $owed,
+                    reason          => 'requested_by_customer',
+                    idempotency_key => $settled->capacity_refund_key,
+                });
             })->then( sub { $out } )
               # A refund failure must not fail the settlement that already
               # committed: the parent is charged, enrolled or waitlisted, and

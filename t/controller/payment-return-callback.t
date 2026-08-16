@@ -73,6 +73,8 @@ sub succeeded_payment () {
     });
     # The finalizer the payment_intent.succeeded webhook also runs; idempotent.
     $mock->set_true('finalize_enrollment');
+    # Read by the post-COMMIT capacity-refund check.
+    $mock->set_always('metadata', {});
     return $mock;
 }
 
