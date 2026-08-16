@@ -274,7 +274,28 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     #
     # Correct only with the session row locked and inside a transaction; the
     # caller takes that lock before calling.
-    sub payment_fits_session ($class, $db, $payment, $session_id) {
+    # Is there room for one more child from this payment, given how many seats
+    # this cart has already taken in this pass?
+    #
+    # $already_granted is what makes a partly-fitting sibling group fill the
+    # seats that exist. An earlier form compared the whole cart every time --
+    # nine taken of ten with two siblings gave 9 + 2 > 10 on both iterations, so
+    # both were waitlisted, both refunded, and the one free seat went unsold.
+    # Asking per child, and counting the siblings already placed, fills it.
+    #
+    # $taken excludes this payment's own rows, because finalize_enrollment
+    # writes them as 'active' as it goes and a re-check that counted them would
+    # see the payment competing with itself. $already_granted adds back exactly
+    # the ones this pass placed.
+    #
+    # NULL or zero capacity is unlimited. Zero is not hypothetical: no CHECK
+    # constraint forbids it and nine live sites already read capacity with a
+    # truthiness test, so a `defined` check here would refund every capacity-0
+    # session at capture while all nine waved the enrollment through.
+    #
+    # Correct only with the session row locked and inside a transaction; the
+    # caller takes that lock before calling.
+    sub payment_fits_session ($class, $db, $payment, $session_id, $already_granted = 0) {
         $db = $db->db if $db isa Registry::DAO;
 
         my $capacity = $db->query(
@@ -290,10 +311,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             $session_id, $payment->id
         )->array->[0] // 0;
 
-        my $items = $payment->metadata->{enrollment_items} // [];
-        my $wants = grep { ( $_->{session_id} // '' ) eq $session_id } @$items;
-
-        return $taken + $wants <= $capacity ? 1 : 0;
+        return $taken + $already_granted + 1 <= $capacity ? 1 : 0;
     }
 
     sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {

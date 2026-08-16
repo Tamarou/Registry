@@ -311,10 +311,30 @@ field $_stripe_client = undef;
     # Stripe round trip, so deciding on the in-memory copy would decide on a
     # value that another settlement may have moved while we waited on the
     # network.
+    # Re-read every field save() will write back, not just the one being
+    # decided on. save() is a whole-row write of six columns from the in-memory
+    # object, so refreshing only $status leaves the other five at values loaded
+    # before the Stripe round trip -- and writes those stale values over
+    # whatever another settlement committed while this one waited on the
+    # network. That erases a capacity debt (refund_owed_cents lives in
+    # $metadata), restores a superseded intent id over a rotated one, and
+    # resurrects a cleared error message.
+    #
+    # $amount_cents is refreshed too: it is what the intent's captured amount is
+    # checked against, and a cart refreshed mid-flight must be compared against
+    # its current price, not the one this object was built with.
     method _lock_and_refresh ($db) {
         my $locked = __CLASS__->find($db, { id => $id }, { for => 'update' })
             or return 0;
-        $status = $locked->status;
+
+        $status                   = $locked->status;
+        $amount_cents             = $locked->amount_cents;
+        $metadata                 = $locked->metadata;
+        $stripe_payment_intent_id = $locked->stripe_payment_intent_id;
+        $stripe_payment_method_id = $locked->stripe_payment_method_id;
+        $completed_at             = $locked->completed_at;
+        $error_message            = $locked->error_message;
+
         return 1;
     }
 
@@ -453,6 +473,7 @@ field $_stripe_client = undef;
 
         my $owed_cents = 0;
         my @owed_children;
+        my %granted;   # session_id => seats this cart has placed in this pass
 
         for my $item (@$items) {
             my $session_id = $item->{session_id} or next;
@@ -461,7 +482,8 @@ field $_stripe_client = undef;
             # In between is a Stripe round trip, so it is re-checked here, under
             # the lock taken above, before anything is written.
             unless (
-                Registry::DAO::Enrollment->payment_fits_session($db, $self, $session_id)
+                Registry::DAO::Enrollment->payment_fits_session(
+                    $db, $self, $session_id, $granted{$session_id} // 0 )
             ) {
                 # Only count a debt for a child this pass actually moved. A
                 # redelivery re-runs the whole cart, and a child waitlisted by an
@@ -479,8 +501,28 @@ field $_stripe_client = undef;
                     # Only this child's share: the cart may hold siblings whose
                     # seats are fine, and refunding the payment would take their
                     # money back too.
-                    $owed_cents += $self->refund_share_for($db, $item->{child_id}, $session_id);
-                    push @owed_children, $item->{child_id};
+                    #
+                    # The resolver refuses when no line item matches, which is
+                    # right -- defaulting to the cart total refunds every
+                    # sibling. But letting that refusal escape here rolls back a
+                    # settlement Stripe has already captured, including the
+                    # paying siblings' enrollments, and every retry reproduces it
+                    # identically. A child can legitimately have no line item:
+                    # calculate_enrollment_total skips any child whose plan
+                    # returns no price, so they ride along in enrollment_items
+                    # with nothing behind them. Flag it for a human and let the
+                    # rest of the cart settle.
+                    try {
+                        $owed_cents += $self->refund_share_for($db, $item->{child_id}, $session_id);
+                        push @owed_children, $item->{child_id};
+                    }
+                    catch ($e) {
+                        push @{ $metadata->{refund_manual_review} //= [] },
+                            { child_id => $item->{child_id}, session_id => $session_id };
+                        warn "finalize_enrollment: unresolvable refund share for "
+                           . "child $item->{child_id} in session $session_id "
+                           . "(payment $id): $e";
+                    }
                 }
                 next;
             }
@@ -492,6 +534,7 @@ field $_stripe_client = undef;
                 status           => 'active',
                 payment_id       => $id,
             });
+            $granted{$session_id}++;
 
             # Confirmation email is best-effort: a failure must not abort
             # enrollment of remaining items. Enrollment creation above is
@@ -517,8 +560,8 @@ field $_stripe_client = undef;
         # If the process dies between the COMMIT and the refund, this row is
         # what the operator finds: refund_pending with the amount attached. The
         # runbook clears it by hand; there is no automated reader until Leg 3.
-        if ($owed_cents) {
-            $status = 'refund_pending';
+        if ($owed_cents || $metadata->{refund_manual_review}) {
+            $status = 'refund_pending' if $owed_cents;
             $metadata->{refund_owed_cents} = $owed_cents;
             # The children this debt is for. The idempotency key is derived from
             # this list, so the key and the amount always come from the same

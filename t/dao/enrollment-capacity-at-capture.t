@@ -122,9 +122,14 @@ subtest 'the predicate excludes this payment own rows' => sub {
         'a payment already holding its seat still fits';
 };
 
-subtest 'a sibling cart is counted whole, not one seat at a time' => sub {
-    # Nine taken of ten, two siblings arriving together: 9 + 2 > 10. Comparing
-    # the count alone gives 9 >= 10 and lets both in.
+subtest 'siblings are admitted one seat at a time, not as a block' => sub {
+    # Nine taken of ten, two siblings arriving together. This originally
+    # asserted that neither fits -- comparing the whole cart every time, so
+    # 9 + 2 > 10 on both iterations. That stopped the pair overselling but also
+    # refunded a seat that existed: both children waitlisted, both refunded, the
+    # tenth place left empty. The predicate now answers per child, counting the
+    # siblings already placed, so the first takes the seat and only the second
+    # is turned away.
     my $session = a_session(10);
     occupy($session, 9);
 
@@ -132,12 +137,14 @@ subtest 'a sibling cart is counted whole, not one seat at a time' => sub {
         { session => $session, child => a_child() },
         { session => $session, child => a_child() },
     );
-    ok !Registry::DAO::Enrollment->payment_fits_session($db, $two, $session->id),
-        'two siblings into one remaining seat does not fit';
+    ok Registry::DAO::Enrollment->payment_fits_session($db, $two, $session->id, 0),
+        'the first sibling takes the last seat';
+    ok !Registry::DAO::Enrollment->payment_fits_session($db, $two, $session->id, 1),
+        'and the second, with that seat now taken by their sibling, does not';
 
     my $one = a_payment({ session => $session, child => a_child() });
     ok Registry::DAO::Enrollment->payment_fits_session($db, $one, $session->id),
-        'but a single child into that seat does';
+        'a single child into that seat still fits';
 };
 
 subtest 'NULL and zero capacity both mean unlimited' => sub {
