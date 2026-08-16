@@ -398,7 +398,9 @@ Verified against the tree. The row and its supporting decisions cite these wrong
 ### Positive Scenarios
 - [ ] The loser of a last-seat race is waitlisted and refunded (the test above)
 - [ ] The refund's own status write lands in the tenant schema — assert `<tenant>.payments.status = 'refunded'` **by qualified name**, and assert `registry.payments` gained no row
-- [ ] The tenant-scoped handle for the post-COMMIT refund exists (`grep -cF connect_schema lib/Registry/Controller/Webhooks.pm || true` -- **0 entering this task, 1 after**; Task 1 removed the transaction-path call and this task reintroduces it after the COMMIT)
+- [ ] The tenant-scoped handle for the post-COMMIT refund exists. Match the **call**, not the word — a bare `grep -cF connect_schema` also counts the comment that explains why the call is there, and reads 2 for a correct implementation:
+      `grep -c -- '->connect_schema(' lib/Registry/Controller/Webhooks.pm || true` -- **0 entering this task, exactly 1 after** (Task 1 removed the transaction-path call; this task reintroduces one after the COMMIT).
+      Third gate in this leg to grade a string that appears in prose as well as code. Anchor on syntax whenever the token is something the surrounding comments would naturally name.
 - [ ] Both paths reach the gate without either call site changing
 
 ### Negative Scenarios
