@@ -95,6 +95,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         $self->render_later;
 
+        # Set inside the transaction, acted on after it: the id of a payment the
+        # capacity gate demoted and now owes a refund.
+        my $refund_for;
+
         try {
             # Transaction-local, so it reverts at COMMIT and cannot ride back
             # into the connection pool the way a session-level setting would.
@@ -106,7 +110,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # One-time program payment finalized by Stripe (e.g. 3DS/redirect
             # cards confirmed off-site). Idempotent with the parent-return path.
             if ($event->{type} eq 'payment_intent.succeeded') {
-                $self->_process_payment_intent_succeeded($db, $event);
+                $refund_for = $self->_process_payment_intent_succeeded($db, $event);
             }
             # Mirror connected account capability changes to the tenant row so
             # the paid-enrollment readiness gate reflects Stripe's current view.
@@ -142,7 +146,57 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        # Post-COMMIT. Reached only on success, so a refund failure below cannot
+        # be confused with a settlement failure above.
+        return $self->_settle_owed_refund($dao, $slug, $refund_for) if $refund_for;
+
         $self->render(status => 200, text => 'OK');
+    }
+
+    # Refund what the capacity gate demoted, after its transaction committed.
+    #
+    # On a tenant-scoped DAO, not the transaction's handle. The search_path
+    # override was transaction-local and is gone by now, so this handle is back
+    # on registry -- and refund_async writes the refunded status itself, inside
+    # its own ->then, on whatever handle it was given. Unqualified, that write
+    # would hit registry.payments, match no rows, and return quietly while
+    # Stripe had already refunded the customer. connect_schema hands back a
+    # connection whose search_path Mojo::Pg set when it opened it.
+    #
+    # Always renders 2xx. A refund failure on an already-committed settlement
+    # must not answer Stripe with a 500: the retry would hit the dedup claim and
+    # be acknowledged as a duplicate, so the refund would never be retried
+    # anyway -- and repeated 500s on successful deliveries are how an endpoint
+    # gets disabled. The row stays refund_pending for the runbook to find.
+    method _settle_owed_refund ($dao, $slug, $payment_id) {
+        my $tdao = ( $slug && $slug ne 'registry' ) ? $dao->connect_schema($slug) : $dao;
+        my $tdb  = $tdao->db;
+
+        require Registry::DAO::Payment;
+        my $payment = Registry::DAO::Payment->find($tdb, { id => $payment_id });
+
+        unless ($payment) {
+            $self->app->log->error(
+                "capacity refund: payment $payment_id vanished after commit");
+            return $self->render(status => 200, text => 'OK');
+        }
+
+        my $owed = ( $payment->metadata // {} )->{refund_owed_cents};
+        return $self->render(status => 200, text => 'OK') unless $owed;
+
+        return $payment->refund_async($tdb, {
+            amount_cents    => $owed,
+            reason          => 'requested_by_customer',
+            # Stable per payment, so a redelivery that somehow reaches here
+            # cannot refund twice within Stripe's key retention window.
+            idempotency_key => "refund:capacity:$payment_id",
+        })->then(sub {
+            $self->render(status => 200, text => 'OK');
+        })->catch(sub ($err) {
+            $self->app->log->error(
+                "capacity refund failed for payment $payment_id: $err");
+            $self->render(status => 200, text => 'OK');
+        });
     }
 
     # Subscription lookups for invoice events are the one blocking Stripe call
@@ -204,7 +258,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             $payment->mark_completed($db, $intent->{id});
         }
 
-        $payment->finalize_enrollment($db);
+        # Non-zero when the capacity gate demoted someone: the caller refunds
+        # after the COMMIT. Returns the payment id rather than the amount so the
+        # post-COMMIT step re-reads the committed row instead of trusting a
+        # value carried across the transaction boundary.
+        my $owed = $payment->finalize_enrollment($db);
+        return $owed ? $payment_id : undef;
     }
 
     # Connect sends account.updated when a connected account's capabilities

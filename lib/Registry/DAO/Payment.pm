@@ -413,8 +413,30 @@ field $_stripe_client = undef;
 
         $self->_lock_cart_sessions($db, $items);
 
+        my $owed_cents = 0;
+
         for my $item (@$items) {
             my $session_id = $item->{session_id} or next;
+
+            # The seat was checked before the parent paid and is granted after.
+            # In between is a Stripe round trip, so it is re-checked here, under
+            # the lock taken above, before anything is written.
+            unless (
+                Registry::DAO::Enrollment->payment_fits_session($db, $self, $session_id)
+            ) {
+                Registry::DAO::Enrollment->demote_to_waitlisted($db, {
+                    session_id       => $session_id,
+                    family_member_id => $item->{child_id},
+                    parent_id        => $user_id,
+                    payment_id       => $id,
+                });
+
+                # Only this child's share: the cart may hold siblings whose
+                # seats are fine, and refunding the payment would take their
+                # money back too.
+                $owed_cents += $self->refund_share_for($db, $item->{child_id}, $session_id);
+                next;
+            }
 
             Registry::DAO::Enrollment->create_for_payment($db, {
                 session_id       => $session_id,
@@ -438,6 +460,23 @@ field $_stripe_client = undef;
                 warn "finalize_enrollment: enrollment confirmation failed for session $session_id (payment $id): $e";
             }
         }
+
+        # Record the debt inside the same transaction as the demotion that
+        # created it, so the two cannot come apart. The refund itself happens
+        # after the COMMIT -- a refund inside this transaction is not undone by
+        # the ROLLBACK the rest of the leg depends on, and a redelivery would
+        # then refund a second time.
+        #
+        # If the process dies between the COMMIT and the refund, this row is
+        # what the operator finds: refund_pending with the amount attached. The
+        # runbook clears it by hand; there is no automated reader until Leg 3.
+        if ($owed_cents) {
+            $status = 'refund_pending';
+            $metadata->{refund_owed_cents} = $owed_cents;
+            $self->save($db);
+        }
+
+        return $owed_cents;
     }
 
     method add_line_item ($db, $args) {

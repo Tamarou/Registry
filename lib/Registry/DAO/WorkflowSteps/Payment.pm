@@ -287,7 +287,35 @@ method handle_payment_callback ($db, $run, $form_data) {
     # write and the enrollment are one piece of work, and a failure between them
     # used to leave a row marked paid with no enrollment behind it.
     return $payment->process_payment_async($db, $form_data->{payment_intent_id},
-        sub ($result) { $self->_settle_callback($db, $run, $payment, $result) });
+        sub ($result) { $self->_settle_callback($db, $run, $payment, $result) })
+
+        # After the COMMIT process_payment_async performs: the capacity gate may
+        # have demoted a child and marked the payment refund_pending inside that
+        # transaction, and the refund itself has to happen outside it.
+        #
+        # $db is already tenant-scoped on this path -- it is the run's own
+        # connection -- so unlike the webhook there is no search_path to
+        # re-establish here.
+        ->then(sub ($out) {
+            my $settled = Registry::DAO::Payment->find($db, { id => $payment->id });
+            my $owed    = $settled && ( $settled->metadata // {} )->{refund_owed_cents};
+            return $out unless $owed;
+
+            return $settled->refund_async($db, {
+                amount_cents    => $owed,
+                reason          => 'requested_by_customer',
+                idempotency_key => 'refund:capacity:' . $payment->id,
+            })->then( sub { $out } )
+              # A refund failure must not fail the settlement that already
+              # committed: the parent is charged, enrolled or waitlisted, and
+              # the run has to keep moving. The row stays refund_pending for the
+              # runbook. Rejecting here would strand the run on the payment step
+              # with the money already taken.
+              ->catch(sub ($err) {
+                  warn "capacity refund failed for payment @{[ $payment->id ]}: $err";
+                  return $out;
+              });
+        });
 }
 
 method _settle_callback ($db, $run, $payment, $result) {

@@ -211,6 +211,33 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
     
     # Count enrollments for a session by status
+    # Move a paid child to the waitlist because the seat went while they paid.
+    #
+    # UPDATE first, INSERT only if it changed nothing. create_for_payment's
+    # arbiter is DO NOTHING on (session_id, student_id, payment_id), which is
+    # exactly the triple a prior pass would have written -- so on a retry, or
+    # any path where the active row already exists, a plain waitlisted insert is
+    # a silent no-op and the child stays enrolled in a session with no room.
+    sub demote_to_waitlisted ($class, $db, $data) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $student_id = $data->{student_id} // $data->{family_member_id};
+
+        my $changed = $db->update(
+            $class->table,
+            { status => 'waitlisted' },
+            {   session_id => $data->{session_id},
+                student_id => $student_id,
+                payment_id => $data->{payment_id},
+            },
+        )->rows;
+
+        return 1 if $changed;
+
+        $class->create_for_payment($db, { %$data, status => 'waitlisted' });
+        return 1;
+    }
+
     # Does this payment's share of a session still fit, re-checked at capture?
     #
     # Separate from count_for_session on purpose. This one excludes the
