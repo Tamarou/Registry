@@ -179,25 +179,40 @@ subtest 'the settlement holds the payment row while it decides' => sub {
     local *Registry::Service::Stripe::retrieve_payment_intent_async =
         sub { Mojo::Promise->resolve( intent_for($payment) ) };
 
-    my $real = \&Registry::DAO::Payment::finalize_enrollment;
-    local *Registry::DAO::Payment::finalize_enrollment = sub ($self, $fdb) {
-        my $out = $real->( $self, $fdb );
-        # We are inside the settlement transaction here, after the row lock and
-        # the session lock have been taken. NOWAIT turns "would block" into an
-        # immediate error so the probe cannot hang the suite.
+    # Probe at the seam -- immediately after each lock method returns, before
+    # anything in the transaction has written the row it locked.
+    #
+    # Probing later (from inside finalize_enrollment, as an earlier version of
+    # this test did) proves nothing: by then mark_completed's UPDATE has
+    # row-locked the payment, and create_for_payment's INSERT has made the
+    # enrollments_session_id_fkey FK take FOR KEY SHARE on the session, which
+    # conflicts with FOR UPDATE. The probe reported "locked" whether or not the
+    # explicit locks existed -- confirmed by deleting both and watching the test
+    # stay green.
+    my $held = sub ($sql, @bind) {
         my $other = Mojo::Pg->new($uri)->db;
-        $payment_locked = !eval {
-            $other->query(
-                'SELECT id FROM registry.payments WHERE id = ? FOR UPDATE NOWAIT',
-                $payment->id );
-            1;
-        };
-        $session_locked = !eval {
-            $other->query(
-                'SELECT id FROM registry.sessions WHERE id = ? FOR UPDATE NOWAIT',
-                $session->id );
-            1;
-        };
+        # NOWAIT turns "would block" into an immediate error, so a genuinely
+        # held row cannot hang the suite.
+        return !eval { $other->query( $sql, @bind ); 1 };
+    };
+
+    my $real_lock = \&Registry::DAO::Payment::_lock_and_refresh;
+    local *Registry::DAO::Payment::_lock_and_refresh = sub ($self, $ldb) {
+        my $out = $real_lock->( $self, $ldb );
+        # //= because the method may be called more than once per settlement;
+        # only the first observation is at the clean seam.
+        $payment_locked //= $held->(
+            'SELECT id FROM registry.payments WHERE id = ? FOR UPDATE NOWAIT',
+            $payment->id );
+        return $out;
+    };
+
+    my $real_sessions = \&Registry::DAO::Payment::_lock_cart_sessions;
+    local *Registry::DAO::Payment::_lock_cart_sessions = sub ($self, $sdb, $items) {
+        my $out = $real_sessions->( $self, $sdb, $items );
+        $session_locked //= $held->(
+            'SELECT id FROM registry.sessions WHERE id = ? FOR UPDATE NOWAIT',
+            $session->id );
         return $out;
     };
 
