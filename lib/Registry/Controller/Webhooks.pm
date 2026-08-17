@@ -279,8 +279,17 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # after the COMMIT. Returns the payment id rather than the amount so the
         # post-COMMIT step re-reads the committed row instead of trusting a
         # value carried across the transaction boundary.
-        my $owed = $payment->finalize_enrollment($db);
-        return $owed ? $payment_id : undef;
+        $payment->finalize_enrollment($db);
+
+        # Gate on the row's persisted obligation, not on what this pass alone
+        # computed. An earlier delivery can have recorded a debt whose refund
+        # failed; this pass may demote nobody new and still owe it. The callback
+        # path already re-reads the row -- reading it here too means Stripe's own
+        # redelivery becomes the retry, which is the only automated retry there
+        # is before Leg 3.
+        my $settled = Registry::DAO::Payment->find($db, { id => $payment_id });
+        return ( $settled && ( $settled->metadata // {} )->{refund_owed_cents} )
+            ? $payment_id : undef;
     }
 
     # Connect sends account.updated when a connected account's capabilities

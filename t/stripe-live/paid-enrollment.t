@@ -376,7 +376,10 @@ subtest 'I6: refund reverses transfer and returns application fee per 2% plan po
     is $main_payment->status, 'completed',
         'I6 precondition: I1 payment is completed (I4 webhook ran)';
 
-    my $refund = $main_payment->refund($tdb);
+    # refund_async is the only refund entry point; the synchronous refund() was
+    # removed. This file runs outside the daemon's event loop, so settle() can
+    # block on the promise here in a way the web path never could.
+    my $refund = settle( $main_payment->refund_async($tdb) );
     ok $refund->{id}, 'I6: refund object returned from Stripe';
 
     # The 2% plan has refund_application_fee=true, so the $3.00 platform fee must come back.

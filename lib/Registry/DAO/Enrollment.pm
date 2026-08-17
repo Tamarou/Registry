@@ -211,6 +211,26 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
     
     # Count enrollments for a session by status
+    # Does this payment already hold a granted seat for this child in this
+    # session? If so a previous delivery adjudicated it and won, and a later
+    # delivery must not revisit the decision.
+    #
+    # 'pending' counts as granted: it is a seat in hand as far as capacity is
+    # concerned (payment_fits_session counts it), so re-adjudicating one would
+    # demote a child who holds a place.
+    sub already_seated_by ($class, $db, $payment_id, $session_id, $child_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        return $db->select(
+            $class->table, ['id'],
+            {   payment_id => $payment_id,
+                session_id => $session_id,
+                student_id => $child_id,
+                status     => { -in => [ 'active', 'pending' ] },
+            },
+        )->hash ? 1 : 0;
+    }
+
     # Move a paid child to the waitlist because the seat went while they paid.
     #
     # UPDATE first, INSERT only if it changed nothing. create_for_payment's

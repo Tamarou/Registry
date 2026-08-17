@@ -52,17 +52,7 @@ sub cart_items_for ($payment, @rows) {
 
 subtest 'the refund guards are an allow-list of completed and refund_pending' => sub {
     for my $status (qw( completed refund_pending )) {
-        my $sync  = payment_with($status);
         my $async = payment_with($status);
-
-        my $sync_ok = eval {
-            no warnings 'redefine';
-            local *Registry::Service::Stripe::create_refund =
-                sub ($s, $p) { { id => 're_ok', status => 'succeeded' } };
-            $sync->refund($db);
-            1;
-        };
-        ok $sync_ok, "refund accepts a $status payment" or diag $@;
 
         my $async_ok = eval {
             no warnings 'redefine';
@@ -81,8 +71,8 @@ subtest 'the allow-list has not become anything' => sub {
     # never charged.
     for my $status (qw( pending failed processing )) {
         my $payment = payment_with($status);
-        my $ok = eval { $payment->refund($db); 1 };
-        ok !$ok, "refund still refuses a $status payment";
+        my $ok = eval { settle( $payment->refund_async($db) ); 1 };
+        ok !$ok, "refund_async still refuses a $status payment";
     }
 };
 
@@ -107,27 +97,6 @@ subtest 'a refund carries an idempotency key and does not post it as a form fiel
     ok !exists $captured{_idempotency_key},
         'and is deleted from the form body before the POST';
     ok exists $captured{payment_intent}, 'the real refund params survive';
-};
-
-subtest 'the sync refund carries the key too, by delegation' => sub {
-    # create_refund delegates to create_refund_async, so it needs no extraction
-    # of its own -- but "needs none" and "has none" look identical from the
-    # outside, and only one of them threads the key.
-    my $payment = payment_with('completed');
-    my %captured;
-    my $captured_key;
-
-    no warnings 'redefine';
-    local *Registry::Service::Stripe::_request_async = sub ($s, $method, $path, $params = undef, $ik = undef) {
-        %captured     = %{ $params // {} };
-        $captured_key = $ik;
-        return Mojo::Promise->resolve({ id => 're_sync_key', status => 'succeeded' });
-    };
-
-    $payment->refund($db, { idempotency_key => 'refund:capacity:sync' });
-
-    is $captured_key, 'refund:capacity:sync', 'the sync path threads the key as well';
-    ok !exists $captured{_idempotency_key}, 'and does not post it as a form field';
 };
 
 subtest 'a per-child refund returns that child share, not the family cart' => sub {

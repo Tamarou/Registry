@@ -132,15 +132,21 @@ subtest 'a demotion over an existing active row actually changes it' => sub {
     });
     is enrollment_status($payment, $session), 'active', 'the active row exists first';
 
-    occupy($session, 1);
-
-    my $tx   = $db->begin;
-    my $owed = $payment->finalize_enrollment($db);
-    $tx->commit;
+    # Called directly, not through finalize_enrollment. A settlement will not
+    # reach the demotion for a child this payment already has seated -- the
+    # short-circuit leaves an earlier delivery's granted seat alone, which is
+    # what the spec requires. The arbiter hazard this subtest exists for is a
+    # property of demote_to_waitlisted itself: create_for_payment's DO NOTHING
+    # is keyed on exactly (session_id, student_id, payment_id), so a plain
+    # insert over this row would change nothing and the child would stay
+    # enrolled in a session with no room.
+    Registry::DAO::Enrollment->demote_to_waitlisted($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, payment_id => $payment->id,
+    });
 
     is enrollment_status($payment, $session), 'waitlisted',
         'the existing row is updated, not skipped by the conflict arbiter';
-    is $owed, 10000, 'and the refund is still owed';
 };
 
 subtest 'a cart that fits owes nothing and stays completed' => sub {

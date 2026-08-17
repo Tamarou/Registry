@@ -478,6 +478,19 @@ field $_stripe_client = undef;
         for my $item (@$items) {
             my $session_id = $item->{session_id} or next;
 
+            # Already seated by an earlier delivery: leave it alone.
+            #
+            # The spec requires this short-circuit and an earlier draft dropped
+            # it. Without it every delivery re-adjudicates the whole cart from
+            # scratch, and because the predicate excludes this payment's own
+            # rows, any enrollment that landed in the meantime -- an admin add,
+            # a transfer, another family's cart -- makes the session look full
+            # and demotes a child who was seated and paid days ago. Stripe
+            # retries for three days and a dashboard resend is unbounded, so
+            # this needs no concurrency to happen.
+            next if Registry::DAO::Enrollment->already_seated_by(
+                $db, $id, $session_id, $item->{child_id} );
+
             # The seat was checked before the parent paid and is granted after.
             # In between is a Stripe round trip, so it is re-checked here, under
             # the lock taken above, before anything is written.
@@ -560,19 +573,39 @@ field $_stripe_client = undef;
         # If the process dies between the COMMIT and the refund, this row is
         # what the operator finds: refund_pending with the amount attached. The
         # runbook clears it by hand; there is no automated reader until Leg 3.
-        if ($owed_cents || $metadata->{refund_manual_review}) {
-            $status = 'refund_pending' if $owed_cents;
-            $metadata->{refund_owed_cents} = $owed_cents;
-            # The children this debt is for. The idempotency key is derived from
-            # this list, so the key and the amount always come from the same
-            # source: a debt for a different set of children is a different
-            # refund and gets a different key, while a redelivery of the same
-            # set replays the same one and Stripe deduplicates it.
-            $metadata->{refund_owed_children} = [ sort @owed_children ];
-            $self->save($db);
-        }
+        $self->_record_capacity_obligation( $db, $owed_cents, \@owed_children );
 
         return $owed_cents;
+    }
+
+    # Persist what this pass decided, merged with anything still outstanding.
+    #
+    # ACCUMULATE, never assign. An earlier delivery can have left an unpaid
+    # debt: the refund failed, or the process died between COMMIT and refund.
+    # This pass computes only what it newly demoted -- demote_to_waitlisted
+    # reports transitions, not state -- so assigning would drop the earlier
+    # balance, and no later pass can re-derive it because those children are
+    # already waitlisted. That is money kept for a seat never delivered.
+    #
+    # The status is set for ANY unresolved obligation, including one that is
+    # only a manual-review flag. Leaving such a row 'completed' hides it from
+    # the operator runbook and from Leg 3's ProcessRefunds, both of which scan
+    # for refund_pending -- a family waitlisted, unrefunded, and invisible.
+    method _record_capacity_obligation ($db, $new_cents, $new_children) {
+        my $outstanding = ( $metadata->{refund_owed_cents} // 0 ) + $new_cents;
+        my $unresolved  = $outstanding || $metadata->{refund_manual_review};
+        return unless $unresolved;
+
+        # Union: a child contributes at most once, because a second pass over an
+        # already-waitlisted child is not a transition and never reaches here.
+        my %children = map { $_ => 1 }
+            @{ $metadata->{refund_owed_children} // [] }, @$new_children;
+
+        $status = 'refund_pending';
+        $metadata->{refund_owed_cents}    = $outstanding;
+        $metadata->{refund_owed_children} = [ sort keys %children ];
+        $self->save($db);
+        return;
     }
 
     # Stable for one debt, distinct across debts. A key held constant per
@@ -582,7 +615,10 @@ field $_stripe_client = undef;
     method capacity_refund_key {
         my $children = ( $metadata // {} )->{refund_owed_children} // [];
         return "refund:capacity:$id" unless @$children;
-        return "refund:capacity:$id:" . join( ',', @$children );
+        # Sorted here as well as at the write site. The key's stability is what
+        # stops Stripe treating a redelivery as a second refund, and it must not
+        # depend on the order some other code happened to store the list in.
+        return "refund:capacity:$id:" . join( ',', sort @$children );
     }
 
     method add_line_item ($db, $args) {
@@ -711,49 +747,28 @@ field $_stripe_client = undef;
         return ( $status // '' ) =~ /\A (?: completed | refund_pending ) \z/x ? 1 : 0;
     }
 
-    method refund ($db, $args = {}) {
-        die "Cannot refund a payment with status '$status'"
-            unless __CLASS__->_refundable_status($status);
-        die "No payment intent to refund" unless $stripe_payment_intent_id;
+    # The bookkeeping the refund path applies once Stripe confirms.
+    #
+    # A synchronous refund() used to sit alongside refund_async with its own
+    # copy of this: its own status transition, metadata writes and debt
+    # clearing. The two drifted -- a fix applied to one silently left the other
+    # behind -- and nothing in lib/ ever called the sync one, because every
+    # money path runs under the daemon's event loop where _await refuses. It is
+    # gone; this is the only copy.
+    method _apply_refund_result ($db, $refund, $refund_cents, $reason) {
+        $status = $refund_cents >= $amount_cents ? 'refunded' : 'partially_refunded';
 
-        my $refund_cents = $args->{amount_cents} // $amount_cents;
-        my $reason = $args->{reason} // 'requested_by_customer';
-
-        my $refund;
-        try {
-            $refund = $self->stripe_client->create_refund({
-                payment_intent => $stripe_payment_intent_id,
-                amount         => $refund_cents,
-                reason         => $reason,
-                $self->_refund_connect_params($db),
-                $args->{idempotency_key}
-                    ? ( _idempotency_key => $args->{idempotency_key} ) : (),
-            });
-        }
-        catch ($e) {
-            die "Refund failed: $e";
-        }
-
-        # Update payment status
-        if ($refund_cents >= $amount_cents) {
-            $status = 'refunded';
-        } else {
-            $status = 'partially_refunded';
-        }
-        
-        # Update metadata to track refund
-        $metadata->{refund_id} = $refund->{id};
+        $metadata->{refund_id}           = $refund->{id};
         $metadata->{refund_amount_cents} = $refund_cents;
-        $metadata->{refund_reason} = $reason;
+        $metadata->{refund_reason}       = $reason;
 
-            # The debt is paid: clear it, or every later settlement reads an
-            # unpaid debt and refunds the same money again.
-            delete $metadata->{refund_owed_cents};
-            delete $metadata->{refund_owed_children};
+        # The obligation is discharged: clear it, or every later settlement
+        # reads an unpaid debt and returns the same money again.
+        delete $metadata->{refund_owed_cents};
+        delete $metadata->{refund_owed_children};
 
         $self->save($db);
-
-        return $refund;
+        return;
     }
 
     sub for_user ($class, $db, $user_id) {
@@ -880,24 +895,7 @@ field $_stripe_client = undef;
             $args->{idempotency_key}
                 ? ( _idempotency_key => $args->{idempotency_key} ) : (),
         })->then(sub ($refund) {
-            # Update payment status
-            if ($refund_cents >= $amount_cents) {
-                $status = 'refunded';
-            } else {
-                $status = 'partially_refunded';
-            }
-
-            # Update metadata to track refund
-            $metadata->{refund_id} = $refund->{id};
-            $metadata->{refund_amount_cents} = $refund_cents;
-            $metadata->{refund_reason} = $reason;
-
-            # The debt is paid: clear it, or every later settlement reads an
-            # unpaid debt and refunds the same money again.
-            delete $metadata->{refund_owed_cents};
-            delete $metadata->{refund_owed_children};
-            
-            $self->save($db);
+            $self->_apply_refund_result( $db, $refund, $refund_cents, $reason );
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";

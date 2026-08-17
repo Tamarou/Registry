@@ -134,27 +134,30 @@ subtest 'the idempotency key names the children it refunds' => sub {
     # Stripe reject the second, differently-priced refund with an
     # idempotency_error -- and both callers swallow it, so the refund never
     # happens at all.
-    my $roomy = a_session(5);
+    # Driven through the obligation metadata rather than two settlements: a
+    # child seated by the first pass is short-circuited by the second and can no
+    # longer be demoted, so two settlements cannot produce two different owed
+    # sets for one payment. The property under test is the key derivation.
     my $full  = a_session(1);
     my $kid_a = a_child();
-    my $kid_b = a_child();
-    my $payment = a_paid_cart({ session => $full,  child => $kid_a },
-                              { session => $roomy, child => $kid_b });
+    my $payment = a_paid_cart({ session => $full, child => $kid_a });
     occupy($full, 1);
 
     finalize($payment);
     my $key_one = reload($payment)->capacity_refund_key;
+    like $key_one, qr/\Q@{[ $kid_a->id ]}\E/, 'the key names the child it owes for';
 
-    # Now the second session fills too: a different set of children is owed.
-    occupy($roomy, 5);
-    $db->query(q{UPDATE payments SET metadata = metadata - 'refund_owed_cents'
-                  WHERE id = ?}, $payment->id);
-    finalize(reload($payment));
-    my $key_two = reload($payment)->capacity_refund_key;
+    # A larger obligation -- a second child added to the same debt -- is a
+    # different refund and must not replay the first refund's key.
+    my %meta = %{ reload($payment)->metadata };
+    $db->update('payments', {
+        metadata => { -json => { %meta,
+            refund_owed_cents    => 20000,
+            refund_owed_children => [ $kid_a->id, a_child()->id ] } },
+    }, { id => $payment->id });
 
-    isnt $key_two, $key_one,
-        'a different set of refunded children gets a different key';
-    like $key_one, qr/\Q@{[ $kid_a->id ]}\E/, 'the first key names the first child';
+    isnt reload($payment)->capacity_refund_key, $key_one,
+        'a different set of owed children gets a different key';
 };
 
 subtest 'a failed refund leaves the debt for the runbook' => sub {
