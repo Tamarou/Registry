@@ -208,7 +208,29 @@ field $_stripe_client = undef;
     # would pass silently and the parent would be charged against a row that
     # does not know its own intent id. Note this stays 'pending' -- recording an
     # intent is not completing a payment.
+    # Every whole-row write to a payment takes the lock, re-reads under it, and
+    # refuses a row whose money has already moved.
+    #
+    # save() writes six columns from the in-memory object. From a stale object
+    # that is not a field update, it is a whole-row restore: the old status, a
+    # nulled completed_at, a superseded intent id. The decline-retry path
+    # produces exactly such an object -- it cancels the old intent over the
+    # network, outside any transaction, and a webhook can capture the payment
+    # while that round trip is in flight. The retry then walks the captured row
+    # back to pending and hands the parent a live card form for money already
+    # taken.
+    method _guard_settled_write ($db, $what) {
+        $self->_lock_and_refresh($db)
+            or die "$what: payment $id no longer exists\n";
+        return 0 if __CLASS__->_money_has_moved($status);
+        return 1;
+    }
+
     method _record_intent ($db, $intent) {
+        return { client_secret => $intent->{client_secret},
+                 payment_intent_id => $intent->{id} }
+            unless $self->_guard_settled_write( $db, '_record_intent' );
+
         $stripe_payment_intent_id = $intent->{id};
         $self->save($db);
 
@@ -221,6 +243,12 @@ field $_stripe_client = undef;
     # save for the same reason as _record_intent: a failure that the database
     # never learned about must not be swallowed on the way to the die below.
     method _record_intent_failure ($db, $error) {
+        # A row whose money has moved is not failed by a later decline: the
+        # webhook that captured it wins over an in-flight retry.
+        unless ( $self->_guard_settled_write( $db, '_record_intent_failure' ) ) {
+            die "Failed to create payment intent: $error";
+        }
+
         $error_message = $error;
         $status = 'failed';
         $self->save($db);
@@ -692,6 +720,10 @@ field $_stripe_client = undef;
     # Call this before retrying a declined intent so the retry is a genuinely
     # new Stripe charge rather than a duplicate of the failed one.
     method rotate_idempotency_token ($db) {
+        # Rotating the token on a settled row would save() the stale object
+        # over a captured payment. Nothing to rotate once the money moved.
+        return unless $self->_guard_settled_write( $db, 'rotate_idempotency_token' );
+
         $db = $db->db if $db isa Registry::DAO;
         $metadata->{idempotency_token} = $db->query(
             'SELECT gen_random_uuid()::text AS uuid'
@@ -871,10 +903,18 @@ field $_stripe_client = undef;
                     return $out;
                 },
                 sub ($error)  {
-                    # Nothing was applied, so there is no pair of writes to keep
-                    # together; the failure record is a single statement.
+                    # This branch needs the same transaction as the success one.
+                    # Its own write is a single statement -- but when the row is
+                    # already settled it returns already_completed, and
+                    # _settle_callback treats that exactly like success, so the
+                    # whole settlement runs here: capacity re-check, demotion,
+                    # debt write. Unprotected, that oversells a session and
+                    # leaves the demotion and its obligation able to come apart.
+                    my $tx     = $db->begin;
                     my $result = $self->_record_retrieval_failure($db, $error);
-                    return $settle ? $settle->($result) : $result;
+                    my $out    = $settle ? $settle->($result) : $result;
+                    $tx->commit;
+                    return $out;
                 },
             );
     }
