@@ -79,6 +79,28 @@ No type, no constraint, no index on the amount. A runbook `jsonb_set` writing `"
 4. A seat this cart holds is counted against its own capacity. *(Violated: the `already_seated_by` short-circuit `next`s before `$granted{$session_id}++`.)*
 5. An obligation is discoverable by a status scan. *(Violated: `_apply_refund_result` leaves `refund_manual_review` behind with a non-`refund_pending` status.)*
 
+
+### 1.5 The guards are duplicated, and only one copy is tested
+
+A 68-mutation run against the implemented path scored **53 caught, 15 survived**. The score matters less than the shape of the survivors:
+
+> Every survivor except two provably-equivalent mutants is a **controller-side or step-side copy of a guard whose DAO-side twin is well tested.**
+
+| Survivor | The duplicated guard | DAO twin |
+|---|---|---|
+| `Webhooks.pm:274` — drop `_money_has_moved` before `mark_completed` | the settled check | graded by `payment-settled-state-machine.t` |
+| `Webhooks.pm:249` — drop `{ for => 'update' }` | the row lock | graded by `payment-callback-atomicity.t` |
+| `Webhooks.pm:290` — use the return value instead of re-reading the debt | the obligation read | graded by `payment-refund-debt-lifecycle.t` |
+| `WorkflowSteps/Payment.pm:299-326` — the whole post-COMMIT refund block | the refund path | graded by `webhook-capacity-refund.t` |
+
+The webhook suites only ever construct payments with `status => 'pending'`, so the webhook's copy of the settled check is never exercised. A bare `die` at `WorkflowSteps/Payment.pm:299` passes **all 65 files** — the step's refund path is dead to the suite, while its webhook twin has three assertions.
+
+This is the same defect as §1.2 seen from the test side. The guards are duplicated because there is no single write path; the duplicates are untested because the tests were written against the DAO. **A design with one write path removes both problems at once** — there is no second copy to leave ungraded.
+
+Three further survivors are ordinary test debt rather than duplication, and are listed in §5 as prerequisites: `payment_fits_session` ignoring `'pending'` seats belonging to *other* payments (an oversell at capture), `already_seated_by` without its `payment_id` predicate, and the deadlock ordering in `_lock_cart_sessions`, whose code comment claims a verification that exists nowhere in the suite.
+
+One methodological caveat worth carrying forward: the same run found that **suite selection changes verdicts.** One mutation was green against a 26-file money-path selection and red only once a 39-file dependent set was added. Rounds 1 and 2 scored against narrower selections and may have over-reported survivors.
+
 ---
 
 ## 2. The design
@@ -211,6 +233,7 @@ Stated so the next review does not have to find them:
 
 1. **Documentation debt first, separately.** Six Declared Deviations owed, eight blocking plan edits, Task 9's runbook. None of it depends on this design, and the plan currently instructs operators into a status that breaks the row.
 2. **The state machine, behind the existing tests.** All 21 known defects have regression tests already; they are the acceptance criteria.
+   Five gaps must be closed first, or the machine ships with the same blind spots the guards had: a webhook delivered onto a `refunded`/`refund_pending` row (the webhook suites only ever build `pending` ones); a `pending` seat held by *another* payment counting against capacity; `already_seated_by` without its `payment_id` predicate; the workflow step's post-COMMIT refund path, which a bare `die` proves is dead to all 65 files; and two concurrent carts over the same session pair, which no test takes.
 3. **The columns**, with the per-tenant loop and a revert-harness entry.
 4. **Only then Task 6.** Its partial unique index encodes the enrollment status vocabulary, and §2.4 changes who owns that.
 
