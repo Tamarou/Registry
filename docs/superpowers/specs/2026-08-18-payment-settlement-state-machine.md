@@ -45,17 +45,19 @@ The plan's Task 9 instructs operators to write an eighth value, `refund_failed`,
 
 Ten paths write a payment row. Whether each is safe depends on the caller, not the method:
 
-| Write | Method | Lock held? | Why / why not |
-|---|---|---|---|
-| `Payment.pm:235` | `_record_intent` | guard + lock | explicit |
-| `:254` | `_record_intent_failure` | guard + lock | explicit |
-| `:307` | `_record_retrieval_failure` | lock, return **discarded** | own status check |
-| `:435`, `:441` | `_apply_intent` | lock at method entry | explicit |
-| `:635` | `_record_capacity_obligation` | none of its own | safe *only* because `finalize_enrollment` locked |
-| `:715` | `mark_completed` | none of its own | safe *only* because both callers lock first |
-| `:731` | `rotate_idempotency_token` | guard | explicit |
-| `:802` | `_apply_refund_result` | **none** | **and no caller locks — this is a live defect** |
-| `WorkflowSteps/Payment.pm:197` | reuse branch | **none** | **bypasses `save()` entirely; no status predicate in the WHERE** |
+| Write | Method | Lock? | **May it write?** | Why / why not |
+|---|---|---|---|---|
+| `Payment.pm:235` | `_record_intent` | yes | guarded | explicit |
+| `:254` | `_record_intent_failure` | yes | guarded | explicit |
+| `:307` | `_record_retrieval_failure` | lock, return **discarded** | own check | |
+| `:435`, `:441` | `_apply_intent` | lock at entry, return **discarded** | own check | |
+| `:635` | `_record_capacity_obligation` | inherited from caller | **NOTHING** | **the only write with neither. Walks a terminal `partially_refunded` back to `refund_pending`.** |
+| `:715` | `mark_completed` | inherited from caller | caller's | safe *only* because both callers check first |
+| `:731` | `rotate_idempotency_token` | yes | guarded | explicit |
+| `:802` | `_apply_refund_result` | **none** | **none** | **no caller locks either** |
+| `WorkflowSteps/Payment.pm:197` | reuse branch | **none** | **none** | **bypasses `save()`; clobbers `amount_cents`, which bricks every later settlement** |
+
+An earlier draft of this table had one column, "Lock held?", and recorded `:635` as *safe because the caller locked*. A reviewer found the blocker there. **Locking serialises writers; it does not decide whether a writer may write.** Conflating the two is why that site was missed by three review rounds.
 
 `save()` writes six columns from the in-memory object. From a stale object that is not an update but a **whole-row restore**: the old status, a nulled `completed_at`, a superseded intent id. Every unlocked write above is therefore a potential silent revert of another settlement's work.
 
@@ -107,42 +109,31 @@ One methodological caveat worth carrying forward: the same run found that **suit
 
 ### 2.1 States
 
-Six states. `refund_pending` is removed as a *status* and re-expressed as an obligation on a settled row — the conflation of "money moved" with "money is owed back" is what makes the two classifiers disagree.
+**Five states, and the existing strings are kept.** An earlier draft proposed six and a rename of `completed`; both were wrong.
 
-```
-                   create
-                     |
-                     v
-                 [pending] ---- intent in flight ----> [processing]
-                     |                                      |
-      intent/retrieval failure                         capture
-                     |                                      |
-                     v                                      v
-                  [failed]                             [captured] <--.
-                                                            |         |
-                                              obligation discharged   |
-                                                            |         |
-                                       obligation recorded  |         |
-                                                            v         |
-                                                      [refunding] ----'
-                                                            |
-                                              fully returned|
-                                                            v
-                                                       [refunded]
-```
+`refunding` is derived data promoted to a status: once §2.2 makes the obligation a typed column, `refunding` is exactly `completed AND refund_owed_cents > 0`. Two representations of one fact is the failure this document exists to eliminate — and there is already a live example of them disagreeing, a row reading `refund_pending` with `refund_owed_cents = 0`. Dropping it also removes the only backward edge in the graph, which is the only place a walk-back would be legal by construction.
+
+Renaming `completed` buys nothing. The defects came from **two classifiers**, not from the word, and a rename touches every fixture, the runbook, the schema dump, and anything already emitted into Stripe metadata.
 
 | State | Money moved? | Refundable? | Settled? |
 |---|---|---|---|
 | `pending` | no | no | no |
 | `processing` | no | no | no |
 | `failed` | no | no | no |
-| `captured` | yes | yes | yes |
-| `refunding` | yes | yes | yes |
+| `completed` | yes | yes | yes |
 | `refunded` | yes | no | yes |
 
-`captured` replaces `completed`; `refunding` replaces `refund_pending`; `partially_refunded` disappears — a partial return is `captured` with a non-zero `refunded_cents`, which is what it actually is. **One classifier, `is_settled`, derived from the table above.** No second list to fall out of sync.
+`partially_refunded` disappears — a partial return is `completed` with a non-zero `refunded_cents`, which is what it actually is. **One classifier**, `is_settled`, derived from this table. No second list to fall out of sync.
 
-*(Renaming `completed` is a data migration on a live column. If that is judged too expensive, keep the string `completed` and rename only in the predicate layer — the design holds either way. The point is one classifier, not the spelling.)*
+And the cheapest mechanism in this document, which an earlier draft noted the absence of and then failed to propose:
+
+```sql
+ALTER TABLE registry.payments
+  ADD CONSTRAINT payments_status_check
+  CHECK (status IN ('pending','processing','failed','completed','refunded'));
+```
+
+One line, same migration, same per-tenant loop. It is what stops an operator following the current runbook from writing `refund_failed` — a value in neither classifier, which today both locks the row out of every future refund and invites the next redelivery to re-complete it.
 
 ### 2.2 The obligation becomes a column
 
@@ -161,36 +152,34 @@ CREATE INDEX idx_payments_refund_owed
 
 `refund_owed_children` stays in jsonb — nothing filters on it, and it exists only to derive the idempotency key. `refund_manual_review` becomes a **fourth state on the obligation**, not a stray flag: `owed`, `discharged`, `unresolvable`, `none`.
 
-### 2.3 One write path
+### 2.3 One write path: a conditional UPDATE
 
-Every mutation of a payment row goes through a single method that takes the lock, re-reads under it, checks the transition is legal, applies it, and saves:
+*This section is a reviewer's design, not mine. It gets more of the 21 defects for a smaller diff than the `transition()` method an earlier draft proposed, and I am recording why it won.*
 
-```perl
-# The only way a payment row changes.
-#
-# $to is a target state or undef for a same-state field write. The lock is real
-# because this method requires an open transaction and refuses without one --
-# a FOR UPDATE outside a transaction is released at statement end and is not a
-# lock, which is a mistake this path has made three times.
-method transition ($db, $to, $changes = {}) {
-    die "transition: requires an open transaction"
-        if $db->dbh->{AutoCommit};
+Every mutation of a payment row becomes an UPDATE that names **only the fields it changes** and carries its own legality in the WHERE clause:
 
-    $self->_lock_and_refresh($db)
-        or die "transition: payment $id no longer exists";
-
-    die "transition: $status -> $to is not a legal transition"
-        unless __CLASS__->_may_transition($status, $to);
-
-    # apply $changes, set $status = $to, save
-}
+```sql
+UPDATE payments SET status = 'completed', completed_at = now()
+ WHERE id = ? AND status IN ('pending','processing')
 ```
 
-Three properties follow that do not hold today:
+Then check `->rows`. Zero means refused — unambiguously, by construction, not by a return shape a caller can misread.
 
-- **The transaction requirement is enforced, not assumed.** `AutoCommit` is checked. The three current guard sites would fail loudly rather than silently holding no lock.
-- **Illegal transitions are impossible, not merely unwritten.** `refunded -> captured` is rejected by the table, so the four "walked back a settled row" defects cannot recur at *any* call site, including ones added later.
-- **There is one place to add a state.** Today adding `refund_pending` required finding three classifiers and ten writers; two were missed both times.
+What this subsumes, without any lock at all:
+
+- **The three `FOR UPDATE`-outside-a-transaction sites.** No lock is needed: the predicate is evaluated inside the UPDATE's own row lock, atomically. This removes the requirement rather than enforcing it.
+- **`_apply_refund_result` unlocked and unguarded** — the predicate moves into the WHERE.
+- **`WorkflowSteps/Payment.pm:197`** — same, and it stops clobbering `amount_cents` and `metadata` because it names neither.
+- **`_record_intent`'s refusal shaped like success** — `rows == 0` is not a shape.
+- **The terminal-status walk-back** — `AND status = 'completed'`.
+- **The whole-row-restore hazard of §1.2**, and with it most of `_lock_and_refresh`'s reason to exist.
+- **Accumulation**, once §2.2 makes it a column: `SET refund_owed_cents = refund_owed_cents + ? WHERE id = ? AND status = 'completed'` is atomic, with no read-modify-write.
+
+§2.1's state table survives as a **pure predicate that builds the WHERE clause** — that is the part carrying the value ("one place to add a state"), without a god-method, an untyped `$changes` bag, or an `AutoCommit` check to get right.
+
+**Why the `transition()` method lost.** It required an open transaction at three call sites that have none — and at one, `_apply_refund_result`, which runs post-COMMIT *on purpose*, because a refund inside the settlement transaction is not undone by the ROLLBACK the rest of the leg depends on. "Requires an open transaction" would have been exactly wrong there. Its `$to = undef` escape for same-state writes disabled the legality check for the majority of writes on this path, which is the very set the defects came from. Its `$changes` bag was an unvalidated `column => value` map through which `{status => 'completed'}` bypasses the machine. And its sketch called `$db->dbh` before the `$db = $db->db if $db isa Registry::DAO` coercion every other method performs — `Registry::DAO` has no `dbh`, so it would have died method-not-found on first use.
+
+**What still needs a transaction and a lock:** `finalize_enrollment`. It is multi-row work — session locks, enrollment writes, the obligation — and genuinely needs both. The conditional UPDATE replaces the *single-row* guards, not the settlement transaction.
 
 ### 2.4 The seat predicate has one owner
 
@@ -206,7 +195,7 @@ One sub answers "what does this cart hold in this session", returning counts by 
 |---|---|---|
 | 1 | refunded rows re-completed | §2.3 legal transitions |
 | 1 | uncleared debt marker | §2.2 obligation state |
-| 1 | constant key, recomputed amount | already fixed; §2.2 keeps key and amount on one source |
+| 1 | constant key, recomputed amount | **fixed only for the populated case.** `capacity_refund_key`'s empty-children branch still returns the constant `refund:capacity:$id`, and the terminal-status walk-back produces exactly the row that reaches it. §2.3's predicate closes the walk-back; the branch should die rather than mint a shared key |
 | 2 | debt assigned not accumulated | §2.2 typed column + §2.3 single write path |
 | 2 | manual-review invisible to runbook | §2.2 obligation state is queryable |
 | 2 | three unguarded whole-row saves | §2.3 |
@@ -214,10 +203,10 @@ One sub answers "what does this cart hold in this session", returning counts by 
 | 3 | `cancelled` disagreement → double refund | §2.4 |
 | 3 | short-circuit bypasses `$granted` → oversell | §2.4 |
 | 3 | `refund_manual_review` never cleared | §2.2 |
-| 3 | guard refusal returns success shape | §2.3 — a refused transition raises; it cannot be mistaken for success |
+| 3 | guard refusal returns success shape | §2.3's `rows == 0`, **plus a caller change**. Raising alone is not enough: the chain would reject and render "Payment processing error" to a parent who has already paid. The caller must route to completion, the decision `_settle_callback` already makes for `already_completed` |
 | 3 | `_apply_refund_result` unguarded | §2.3 |
 | 3 | fourth unguarded write at `:197` | §2.3 |
-| 3 | promotion path silent no-op | §2.4 |
+| 3 | promotion path silent no-op | **NOT fixed by §2.4.** The cause is `create_for_payment`'s `ON CONFLICT (session_id, student_id, payment_id) DO NOTHING` meeting an existing `waitlisted` row. A shared *read* predicate does not make an INSERT promote. Needs `DO UPDATE SET status='active' WHERE enrollments.status='waitlisted'`, or the UPDATE-then-INSERT shape `demote_to_waitlisted` already uses |
 | 3 | guard locks outside a transaction | §2.3 `AutoCommit` check |
 
 ## 4. What this does not fix
@@ -227,16 +216,29 @@ Stated so the next review does not have to find them:
 - **`Enrollment::enroll_children` and `Waitlist::accept_offer` still take no session lock.** The capacity gate is correct against concurrent *payments* and remains racy against those two writers. Plan Coverage Gap 2 already records this; it is Leg 8's.
 - **Two settlements serializing is proven only by a held lock, not by a concurrency test.** The suite has no two-process test. Lens A's probes did this by hand and found the current locks correct.
 - **A `refunded` row is not evidence money moved.** `_apply_refund_result` never reads `$refund->{status}`; Stripe can hold a Connect refund `pending`. The spec assigns this to Leg 3.
-- **The renaming of `completed` is a live-data migration** and may be judged not worth it. See §2.1.
+- **Three call sites have no transaction and one must not have one.** `_apply_refund_result` runs post-COMMIT deliberately. §2.3's conditional UPDATE is what makes this a non-issue — but any future move back toward a transaction-scoped guard has to account for it.
+- **`save()` never checks `->rows`, and `_apply_intent` discards `_lock_and_refresh`'s return.** Both are silent-no-op paths that survive this design unless fixed alongside it.
 
 ## 5. Sequencing
 
-1. **Documentation debt first, separately.** Six Declared Deviations owed, eight blocking plan edits, Task 9's runbook. None of it depends on this design, and the plan currently instructs operators into a status that breaks the row.
-2. **The state machine, behind the existing tests.** All 21 known defects have regression tests already; they are the acceptance criteria.
+0. **Today, ahead of everything: fix the runbook line that bricks a row.** `docs/superpowers/plans/2026-08-15-priceops-leg-0-atomic-money-path.md:623` instructs an operator to write `refund_failed`. That is not documentation debt of the same kind as the deviations owed — it is a live instruction that puts a money row into a status in neither classifier. One-line edit.
+1. **The rest of the documentation debt, separately.** Six Declared Deviations owed, eight blocking plan edits, Task 9's runbook. None of it depends on this design, and the plan currently instructs operators into a status that breaks the row.
+2. **Write the failing tests for round 3's eight defects.** The earlier claim here — *"all 21 known defects have regression tests already"* — was **false**. The suite is green with all eight present, so a machine landed against it would be unfalsifiable, on a branch whose history is that each round's fixes introduced the next round's. Each test is roughly sixty lines against the existing `payment-capacity-obligation.t` fixture.
+   Then fix, in the current code, the three whose fix is two lines: the `cancelled` vocabulary, `$granted`, and clearing `refund_manual_review`. The machine then lands against a suite that has already gone red and green once.
    Five gaps must be closed first, or the machine ships with the same blind spots the guards had: a webhook delivered onto a `refunded`/`refund_pending` row (the webhook suites only ever build `pending` ones); a `pending` seat held by *another* payment counting against capacity; `already_seated_by` without its `payment_id` predicate; the workflow step's post-COMMIT refund path, which a bare `die` proves is dead to all 65 files; and two concurrent carts over the same session pair, which no test takes.
-3. **The columns**, with the per-tenant loop and a revert-harness entry.
-4. **Only then Task 6.** Its partial unique index encodes the enrollment status vocabulary, and §2.4 changes who owns that.
+3. **§2.4 — the seat predicate — before §2.2's CHECK constraint, not after.** This ordering is load-bearing. `CHECK (refund_owed_cents <= amount_cents)` turns the unfixed `cancelled` bug from an overpayment into a *hard failure*: the re-owed debt accumulates on each redelivery until a later one violates the constraint, throws inside the settlement transaction, and rolls back `mark_completed` and the enrollments with it — 500 to Stripe, retry into the same wall, family gets nothing.
+4. **The columns**, with the per-tenant loop and a revert-harness entry.
+5. **Only then Task 6.** Its partial unique index encodes the enrollment status vocabulary, and §2.4 changes who owns that.
 
 ## 6. The honest caveat
 
-I designed the guards this document replaces, and three review rounds found 21 defects in them. The argument for this design is structural — one write path, one classifier, one seat predicate, illegal transitions rejected by construction — but I am not the right person to be the only reader of it. It should be reviewed before it is built.
+I designed the guards this document replaces, and three review rounds found 21 defects in them. Asking for a reader was the right call, and the reader earned it:
+
+- It found a **blocker at the one site this document certified as safe** (§1.2's `:635` row). The table had a single column, "Lock held?", and I had reasoned that locking implied authority to write. It does not.
+- It found that **§5's acceptance criteria did not exist** — I claimed all 21 defects had regression tests; round 3's eight do not, and the suite is green with all of them present.
+- It replaced §2.3 with a **materially better mechanism**. The conditional UPDATE removes the need for the lock rather than enforcing it, and gets more of the 21 for a smaller diff. My `transition()` would have died method-not-found on first use, and its `$to = undef` escape disabled the check for the majority of writes on this path.
+- It found that **§3's promotion-no-op mapping was wrong** — a shared read predicate cannot make an INSERT promote.
+
+That is four substantive corrections to a document whose thesis is that I keep fixing the site rather than the property. The thesis survives; my execution of it needed the same scrutiny as the code did.
+
+This revision has not itself been reviewed.
