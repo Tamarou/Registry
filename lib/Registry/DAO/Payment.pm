@@ -506,18 +506,26 @@ field $_stripe_client = undef;
         for my $item (@$items) {
             my $session_id = $item->{session_id} or next;
 
-            # Already seated by an earlier delivery: leave it alone.
+            # What this cart already holds here decides whether we adjudicate.
             #
-            # The spec requires this short-circuit and an earlier draft dropped
-            # it. Without it every delivery re-adjudicates the whole cart from
-            # scratch, and because the predicate excludes this payment's own
-            # rows, any enrollment that landed in the meantime -- an admin add,
-            # a transfer, another family's cart -- makes the session look full
-            # and demotes a child who was seated and paid days ago. Stripe
-            # retries for three days and a dashboard resend is unbounded, so
-            # this needs no concurrency to happen.
-            next if Registry::DAO::Enrollment->already_seated_by(
+            # A seat in hand is left alone AND counted against this cart's own
+            # capacity: payment_fits_session excludes this payment's rows, so
+            # skipping without counting makes the cart invisible to itself and
+            # it oversells the session on the next delivery. The two have to
+            # move together -- fixing the vocabulary without the count just
+            # changes which way it is wrong.
+            my $held = Registry::DAO::Enrollment->cart_seat_state(
                 $db, $id, $session_id, $item->{child_id} );
+
+            if ( $held eq 'seated' ) {
+                $granted{$session_id}++;
+                next;
+            }
+
+            # cancelled, refunded, or anything else terminal belongs to whoever
+            # put it there. Re-adjudicating it un-does an admin drop and re-owes
+            # a share another system has already returned.
+            next if $held eq 'closed';
 
             # The seat was checked before the parent paid and is granted after.
             # In between is a Stripe round trip, so it is re-checked here, under
@@ -798,6 +806,12 @@ field $_stripe_client = undef;
         # reads an unpaid debt and returns the same money again.
         delete $metadata->{refund_owed_cents};
         delete $metadata->{refund_owed_children};
+        # And the manual-review flag, which is part of the same obligation.
+        # Left behind it stays truthy forever, so every later delivery re-enters
+        # the obligation write and stamps refund_pending over this terminal
+        # status -- putting a settled row back in the runbook's queue with a
+        # zero amount and a degenerate idempotency key.
+        delete $metadata->{refund_manual_review};
 
         $self->save($db);
         return;

@@ -211,24 +211,40 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
     
     # Count enrollments for a session by status
-    # Does this payment already hold a granted seat for this child in this
-    # session? If so a previous delivery adjudicated it and won, and a later
-    # delivery must not revisit the decision.
+    # What does this payment already hold for this (session, child)?
     #
-    # 'pending' counts as granted: it is a seat in hand as far as capacity is
-    # concerned (payment_fits_session counts it), so re-adjudicating one would
-    # demote a child who holds a place.
-    sub already_seated_by ($class, $db, $payment_id, $session_id, $child_id) {
+    # One predicate, three answers, because the two that preceded it disagreed.
+    # `already_seated_by` short-circuited on active|pending while
+    # demote_to_waitlisted treated every non-waitlisted row as demotable -- so a
+    # `cancelled` row fell between them: not short-circuited, therefore
+    # re-adjudicated, and not waitlisted, therefore counted as a fresh
+    # demotion. An admin's drop was silently un-cancelled and its share owed a
+    # second time, under an idempotency key Stripe had never seen. The other
+    # refund system's ledger already said that money went back.
+    #
+    #   seated     -- active or pending. A seat in hand: leave it, and count it
+    #                 against this cart's own capacity.
+    #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
+    #   closed     -- cancelled, refunded, or any other terminal state another
+    #                 system owns. Not ours to re-adjudicate at all.
+    #   none       -- nothing here; adjudicate normally.
+    sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
         $db = $db->db if $db isa Registry::DAO;
 
-        return $db->select(
-            $class->table, ['id'],
+        my $row = $db->select(
+            $class->table, ['status'],
             {   payment_id => $payment_id,
                 session_id => $session_id,
                 student_id => $child_id,
-                status     => { -in => [ 'active', 'pending' ] },
             },
-        )->hash ? 1 : 0;
+        )->hash;
+
+        return 'none' unless $row;
+
+        my $status = $row->{status} // '';
+        return 'seated'     if $status eq 'active' || $status eq 'pending';
+        return 'waitlisted' if $status eq 'waitlisted';
+        return 'closed';
     }
 
     # Move a paid child to the waitlist because the seat went while they paid.
@@ -253,7 +269,10 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             {   session_id => $data->{session_id},
                 student_id => $student_id,
                 payment_id => $data->{payment_id},
-                status     => { '!=' => 'waitlisted' },
+                # Only a seat in hand is demotable. '!=' => 'waitlisted' also
+                # matched cancelled and refunded rows, which is how an admin's
+                # drop got silently un-cancelled and re-owed.
+                status     => { -in => [ 'active', 'pending' ] },
             },
         )->rows;
 
