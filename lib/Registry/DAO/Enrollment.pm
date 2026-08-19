@@ -213,20 +213,20 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # Count enrollments for a session by status
     # What does this payment already hold for this (session, child)?
     #
-    # One predicate, three answers, because the two that preceded it disagreed.
-    # `already_seated_by` short-circuited on active|pending while
-    # demote_to_waitlisted treated every non-waitlisted row as demotable -- so a
-    # `cancelled` row fell between them: not short-circuited, therefore
-    # re-adjudicated, and not waitlisted, therefore counted as a fresh
-    # demotion. An admin's drop was silently un-cancelled and its share owed a
-    # second time, under an idempotency key Stripe had never seen. The other
-    # refund system's ledger already said that money went back.
+    # One predicate with three answers, because every consumer of this question
+    # must agree on it. A cancelled row in particular must be neither
+    # re-adjudicated nor treated as a fresh demotion: doing the first
+    # un-cancels an admin's drop, and doing the second owes its share a second
+    # time under an idempotency key Stripe has never seen, against money the
+    # enrollment's own refund_status already records as returned.
     #
     #   seated     -- active or pending. A seat in hand: leave it, and count it
     #                 against this cart's own capacity.
     #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
-    #   closed     -- cancelled, refunded, or any other terminal state another
-    #                 system owns. Not ours to re-adjudicate at all.
+    #   closed     -- cancelled. `enrollments_status_check` bounds this column to
+    #                 pending|active|cancelled|waitlisted, so cancelled is the
+    #                 whole category: a terminal drop another system owns, and
+    #                 not ours to re-adjudicate.
     #   none       -- nothing here; adjudicate normally.
     sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
         $db = $db->db if $db isa Registry::DAO;
@@ -269,9 +269,9 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             {   session_id => $data->{session_id},
                 student_id => $student_id,
                 payment_id => $data->{payment_id},
-                # Only a seat in hand is demotable. '!=' => 'waitlisted' also
-                # matched cancelled and refunded rows, which is how an admin's
-                # drop got silently un-cancelled and re-owed.
+                # Only a seat in hand is demotable. A predicate of
+                # "not already waitlisted" also matches a cancelled row, which
+                # un-cancels an admin's drop and re-owes its share.
                 status     => { -in => [ 'active', 'pending' ] },
             },
         )->rows;
@@ -293,26 +293,6 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         return 1;
     }
 
-    # Does this payment's share of a session still fit, re-checked at capture?
-    #
-    # Separate from count_for_session on purpose. This one excludes the
-    # payment's own rows, because finalize_enrollment writes them as 'active'
-    # and a re-check that counted them would see the payment competing with
-    # itself and refund a seat it had just been granted. count_for_session's
-    # other callers are on transfer paths with no payment in hand and want the
-    # unfiltered count.
-    #
-    # The comparison is count + this payment's items for the session, not count
-    # alone: two siblings arriving together into one remaining seat is 9 + 2
-    # against 10, and comparing the count gives 9 >= 10 and admits both.
-    #
-    # NULL or zero capacity is unlimited. Zero is not hypothetical -- no CHECK
-    # constraint forbids it, and nine live sites already read capacity with a
-    # truthiness test. A `defined` check here would refund every capacity-0
-    # session at capture while all nine waved the enrollment through.
-    #
-    # Correct only with the session row locked and inside a transaction; the
-    # caller takes that lock before calling.
     # Is there room for one more child from this payment, given how many seats
     # this cart has already taken in this pass?
     #
