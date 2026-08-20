@@ -125,6 +125,8 @@ Renaming `completed` buys nothing. The defects came from **two classifiers**, no
 
 `partially_refunded` disappears — a partial return is `completed` with a non-zero `refunded_cents`, which is what it actually is. **One classifier**, `is_settled`, derived from this table. No second list to fall out of sync.
 
+**There are now three classifiers to collapse, not two.** Round 4 added `_money_returned` (`refunded|partially_refunded`) to gate `finalize_enrollment`, because neither existing predicate asks the right question: `_money_has_moved` includes `completed`, and `mark_completed` runs immediately above `finalize_enrollment` in the same transaction, so using it refuses every first settlement — measured, not reasoned. `_refundable_status` also includes `completed`. It is named rather than inlined precisely so this section can find it.
+
 And the cheapest mechanism in this document, which an earlier draft noted the absence of and then failed to propose:
 
 ```sql
@@ -150,7 +152,14 @@ CREATE INDEX idx_payments_refund_owed
 
 `sql/deploy/payments-amount-cents.sql:18` is the precedent, including the per-tenant-schema loop. This buys: a typed integer an operator cannot corrupt with a quoted string; the invariant that a debt cannot exceed the cart; an index Leg 3's `ProcessRefunds` can drive; and a cumulative refunded total that survives a second refund, which today is recoverable only from Stripe's list endpoint.
 
-`refund_owed_children` stays in jsonb — nothing filters on it, and it exists only to derive the idempotency key. `refund_manual_review` becomes a **fourth state on the obligation**, not a stray flag: `owed`, `discharged`, `unresolvable`, `none`.
+**Two confirmed defects this section must fix, found in review round 4 and deferred here by decision.** Both come from one root cause: the obligation is a mutable accumulator with no version, and both the Stripe idempotency key and the discharge assume it is stable across a network round trip. Neither is fixed by §2.3's conditional UPDATE — the arithmetic is wrong under any locking discipline.
+
+- **The key changes as the debt grows — double refund.** `capacity_refund_key` derives from `refund_owed_children`, and `_record_capacity_obligation` unions that list while accumulating the cents. Both callers then refund the accumulated *total*, not the delta (`Webhooks.pm:219`, `WorkflowSteps/Payment.pm:313`). Debt 5000 for child A goes out under `refund:capacity:P:A`; if the local discharge fails, a later pass adds child B and 8000 goes out under `refund:capacity:P:A,B` — a key Stripe has never seen. **13000 sent against an 8000 obligation**, with the platform's application fee returned twice alongside it. Confirmed independently by two review lenses. The comment above the method claims the key is "Stable for one debt"; it is not.
+- **The discharge deletes instead of subtracting — lost refund.** `$refund_cents` is captured at `Payment.pm:957`, *before* the Stripe call, and `_apply_refund_result` deletes `refund_owed_cents` outright. A debt that grew during the round trip is erased down to zero — the increment gone, with no row, no status and nothing for the runbook to find. Related: `refund_async`'s `->catch` sits below the `->then`, so a local database throw from `_apply_refund_result` is reported as `"Refund failed: ..."`, indistinguishable from Stripe refusing. The caller cannot tell "no money moved, safe to retry" from "money moved, do not retry".
+
+The typed columns alone fix neither. The design needs a **per-debt sequence**: increment a counter on each `_record_capacity_obligation` write, key each refund `refund:capacity:$id:$n`, and send that increment's own delta rather than the balance. Each attempt then carries a key stable for exactly the money it covers, and the discharge becomes `refund_owed_cents = refund_owed_cents - ?` rather than a delete.
+
+`refund_owed_children` stays in jsonb — nothing filters on it, and once the sequence above owns the key it no longer derives one. `refund_manual_review` becomes a **fourth state on the obligation**, not a stray flag: `owed`, `discharged`, `unresolvable`, `none`.
 
 ### 2.3 One write path: a conditional UPDATE
 

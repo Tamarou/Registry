@@ -428,4 +428,45 @@ subtest 'a held seat counts regardless of where it sits in the cart' => sub {
     is $filled, 2, 'the 2-seat session holds exactly two';
 };
 
+subtest 'a waitlisted child is not re-adjudicated when a seat frees up' => sub {
+    # An earlier delivery demoted this child and owed their share back. A
+    # redelivery after a seat frees cannot actually promote them --
+    # create_for_payment conflicts on (session_id, student_id, payment_id)
+    # against the row the demotion wrote and does nothing -- but without the
+    # skip it still takes the seating branch, which credits %granted for a seat
+    # that was never created and mails a confirmation to a family whose child
+    # is on the waitlist with a refund outstanding.
+    my $session = a_session(2);
+    my $waiting = a_child();
+    my $second  = a_child();
+    my $payment = a_paid_cart( { session => $session, child => $waiting },
+                               { session => $session, child => $second } );
+
+    # Both seats taken by outsiders, so the first pass waitlists both children.
+    occupy( $session, 2 );
+    settle( reload($payment) );
+    is status_for_child( $payment, $session, $waiting ), 'waitlisted',
+        'the first pass waitlisted them';
+
+    my $notes_before = $db->query(
+        q{SELECT COUNT(*) FROM notifications WHERE user_id = ?},
+        $parent->id)->array->[0];
+
+    # An admin drops one outsider: exactly one seat is now genuinely free.
+    $db->query(
+        q{DELETE FROM enrollments WHERE id = (
+              SELECT id FROM enrollments
+               WHERE session_id = ? AND payment_id IS NULL
+               LIMIT 1)}, $session->id);
+
+    settle( reload($payment) );
+
+    is status_for_child( $payment, $session, $waiting ), 'waitlisted',
+        'the redelivery does not claim to seat a child it cannot seat';
+
+    is $db->query(q{SELECT COUNT(*) FROM notifications WHERE user_id = ?},
+        $parent->id)->array->[0], $notes_before,
+        'and sends no enrollment confirmation for a seat that was not created';
+};
+
 done_testing;

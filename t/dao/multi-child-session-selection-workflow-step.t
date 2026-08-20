@@ -282,6 +282,21 @@ subtest 'Submit with valid session selections' => sub {
     is scalar(@{$data->{enrollment_items}}), 2, 'Two enrollment items';
     ok $data->{session_selections}, 'Session selections stored';
 
+    # Deterministic order. finalize_enrollment awards the last seats of a full
+    # session in list order, so an unsorted hash walk lets Perl's per-process
+    # key randomization decide which sibling loses a seat -- and with siblings
+    # at different prices, how much is refunded. Two identical registrations
+    # would refund different amounts.
+    #
+    # Detection here is probabilistic, not strong: with two children an
+    # unsorted hash walk produces the sorted order half the time, so this
+    # catches a regression on roughly every other run. It never false-fails --
+    # sorted code always passes -- but the durable guard is the `sort` in
+    # MultiChildSessionSelection and the comment beside it, not this assertion.
+    is_deeply [ map { $_->{child_id} } @{ $data->{enrollment_items} } ],
+        [ sort ( $child1->id, $child2->id ) ],
+        'Enrollment items are in a deterministic order, not hash order';
+
     # Check session selections
     is $data->{session_selections}->{$child1->id}, $session1->id, 'Child1 session stored';
     is $data->{session_selections}->{$child2->id}, $session1->id, 'Child2 session stored';

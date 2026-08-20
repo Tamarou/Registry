@@ -332,21 +332,31 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return 0 unless defined $endpoint_secret;
 
         my @sig_elements = split /,/, $sig_header;
-        my %sigs;
+        my ( @v1, $timestamp );
 
+        # v1 accumulates. During endpoint-secret rotation Stripe signs the
+        # payload with both the old and the new secret and sends both in one
+        # header, so keeping only the last one rejects live confirmations for
+        # the whole rotation window -- and repeated 4xx is how Stripe disables
+        # an endpoint. Whichever secret this deployment holds must verify,
+        # wherever its signature sits in the list.
         for my $element (@sig_elements) {
             my ($key, $value) = split /=/, $element, 2;
             if ($key eq 'v1') {
-                $sigs{v1} = $value;
+                push @v1, $value;
             } elsif ($key eq 't') {
-                $sigs{t} = $value;
+                $timestamp = $value;
             }
         }
 
-        return 0 unless $sigs{v1} && $sigs{t};
+        return 0 unless @v1;
+        # A bare `unless $timestamp` would also reject t=0. Test for presence.
+        return 0 unless defined $timestamp && length $timestamp;
+        # The header is attacker-controlled, so a non-numeric t must be a quiet
+        # rejection rather than an uninitialized-value warning in the log.
+        return 0 unless $timestamp =~ /\A[0-9]+\z/;
 
         # Check timestamp (within 5 minutes)
-        my $timestamp = $sigs{t};
         my $current_time = time();
         return 0 if abs($current_time - $timestamp) > 300;
 
@@ -354,7 +364,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $signed_payload = $timestamp . '.' . $payload;
         my $expected_sig = hmac_sha256_hex($signed_payload, $endpoint_secret);
 
-        return _secure_compare($expected_sig, $sigs{v1});
+        # Compare against every candidate, and do not short-circuit: returning
+        # early on the first match would leak, through timing, which signature
+        # in the list matched.
+        my $matched = 0;
+        $matched |= _secure_compare($expected_sig, $_) for @v1;
+        return $matched ? 1 : 0;
     }
 
     sub _secure_compare ($a, $b) {

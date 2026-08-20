@@ -103,7 +103,7 @@ Where the shipped code differs from what Tasks 0-5b specify. Distinct from
 records **code-vs-plan**, and every entry was derived from
 `git diff origin/main...HEAD` and verified against the tree, not recalled.
 
-The count is eight. An earlier note in the settlement spec said six were owed
+The count is fourteen: eight from the first pass over this branch, plus six from review round 4. An earlier note in the settlement spec said six were owed
 without enumerating them; that number was unsourced and is superseded by this
 list.
 
@@ -157,6 +157,56 @@ list.
    blocking Stripe call. Task 1 specifies the claim and the prefetch, not this
    read. It is explicitly not the claim — the `ON CONFLICT` inside the
    transaction still decides.
+
+### Round 4 additions
+
+A fourth review round (four lenses, one rejected claim) produced these, none of
+which any task specifies:
+
+9. **A third status classifier, `_money_returned`** (`refunded|partially_refunded`),
+   gating `finalize_enrollment`. Neither existing predicate asks the right
+   question: `_money_has_moved` includes `completed`, and `mark_completed` runs
+   immediately above `finalize_enrollment` in the same transaction, so using it
+   refuses every first settlement — measured, not reasoned. `_refundable_status`
+   also includes `completed`. `refund_pending` is deliberately excluded: that
+   money is owed, not returned, and the rest of the cart still needs
+   adjudicating on redelivery.
+
+10. **`finalize_enrollment` refuses a row whose money went back.** The webhook's
+    guard covers `mark_completed` only, so a redelivery onto a `refunded` row
+    re-adjudicated the whole cart and seated every unseated item — a child
+    enrolled against money the parent already got back. Placed in the shared
+    method rather than at the webhook, so the callback path is covered too.
+
+11. **A `waitlisted` seat is no longer re-adjudicated.** It could never actually
+    be promoted — `create_for_payment` conflicts on
+    `(session_id, student_id, payment_id)` against the row the demotion wrote —
+    but the seating branch still credited `%granted` for a seat that was never
+    created and mailed a confirmation to a family whose child was on the
+    waitlist with a refund outstanding. The phantom grant then under-counted
+    capacity for the next item in that session.
+
+12. **`enrollment_items` is built in sorted order.** `finalize_enrollment` awards
+    the last seats of a full session in list order, so an unsorted hash walk let
+    Perl's per-process key randomization decide which sibling lost a seat — and
+    with siblings at different prices, how much was refunded.
+
+13. **The signature parser accumulates `v1` rather than keeping the last.**
+    Stripe sends both the old and new signature in one header during
+    endpoint-secret rotation. It also rejects a non-numeric `t` explicitly, so
+    an attacker-controlled header cannot leak an uninitialized-value warning
+    into the log, and tests `t` for presence rather than truth so `t=0` is not
+    read as absent.
+
+14. **Invoice handlers die on an unresolvable subscription, and their user agent
+    has timeouts.** `_stripe_request` warns and returns undef on any API error,
+    and Perl's rvalue deref of undef does not die — so the handler read an undef
+    `tenant_id`, fell out of `return unless`, and let the caller stamp the event
+    processed and COMMIT. The tenant was never moved, permanently, because every
+    retry then hit the dedup claim. Newer Stripe API versions moved the id to
+    `invoice.parent.subscription_details.subscription`, making that the routine
+    case. The timeouts match `Registry::Service::Stripe`; without them the
+    `//=` fallback could hold the dedup claim open for an unbounded wait.
 
 ## Spec Citations Corrected
 

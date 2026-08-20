@@ -121,12 +121,28 @@ subtest 'a child already waitlisted does not create a second debt' => sub {
     is finalize($payment), 10000, 'first pass owes the lost seat';
 
     # Clear the debt as a successful refund would, then deliver again.
-    my $paid = reload($payment);
     $db->query(q{UPDATE payments SET metadata = metadata - 'refund_owed_cents'
                   WHERE id = ?}, $payment->id);
 
-    is finalize(reload($payment)), 0,
+    finalize(reload($payment));
+
+    # Asserted on the row, not on finalize_enrollment's return value: neither
+    # caller reads that return (Webhooks.pm re-reads the committed row, and the
+    # workflow step re-reads it too), so a return-value assertion grades
+    # something no production code consults.
+    #
+    # The row is still refund_pending from the first pass, so the second
+    # delivery is now refused outright by finalize_enrollment's returned-or-owed
+    # gate rather than recomputing its way to zero. Stronger, and it leaves the
+    # gate that matters -- no seat granted against money owed back -- in force.
+    my $meta = $db->select('payments', ['metadata'], { id => $payment->id })
+        ->expand->hash->{metadata};
+    is $meta->{refund_owed_cents}, undef,
         'a second delivery owes nothing for a child already waitlisted';
+    is $db->query(q{SELECT COUNT(*) FROM enrollments
+                     WHERE payment_id = ? AND status IN ('active','pending')},
+        $payment->id)->array->[0], 0,
+        'and seats nobody against the money it already owes back';
 };
 
 subtest 'the idempotency key names the children it refunds' => sub {

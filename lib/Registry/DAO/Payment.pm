@@ -488,6 +488,19 @@ field $_stripe_client = undef;
     }
 
     method finalize_enrollment ($db) {
+        # Seating anyone against money that has been returned, or is owed back,
+        # is a delivery the parent no longer paid for. The webhook's guard above
+        # covers mark_completed only, so without this a redelivery onto a
+        # refunded row re-adjudicates the whole cart and seats every unseated
+        # item.
+        #
+        # NOT _money_has_moved: mark_completed runs immediately above this in
+        # the same transaction, so on the normal path $status is already
+        # 'completed' by the time we get here and that predicate would refuse
+        # every first settlement. The question here is narrower -- has this
+        # money gone back to the payer.
+        return if __CLASS__->_money_returned($status);
+
         my $items =
             ( ref $metadata eq 'HASH' && ref $metadata->{enrollment_items} eq 'ARRAY' )
             ? $metadata->{enrollment_items}
@@ -509,11 +522,13 @@ field $_stripe_client = undef;
         # it means an unseated item earlier in the list is adjudicated against a
         # capacity that under-counts by every seat still ahead of it.
         #
-        # The loop below re-reads each state rather than caching these: a cart
-        # holding the same (session, child) twice would see a stale 'none' on
-        # the second pass and try to seat it again, which the payment-blind
-        # enrollments_session_student_type_unique turns into a die inside the
-        # settlement transaction, after capture. Two reads is the cheap side.
+        # The loop below re-reads each state rather than caching these. The
+        # earlier justification here -- that a cart could hold the same
+        # (session, child) twice -- was wrong: MultiChildSessionSelection keys
+        # %selections by child id, so each child appears exactly once. The
+        # re-read is kept because the loop writes enrollment rows as it goes and
+        # a cached state would be stale against its own writes; it is not
+        # load-bearing for duplicates, which cannot occur.
         my %granted;   # session_id => seats this cart holds in this session
         for my $item (@$items) {
             my $sid = $item->{session_id} or next;
@@ -542,6 +557,17 @@ field $_stripe_client = undef;
             # put it there. Re-adjudicating it un-does an admin drop and re-owes
             # a share another system has already returned.
             next if $held eq 'closed';
+
+            # An earlier delivery already demoted this child and owed their
+            # share back. Re-adjudicating cannot promote them -- create_for_payment
+            # conflicts on (session_id, student_id, payment_id) against the very
+            # row that demotion wrote and does nothing -- but it would still
+            # credit %granted for a seat that was never created and send a
+            # confirmation email to a family whose child is on the waitlist.
+            # The phantom grant then under-counts capacity for the next item in
+            # this session, which is the defect the pre-pass above exists to
+            # prevent, reintroduced one item at a time.
+            next if $held eq 'waitlisted';
 
             # The seat was checked before the parent paid and is granted after.
             # In between is a Stripe round trip, so it is re-checked here, under
@@ -799,6 +825,24 @@ field $_stripe_client = undef;
     #
     # An allow-list rather than a widened deny-list: 'pending' and 'failed' rows
     # were never charged, and refunding one would send money that never arrived.
+    # A third status classifier, and it is deliberately named rather than
+    # inlined at its one call site so that the collapse in the settlement
+    # spec's section 2.1 has something to grep for. It answers a question
+    # neither of the other two asks: not "did money move" (_money_has_moved,
+    # which includes completed) and not "may we refund" (_refundable_status,
+    # which also includes completed), but "has this money gone back to the
+    # payer" -- the set in which no further seat may be granted.
+    #
+    # refund_pending is deliberately NOT in it. That money is owed, not yet
+    # returned, and the debt belongs to one child whose seat went; the rest of
+    # the cart still needs adjudicating on redelivery. Excluding it here is what
+    # lets a second delivery demote a second child and accumulate the balance.
+    sub _money_returned ($class, $status) {
+        return ( $status // '' )
+            =~ /\A (?: refunded | partially_refunded ) \z/x
+            ? 1 : 0;
+    }
+
     sub _refundable_status ($class, $status) {
         return ( $status // '' ) =~ /\A (?: completed | refund_pending ) \z/x ? 1 : 0;
     }

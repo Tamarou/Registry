@@ -321,6 +321,29 @@ subtest 'a delivery onto a settled row does not re-complete it (Leg 0 Task 3)' =
         is $row->{status}, $settled,
             "a $settled payment is not re-completed by a later delivery";
         ok defined $row->{completed_at}, "and keeps its completion stamp ($settled)";
+
+        # The status guard covers mark_completed only. finalize_enrollment ran
+        # below it unconditionally, so a settled row's cart was re-adjudicated
+        # and any unseated item seated -- a child enrolled against money that
+        # has gone back to the payer. Graded separately from the status,
+        # because the status assertion above passes either way.
+        #
+        # refund_pending is excluded on purpose: that money is owed, not
+        # returned, the debt belongs to one child whose seat went, and the rest
+        # of the cart must still be adjudicated on redelivery. Asserting
+        # zero-enrollments there would have pinned the wrong behaviour and
+        # broken the debt-accumulation case in payment-capacity-obligation.t.
+        my $enrolled = $db->query(
+            q{SELECT COUNT(*) FROM enrollments WHERE payment_id = ?},
+            $payment->id)->array->[0];
+        if ( $settled eq 'refund_pending' ) {
+            is $enrolled, 1,
+                'a refund_pending row still adjudicates the rest of its cart';
+        }
+        else {
+            is $enrolled, 0,
+                "and no enrollment is created against $settled money";
+        }
     }
 };
 

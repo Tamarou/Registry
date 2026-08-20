@@ -132,7 +132,12 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             # so calculate_enrollment_total (called from the Payment step) can
             # iterate children and look up pricing without re-querying the family.
             my @enrollment_items;
-            for my $child_id (keys %selections) {
+            # Sorted. finalize_enrollment awards the last seats of a full
+            # session in list order, so an unsorted hash walk lets Perl's
+            # per-process key randomization decide which sibling loses a seat --
+            # and with siblings at different prices, how much is refunded. Two
+            # identical registrations would refund different amounts.
+            for my $child_id (sort keys %selections) {
                 push @enrollment_items, {
                     child_id   => $child_id,
                     session_id => $selections{$child_id},

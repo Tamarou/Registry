@@ -15,6 +15,12 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
     ADJUST {
         $ua = Mojo::UserAgent->new;
+        # Matching Registry::Service::Stripe. Without these, the //= fallback in
+        # the invoice handlers can hold the webhook's dedup claim open across an
+        # unbounded network wait -- and a concurrent redelivery blocks behind it
+        # on the uncommitted claim for the same duration.
+        $ua->connect_timeout(10);
+        $ua->request_timeout(30);
         $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
         $api_base = 'https://api.stripe.com/v1';
     }
@@ -321,11 +327,29 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
         # Get subscription to find tenant, unless the caller already fetched it
         # outside its transaction.
-        $subscription //= $self->get_subscription($subscription_id);
+        $subscription //= $self->get_subscription($subscription_id)
+            if defined $subscription_id;
+
+        # A lookup that failed is not the same as a subscription that is not
+        # ours, and the difference decides whether Stripe retries. _stripe_request
+        # warns and returns undef on any API error, and Perl's rvalue deref of
+        # undef does not die -- so the old code read an undef tenant_id, fell out
+        # of the `return unless`, and let the caller stamp the event processed
+        # and COMMIT. The tenant was never moved, permanently and silently,
+        # because every retry then hits the dedup claim.
+        #
+        # Newer Stripe API versions moved this id to
+        # invoice.parent.subscription_details.subscription, so a missing
+        # $subscription_id is the routine case, not an exotic one.
+        die "Cannot resolve subscription for invoice event: "
+            . ( $subscription_id // 'no subscription id on the invoice' ) . "\n"
+            unless $subscription;
+
+        # Resolved, but not one of ours. A genuine no-op, and safe to mark
+        # processed -- there is nothing a retry would do differently.
         my $tenant_id = $subscription->{metadata}->{tenant_id};
-        
         return unless $tenant_id;
-        
+
         $self->update_billing_status($db, $tenant_id, 'past_due');
     }
 
@@ -335,11 +359,29 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
         # Get subscription to find tenant, unless the caller already fetched it
         # outside its transaction.
-        $subscription //= $self->get_subscription($subscription_id);
+        $subscription //= $self->get_subscription($subscription_id)
+            if defined $subscription_id;
+
+        # A lookup that failed is not the same as a subscription that is not
+        # ours, and the difference decides whether Stripe retries. _stripe_request
+        # warns and returns undef on any API error, and Perl's rvalue deref of
+        # undef does not die -- so the old code read an undef tenant_id, fell out
+        # of the `return unless`, and let the caller stamp the event processed
+        # and COMMIT. The tenant was never moved, permanently and silently,
+        # because every retry then hits the dedup claim.
+        #
+        # Newer Stripe API versions moved this id to
+        # invoice.parent.subscription_details.subscription, so a missing
+        # $subscription_id is the routine case, not an exotic one.
+        die "Cannot resolve subscription for invoice event: "
+            . ( $subscription_id // 'no subscription id on the invoice' ) . "\n"
+            unless $subscription;
+
+        # Resolved, but not one of ours. A genuine no-op, and safe to mark
+        # processed -- there is nothing a retry would do differently.
         my $tenant_id = $subscription->{metadata}->{tenant_id};
-        
         return unless $tenant_id;
-        
+
         $self->update_billing_status($db, $tenant_id, 'active');
     }
 
