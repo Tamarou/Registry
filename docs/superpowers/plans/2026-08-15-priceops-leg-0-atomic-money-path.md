@@ -4,8 +4,8 @@
 
 > ## STATUS — read before following any step below
 >
-> **Implemented and merged:** Tasks 0, 1, 1b, 2, 3, 4, 5a, 5b.
-> **Not implemented:** Tasks 6, 7a, 7b, 7c, 8, 9.
+> **Implemented and merged:** Tasks 0, 1, 1b, 2, 3, 4, 5a, 5b, 9.
+> **Not implemented:** Tasks 6, 7a, 7b, 7c, 8.
 >
 > **The guards this plan specifies in Tasks 2 through 5b are superseded.** Three
 > adversarial review rounds found 21 defects in them; 16 are fixed and **five
@@ -14,8 +14,19 @@
 > **first** — it lists the open defects and the design that closes them.
 >
 > Steps in implemented tasks are ticked. An unticked box in Tasks 0-5b means the
-> step was deliberately not done and the task body says why. Line numbers in
-> unimplemented tasks have drifted; re-derive them by searching for the text.
+> step was deliberately not done and the task body says why.
+>
+> **Every `file:line` in this document is stale, including in the implemented
+> tasks and in the prose sections.** `Payment.pm` grew by roughly 500 lines and
+> `Webhooks.pm` by 230, so citations drift by up to ~140 lines and some now land
+> on unrelated code: Coverage Gap 1's `Payment.pm:355` is `:495`; the row's
+> `Webhooks.pm:138` is `:247`, and `:138` today is tenant-billing logging. An
+> earlier version of this note scoped the warning to unimplemented tasks only,
+> which was wrong in the more dangerous direction. **Re-derive every citation by
+> searching for the quoted text, never by line number.**
+>
+> What the implementation did differently from what these tasks specify is
+> recorded in [Deviations From This Plan](#deviations-from-this-plan), below.
 >
 > **No live card goes through this path** until the state-machine spec's status
 > CHECK constraint and conditional-UPDATE write path land.
@@ -84,6 +95,68 @@ Thirteen places where this plan does something other than what the spec's Leg 0 
 12. **The idempotency token keeps its shipped name.** The row says `metadata[registry_idempotency_token]`; the live key is `idempotency_token` (`Payment.pm:129`, flattened to Stripe by `_stripe_metadata_params:51-62`). It predates #314 and is already on live Stripe objects, so renaming is a live-data change. Adopting the shipped name is the smaller diff.
 
 13. **Task 7b passes the tenant id through from `TenantPayment.pm:318-322`.** The row asks only that the tenant write join the transaction, read `trial_end` defensively, and cancel what it cannot record. The pass-through comes from a different spec bullet (`:2708-2711`) that names no leg. Without it the row's own item is dead code, since `Subscription.pm:131` and `:144` both sit under `if ($tenant_id)`.
+
+## Deviations From This Plan
+
+Where the shipped code differs from what Tasks 0-5b specify. Distinct from
+*Declared Deviations From The Spec* above, which records plan-vs-spec; this
+records **code-vs-plan**, and every entry was derived from
+`git diff origin/main...HEAD` and verified against the tree, not recalled.
+
+The count is eight. An earlier note in the settlement spec said six were owed
+without enumerating them; that number was unsourced and is superseded by this
+list.
+
+1. **The synchronous `Payment::refund` was deleted, not merely bypassed.**
+   Declared Deviation 1 says the capacity refund *calls* `refund_async` instead.
+   It does — and the branch also removes `method refund ($db, $args = {})`
+   entirely (it is `Payment.pm:448` on `main`). No caller remains in `lib/` or
+   `t/`. Removing a public method is wider than declining to call it, and that
+   was never declared.
+
+2. **Two status classifiers were introduced, and this plan names neither.**
+   `_money_has_moved` (`completed|refunded|partially_refunded|refund_pending`)
+   and `_refundable_status` (`completed|refund_pending`). They deliberately
+   disagree, and that disagreement is the central finding of the settlement
+   spec. A plan reader has no way to learn either exists.
+
+3. **Task 3's row lock became a whole-row refresh plus a settled-write
+   refusal.** The task specifies `SELECT ... FOR UPDATE`. The shipped
+   `_lock_and_refresh` also overwrites seven fields of the in-memory object,
+   and `_guard_settled_write` refuses on four statuses rather than the one the
+   task discusses. The refresh is load-bearing, not incidental: `save()` is a
+   whole-row write of six columns from the object, so from a stale object it is
+   a *restore*.
+
+4. **The seat predicate is a third new sub, `cart_seat_state`, undeclared.**
+   Deviations 2 and 8 declare new subs for the capacity check and the demotion
+   without naming them; this one is not declared at all. It returns
+   `seated`/`waitlisted`/`closed`/`none` and is scoped by `payment_id`.
+
+5. **`payment_fits_session` takes an `$already_granted` argument.** The plan's
+   capacity predicate has no such parameter. Without it, nine seats taken of
+   ten with two siblings gives `9 + 2 > 10` on both iterations: both children
+   waitlisted, both refunded, and the one free seat left unsold.
+
+6. **The capacity obligation is an undeclared jsonb schema.** Three metadata
+   keys — `refund_owed_cents`, `refund_owed_children`, `refund_manual_review` —
+   written by `_record_capacity_obligation`, keyed for Stripe by
+   `capacity_refund_key`, discharged by `_apply_refund_result`, settled
+   post-COMMIT by `Webhooks::_settle_owed_refund`. Task 5b specifies writing
+   `status = 'refund_pending'` and says nothing about what accompanies it.
+   Settlement spec §2.2 replaces this with typed columns.
+
+7. **`demote_to_waitlisted` carries a status predicate.** It updates only
+   `status IN ('active','pending')`. Deviation 8 declares the UPDATE-then-INSERT
+   shape but not the predicate, which is the part that stops a `cancelled` row
+   being un-cancelled and its share re-owed on every redelivery.
+
+8. **The webhook runs a third read before its transaction.** A
+   non-authoritative `SELECT` on `registry.webhook_events` guards
+   `_prefetch_subscription`, so a redelivery of an already-handled event skips a
+   blocking Stripe call. Task 1 specifies the claim and the prefetch, not this
+   read. It is explicitly not the claim — the `ON CONFLICT` inside the
+   transaction still decides.
 
 ## Spec Citations Corrected
 
@@ -638,22 +711,22 @@ The spec is explicit that this is not optional (`:2624-2632`): *"With no timeout
 - Consumes: Task 5b — it is 5b that writes the `refund_pending` state this runbook clears. (Task 4 supplies the guard that lets a `refund_pending` row be refunded at all, but the stranded row itself comes from 5b.)
 - Produces: a runbook section. There is no automated reader until Leg 3, so this leg writes the procedure rather than implying one exists.
 
-- [ ] **Step 1: Add `### Clearing a stranded refund_pending payment`** after the refund-policy subsection, stating: the state arises only from a post-COMMIT failure; Stripe's redelivery does **not** heal it, because the dedup claim committed in the same transaction dedups the retry away by design; and there is no automated reader until Leg 3.
-- [ ] **Step 2: Write the procedure — list before re-issuing.** `GET /v1/refunds?payment_intent=<id>` under `Stripe-Account` first. A `succeeded` Refund settles the row; a `pending` one is left alone; only an **empty list** justifies re-issuing.
+- [x] **Step 1: Add `### Clearing a stranded refund_pending payment`** after the refund-policy subsection, stating: the state arises only from a post-COMMIT failure; Stripe's redelivery does **not** heal it, because the dedup claim committed in the same transaction dedups the retry away by design; and there is no automated reader until Leg 3.
+- [x] **Step 2: Write the procedure — list before re-issuing.** `GET /v1/refunds?payment_intent=<id>` under `Stripe-Account` first. A `succeeded` Refund settles the row; a `pending` one is left alone; only an **empty list** justifies re-issuing.
       **A `failed` Refund must NOT be written as `refund_failed`.** That string appears nowhere in `lib/` and is in neither status classifier: `_money_has_moved` (`completed|refunded|partially_refunded|refund_pending`) and `_refundable_status` (`completed|refund_pending`). Writing it does both bad things at once — the row is locked out of every future refund, *and* the next Stripe redelivery sees an unsettled payment and re-completes it. Leave a failed refund as `refund_pending` with the obligation intact, and record the failure outside the status column (a note on the ticket, not the row) until a status is added to both classifiers. Re-POSTing under the stable key is a double refund waiting on a clock — Stripe prunes idempotency keys after 24 hours.
-- [ ] **Step 3: Give the finding query, per tenant schema** — `payments` is tenant-scoped.
-- [ ] **Step 4: Commit.**
+- [x] **Step 3: Give the finding query, per tenant schema** — `payments` is tenant-scoped.
+- [x] **Step 4: Commit.**
 
 **Acceptance Criteria**
 
 ### Positive Scenarios
-- [ ] The section exists and names the 24-hour pruning (`grep -cF '24 hours' docs/operations/sacp-stripe-connect-onboarding.md || true` -- 0 now, at least 1 after)
-- [ ] The finding query is per-tenant, not against `registry`. Two counts, because `refund_pending` alone cannot detect a `registry`-scoped query:
+- [x] The section exists and names the 24-hour pruning (`grep -cF '24 hours' docs/operations/sacp-stripe-connect-onboarding.md || true` -- 0 now, at least 1 after)
+- [x] The finding query is per-tenant, not against `registry`. Two counts, because `refund_pending` alone cannot detect a `registry`-scoped query:
       `grep -cF 'refund_pending' docs/operations/sacp-stripe-connect-onboarding.md || true` -- 0 now, at least 1 after
       `grep -cF 'registry.payments' docs/operations/sacp-stripe-connect-onboarding.md || true` -- **4 now, still 4 after** (the doc already carries four legitimate uses; a fifth means the finding query was written against `registry`)
 
 ### Negative Scenarios
-- [ ] **A procedure that re-issues before listing is a double refund.** Assert the listing step comes first in the document order.
+- [x] **A procedure that re-issues before listing is a double refund.** Assert the listing step comes first in the document order.
 
 ---
 

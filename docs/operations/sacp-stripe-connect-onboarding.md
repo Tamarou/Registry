@@ -203,6 +203,128 @@ $tenant_slug)`, which returns `1` (refund the fee) or `0` (keep the fee).
 `Registry::DAO::Payment::_refund_connect_params` maps those to the string
 booleans `'true'`/`'false'` required by Stripe's form-encoded API.
 
+### Clearing a stranded `refund_pending` payment
+
+`refund_pending` means the platform owes a refund it has not yet issued. A
+capacity re-check at capture found a child's seat gone, waitlisted them, and
+recorded the debt -- and then the refund call itself failed after the
+settlement transaction had already committed.
+
+**Stripe's redelivery does not heal this.** The dedup claim in
+`registry.webhook_events` commits in the same transaction as the settlement, by
+design, so the retry is deduplicated away. The money is captured, the
+enrollment is correct, and the refund is owed to nobody's queue. There is no
+automated reader for this state until Leg 3 ships `ProcessRefunds`. Until then
+it is cleared by hand, using the procedure below.
+
+#### Step 1: Find the stranded rows
+
+`payments` is tenant-scoped -- these rows are in the tenant's schema, not in
+`registry`. Query per tenant:
+
+```bash
+psql $DATABASE_URL -c \
+  "SELECT id, amount_cents, metadata->>'refund_owed_cents' AS owed_cents,
+          metadata->>'refund_owed_children' AS owed_children,
+          stripe_payment_intent_id, completed_at
+     FROM \"<sacp-slug>\".payments
+    WHERE status = 'refund_pending'
+    ORDER BY completed_at"
+```
+
+`refund_owed_cents` is the amount owed; `refund_owed_children` is the child id
+list that also forms the idempotency key. A row with `refund_manual_review` set
+in its metadata reached a state the automatic path could not resolve and needs
+a human decision on the amount before anything is sent to Stripe.
+
+#### Step 2: List refunds before issuing one
+
+**Always list first.** The failure that stranded the row may have happened
+after Stripe accepted the refund, so the debt can already be discharged:
+
+```bash
+curl -s https://api.stripe.com/v1/refunds \
+  -u "$STRIPE_SECRET_KEY:" \
+  -H "Stripe-Account: <tenant-connect-account-id>" \
+  -G -d payment_intent=<stripe_payment_intent_id>
+```
+
+Act on what comes back:
+
+| Result | Action |
+|---|---|
+| A `succeeded` Refund for the owed amount | The debt is paid. Settle the row (step 4). Do not re-issue. |
+| A `pending` Refund | Leave it alone. Connect refunds can sit pending; re-issuing duplicates it. Re-check later. |
+| A `failed` Refund | See the warning below. Do **not** re-issue blindly and do **not** change the status. |
+| An empty list | Nothing reached Stripe. Only this case justifies issuing the refund. |
+
+#### Step 3: Issue the refund, under the stable key
+
+The key is derived from the payment id and the owed-children list, sorted:
+
+- Whole payment: `refund:capacity:<payment_id>`
+- Per child: `refund:capacity:<payment_id>:<child_id>,<child_id>` (ids sorted)
+
+```bash
+curl -s https://api.stripe.com/v1/refunds \
+  -u "$STRIPE_SECRET_KEY:" \
+  -H "Stripe-Account: <tenant-connect-account-id>" \
+  -H "Idempotency-Key: refund:capacity:<payment_id>" \
+  -d payment_intent=<stripe_payment_intent_id> \
+  -d amount=<refund_owed_cents> \
+  -d reverse_transfer=true \
+  -d refund_application_fee=<true|false>
+```
+
+`refund_application_fee` follows the tenant's plan config -- see **Refund
+policy config** above; `reverse_transfer` is always `true` for
+destination-charge refunds.
+
+> **Stripe prunes idempotency keys after 24 hours.** The key protects a retry
+> made minutes later. It does **not** protect one made the next day: the same
+> key sent after 24 hours is a brand new request and a second refund. Past that
+> window, step 2's listing is the only thing standing between you and paying
+> twice. List again immediately before sending, every time.
+
+#### Step 4: Settle the row
+
+Clear the obligation and move the status once the refund is confirmed
+`succeeded`:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET status = 'refunded',
+          metadata = (metadata - 'refund_owed_cents'
+                               - 'refund_owed_children'
+                               - 'refund_manual_review')
+    WHERE id = '<payment_id>' AND status = 'refund_pending'"
+```
+
+Use `partially_refunded` instead of `refunded` when the amount returned is
+less than the row's `amount_cents`. This is the same rule the automatic path
+applies (`Registry::DAO::Payment::_apply_refund_result`): the full cart is
+`refunded`, anything short of it is `partially_refunded`.
+
+The `status = 'refund_pending'` predicate in the WHERE clause is not
+decoration -- check that the UPDATE reported one row. Zero means something else
+moved the status while you were working, and you should re-read the row before
+doing anything more.
+
+#### A failed refund is NOT `refund_failed`
+
+Never write `refund_failed`, or any status outside the five the code knows.
+The string appears nowhere in `lib/`, and it is in neither classifier --
+`Registry::DAO::Payment::_money_has_moved`
+(`completed|refunded|partially_refunded|refund_pending`) and
+`_refundable_status` (`completed|refund_pending`). Writing it does both bad
+things at once: the row is locked out of every future refund, *and* the next
+Stripe redelivery sees an unsettled payment and re-completes it.
+
+Leave a failed refund as `refund_pending` with the obligation intact, and
+record the failure **outside** the status column -- on the ticket, not on the
+row. The status column is load-bearing for two classifiers; a note is not.
+
 ### Charge idempotency
 
 Every payment row carries `metadata.idempotency_token`, a UUID seeded by
