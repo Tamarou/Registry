@@ -501,7 +501,26 @@ field $_stripe_client = undef;
 
         my $owed_cents = 0;
         my @owed_children;
-        my %granted;   # session_id => seats this cart has placed in this pass
+
+        # Count what this cart already holds BEFORE deciding anything, so the
+        # arithmetic does not depend on the order items happen to sit in.
+        # payment_fits_session excludes this payment's own rows, so a held seat
+        # only counts through %granted -- and crediting it as the loop reaches
+        # it means an unseated item earlier in the list is adjudicated against a
+        # capacity that under-counts by every seat still ahead of it.
+        #
+        # The loop below re-reads each state rather than caching these: a cart
+        # holding the same (session, child) twice would see a stale 'none' on
+        # the second pass and try to seat it again, which the payment-blind
+        # enrollments_session_student_type_unique turns into a die inside the
+        # settlement transaction, after capture. Two reads is the cheap side.
+        my %granted;   # session_id => seats this cart holds in this session
+        for my $item (@$items) {
+            my $sid = $item->{session_id} or next;
+            $granted{$sid}++
+                if Registry::DAO::Enrollment->cart_seat_state(
+                    $db, $id, $sid, $item->{child_id} ) eq 'seated';
+        }
 
         for my $item (@$items) {
             my $session_id = $item->{session_id} or next;
@@ -517,10 +536,7 @@ field $_stripe_client = undef;
             my $held = Registry::DAO::Enrollment->cart_seat_state(
                 $db, $id, $session_id, $item->{child_id} );
 
-            if ( $held eq 'seated' ) {
-                $granted{$session_id}++;
-                next;
-            }
+            next if $held eq 'seated';
 
             # cancelled, refunded, or anything else terminal belongs to whoever
             # put it there. Re-adjudicating it un-does an admin drop and re-owes

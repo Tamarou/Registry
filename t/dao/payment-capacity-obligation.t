@@ -395,4 +395,37 @@ subtest 'a closed row does not consume a seat its sibling needs' => sub {
         'and the waiting child takes the freed seat rather than losing it to a phantom';
 };
 
+subtest 'a held seat counts regardless of where it sits in the cart' => sub {
+    # The seat credit used to accrue as the loop reached each item, so an
+    # unseated item earlier in the list was adjudicated against a capacity that
+    # under-counted by every held seat still ahead of it -- and overfilled by
+    # one. Order the cart so the unseated child comes first.
+    my $session = a_session(2);
+    my $unseated = a_child();
+    my $holder   = a_child();
+
+    # $holder already has one of the two seats, from an earlier delivery.
+    my $payment = a_paid_cart( { session => $session, child => $unseated },
+                               { session => $session, child => $holder } );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $holder->id,
+        parent_id => $parent->id, status => 'active', payment_id => $payment->id });
+
+    # And an outsider holds the other.
+    occupy($session, 1);
+
+    my $after = settle( reload($payment) );
+
+    is status_for_child($payment, $session, $holder), 'active',
+        'the held seat is untouched';
+    is status_for_child($payment, $session, $unseated), 'waitlisted',
+        'and the child listed before it is refused, not squeezed into a full session';
+
+    my $filled = $db->query(
+        q{SELECT COUNT(*) FROM enrollments
+           WHERE session_id = ? AND status IN ('active','pending')},
+        $session->id)->array->[0];
+    is $filled, 2, 'the 2-seat session holds exactly two';
+};
+
 done_testing;

@@ -274,4 +274,54 @@ subtest 'webhook settlement stamps completed_at and preserves metadata (Leg 0 Ta
         'and still holds its one item';
 };
 
+subtest 'a delivery onto a settled row does not re-complete it (Leg 0 Task 3)' => sub {
+    # The webhook's guard was widened from `status eq 'completed'` to
+    # _money_has_moved, which also covers refunded, partially_refunded and
+    # refund_pending. That widening is the difference between a redelivery being
+    # a no-op and it re-completing a refunded row -- which the capacity gate then
+    # re-demotes and refunds a second time. Every other fixture in this file
+    # builds a 'pending' payment, so the widened arm was never exercised.
+    # A distinct child per status: enrollments_session_student_type_unique is
+    # status-blind, so reusing one child would make the second iteration's
+    # finalize_enrollment raise inside the settlement transaction and answer
+    # 500 -- a real defect, but not the one under test here.
+    my %kid;
+    for my $settled (qw( refunded partially_refunded refund_pending )) {
+        $kid{$settled} = Registry::DAO::Family->add_child($db, $parent->id, {
+            child_name => "PI Settled $settled", birth_date => '2015-05-05',
+            grade => '6', medical_info => {},
+            emergency_contact => { name => 'x', phone => '5' },
+        });
+    }
+
+    for my $settled (qw( refunded partially_refunded refund_pending )) {
+        my $payment = Registry::DAO::Payment->create($db, {
+            user_id => $parent->id, amount_cents => 10000, status => 'pending',
+            metadata => {
+                enrollment_items => [ { session_id => $session->id, child_id => $kid{$settled}->id } ],
+                tenant_slug      => undef },
+        });
+        $db->update('payments', {
+            status => $settled, completed_at => \'NOW()',
+            stripe_payment_intent_id => 'pi_settled_' . $payment->id,
+        }, { id => $payment->id });
+
+        post_webhook({
+            id   => "evt_settled_$settled",
+            type => 'payment_intent.succeeded',
+            data => { object => {
+                id       => 'pi_settled_' . $payment->id,
+                amount   => 10000,
+                metadata => { payment_id => $payment->id },
+            } },
+        })->status_is(200);
+
+        my $row = $db->select('payments', ['status','completed_at'],
+            { id => $payment->id })->hash;
+        is $row->{status}, $settled,
+            "a $settled payment is not re-completed by a later delivery";
+        ok defined $row->{completed_at}, "and keeps its completion stamp ($settled)";
+    }
+};
+
 done_testing;

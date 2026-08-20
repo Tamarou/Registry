@@ -218,6 +218,8 @@ Stated so the next review does not have to find them:
 - **A `refunded` row is not evidence money moved.** `_apply_refund_result` never reads `$refund->{status}`; Stripe can hold a Connect refund `pending`. The spec assigns this to Leg 3.
 - **Three call sites have no transaction and one must not have one.** `_apply_refund_result` runs post-COMMIT deliberately. §2.3's conditional UPDATE is what makes this a non-issue — but any future move back toward a transaction-scoped guard has to account for it.
 - **`save()` never checks `->rows`, and `_apply_intent` discards `_lock_and_refresh`'s return.** Both are silent-no-op paths that survive this design unless fixed alongside it.
+- **`demote_to_waitlisted`'s fallback INSERT can abort a captured settlement.** Its three lookups scope on `payment_id`; `enrollments_session_student_type_unique` does not. A child holding a row in this session from another payment is invisible to the SELECT and fatal to the INSERT, inside the settlement transaction, after capture. Filed as [#315](https://github.com/Tamarou/Registry/issues/315).
+- **`_reusable_payment_row` refuses unstamped rows.** A pre-linkage `pending` row is orphaned rather than reused. Not a money defect; litter no process reaps. Filed as [#316](https://github.com/Tamarou/Registry/issues/316).
 
 ## 5. Sequencing
 

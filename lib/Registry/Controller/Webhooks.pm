@@ -70,11 +70,27 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             }
         }
 
-        # Anything doable before the transaction happens before the transaction.
+        # Prefetch before the transaction, and skip it for an event we have
+        # already handled.
+        #
         # get_subscription is a blocking Stripe call on a user agent with no
-        # request timeout; inside the block it would hold the claim open for the
-        # length of a network round trip.
-        my $subscription = $self->_prefetch_subscription($dao, $event);
+        # request timeout. Inside the transaction it would hold the dedup claim
+        # open for a network round trip, so it cannot go there -- and the claim
+        # is the transaction, so there is no "after the claim but outside it".
+        #
+        # Unconditionally above it, every duplicate redelivery paid for a live
+        # Stripe call before discovering it had nothing to do, blocking the
+        # IOLoop each time. This cheap SELECT is not the claim and does not need
+        # to be authoritative: the real ON CONFLICT claim below still decides.
+        # It only spares the common case -- a redelivery of an event already
+        # processed -- from the network.
+        my $subscription;
+        unless (
+            $db->select( 'registry.webhook_events', ['id'],
+                { stripe_event_id => $event_id } )->hash
+        ) {
+            $subscription = $self->_prefetch_subscription($dao, $event);
+        }
 
         # Claim and work are one transaction on one connection. A failure rolls
         # the claim back with the work, so Stripe's retry re-claims and
