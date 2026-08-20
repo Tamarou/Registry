@@ -245,9 +245,17 @@ after Stripe accepted the refund, so the debt can already be discharged:
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
-  -H "Stripe-Account: <tenant-connect-account-id>" \
   -G -d payment_intent=<stripe_payment_intent_id>
 ```
+
+**No `Stripe-Account` header.** These are destination charges made *on the
+platform account* -- `Registry::DAO::Payment` sets
+`transfer_data[destination]` and `on_behalf_of` rather than acting as the
+connected account, and `Registry::Service::Stripe::_request_async` never sends
+`Stripe-Account`. Adding the header queries an account on which the
+PaymentIntent does not exist, so the listing comes back empty and this check --
+whose entire purpose is "has a refund already gone out?" -- silently reports
+"nothing reached Stripe" for a refund that did.
 
 Act on what comes back:
 
@@ -262,19 +270,30 @@ Act on what comes back:
 
 The key is derived from the payment id and the owed-children list, sorted:
 
-- Whole payment: `refund:capacity:<payment_id>`
-- Per child: `refund:capacity:<payment_id>:<child_id>,<child_id>` (ids sorted)
+- Normal case, one or more children owed:
+  `refund:capacity:<payment_id>:<child_id>,<child_id>` (ids sorted, comma-joined)
+- Bare `refund:capacity:<payment_id>` **only** when `refund_owed_children` is
+  empty -- a manual-review row with nothing owed, which you should not be
+  refunding
 
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
-  -H "Stripe-Account: <tenant-connect-account-id>" \
-  -H "Idempotency-Key: refund:capacity:<payment_id>" \
+  -H "Idempotency-Key: refund:capacity:<payment_id>:<child_id>,<child_id>" \
   -d payment_intent=<stripe_payment_intent_id> \
   -d amount=<refund_owed_cents> \
   -d reverse_transfer=true \
   -d refund_application_fee=<true|false>
 ```
+
+**Use the suffixed form.** `capacity_refund_key` returns the bare
+`refund:capacity:<payment_id>` only when `refund_owed_children` is *empty*,
+which is the manual-review case where the owed amount is zero and no refund
+should be sent at all. Every debt an operator can act on carries the child
+suffix, so copying the bare form means the hand-issued refund and the automated
+retry travel under different keys and Stripe deduplicates neither. Build the
+key from the row's own `refund_owed_children`, sorted, comma-joined -- the
+values the step 1 query printed.
 
 `refund_application_fee` follows the tenant's plan config -- see **Refund
 policy config** above; `reverse_transfer` is always `true` for
