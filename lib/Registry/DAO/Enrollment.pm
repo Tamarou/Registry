@@ -5,6 +5,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     use Mojo::JSON qw(decode_json);
     use Carp qw(croak);
     use Scalar::Util qw(blessed);
+    use experimental 'keyword_any';
     use DateTime;
 
     
@@ -228,6 +229,28 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     #                 whole category: a terminal drop another system owns, and
     #                 not ours to re-adjudicate.
     #   none       -- nothing here; adjudicate normally.
+    # The one place that answers "does this enrollment status hold a seat".
+    #
+    # Three consumers used to carry their own copy of this list: this class's
+    # cart_seat_state classification, payment_fits_session's COUNT predicate,
+    # and demote_to_waitlisted's UPDATE predicate. They agreed, which is the
+    # most fragile state a duplicated rule can be in -- nothing failed if one
+    # drifted, and every way of drifting is a money defect. Round 3 of the Leg 0
+    # review found three separate disagreements between them about 'cancelled'.
+    #
+    # Deviation from the settlement spec's section 2.4, which proposes a sub
+    # returning counts by category. The three consumers ask different questions
+    # -- one child's state, everyone else's occupancy, and demotability -- so a
+    # shared counts object would have to be reshaped at each call site. The
+    # duplication was never the counting; it was this list. Sharing the list
+    # gets the whole benefit for a fraction of the diff.
+    #
+    # Out of scope, sharing the vocabulary but not this owner:
+    # get_dashboard_stats_for_parent and the family-enrollment query both count
+    # ('active','pending') to answer "what is this family signed up for", which
+    # is a different question that happens to have the same answer today.
+    sub seat_holding_statuses ($class) { return [qw( active pending )] }
+
     sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -242,7 +265,8 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         return 'none' unless $row;
 
         my $status = $row->{status} // '';
-        return 'seated'     if $status eq 'active' || $status eq 'pending';
+        return 'seated'
+            if any { $_ eq $status } @{ $class->seat_holding_statuses };
         return 'waitlisted' if $status eq 'waitlisted';
         return 'closed';
     }
@@ -272,7 +296,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
                 # Only a seat in hand is demotable. A predicate of
                 # "not already waitlisted" also matches a cancelled row, which
                 # un-cancels an admin's drop and re-owes its share.
-                status     => { -in => [ 'active', 'pending' ] },
+                status     => { -in => $class->seat_holding_statuses },
             },
         )->rows;
 
@@ -325,9 +349,9 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         my $taken = $db->query(
             q{SELECT COUNT(*) FROM enrollments
                WHERE session_id = ?
-                 AND status IN ('active', 'pending')
+                 AND status = ANY(?)
                  AND (payment_id IS NULL OR payment_id != ?)},
-            $session_id, $payment->id
+            $session_id, $class->seat_holding_statuses, $payment->id
         )->array->[0] // 0;
 
         return $taken + $already_granted + 1 <= $capacity ? 1 : 0;
