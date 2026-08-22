@@ -211,6 +211,128 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
     
     # Count enrollments for a session by status
+    # What does this payment already hold for this (session, child)?
+    #
+    # One predicate with three answers, because every consumer of this question
+    # must agree on it. A cancelled row in particular must be neither
+    # re-adjudicated nor treated as a fresh demotion: doing the first
+    # un-cancels an admin's drop, and doing the second owes its share a second
+    # time under an idempotency key Stripe has never seen, against money the
+    # enrollment's own refund_status already records as returned.
+    #
+    #   seated     -- active or pending. A seat in hand: leave it, and count it
+    #                 against this cart's own capacity.
+    #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
+    #   closed     -- cancelled. `enrollments_status_check` bounds this column to
+    #                 pending|active|cancelled|waitlisted, so cancelled is the
+    #                 whole category: a terminal drop another system owns, and
+    #                 not ours to re-adjudicate.
+    #   none       -- nothing here; adjudicate normally.
+    sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $row = $db->select(
+            $class->table, ['status'],
+            {   payment_id => $payment_id,
+                session_id => $session_id,
+                student_id => $child_id,
+            },
+        )->hash;
+
+        return 'none' unless $row;
+
+        my $status = $row->{status} // '';
+        return 'seated'     if $status eq 'active' || $status eq 'pending';
+        return 'waitlisted' if $status eq 'waitlisted';
+        return 'closed';
+    }
+
+    # Move a paid child to the waitlist because the seat went while they paid.
+    #
+    # UPDATE first, INSERT only if it changed nothing. create_for_payment's
+    # arbiter is DO NOTHING on (session_id, student_id, payment_id), which is
+    # exactly the triple a prior pass would have written -- so on a retry, or
+    # any path where the active row already exists, a plain waitlisted insert is
+    # a silent no-op and the child stays enrolled in a session with no room.
+    sub demote_to_waitlisted ($class, $db, $data) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $student_id = $data->{student_id} // $data->{family_member_id};
+
+        # Returns whether this call actually moved someone off a seat. A
+        # redelivery re-runs the whole cart, and a child already waitlisted by
+        # an earlier pass has already been accounted for -- re-owing a refund
+        # for them charges the tenant twice for one lost seat.
+        my $changed = $db->update(
+            $class->table,
+            { status => 'waitlisted' },
+            {   session_id => $data->{session_id},
+                student_id => $student_id,
+                payment_id => $data->{payment_id},
+                # Only a seat in hand is demotable. A predicate of
+                # "not already waitlisted" also matches a cancelled row, which
+                # un-cancels an admin's drop and re-owes its share.
+                status     => { -in => [ 'active', 'pending' ] },
+            },
+        )->rows;
+
+        return 1 if $changed;
+
+        # Nothing updated: either there is no row yet, or there is one and it is
+        # already waitlisted. Only the first is a new demotion.
+        my $existing = $db->select(
+            $class->table, ['status'],
+            {   session_id => $data->{session_id},
+                student_id => $student_id,
+                payment_id => $data->{payment_id},
+            },
+        )->hash;
+        return 0 if $existing;
+
+        $class->create_for_payment($db, { %$data, status => 'waitlisted' });
+        return 1;
+    }
+
+    # Is there room for one more child from this payment, given how many seats
+    # this cart has already taken in this pass?
+    #
+    # $already_granted is what makes a partly-fitting sibling group fill the
+    # seats that exist. An earlier form compared the whole cart every time --
+    # nine taken of ten with two siblings gave 9 + 2 > 10 on both iterations, so
+    # both were waitlisted, both refunded, and the one free seat went unsold.
+    # Asking per child, and counting the siblings already placed, fills it.
+    #
+    # $taken excludes this payment's own rows, because finalize_enrollment
+    # writes them as 'active' as it goes and a re-check that counted them would
+    # see the payment competing with itself. $already_granted adds back exactly
+    # the ones this pass placed.
+    #
+    # NULL or zero capacity is unlimited. Zero is not hypothetical: no CHECK
+    # constraint forbids it and nine live sites already read capacity with a
+    # truthiness test, so a `defined` check here would refund every capacity-0
+    # session at capture while all nine waved the enrollment through.
+    #
+    # Correct only with the session row locked and inside a transaction; the
+    # caller takes that lock before calling.
+    sub payment_fits_session ($class, $db, $payment, $session_id, $already_granted = 0) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $capacity = $db->query(
+            'SELECT capacity FROM sessions WHERE id = ?', $session_id
+        )->hash->{capacity};
+        return 1 unless $capacity;    # NULL or 0 -- unlimited
+
+        my $taken = $db->query(
+            q{SELECT COUNT(*) FROM enrollments
+               WHERE session_id = ?
+                 AND status IN ('active', 'pending')
+                 AND (payment_id IS NULL OR payment_id != ?)},
+            $session_id, $payment->id
+        )->array->[0] // 0;
+
+        return $taken + $already_granted + 1 <= $capacity ? 1 : 0;
+    }
+
     sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {
         $db = $db->db if $db isa Registry::DAO;
 

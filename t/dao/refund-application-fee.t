@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Mojo::JSON qw(decode_json);
+use Test::Registry::Async qw( settle );
 use Registry::PriceOps::RevenueShare qw(refund_application_fee_for_tenant);
 
 my $test_db = Test::Registry::DB->new;
@@ -261,11 +262,11 @@ subtest 'tenant refund honors plan opt-out (refund_application_fee=false)' => su
     {
         no warnings 'redefine';
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_refund_tests';
-        local *Registry::Service::Stripe::create_refund = sub ($s, $p) {
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
             %captured = %$p;
-            return { id => 're_optout_fake' };
+            return Mojo::Promise->resolve({ id => 're_optout_fake' });
         };
-        $payment->refund($db);
+        settle($payment->refund_async($db));
     }
 
     is $captured{reverse_transfer},       'true',  'tenant refund sets reverse_transfer=true (string)';
@@ -308,11 +309,11 @@ subtest 'tenant refund with absent refund_application_fee key defaults to 1' => 
     {
         no warnings 'redefine';
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_refund_tests';
-        local *Registry::Service::Stripe::create_refund = sub ($s, $p) {
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
             %captured = %$p;
-            return { id => 're_default_fake' };
+            return Mojo::Promise->resolve({ id => 're_default_fake' });
         };
-        $payment->refund($db);
+        settle($payment->refund_async($db));
     }
 
     is $captured{reverse_transfer},       'true', 'tenant refund sets reverse_transfer=true (string)';
@@ -336,11 +337,11 @@ subtest 'registry (non-tenant) payment refund sends no Connect params' => sub {
     {
         no warnings 'redefine';
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_refund_tests';
-        local *Registry::Service::Stripe::create_refund = sub ($s, $p) {
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
             %captured = %$p;
-            return { id => 're_registry_fake' };
+            return Mojo::Promise->resolve({ id => 're_registry_fake' });
         };
-        $payment->refund($db);
+        settle($payment->refund_async($db));
     }
 
     ok !exists $captured{reverse_transfer},       'registry refund: no reverse_transfer';
@@ -365,11 +366,11 @@ subtest 'tenant_slug=registry is treated as platform payment (no Connect params)
     {
         no warnings 'redefine';
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_refund_tests';
-        local *Registry::Service::Stripe::create_refund = sub ($s, $p) {
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
             %captured = %$p;
-            return { id => 're_registry_gate_fake' };
+            return Mojo::Promise->resolve({ id => 're_registry_gate_fake' });
         };
-        $payment->refund($db);
+        settle($payment->refund_async($db));
     }
 
     ok !exists $captured{reverse_transfer},       'registry-slug gate: no reverse_transfer';

@@ -64,10 +64,17 @@ my %stripe_return = (
 sub succeeded_payment () {
     my $mock = Test::MockObject->new;
     $mock->set_always('id', '00000000-0000-0000-0000-000000000001');
-    $mock->set_always('process_payment_async',
-        Mojo::Promise->resolve({ success => 1 }));
+    # The settlement runs inside the transaction process_payment_async opens,
+    # so the mock invokes $settle; set_always would ignore it and the step would
+    # never reach _settle_callback.
+    $mock->mock('process_payment_async', sub ($self, $db, $intent_id, $settle = undef) {
+        my $result = { success => 1 };
+        return Mojo::Promise->resolve($settle ? $settle->($result) : $result);
+    });
     # The finalizer the payment_intent.succeeded webhook also runs; idempotent.
     $mock->set_true('finalize_enrollment');
+    # Read by the post-COMMIT capacity-refund check.
+    $mock->set_always('metadata', {});
     return $mock;
 }
 

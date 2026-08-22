@@ -171,7 +171,9 @@ class Registry::Service::Stripe {
     
     # Refunds API
     method create_refund_async($params) {
-        return $self->_request_async('POST', 'refunds', $params);
+        my %p  = %$params;  # ponytail: shallow copy avoids mutating caller's hashref
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'refunds', \%p, $ik);
     }
     
     method retrieve_refund_async($refund_id) {

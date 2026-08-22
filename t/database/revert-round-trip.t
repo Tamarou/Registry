@@ -30,6 +30,7 @@ my @CHANGES = qw(
     payments-amount-cents
     refund-amounts-cents
     drop-installment-schedules
+    webhook-events-processed-at
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
@@ -83,7 +84,13 @@ my $sqitch = App::Sqitch->new();
 #   does not exist
 # Do not "improve" this list with mixed case or hyphens.  Both were tried
 # against live Postgres; both break the harness rather than the migrations.
-my @SLUGS = qw( order user group table check );
+# 'default' sits fourth rather than last so that the newest change exercises the
+# newest slug: a slug appended to the end is not reached until a later leg adds
+# the change that pairs with it, and an unverified slug fails far from the commit
+# that introduced it.  Verified against live Postgres -- clone_schema('default')
+# succeeds and pg_dump renders it "default".enrollments, so the quoted assertion
+# below matches.
+my @SLUGS = qw( order user group default table check );
 @CHANGES <= @SLUGS
     or die sprintf 'revert-round-trip needs one reserved-word slug per change: %d changes, %d slugs',
         scalar @CHANGES, scalar @SLUGS;

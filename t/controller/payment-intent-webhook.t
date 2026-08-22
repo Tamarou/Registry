@@ -160,4 +160,191 @@ subtest 'amount mismatch fails loudly and does not finalize (Leg W1)' => sub {
     is $after_good->status, 'completed', 'payment completed on matching amount';
 };
 
+subtest 'a die mid-finalization leaves no partial enrollment and no claim (Leg 0 Task 1)' => sub {
+    # Two children in one cart, so finalization has a midpoint to die at. Without
+    # a transaction the first enrollment is already committed when the second
+    # dies, and nothing takes it back -- that is the defect this task closes.
+    my @kids = map {
+        Registry::DAO::Family->add_child($db, $parent->id, {
+            child_name => "PI Atomic $_", birth_date => '2017-03-0' . $_, grade => '4',
+            medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+        })
+    } (1, 2);
+
+    my $payment3 = Registry::DAO::Payment->create($db, {
+        user_id  => $parent->id,
+        amount_cents => 20000,
+        status   => 'pending',
+        metadata => {
+            enrollment_items => [ map { { session_id => $session->id, child_id => $_->id } } @kids ],
+            tenant_slug      => undef,
+        },
+    });
+
+    my sub pi3_event ($event_id) {
+        return {
+            id   => $event_id,
+            type => 'payment_intent.succeeded',
+            data => { object => {
+                id       => 'pi_' . $payment3->id,
+                amount   => 20000,
+                metadata => { payment_id => $payment3->id },
+            } },
+        };
+    }
+
+    my sub p3_enrollments {
+        scalar @{ $db->select('enrollments', '*', { payment_id => $payment3->id })->hashes };
+    }
+
+    my sub claim_rows ($event_id) {
+        scalar @{ $db->query(
+            'SELECT 1 FROM registry.webhook_events WHERE stripe_event_id = ?', $event_id
+        )->arrays };
+    }
+
+    # Die on the second item only: the first has already been written by then.
+    {
+        my $real  = \&Registry::DAO::Enrollment::create_for_payment;
+        my $calls = 0;
+        no warnings 'redefine';
+        local *Registry::DAO::Enrollment::create_for_payment = sub {
+            die "probe: finalization failed partway\n" if ++$calls == 2;
+            return $real->(@_);
+        };
+
+        post_webhook(pi3_event('evt_pi_atomic'))->status_is(500);
+    }
+
+    is p3_enrollments(), 0,
+        'the first item is rolled back with the second -- no partial enrollment';
+    is claim_rows('evt_pi_atomic'), 0,
+        'the claim does not survive the failure';
+
+    my $after = Registry::DAO::Payment->find($db, { id => $payment3->id });
+    isnt $after->status, 'completed', 'payment not completed on a partial failure';
+
+    # Stripe's retry must be able to re-claim the same event id and succeed.
+    post_webhook(pi3_event('evt_pi_atomic'))->status_is(200);
+    is p3_enrollments(), 2, 'the retry finalizes the whole cart';
+};
+
+subtest 'webhook settlement stamps completed_at and preserves metadata (Leg 0 Task 2)' => sub {
+    # The webhook wrote two columns and never completed_at, so a webhook-settled
+    # payment was indistinguishable from one still pending on that column while
+    # a callback-settled one carried a timestamp. Same event, two shapes.
+    my $child3 = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'PI Stamp', birth_date => '2016-04-04', grade => '5',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+
+    my $payment4 = Registry::DAO::Payment->create($db, {
+        user_id  => $parent->id,
+        amount_cents => 10000,
+        status   => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $child3->id } ],
+            tenant_slug      => undef,
+        },
+    });
+
+    my $before = $db->select('payments', ['completed_at'], { id => $payment4->id })->hash;
+    is $before->{completed_at}, undef, 'completed_at starts NULL';
+
+    post_webhook({
+        id   => 'evt_pi_stamp',
+        type => 'payment_intent.succeeded',
+        data => { object => {
+            id       => 'pi_' . $payment4->id,
+            amount   => 10000,
+            metadata => { payment_id => $payment4->id },
+        } },
+    })->status_is(200);
+
+    my $after = $db->select('payments', ['completed_at'], { id => $payment4->id })->hash;
+    ok defined $after->{completed_at},
+        'a webhook-settled payment carries completed_at, like a callback-settled one';
+
+    # save() rewrites the whole metadata column rather than patching it, so the
+    # enrollment snapshot has to survive the wider write.
+    my $refreshed = Registry::DAO::Payment->find($db, { id => $payment4->id });
+    is ref $refreshed->metadata->{enrollment_items}, 'ARRAY',
+        'the enrollment snapshot survives the metadata rewrite';
+    is scalar @{ $refreshed->metadata->{enrollment_items} }, 1,
+        'and still holds its one item';
+};
+
+subtest 'a delivery onto a settled row does not re-complete it (Leg 0 Task 3)' => sub {
+    # The webhook's guard was widened from `status eq 'completed'` to
+    # _money_has_moved, which also covers refunded, partially_refunded and
+    # refund_pending. That widening is the difference between a redelivery being
+    # a no-op and it re-completing a refunded row -- which the capacity gate then
+    # re-demotes and refunds a second time. Every other fixture in this file
+    # builds a 'pending' payment, so the widened arm was never exercised.
+    # A distinct child per status: enrollments_session_student_type_unique is
+    # status-blind, so reusing one child would make the second iteration's
+    # finalize_enrollment raise inside the settlement transaction and answer
+    # 500 -- a real defect, but not the one under test here.
+    my %kid;
+    for my $settled (qw( refunded partially_refunded refund_pending )) {
+        $kid{$settled} = Registry::DAO::Family->add_child($db, $parent->id, {
+            child_name => "PI Settled $settled", birth_date => '2015-05-05',
+            grade => '6', medical_info => {},
+            emergency_contact => { name => 'x', phone => '5' },
+        });
+    }
+
+    for my $settled (qw( refunded partially_refunded refund_pending )) {
+        my $payment = Registry::DAO::Payment->create($db, {
+            user_id => $parent->id, amount_cents => 10000, status => 'pending',
+            metadata => {
+                enrollment_items => [ { session_id => $session->id, child_id => $kid{$settled}->id } ],
+                tenant_slug      => undef },
+        });
+        $db->update('payments', {
+            status => $settled, completed_at => \'NOW()',
+            stripe_payment_intent_id => 'pi_settled_' . $payment->id,
+        }, { id => $payment->id });
+
+        post_webhook({
+            id   => "evt_settled_$settled",
+            type => 'payment_intent.succeeded',
+            data => { object => {
+                id       => 'pi_settled_' . $payment->id,
+                amount   => 10000,
+                metadata => { payment_id => $payment->id },
+            } },
+        })->status_is(200);
+
+        my $row = $db->select('payments', ['status','completed_at'],
+            { id => $payment->id })->hash;
+        is $row->{status}, $settled,
+            "a $settled payment is not re-completed by a later delivery";
+        ok defined $row->{completed_at}, "and keeps its completion stamp ($settled)";
+
+        # The status guard covers mark_completed only. finalize_enrollment ran
+        # below it unconditionally, so a settled row's cart was re-adjudicated
+        # and any unseated item seated -- a child enrolled against money that
+        # has gone back to the payer. Graded separately from the status,
+        # because the status assertion above passes either way.
+        #
+        # refund_pending is excluded on purpose: that money is owed, not
+        # returned, the debt belongs to one child whose seat went, and the rest
+        # of the cart must still be adjudicated on redelivery. Asserting
+        # zero-enrollments there would have pinned the wrong behaviour and
+        # broken the debt-accumulation case in payment-capacity-obligation.t.
+        my $enrolled = $db->query(
+            q{SELECT COUNT(*) FROM enrollments WHERE payment_id = ?},
+            $payment->id)->array->[0];
+        if ( $settled eq 'refund_pending' ) {
+            is $enrolled, 1,
+                'a refund_pending row still adjudicates the rest of its cart';
+        }
+        else {
+            is $enrolled, 0,
+                "and no enrollment is created against $settled money";
+        }
+    }
+};
+
 done_testing;

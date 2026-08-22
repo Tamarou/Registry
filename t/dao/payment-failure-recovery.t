@@ -77,11 +77,20 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 sub mock_payment_with_outcome ($process_result, %more) {
     my $mock = Test::MockObject->new;
     $mock->set_always('id',                    $payment_id);
-    $mock->set_always('process_payment_async', Mojo::Promise->resolve($process_result));
+    # process_payment_async now runs the caller's settlement inside the
+    # transaction it opens around its own completed-write, so the mock has to
+    # invoke $settle rather than just resolve. set_always ignores arguments and
+    # would drop it, leaving the step with a raw Stripe result and no outcome.
+    $mock->mock('process_payment_async', sub ($self, $db, $intent_id, $settle = undef) {
+        return Mojo::Promise->resolve(
+            $settle ? $settle->($process_result) : $process_result);
+    });
     # Before minting a replacement intent the retry path cancels the
     # superseded one and rotates the idempotency token. undef here means
     # there is no prior intent to cancel, so no stripe_client is needed.
     $mock->set_always('stripe_payment_intent_id', undef);
+    # metadata is read by the post-COMMIT capacity-refund check.
+    $mock->set_always('metadata', {});
     $mock->set_always('rotate_idempotency_token', 1);
     if (exists $more{retry_intent}) {
         $mock->set_always('create_payment_intent_async',
@@ -190,11 +199,15 @@ subtest 'retry state persists in run data for next GET' => sub {
 subtest 'successful payment still transitions to complete' => sub {
     my $mock = Test::MockObject->new;
     $mock->set_always('id', $payment_id);
-    $mock->set_always('process_payment_async',
-        Mojo::Promise->resolve({ success => 1, payment => $mock }));
+    $mock->mock('process_payment_async', sub ($self, $db, $intent_id, $settle = undef) {
+        my $result = { success => 1, payment => $mock };
+        return Mojo::Promise->resolve($settle ? $settle->($result) : $result);
+    });
     # A successful callback finalizes the enrollment; stub it so the mock
     # doesn't warn about the un-mocked call.
     $mock->set_always('finalize_enrollment', 1);
+    # And the post-COMMIT capacity-refund check reads metadata for an owed debt.
+    $mock->set_always('metadata', {});
 
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };

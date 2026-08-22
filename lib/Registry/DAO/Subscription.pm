@@ -15,6 +15,15 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
 
     ADJUST {
         $ua = Mojo::UserAgent->new;
+        # Matching Registry::Service::Stripe. request_timeout is the load-bearing
+        # one: Mojo defaults it to 0, meaning unbounded, and the //= fallback in
+        # the invoice handlers can reach Stripe from inside the webhook's
+        # transaction -- holding the dedup claim open for the whole wait, with a
+        # concurrent redelivery blocked behind it on the uncommitted claim.
+        # connect_timeout(10) only restates Mojo's own default; it is here so
+        # the pair reads as a deliberate choice rather than a half-set one.
+        $ua->connect_timeout(10);
+        $ua->request_timeout(30);
         $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
         $api_base = 'https://api.stripe.com/v1';
     }
@@ -74,6 +83,12 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         
         my $headers = {
             'Authorization' => "Basic $auth",
+            # Pinned, as Registry::Service::Stripe does. Unpinned, the response
+            # shape is whatever the account's default API version says, and a
+            # bump there silently moves fields -- which is how the invoice
+            # handlers below came to read a subscription id from a location
+            # newer versions no longer use.
+            'Stripe-Version' => '2024-12-18.acacia',
             'Content-Type' => 'application/x-www-form-urlencoded'
         };
         
@@ -210,7 +225,11 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         return $self->_stripe_request('DELETE', "/subscriptions/$subscription_id", \%form_data);
     }
 
-    method process_webhook_event($db, $event_id, $event_type, $event_data) {
+    # $subscription is the invoice's subscription, already fetched from Stripe by
+    # the caller. The webhook controller pre-fetches it so the blocking call does
+    # not happen inside its settlement transaction; callers that pass nothing get
+    # the original behaviour, with the handlers fetching it themselves.
+    method process_webhook_event($db, $event_id, $event_type, $event_data, $subscription = undef) {
         # Store webhook event for processing
         my $result = $db->query(
             'INSERT INTO registry.subscription_events (stripe_event_id, event_type, event_data) VALUES (?, ?, ?) ON CONFLICT (stripe_event_id) DO NOTHING RETURNING id',
@@ -234,10 +253,10 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
                 $self->_handle_trial_ending($db, $event_data);
             }
             elsif ($event_type eq 'invoice.payment_failed') {
-                $self->_handle_payment_failed($db, $event_data);
+                $self->_handle_payment_failed($db, $event_data, $subscription);
             }
             elsif ($event_type eq 'invoice.payment_succeeded') {
-                $self->_handle_payment_succeeded($db, $event_data);
+                $self->_handle_payment_succeeded($db, $event_data, $subscription);
             }
             
             # Mark event as processed
@@ -248,13 +267,17 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         };
         
         if ($@) {
-            warn "DEBUG Subscription: Webhook processing failed: $@";
+            # Captured first: $db->query runs an eval internally, which resets
+            # $@, so `die $@` below would rethrow Perl's bare "Died" and throw
+            # away the diagnostic this path exists to surface.
+            my $err = $@;
+            warn "DEBUG Subscription: Webhook processing failed: $err";
             # Mark event as failed
             $db->query(
                 'UPDATE registry.subscription_events SET processing_status = ? WHERE id = ?',
                 'failed', $event_record_id
             );
-            die $@;
+            die $err;
         }
         
         return 1;
@@ -311,29 +334,137 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         $self->update_billing_status($db, $tenant_id, 'trial', $subscription);
     }
 
-    method _handle_payment_failed($db, $event_data) {
+    # Newer Stripe API versions moved the subscription id off the invoice's top
+    # level into parent.subscription_details.subscription. Which one arrives is
+    # decided by the endpoint's API version in the Dashboard, outside this code,
+    # so read both rather than assume one.
+    method _invoice_subscription_id ($invoice) {
+        my $top = $invoice->{subscription};
+        return $top if defined $top && length $top;
+        return $invoice->{parent}{subscription_details}{subscription};
+    }
+
+    method _handle_payment_failed($db, $event_data, $subscription = undef) {
         my $invoice = $event_data->{object};
-        my $subscription_id = $invoice->{subscription};
-        
-        # Get subscription to find tenant
-        my $subscription = $self->get_subscription($subscription_id);
+        my $subscription_id = $self->_invoice_subscription_id($invoice);
+
+        # Get subscription to find tenant, unless the caller already fetched it
+        # outside its transaction. `length`, not `defined`: '' and '0' would
+        # otherwise reach GET /v1/subscriptions/ -- a blocking call inside the
+        # webhook's transaction, which is exactly what the prefetch in
+        # Webhooks.pm exists to avoid, and which that code declines by
+        # truthiness.
+        $subscription //= $self->get_subscription($subscription_id)
+            if defined $subscription_id && length $subscription_id;
+
+        # Transient and permanent failures need opposite answers, and an earlier
+        # version of this guard died on both.
+        #
+        # Transient -- the invoice names a subscription and the lookup failed.
+        # _stripe_request warns and returns undef on any API error, and Perl's
+        # rvalue deref of undef does not die, so without this the handler read
+        # an undef tenant_id, fell out of the `return unless`, and let the
+        # caller stamp the event processed and COMMIT. The tenant was never
+        # moved, permanently, because every retry then hit the dedup claim.
+        # Dying releases the claim so Stripe's retry can succeed.
+        die "Cannot resolve subscription $subscription_id for invoice event\n"
+            if defined $subscription_id
+            && length $subscription_id
+            && !$subscription;
+
+        # Permanent -- the invoice carries no subscription at all. One-off
+        # invoices are real, and no retry makes one grow a subscription. Dying
+        # here is a poison pill: ~3 days of 500s, after which Stripe disables
+        # the endpoint and payment_intent.succeeded stops arriving, taking the
+        # enrollment safety net down with it. Webhooks.pm already codifies that
+        # rule for the refund path; this is the same rule.
+        unless ($subscription) {
+            warn "Invoice event carries no subscription id; ignoring\n";
+            return;
+        }
+
+        # Resolved, but no tenant stamped on it. Either not ours, or ours with
+        # the metadata dropped -- and the second costs money quietly, because a
+        # non-paying tenant is never moved to past_due. A retry changes nothing,
+        # so this is processed rather than failed, but it is warned about rather
+        # than ignored.
         my $tenant_id = $subscription->{metadata}->{tenant_id};
-        
-        return unless $tenant_id;
-        
+        unless ($tenant_id) {
+            warn "Subscription @{[ $subscription->{id} // q{?} ]} has no "
+                . "metadata.tenant_id; billing status not updated\n";
+            return;
+        }
+
+        # The same two guards the three sibling handlers carry. metadata is
+        # free-form text an operator can edit in the Dashboard, and a non-UUID
+        # value aborts the transaction inside update_billing_status -- another
+        # permanent condition answered with an endless retry loop.
+        return unless $tenant_id
+            =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        return unless $db->query(
+            'SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id )->rows;
         $self->update_billing_status($db, $tenant_id, 'past_due');
     }
 
-    method _handle_payment_succeeded($db, $event_data) {
+    method _handle_payment_succeeded($db, $event_data, $subscription = undef) {
         my $invoice = $event_data->{object};
-        my $subscription_id = $invoice->{subscription};
-        
-        # Get subscription to find tenant
-        my $subscription = $self->get_subscription($subscription_id);
+        my $subscription_id = $self->_invoice_subscription_id($invoice);
+
+        # Get subscription to find tenant, unless the caller already fetched it
+        # outside its transaction. `length`, not `defined`: '' and '0' would
+        # otherwise reach GET /v1/subscriptions/ -- a blocking call inside the
+        # webhook's transaction, which is exactly what the prefetch in
+        # Webhooks.pm exists to avoid, and which that code declines by
+        # truthiness.
+        $subscription //= $self->get_subscription($subscription_id)
+            if defined $subscription_id && length $subscription_id;
+
+        # Transient and permanent failures need opposite answers, and an earlier
+        # version of this guard died on both.
+        #
+        # Transient -- the invoice names a subscription and the lookup failed.
+        # _stripe_request warns and returns undef on any API error, and Perl's
+        # rvalue deref of undef does not die, so without this the handler read
+        # an undef tenant_id, fell out of the `return unless`, and let the
+        # caller stamp the event processed and COMMIT. The tenant was never
+        # moved, permanently, because every retry then hit the dedup claim.
+        # Dying releases the claim so Stripe's retry can succeed.
+        die "Cannot resolve subscription $subscription_id for invoice event\n"
+            if defined $subscription_id
+            && length $subscription_id
+            && !$subscription;
+
+        # Permanent -- the invoice carries no subscription at all. One-off
+        # invoices are real, and no retry makes one grow a subscription. Dying
+        # here is a poison pill: ~3 days of 500s, after which Stripe disables
+        # the endpoint and payment_intent.succeeded stops arriving, taking the
+        # enrollment safety net down with it. Webhooks.pm already codifies that
+        # rule for the refund path; this is the same rule.
+        unless ($subscription) {
+            warn "Invoice event carries no subscription id; ignoring\n";
+            return;
+        }
+
+        # Resolved, but no tenant stamped on it. Either not ours, or ours with
+        # the metadata dropped -- and the second costs money quietly, because a
+        # non-paying tenant is never moved to past_due. A retry changes nothing,
+        # so this is processed rather than failed, but it is warned about rather
+        # than ignored.
         my $tenant_id = $subscription->{metadata}->{tenant_id};
-        
-        return unless $tenant_id;
-        
+        unless ($tenant_id) {
+            warn "Subscription @{[ $subscription->{id} // q{?} ]} has no "
+                . "metadata.tenant_id; billing status not updated\n";
+            return;
+        }
+
+        # The same two guards the three sibling handlers carry. metadata is
+        # free-form text an operator can edit in the Dashboard, and a non-UUID
+        # value aborts the transaction inside update_billing_status -- another
+        # permanent condition answered with an endless retry loop.
+        return unless $tenant_id
+            =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        return unless $db->query(
+            'SELECT 1 FROM registry.tenants WHERE id = ?', $tenant_id )->rows;
         $self->update_billing_status($db, $tenant_id, 'active');
     }
 

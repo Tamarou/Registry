@@ -104,6 +104,29 @@ method _render_data ($db, $run, %extra) {
 # renders as an operator, turning `WHERE id = ?` into `WHERE id != ?` and
 # pointing the reuse UPDATE/DELETE at every other payment in the tenant. There
 # is no sanitised reading of a client-chosen operator, so refuse it outright.
+# A run reuses its own still-open payment row, and nothing else.
+#
+# The old test was `status ne 'completed'` -- a deny-list of one, which admitted
+# every other status there is. A refunded or partially_refunded row driven back
+# through this step was reused and re-completed, turning a refund into a charge.
+#
+# Status alone is not enough either. workflow_run_id has been written onto every
+# payment row since creation (see create_payment below) and never read back, so
+# two runs' rows are indistinguishable while both are pending. A row with no
+# stamp predates the linkage and is refused rather than assumed to be ours --
+# the safe direction, and the reason this is advisory on historical rows.
+sub _reusable_payment_row ($class, $payment, $run_id) {
+    return 0 unless $payment;
+
+    my $status = $payment->status // '';
+    return 0 unless $status eq 'pending' || $status eq 'processing';
+
+    my $owner = ( $payment->metadata // {} )->{workflow_run_id} // '';
+    return 0 unless length $owner && length $run_id && $owner eq $run_id;
+
+    return 1;
+}
+
 method _run_payment_id ($run) {
     my $payment_id = $run->data->{payment_id};
     die "Invalid payment_id in workflow data" if ref $payment_id;
@@ -163,7 +186,7 @@ method create_payment ($db, $run, $form_data) {
     my $supersede = Mojo::Promise->resolve;
     if ($existing_payment_id) {
         my $existing = Registry::DAO::Payment->find($db, { id => $existing_payment_id });
-        if ($existing && $existing->status ne 'completed') {
+        if (__PACKAGE__->_reusable_payment_row($existing, $run->id)) {
             # Refresh amount and enrollment snapshot in DB; preserve idempotency_token
             my $raw_db = ($db isa Registry::DAO) ? $db->db : $db;
             my $updated_meta = {
@@ -259,9 +282,48 @@ method handle_payment_callback ($db, $run, $form_data) {
     my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
     die "Payment $payment_id not found" unless $payment;
 
-    # Process the payment
-    return $payment->process_payment_async($db, $form_data->{payment_intent_id})
-        ->then(sub ($result) { $self->_settle_callback($db, $run, $payment, $result) });
+    # Settle inside the transaction process_payment_async opens around its own
+    # completed-write, rather than chaining a second ->then after it: the status
+    # write and the enrollment are one piece of work, and a failure between them
+    # used to leave a row marked paid with no enrollment behind it.
+    return $payment->process_payment_async($db, $form_data->{payment_intent_id},
+        sub ($result) { $self->_settle_callback($db, $run, $payment, $result) })
+
+        # After the COMMIT process_payment_async performs: the capacity gate may
+        # have demoted a child and marked the payment refund_pending inside that
+        # transaction, and the refund itself has to happen outside it.
+        #
+        # $db is already tenant-scoped on this path -- it is the run's own
+        # connection -- so unlike the webhook there is no search_path to
+        # re-establish here.
+        ->then(sub ($out) {
+            my $settled = Registry::DAO::Payment->find($db, { id => $payment->id });
+            my $owed    = $settled && ( $settled->metadata // {} )->{refund_owed_cents};
+            return $out unless $owed;
+
+            # Started from a resolved promise so a synchronous throw from
+            # refund_async -- the status guard, a missing intent id, a
+            # stripe_client that will not build -- becomes a rejection the
+            # ->catch below can see. Otherwise it propagates out of this ->then
+            # with no handler, rejecting the whole chain, and the run is
+            # stranded on the payment step with the money already taken.
+            return Mojo::Promise->resolve->then(sub {
+                $settled->refund_async($db, {
+                    amount_cents    => $owed,
+                    reason          => 'requested_by_customer',
+                    idempotency_key => $settled->capacity_refund_key,
+                });
+            })->then( sub { $out } )
+              # A refund failure must not fail the settlement that already
+              # committed: the parent is charged, enrolled or waitlisted, and
+              # the run has to keep moving. The row stays refund_pending for the
+              # runbook. Rejecting here would strand the run on the payment step
+              # with the money already taken.
+              ->catch(sub ($err) {
+                  warn "capacity refund failed for payment @{[ $payment->id ]}: $err";
+                  return $out;
+              });
+        });
 }
 
 method _settle_callback ($db, $run, $payment, $result) {
