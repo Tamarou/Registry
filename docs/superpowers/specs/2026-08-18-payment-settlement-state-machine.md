@@ -198,6 +198,12 @@ What this subsumes, without any lock at all:
 
 One sub answers "what does this cart hold in this session", returning counts by category, and the three consumers read from it. The short-circuit, the demotion predicate and the capacity arithmetic then cannot diverge, because there is one source.
 
+**Implemented, with a deviation.** The shared thing is `Enrollment::seat_holding_statuses` — the *list*, not a counts object. The three consumers ask genuinely different questions (one child's state, everyone else's occupancy, and demotability), so a shared counts structure would have to be reshaped at each call site; the duplication was never the counting, it was the `('active','pending')` literal appearing three times. Sharing the list gets the whole benefit for a fraction of the diff.
+
+Graded by `t/dao/enrollment-seat-vocabulary.t`, which walks every status `enrollments_status_check` permits and asserts all three consumers agree on each. Narrowing any one consumer fails it, and so does narrowing the owner — verified by mutation. The test also reads the CHECK constraint at runtime and fails if the vocabulary grows without a decision here, because a new status would otherwise fall into `cart_seat_state`'s `closed` default silently.
+
+Deliberately out of scope: `get_dashboard_stats_for_parent` and the family-enrollment query both count `('active','pending')` too, but they answer "what is this family signed up for" rather than "who holds a seat" — the same answer today for a different reason. Folding them in would couple a display concern to the settlement predicate.
+
 ---
 
 ## 3. What this fixes
