@@ -127,6 +127,8 @@ Renaming `completed` buys nothing. The defects came from **two classifiers**, no
 
 **There are now three classifiers to collapse, not two.** Round 4 added `_money_returned` (`refunded|partially_refunded`) to gate `finalize_enrollment`, because neither existing predicate asks the right question: `_money_has_moved` includes `completed`, and `mark_completed` runs immediately above `finalize_enrollment` in the same transaction, so using it refuses every first settlement — measured, not reasoned. `_refundable_status` also includes `completed`. It is named rather than inlined precisely so this section can find it.
 
+Two things §2.1 should carry forward when it collapses them. First, `_money_returned` is a **deny-list**, while `_refundable_status` and `_reusable_payment_row` are both allow-lists and both carry comments explaining that the allow-list form is the fix for exactly this hazard — `pending` and `failed` pass the new gate, which is inert today only because `mark_completed` runs first. The collapsed `is_settled` should be derived positively from §2.1's table, not written as another exclusion. Second, the exclusion of `refund_pending` from `_money_returned` is **conservatism, not a demonstrated requirement**: no known production path leaves a cart item unadjudicated after the first delivery, and the two tests covering it manufacture the state by hand. Keep the exclusion — a gate that refuses to adjudicate would strand a paid-for child with no seat and no refund if such a state ever arose — but do not carry forward the claim that it is load-bearing.
+
 And the cheapest mechanism in this document, which an earlier draft noted the absence of and then failed to propose:
 
 ```sql

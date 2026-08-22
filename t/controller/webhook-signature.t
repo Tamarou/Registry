@@ -59,4 +59,49 @@ subtest 'malformed headers are rejected without warnings' => sub {
         'an attacker-controlled header does not leak warnings into the log';
 };
 
+# The only anti-replay control on the money endpoint, and nothing graded it --
+# deleting the line entirely left the whole suite green. The change that added
+# the numeric check also shifted load onto this window: t=0 used to be rejected
+# by a truthiness test upstream, and now reaches here and only here.
+subtest 'the replay window is enforced in both directions' => sub {
+    for my $skew ( -400, -301, 301, 400 ) {
+        my $t = time() + $skew;
+        my $sig = hmac_sha256_hex( "$t.$payload", $old );
+        ok !check( "t=$t,v1=$sig", $old ),
+            "a correctly-signed payload ${skew}s away is refused";
+    }
+    for my $skew ( -299, 0, 299 ) {
+        my $t = time() + $skew;
+        my $sig = hmac_sha256_hex( "$t.$payload", $old );
+        ok check( "t=$t,v1=$sig", $old ),
+            "and one ${skew}s away is still accepted";
+    }
+};
+
+# _secure_compare's length check is not cosmetic: the comparison loop runs
+# 0 .. length($expected)-1, so without it any candidate whose PREFIX is the
+# correct signature verifies. That is a forgery bypass, and no test touched it.
+subtest 'a candidate that merely starts with the right signature is refused' => sub {
+    my $t   = time();
+    my $sig = hmac_sha256_hex( "$t.$payload", $old );
+
+    ok check( "t=$t,v1=$sig", $old ), 'the exact signature verifies';
+    ok !check( "t=$t,v1=" . $sig . ('0' x 200), $old ),
+        'the signature plus trailing garbage does not';
+    ok !check( "t=$t,v1=" . substr( $sig, 0, 32 ), $old ),
+        'and a truncated signature does not';
+};
+
+# @v1 is attacker-supplied and was unbounded, on the one route that opts out of
+# rate limiting. Stripe sends one signature normally and two during rotation.
+subtest 'an absurd number of candidate signatures is refused outright' => sub {
+    my $t   = time();
+    my $sig = hmac_sha256_hex( "$t.$payload", $old );
+
+    ok check( "t=$t,v1=$sig," . join( ',', map { "v1=deadbeef$_" } 1 .. 5 ), $old ),
+        'a plausible handful still verifies';
+    ok !check( "t=$t,v1=$sig," . join( ',', map { "v1=deadbeef$_" } 1 .. 200 ), $old ),
+        'two hundred candidates are refused even though one of them is valid';
+};
+
 done_testing;

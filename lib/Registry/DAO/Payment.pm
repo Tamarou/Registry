@@ -488,8 +488,10 @@ field $_stripe_client = undef;
     }
 
     method finalize_enrollment ($db) {
-        # Seating anyone against money that has been returned, or is owed back,
-        # is a delivery the parent no longer paid for. The webhook's guard above
+        # Seating anyone against money that has gone back to the payer is a
+        # delivery the parent no longer paid for. Returned, not "returned or
+        # owed back" -- refund_pending is owed and is deliberately outside this
+        # set; see _money_returned. The webhook's guard above
         # covers mark_completed only, so without this a redelivery onto a
         # refunded row re-adjudicates the whole cart and seats every unseated
         # item.
@@ -833,10 +835,24 @@ field $_stripe_client = undef;
     # which also includes completed), but "has this money gone back to the
     # payer" -- the set in which no further seat may be granted.
     #
-    # refund_pending is deliberately NOT in it. That money is owed, not yet
-    # returned, and the debt belongs to one child whose seat went; the rest of
-    # the cart still needs adjudicating on redelivery. Excluding it here is what
-    # lets a second delivery demote a second child and accumulate the balance.
+    # refund_pending is deliberately NOT in it, and the honest reason is
+    # conservatism rather than a demonstrated need. That money is owed, not yet
+    # returned, so refusing to adjudicate is a stronger claim than the evidence
+    # supports: no known production path leaves a cart item unadjudicated after
+    # the first delivery, because every item with a session_id gets an
+    # enrollment row on that pass -- seated on the fits branch, waitlisted on
+    # the other -- and drops set status='cancelled' rather than deleting.
+    #
+    # An earlier version of this comment claimed the exclusion is what lets a
+    # second delivery demote a second child and accumulate the balance. That is
+    # false: the two tests covering it manufacture the state by hand, and the
+    # refund retry does not depend on it either way, since the caller re-reads
+    # refund_owed_cents straight off the row.
+    #
+    # It stays excluded because including it is the change that cannot be
+    # undone safely: if such a state ever does arise, a gate that refuses to
+    # adjudicate strands a paid-for child with no seat and no refund. Leaving
+    # the row adjudicable is a no-op in every path we can find.
     sub _money_returned ($class, $status) {
         return ( $status // '' )
             =~ /\A (?: refunded | partially_refunded ) \z/x

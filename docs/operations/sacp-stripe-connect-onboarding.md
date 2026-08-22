@@ -333,16 +333,30 @@ doing anything more.
 #### A failed refund is NOT `refund_failed`
 
 Never write `refund_failed`, or any status outside the five the code knows.
-The string appears nowhere in `lib/`, and it is in neither classifier --
-`Registry::DAO::Payment::_money_has_moved`
-(`completed|refunded|partially_refunded|refund_pending`) and
-`_refundable_status` (`completed|refund_pending`). Writing it does both bad
-things at once: the row is locked out of every future refund, *and* the next
-Stripe redelivery sees an unsettled payment and re-completes it.
+The string appears nowhere in `lib/`, and it is in none of the three
+classifiers that read this column:
+
+| Classifier | Statuses | What it decides |
+|---|---|---|
+| `_money_has_moved` | `completed`, `refunded`, `partially_refunded`, `refund_pending` | whether a delivery may re-complete the row |
+| `_refundable_status` | `completed`, `refund_pending` | whether a refund may be issued at all |
+| `_money_returned` | `refunded`, `partially_refunded` | whether any further seat may be granted |
+
+Writing an unknown status does two bad things at once: the row is locked out
+of every future refund, *and* the next Stripe redelivery sees an unsettled
+payment and re-completes it.
 
 Leave a failed refund as `refund_pending` with the obligation intact, and
 record the failure **outside** the status column -- on the ticket, not on the
-row. The status column is load-bearing for two classifiers; a note is not.
+row. The status column is load-bearing for three classifiers; a note is not.
+
+> **Step 4 has a consequence worth knowing.** Setting a row to `refunded` or
+> `partially_refunded` puts it in `_money_returned`, which permanently stops
+> `finalize_enrollment` from granting any further seat on that payment --
+> silently, because both callers discard its return value. That is the intended
+> behaviour for a cart whose money went back, and it is why step 4 comes only
+> after a `succeeded` refund is confirmed. Do not use those statuses to park a
+> row you are still working on; leave it `refund_pending`.
 
 ### Charge idempotency
 

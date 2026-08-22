@@ -350,6 +350,14 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
 
         return 0 unless @v1;
+
+        # Cap the candidate list. Stripe sends one signature normally and two
+        # during an endpoint-secret rotation; anything beyond that is someone
+        # else's idea. Uncapped, this loop is a CPU amplifier on the one route
+        # that opts out of rate limiting (Middleware/RateLimit.pm's
+        # @EXCLUDED_PREFIXES) -- measured at 62x over the single-signature form
+        # at Mojo's header ceiling, blocking a worker for the duration.
+        return 0 if @v1 > 8;
         # A bare `unless $timestamp` would also reject t=0. Test for presence.
         return 0 unless defined $timestamp && length $timestamp;
         # The header is attacker-controlled, so a non-numeric t must be a quiet
@@ -364,12 +372,15 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $signed_payload = $timestamp . '.' . $payload;
         my $expected_sig = hmac_sha256_hex($signed_payload, $endpoint_secret);
 
-        # Compare against every candidate, and do not short-circuit: returning
-        # early on the first match would leak, through timing, which signature
-        # in the list matched.
-        my $matched = 0;
-        $matched |= _secure_compare($expected_sig, $_) for @v1;
-        return $matched ? 1 : 0;
+        # Stop at the first match. An earlier version deliberately did not, to
+        # avoid leaking through timing which candidate matched -- but the
+        # candidates are supplied by whoever sent the header, so there is
+        # nothing to leak to them that they do not already know. The
+        # non-short-circuit form bought a real DoS against a vacuous threat.
+        for my $candidate (@v1) {
+            return 1 if _secure_compare( $expected_sig, $candidate );
+        }
+        return 0;
     }
 
     sub _secure_compare ($a, $b) {

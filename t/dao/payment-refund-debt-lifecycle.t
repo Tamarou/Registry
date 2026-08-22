@@ -131,10 +131,10 @@ subtest 'a child already waitlisted does not create a second debt' => sub {
     # workflow step re-reads it too), so a return-value assertion grades
     # something no production code consults.
     #
-    # The row is still refund_pending from the first pass, so the second
-    # delivery is now refused outright by finalize_enrollment's returned-or-owed
-    # gate rather than recomputing its way to zero. Stronger, and it leaves the
-    # gate that matters -- no seat granted against money owed back -- in force.
+    # The row is still refund_pending from the first pass. That status is
+    # deliberately NOT in _money_returned, so the second delivery is not refused
+    # by the gate -- it runs, and the already-waitlisted child is skipped inside
+    # the loop instead.
     my $meta = $db->select('payments', ['metadata'], { id => $payment->id })
         ->expand->hash->{metadata};
     is $meta->{refund_owed_cents}, undef,
@@ -143,6 +143,19 @@ subtest 'a child already waitlisted does not create a second debt' => sub {
                      WHERE payment_id = ? AND status IN ('active','pending')},
         $payment->id)->array->[0], 0,
         'and seats nobody against the money it already owes back';
+
+    # The two assertions above are satisfied by "the second delivery did
+    # nothing at all" just as well as by "it adjudicated and owed nothing" --
+    # an early return leaves metadata and enrollments untouched too. That is
+    # exactly the regression this subtest exists to catch, and an earlier
+    # rewrite of it lost the distinction: putting refund_pending back into
+    # _money_returned left this file green. Graded directly, so the classifier
+    # cannot drift without something here going red.
+    ok !Registry::DAO::Payment->_money_returned('refund_pending'),
+        'a refund_pending row is not treated as money already returned';
+    ok Registry::DAO::Payment->_money_returned($_),
+        "$_ is treated as money already returned"
+        for qw( refunded partially_refunded );
 };
 
 subtest 'the idempotency key names the children it refunds' => sub {
