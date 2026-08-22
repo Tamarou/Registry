@@ -31,6 +31,7 @@ my @CHANGES = qw(
     refund-amounts-cents
     drop-installment-schedules
     webhook-events-processed-at
+    payments-typed-obligation
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
