@@ -209,15 +209,30 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # them. The exception escapes the action and Mojolicious renders a 500
         # on an already-committed settlement, which is precisely what the
         # always-2xx rule below exists to prevent.
+        # One Stripe call per unsettled increment, each for its own amount under
+        # its own key -- never the accumulated balance under a key that changes
+        # as the balance grows, which is how one debt got paid twice. Sequenced
+        # rather than concurrent so a failure stops the chain with the remaining
+        # increments still owed and still retryable.
+        my $due = $payment->unsettled_refund_increments($tdb);
         return Mojo::Promise->resolve->then(sub {
-            $payment->refund_async($tdb, {
-                amount_cents    => $owed,
-                reason          => 'requested_by_customer',
-                # Derived from the children this debt is for, so the key and the
-                # amount always come from the same source: a redelivery of the
-                # same debt replays the same key and Stripe deduplicates it.
-                idempotency_key => $payment->capacity_refund_key,
-            });
+            my $chain = Mojo::Promise->resolve;
+            for my $inc (@$due) {
+                $chain = $chain->then(sub {
+                    $payment->refund_async($tdb, {
+                        amount_cents    => $inc->{cents},
+                        reason          => 'requested_by_customer',
+                        idempotency_key => $payment->capacity_refund_key($inc->{seq}),
+                    })->then(sub ($refund) {
+                        # Settled per increment, so a partial success is kept.
+                        # Discharging the whole obligation on one response is
+                        # how a debt that grew mid-flight got erased.
+                        $payment->settle_refund_increment($tdb, $inc->{seq}, $refund);
+                        return $refund;
+                    });
+                });
+            }
+            return $chain;
         })->then(sub {
             $self->render(status => 200, text => 'OK');
         })->catch(sub ($err) {

@@ -653,7 +653,7 @@ field $_stripe_client = undef;
         # If the process dies between the COMMIT and the refund, this row is
         # what the operator finds: refund_pending with the amount attached. The
         # runbook clears it by hand; there is no automated reader until Leg 3.
-        $self->_record_capacity_obligation( $db, $owed_cents, \@owed_children );
+        $self->record_capacity_obligation( $db, $owed_cents, \@owed_children );
 
         return $owed_cents;
     }
@@ -671,35 +671,116 @@ field $_stripe_client = undef;
     # only a manual-review flag. Leaving such a row 'completed' hides it from
     # the operator runbook and from Leg 3's ProcessRefunds, both of which scan
     # for refund_pending -- a family waitlisted, unrefunded, and invisible.
-    method _record_capacity_obligation ($db, $new_cents, $new_children) {
-        my $outstanding = ( $metadata->{refund_owed_cents} // 0 ) + $new_cents;
-        my $unresolved  = $outstanding || $metadata->{refund_manual_review};
-        return unless $unresolved;
+    # The obligation, one increment at a time.
+    #
+    # Every method here is a targeted UPDATE naming only the columns it changes,
+    # never save(). save() is a whole-row write of six columns from the
+    # in-memory object, so from a stale object it is a restore; and the
+    # arithmetic below has to be atomic against a concurrent settlement anyway.
+    # This is the shape the settlement spec's section 2.3 generalises.
 
-        # Union: a child contributes at most once, because a second pass over an
-        # already-waitlisted child is not a transition and never reaches here.
-        my %children = map { $_ => 1 }
-            @{ $metadata->{refund_owed_children} // [] }, @$new_children;
+    # Append a new debt increment. The DELTA is recorded, not the running total:
+    # refunding the accumulated balance under a key that changes as the balance
+    # grows is how one debt gets paid twice, which is exactly what happened when
+    # the key was derived from the owed-children list.
+    method record_capacity_obligation ($db, $new_cents, $new_children = []) {
+        $db = $db->db if $db isa Registry::DAO;
+        return unless $new_cents;
 
+        my $row = $db->query( <<'SQL', $new_cents, $new_cents,
+            UPDATE payments
+               SET refund_seq        = refund_seq + 1,
+                   -- Clamped rather than allowed to violate
+                   -- payments_refund_owed_cents_check. This runs inside the
+                   -- settlement transaction, so a CHECK violation here would
+                   -- roll back a captured charge -- the hazard the spec's
+                   -- section 5 ordering exists to avoid. Over-accumulation is a
+                   -- bug, but it must not cost the family their enrollment.
+                   refund_owed_cents = LEAST(amount_cents, refund_owed_cents + ?::integer),
+                   refund_increments = refund_increments || jsonb_build_object(
+                       'seq',        refund_seq + 1,
+                       'cents',      ?::integer,
+                       'children',   ?::jsonb,
+                       'settled_at', NULL ),
+                   status = 'refund_pending'
+             WHERE id = ?
+         RETURNING refund_owed_cents, refund_seq
+SQL
+            encode_json($new_children), $id )->hash;
+
+        return unless $row;
         $status = 'refund_pending';
-        $metadata->{refund_owed_cents}    = $outstanding;
-        $metadata->{refund_owed_children} = [ sort keys %children ];
-        $self->save($db);
-        return;
+        return $row->{refund_seq};
     }
 
-    # Stable for one debt, distinct across debts. A key held constant per
-    # payment while the amount is recomputed makes Stripe reject the second,
-    # differently-priced refund with an idempotency_error -- which both callers
-    # catch and log, so the refund silently never happens.
-    method capacity_refund_key {
-        my $children = ( $metadata // {} )->{refund_owed_children} // [];
-        return "refund:capacity:$id" unless @$children;
-        # Sorted here as well as at the write site. The key's stability is what
-        # stops Stripe treating a redelivery as a second refund, and it must not
-        # depend on the order some other code happened to store the list in.
-        return "refund:capacity:$id:" . join( ',', sort @$children );
+    # What still has to reach Stripe. Ordered by seq so a retry sends the oldest
+    # debt first, and so the caller's behaviour does not depend on jsonb order.
+    method unsettled_refund_increments ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( <<'SQL', $id )->hashes->to_array;
+            SELECT (e->>'seq')::int AS seq, (e->>'cents')::int AS cents
+              FROM payments p, jsonb_array_elements(p.refund_increments) e
+             WHERE p.id = ? AND e->>'settled_at' IS NULL
+             ORDER BY (e->>'seq')::int
+SQL
     }
+
+    # Names the increment it pays for. Stable forever for that increment, so a
+    # retry of a failed attempt is deduplicated by Stripe, and distinct from
+    # every other increment, so a genuinely new debt is never folded into one
+    # already sent.
+    method capacity_refund_key ($seq) { return "refund:capacity:$id:$seq" }
+
+    # Discharge one increment: mark it settled, subtract exactly its amount, and
+    # add exactly its amount to the cumulative total returned.
+    #
+    # Subtracting, not deleting. The old code deleted the whole obligation, so a
+    # debt that grew during the Stripe round trip was erased along with the part
+    # that was actually paid -- no row, no status, nothing for the runbook.
+    #
+    # Idempotent: the settled_at IS NULL guard means a second call moves no
+    # money. Both callers can retry freely.
+    method settle_refund_increment ($db, $seq, $refund = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $row = $db->query( <<'SQL', $seq, $refund->{id}, $seq, $seq, $id )->hash;
+            UPDATE payments p
+               SET refund_increments = (
+                     SELECT jsonb_agg(
+                              CASE WHEN (e->>'seq')::int = ?
+                                    AND e->>'settled_at' IS NULL
+                                   THEN e || jsonb_build_object(
+                                            'settled_at', to_jsonb(NOW()),
+                                            'refund_id',  to_jsonb(?::text) )
+                                   ELSE e END
+                              ORDER BY (e->>'seq')::int )
+                       FROM jsonb_array_elements(p.refund_increments) e ),
+                   refund_owed_cents = GREATEST( 0, p.refund_owed_cents - COALESCE((
+                       SELECT (e->>'cents')::int
+                         FROM jsonb_array_elements(p.refund_increments) e
+                        WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL ), 0) ),
+                   refunded_cents = LEAST( p.amount_cents, p.refunded_cents + COALESCE((
+                       SELECT (e->>'cents')::int
+                         FROM jsonb_array_elements(p.refund_increments) e
+                        WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL ), 0) )
+             WHERE p.id = ?
+         RETURNING refund_owed_cents, refunded_cents, amount_cents
+SQL
+        return unless $row;
+
+        # Status follows the money, once nothing is left owed. A part-refunded
+        # cart says so rather than claiming a full refund -- the ledger
+        # distinction the runbook and Leg 3 both read.
+        return $row if $row->{refund_owed_cents};
+        my $now = $row->{refunded_cents} >= $row->{amount_cents}
+            ? 'refunded' : 'partially_refunded';
+        $db->query( 'UPDATE payments SET status = ? WHERE id = ? AND status = ?',
+            $now, $id, 'refund_pending' );
+        $status = $now;
+        return $row;
+    }
+
+
 
     method add_line_item ($db, $args) {
         $db = $db->db if $db isa Registry::DAO;
@@ -871,25 +952,33 @@ field $_stripe_client = undef;
     # behind -- and nothing in lib/ ever called the sync one, because every
     # money path runs under the daemon's event loop where _await refuses. It is
     # gone; this is the only copy.
+    # Records the Stripe reference for the most recent refund, and nothing else.
+    #
+    # It used to own the discharge as well: set the status, and DELETE the whole
+    # obligation. Both are wrong now and one always was. Deleting erased a debt
+    # that grew during the round trip -- $refund_cents is captured before the
+    # network call, so an increment recorded while it was in flight vanished
+    # with the part actually paid, leaving no row and nothing for the runbook.
+    # And the status cannot be decided from one refund's amount once refunds are
+    # per-increment, because a 3000 increment of a 20000 cart is not a partial
+    # refund of the cart, it is one instalment of the debt.
+    #
+    # settle_refund_increment owns both: it subtracts exactly the increment it
+    # settles, adds exactly that to refunded_cents, and moves the status only
+    # when nothing is left owed.
     method _apply_refund_result ($db, $refund, $refund_cents, $reason) {
-        $status = $refund_cents >= $amount_cents ? 'refunded' : 'partially_refunded';
+        $db = $db->db if $db isa Registry::DAO;
 
-        $metadata->{refund_id}           = $refund->{id};
-        $metadata->{refund_amount_cents} = $refund_cents;
-        $metadata->{refund_reason}       = $reason;
-
-        # The obligation is discharged: clear it, or every later settlement
-        # reads an unpaid debt and returns the same money again.
-        delete $metadata->{refund_owed_cents};
-        delete $metadata->{refund_owed_children};
-        # And the manual-review flag, which is part of the same obligation.
-        # Left behind it stays truthy forever, so every later delivery re-enters
-        # the obligation write and stamps refund_pending over this terminal
-        # status -- putting a settled row back in the runbook's queue with a
-        # zero amount and a degenerate idempotency key.
-        delete $metadata->{refund_manual_review};
-
-        $self->save($db);
+        # A targeted jsonb merge, not save(). save() would write six columns
+        # from an object loaded before the Stripe round trip, over a row
+        # settle_refund_increment may have moved in the meantime.
+        $db->query( <<'SQL', encode_json({
+            UPDATE payments SET metadata = metadata || ?::jsonb WHERE id = ?
+SQL
+            refund_id           => $refund->{id},
+            refund_amount_cents => $refund_cents,
+            refund_reason       => $reason,
+        }), $id );
         return;
     }
 

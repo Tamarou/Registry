@@ -21,6 +21,14 @@ BEGIN
     END LOOP;
 
     IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'registry' AND table_name = 'payments'
+           AND column_name = 'refund_increments' AND data_type = 'jsonb'
+    ) THEN
+        RAISE EXCEPTION 'registry.payments has no jsonb refund_increments column';
+    END IF;
+
+    IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
          WHERE conname = 'payments_status_check'
            AND conrelid = 'registry.payments'::regclass

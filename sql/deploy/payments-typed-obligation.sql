@@ -22,7 +22,8 @@ SET client_min_messages = 'warning';
 ALTER TABLE registry.payments
     ADD COLUMN IF NOT EXISTS refund_owed_cents INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS refunded_cents    INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS refund_seq        INTEGER NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS refund_seq        INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS refund_increments JSONB   NOT NULL DEFAULT '[]'::jsonb;
 
 -- Backfill before the constraints, so a row whose jsonb already violates them
 -- fails here with its own data visible rather than at some later write.
@@ -33,7 +34,20 @@ UPDATE registry.payments
            COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0), amount_cents),
        refund_seq = CASE
            WHEN COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) > 0 THEN 1
-           ELSE 0 END
+           ELSE 0 END,
+       -- An existing unpaid debt becomes increment 1, unsettled, so the
+       -- retry path picks it up instead of silently owning an untracked
+       -- balance. Its key is refund:capacity:<id>:1, which is NOT the key any
+       -- earlier attempt used -- deliberate, since we cannot know whether one
+       -- was made. The runbook's list-before-issue is what covers that.
+       refund_increments = CASE
+           WHEN COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) > 0
+           THEN jsonb_build_array(jsonb_build_object(
+                    'seq',      1,
+                    'cents',    LEAST((metadata->>'refund_owed_cents')::INTEGER, amount_cents),
+                    'children', COALESCE(metadata->'refund_owed_children', '[]'::jsonb),
+                    'settled_at', NULL))
+           ELSE '[]'::jsonb END
  WHERE metadata ? 'refund_owed_cents' OR metadata ? 'refund_amount_cents';
 
 ALTER TABLE registry.payments
@@ -81,7 +95,8 @@ BEGIN
             'ALTER TABLE %I.payments
                 ADD COLUMN IF NOT EXISTS refund_owed_cents INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS refunded_cents    INTEGER NOT NULL DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS refund_seq        INTEGER NOT NULL DEFAULT 0', s);
+                ADD COLUMN IF NOT EXISTS refund_seq        INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS refund_increments JSONB   NOT NULL DEFAULT ''[]''::jsonb', s);
 
         EXECUTE format(
             'UPDATE %I.payments

@@ -23,7 +23,8 @@ DROP INDEX IF EXISTS registry.idx_payments_refund_owed;
 ALTER TABLE registry.payments
     DROP COLUMN IF EXISTS refund_owed_cents,
     DROP COLUMN IF EXISTS refunded_cents,
-    DROP COLUMN IF EXISTS refund_seq;
+    DROP COLUMN IF EXISTS refund_seq,
+    DROP COLUMN IF EXISTS refund_increments;
 
 -- The tenant loop must mirror the deploy's. sql/revert/refund-amounts-cents.sql
 -- is the cautionary example: its tenant loop omitted a COMMENT the registry
@@ -51,7 +52,8 @@ BEGIN
             'ALTER TABLE %I.payments
                 DROP COLUMN IF EXISTS refund_owed_cents,
                 DROP COLUMN IF EXISTS refunded_cents,
-                DROP COLUMN IF EXISTS refund_seq', s);
+                DROP COLUMN IF EXISTS refund_seq,
+                DROP COLUMN IF EXISTS refund_increments', s);
     END LOOP;
 END $$;
 
