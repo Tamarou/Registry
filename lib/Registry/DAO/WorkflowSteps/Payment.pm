@@ -304,7 +304,7 @@ method handle_payment_callback ($db, $run, $form_data) {
             # recorded a debt whose refund failed, and this pass may demote
             # nobody new and still owe it.
             my $due = $settled->unsettled_refund_increments($db);
-            return $out unless @$due;
+            return $out unless $due && @$due;
 
             # Started from a resolved promise so a synchronous throw from
             # refund_async -- the status guard, a missing intent id, a

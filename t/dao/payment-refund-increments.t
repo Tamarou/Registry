@@ -121,4 +121,22 @@ subtest 'settling an increment twice does not double-count the money returned' =
     is $r->{refund_owed_cents}, 0, 'and not driven negative past the CHECK';
 };
 
+# The increments are what actually reach Stripe, so if the balance is clamped
+# against payments_refund_owed_cents_check but the increments are not, the
+# refunds sent exceed the payment. They must clamp against the same headroom.
+subtest 'a debt larger than the cart clamps the increment, not just the balance' => sub {
+    my $p = a_payment(10000);
+    $p->record_capacity_obligation( $db, 8000, ['child-a'] );
+    $p->record_capacity_obligation( $db, 8000, ['child-b'] );
+
+    my $r = row_of($p);
+    is $r->{refund_owed_cents}, 10000, 'the balance stops at the cart total';
+
+    my $summed = 0;
+    $summed += $_->{cents} for @{ $r->{refund_increments} };
+    is $summed, $r->{refund_owed_cents},
+        'and the increments sum to it exactly -- what is sent equals what is owed';
+    cmp_ok $summed, '<=', 10000, 'never more than the payment itself';
+};
+
 done_testing;

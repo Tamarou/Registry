@@ -77,6 +77,11 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 sub mock_payment_with_outcome ($process_result, %more) {
     my $mock = Test::MockObject->new;
     $mock->set_always('id',                    $payment_id);
+    # The post-COMMIT refund step reads the obligation off the row. A mock
+    # without this returns undef where production returns an arrayref, and the
+    # step dies dereferencing it -- so the mock has to carry the real interface,
+    # not just the methods this test happens to exercise.
+    $mock->set_always('unsettled_refund_increments', []);
     # process_payment_async now runs the caller's settlement inside the
     # transaction it opens around its own completed-write, so the mock has to
     # invoke $settle rather than just resolve. set_always ignores arguments and

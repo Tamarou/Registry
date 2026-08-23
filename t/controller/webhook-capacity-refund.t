@@ -151,6 +151,54 @@ subtest 'the refund lands in the tenant schema, not registry' => sub {
     is $in_registry, 0, 'and registry.payments gained nothing';
 };
 
+# One increment cannot tell the two apart: the balance and the increment are
+# the same number, so a caller sending refund_owed_cents passes just as well as
+# one sending $inc->{cents}. Two increments separate them, and sending the
+# balance is precisely the double refund this whole design exists to stop.
+subtest 'two increments are refunded separately, never as one accumulated total' => sub {
+    my $payment = a_doomed_payment();
+
+    # A second, earlier debt whose refund never settled -- the shape a lost
+    # response leaves behind.
+    #
+    # The intent id has to be seeded with it. Recording a debt moves the row to
+    # refund_pending, which makes the delivery below skip mark_completed --
+    # correct, that is the settled-write guard doing its job -- so the row would
+    # never acquire an intent id and refund_async would die on that instead,
+    # invisibly, because the always-2xx catch swallows it. In production the
+    # first delivery completes the payment before any debt exists.
+    $tdb->update('payments', { stripe_payment_intent_id => 'pi_multi_' . $payment->id },
+        { id => $payment->id });
+    tenant_payment($payment)->record_capacity_obligation( $tdb, 4000, ['earlier-kid'] );
+
+    my @refunds;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_multi_' . scalar(@refunds), status => 'succeeded' });
+        };
+        post_settlement($payment)->status_is(200);
+    }
+
+    is scalar @refunds, 2, 'one Stripe call per unsettled increment';
+    # 4000 + 11000, not 4000 + 15000: the cart is 15000, so the second
+    # increment is clamped to the headroom left. The increments always sum to
+    # the balance, which is the property that keeps Stripe from being sent more
+    # than the payment.
+    is_deeply [ sort { $a <=> $b } map { $_->{amount} } @refunds ], [ 4000, 11000 ],
+        'each for its own amount -- not the 15000 balance twice, nor once';
+
+    my $total = 0; $total += $_->{amount} for @refunds;
+    is $total, 15000, 'the total reaching Stripe equals the debt, never more';
+
+    my %keys = map { $_->{_idempotency_key} // '' => 1 } @refunds;
+    is scalar( keys %keys ), 2,
+        'under distinct keys, so Stripe cannot fold one into the other';
+
+    is tenant_payment($payment)->refund_owed_cents, 0, 'and nothing is left owed';
+};
+
 subtest 'the refund happens after the COMMIT, not inside it' => sub {
     my $payment = a_doomed_payment();
     my $visible_to_another_connection;

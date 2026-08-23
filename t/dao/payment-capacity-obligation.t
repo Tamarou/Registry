@@ -111,25 +111,35 @@ subtest 'a second demotion adds to the debt rather than replacing it' => sub {
     # child. Assigning rather than accumulating drops the earlier balance, and
     # nothing can re-derive it -- that child is already waitlisted, so no later
     # pass sees a transition.
+    # Both children are in this cart, so the accumulated debt can actually be
+    # owed. The earlier form seeded a 10000 debt for a child who was not in the
+    # cart and then demoted the one who was, claiming 20000 against a 10000
+    # payment -- impossible before the typed columns too, but silently recorded
+    # because nothing constrained the blob. payments_refund_owed_cents_check
+    # clamps it now, which is what surfaced the bad fixture.
     my $session = a_session(1);
     my $earlier = a_child();
     my $now     = a_child();
-    my $payment = a_paid_cart({ session => $session, child => $now });
+    my $payment = a_paid_cart({ session => $session, child => $earlier },
+                              { session => $session, child => $now });
     occupy($session, 1);
 
-    # As a failed refund would have left it.
-    my %meta = %{ $payment->metadata };
-    $db->update('payments', {
-        status   => 'refund_pending',
-        metadata => { -json => { %meta,
-            refund_owed_cents    => 10000,
-            refund_owed_children => [ $earlier->id ] } },
-    }, { id => $payment->id });
+    # As a failed refund would have left it: an unsettled increment carrying its
+    # own amount, AND the waitlist row the demotion wrote. Both, or the fixture
+    # is not the state it claims -- a child with a debt but no waitlist row gets
+    # re-adjudicated on this pass and owed a second time, which is a fixture
+    # artifact rather than the behaviour under test.
+    reload($payment)->record_capacity_obligation( $db, 10000, [ $earlier->id ] );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $earlier->id,
+        parent_id => $parent->id, status => 'waitlisted', payment_id => $payment->id });
 
     my $after = settle( reload($payment) );
-    is $after->metadata->{refund_owed_cents}, 20000,
+    is $after->refund_owed_cents, 20000,
         'the new demotion is added to the unpaid balance, not substituted for it';
-    is scalar @{ $after->metadata->{refund_owed_children} }, 2,
+    my %named = map { $_ => 1 }
+        map { @{ $_->{children} // [] } } @{ $after->refund_increments };
+    is scalar( keys %named ), 2,
         'and both children are named in the obligation';
 };
 
@@ -145,11 +155,11 @@ subtest 'a pass that demotes nobody leaves an unpaid debt alone' => sub {
     occupy($session, 1);
 
     my $after_one = settle($payment);
-    is $after_one->metadata->{refund_owed_cents}, 10000, 'pass 1 owes the priced child';
+    is $after_one->refund_owed_cents, 10000, 'pass 1 owes the priced child';
     ok $after_one->metadata->{refund_manual_review}, 'and flags the unpriced one';
 
     my $after_two = settle(reload($payment));
-    is $after_two->metadata->{refund_owed_cents}, 10000,
+    is $after_two->refund_owed_cents, 10000,
         'the unpaid debt survives a delivery that demotes nobody';
 };
 
@@ -181,7 +191,7 @@ subtest 'a redelivery does not re-adjudicate a seat already granted' => sub {
 
     my $after_one = settle($payment);
     is status_for($payment, $session), 'active', 'the child is seated on pass 1';
-    is $after_one->metadata->{refund_owed_cents}, undef, 'and owes nothing';
+    is $after_one->refund_owed_cents, 0, 'and owes nothing';
 
     # Fill the session past capacity from outside this payment. The predicate
     # excludes this payment's own rows, so on a second pass it sees the session
@@ -191,7 +201,7 @@ subtest 'a redelivery does not re-adjudicate a seat already granted' => sub {
     my $after_two = settle(reload($payment));
     is status_for($payment, $session), 'active',
         'a later delivery leaves the seated child alone';
-    is $after_two->metadata->{refund_owed_cents}, undef,
+    is $after_two->refund_owed_cents, 0,
         'and creates no obligation against a seat already granted';
 };
 
@@ -211,27 +221,29 @@ subtest 'a pending seat short-circuits too' => sub {
     my $after = settle( reload($payment) );
     is status_for($payment, $session), 'pending',
         'the pending seat is left alone rather than demoted';
-    is $after->metadata->{refund_owed_cents}, undef, 'and owes nothing';
+    is $after->refund_owed_cents, 0, 'and owes nothing';
 };
 
-subtest 'the obligation key is stable across item ordering' => sub {
-    # The key is derived from the owed-children list. If that list is not
-    # ordered deterministically, a redelivery whose cart items arrive in a
-    # different order mints a different key and Stripe refunds a second time.
-    # Graded directly on the key rather than through two carts: the same
-    # children in two payments collide on enrollments_session_student_type_unique,
-    # which would make this die for a reason that has nothing to do with ordering.
+subtest 'the obligation key names one increment and never moves' => sub {
+    # The key used to be derived from the owed-children list, which unions as
+    # the debt grows -- so a second attempt travelled under a key Stripe had
+    # never seen and refunded the whole accumulated balance again. It now names
+    # the increment it pays for, so it cannot move when new debt arrives, and a
+    # genuinely new increment can never be folded into one already sent.
     my $session = a_session(5);
     my $payment = a_paid_cart({ session => $session, child => a_child() });
 
-    my %meta = %{ $payment->metadata };
-    $db->update('payments',
-        { metadata => { -json => { %meta, refund_owed_children => [ 'ccc', 'aaa', 'bbb' ] } } },
-        { id => $payment->id });
+    $payment->record_capacity_obligation( $db, 5000, [ 'ccc', 'aaa' ] );
+    my $first = $payment->capacity_refund_key(1);
+    is $first, 'refund:capacity:' . $payment->id . ':1',
+        'the key names the increment, not the child set';
 
-    is reload($payment)->capacity_refund_key,
-        'refund:capacity:' . $payment->id . ':aaa,bbb,ccc',
-        'the key orders its child set, so a differently-ordered cart replays it';
+    $payment->record_capacity_obligation( $db, 3000, [ 'bbb' ] );
+    is $payment->capacity_refund_key(1), $first,
+        'and growing the debt does not move it -- a retry of the first attempt '
+        . 'replays the same key and Stripe deduplicates it';
+    isnt $payment->capacity_refund_key(2), $first,
+        'while the new increment gets its own';
 };
 
 subtest 'a cancelled enrollment is left alone, not resurrected and re-owed' => sub {
@@ -260,7 +272,7 @@ subtest 'a cancelled enrollment is left alone, not resurrected and re-owed' => s
 
     is status_for($payment, $session), 'cancelled',
         'the cancelled enrollment stays cancelled';
-    is $after->metadata->{refund_owed_cents}, undef,
+    is $after->refund_owed_cents, 0,
         'and no second obligation is created against a drop already settled';
 };
 
@@ -313,15 +325,33 @@ subtest 'discharging an obligation clears the manual-review flag with it' => sub
             sub { Mojo::Promise->resolve({ id => 're_ob', status => 'succeeded' }) };
         # ->wait, not the imported settle(): this file defines its own settle()
         # for finalize_enrollment. Safe here -- prove runs no event loop.
-        $owing->refund_async($db, { amount_cents => 10000,
-                                    idempotency_key => $owing->capacity_refund_key })->wait;
+        # One increment, one key, and the discharge is settle_refund_increment's
+        # job now -- refund_async only records the Stripe reference.
+        my ($inc) = @{ $owing->unsettled_refund_increments($db) };
+        $owing->refund_async($db, { amount_cents => $inc->{cents},
+                                    idempotency_key => $owing->capacity_refund_key($inc->{seq}) })->wait;
+        $owing->settle_refund_increment($db, $inc->{seq}, { id => 're_ob' });
     }
 
+    # ASSERTION REVERSED, deliberately. This used to require the flag be
+    # cleared on discharge, and the old code did clear it -- but for a
+    # mechanical reason, not a money one: a leftover flag re-entered the
+    # obligation write and stamped refund_pending back over a terminal status.
+    # That path is gone, because record_capacity_obligation returns early on a
+    # zero increment.
+    #
+    # What is left is the money question, and clearing was the wrong answer to
+    # it. The flag means a share this code could not compute. Refunding the
+    # children it COULD compute does not discharge that, and the runbook finds
+    # these rows by status = 'refund_pending'. Clearing the flag and moving the
+    # status silently drops an obligation no human has decided about.
     my $done = reload($payment);
-    ok !$done->metadata->{refund_manual_review},
-        'discharging the obligation clears the flag too';
-    isnt $done->status, 'refund_pending',
-        'so a later delivery cannot stamp refund_pending over a terminal status';
+    ok $done->metadata->{refund_manual_review},
+        'the unresolvable share survives discharge of the computable one';
+    is $done->status, 'refund_pending',
+        'and the row stays where the runbook looks for it';
+    ok !$done->refund_owed_cents,
+        'while the computable debt really is paid';
 };
 
 subtest 'each layer of the cancelled protection is graded on its own' => sub {

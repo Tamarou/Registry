@@ -174,7 +174,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     #
     # On a tenant-scoped DAO, not the transaction's handle. The search_path
     # override was transaction-local and is gone by now, so this handle is back
-    # on registry -- and refund_async writes the refunded status itself, inside
+    # on registry -- and settle_refund_increment writes the status itself, inside
     # its own ->then, on whatever handle it was given. Unqualified, that write
     # would hit registry.payments, match no rows, and return quietly while
     # Stripe had already refunded the customer. connect_schema hands back a
@@ -198,8 +198,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return $self->render(status => 200, text => 'OK');
         }
 
-        my $owed = ( $payment->metadata // {} )->{refund_owed_cents};
-        return $self->render(status => 200, text => 'OK') unless $owed;
+        # The typed column, not the jsonb key it used to live in. Reading the
+        # old location here returned undef on every delivery, so this returned
+        # early and the refund was never issued -- silently, because the row
+        # stays refund_pending either way and looks exactly like a refund that
+        # failed at Stripe.
+        return $self->render(status => 200, text => 'OK')
+            unless $payment->refund_owed_cents;
 
         # Started from a resolved promise so a *synchronous* throw becomes a
         # rejection this chain's ->catch can see. refund_async dies before
@@ -319,8 +324,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # redelivery becomes the retry, which is the only automated retry there
         # is before Leg 3.
         my $settled = Registry::DAO::Payment->find($db, { id => $payment_id });
-        return ( $settled && ( $settled->metadata // {} )->{refund_owed_cents} )
-            ? $payment_id : undef;
+        return ( $settled && $settled->refund_owed_cents ) ? $payment_id : undef;
     }
 
     # Connect sends account.updated when a connected account's capabilities

@@ -224,18 +224,27 @@ it is cleared by hand, using the procedure below.
 
 ```bash
 psql $DATABASE_URL -c \
-  "SELECT id, amount_cents, metadata->>'refund_owed_cents' AS owed_cents,
-          metadata->>'refund_owed_children' AS owed_children,
+  "SELECT id, amount_cents, refund_owed_cents, refunded_cents,
+          jsonb_pretty(refund_increments) AS increments,
+          metadata->'refund_manual_review' AS manual_review,
           stripe_payment_intent_id, completed_at
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
     ORDER BY completed_at"
 ```
 
-`refund_owed_cents` is the amount owed; `refund_owed_children` is the child id
-list that also forms the idempotency key. A row with `refund_manual_review` set
-in its metadata reached a state the automatic path could not resolve and needs
-a human decision on the amount before anything is sent to Stripe.
+`refund_owed_cents` is what is still owed and `refunded_cents` is what has
+already gone back. `refund_increments` is the authority for **what to send**: a
+JSON array of debts, each with its own `seq`, `cents`, and `settled_at`. Send
+one refund per increment whose `settled_at` is null, **for that increment's own
+`cents`** -- never for the `refund_owed_cents` total. The increments sum to the
+total by construction, and sending the total is how one debt gets paid twice.
+
+A row with `refund_manual_review` set reached a state the automatic path could
+not resolve -- a child whose share could not be computed -- and needs a human
+decision on the amount. Such a row stays `refund_pending` even when
+`refund_owed_cents` is zero and every increment is settled, deliberately: that
+is the only way it stays in this query's results until someone acts on it.
 
 #### Step 2: List refunds before issuing one
 
@@ -270,30 +279,30 @@ Act on what comes back:
 
 The key is derived from the payment id and the owed-children list, sorted:
 
-- Normal case, one or more children owed:
-  `refund:capacity:<payment_id>:<child_id>,<child_id>` (ids sorted, comma-joined)
-- Bare `refund:capacity:<payment_id>` **only** when `refund_owed_children` is
-  empty -- a manual-review row with nothing owed, which you should not be
-  refunding
+`refund:capacity:<payment_id>:<seq>` -- where `<seq>` is the increment's own
+`seq` from `refund_increments`.
+
+The key names the increment it pays for, so it never moves when new debt
+arrives, and a genuinely new increment can never be folded into one already
+sent. Retrying a failed attempt under the same key is safe and correct; that is
+the whole point of it.
 
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
-  -H "Idempotency-Key: refund:capacity:<payment_id>:<child_id>,<child_id>" \
+  -H "Idempotency-Key: refund:capacity:<payment_id>:<seq>" \
   -d payment_intent=<stripe_payment_intent_id> \
-  -d amount=<refund_owed_cents> \
+  -d amount=<this increment's cents, NOT refund_owed_cents> \
   -d reverse_transfer=true \
   -d refund_application_fee=<true|false>
 ```
 
-**Use the suffixed form.** `capacity_refund_key` returns the bare
-`refund:capacity:<payment_id>` only when `refund_owed_children` is *empty*,
-which is the manual-review case where the owed amount is zero and no refund
-should be sent at all. Every debt an operator can act on carries the child
-suffix, so copying the bare form means the hand-issued refund and the automated
-retry travel under different keys and Stripe deduplicates neither. Build the
-key from the row's own `refund_owed_children`, sorted, comma-joined -- the
-values the step 1 query printed.
+**One refund per unsettled increment.** Repeat this call for each element of
+`refund_increments` whose `settled_at` is null, using that element's `seq` in
+the key and that element's `cents` as the amount. Sending `refund_owed_cents`
+under a single key is the shape that caused a double refund: the key moved as
+the debt grew, so Stripe saw a key it had never seen and paid the whole
+accumulated balance again.
 
 `refund_application_fee` follows the tenant's plan config -- see **Refund
 policy config** above; `reverse_transfer` is always `true` for
@@ -313,11 +322,30 @@ Clear the obligation and move the status once the refund is confirmed
 ```bash
 psql $DATABASE_URL -c \
   "UPDATE \"<sacp-slug>\".payments
-      SET status = 'refunded',
-          metadata = (metadata - 'refund_owed_cents'
-                               - 'refund_owed_children'
-                               - 'refund_manual_review')
-    WHERE id = '<payment_id>' AND status = 'refund_pending'"
+      SET refund_owed_cents = refund_owed_cents - <this increment's cents>,
+          refunded_cents    = refunded_cents    + <this increment's cents>,
+          refund_increments = (
+              SELECT jsonb_agg(
+                       CASE WHEN (e->>'seq')::int = <seq>
+                            THEN e || jsonb_build_object('settled_at', to_jsonb(NOW()),
+                                                         'refund_id', to_jsonb('<re_...>'::text))
+                            ELSE e END ORDER BY (e->>'seq')::int)
+                FROM jsonb_array_elements(refund_increments) e)
+    WHERE id = '<payment_id>'"
+```
+
+Per increment, subtracting rather than clearing -- a debt that grew while the
+refund was in flight must not be erased along with the part that was paid. Then
+move the status **only once `refund_owed_cents` is zero and no
+`refund_manual_review` remains**:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET status = 'refunded'
+    WHERE id = '<payment_id>' AND status = 'refund_pending'
+      AND refund_owed_cents = 0
+      AND COALESCE(jsonb_array_length(metadata->'refund_manual_review'), 0) = 0"
 ```
 
 Use `partially_refunded` instead of `refunded` when the amount returned is

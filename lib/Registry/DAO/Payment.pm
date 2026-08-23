@@ -19,6 +19,14 @@ field $stripe_payment_method_id :param :reader = undef;
 field $metadata :param :reader = {};
 field $completed_at :param :reader = undef;
 field $error_message :param :reader = undef;
+
+# The obligation, as typed columns rather than jsonb. Readers so callers and
+# tests stop reaching into metadata for money -- that blob is where the debt
+# used to live, and an operator could put a quoted string in it.
+field $refund_owed_cents :param :reader = 0;
+field $refunded_cents    :param :reader = 0;
+field $refund_seq        :param :reader = 0;
+field $refund_increments :param :reader = undef;
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 
@@ -610,8 +618,14 @@ field $_stripe_client = undef;
                         push @owed_children, $item->{child_id};
                     }
                     catch ($e) {
-                        push @{ $metadata->{refund_manual_review} //= [] },
-                            { child_id => $item->{child_id}, session_id => $session_id };
+                        # Persisted here, not left on $metadata for a later
+                        # save(). The obligation writer stopped calling save()
+                        # when the debt moved to typed columns, so an in-memory
+                        # flag would never reach the row -- and a cart whose
+                        # ONLY problem is an unpriced child would settle looking
+                        # clean, with nothing for the runbook to find.
+                        $self->flag_refund_manual_review(
+                            $db, $item->{child_id}, $session_id );
                         warn "finalize_enrollment: unresolvable refund share for "
                            . "child $item->{child_id} in session $session_id "
                            . "(payment $id): $e";
@@ -687,30 +701,64 @@ field $_stripe_client = undef;
         $db = $db->db if $db isa Registry::DAO;
         return unless $new_cents;
 
+        # The increment records the CLAMPED delta, not what was asked for, so
+        # the increments always sum to refund_owed_cents. Clamping only the
+        # balance -- as an earlier version did -- lets the increments total more
+        # than the cart, and since the increments are what actually reach
+        # Stripe, that is a refund larger than the payment.
+        #
+        # Clamped rather than allowed to violate
+        # payments_refund_owed_cents_check: this runs inside the settlement
+        # transaction, so a CHECK violation would roll back a captured charge.
+        # Over-accumulation is a bug, but it must not cost the family their
+        # enrollment. The WHERE clause means no room produces no increment at
+        # all rather than a zero-cent one.
         my $row = $db->query( <<'SQL', $new_cents, $new_cents,
             UPDATE payments
                SET refund_seq        = refund_seq + 1,
-                   -- Clamped rather than allowed to violate
-                   -- payments_refund_owed_cents_check. This runs inside the
-                   -- settlement transaction, so a CHECK violation here would
-                   -- roll back a captured charge -- the hazard the spec's
-                   -- section 5 ordering exists to avoid. Over-accumulation is a
-                   -- bug, but it must not cost the family their enrollment.
-                   refund_owed_cents = LEAST(amount_cents, refund_owed_cents + ?::integer),
+                   refund_owed_cents = refund_owed_cents
+                                     + LEAST(?::integer, amount_cents - refund_owed_cents),
                    refund_increments = refund_increments || jsonb_build_object(
                        'seq',        refund_seq + 1,
-                       'cents',      ?::integer,
+                       'cents',      LEAST(?::integer, amount_cents - refund_owed_cents),
                        'children',   ?::jsonb,
                        'settled_at', NULL ),
                    status = 'refund_pending'
-             WHERE id = ?
+             WHERE id = ? AND amount_cents > refund_owed_cents
          RETURNING refund_owed_cents, refund_seq
 SQL
             encode_json($new_children), $id )->hash;
 
-        return unless $row;
+        # No room left. The debt is real and cannot be recorded, which is
+        # precisely the case a human has to look at.
+        unless ($row) {
+            $self->flag_refund_manual_review( $db, $_, undef ) for @$new_children;
+            return;
+        }
+
         $status = 'refund_pending';
         return $row->{refund_seq};
+    }
+
+    # A share this code cannot compute, recorded for a human.
+    #
+    # Kept in metadata rather than given a column: it is a list of
+    # (child, session) pairs nothing filters on, and unlike the debt it carries
+    # no arithmetic an operator can corrupt. What it does share with the debt is
+    # the status -- a row with an unresolvable share is refund_pending, so the
+    # runbook's finding query sees it even when the computable balance is zero.
+    method flag_refund_manual_review ($db, $child_id, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        $db->query( <<'SQL', encode_json([ { child_id => $child_id, session_id => $session_id } ]), $id );
+            UPDATE payments
+               SET metadata = jsonb_set( metadata, '{refund_manual_review}',
+                       COALESCE(metadata->'refund_manual_review', '[]'::jsonb) || ?::jsonb ),
+                   status = 'refund_pending'
+             WHERE id = ? AND status NOT IN ('refunded', 'partially_refunded')
+SQL
+        $status = 'refund_pending';
+        return;
     }
 
     # What still has to reach Stripe. Ordered by seq so a retry sends the oldest
@@ -772,10 +820,26 @@ SQL
         # cart says so rather than claiming a full refund -- the ledger
         # distinction the runbook and Leg 3 both read.
         return $row if $row->{refund_owed_cents};
+
+        # An unresolved manual-review flag holds the row in refund_pending even
+        # with nothing computable left owed. That flag means a share this code
+        # could not work out -- refunding the children it COULD work out does
+        # not discharge it, and the runbook finds these rows by
+        # status = 'refund_pending'. Moving the status here would hide an
+        # obligation nobody has decided about.
+        #
+        # The old code deleted the flag on discharge. Its stated reason was
+        # mechanical: a leftover flag re-entered the obligation write and
+        # stamped refund_pending back over a terminal status. That path is gone
+        # -- record_capacity_obligation returns early on a zero increment -- so
+        # what is left is the money question, and the answer to that is no.
         my $now = $row->{refunded_cents} >= $row->{amount_cents}
             ? 'refunded' : 'partially_refunded';
-        $db->query( 'UPDATE payments SET status = ? WHERE id = ? AND status = ?',
-            $now, $id, 'refund_pending' );
+        $db->query( <<'SQL', $now, $id );
+            UPDATE payments SET status = ?
+             WHERE id = ? AND status = 'refund_pending'
+               AND COALESCE(jsonb_array_length(metadata->'refund_manual_review'), 0) = 0
+SQL
         $status = $now;
         return $row;
     }
@@ -972,13 +1036,29 @@ SQL
         # A targeted jsonb merge, not save(). save() would write six columns
         # from an object loaded before the Stripe round trip, over a row
         # settle_refund_increment may have moved in the meantime.
+        #
+        # The status move is conditional on there being NO increments, which is
+        # what keeps the two writers from overlapping. A capacity refund is
+        # incremental and settle_refund_increment owns its status, because the
+        # amount of any one increment says nothing about whether the cart is
+        # fully refunded. A direct whole-payment refund has no increments and
+        # nothing else to move it, so it is owned here.
         $db->query( <<'SQL', encode_json({
-            UPDATE payments SET metadata = metadata || ?::jsonb WHERE id = ?
+            UPDATE payments
+               SET metadata = metadata || ?::jsonb,
+                   status = CASE
+                       WHEN jsonb_array_length(refund_increments) > 0 THEN status
+                       WHEN ?::integer >= amount_cents THEN 'refunded'
+                       ELSE 'partially_refunded' END,
+                   refunded_cents = CASE
+                       WHEN jsonb_array_length(refund_increments) > 0 THEN refunded_cents
+                       ELSE LEAST(amount_cents, ?::integer) END
+             WHERE id = ?
 SQL
             refund_id           => $refund->{id},
             refund_amount_cents => $refund_cents,
             refund_reason       => $reason,
-        }), $id );
+        }), $refund_cents, $refund_cents, $id );
         return;
     }
 
