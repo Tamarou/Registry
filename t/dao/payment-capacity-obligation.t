@@ -305,7 +305,7 @@ subtest 'a seat held from an earlier pass counts against this cart capacity' => 
     is $seated, 2, 'a later delivery does not oversell a 2-seat session';
 };
 
-subtest 'discharging an obligation clears the manual-review flag with it' => sub {
+subtest 'discharging an obligation does NOT clear the manual-review flag' => sub {
     # The flag is truthy forever once set, so every later delivery re-enters the
     # obligation write and stamps refund_pending over a terminal status.
     my $session = a_session(1);

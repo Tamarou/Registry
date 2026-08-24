@@ -40,6 +40,18 @@ UPDATE registry.payments
        -- balance. Its key is refund:capacity:<id>:1, which is NOT the key any
        -- earlier attempt used -- deliberate, since we cannot know whether one
        -- was made. The runbook's list-before-issue is what covers that.
+       -- A debt exceeding the cart is clamped rather than dropped in silence.
+       -- main's unclamped accumulator could produce one, and the code path this
+       -- replaces flags that case for a human via refund_manual_review; a
+       -- one-shot pass over every historical row should be no less careful.
+       metadata = CASE
+           WHEN COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) > amount_cents
+           THEN jsonb_set( metadata, '{refund_manual_review}',
+                    COALESCE(metadata->'refund_manual_review', '[]'::jsonb)
+                    || jsonb_build_array(jsonb_build_object(
+                           'reason', 'backfill clamped a debt exceeding the cart',
+                           'metadata_owed_cents', metadata->'refund_owed_cents')) )
+           ELSE metadata END,
        refund_increments = CASE
            WHEN COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) > 0
            THEN jsonb_build_array(jsonb_build_object(
@@ -74,6 +86,13 @@ CREATE INDEX IF NOT EXISTS idx_payments_refund_owed
 -- change across both classifiers, the runbook and every fixture. The columns
 -- those derivations need land here; the collapse is its own change. A
 -- seven-value CHECK stops invented statuses just as well as a five-value one.
+-- Normalise before constraining. This change names 'refund_failed' as the value
+-- it expects to find and then adds a CHECK that refuses to deploy if it is
+-- there, with no finding query and no way to see which row. A row in that state
+-- is one the runbook told an operator to write; refund_pending is where it
+-- belongs, and the obligation columns above already carry the amount.
+UPDATE registry.payments SET status = 'refund_pending' WHERE status = 'refund_failed';
+
 ALTER TABLE registry.payments
     ADD CONSTRAINT payments_status_check
         CHECK (status IN ('pending', 'processing', 'completed', 'failed',
@@ -106,8 +125,26 @@ BEGIN
                         COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0), amount_cents),
                     refund_seq = CASE
                         WHEN COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0) > 0
-                        THEN 1 ELSE 0 END
+                        THEN 1 ELSE 0 END,
+                    -- The fourth column, and the one that matters most here.
+                    -- Omitting it leaves a row whose balance says money is owed
+                    -- and whose increment list is empty: both callers pass the
+                    -- balance guard, find nothing due, loop zero times and
+                    -- answer 200 -- forever, on every redelivery. And this is
+                    -- the tenant branch, which is where the money actually is.
+                    refund_increments = CASE
+                        WHEN COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0) > 0
+                        THEN jsonb_build_array(jsonb_build_object(
+                                 ''seq'',      1,
+                                 ''cents'',    LEAST((metadata->>''refund_owed_cents'')::INTEGER, amount_cents),
+                                 ''children'', COALESCE(metadata->''refund_owed_children'', ''[]''::jsonb),
+                                 ''settled_at'', NULL))
+                        ELSE ''[]''::jsonb END
               WHERE metadata ? ''refund_owed_cents'' OR metadata ? ''refund_amount_cents''', s);
+
+        EXECUTE format(
+            'UPDATE %I.payments SET status = ''refund_pending''
+              WHERE status = ''refund_failed''', s);
 
         EXECUTE format(
             'ALTER TABLE %I.payments
@@ -121,9 +158,21 @@ BEGIN
                     CHECK (status IN (''pending'', ''processing'', ''completed'', ''failed'',
                                       ''refund_pending'', ''refunded'', ''partially_refunded''))', s);
 
-        EXECUTE format(
-            'CREATE INDEX IF NOT EXISTS idx_payments_refund_owed
-                ON %I.payments (refund_owed_cents) WHERE refund_owed_cents > 0', s);
+        -- Skipped when the tenant already has an equivalent index under any
+        -- name. clone_schema's LIKE ... INCLUDING ALL copies this index but
+        -- renames it to payments_refund_owed_cents_idx, so IF NOT EXISTS --
+        -- which matches on name only -- would create a second, duplicate index
+        -- on tenants provisioned that way, and the revert's DROP of the
+        -- hardcoded name would then be a silent no-op.
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_indexes
+             WHERE schemaname = s AND tablename = 'payments'
+               AND indexdef LIKE '%refund_owed_cents%WHERE%'
+        ) THEN
+            EXECUTE format(
+                'CREATE INDEX idx_payments_refund_owed
+                    ON %I.payments (refund_owed_cents) WHERE refund_owed_cents > 0', s);
+        END IF;
     END LOOP;
 END $$;
 

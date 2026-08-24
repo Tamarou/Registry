@@ -277,7 +277,7 @@ Act on what comes back:
 
 #### Step 3: Issue the refund, under the stable key
 
-The key is derived from the payment id and the owed-children list, sorted:
+The key names one increment:
 
 `refund:capacity:<payment_id>:<seq>` -- where `<seq>` is the increment's own
 `seq` from `refund_increments`.
@@ -293,9 +293,16 @@ curl -s https://api.stripe.com/v1/refunds \
   -H "Idempotency-Key: refund:capacity:<payment_id>:<seq>" \
   -d payment_intent=<stripe_payment_intent_id> \
   -d amount=<this increment's cents, NOT refund_owed_cents> \
+  -d reason=requested_by_customer \
   -d reverse_transfer=true \
   -d refund_application_fee=<true|false>
 ```
+
+`reason` is not optional here. The automated path always sends
+`requested_by_customer`, and Stripe rejects a replay of a used idempotency key
+whose parameters differ rather than folding it — so a hand-issued refund that
+omits it cannot share a key with the automated attempt, and whichever runs
+second is refused.
 
 **One refund per unsettled increment.** Repeat this call for each element of
 `refund_increments` whose `settled_at` is null, using that element's `seq` in
@@ -322,17 +329,29 @@ Clear the obligation and move the status once the refund is confirmed
 ```bash
 psql $DATABASE_URL -c \
   "UPDATE \"<sacp-slug>\".payments
-      SET refund_owed_cents = refund_owed_cents - <this increment's cents>,
-          refunded_cents    = refunded_cents    + <this increment's cents>,
+      SET refund_owed_cents = GREATEST(0, refund_owed_cents - (
+              SELECT (e->>'cents')::int FROM jsonb_array_elements(refund_increments) e
+               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL)),
+          refunded_cents    = LEAST(amount_cents, refunded_cents + (
+              SELECT (e->>'cents')::int FROM jsonb_array_elements(refund_increments) e
+               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL)),
           refund_increments = (
               SELECT jsonb_agg(
                        CASE WHEN (e->>'seq')::int = <seq>
+                              AND e->>'settled_at' IS NULL
                             THEN e || jsonb_build_object('settled_at', to_jsonb(NOW()),
                                                          'refund_id', to_jsonb('<re_...>'::text))
                             ELSE e END ORDER BY (e->>'seq')::int)
                 FROM jsonb_array_elements(refund_increments) e)
     WHERE id = '<payment_id>'"
 ```
+
+The amount is derived from the increment rather than typed in, and every clause
+is guarded on `settled_at IS NULL`. Both matter: the code's copy
+(`settle_refund_increment`) has the same guards and is idempotent because of
+them. Without them, re-running this block double-counts the money returned, and
+a mistyped `<seq>` moves the balance while leaving the increment still due — the
+row's own one-row check passes in both cases.
 
 Per increment, subtracting rather than clearing -- a debt that grew while the
 refund was in flight must not be erased along with the part that was paid. Then
@@ -358,9 +377,52 @@ decoration -- check that the UPDATE reported one row. Zero means something else
 moved the status while you were working, and you should re-read the row before
 doing anything more.
 
+#### Step 5: Resolve a manual-review flag
+
+A row with `refund_manual_review` set stays `refund_pending` even when
+`refund_owed_cents` is zero and every increment is settled. That is deliberate
+-- it is the only thing keeping the row in Step 1's results until a human has
+decided about the share the code could not compute -- but it means **the row has
+no exit until you provide one.** Nothing in the code clears this flag.
+
+Work out what is actually owed for each entry in the array. If money is owed,
+record it as a normal debt and settle it through Steps 2-4:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET refund_seq        = refund_seq + 1,
+          refund_owed_cents = refund_owed_cents + <cents>,
+          refund_increments = refund_increments || jsonb_build_object(
+              'seq', refund_seq + 1, 'cents', <cents>,
+              'children', '[\"<child_id>\"]'::jsonb, 'settled_at', NULL)
+    WHERE id = '<payment_id>'
+      AND amount_cents >= refund_owed_cents + refunded_cents + <cents>"
+```
+
+The `amount_cents >=` predicate is the same headroom rule the code applies. If
+it matches no rows, the cart cannot absorb the amount and the discrepancy needs
+escalating rather than forcing.
+
+Then, once nothing is owed, clear the flag and let the status move:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET metadata = metadata - 'refund_manual_review'
+    WHERE id = '<payment_id>' AND refund_owed_cents = 0"
+```
+
+Record the decision on the ticket before removing the flag -- once it is gone
+the row leaves this queue and nothing else remembers a human looked at it.
+
 #### A failed refund is NOT `refund_failed`
 
-Never write `refund_failed`, or any status outside the five the code knows.
+Never write `refund_failed`, or any status outside the seven the code knows:
+`pending`, `processing`, `completed`, `failed`, `refund_pending`, `refunded`,
+`partially_refunded`. As of the `payments-typed-obligation` migration the
+database enforces this with a CHECK constraint, so an invented status is now
+rejected outright rather than silently accepted.
 The string appears nowhere in `lib/`, and it is in none of the three
 classifiers that read this column:
 

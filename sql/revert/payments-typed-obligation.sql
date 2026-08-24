@@ -7,10 +7,26 @@ BEGIN;
 
 SET client_min_messages = 'warning';
 
--- No data restoration. The deploy backfilled FROM metadata and left those keys
--- in place, so the jsonb is still the record and dropping the columns loses
--- nothing. This is the reason the deploy does not delete them: a revert that
--- has to reconstruct money is a revert nobody dares run.
+-- No data restoration, and that is LOSSY for anything recorded after deploy.
+--
+-- The deploy backfills FROM metadata and leaves those keys in place, so a row
+-- that predates the deploy can be reconstructed from the jsonb. But from the
+-- moment this change lands, record_capacity_obligation writes only the columns
+-- -- no metadata at all -- so every obligation recorded afterwards exists
+-- solely here and is erased by this revert. Asymmetrically: _apply_refund_result
+-- still writes refund_amount_cents into metadata, so what was PAID survives a
+-- revert while what is OWED does not.
+--
+-- Worse on a redeploy. The frozen metadata keys stay pinned at their
+-- pre-migration values while the columns move, so re-deploying re-reads them
+-- and resurrects a debt that has since been settled in full -- as an UNSETTLED
+-- increment, under the same idempotency key the first attempt used. Stripe
+-- dedupes that for 24 hours and not a minute longer.
+--
+-- Before reverting: dump payments.refund_owed_cents, refunded_cents and
+-- refund_increments for every row where refund_owed_cents > 0, in every schema.
+-- Before redeploying a reverted database: reconcile the metadata keys against
+-- that dump, or clear them.
 
 ALTER TABLE registry.payments
     DROP CONSTRAINT IF EXISTS payments_status_check,
@@ -46,7 +62,13 @@ BEGIN
                 DROP CONSTRAINT IF EXISTS payments_refunded_cents_check,
                 DROP CONSTRAINT IF EXISTS payments_refund_seq_check', s);
 
+        -- By name is not enough: clone_schema renames this index to
+        -- payments_refund_owed_cents_idx, so the hardcoded name misses exactly
+        -- the tenants that reach production through normal provisioning. It has
+        -- only ever worked because the DROP COLUMN below cascades -- a
+        -- load-bearing accident.
         EXECUTE format('DROP INDEX IF EXISTS %I.idx_payments_refund_owed', s);
+        EXECUTE format('DROP INDEX IF EXISTS %I.payments_refund_owed_cents_idx', s);
 
         EXECUTE format(
             'ALTER TABLE %I.payments

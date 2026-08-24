@@ -54,20 +54,24 @@ sub settle_after_concurrent_write ($payment, $writer) {
     return settle( $payment->process_payment_async($db, 'pi_lr_' . $payment->id) );
 }
 
-subtest 'a concurrent capacity debt survives this settlement save' => sub {
-    # refund_owed_cents is the record that a refund is owed. If a settlement
-    # that loaded the row before the debt was written saves over it, the debt
-    # is gone -- the child stays waitlisted and the money is kept.
+subtest 'a concurrent manual-review flag survives this settlement save' => sub {
+    # save() writes the whole metadata blob from the in-memory object, so a
+    # settlement that loaded the row before another pass wrote to metadata will
+    # clobber it. This used to seed refund_owed_cents, which no longer lives in
+    # metadata -- the assertion still passed but graded nothing. The flag is
+    # what save() can still destroy, and losing it loses the only record that a
+    # share needs a human.
     my $payment = a_payment();
 
     settle_after_concurrent_write($payment, sub {
         $db->query(
             q{UPDATE payments SET metadata = metadata || ?::jsonb WHERE id = ?},
-            '{"refund_owed_cents":7777}', $payment->id );
+            '{"refund_manual_review":[{"child_id":"kid-x"}]}', $payment->id );
     });
 
-    is row_of($payment)->{metadata}{refund_owed_cents}, 7777,
-        'the debt another settlement recorded is still there';
+    is_deeply row_of($payment)->{metadata}{refund_manual_review},
+        [ { child_id => 'kid-x' } ],
+        'the flag another settlement recorded is still there';
 };
 
 subtest 'a concurrently rotated intent id is not written back stale' => sub {

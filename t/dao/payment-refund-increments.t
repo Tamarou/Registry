@@ -139,4 +139,116 @@ subtest 'a debt larger than the cart clamps the increment, not just the balance'
     cmp_ok $summed, '<=', 10000, 'never more than the payment itself';
 };
 
+# THE invariant, across settlements rather than within one. Every quantity is a
+# different number, because a fixture where two coincide cannot say which one
+# the code used -- that is how the balance-vs-increment mutant survived a full
+# pass on this branch.
+#
+# The clamp used to read amount_cents - refund_owed_cents, with no refunded_cents
+# term. Settling drives refund_owed_cents to zero, so every discharge handed the
+# whole headroom back and the increments could total more than the cart.
+subtest 'settled money is spent headroom, and never becomes refundable again' => sub {
+    my $p = a_payment(9000);
+
+    $p->record_capacity_obligation( $db, 6000, ['child-a'] );
+    $p->settle_refund_increment( $db, 1, { id => 're_one' } );
+    is row_of($p)->{refunded_cents}, 6000, '6000 of a 9000 cart has gone back';
+    is row_of($p)->{refund_owed_cents}, 0, 'and nothing is owed';
+
+    # Only 3000 of the cart is still refundable. Asking for 5000 must yield 3000.
+    $p->record_capacity_obligation( $db, 5000, ['child-b'] );
+
+    my $r = row_of($p);
+    is $r->{refund_owed_cents}, 3000,
+        'the second debt is clamped to what is left, not to the whole cart';
+
+    my $summed = 0;
+    $summed += $_->{cents} for @{ $r->{refund_increments} };
+    is $summed, $r->{refunded_cents} + $r->{refund_owed_cents},
+        'increments account for every cent, returned or owed';
+    cmp_ok $summed, '<=', 9000,
+        'and never total more than the charge -- 11000 against 9000 was the defect';
+};
+
+subtest 'a fully refunded charge cannot take on new debt' => sub {
+    my $p = a_payment(9000);
+    $p->record_capacity_obligation( $db, 9000, ['child-a'] );
+    $p->settle_refund_increment( $db, 1, { id => 're_all' } );
+    is row_of($p)->{status}, 'refunded', 'the whole cart went back';
+
+    $p->record_capacity_obligation( $db, 2500, ['child-b'] );
+
+    my $r = row_of($p);
+    is $r->{refund_owed_cents}, 0, 'no further debt is recordable';
+    is $r->{status}, 'refunded',
+        'and the terminal status is not dragged back to refund_pending';
+    is $r->{refund_seq}, 1,
+        'the counter does not advance for a debt that was never recorded';
+    is scalar @{ $r->{refund_increments} }, 1,
+        'and no zero-cent increment is appended -- the caller would POST amount=0';
+    ok $r->{metadata}{refund_manual_review},
+        'the debt that could not be recorded is flagged, not dropped in silence';
+};
+
+# A negative delta subtracts. A large one violates
+# payments_refund_owed_cents_check INSIDE the settlement transaction, which
+# rolls back a charge Stripe has already captured -- the exact outcome the
+# clamp exists to prevent. Reachable through an unbounded percentage_discount
+# on a pricing plan, which yields a negative share.
+subtest 'a negative share is refused, not subtracted' => sub {
+    my $p = a_payment(9000);
+    $p->record_capacity_obligation( $db, 6000, ['child-a'] );
+
+    my $err = do { local $@; eval { $p->record_capacity_obligation( $db, -2500, ['child-b'] ); 1 }; $@ };
+    is $err, '', 'it does not throw inside the settlement transaction';
+
+    my $r = row_of($p);
+    is $r->{refund_owed_cents}, 6000, 'and does not reduce a real debt';
+    is scalar @{ $r->{refund_increments} }, 1, 'no negative increment is recorded';
+    ok $r->{metadata}{refund_manual_review},
+        'the nonsense share is flagged for a human instead of being swallowed';
+};
+
+# _apply_refund_result owns the status and the cumulative total for a DIRECT
+# refund -- one with no per-increment idempotency key. Every other assertion in
+# the suite sits on the settle_refund_increment path, so this branch was
+# ungraded, and it accumulates rather than assigns.
+subtest 'a direct refund records itself, and a second one adds to the first' => sub {
+    my $p = a_payment(10000);
+
+    my $apply = sub ($cents) {
+        $p->_apply_refund_result( $db, { id => "re_direct_$cents" }, $cents, 'requested_by_customer', 0 );
+    };
+
+    $apply->(2000);
+    my $r = row_of($p);
+    is $r->{refunded_cents}, 2000, 'the first direct refund is recorded';
+    is $r->{status}, 'partially_refunded', 'and the status follows it';
+
+    $apply->(1500);
+    $r = row_of($p);
+    is $r->{refunded_cents}, 3500,
+        'the second accumulates rather than overwriting -- assigning lost the first';
+    is $r->{status}, 'partially_refunded', 'still partial';
+
+    $apply->(6500);
+    is row_of($p)->{status}, 'refunded',
+        'and the cart reads fully refunded once the total reaches it';
+};
+
+# The guard used to be "does this row have any increments", which latched
+# permanently on the first capacity demotion -- so a later direct refund left
+# the bank while the ledger denied it.
+subtest 'a direct refund on a payment that once had an increment is still recorded' => sub {
+    my $p = a_payment(10000);
+    $p->record_capacity_obligation( $db, 2000, ['child-a'] );
+    $p->settle_refund_increment( $db, 1, { id => 're_inc' } );
+    is row_of($p)->{refunded_cents}, 2000, 'the increment is settled';
+
+    $p->_apply_refund_result( $db, { id => 're_after' }, 3000, 'requested_by_customer', 0 );
+
+    is row_of($p)->{refunded_cents}, 5000,
+        'a later direct refund is still recorded, not swallowed by a latched guard';
+};
+
 done_testing;

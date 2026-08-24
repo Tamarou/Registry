@@ -701,6 +701,23 @@ field $_stripe_client = undef;
         $db = $db->db if $db isa Registry::DAO;
         return unless $new_cents;
 
+        # Positive, not merely non-zero. A negative delta SUBTRACTS from a real
+        # debt, and a large one violates payments_refund_owed_cents_check inside
+        # the settlement transaction -- rolling back a charge Stripe has already
+        # captured, with no enrollments, on a redelivery loop that reproduces it
+        # forever. Reachable today: PricingPlan's percentage_discount is
+        # unbounded, so a plan configured above 100 yields a negative share.
+        # Flagged rather than swallowed, because a nonsense share is exactly the
+        # case a human has to look at.
+        if ( $new_cents < 0 ) {
+            warn "record_capacity_obligation: refusing negative share "
+               . "$new_cents on payment $id\n";
+            $self->flag_refund_manual_review( $db, $_, undef ) for @$new_children;
+            $self->flag_refund_manual_review( $db, undef, undef )
+                unless @$new_children;
+            return;
+        }
+
         # The increment records the CLAMPED delta, not what was asked for, so
         # the increments always sum to refund_owed_cents. Clamping only the
         # balance -- as an earlier version did -- lets the increments total more
@@ -713,18 +730,26 @@ field $_stripe_client = undef;
         # Over-accumulation is a bug, but it must not cost the family their
         # enrollment. The WHERE clause means no room produces no increment at
         # all rather than a zero-cent one.
+        # Headroom is what the charge has left AFTER money already returned, not
+        # just after money currently owed. Settling drives refund_owed_cents to
+        # zero, so a clamp that ignored refunded_cents handed the whole cart
+        # back as headroom on every discharge -- and the increments, which are
+        # what actually reach Stripe, could then total more than the charge.
+        # Measured at 11000 against a 9000 cart.
         my $row = $db->query( <<'SQL', $new_cents, $new_cents,
             UPDATE payments
                SET refund_seq        = refund_seq + 1,
-                   refund_owed_cents = refund_owed_cents
-                                     + LEAST(?::integer, amount_cents - refund_owed_cents),
+                   refund_owed_cents = refund_owed_cents + LEAST(
+                       ?::integer, amount_cents - refund_owed_cents - refunded_cents),
                    refund_increments = refund_increments || jsonb_build_object(
                        'seq',        refund_seq + 1,
-                       'cents',      LEAST(?::integer, amount_cents - refund_owed_cents),
+                       'cents',      LEAST(
+                           ?::integer, amount_cents - refund_owed_cents - refunded_cents),
                        'children',   ?::jsonb,
                        'settled_at', NULL ),
                    status = 'refund_pending'
-             WHERE id = ? AND amount_cents > refund_owed_cents
+             WHERE id = ?
+               AND amount_cents > refund_owed_cents + refunded_cents
          RETURNING refund_owed_cents, refund_seq
 SQL
             encode_json($new_children), $id )->hash;
@@ -750,14 +775,26 @@ SQL
     method flag_refund_manual_review ($db, $child_id, $session_id) {
         $db = $db->db if $db isa Registry::DAO;
 
+        # The flag is written unconditionally. It records that a human has to
+        # look at something, which is true whatever the status says -- and the
+        # case that most needs recording is a debt on a row that already reached
+        # a terminal refund status, since that debt cannot be represented as an
+        # obligation at all. An earlier version guarded the whole statement on
+        # the status, so exactly that case wrote nothing anywhere.
         $db->query( <<'SQL', encode_json([ { child_id => $child_id, session_id => $session_id } ]), $id );
             UPDATE payments
                SET metadata = jsonb_set( metadata, '{refund_manual_review}',
-                       COALESCE(metadata->'refund_manual_review', '[]'::jsonb) || ?::jsonb ),
-                   status = 'refund_pending'
+                       COALESCE(metadata->'refund_manual_review', '[]'::jsonb) || ?::jsonb )
+             WHERE id = ?
+SQL
+
+        # The status move is separate, and still refuses to walk a terminal row
+        # back to refund_pending.
+        my $moved = $db->query( <<'SQL', $id )->rows;
+            UPDATE payments SET status = 'refund_pending'
              WHERE id = ? AND status NOT IN ('refunded', 'partially_refunded')
 SQL
-        $status = 'refund_pending';
+        $status = 'refund_pending' if $moved;
         return;
     }
 
@@ -793,7 +830,7 @@ SQL
 
         my $row = $db->query( <<'SQL', $seq, $refund->{id}, $seq, $seq, $id )->hash;
             UPDATE payments p
-               SET refund_increments = (
+               SET refund_increments = COALESCE( (
                      SELECT jsonb_agg(
                               CASE WHEN (e->>'seq')::int = ?
                                     AND e->>'settled_at' IS NULL
@@ -803,6 +840,11 @@ SQL
                                    ELSE e END
                               ORDER BY (e->>'seq')::int )
                        FROM jsonb_array_elements(p.refund_increments) e ),
+                     -- jsonb_agg over zero rows is SQL NULL, and the column is
+                     -- NOT NULL. Without this a hand-run recovery settle on a
+                     -- row with no increments throws instead of no-opping,
+                     -- which contradicts the idempotence this method promises.
+                     '[]'::jsonb ),
                    refund_owed_cents = GREATEST( 0, p.refund_owed_cents - COALESCE((
                        SELECT (e->>'cents')::int
                          FROM jsonb_array_elements(p.refund_increments) e
@@ -835,12 +877,17 @@ SQL
         # what is left is the money question, and the answer to that is no.
         my $now = $row->{refunded_cents} >= $row->{amount_cents}
             ? 'refunded' : 'partially_refunded';
-        $db->query( <<'SQL', $now, $id );
+        # Assigned only if the row actually moved. The UPDATE is triple-guarded
+        # -- an unresolved manual-review flag deliberately holds the row in
+        # refund_pending -- and an unconditional assignment made the object
+        # claim a status the row had refused. That object is reused across the
+        # caller's loop, and refund_async gates on this in-memory $status.
+        my $moved = $db->query( <<'SQL', $now, $id )->rows;
             UPDATE payments SET status = ?
              WHERE id = ? AND status = 'refund_pending'
                AND COALESCE(jsonb_array_length(metadata->'refund_manual_review'), 0) = 0
 SQL
-        $status = $now;
+        $status = $now if $moved;
         return $row;
     }
 
@@ -1030,35 +1077,41 @@ SQL
     # settle_refund_increment owns both: it subtracts exactly the increment it
     # settles, adds exactly that to refunded_cents, and moves the status only
     # when nothing is left owed.
-    method _apply_refund_result ($db, $refund, $refund_cents, $reason) {
+    method _apply_refund_result ($db, $refund, $refund_cents, $reason, $is_increment = 0) {
         $db = $db->db if $db isa Registry::DAO;
 
         # A targeted jsonb merge, not save(). save() would write six columns
         # from an object loaded before the Stripe round trip, over a row
         # settle_refund_increment may have moved in the meantime.
         #
-        # The status move is conditional on there being NO increments, which is
-        # what keeps the two writers from overlapping. A capacity refund is
-        # incremental and settle_refund_increment owns its status, because the
-        # amount of any one increment says nothing about whether the cart is
-        # fully refunded. A direct whole-payment refund has no increments and
-        # nothing else to move it, so it is owned here.
+        # The status move is conditional on THIS refund being an increment, not
+        # on the row having any. Increments are never removed, so a
+        # "has increments" test latched permanently on the first capacity
+        # demotion -- and a later direct refund on the same payment then left
+        # the bank while the ledger denied it.
+        #
+        # settle_refund_increment owns the status for an increment, because the
+        # amount of any one instalment says nothing about whether the cart is
+        # fully refunded. A direct refund has nothing else to move it, so it is
+        # owned here -- and it ACCUMULATES refunded_cents rather than assigning,
+        # so two successive direct refunds do not overwrite each other.
         $db->query( <<'SQL', encode_json({
             UPDATE payments
                SET metadata = metadata || ?::jsonb,
                    status = CASE
-                       WHEN jsonb_array_length(refund_increments) > 0 THEN status
-                       WHEN ?::integer >= amount_cents THEN 'refunded'
+                       WHEN ?::boolean THEN status
+                       WHEN refunded_cents + ?::integer >= amount_cents THEN 'refunded'
                        ELSE 'partially_refunded' END,
                    refunded_cents = CASE
-                       WHEN jsonb_array_length(refund_increments) > 0 THEN refunded_cents
-                       ELSE LEAST(amount_cents, ?::integer) END
+                       WHEN ?::boolean THEN refunded_cents
+                       ELSE LEAST(amount_cents, refunded_cents + ?::integer) END
              WHERE id = ?
 SQL
             refund_id           => $refund->{id},
             refund_amount_cents => $refund_cents,
             refund_reason       => $reason,
-        }), $refund_cents, $refund_cents, $id );
+        }), $is_increment ? 1 : 0, $refund_cents,
+            $is_increment ? 1 : 0, $refund_cents, $id );
         return;
     }
 
@@ -1194,7 +1247,10 @@ SQL
             $args->{idempotency_key}
                 ? ( _idempotency_key => $args->{idempotency_key} ) : (),
         })->then(sub ($refund) {
-            $self->_apply_refund_result( $db, $refund, $refund_cents, $reason );
+            # An increment always travels under a per-increment idempotency key;
+            # a direct refund has none. That is what distinguishes the two here.
+            $self->_apply_refund_result( $db, $refund, $refund_cents, $reason,
+                $args->{idempotency_key} ? 1 : 0 );
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";

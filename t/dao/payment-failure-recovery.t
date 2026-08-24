@@ -77,10 +77,11 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 sub mock_payment_with_outcome ($process_result, %more) {
     my $mock = Test::MockObject->new;
     $mock->set_always('id',                    $payment_id);
-    # The post-COMMIT refund step reads the obligation off the row. A mock
-    # without this returns undef where production returns an arrayref, and the
-    # step dies dereferencing it -- so the mock has to carry the real interface,
-    # not just the methods this test happens to exercise.
+    # The post-COMMIT refund step reads the obligation off the row. The step
+    # guards with `$due && @$due`, so an un-mocked call does not die -- it
+    # prints an un-mocked-method warning, and this suite's output has to be
+    # pristine. The mock carries the real interface rather than only the
+    # methods a given test happens to exercise.
     $mock->set_always('unsettled_refund_increments', []);
     # process_payment_async now runs the caller's settlement inside the
     # transaction it opens around its own completed-write, so the mock has to
@@ -211,7 +212,11 @@ subtest 'successful payment still transitions to complete' => sub {
     # A successful callback finalizes the enrollment; stub it so the mock
     # doesn't warn about the un-mocked call.
     $mock->set_always('finalize_enrollment', 1);
-    # And the post-COMMIT capacity-refund check reads metadata for an owed debt.
+    # And the post-COMMIT capacity-refund check reads the obligation off the
+    # row. Without this the mock's AUTOLOAD returns undef, the step's guard
+    # swallows it, and every run prints an un-mocked-method warning -- output
+    # that has to be pristine.
+    $mock->set_always('unsettled_refund_increments', []);
     $mock->set_always('metadata', {});
 
     no warnings 'redefine';

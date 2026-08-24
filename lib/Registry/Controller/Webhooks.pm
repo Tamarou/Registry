@@ -198,13 +198,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return $self->render(status => 200, text => 'OK');
         }
 
-        # The typed column, not the jsonb key it used to live in. Reading the
-        # old location here returned undef on every delivery, so this returned
-        # early and the refund was never issued -- silently, because the row
-        # stays refund_pending either way and looks exactly like a refund that
-        # failed at Stripe.
-        return $self->render(status => 200, text => 'OK')
-            unless $payment->refund_owed_cents;
 
         # Started from a resolved promise so a *synchronous* throw becomes a
         # rejection this chain's ->catch can see. refund_async dies before
@@ -219,8 +212,21 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # as the balance grows, which is how one debt got paid twice. Sequenced
         # rather than concurrent so a failure stops the chain with the remaining
         # increments still owed and still retryable.
-        my $due = $payment->unsettled_refund_increments($tdb);
+        # Inside the ->then, not above it. unsettled_refund_increments casts
+        # jsonb the runbook now invites operators to hand-edit, so it can throw
+        # -- and above the resolve that exception escapes the action, after
+        # render_later and after the COMMIT, producing exactly the 500 on an
+        # already-committed settlement that the always-2xx rule below exists to
+        # prevent.
+        #
+        # The work queue is the predicate, in both callers. An earlier version
+        # gated here on refund_owed_cents while the workflow step gated on the
+        # queue; they agree only while the invariant holds, and a migration bug
+        # produced precisely the row where they disagreed.
         return Mojo::Promise->resolve->then(sub {
+            my $due = $payment->unsettled_refund_increments($tdb);
+            return unless $due && @$due;
+
             my $chain = Mojo::Promise->resolve;
             for my $inc (@$due) {
                 $chain = $chain->then(sub {
@@ -232,7 +238,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                         # Settled per increment, so a partial success is kept.
                         # Discharging the whole obligation on one response is
                         # how a debt that grew mid-flight got erased.
-                        $payment->settle_refund_increment($tdb, $inc->{seq}, $refund);
+                        # A zero-row settle is indistinguishable from success
+                        # otherwise: Stripe has paid and the increment is still
+                        # due, with nobody told.
+                        $payment->settle_refund_increment($tdb, $inc->{seq}, $refund)
+                            or $self->app->log->error(
+                                "capacity refund: settling increment $inc->{seq} of "
+                              . "payment $payment_id matched no row after Stripe paid");
                         return $refund;
                     });
                 });
