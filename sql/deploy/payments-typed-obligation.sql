@@ -67,7 +67,10 @@ UPDATE registry.payments p
        -- path this replaces flags that case for a human; a one-shot pass over
        -- every historical row should be no less careful. Tested against the
        -- headroom left after refunded_cents, not against the whole cart.
-       metadata = CASE WHEN c.wanted > c.owed
+       -- Flagged when the cart could not absorb the debt, and also when more
+       -- was recorded returned than was ever charged -- a row claiming that is
+       -- at least as worth a human's eye.
+       metadata = CASE WHEN c.wanted > c.owed OR c.overpaid
            THEN jsonb_set( COALESCE(p.metadata, '{}'::jsonb), '{refund_manual_review}',
                     COALESCE(p.metadata->'refund_manual_review', '[]'::jsonb)
                     || jsonb_build_array(jsonb_build_object(
@@ -77,13 +80,21 @@ UPDATE registry.payments p
            ELSE p.metadata END
   FROM (
       SELECT id,
-             LEAST( COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0),
-                    amount_cents ) AS refunded,
+             GREATEST( 0, LEAST(
+                 COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0),
+                 amount_cents ) ) AS refunded,
              COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) AS wanted,
-             LEAST( COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0),
-                    amount_cents - LEAST(
-                        COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0),
-                        amount_cents ) ) AS owed
+             ( COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0)
+                 > amount_cents ) AS overpaid,
+             -- Floored as well as capped. LEAST clamps only the top, and a
+             -- negative legacy value -- reachable on main, whose accumulator
+             -- was unclamped and whose percentage_discount is unbounded --
+             -- violates the CHECK and aborts the deploy naming no row.
+             GREATEST( 0, LEAST(
+                 COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0),
+                 amount_cents - GREATEST( 0, LEAST(
+                     COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0),
+                     amount_cents ) ) ) ) AS owed
         FROM registry.payments
        WHERE metadata ? 'refund_owed_cents' OR metadata ? 'refund_amount_cents'
   ) c
@@ -160,7 +171,7 @@ BEGIN
                                  ''children'',   COALESCE(p.metadata->''refund_owed_children'', ''[]''::jsonb),
                                  ''settled_at'', NULL))
                         ELSE ''[]''::jsonb END,
-                    metadata = CASE WHEN c.wanted > c.owed
+                    metadata = CASE WHEN c.wanted > c.owed OR c.overpaid
                         THEN jsonb_set( COALESCE(p.metadata, ''{}''::jsonb), ''{refund_manual_review}'',
                                  COALESCE(p.metadata->''refund_manual_review'', ''[]''::jsonb)
                                  || jsonb_build_array(jsonb_build_object(
@@ -170,13 +181,17 @@ BEGIN
                         ELSE p.metadata END
                FROM (
                    SELECT id,
-                          LEAST( COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0),
-                                 amount_cents ) AS refunded,
+                          GREATEST( 0, LEAST(
+                              COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0),
+                              amount_cents ) ) AS refunded,
                           COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0) AS wanted,
-                          LEAST( COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0),
-                                 amount_cents - LEAST(
-                                     COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0),
-                                     amount_cents ) ) AS owed
+                          ( COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0)
+                              > amount_cents ) AS overpaid,
+                          GREATEST( 0, LEAST(
+                              COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0),
+                              amount_cents - GREATEST( 0, LEAST(
+                                  COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0),
+                                  amount_cents ) ) ) ) AS owed
                      FROM %I.payments
                     WHERE metadata ? ''refund_owed_cents'' OR metadata ? ''refund_amount_cents''
                ) c

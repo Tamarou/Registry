@@ -251,4 +251,68 @@ subtest 'a direct refund on a payment that once had an increment is still record
         'a later direct refund is still recorded, not swallowed by a latched guard';
 };
 
+# The refusal has to happen BEFORE the money moves. An earlier version sat in
+# _apply_refund_result, which runs inside create_refund_async's ->then -- so it
+# fired after Stripe had paid, recorded nothing, and the ->catch rewrote it as
+# "Refund failed". The direct path sends no idempotency key, so the retry that
+# lie invites is a second real refund.
+subtest 'a direct refund while a debt is outstanding never reaches Stripe' => sub {
+    my $p = a_payment(20000);
+    $db->update('payments', { stripe_payment_intent_id => 'pi_guard_' . $p->id },
+        { id => $p->id });
+    my $fresh = Registry::DAO::Payment->find($db, { id => $p->id });
+    $fresh->record_capacity_obligation( $db, 6600, ['child-a'] );
+
+    my @calls;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $params) {
+            push @calls, $params;
+            Mojo::Promise->resolve({ id => 're_should_not_happen' });
+        };
+        my $err = do {
+            local $@;
+            eval { Registry::DAO::Payment->find($db, { id => $p->id })
+                       ->refund_async( $db, { amount_cents => 4200 } ) };
+            $@;
+        };
+        like $err, qr/Cannot issue a direct refund while 6600 cents/,
+            'it refuses';
+    }
+
+    is scalar @calls, 0,
+        'and no money left Stripe -- the refusal is before the call, not after it';
+
+    my $r = row_of($p);
+    is $r->{refund_owed_cents}, 6600, 'the debt is untouched';
+    is $r->{refunded_cents}, 0, 'nothing is recorded as returned';
+    is $r->{status}, 'refund_pending',
+        'and the row stays where the runbook and _refundable_status can see it';
+};
+
+# A settle must never violate a CHECK: that throw lands after Stripe has paid,
+# rolls the settlement back, and leaves the increment unsettled for a redelivery
+# to re-send once the 24-hour idempotency window lapses.
+subtest 'settling against a drifted balance does not throw after Stripe paid' => sub {
+    my $p = a_payment(17300);
+    $p->record_capacity_obligation( $db, 4400, ['child-a'] );
+
+    # As an operator zeroing the balance by hand would leave it -- the state the
+    # webhook gate comment says the runbook's settle step can produce.
+    $db->query( 'UPDATE payments SET refund_owed_cents = 0 WHERE id = ?', $p->id );
+
+    my $err = do {
+        local $@;
+        eval { $p->settle_refund_increment( $db, 1, { id => 're_drift' } ); 1 };
+        $@;
+    };
+    is $err, '', 'the settle does not raise';
+
+    my $r = row_of($p);
+    cmp_ok $r->{refund_owed_cents}, '>=', 0, 'the balance is floored, not negative';
+    cmp_ok $r->{refunded_cents}, '<=', 17300, 'and the returned total is capped';
+    is $r->{refund_increments}[0]{settled_at} ? 1 : 0, 1,
+        'the increment is settled, so no redelivery re-sends it';
+};
+
 done_testing;

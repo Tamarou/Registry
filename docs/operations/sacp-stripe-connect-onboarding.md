@@ -412,7 +412,8 @@ record it as a normal debt and settle it through Steps 2-4:
 ```bash
 psql $DATABASE_URL -c \
   "UPDATE \"<sacp-slug>\".payments
-      SET refund_seq        = refund_seq + 1,
+      SET status            = 'refund_pending',
+          refund_seq        = refund_seq + 1,
           refund_owed_cents = refund_owed_cents + <cents>,
           refund_increments = refund_increments || jsonb_build_object(
               'seq', refund_seq + 1, 'cents', <cents>,
@@ -420,6 +421,20 @@ psql $DATABASE_URL -c \
     WHERE id = '<payment_id>'
       AND amount_cents > refund_owed_cents + refunded_cents"
 ```
+
+> **`status = 'refund_pending'` is not optional.** `record_capacity_obligation`
+> sets it unconditionally, and everything downstream depends on it: Step 4's
+> settle and status statements are both guarded on `status = 'refund_pending'`,
+> and `_refundable_status` is `completed|refund_pending`, so a debt recorded on
+> a row left `refunded` or `partially_refunded` is **invisible to every
+> automated retry** — the webhook redelivery and the parent-return path both
+> die inside their always-2xx catch, silently, forever. You would also finish
+> with `refunded_cents = amount_cents` under a `partially_refunded` status,
+> which is the ledger distinction Leg 3 reads, inverted.
+>
+> This matters because the row it applies to is one the code itself produces:
+> `flag_refund_manual_review` writes the flag on a terminal row deliberately,
+> and Step 1's second predicate exists to surface exactly that.
 
 The predicate is the code's headroom rule (`>`, on the sum of what is owed and
 what has already gone back). If it matches no rows the cart has nothing left and
@@ -447,8 +462,11 @@ set, and by the time you clear it there are no increments left to settle. A row
 left here sits in Step 1's results forever with nothing owed and nothing to do.
 
 If you ran Step 4's status statement *before* clearing the flag it will have
-reported zero rows -- that is the flag guard, not the "something else moved the
-status" case the note there describes.
+reported zero rows. That is usually the flag guard rather than the "something
+else moved the status" case the note there describes -- but check the status
+before assuming so. If the row is not `refund_pending`, the status guard is
+what refused, and the recording statement above was run without its
+`status = 'refund_pending'` clause.
 
 #### A failed refund is NOT `refund_failed`
 

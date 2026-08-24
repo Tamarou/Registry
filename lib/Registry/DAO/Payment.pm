@@ -792,7 +792,8 @@ SQL
         # the status, so exactly that case wrote nothing anywhere.
         $db->query( <<'SQL', encode_json([ { child_id => $child_id, session_id => $session_id } ]), $id );
             UPDATE payments
-               SET metadata = jsonb_set( metadata, '{refund_manual_review}',
+               SET metadata = jsonb_set( COALESCE(metadata, '{}'::jsonb),
+                       '{refund_manual_review}',
                        COALESCE(metadata->'refund_manual_review', '[]'::jsonb) || ?::jsonb )
              WHERE id = ?
 SQL
@@ -846,11 +847,17 @@ SQL
         # still ran the status move.
         my $row = $db->query( <<'SQL', $id, $seq, $seq, $refund->{id}, $id )->hash;
             WITH due AS (
-                SELECT (e->>'cents')::int AS cents
+                -- SUM, not a bare select. The jsonb rewrite below marks EVERY
+                -- element with this seq settled, so subtracting only one of
+                -- them would leave a balance no increment can discharge. A
+                -- duplicate seq is unreachable from lib/, but the runbook hands
+                -- operators an append block.
+                SELECT SUM((e->>'cents')::int) AS cents
                   FROM payments p, jsonb_array_elements(p.refund_increments) e
                  WHERE p.id = ?
                    AND (e->>'seq')::int = ?
                    AND e->>'settled_at' IS NULL
+                HAVING COUNT(*) > 0
             )
             UPDATE payments p
                SET refund_increments = COALESCE( (
@@ -866,13 +873,21 @@ SQL
                      -- jsonb_agg over zero rows is SQL NULL against a NOT NULL
                      -- column.
                      '[]'::jsonb ),
-                   -- Straight arithmetic on the CTE's amount. GREATEST/LEAST
-                   -- would be wrong here as a safety net anyway: Postgres
-                   -- IGNORES NULL arguments to them rather than propagating,
-                   -- so GREATEST(0, NULL) is 0 -- which would zero a live debt
-                   -- rather than refuse.
-                   refund_owed_cents = p.refund_owed_cents - due.cents,
-                   refunded_cents    = p.refunded_cents    + due.cents
+                   -- Floored and capped. Bare arithmetic violates the CHECK
+                   -- constraints on a row whose columns drifted -- a hand-edited
+                   -- one, or a balance zeroed by an operator while an increment
+                   -- was still due -- and that throw happens AFTER Stripe paid,
+                   -- rolling the settlement back and leaving the increment
+                   -- unsettled. The redelivery then re-sends it, deduplicated
+                   -- only for the 24 hours Stripe keeps the key.
+                   --
+                   -- The NULL hazard that argued against GREATEST/LEAST applies
+                   -- to a scalar subquery, not to this join: no match produces
+                   -- no CTE row and no update at all, so due.cents is never
+                   -- NULL here.
+                   refund_owed_cents = GREATEST( 0, p.refund_owed_cents - due.cents ),
+                   refunded_cents    = LEAST( p.amount_cents,
+                                              p.refunded_cents + due.cents )
               FROM due
              WHERE p.id = ?
          RETURNING p.refund_owed_cents, p.refunded_cents, p.amount_cents
@@ -1121,19 +1136,16 @@ SQL
         # it out of the runbook's queue AND out of _refundable_status, so the
         # outstanding increments can never be paid -- the money is stranded with
         # no operator able to find it.
-        if ( !$is_increment ) {
-            my $owed = $db->query(
-                'SELECT refund_owed_cents FROM payments WHERE id = ?', $id
-            )->hash->{refund_owed_cents} // 0;
-            die "Cannot issue a direct refund while $owed cents of capacity "
-              . "debt is outstanding on payment $id\n" if $owed;
-        }
-
         $db->query( <<'SQL', encode_json({
             UPDATE payments
-               SET metadata = metadata || ?::jsonb,
+               SET metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb,
                    status = CASE
                        WHEN ?::boolean THEN status
+                       -- A debt recorded between refund_async's check and this
+                       -- write must not be buried under a terminal status. The
+                       -- pre-flight read cannot be atomic with the Stripe call,
+                       -- so the write re-checks.
+                       WHEN refund_owed_cents > 0 THEN status
                        WHEN refunded_cents + ?::integer >= amount_cents THEN 'refunded'
                        ELSE 'partially_refunded' END,
                    refunded_cents = CASE
@@ -1279,6 +1291,24 @@ SQL
 
         my $refund_cents = $args->{amount_cents} // $amount_cents;
         my $reason = $args->{reason} // 'requested_by_customer';
+
+        # Refused BEFORE the money moves. An earlier version of this guard sat
+        # in _apply_refund_result, which runs inside create_refund_async's
+        # ->then -- so it fired after Stripe had already paid, recorded nothing,
+        # and the ->catch below rewrote it as "Refund failed". That tells the
+        # caller no money moved when it did, and the direct path sends no
+        # idempotency key, so the retry it invites is a second real refund.
+        #
+        # Writing a terminal status over a refund_pending row would take it out
+        # of both the runbook's queue and _refundable_status, stranding the
+        # outstanding increments where nobody can find them.
+        unless ( $args->{idempotency_key} ) {
+            my $owed = $db->query(
+                'SELECT refund_owed_cents FROM payments WHERE id = ?', $id
+            )->hash->{refund_owed_cents} // 0;
+            die "Cannot issue a direct refund while $owed cents of capacity "
+              . "debt is outstanding on payment $id\n" if $owed;
+        }
 
         return $self->stripe_client->create_refund_async({
             payment_intent => $stripe_payment_intent_id,
