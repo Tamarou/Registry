@@ -355,7 +355,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # over jsonb the runbook lets operators hand-edit. A non-numeric value
         # there would throw here, roll back a captured charge with no
         # enrollments, and take the dedup claim with it -- so every retry
-        # reproduces it. A length test cannot throw.
+        # reproduces it.
+        #
+        # A length test still raises on a non-array, so the real guarantee is
+        # payments_refund_increments_is_array, which makes that state
+        # unrepresentable. This predicate is cheap and cast-free; the constraint
+        # is what makes it safe.
         return undef unless $settled;
         my $due = $db->query(
             q{SELECT 1 FROM payments

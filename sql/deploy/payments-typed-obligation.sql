@@ -117,6 +117,19 @@ ALTER TABLE registry.payments
     -- Runtime could mint it and nothing stopped it.
     ADD CONSTRAINT payments_refund_total_check
         CHECK (refund_owed_cents + refunded_cents <= amount_cents),
+    -- refund_increments is the authority for what reaches Stripe, and three
+    -- readers call jsonb_array_elements or jsonb_array_length on it -- all of
+    -- which RAISE on a non-array. One of those readers runs inside the
+    -- settlement transaction, where a raise rolls back a captured charge and
+    -- the dedup claim with it, so every retry reproduces it.
+    --
+    -- The corruption is silent going in: record_capacity_obligation appends
+    -- with `||`, and object || object MERGES rather than raising. So the
+    -- settlement that poisons the row commits, and the next delivery is the one
+    -- that dies. The runbook hands operators raw UPDATEs against this column,
+    -- and one deleted `||` produces exactly this.
+    ADD CONSTRAINT payments_refund_increments_is_array
+        CHECK (jsonb_typeof(refund_increments) = 'array'),
     ADD CONSTRAINT payments_refund_seq_check
         CHECK (refund_seq >= 0);
 
@@ -142,6 +155,20 @@ CREATE INDEX IF NOT EXISTS idx_payments_refund_owed
 -- is one the runbook told an operator to write; refund_pending is where it
 -- belongs, and the obligation columns above already carry the amount.
 UPDATE registry.payments SET status = 'refund_pending' WHERE status = 'refund_failed';
+
+-- A negative cart aborts payments_refund_total_check naming no row. It is
+-- reachable by the mechanism this change already floors for in metadata:
+-- PricingPlan's percentage_discount is unbounded, so a plan above 100 yields a
+-- negative share. Flagged, not silently zeroed -- a negative charge is a human
+-- case, and the amount is preserved in the flag.
+UPDATE registry.payments
+   SET metadata = jsonb_set( COALESCE(metadata, '{}'::jsonb), '{refund_manual_review}',
+           COALESCE(metadata->'refund_manual_review', '[]'::jsonb)
+           || jsonb_build_array(jsonb_build_object(
+                  'reason', 'migration floored a negative amount_cents',
+                  'original_amount_cents', amount_cents)) ),
+       amount_cents = 0
+ WHERE amount_cents < 0;
 
 ALTER TABLE registry.payments
     ADD CONSTRAINT payments_status_check
@@ -219,6 +246,16 @@ BEGIN
               WHERE status = ''refund_failed''', s);
 
         EXECUTE format(
+            'UPDATE %I.payments
+                SET metadata = jsonb_set( COALESCE(metadata, ''{}''::jsonb), ''{refund_manual_review}'',
+                        COALESCE(metadata->''refund_manual_review'', ''[]''::jsonb)
+                        || jsonb_build_array(jsonb_build_object(
+                               ''reason'', ''migration floored a negative amount_cents'',
+                               ''original_amount_cents'', amount_cents)) ),
+                    amount_cents = 0
+              WHERE amount_cents < 0', s);
+
+        EXECUTE format(
             'ALTER TABLE %I.payments
                 ADD CONSTRAINT payments_refund_owed_cents_check
                     CHECK (refund_owed_cents >= 0),
@@ -226,6 +263,8 @@ BEGIN
                     CHECK (refunded_cents >= 0),
                 ADD CONSTRAINT payments_refund_total_check
                     CHECK (refund_owed_cents + refunded_cents <= amount_cents),
+                ADD CONSTRAINT payments_refund_increments_is_array
+                    CHECK (jsonb_typeof(refund_increments) = ''array''),
                 ADD CONSTRAINT payments_refund_seq_check
                     CHECK (refund_seq >= 0),
                 ADD CONSTRAINT payments_status_check

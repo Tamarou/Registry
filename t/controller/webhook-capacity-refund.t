@@ -302,7 +302,7 @@ subtest 'a settle that records nothing after Stripe paid is logged, not swallowe
     my $payment = a_doomed_payment();
     my @errors;
     {
-        no warnings 'redefine';
+        no warnings 'redefine', 'once';
         local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
             Mojo::Promise->resolve({ id => 're_lost', status => 'succeeded' });
         };
@@ -316,6 +316,45 @@ subtest 'a settle that records nothing after Stripe paid is logged, not swallowe
 
     ok scalar( grep { /matched no row after Stripe paid/ } @errors ),
         'the operator is told Stripe paid and the increment is still due';
+};
+
+# The gate decides whether the post-COMMIT refund runs at all. It was changed
+# twice -- from the balance to the work queue, then to a cast-free length test
+# -- and nothing graded either change: replacing the whole predicate with the
+# original `refund_owed_cents > 0` left the suite green. The state it exists for
+# is a row whose balance reads zero while increments remain due, which the
+# runbook's own settle step can produce.
+subtest 'a row whose balance was zeroed but still owes increments is still refunded' => sub {
+    my $payment = a_doomed_payment();
+
+    # First delivery: the child is demoted, the debt is recorded, the refund
+    # fails. The child is now waitlisted, so a later delivery adds no new debt --
+    # which is what makes the gate's predicate the only thing deciding.
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async =
+            sub { Mojo::Promise->reject('stripe said no') };
+        post_settlement($payment)->status_is(200);
+    }
+    cmp_ok tenant_payment($payment)->refund_owed_cents, '>', 0, 'a debt is owed';
+
+    # As a hand-run settle with a mistyped seq leaves it: balance zero, the
+    # increment still unsettled.
+    $tdb->query( 'UPDATE payments SET refund_owed_cents = 0 WHERE id = ?', $payment->id );
+
+    my @refunds;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_zero', status => 'succeeded' });
+        };
+        post_settlement($payment)->status_is(200);
+    }
+
+    ok scalar @refunds,
+        'the gate sees the work queue, not just the balance -- a zeroed balance '
+        . 'with increments due is still refunded';
 };
 
 done_testing;

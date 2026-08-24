@@ -33,6 +33,7 @@ ALTER TABLE registry.payments
     DROP CONSTRAINT IF EXISTS payments_refund_owed_cents_check,
     DROP CONSTRAINT IF EXISTS payments_refunded_cents_check,
     DROP CONSTRAINT IF EXISTS payments_refund_total_check,
+    DROP CONSTRAINT IF EXISTS payments_refund_increments_is_array,
     DROP CONSTRAINT IF EXISTS payments_refund_seq_check;
 
 DROP INDEX IF EXISTS registry.idx_payments_refund_owed;
@@ -62,6 +63,7 @@ BEGIN
                 DROP CONSTRAINT IF EXISTS payments_refund_owed_cents_check,
                 DROP CONSTRAINT IF EXISTS payments_refunded_cents_check,
                 DROP CONSTRAINT IF EXISTS payments_refund_total_check,
+                DROP CONSTRAINT IF EXISTS payments_refund_increments_is_array,
                 DROP CONSTRAINT IF EXISTS payments_refund_seq_check', s);
 
         -- By name is not enough: clone_schema renames this index to
