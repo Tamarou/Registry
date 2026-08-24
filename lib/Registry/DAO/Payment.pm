@@ -838,27 +838,24 @@ SQL
     method settle_refund_increment ($db, $seq, $refund = {}) {
         $db = $db->db if $db isa Registry::DAO;
 
-        # The CTE is the guard. If no UNSETTLED increment carries this seq the
-        # subquery is empty, the UPDATE's FROM joins against nothing, no row is
-        # touched, and ->hash is undef -- so a settle that moved no money
-        # reports so. An earlier form keyed on `WHERE p.id = ?`, which is always
-        # true: it returned success for a seq it had never settled, made both
-        # callers' "matched no row after Stripe paid" branch unreachable, and
-        # still ran the status move.
-        my $row = $db->query( <<'SQL', $id, $seq, $seq, $refund->{id}, $id )->hash;
-            WITH due AS (
-                -- SUM, not a bare select. The jsonb rewrite below marks EVERY
-                -- element with this seq settled, so subtracting only one of
-                -- them would leave a balance no increment can discharge. A
-                -- duplicate seq is unreachable from lib/, but the runbook hands
-                -- operators an append block.
-                SELECT SUM((e->>'cents')::int) AS cents
-                  FROM payments p, jsonb_array_elements(p.refund_increments) e
-                 WHERE p.id = ?
-                   AND (e->>'seq')::int = ?
-                   AND e->>'settled_at' IS NULL
-                HAVING COUNT(*) > 0
-            )
+        # Every reference to the increment is CORRELATED against the target
+        # tuple, and the guard is an EXISTS in the WHERE rather than a CTE join.
+        #
+        # A CTE is materialised from the statement's snapshot. Under READ
+        # COMMITTED a blocked UPDATE re-evaluates correlated subqueries against
+        # the updated row via EvalPlanQual, but NOT a CTE -- so with a CTE, two
+        # overlapping settles of one seq left the jsonb rewrite correctly
+        # no-opping while the arithmetic still applied a stale amount. 3000
+        # reached Stripe and the row recorded 6000 returned, silently, with the
+        # caller's zero-row branch never firing. The bare arithmetic it replaced
+        # at least aborted loudly on the CHECK.
+        #
+        # SUM, because the jsonb rewrite below marks EVERY element with this seq
+        # settled: subtracting one of a duplicated pair would leave a balance
+        # nothing can discharge. The EXISTS makes "no unsettled increment with
+        # this seq" report zero rows, which is the contract both callers' "matched
+        # no row after Stripe paid" branch depends on.
+        my $row = $db->query( <<'SQL', $seq, $refund->{id}, $seq, $seq, $id, $seq )->hash;
             UPDATE payments p
                SET refund_increments = COALESCE( (
                      SELECT jsonb_agg(
@@ -873,23 +870,17 @@ SQL
                      -- jsonb_agg over zero rows is SQL NULL against a NOT NULL
                      -- column.
                      '[]'::jsonb ),
-                   -- Floored and capped. Bare arithmetic violates the CHECK
-                   -- constraints on a row whose columns drifted -- a hand-edited
-                   -- one, or a balance zeroed by an operator while an increment
-                   -- was still due -- and that throw happens AFTER Stripe paid,
-                   -- rolling the settlement back and leaving the increment
-                   -- unsettled. The redelivery then re-sends it, deduplicated
-                   -- only for the 24 hours Stripe keeps the key.
-                   --
-                   -- The NULL hazard that argued against GREATEST/LEAST applies
-                   -- to a scalar subquery, not to this join: no match produces
-                   -- no CTE row and no update at all, so due.cents is never
-                   -- NULL here.
-                   refund_owed_cents = GREATEST( 0, p.refund_owed_cents - due.cents ),
-                   refunded_cents    = LEAST( p.amount_cents,
-                                              p.refunded_cents + due.cents )
-              FROM due
+                   refund_owed_cents = GREATEST( 0, p.refund_owed_cents - COALESCE( (
+                       SELECT SUM((e->>'cents')::int)
+                         FROM jsonb_array_elements(p.refund_increments) e
+                        WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL ), 0) ),
+                   refunded_cents = LEAST( p.amount_cents, p.refunded_cents + COALESCE( (
+                       SELECT SUM((e->>'cents')::int)
+                         FROM jsonb_array_elements(p.refund_increments) e
+                        WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL ), 0) )
              WHERE p.id = ?
+               AND EXISTS ( SELECT 1 FROM jsonb_array_elements(p.refund_increments) e
+                             WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL )
          RETURNING p.refund_owed_cents, p.refunded_cents, p.amount_cents
 SQL
         return unless $row;
@@ -1150,6 +1141,13 @@ SQL
                        ELSE 'partially_refunded' END,
                    refunded_cents = CASE
                        WHEN ?::boolean THEN refunded_cents
+                       -- Same re-check as the status above. Guarding only the
+                       -- status let refunded_cents consume the whole cart while
+                       -- a debt recorded mid-round-trip survived beside it:
+                       -- owed + refunded then exceeds amount_cents, which is the
+                       -- shape verify treats as fatal, and the increment loop
+                       -- POSTs against a fully-refunded intent forever.
+                       WHEN refund_owed_cents > 0 THEN refunded_cents
                        ELSE LEAST(amount_cents, refunded_cents + ?::integer) END
              WHERE id = ?
 SQL
@@ -1285,6 +1283,13 @@ SQL
     }
     
     method refund_async ($db, $args = {}) {
+        # Every sibling opens with this. refund_async did not, and round 3 added
+        # a raw $db->query here -- Registry::DAO::query returns a plain hashref,
+        # so a DAO handle (which WorkflowProcessor passes straight through) threw
+        # method-not-found inside the workflow step's ->catch, where it is a
+        # silent warn and no refund.
+        $db = $db->db if $db isa Registry::DAO;
+
         die "Cannot refund a payment with status '$status'"
             unless __CLASS__->_refundable_status($status);
         die "No Stripe payment intent ID" unless $stripe_payment_intent_id;

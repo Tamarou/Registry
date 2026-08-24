@@ -73,6 +73,13 @@ for my $schema ( 'registry', $slug ) {
         negative  => seed( $schema, 9000,  '{"refund_owed_cents":-500}' ),
         zero_cart => seed( $schema, 0,     '{"refund_owed_cents":100}' ),
         settled   => seed( $schema, 15000, '{"refund_amount_cents":4000}' ),
+        # More recorded returned than was ever charged. Its own branch in the
+        # flag CASE, and no fixture reached it.
+        overpaid  => seed( $schema, 9000,  '{"refund_amount_cents":12000}' ),
+        # The status the Leg 0 runbook told operators to write. The migration
+        # normalises it; without a fixture, deleting that normalisation left the
+        # suite green while payments_status_check aborted a real deploy.
+        bricked   => seed( $schema, 11000, '{"refund_owed_cents":2200}', 'refund_failed' ),
         untouched => seed( $schema, 12000, '{"enrollment_items":[]}' ),
     };
 }
@@ -107,8 +114,26 @@ for my $schema ( 'registry', $slug ) {
         is $r->{refund_owed_cents}, 3500, 'and the debt gets what is left';
 
         $r = row( $schema, $s->{negative} );
-        cmp_ok $r->{refund_owed_cents}, '>=', 0,
-            'a negative legacy value is floored, not passed to a CHECK that aborts the deploy';
+        # The >= 0 assertion this replaced was decorative: the CHECK added in the
+        # same transaction guarantees it, so any row that could fail it aborts
+        # the deploy first and deploy_to's die is what actually grades it.
+        is $r->{refund_owed_cents}, 0, 'a negative legacy value floors to zero';
+        ok $r->{metadata}{refund_manual_review},
+            'and is flagged -- the runtime path calls a nonsense share a human case';
+        like $r->{metadata}{refund_manual_review}[0]{reason}, qr/negative/,
+            'saying which nonsense it was';
+
+        $r = row( $schema, $s->{overpaid} );
+        is $r->{refunded_cents}, 9000, 'a refunded total above the charge is clamped to it';
+        ok $r->{metadata}{refund_manual_review},
+            'and flagged rather than silently truncated';
+        is $r->{metadata}{refund_manual_review}[0]{metadata_refund_cents}, 12000,
+            'naming the figure it clamped, which an operator can act on';
+
+        $r = row( $schema, $s->{bricked} );
+        is $r->{status}, 'refund_pending',
+            'refund_failed is normalised before the status CHECK, not left to abort the deploy';
+        is $r->{refund_owed_cents}, 2200, 'with its debt intact';
 
         $r = row( $schema, $s->{zero_cart} );
         is scalar @{ $r->{refund_increments} }, 0,
@@ -159,6 +184,23 @@ subtest 'verify rejects a row the backfill must never produce' => sub {
         }
         is $verify->(), 0, "and passes again once restored ($schema)";
 
+        # owed + refunded exceeding the charge is now refused by the constraint
+        # itself, so it cannot be reached by an UPDATE at all. That is the
+        # primary guard; verify's assertion is the backstop for a row that
+        # somehow predates it.
+        my $err = do {
+            local $@;
+            eval { $db->query( sprintf(
+                q{UPDATE %s.payments SET refunded_cents = amount_cents
+                   WHERE refund_owed_cents > 0}, $q ) ); 1 };
+            $@;
+        };
+        like $err, qr/payments_refund_total_check/,
+            "the sum constraint refuses owed + refunded above the charge ($schema)";
+
+        # And verify still catches it if the constraint is not there to stop it.
+        $db->query( sprintf(
+            'ALTER TABLE %s.payments DROP CONSTRAINT payments_refund_total_check', $q ) );
         $db->query( sprintf(
             q{UPDATE %s.payments SET refunded_cents = amount_cents
                WHERE refund_owed_cents > 0}, $q ) );
@@ -166,6 +208,9 @@ subtest 'verify rejects a row the backfill must never produce' => sub {
             "verify FAILS when owed + refunded exceeds the charge ($schema)";
 
         $db->query( sprintf( 'UPDATE %s.payments SET refunded_cents = 0 WHERE refund_owed_cents > 0', $q ) );
+        $db->query( sprintf(
+            q{ALTER TABLE %s.payments ADD CONSTRAINT payments_refund_total_check
+                   CHECK (refund_owed_cents + refunded_cents <= amount_cents)}, $q ) );
         is $verify->(), 0, "and passes again ($schema)";
     }
 };

@@ -70,13 +70,18 @@ UPDATE registry.payments p
        -- Flagged when the cart could not absorb the debt, and also when more
        -- was recorded returned than was ever charged -- a row claiming that is
        -- at least as worth a human's eye.
-       metadata = CASE WHEN c.wanted > c.owed OR c.overpaid
+       metadata = CASE WHEN c.wanted > c.owed OR c.overpaid OR c.wanted < 0
            THEN jsonb_set( COALESCE(p.metadata, '{}'::jsonb), '{refund_manual_review}',
                     COALESCE(p.metadata->'refund_manual_review', '[]'::jsonb)
                     || jsonb_build_array(jsonb_build_object(
-                           'reason', 'backfill clamped a debt the cart cannot absorb',
-                           'metadata_owed_cents', c.wanted,
-                           'recorded_cents',      c.owed)) )
+                           'reason', CASE
+                               WHEN c.wanted < 0 THEN 'backfill floored a negative debt'
+                               WHEN c.overpaid  THEN 'backfill clamped a refunded total above the charge'
+                               ELSE 'backfill clamped a debt the cart cannot absorb' END,
+                           'metadata_owed_cents',   c.wanted,
+                           'metadata_refund_cents', COALESCE((p.metadata->>'refund_amount_cents')::INTEGER, 0),
+                           'recorded_owed_cents',   c.owed,
+                           'recorded_refund_cents', c.refunded)) )
            ELSE p.metadata END
   FROM (
       SELECT id,
@@ -102,9 +107,16 @@ UPDATE registry.payments p
 
 ALTER TABLE registry.payments
     ADD CONSTRAINT payments_refund_owed_cents_check
-        CHECK (refund_owed_cents >= 0 AND refund_owed_cents <= amount_cents),
+        CHECK (refund_owed_cents >= 0),
     ADD CONSTRAINT payments_refunded_cents_check
-        CHECK (refunded_cents >= 0 AND refunded_cents <= amount_cents),
+        CHECK (refunded_cents >= 0),
+    -- The SUM, not each column against the cart. Two per-column upper bounds
+    -- let owed + refunded exceed the charge while both pass individually --
+    -- and the sum is the real invariant: it is the headroom rule
+    -- record_capacity_obligation applies, and the shape verify treats as fatal.
+    -- Runtime could mint it and nothing stopped it.
+    ADD CONSTRAINT payments_refund_total_check
+        CHECK (refund_owed_cents + refunded_cents <= amount_cents),
     ADD CONSTRAINT payments_refund_seq_check
         CHECK (refund_seq >= 0);
 
@@ -171,13 +183,18 @@ BEGIN
                                  ''children'',   COALESCE(p.metadata->''refund_owed_children'', ''[]''::jsonb),
                                  ''settled_at'', NULL))
                         ELSE ''[]''::jsonb END,
-                    metadata = CASE WHEN c.wanted > c.owed OR c.overpaid
+                    metadata = CASE WHEN c.wanted > c.owed OR c.overpaid OR c.wanted < 0
                         THEN jsonb_set( COALESCE(p.metadata, ''{}''::jsonb), ''{refund_manual_review}'',
                                  COALESCE(p.metadata->''refund_manual_review'', ''[]''::jsonb)
                                  || jsonb_build_array(jsonb_build_object(
-                                        ''reason'', ''backfill clamped a debt the cart cannot absorb'',
-                                        ''metadata_owed_cents'', c.wanted,
-                                        ''recorded_cents'',      c.owed)) )
+                                        ''reason'', CASE
+                                            WHEN c.wanted < 0 THEN ''backfill floored a negative debt''
+                                            WHEN c.overpaid  THEN ''backfill clamped a refunded total above the charge''
+                                            ELSE ''backfill clamped a debt the cart cannot absorb'' END,
+                                        ''metadata_owed_cents'',   c.wanted,
+                                        ''metadata_refund_cents'', COALESCE((p.metadata->>''refund_amount_cents'')::INTEGER, 0),
+                                        ''recorded_owed_cents'',   c.owed,
+                                        ''recorded_refund_cents'', c.refunded)) )
                         ELSE p.metadata END
                FROM (
                    SELECT id,
@@ -204,9 +221,11 @@ BEGIN
         EXECUTE format(
             'ALTER TABLE %I.payments
                 ADD CONSTRAINT payments_refund_owed_cents_check
-                    CHECK (refund_owed_cents >= 0 AND refund_owed_cents <= amount_cents),
+                    CHECK (refund_owed_cents >= 0),
                 ADD CONSTRAINT payments_refunded_cents_check
-                    CHECK (refunded_cents >= 0 AND refunded_cents <= amount_cents),
+                    CHECK (refunded_cents >= 0),
+                ADD CONSTRAINT payments_refund_total_check
+                    CHECK (refund_owed_cents + refunded_cents <= amount_cents),
                 ADD CONSTRAINT payments_refund_seq_check
                     CHECK (refund_seq >= 0),
                 ADD CONSTRAINT payments_status_check

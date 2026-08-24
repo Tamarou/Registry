@@ -364,7 +364,15 @@ psql $DATABASE_URL -c \
 > `jsonb_agg` over zero rows is likewise NULL against a NOT NULL column.
 
 The amount is derived from the increment rather than typed in, and every clause
-is guarded on `settled_at IS NULL`. Both matter: the code's copy
+is guarded on `settled_at IS NULL`.
+
+**One increment per `seq`.** These scalar subselects raise `more than one row
+returned by a subquery used as an expression` if two unsettled increments share
+a seq -- and Step 5's append block is the only thing that can create that, since
+the code always derives `seq` from `refund_seq + 1`. The code's own copy uses
+`SUM(...) ... HAVING COUNT(*) > 0` and survives it; this one does not, and it
+fails *after* Step 3 has already paid Stripe. Append with `refund_seq + 1`,
+never a literal. Both matter: the code's copy
 (`settle_refund_increment`) has the same guards and is idempotent because of
 them. Without them, re-running this block double-counts the money returned, and
 a mistyped `<seq>` moves the balance while leaving the increment still due — the
@@ -393,10 +401,15 @@ the ledger distinction Leg 3 reads. This is the same rule the automatic path
 applies (`Registry::DAO::Payment::_apply_refund_result`): the full cart is
 `refunded`, anything short of it is `partially_refunded`.
 
-The `status = 'refund_pending'` predicate in the WHERE clause is not
-decoration -- check that the UPDATE reported one row. Zero means something else
-moved the status while you were working, and you should re-read the row before
-doing anything more.
+Check what the UPDATE reported, and read zero correctly -- it usually is not
+concurrency:
+
+| Reported | Means |
+|---|---|
+| 1 | the row moved |
+| 0, and `refund_owed_cents > 0` | **the ordinary case**: increments remain. Go back to Step 3 for the next one. |
+| 0, and `metadata.refund_manual_review` is set | the flag guard. Resolve it via Step 5. |
+| 0, and neither of those | something else moved the status. Re-read the row before doing anything more. |
 
 #### Step 5: Resolve a manual-review flag
 
@@ -441,7 +454,13 @@ what has already gone back). If it matches no rows the cart has nothing left and
 the discrepancy needs escalating rather than forcing. Unlike the code, this does
 **not** clamp `<cents>` to the remaining headroom -- check
 `amount_cents - refund_owed_cents - refunded_cents` yourself before running it,
-or you will trip `payments_refund_owed_cents_check`.
+or you will trip `payments_refund_total_check`, which constrains
+`refund_owed_cents + refunded_cents` against the charge -- the per-column
+bounds do not, and an earlier version of this note named one of them.
+
+Enter **integer cents**. A decimal is accepted by the column, which rounds it,
+but stored verbatim in the increment -- and `(e->>'cents')::int` then throws on
+that row forever, taking the settlement path down with it.
 
 Then, once nothing is owed, clear the flag and let the status move:
 
@@ -461,12 +480,12 @@ move the status; nothing in the code does either, because
 set, and by the time you clear it there are no increments left to settle. A row
 left here sits in Step 1's results forever with nothing owed and nothing to do.
 
-If you ran Step 4's status statement *before* clearing the flag it will have
-reported zero rows. That is usually the flag guard rather than the "something
-else moved the status" case the note there describes -- but check the status
-before assuming so. If the row is not `refund_pending`, the status guard is
-what refused, and the recording statement above was run without its
-`status = 'refund_pending'` clause.
+If the recording statement reports zero rows, check the status before assuming
+a mistake. `flag_refund_manual_review` deliberately leaves a terminal row
+terminal -- the preamble above says so -- and the recording statement's headroom
+predicate will also refuse a cart with nothing left. Neither is operator error.
+A row that is already `refunded` with its flag cleared and nothing owed is
+finished; leave it.
 
 #### A failed refund is NOT `refund_failed`
 

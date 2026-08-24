@@ -197,6 +197,16 @@ subtest 'two increments are refunded separately, never as one accumulated total'
         'under distinct keys, so Stripe cannot fold one into the other';
 
     is tenant_payment($payment)->refund_owed_cents, 0, 'and nothing is left owed';
+
+    # refunded_cents on the COMPOSED path -- refund_async into
+    # _apply_refund_result into settle_refund_increment. Every other assertion
+    # for it exercises one of those in isolation, so forcing $is_increment to 0
+    # recorded 14000 for 7000 actually returned and the whole suite stayed
+    # green. It is the Leg 3 ledger figure and the headroom term in
+    # record_capacity_obligation's clamp, so over-counting it destroys refund
+    # capacity for every later demotion on the cart.
+    is tenant_payment($payment)->refunded_cents, 15000,
+        'and exactly what reached Stripe is recorded as returned, counted once';
 };
 
 subtest 'the refund happens after the COMMIT, not inside it' => sub {
@@ -283,6 +293,29 @@ subtest 'a settlement that fits refunds nothing' => sub {
 
     is scalar @refunds, 0, 'no refund is issued for a seat that was there';
     is tenant_payment($payment)->status, 'completed', 'and the payment is completed';
+};
+
+# The zero-row branch is the ONLY alarm for "Stripe took the money and nothing
+# recorded it". Both callers write `... or log(...)`, and nothing graded either,
+# so removing the whole `or` clause left the suite green.
+subtest 'a settle that records nothing after Stripe paid is logged, not swallowed' => sub {
+    my $payment = a_doomed_payment();
+    my @errors;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            Mojo::Promise->resolve({ id => 're_lost', status => 'succeeded' });
+        };
+        # Settle the increment out from under the loop, so the refund succeeds
+        # and the settle that follows it matches no unsettled row -- exactly the
+        # shape the log line names.
+        local *Registry::DAO::Payment::settle_refund_increment = sub { return undef };
+        local *Mojo::Log::error = sub ($self, @msg) { push @errors, join '', @msg };
+        post_settlement($payment)->status_is(200);
+    }
+
+    ok scalar( grep { /matched no row after Stripe paid/ } @errors ),
+        'the operator is told Stripe paid and the increment is still due';
 };
 
 done_testing;

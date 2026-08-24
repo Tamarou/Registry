@@ -331,20 +331,39 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # Gate on the row's persisted obligation, not on what this pass alone
         # computed. An earlier delivery can have recorded a debt whose refund
-        # failed; this pass may demote nobody new and still owe it. The callback
-        # path already re-reads the row -- reading it here too means Stripe's own
-        # redelivery becomes the retry, which is the only automated retry there
-        # is before Leg 3.
+        # failed; this pass may demote nobody new and still owe it.
+        #
+        # NOT because redelivery retries it. Earlier comments here claimed
+        # "Stripe's own redelivery becomes the retry, the only automated retry
+        # there is" -- that is false and measured false: the dedup claim is on
+        # stripe_event_id and commits WITH the settlement, so a redelivery of
+        # the same event is refused above before this is reached. Only a
+        # DIFFERENT event on the same payment reaches here. Until Leg 3's
+        # ProcessRefunds exists, a failed capacity refund waits for the runbook.
+        # The runbook says so correctly; this file said the opposite.
         my $settled = Registry::DAO::Payment->find($db, { id => $payment_id });
-        # The work queue, not the balance -- the same predicate _settle_owed_refund
-        # uses. Round 1 unified the two callers one frame too shallow: this gate
-        # decides whether the settle runs at all, and it still read the balance.
-        # A row whose balance was zeroed while increments remained due -- which
-        # the runbook's own settle step could produce -- was then never retried,
-        # because Stripe's redelivery is the only automated retry there is.
+
+        # The work queue, not the balance -- the same predicate
+        # _settle_owed_refund uses. Round 1 unified the two callers one frame
+        # too shallow: this gate decides whether the settle runs at all, and it
+        # still read the balance. A row whose balance was zeroed while
+        # increments remained due is then invisible to a later event that would
+        # otherwise have carried the refund.
+        #
+        # jsonb_array_length, not unsettled_refund_increments: this runs INSIDE
+        # the settlement transaction, and that method casts (e->>'cents')::int
+        # over jsonb the runbook lets operators hand-edit. A non-numeric value
+        # there would throw here, roll back a captured charge with no
+        # enrollments, and take the dedup claim with it -- so every retry
+        # reproduces it. A length test cannot throw.
         return undef unless $settled;
-        my $due = $settled->unsettled_refund_increments($db);
-        return ( $due && @$due ) ? $payment_id : undef;
+        my $due = $db->query(
+            q{SELECT 1 FROM payments
+               WHERE id = ?
+                 AND ( refund_owed_cents > 0
+                       OR jsonb_array_length(refund_increments) > 0 )},
+            $payment_id )->rows;
+        return $due ? $payment_id : undef;
     }
 
     # Connect sends account.updated when a connected account's capabilities

@@ -297,9 +297,12 @@ subtest 'settling against a drifted balance does not throw after Stripe paid' =>
     my $p = a_payment(17300);
     $p->record_capacity_obligation( $db, 4400, ['child-a'] );
 
-    # As an operator zeroing the balance by hand would leave it -- the state the
-    # webhook gate comment says the runbook's settle step can produce.
-    $db->query( 'UPDATE payments SET refund_owed_cents = 0 WHERE id = ?', $p->id );
+    # Drift BOTH ways, or half the assertions below cannot fail. Zeroing the
+    # balance alone tests the floor; the cap is only approached when
+    # refunded_cents is already near the cart, which is the state an operator
+    # over-recording a refund produces.
+    $db->query( q{UPDATE payments SET refund_owed_cents = 0, refunded_cents = 16000
+                   WHERE id = ?}, $p->id );
 
     my $err = do {
         local $@;
@@ -310,9 +313,45 @@ subtest 'settling against a drifted balance does not throw after Stripe paid' =>
 
     my $r = row_of($p);
     cmp_ok $r->{refund_owed_cents}, '>=', 0, 'the balance is floored, not negative';
-    cmp_ok $r->{refunded_cents}, '<=', 17300, 'and the returned total is capped';
+    is $r->{refunded_cents}, 17300,
+        'and the returned total is capped at the charge rather than exceeding it';
     is $r->{refund_increments}[0]{settled_at} ? 1 : 0, 1,
         'the increment is settled, so no redelivery re-sends it';
+};
+
+# settle_refund_increment's return value is a reporting contract, not just a
+# convenience: both callers write `... or log "matched no row after Stripe paid"`,
+# which is the only alarm for "Stripe took the money and nothing recorded it".
+# Without the EXISTS guard the UPDATE matches the row regardless, the arithmetic
+# adds a COALESCEd zero, and it returns truthy -- so that branch is unreachable
+# and the alarm never sounds.
+subtest 'settling a seq that is not due reports so, and moves nothing' => sub {
+    my $p = a_payment(9000);
+    $p->record_capacity_obligation( $db, 2600, ['child-a'] );
+
+    my $before = row_of($p);
+
+    for my $seq ( 0, 2, 99, -1 ) {
+        ok !$p->settle_refund_increment( $db, $seq, { id => "re_bogus_$seq" } ),
+            "seq $seq is not due, and the caller is told so";
+    }
+
+    my $after = row_of($p);
+    is $after->{refund_owed_cents}, $before->{refund_owed_cents},
+        'the balance is untouched';
+    is $after->{refunded_cents}, $before->{refunded_cents},
+        'nothing is recorded as returned';
+    is $after->{status}, $before->{status}, 'and the status did not move';
+
+    # And the real one still settles.
+    ok $p->settle_refund_increment( $db, 1, { id => 're_real' } ),
+        'the increment that IS due settles and reports success';
+    is row_of($p)->{refunded_cents}, 2600, 'for its own amount';
+
+    # A second settle of the same seq is a no-op that reports so.
+    ok !$p->settle_refund_increment( $db, 1, { id => 're_again' } ),
+        'and settling it again moves no money and says nothing was due';
+    is row_of($p)->{refunded_cents}, 2600, 'the total is not double-counted';
 };
 
 done_testing;

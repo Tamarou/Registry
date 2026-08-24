@@ -277,8 +277,11 @@ subtest 'the parent-return path refunds each increment separately' => sub {
     my %keys = map { $_->{_idempotency_key} // '' => 1 } @refunds;
     is scalar( keys %keys ), 2, 'under distinct per-increment keys';
 
-    is Registry::DAO::Payment->find($db, { id => $payment->id })->refund_owed_cents,
-        0, 'and the debt is discharged';
+    my $done = Registry::DAO::Payment->find($db, { id => $payment->id });
+    is $done->refund_owed_cents, 0, 'and the debt is discharged';
+    is $done->refunded_cents, 6500,
+        'with exactly what reached Stripe recorded as returned -- counted once, '
+        . 'on the composed refund_async/_apply_refund_result/settle path';
 };
 
 done_testing;
