@@ -44,6 +44,27 @@ BEGIN
         RAISE EXCEPTION 'registry.payments has no refund_owed index';
     END IF;
 
+    -- Content, for registry too. An earlier version asserted this only inside
+    -- the tenant loop, so the same defect in registry -- which holds the
+    -- platform's own money -- passed verify untouched.
+    IF EXISTS (
+        SELECT 1 FROM registry.payments
+         WHERE refund_owed_cents > 0 AND jsonb_array_length(refund_increments) = 0
+    ) THEN
+        RAISE EXCEPTION 'registry.payments has debt with no increment to discharge it';
+    END IF;
+
+    -- The headroom invariant the runtime depends on. Neither CHECK constrains
+    -- the SUM, and the backfill is the one pass that can produce a row
+    -- violating it.
+    IF EXISTS (
+        SELECT 1 FROM registry.payments
+         WHERE refund_owed_cents + refunded_cents > amount_cents
+    ) THEN
+        RAISE EXCEPTION
+            'registry.payments has owed + refunded exceeding the charge';
+    END IF;
+
     FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         CONTINUE WHEN NOT EXISTS (
             SELECT 1 FROM information_schema.schemata WHERE schema_name = s
@@ -71,6 +92,15 @@ BEGIN
         IF orphan IS NOT NULL THEN
             RAISE EXCEPTION
                 'tenant schema %.payments has debt with no increment to discharge it', s;
+        END IF;
+
+        EXECUTE format(
+            'SELECT 1 FROM %I.payments
+              WHERE refund_owed_cents + refunded_cents > amount_cents
+              LIMIT 1', s) INTO orphan;
+        IF orphan IS NOT NULL THEN
+            RAISE EXCEPTION
+                'tenant schema %.payments has owed + refunded exceeding the charge', s;
         END IF;
 
         IF NOT EXISTS (

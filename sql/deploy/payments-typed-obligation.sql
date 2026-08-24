@@ -27,40 +27,67 @@ ALTER TABLE registry.payments
 
 -- Backfill before the constraints, so a row whose jsonb already violates them
 -- fails here with its own data visible rather than at some later write.
-UPDATE registry.payments
-   SET refund_owed_cents = LEAST(
-           COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0), amount_cents),
-       refunded_cents = LEAST(
-           COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0), amount_cents),
-       refund_seq = CASE
-           WHEN COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) > 0 THEN 1
-           ELSE 0 END,
-       -- An existing unpaid debt becomes increment 1, unsettled, so the
-       -- retry path picks it up instead of silently owning an untracked
-       -- balance. Its key is refund:capacity:<id>:1, which is NOT the key any
-       -- earlier attempt used -- deliberate, since we cannot know whether one
-       -- was made. The runbook's list-before-issue is what covers that.
-       -- A debt exceeding the cart is clamped rather than dropped in silence.
-       -- main's unclamped accumulator could produce one, and the code path this
-       -- replaces flags that case for a human via refund_manual_review; a
-       -- one-shot pass over every historical row should be no less careful.
-       metadata = CASE
-           WHEN COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) > amount_cents
-           THEN jsonb_set( metadata, '{refund_manual_review}',
-                    COALESCE(metadata->'refund_manual_review', '[]'::jsonb)
-                    || jsonb_build_array(jsonb_build_object(
-                           'reason', 'backfill clamped a debt exceeding the cart',
-                           'metadata_owed_cents', metadata->'refund_owed_cents')) )
-           ELSE metadata END,
-       refund_increments = CASE
-           WHEN COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) > 0
+-- Derived once in the subquery and shared, rather than recomputed per column.
+-- Repeating the clamp inline let the two figures disagree: each was clamped to
+-- amount_cents independently, so the PAIR could sum past the charge -- and that
+-- sum is the runtime headroom rule. record_capacity_obligation refuses every
+-- future increment once amount_cents > refund_owed_cents + refunded_cents is
+-- false, while the caller loop would meanwhile send Stripe more than the charge.
+--
+-- refunded_cents is taken first and owed clamped against what is LEFT.
+--
+-- Note refund_amount_cents was an ASSIGNMENT on the old code path -- the most
+-- recent refund, not a cumulative total -- so this under-states what went back
+-- for a row refunded more than once. Under-stating is the safe direction: it
+-- leaves headroom unclaimed rather than over-claimed.
+UPDATE registry.payments p
+   SET refunded_cents    = c.refunded,
+       refund_owed_cents = c.owed,
+       refund_seq        = CASE WHEN c.owed > 0 THEN 1 ELSE 0 END,
+       -- An existing unpaid debt becomes increment 1, unsettled, so the retry
+       -- path picks it up instead of silently owning an untracked balance. Its
+       -- key is refund:capacity:<id>:1, which is NOT the key any earlier attempt
+       -- used -- deliberate, since we cannot know whether one was made. The
+       -- runbook's list-before-issue is what covers that.
+       --
+       -- Gated on the CLAMPED figure. Gating on the raw metadata value while
+       -- clamping the amount separately produced a zero-cent unsettled
+       -- increment on a zero-amount cart, which the workflow-step caller --
+       -- which gates on the queue, not the balance -- would POST to Stripe as
+       -- amount=0 on every delivery forever.
+       refund_increments = CASE WHEN c.owed > 0
            THEN jsonb_build_array(jsonb_build_object(
-                    'seq',      1,
-                    'cents',    LEAST((metadata->>'refund_owed_cents')::INTEGER, amount_cents),
-                    'children', COALESCE(metadata->'refund_owed_children', '[]'::jsonb),
+                    'seq',        1,
+                    'cents',      c.owed,
+                    'children',   COALESCE(p.metadata->'refund_owed_children', '[]'::jsonb),
                     'settled_at', NULL))
-           ELSE '[]'::jsonb END
- WHERE metadata ? 'refund_owed_cents' OR metadata ? 'refund_amount_cents';
+           ELSE '[]'::jsonb END,
+       -- Debt the cart cannot absorb is clamped rather than dropped in silence.
+       -- main's accumulator was unclamped and could produce one, and the code
+       -- path this replaces flags that case for a human; a one-shot pass over
+       -- every historical row should be no less careful. Tested against the
+       -- headroom left after refunded_cents, not against the whole cart.
+       metadata = CASE WHEN c.wanted > c.owed
+           THEN jsonb_set( COALESCE(p.metadata, '{}'::jsonb), '{refund_manual_review}',
+                    COALESCE(p.metadata->'refund_manual_review', '[]'::jsonb)
+                    || jsonb_build_array(jsonb_build_object(
+                           'reason', 'backfill clamped a debt the cart cannot absorb',
+                           'metadata_owed_cents', c.wanted,
+                           'recorded_cents',      c.owed)) )
+           ELSE p.metadata END
+  FROM (
+      SELECT id,
+             LEAST( COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0),
+                    amount_cents ) AS refunded,
+             COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0) AS wanted,
+             LEAST( COALESCE((metadata->>'refund_owed_cents')::INTEGER, 0),
+                    amount_cents - LEAST(
+                        COALESCE((metadata->>'refund_amount_cents')::INTEGER, 0),
+                        amount_cents ) ) AS owed
+        FROM registry.payments
+       WHERE metadata ? 'refund_owed_cents' OR metadata ? 'refund_amount_cents'
+  ) c
+ WHERE p.id = c.id;
 
 ALTER TABLE registry.payments
     ADD CONSTRAINT payments_refund_owed_cents_check
@@ -117,30 +144,43 @@ BEGIN
                 ADD COLUMN IF NOT EXISTS refund_seq        INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS refund_increments JSONB   NOT NULL DEFAULT ''[]''::jsonb', s);
 
+        -- Mirrors the registry backfill above, clause for clause. This branch
+        -- has been wrong twice: once omitting refund_increments entirely, once
+        -- omitting the manual-review flag. payments is tenant-scoped, so this
+        -- is the copy with the customer money in it.
         EXECUTE format(
-            'UPDATE %I.payments
-                SET refund_owed_cents = LEAST(
-                        COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0), amount_cents),
-                    refunded_cents = LEAST(
-                        COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0), amount_cents),
-                    refund_seq = CASE
-                        WHEN COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0) > 0
-                        THEN 1 ELSE 0 END,
-                    -- The fourth column, and the one that matters most here.
-                    -- Omitting it leaves a row whose balance says money is owed
-                    -- and whose increment list is empty: both callers pass the
-                    -- balance guard, find nothing due, loop zero times and
-                    -- answer 200 -- forever, on every redelivery. And this is
-                    -- the tenant branch, which is where the money actually is.
-                    refund_increments = CASE
-                        WHEN COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0) > 0
+            'UPDATE %I.payments p
+                SET refunded_cents    = c.refunded,
+                    refund_owed_cents = c.owed,
+                    refund_seq        = CASE WHEN c.owed > 0 THEN 1 ELSE 0 END,
+                    refund_increments = CASE WHEN c.owed > 0
                         THEN jsonb_build_array(jsonb_build_object(
-                                 ''seq'',      1,
-                                 ''cents'',    LEAST((metadata->>''refund_owed_cents'')::INTEGER, amount_cents),
-                                 ''children'', COALESCE(metadata->''refund_owed_children'', ''[]''::jsonb),
+                                 ''seq'',        1,
+                                 ''cents'',      c.owed,
+                                 ''children'',   COALESCE(p.metadata->''refund_owed_children'', ''[]''::jsonb),
                                  ''settled_at'', NULL))
-                        ELSE ''[]''::jsonb END
-              WHERE metadata ? ''refund_owed_cents'' OR metadata ? ''refund_amount_cents''', s);
+                        ELSE ''[]''::jsonb END,
+                    metadata = CASE WHEN c.wanted > c.owed
+                        THEN jsonb_set( COALESCE(p.metadata, ''{}''::jsonb), ''{refund_manual_review}'',
+                                 COALESCE(p.metadata->''refund_manual_review'', ''[]''::jsonb)
+                                 || jsonb_build_array(jsonb_build_object(
+                                        ''reason'', ''backfill clamped a debt the cart cannot absorb'',
+                                        ''metadata_owed_cents'', c.wanted,
+                                        ''recorded_cents'',      c.owed)) )
+                        ELSE p.metadata END
+               FROM (
+                   SELECT id,
+                          LEAST( COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0),
+                                 amount_cents ) AS refunded,
+                          COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0) AS wanted,
+                          LEAST( COALESCE((metadata->>''refund_owed_cents'')::INTEGER, 0),
+                                 amount_cents - LEAST(
+                                     COALESCE((metadata->>''refund_amount_cents'')::INTEGER, 0),
+                                     amount_cents ) ) AS owed
+                     FROM %I.payments
+                    WHERE metadata ? ''refund_owed_cents'' OR metadata ? ''refund_amount_cents''
+               ) c
+              WHERE p.id = c.id', s, s);
 
         EXECUTE format(
             'UPDATE %I.payments SET status = ''refund_pending''

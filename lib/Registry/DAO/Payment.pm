@@ -757,7 +757,16 @@ SQL
         # No room left. The debt is real and cannot be recorded, which is
         # precisely the case a human has to look at.
         unless ($row) {
+            # Same fallback the negative-share branch above has. Without it, a
+            # debt refused for lack of headroom on a cart with no named children
+            # left no balance, no increment, no flag and no warning -- and
+            # record_capacity_obligation is public with $new_children defaulted
+            # to [].
+            warn "record_capacity_obligation: no headroom for $new_cents cents "
+               . "on payment $id\n";
             $self->flag_refund_manual_review( $db, $_, undef ) for @$new_children;
+            $self->flag_refund_manual_review( $db, undef, undef )
+                unless @$new_children;
             return;
         }
 
@@ -828,7 +837,21 @@ SQL
     method settle_refund_increment ($db, $seq, $refund = {}) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $row = $db->query( <<'SQL', $seq, $refund->{id}, $seq, $seq, $id )->hash;
+        # The CTE is the guard. If no UNSETTLED increment carries this seq the
+        # subquery is empty, the UPDATE's FROM joins against nothing, no row is
+        # touched, and ->hash is undef -- so a settle that moved no money
+        # reports so. An earlier form keyed on `WHERE p.id = ?`, which is always
+        # true: it returned success for a seq it had never settled, made both
+        # callers' "matched no row after Stripe paid" branch unreachable, and
+        # still ran the status move.
+        my $row = $db->query( <<'SQL', $id, $seq, $seq, $refund->{id}, $id )->hash;
+            WITH due AS (
+                SELECT (e->>'cents')::int AS cents
+                  FROM payments p, jsonb_array_elements(p.refund_increments) e
+                 WHERE p.id = ?
+                   AND (e->>'seq')::int = ?
+                   AND e->>'settled_at' IS NULL
+            )
             UPDATE payments p
                SET refund_increments = COALESCE( (
                      SELECT jsonb_agg(
@@ -840,21 +863,19 @@ SQL
                                    ELSE e END
                               ORDER BY (e->>'seq')::int )
                        FROM jsonb_array_elements(p.refund_increments) e ),
-                     -- jsonb_agg over zero rows is SQL NULL, and the column is
-                     -- NOT NULL. Without this a hand-run recovery settle on a
-                     -- row with no increments throws instead of no-opping,
-                     -- which contradicts the idempotence this method promises.
+                     -- jsonb_agg over zero rows is SQL NULL against a NOT NULL
+                     -- column.
                      '[]'::jsonb ),
-                   refund_owed_cents = GREATEST( 0, p.refund_owed_cents - COALESCE((
-                       SELECT (e->>'cents')::int
-                         FROM jsonb_array_elements(p.refund_increments) e
-                        WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL ), 0) ),
-                   refunded_cents = LEAST( p.amount_cents, p.refunded_cents + COALESCE((
-                       SELECT (e->>'cents')::int
-                         FROM jsonb_array_elements(p.refund_increments) e
-                        WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL ), 0) )
+                   -- Straight arithmetic on the CTE's amount. GREATEST/LEAST
+                   -- would be wrong here as a safety net anyway: Postgres
+                   -- IGNORES NULL arguments to them rather than propagating,
+                   -- so GREATEST(0, NULL) is 0 -- which would zero a live debt
+                   -- rather than refuse.
+                   refund_owed_cents = p.refund_owed_cents - due.cents,
+                   refunded_cents    = p.refunded_cents    + due.cents
+              FROM due
              WHERE p.id = ?
-         RETURNING refund_owed_cents, refunded_cents, amount_cents
+         RETURNING p.refund_owed_cents, p.refunded_cents, p.amount_cents
 SQL
         return unless $row;
 
@@ -1095,6 +1116,19 @@ SQL
         # fully refunded. A direct refund has nothing else to move it, so it is
         # owned here -- and it ACCUMULATES refunded_cents rather than assigning,
         # so two successive direct refunds do not overwrite each other.
+        # A direct refund is refused outright while a capacity debt is
+        # outstanding. Writing a terminal status over a refund_pending row takes
+        # it out of the runbook's queue AND out of _refundable_status, so the
+        # outstanding increments can never be paid -- the money is stranded with
+        # no operator able to find it.
+        if ( !$is_increment ) {
+            my $owed = $db->query(
+                'SELECT refund_owed_cents FROM payments WHERE id = ?', $id
+            )->hash->{refund_owed_cents} // 0;
+            die "Cannot issue a direct refund while $owed cents of capacity "
+              . "debt is outstanding on payment $id\n" if $owed;
+        }
+
         $db->query( <<'SQL', encode_json({
             UPDATE payments
                SET metadata = metadata || ?::jsonb,
@@ -1112,6 +1146,13 @@ SQL
             refund_reason       => $reason,
         }), $is_increment ? 1 : 0, $refund_cents,
             $is_increment ? 1 : 0, $refund_cents, $id );
+
+        # Refresh the in-memory status for the direct path. refund_async gates
+        # on this field, and leaving it stale let a second full refund through
+        # on the same object -- a regression from main, where the status guard
+        # caught it.
+        $status = $db->query( 'SELECT status FROM payments WHERE id = ?', $id )
+            ->hash->{status} unless $is_increment;
         return;
     }
 

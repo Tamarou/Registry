@@ -336,7 +336,15 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # redelivery becomes the retry, which is the only automated retry there
         # is before Leg 3.
         my $settled = Registry::DAO::Payment->find($db, { id => $payment_id });
-        return ( $settled && $settled->refund_owed_cents ) ? $payment_id : undef;
+        # The work queue, not the balance -- the same predicate _settle_owed_refund
+        # uses. Round 1 unified the two callers one frame too shallow: this gate
+        # decides whether the settle runs at all, and it still read the balance.
+        # A row whose balance was zeroed while increments remained due -- which
+        # the runbook's own settle step could produce -- was then never retried,
+        # because Stripe's redelivery is the only automated retry there is.
+        return undef unless $settled;
+        my $due = $settled->unsettled_refund_increments($db);
+        return ( $due && @$due ) ? $payment_id : undef;
     }
 
     # Connect sends account.updated when a connected account's capabilities

@@ -230,8 +230,15 @@ psql $DATABASE_URL -c \
           stripe_payment_intent_id, completed_at
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
+       OR jsonb_array_length(COALESCE(metadata->'refund_manual_review', '[]'::jsonb)) > 0
     ORDER BY completed_at"
 ```
+
+The second predicate matters: a debt that could not be recorded at all -- a
+share the code could not compute, or one on a row that had already reached a
+terminal refund status -- is flagged in `metadata.refund_manual_review` without
+moving the status. Searching on status alone misses exactly the rows nobody else
+is going to catch.
 
 `refund_owed_cents` is what is still owed and `refunded_cents` is what has
 already gone back. `refund_increments` is the authority for **what to send**: a
@@ -329,22 +336,32 @@ Clear the obligation and move the status once the refund is confirmed
 ```bash
 psql $DATABASE_URL -c \
   "UPDATE \"<sacp-slug>\".payments
-      SET refund_owed_cents = GREATEST(0, refund_owed_cents - (
+      SET refund_owed_cents = GREATEST(0, refund_owed_cents - COALESCE((
               SELECT (e->>'cents')::int FROM jsonb_array_elements(refund_increments) e
-               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL)),
-          refunded_cents    = LEAST(amount_cents, refunded_cents + (
+               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL), 0)),
+          refunded_cents    = LEAST(amount_cents, refunded_cents + COALESCE((
               SELECT (e->>'cents')::int FROM jsonb_array_elements(refund_increments) e
-               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL)),
-          refund_increments = (
+               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL), 0)),
+          refund_increments = COALESCE((
               SELECT jsonb_agg(
                        CASE WHEN (e->>'seq')::int = <seq>
                               AND e->>'settled_at' IS NULL
                             THEN e || jsonb_build_object('settled_at', to_jsonb(NOW()),
                                                          'refund_id', to_jsonb('<re_...>'::text))
                             ELSE e END ORDER BY (e->>'seq')::int)
-                FROM jsonb_array_elements(refund_increments) e)
+                FROM jsonb_array_elements(refund_increments) e), '[]'::jsonb)
     WHERE id = '<payment_id>'"
 ```
+
+> **The `COALESCE`s are load-bearing, not tidiness.** When the subquery matches
+> nothing -- an already-settled `seq`, or a mistyped one -- it returns SQL NULL,
+> and Postgres's `GREATEST`/`LEAST` **ignore** NULL rather than propagating it.
+> `GREATEST(0, NULL)` is `0` and `LEAST(amount_cents, NULL)` is `amount_cents`,
+> so without them re-running this block **zeroes a live debt and records the
+> entire cart as refunded**. The row then passes the status move below, leaves
+> this queue, and can never be refunded again because
+> `amount_cents > refund_owed_cents + refunded_cents` is false forever.
+> `jsonb_agg` over zero rows is likewise NULL against a NOT NULL column.
 
 The amount is derived from the increment rather than typed in, and every clause
 is guarded on `settled_at IS NULL`. Both matter: the code's copy
@@ -361,14 +378,18 @@ move the status **only once `refund_owed_cents` is zero and no
 ```bash
 psql $DATABASE_URL -c \
   "UPDATE \"<sacp-slug>\".payments
-      SET status = 'refunded'
+      SET status = CASE WHEN refunded_cents >= amount_cents
+                        THEN 'refunded' ELSE 'partially_refunded' END
     WHERE id = '<payment_id>' AND status = 'refund_pending'
       AND refund_owed_cents = 0
       AND COALESCE(jsonb_array_length(metadata->'refund_manual_review'), 0) = 0"
 ```
 
-Use `partially_refunded` instead of `refunded` when the amount returned is
-less than the row's `amount_cents`. This is the same rule the automatic path
+The status is **derived, not typed**. Writing the literal `refunded` here is
+wrong in the common case: this block's own `refund_owed_cents = 0` guard is
+satisfied precisely when a partial discharge completes, so a hand-written
+`refunded` would claim a full return of a cart that got part of one. That is
+the ledger distinction Leg 3 reads. This is the same rule the automatic path
 applies (`Registry::DAO::Payment::_apply_refund_result`): the full cart is
 `refunded`, anything short of it is `partially_refunded`.
 
@@ -397,12 +418,15 @@ psql $DATABASE_URL -c \
               'seq', refund_seq + 1, 'cents', <cents>,
               'children', '[\"<child_id>\"]'::jsonb, 'settled_at', NULL)
     WHERE id = '<payment_id>'
-      AND amount_cents >= refund_owed_cents + refunded_cents + <cents>"
+      AND amount_cents > refund_owed_cents + refunded_cents"
 ```
 
-The `amount_cents >=` predicate is the same headroom rule the code applies. If
-it matches no rows, the cart cannot absorb the amount and the discrepancy needs
-escalating rather than forcing.
+The predicate is the code's headroom rule (`>`, on the sum of what is owed and
+what has already gone back). If it matches no rows the cart has nothing left and
+the discrepancy needs escalating rather than forcing. Unlike the code, this does
+**not** clamp `<cents>` to the remaining headroom -- check
+`amount_cents - refund_owed_cents - refunded_cents` yourself before running it,
+or you will trip `payments_refund_owed_cents_check`.
 
 Then, once nothing is owed, clear the flag and let the status move:
 
@@ -414,7 +438,17 @@ psql $DATABASE_URL -c \
 ```
 
 Record the decision on the ticket before removing the flag -- once it is gone
-the row leaves this queue and nothing else remembers a human looked at it.
+nothing else remembers a human looked at it.
+
+**Then go back and run Step 4's status statement.** Clearing the flag does not
+move the status; nothing in the code does either, because
+`settle_refund_increment` deliberately refuses to move a row while a flag is
+set, and by the time you clear it there are no increments left to settle. A row
+left here sits in Step 1's results forever with nothing owed and nothing to do.
+
+If you ran Step 4's status statement *before* clearing the flag it will have
+reported zero rows -- that is the flag guard, not the "something else moved the
+status" case the note there describes.
 
 #### A failed refund is NOT `refund_failed`
 
