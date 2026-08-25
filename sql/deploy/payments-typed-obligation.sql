@@ -130,6 +130,15 @@ ALTER TABLE registry.payments
     -- and one deleted `||` produces exactly this.
     ADD CONSTRAINT payments_refund_increments_is_array
         CHECK (jsonb_typeof(refund_increments) = 'array'),
+    -- Integer cents, enforced rather than requested. An operator entering
+    -- dollars is the likeliest error in a money runbook: the column rounds
+    -- 130.50 to 131 while the increment keeps 130.50 verbatim, so the two
+    -- disagree and every later (e->>'cents')::int -- including one inside the
+    -- settlement transaction -- throws on that row forever. The runbook warns
+    -- about it; a warning is not a guard.
+    ADD CONSTRAINT payments_refund_increments_cents_integer
+        CHECK ( NOT jsonb_path_exists( refund_increments,
+                    '$[*].cents ? (@ != @.floor() || @.type() != "number")' ) ),
     ADD CONSTRAINT payments_refund_seq_check
         CHECK (refund_seq >= 0);
 
@@ -265,6 +274,9 @@ BEGIN
                     CHECK (refund_owed_cents + refunded_cents <= amount_cents),
                 ADD CONSTRAINT payments_refund_increments_is_array
                     CHECK (jsonb_typeof(refund_increments) = ''array''),
+                ADD CONSTRAINT payments_refund_increments_cents_integer
+                    CHECK ( NOT jsonb_path_exists( refund_increments,
+                                ''$[*].cents ? (@ != @.floor() || @.type() != "number")'' ) ),
                 ADD CONSTRAINT payments_refund_seq_check
                     CHECK (refund_seq >= 0),
                 ADD CONSTRAINT payments_status_check

@@ -354,4 +354,41 @@ subtest 'settling a seq that is not due reports so, and moves nothing' => sub {
     is row_of($p)->{refunded_cents}, 2600, 'the total is not double-counted';
 };
 
+# Two states the code cannot defend against in app code, made unrepresentable
+# instead. Both are reachable only by hand-edit -- and the runbook now hands
+# operators raw UPDATEs against this column.
+subtest 'the obligation column refuses states that would break its readers' => sub {
+    my $p = a_payment(50000);
+    $p->record_capacity_obligation( $db, 4000, ['child-a'] );
+
+    # jsonb_array_length and jsonb_array_elements both RAISE on a non-array, and
+    # one of those runs inside the settlement transaction -- where a raise rolls
+    # back a captured charge and the dedup claim with it. The corruption is
+    # silent going in, because `||` MERGES two objects rather than raising.
+    my $err = do {
+        local $@;
+        eval { $db->query( q{UPDATE payments SET refund_increments = '{"seq":1}'::jsonb
+                              WHERE id = ?}, $p->id ); 1 };
+        $@;
+    };
+    like $err, qr/payments_refund_increments_is_array/,
+        'a non-array increments column is refused';
+
+    # An operator entering dollars: the column rounds, the increment keeps the
+    # decimal verbatim, and every later (e->>'cents')::int throws on that row.
+    $err = do {
+        local $@;
+        eval { $db->query( q{UPDATE payments SET refund_increments =
+                   '[{"seq":1,"cents":130.50,"children":[],"settled_at":null}]'::jsonb
+                              WHERE id = ?}, $p->id ); 1 };
+        $@;
+    };
+    like $err, qr/payments_refund_increments_cents_integer/,
+        'decimal cents are refused at entry, not left to break a later cast';
+
+    # And the ordinary shape still writes.
+    is row_of($p)->{refund_increments}[0]{cents}, 4000,
+        'while a well-formed increment is untouched';
+};
+
 done_testing;

@@ -458,9 +458,11 @@ or you will trip `payments_refund_total_check`, which constrains
 `refund_owed_cents + refunded_cents` against the charge -- the per-column
 bounds do not, and an earlier version of this note named one of them.
 
-Enter **integer cents**. A decimal is accepted by the column, which rounds it,
-but stored verbatim in the increment -- and `(e->>'cents')::int` then throws on
-that row forever, taking the settlement path down with it.
+Enter **integer cents**. `payments_refund_increments_cents_integer` refuses a
+decimal outright, so this is now an error at entry rather than a row that breaks
+later -- before that constraint existed, the column rounded 130.50 to 131 while
+the increment kept 130.50, and every subsequent `(e->>'cents')::int` threw on
+that row forever, including one inside the settlement transaction.
 
 Then, once nothing is owed, clear the flag and let the status move:
 
