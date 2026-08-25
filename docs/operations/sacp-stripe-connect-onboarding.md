@@ -224,18 +224,34 @@ it is cleared by hand, using the procedure below.
 
 ```bash
 psql $DATABASE_URL -c \
-  "SELECT id, amount_cents, metadata->>'refund_owed_cents' AS owed_cents,
-          metadata->>'refund_owed_children' AS owed_children,
+  "SELECT id, amount_cents, refund_owed_cents, refunded_cents,
+          jsonb_pretty(refund_increments) AS increments,
+          metadata->'refund_manual_review' AS manual_review,
           stripe_payment_intent_id, completed_at
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
+       OR jsonb_array_length(COALESCE(metadata->'refund_manual_review', '[]'::jsonb)) > 0
     ORDER BY completed_at"
 ```
 
-`refund_owed_cents` is the amount owed; `refund_owed_children` is the child id
-list that also forms the idempotency key. A row with `refund_manual_review` set
-in its metadata reached a state the automatic path could not resolve and needs
-a human decision on the amount before anything is sent to Stripe.
+The second predicate matters: a debt that could not be recorded at all -- a
+share the code could not compute, or one on a row that had already reached a
+terminal refund status -- is flagged in `metadata.refund_manual_review` without
+moving the status. Searching on status alone misses exactly the rows nobody else
+is going to catch.
+
+`refund_owed_cents` is what is still owed and `refunded_cents` is what has
+already gone back. `refund_increments` is the authority for **what to send**: a
+JSON array of debts, each with its own `seq`, `cents`, and `settled_at`. Send
+one refund per increment whose `settled_at` is null, **for that increment's own
+`cents`** -- never for the `refund_owed_cents` total. The increments sum to the
+total by construction, and sending the total is how one debt gets paid twice.
+
+A row with `refund_manual_review` set reached a state the automatic path could
+not resolve -- a child whose share could not be computed -- and needs a human
+decision on the amount. Such a row stays `refund_pending` even when
+`refund_owed_cents` is zero and every increment is settled, deliberately: that
+is the only way it stays in this query's results until someone acts on it.
 
 #### Step 2: List refunds before issuing one
 
@@ -268,32 +284,39 @@ Act on what comes back:
 
 #### Step 3: Issue the refund, under the stable key
 
-The key is derived from the payment id and the owed-children list, sorted:
+The key names one increment:
 
-- Normal case, one or more children owed:
-  `refund:capacity:<payment_id>:<child_id>,<child_id>` (ids sorted, comma-joined)
-- Bare `refund:capacity:<payment_id>` **only** when `refund_owed_children` is
-  empty -- a manual-review row with nothing owed, which you should not be
-  refunding
+`refund:capacity:<payment_id>:<seq>` -- where `<seq>` is the increment's own
+`seq` from `refund_increments`.
+
+The key names the increment it pays for, so it never moves when new debt
+arrives, and a genuinely new increment can never be folded into one already
+sent. Retrying a failed attempt under the same key is safe and correct; that is
+the whole point of it.
 
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
-  -H "Idempotency-Key: refund:capacity:<payment_id>:<child_id>,<child_id>" \
+  -H "Idempotency-Key: refund:capacity:<payment_id>:<seq>" \
   -d payment_intent=<stripe_payment_intent_id> \
-  -d amount=<refund_owed_cents> \
+  -d amount=<this increment's cents, NOT refund_owed_cents> \
+  -d reason=requested_by_customer \
   -d reverse_transfer=true \
   -d refund_application_fee=<true|false>
 ```
 
-**Use the suffixed form.** `capacity_refund_key` returns the bare
-`refund:capacity:<payment_id>` only when `refund_owed_children` is *empty*,
-which is the manual-review case where the owed amount is zero and no refund
-should be sent at all. Every debt an operator can act on carries the child
-suffix, so copying the bare form means the hand-issued refund and the automated
-retry travel under different keys and Stripe deduplicates neither. Build the
-key from the row's own `refund_owed_children`, sorted, comma-joined -- the
-values the step 1 query printed.
+`reason` is not optional here. The automated path always sends
+`requested_by_customer`, and Stripe rejects a replay of a used idempotency key
+whose parameters differ rather than folding it — so a hand-issued refund that
+omits it cannot share a key with the automated attempt, and whichever runs
+second is refused.
+
+**One refund per unsettled increment.** Repeat this call for each element of
+`refund_increments` whose `settled_at` is null, using that element's `seq` in
+the key and that element's `cents` as the amount. Sending `refund_owed_cents`
+under a single key is the shape that caused a double refund: the key moved as
+the debt grew, so Stripe saw a key it had never seen and paid the whole
+accumulated balance again.
 
 `refund_application_fee` follows the tenant's plan config -- see **Refund
 policy config** above; `reverse_transfer` is always `true` for
@@ -313,26 +336,166 @@ Clear the obligation and move the status once the refund is confirmed
 ```bash
 psql $DATABASE_URL -c \
   "UPDATE \"<sacp-slug>\".payments
-      SET status = 'refunded',
-          metadata = (metadata - 'refund_owed_cents'
-                               - 'refund_owed_children'
-                               - 'refund_manual_review')
-    WHERE id = '<payment_id>' AND status = 'refund_pending'"
+      SET refund_owed_cents = GREATEST(0, refund_owed_cents - COALESCE((
+              SELECT (e->>'cents')::int FROM jsonb_array_elements(refund_increments) e
+               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL), 0)),
+          refunded_cents    = LEAST(amount_cents, refunded_cents + COALESCE((
+              SELECT (e->>'cents')::int FROM jsonb_array_elements(refund_increments) e
+               WHERE (e->>'seq')::int = <seq> AND e->>'settled_at' IS NULL), 0)),
+          refund_increments = COALESCE((
+              SELECT jsonb_agg(
+                       CASE WHEN (e->>'seq')::int = <seq>
+                              AND e->>'settled_at' IS NULL
+                            THEN e || jsonb_build_object('settled_at', to_jsonb(NOW()),
+                                                         'refund_id', to_jsonb('<re_...>'::text))
+                            ELSE e END ORDER BY (e->>'seq')::int)
+                FROM jsonb_array_elements(refund_increments) e), '[]'::jsonb)
+    WHERE id = '<payment_id>'"
 ```
 
-Use `partially_refunded` instead of `refunded` when the amount returned is
-less than the row's `amount_cents`. This is the same rule the automatic path
+> **The `COALESCE`s are load-bearing, not tidiness.** When the subquery matches
+> nothing -- an already-settled `seq`, or a mistyped one -- it returns SQL NULL,
+> and Postgres's `GREATEST`/`LEAST` **ignore** NULL rather than propagating it.
+> `GREATEST(0, NULL)` is `0` and `LEAST(amount_cents, NULL)` is `amount_cents`,
+> so without them re-running this block **zeroes a live debt and records the
+> entire cart as refunded**. The row then passes the status move below, leaves
+> this queue, and can never be refunded again because
+> `amount_cents > refund_owed_cents + refunded_cents` is false forever.
+> `jsonb_agg` over zero rows is likewise NULL against a NOT NULL column.
+
+The amount is derived from the increment rather than typed in, and every clause
+is guarded on `settled_at IS NULL`.
+
+**One increment per `seq`.** These scalar subselects raise `more than one row
+returned by a subquery used as an expression` if two unsettled increments share
+a seq -- and Step 5's append block is the only thing that can create that, since
+the code always derives `seq` from `refund_seq + 1`. The code's own copy uses
+`SUM(...) ... HAVING COUNT(*) > 0` and survives it; this one does not, and it
+fails *after* Step 3 has already paid Stripe. Append with `refund_seq + 1`,
+never a literal. Both matter: the code's copy
+(`settle_refund_increment`) has the same guards and is idempotent because of
+them. Without them, re-running this block double-counts the money returned, and
+a mistyped `<seq>` moves the balance while leaving the increment still due — the
+row's own one-row check passes in both cases.
+
+Per increment, subtracting rather than clearing -- a debt that grew while the
+refund was in flight must not be erased along with the part that was paid. Then
+move the status **only once `refund_owed_cents` is zero and no
+`refund_manual_review` remains**:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET status = CASE WHEN refunded_cents >= amount_cents
+                        THEN 'refunded' ELSE 'partially_refunded' END
+    WHERE id = '<payment_id>' AND status = 'refund_pending'
+      AND refund_owed_cents = 0
+      AND COALESCE(jsonb_array_length(metadata->'refund_manual_review'), 0) = 0"
+```
+
+The status is **derived, not typed**. Writing the literal `refunded` here is
+wrong in the common case: this block's own `refund_owed_cents = 0` guard is
+satisfied precisely when a partial discharge completes, so a hand-written
+`refunded` would claim a full return of a cart that got part of one. That is
+the ledger distinction Leg 3 reads. This is the same rule the automatic path
 applies (`Registry::DAO::Payment::_apply_refund_result`): the full cart is
 `refunded`, anything short of it is `partially_refunded`.
 
-The `status = 'refund_pending'` predicate in the WHERE clause is not
-decoration -- check that the UPDATE reported one row. Zero means something else
-moved the status while you were working, and you should re-read the row before
-doing anything more.
+Check what the UPDATE reported, and read zero correctly -- it usually is not
+concurrency:
+
+| Reported | Means |
+|---|---|
+| 1 | the row moved |
+| 0, and `refund_owed_cents > 0` | **the ordinary case**: increments remain. Go back to Step 3 for the next one. |
+| 0, and `metadata.refund_manual_review` is set | the flag guard. Resolve it via Step 5. |
+| 0, and neither of those | something else moved the status. Re-read the row before doing anything more. |
+
+#### Step 5: Resolve a manual-review flag
+
+A row with `refund_manual_review` set stays `refund_pending` even when
+`refund_owed_cents` is zero and every increment is settled. That is deliberate
+-- it is the only thing keeping the row in Step 1's results until a human has
+decided about the share the code could not compute -- but it means **the row has
+no exit until you provide one.** Nothing in the code clears this flag.
+
+Work out what is actually owed for each entry in the array. If money is owed,
+record it as a normal debt and settle it through Steps 2-4:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET status            = 'refund_pending',
+          refund_seq        = refund_seq + 1,
+          refund_owed_cents = refund_owed_cents + <cents>,
+          refund_increments = refund_increments || jsonb_build_object(
+              'seq', refund_seq + 1, 'cents', <cents>,
+              'children', '[\"<child_id>\"]'::jsonb, 'settled_at', NULL)
+    WHERE id = '<payment_id>'
+      AND amount_cents > refund_owed_cents + refunded_cents"
+```
+
+> **`status = 'refund_pending'` is not optional.** `record_capacity_obligation`
+> sets it unconditionally, and everything downstream depends on it: Step 4's
+> settle and status statements are both guarded on `status = 'refund_pending'`,
+> and `_refundable_status` is `completed|refund_pending`, so a debt recorded on
+> a row left `refunded` or `partially_refunded` is **invisible to every
+> automated retry** — the webhook redelivery and the parent-return path both
+> die inside their always-2xx catch, silently, forever. You would also finish
+> with `refunded_cents = amount_cents` under a `partially_refunded` status,
+> which is the ledger distinction Leg 3 reads, inverted.
+>
+> This matters because the row it applies to is one the code itself produces:
+> `flag_refund_manual_review` writes the flag on a terminal row deliberately,
+> and Step 1's second predicate exists to surface exactly that.
+
+The predicate is the code's headroom rule (`>`, on the sum of what is owed and
+what has already gone back). If it matches no rows the cart has nothing left and
+the discrepancy needs escalating rather than forcing. Unlike the code, this does
+**not** clamp `<cents>` to the remaining headroom -- check
+`amount_cents - refund_owed_cents - refunded_cents` yourself before running it,
+or you will trip `payments_refund_total_check`, which constrains
+`refund_owed_cents + refunded_cents` against the charge -- the per-column
+bounds do not, and an earlier version of this note named one of them.
+
+Enter **integer cents**. `payments_refund_increments_cents_integer` refuses a
+decimal outright, so this is now an error at entry rather than a row that breaks
+later -- before that constraint existed, the column rounded 130.50 to 131 while
+the increment kept 130.50, and every subsequent `(e->>'cents')::int` threw on
+that row forever, including one inside the settlement transaction.
+
+Then, once nothing is owed, clear the flag and let the status move:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET metadata = metadata - 'refund_manual_review'
+    WHERE id = '<payment_id>' AND refund_owed_cents = 0"
+```
+
+Record the decision on the ticket before removing the flag -- once it is gone
+nothing else remembers a human looked at it.
+
+**Then go back and run Step 4's status statement.** Clearing the flag does not
+move the status; nothing in the code does either, because
+`settle_refund_increment` deliberately refuses to move a row while a flag is
+set, and by the time you clear it there are no increments left to settle. A row
+left here sits in Step 1's results forever with nothing owed and nothing to do.
+
+If the recording statement reports zero rows, check the status before assuming
+a mistake. `flag_refund_manual_review` deliberately leaves a terminal row
+terminal -- the preamble above says so -- and the recording statement's headroom
+predicate will also refuse a cart with nothing left. Neither is operator error.
+A row that is already `refunded` with its flag cleared and nothing owed is
+finished; leave it.
 
 #### A failed refund is NOT `refund_failed`
 
-Never write `refund_failed`, or any status outside the five the code knows.
+Never write `refund_failed`, or any status outside the seven the code knows:
+`pending`, `processing`, `completed`, `failed`, `refund_pending`, `refunded`,
+`partially_refunded`. As of the `payments-typed-obligation` migration the
+database enforces this with a CHECK constraint, so an invented status is now
+rejected outright rather than silently accepted.
 The string appears nowhere in `lib/`, and it is in none of the three
 classifiers that read this column:
 

@@ -114,7 +114,7 @@ subtest 'a seat lost during payment is waitlisted, not enrolled' => sub {
 
     my $after = Registry::DAO::Payment->find($db, { id => $payment->id });
     is $after->status, 'refund_pending', 'the payment is marked refund_pending';
-    is $after->metadata->{refund_owed_cents}, 10000, 'with the owed amount recorded';
+    is $after->refund_owed_cents, 10000, 'with the owed amount recorded';
 };
 
 subtest 'a demotion over an existing active row actually changes it' => sub {

@@ -90,7 +90,7 @@ subtest 'a paid debt is cleared, so a later settlement does not pay it again' =>
     occupy($session, 1);
 
     is finalize($payment), 10000, 'the lost seat is owed';
-    is reload($payment)->metadata->{refund_owed_cents}, 10000, 'and recorded';
+    is reload($payment)->refund_owed_cents, 10000, 'and recorded';
 
     my @refunds;
     {
@@ -99,15 +99,27 @@ subtest 'a paid debt is cleared, so a later settlement does not pay it again' =>
             push @refunds, $p;
             Mojo::Promise->resolve({ id => 're_dbt', status => 'succeeded' });
         };
-        settle( reload($payment)->refund_async($db, {
-            amount_cents    => 10000,
-            idempotency_key => 'refund:capacity:test',
-        }) );
+        # The production shape: one call per unsettled increment, then settle
+        # that increment. refund_async no longer discharges anything -- it
+        # records the Stripe reference, and settle_refund_increment subtracts
+        # exactly the increment it settles.
+        my $p   = reload($payment);
+        my $due = $p->unsettled_refund_increments($db);
+        for my $inc (@$due) {
+            settle( $p->refund_async($db, {
+                amount_cents    => $inc->{cents},
+                idempotency_key => $p->capacity_refund_key( $inc->{seq} ),
+            }) );
+            $p->settle_refund_increment( $db, $inc->{seq}, { id => 're_dbt' } );
+        }
     }
 
     is scalar @refunds, 1, 'the refund is issued once';
-    ok !defined reload($payment)->metadata->{refund_owed_cents},
+    is $refunds[0]{amount}, 10000, 'for the increment amount, not a running total';
+    ok !reload($payment)->refund_owed_cents,
         'and the debt marker is cleared once it is paid';
+    is reload($payment)->refunded_cents, 10000,
+        'with the cumulative total returned recorded, which jsonb never was';
 };
 
 subtest 'a child already waitlisted does not create a second debt' => sub {
@@ -120,9 +132,12 @@ subtest 'a child already waitlisted does not create a second debt' => sub {
 
     is finalize($payment), 10000, 'first pass owes the lost seat';
 
-    # Clear the debt as a successful refund would, then deliver again.
-    $db->query(q{UPDATE payments SET metadata = metadata - 'refund_owed_cents'
-                  WHERE id = ?}, $payment->id);
+    # Clear the debt the way a successful refund does: settle the increment.
+    # Deleting the jsonb key was the old shape and is now a no-op, so the debt
+    # survived and the assertion below passed only because it read that same
+    # dead key.
+    my ($inc) = @{ reload($payment)->unsettled_refund_increments($db) };
+    reload($payment)->settle_refund_increment( $db, $inc->{seq}, { id => 're_paid' } );
 
     finalize(reload($payment));
 
@@ -135,9 +150,10 @@ subtest 'a child already waitlisted does not create a second debt' => sub {
     # deliberately NOT in _money_returned, so the second delivery is not refused
     # by the gate -- it runs, and the already-waitlisted child is skipped inside
     # the loop instead.
-    my $meta = $db->select('payments', ['metadata'], { id => $payment->id })
-        ->expand->hash->{metadata};
-    is $meta->{refund_owed_cents}, undef,
+    # Read off the column. metadata.refund_owed_cents has had no writer in lib/
+    # since the obligation became typed, so asserting it is undef is
+    # unconditionally true and grades nothing.
+    is reload($payment)->refund_owed_cents, 0,
         'a second delivery owes nothing for a child already waitlisted';
     is $db->query(q{SELECT COUNT(*) FROM enrollments
                      WHERE payment_id = ? AND status IN ('active','pending')},
@@ -167,26 +183,50 @@ subtest 'the idempotency key names the children it refunds' => sub {
     # child seated by the first pass is short-circuited by the second and can no
     # longer be demoted, so two settlements cannot produce two different owed
     # sets for one payment. The property under test is the key derivation.
-    my $full  = a_session(1);
+    # Two children, so the cart is 20000 and a second increment has room to
+    # land. With a one-child cart the first pass owes the entire value and the
+    # second record is refused by the headroom predicate -- the case this
+    # subtest exists to exercise never happened, and the assertions passed
+    # against an increment that was never created.
+    # Capacity 2 with one seat taken: of the cart's two children one gets the
+    # free seat and one is demoted, so the first pass owes 10000 of a 20000
+    # cart and leaves headroom for a second increment to land. A one-child cart
+    # -- or a full session -- owes the entire value on the first pass, the
+    # second record is refused by the headroom predicate, and the assertions
+    # below grade an increment that was never created.
+    my $full  = a_session(2);
     my $kid_a = a_child();
-    my $payment = a_paid_cart({ session => $full, child => $kid_a });
+    my $payment = a_paid_cart({ session => $full, child => $kid_a },
+                              { session => $full, child => a_child() });
     occupy($full, 1);
 
     finalize($payment);
-    my $key_one = reload($payment)->capacity_refund_key;
-    like $key_one, qr/\Q@{[ $kid_a->id ]}\E/, 'the key names the child it owes for';
+    my $p       = reload($payment);
+    my ($first) = @{ $p->unsettled_refund_increments($db) };
+    my $key_one = $p->capacity_refund_key( $first->{seq} );
+    is $key_one, 'refund:capacity:' . $payment->id . ':1',
+        'the key names the increment it pays for';
 
-    # A larger obligation -- a second child added to the same debt -- is a
-    # different refund and must not replay the first refund's key.
-    my %meta = %{ reload($payment)->metadata };
-    $db->update('payments', {
-        metadata => { -json => { %meta,
-            refund_owed_cents    => 20000,
-            refund_owed_children => [ $kid_a->id, a_child()->id ] } },
-    }, { id => $payment->id });
+    # New debt is a different refund and must not replay the first key. It must
+    # also not MOVE the first key: that is what the old child-set derivation did,
+    # and it is why a lost response followed by a new demotion sent the whole
+    # accumulated balance under a key Stripe had never seen.
+    $p->record_capacity_obligation( $db, 5000, [ a_child()->id ] );
 
-    isnt reload($payment)->capacity_refund_key, $key_one,
-        'a different set of owed children gets a different key';
+    is $p->capacity_refund_key( $first->{seq} ), $key_one,
+        'the first increment keeps its key when the debt grows';
+    isnt $p->capacity_refund_key(2), $key_one,
+        'and the new increment gets its own';
+
+    my $due = $p->unsettled_refund_increments($db);
+    my $total = 0; $total += $_->{cents} for @$due;
+    # Off a reloaded row, not $p. record_capacity_obligation refreshes $status
+    # but not $refund_owed_cents, so comparing against the in-memory field
+    # compares a fresh number to a stale one -- it passed only because the
+    # unreachable-increment defect above cancelled it out.
+    is $total, reload($payment)->refund_owed_cents,
+        'what would reach Stripe equals what is owed -- never more';
+    cmp_ok scalar @$due, '>', 1, 'and there really are two increments to sum';
 };
 
 subtest 'a failed refund leaves the debt for the runbook' => sub {
@@ -203,7 +243,7 @@ subtest 'a failed refund leaves the debt for the runbook' => sub {
             amount_cents => 10000, idempotency_key => 'refund:capacity:fail' }) ); 1 };
     }
 
-    is reload($payment)->metadata->{refund_owed_cents}, 10000,
+    is reload($payment)->refund_owed_cents, 10000,
         'the debt survives a failed refund so the runbook can find it';
     is reload($payment)->status, 'refund_pending', 'and the row stays refund_pending';
 };

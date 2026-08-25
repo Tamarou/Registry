@@ -174,7 +174,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     #
     # On a tenant-scoped DAO, not the transaction's handle. The search_path
     # override was transaction-local and is gone by now, so this handle is back
-    # on registry -- and refund_async writes the refunded status itself, inside
+    # on registry -- and settle_refund_increment writes the status itself, inside
     # its own ->then, on whatever handle it was given. Unqualified, that write
     # would hit registry.payments, match no rows, and return quietly while
     # Stripe had already refunded the customer. connect_schema hands back a
@@ -198,8 +198,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return $self->render(status => 200, text => 'OK');
         }
 
-        my $owed = ( $payment->metadata // {} )->{refund_owed_cents};
-        return $self->render(status => 200, text => 'OK') unless $owed;
 
         # Started from a resolved promise so a *synchronous* throw becomes a
         # rejection this chain's ->catch can see. refund_async dies before
@@ -209,15 +207,49 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # them. The exception escapes the action and Mojolicious renders a 500
         # on an already-committed settlement, which is precisely what the
         # always-2xx rule below exists to prevent.
+        # One Stripe call per unsettled increment, each for its own amount under
+        # its own key -- never the accumulated balance under a key that changes
+        # as the balance grows, which is how one debt got paid twice. Sequenced
+        # rather than concurrent so a failure stops the chain with the remaining
+        # increments still owed and still retryable.
+        # Inside the ->then, not above it. unsettled_refund_increments casts
+        # jsonb the runbook now invites operators to hand-edit, so it can throw
+        # -- and above the resolve that exception escapes the action, after
+        # render_later and after the COMMIT, producing exactly the 500 on an
+        # already-committed settlement that the always-2xx rule below exists to
+        # prevent.
+        #
+        # The work queue is the predicate, in both callers. An earlier version
+        # gated here on refund_owed_cents while the workflow step gated on the
+        # queue; they agree only while the invariant holds, and a migration bug
+        # produced precisely the row where they disagreed.
         return Mojo::Promise->resolve->then(sub {
-            $payment->refund_async($tdb, {
-                amount_cents    => $owed,
-                reason          => 'requested_by_customer',
-                # Derived from the children this debt is for, so the key and the
-                # amount always come from the same source: a redelivery of the
-                # same debt replays the same key and Stripe deduplicates it.
-                idempotency_key => $payment->capacity_refund_key,
-            });
+            my $due = $payment->unsettled_refund_increments($tdb);
+            return unless $due && @$due;
+
+            my $chain = Mojo::Promise->resolve;
+            for my $inc (@$due) {
+                $chain = $chain->then(sub {
+                    $payment->refund_async($tdb, {
+                        amount_cents    => $inc->{cents},
+                        reason          => 'requested_by_customer',
+                        idempotency_key => $payment->capacity_refund_key($inc->{seq}),
+                    })->then(sub ($refund) {
+                        # Settled per increment, so a partial success is kept.
+                        # Discharging the whole obligation on one response is
+                        # how a debt that grew mid-flight got erased.
+                        # A zero-row settle is indistinguishable from success
+                        # otherwise: Stripe has paid and the increment is still
+                        # due, with nobody told.
+                        $payment->settle_refund_increment($tdb, $inc->{seq}, $refund)
+                            or $self->app->log->error(
+                                "capacity refund: settling increment $inc->{seq} of "
+                              . "payment $payment_id matched no row after Stripe paid");
+                        return $refund;
+                    });
+                });
+            }
+            return $chain;
         })->then(sub {
             $self->render(status => 200, text => 'OK');
         })->catch(sub ($err) {
@@ -299,13 +331,44 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # Gate on the row's persisted obligation, not on what this pass alone
         # computed. An earlier delivery can have recorded a debt whose refund
-        # failed; this pass may demote nobody new and still owe it. The callback
-        # path already re-reads the row -- reading it here too means Stripe's own
-        # redelivery becomes the retry, which is the only automated retry there
-        # is before Leg 3.
+        # failed; this pass may demote nobody new and still owe it.
+        #
+        # NOT because redelivery retries it. Earlier comments here claimed
+        # "Stripe's own redelivery becomes the retry, the only automated retry
+        # there is" -- that is false and measured false: the dedup claim is on
+        # stripe_event_id and commits WITH the settlement, so a redelivery of
+        # the same event is refused above before this is reached. Only a
+        # DIFFERENT event on the same payment reaches here. Until Leg 3's
+        # ProcessRefunds exists, a failed capacity refund waits for the runbook.
+        # The runbook says so correctly; this file said the opposite.
         my $settled = Registry::DAO::Payment->find($db, { id => $payment_id });
-        return ( $settled && ( $settled->metadata // {} )->{refund_owed_cents} )
-            ? $payment_id : undef;
+
+        # The work queue, not the balance -- the same predicate
+        # _settle_owed_refund uses. Round 1 unified the two callers one frame
+        # too shallow: this gate decides whether the settle runs at all, and it
+        # still read the balance. A row whose balance was zeroed while
+        # increments remained due is then invisible to a later event that would
+        # otherwise have carried the refund.
+        #
+        # jsonb_array_length, not unsettled_refund_increments: this runs INSIDE
+        # the settlement transaction, and that method casts (e->>'cents')::int
+        # over jsonb the runbook lets operators hand-edit. A non-numeric value
+        # there would throw here, roll back a captured charge with no
+        # enrollments, and take the dedup claim with it -- so every retry
+        # reproduces it.
+        #
+        # A length test still raises on a non-array, so the real guarantee is
+        # payments_refund_increments_is_array, which makes that state
+        # unrepresentable. This predicate is cheap and cast-free; the constraint
+        # is what makes it safe.
+        return undef unless $settled;
+        my $due = $db->query(
+            q{SELECT 1 FROM payments
+               WHERE id = ?
+                 AND ( refund_owed_cents > 0
+                       OR jsonb_array_length(refund_increments) > 0 )},
+            $payment_id )->rows;
+        return $due ? $payment_id : undef;
     }
 
     # Connect sends account.updated when a connected account's capabilities

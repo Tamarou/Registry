@@ -77,16 +77,23 @@ subtest 'a refunded payment is not re-completed and does not owe again' => sub {
     # The sequence that produces a double refund: capacity gate refunds, then a
     # redelivery arrives with a different event id, the dedup claim lets it
     # through, and the row is driven back to completed and demoted again.
+    # The debt is seeded on the column, not in metadata. Seeding
+    # metadata.refund_owed_cents was the old shape: nothing reads it any more,
+    # so the "does not owe again" half of this subtest's title graded nothing.
     my $payment = payment_with('refunded');
     $db->update('payments', {
-        metadata => { -json => { enrollment_items => [], tenant_slug => undef,
-                                 refund_owed_cents => 10000 } },
+        metadata => { -json => { enrollment_items => [], tenant_slug => undef } },
     }, { id => $payment->id });
+    $db->query( q{UPDATE payments SET refund_owed_cents = 10000,
+                         refund_increments = ?::jsonb WHERE id = ?},
+        '[{"seq":1,"cents":10000,"children":[],"settled_at":null}]', $payment->id );
 
     my $reloaded = Registry::DAO::Payment->find($db, { id => $payment->id });
     settle_with_succeeded_intent($reloaded);
 
     is status_of($payment), 'refunded', 'the refunded row stays refunded';
+    is Registry::DAO::Payment->find($db, { id => $payment->id })->refund_owed_cents,
+        10000, 'and the debt is neither re-owed nor multiplied';
 };
 
 subtest 'a transport failure does not downgrade a payment whose money moved' => sub {

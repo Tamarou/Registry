@@ -298,8 +298,7 @@ method handle_payment_callback ($db, $run, $form_data) {
         # re-establish here.
         ->then(sub ($out) {
             my $settled = Registry::DAO::Payment->find($db, { id => $payment->id });
-            my $owed    = $settled && ( $settled->metadata // {} )->{refund_owed_cents};
-            return $out unless $owed;
+            return $out unless $settled;
 
             # Started from a resolved promise so a synchronous throw from
             # refund_async -- the status guard, a missing intent id, a
@@ -307,12 +306,36 @@ method handle_payment_callback ($db, $run, $form_data) {
             # ->catch below can see. Otherwise it propagates out of this ->then
             # with no handler, rejecting the whole chain, and the run is
             # stranded on the payment step with the money already taken.
+            # One call per unsettled increment, each for its own amount under
+            # its own key. Sending the accumulated balance under a key that
+            # changes as the balance grows is how one debt got paid twice.
             return Mojo::Promise->resolve->then(sub {
-                $settled->refund_async($db, {
-                    amount_cents    => $owed,
-                    reason          => 'requested_by_customer',
-                    idempotency_key => $settled->capacity_refund_key,
-                });
+                # Read off the row, not off this pass: an earlier delivery can
+                # have recorded a debt whose refund failed, and this pass may
+                # demote nobody new and still owe it. Inside the resolve so a
+                # throw from the jsonb casts becomes a rejection the ->catch
+                # below can see, rather than stranding the run on the payment
+                # step with the money already taken.
+                my $due = $settled->unsettled_refund_increments($db);
+                return $out unless $due && @$due;
+
+                my $chain = Mojo::Promise->resolve;
+                for my $inc (@$due) {
+                    $chain = $chain->then(sub {
+                        $settled->refund_async($db, {
+                            amount_cents    => $inc->{cents},
+                            reason          => 'requested_by_customer',
+                            idempotency_key => $settled->capacity_refund_key($inc->{seq}),
+                        })->then(sub ($refund) {
+                            $settled->settle_refund_increment($db, $inc->{seq}, $refund)
+                                or warn "capacity refund: settling increment "
+                                      . "$inc->{seq} of payment @{[ $settled->id ]} "
+                                      . "matched no row after Stripe paid\n";
+                            return $refund;
+                        });
+                    });
+                }
+                return $chain;
             })->then( sub { $out } )
               # A refund failure must not fail the settlement that already
               # committed: the parent is charged, enrolled or waitlisted, and

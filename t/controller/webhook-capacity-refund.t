@@ -151,6 +151,64 @@ subtest 'the refund lands in the tenant schema, not registry' => sub {
     is $in_registry, 0, 'and registry.payments gained nothing';
 };
 
+# One increment cannot tell the two apart: the balance and the increment are
+# the same number, so a caller sending refund_owed_cents passes just as well as
+# one sending $inc->{cents}. Two increments separate them, and sending the
+# balance is precisely the double refund this whole design exists to stop.
+subtest 'two increments are refunded separately, never as one accumulated total' => sub {
+    my $payment = a_doomed_payment();
+
+    # A second, earlier debt whose refund never settled -- the shape a lost
+    # response leaves behind.
+    #
+    # The intent id has to be seeded with it. Recording a debt moves the row to
+    # refund_pending, which makes the delivery below skip mark_completed --
+    # correct, that is the settled-write guard doing its job -- so the row would
+    # never acquire an intent id and refund_async would die on that instead,
+    # invisibly, because the always-2xx catch swallows it. In production the
+    # first delivery completes the payment before any debt exists.
+    $tdb->update('payments', { stripe_payment_intent_id => 'pi_multi_' . $payment->id },
+        { id => $payment->id });
+    tenant_payment($payment)->record_capacity_obligation( $tdb, 4000, ['earlier-kid'] );
+
+    my @refunds;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_multi_' . scalar(@refunds), status => 'succeeded' });
+        };
+        post_settlement($payment)->status_is(200);
+    }
+
+    is scalar @refunds, 2, 'one Stripe call per unsettled increment';
+    # 4000 + 11000, not 4000 + 15000: the cart is 15000, so the second
+    # increment is clamped to the headroom left. The increments always sum to
+    # the balance, which is the property that keeps Stripe from being sent more
+    # than the payment.
+    is_deeply [ sort { $a <=> $b } map { $_->{amount} } @refunds ], [ 4000, 11000 ],
+        'each for its own amount -- not the 15000 balance twice, nor once';
+
+    my $total = 0; $total += $_->{amount} for @refunds;
+    is $total, 15000, 'the total reaching Stripe equals the debt, never more';
+
+    my %keys = map { $_->{_idempotency_key} // '' => 1 } @refunds;
+    is scalar( keys %keys ), 2,
+        'under distinct keys, so Stripe cannot fold one into the other';
+
+    is tenant_payment($payment)->refund_owed_cents, 0, 'and nothing is left owed';
+
+    # refunded_cents on the COMPOSED path -- refund_async into
+    # _apply_refund_result into settle_refund_increment. Every other assertion
+    # for it exercises one of those in isolation, so forcing $is_increment to 0
+    # recorded 14000 for 7000 actually returned and the whole suite stayed
+    # green. It is the Leg 3 ledger figure and the headroom term in
+    # record_capacity_obligation's clamp, so over-counting it destroys refund
+    # capacity for every later demotion on the cart.
+    is tenant_payment($payment)->refunded_cents, 15000,
+        'and exactly what reached Stripe is recorded as returned, counted once';
+};
+
 subtest 'the refund happens after the COMMIT, not inside it' => sub {
     my $payment = a_doomed_payment();
     my $visible_to_another_connection;
@@ -235,6 +293,68 @@ subtest 'a settlement that fits refunds nothing' => sub {
 
     is scalar @refunds, 0, 'no refund is issued for a seat that was there';
     is tenant_payment($payment)->status, 'completed', 'and the payment is completed';
+};
+
+# The zero-row branch is the ONLY alarm for "Stripe took the money and nothing
+# recorded it". Both callers write `... or log(...)`, and nothing graded either,
+# so removing the whole `or` clause left the suite green.
+subtest 'a settle that records nothing after Stripe paid is logged, not swallowed' => sub {
+    my $payment = a_doomed_payment();
+    my @errors;
+    {
+        no warnings 'redefine', 'once';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            Mojo::Promise->resolve({ id => 're_lost', status => 'succeeded' });
+        };
+        # Settle the increment out from under the loop, so the refund succeeds
+        # and the settle that follows it matches no unsettled row -- exactly the
+        # shape the log line names.
+        local *Registry::DAO::Payment::settle_refund_increment = sub { return undef };
+        local *Mojo::Log::error = sub ($self, @msg) { push @errors, join '', @msg };
+        post_settlement($payment)->status_is(200);
+    }
+
+    ok scalar( grep { /matched no row after Stripe paid/ } @errors ),
+        'the operator is told Stripe paid and the increment is still due';
+};
+
+# The gate decides whether the post-COMMIT refund runs at all. It was changed
+# twice -- from the balance to the work queue, then to a cast-free length test
+# -- and nothing graded either change: replacing the whole predicate with the
+# original `refund_owed_cents > 0` left the suite green. The state it exists for
+# is a row whose balance reads zero while increments remain due, which the
+# runbook's own settle step can produce.
+subtest 'a row whose balance was zeroed but still owes increments is still refunded' => sub {
+    my $payment = a_doomed_payment();
+
+    # First delivery: the child is demoted, the debt is recorded, the refund
+    # fails. The child is now waitlisted, so a later delivery adds no new debt --
+    # which is what makes the gate's predicate the only thing deciding.
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async =
+            sub { Mojo::Promise->reject('stripe said no') };
+        post_settlement($payment)->status_is(200);
+    }
+    cmp_ok tenant_payment($payment)->refund_owed_cents, '>', 0, 'a debt is owed';
+
+    # As a hand-run settle with a mistyped seq leaves it: balance zero, the
+    # increment still unsettled.
+    $tdb->query( 'UPDATE payments SET refund_owed_cents = 0 WHERE id = ?', $payment->id );
+
+    my @refunds;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_zero', status => 'succeeded' });
+        };
+        post_settlement($payment)->status_is(200);
+    }
+
+    ok scalar @refunds,
+        'the gate sees the work queue, not just the balance -- a zeroed balance '
+        . 'with increments due is still refunded';
 };
 
 done_testing;

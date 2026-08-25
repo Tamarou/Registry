@@ -226,4 +226,62 @@ subtest 'the settlement holds the payment row while it decides' => sub {
         'and so is the session whose capacity it is about to decide on';
 };
 
+# The parent-return path's post-COMMIT refund loop was dead to the entire suite:
+# a bare `die` at the top of it failed nothing, in any file. Every test that
+# reaches handle_payment_callback builds a capacity 10-20 session, so no child
+# is ever demoted, no debt is ever recorded, and the loop never runs. This is
+# the ordinary-card path, not just 3DS.
+subtest 'the parent-return path refunds each increment separately' => sub {
+    # Its own child. enrollments_session_student_type_unique is payment-blind
+    # (issue #315), and the shared $child is already enrolled in $session by an
+    # earlier subtest, so reusing it makes finalize_enrollment raise for a
+    # reason that has nothing to do with refunds.
+    my $kid = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'CB Refund Kid', birth_date => '2018-02-02', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $kid->id } ],
+            tenant_slug      => undef },
+    });
+    my $run = run_for($payment);
+
+    # A debt whose refund never settled, plus a second one -- two increments
+    # with DIFFERENT amounts, because a fixture where they coincide cannot say
+    # whether the code sent the increment or the balance.
+    $payment->record_capacity_obligation( $db, 4000, ['kid-a'] );
+    $payment->record_capacity_obligation( $db, 2500, ['kid-b'] );
+    $db->update('payments',
+        { stripe_payment_intent_id => 'pi_cb_refund_' . $payment->id },
+        { id => $payment->id });
+
+    my @refunds;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async =
+        sub { Mojo::Promise->resolve( intent_for($payment) ) };
+    local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+        push @refunds, $p;
+        Mojo::Promise->resolve({ id => 're_cb_' . scalar(@refunds), status => 'succeeded' });
+    };
+
+    settle( $step->handle_payment_callback( $db, $run, {
+        payment_intent_id => 'pi_cb_refund',
+    } ) );
+
+    is scalar @refunds, 2, 'one Stripe call per unsettled increment';
+    is_deeply [ sort { $a <=> $b } map { $_->{amount} } @refunds ], [ 2500, 4000 ],
+        'each for its own amount, never the 6500 balance';
+
+    my %keys = map { $_->{_idempotency_key} // '' => 1 } @refunds;
+    is scalar( keys %keys ), 2, 'under distinct per-increment keys';
+
+    my $done = Registry::DAO::Payment->find($db, { id => $payment->id });
+    is $done->refund_owed_cents, 0, 'and the debt is discharged';
+    is $done->refunded_cents, 6500,
+        'with exactly what reached Stripe recorded as returned -- counted once, '
+        . 'on the composed refund_async/_apply_refund_result/settle path';
+};
+
 done_testing;
