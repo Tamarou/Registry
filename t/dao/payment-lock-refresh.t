@@ -55,9 +55,10 @@ sub settle_after_concurrent_write ($payment, $writer) {
 }
 
 subtest 'a concurrent manual-review flag survives this settlement save' => sub {
-    # save() writes the whole metadata blob from the in-memory object, so a
-    # settlement that loaded the row before another pass wrote to metadata will
-    # clobber it. This used to seed refund_owed_cents, which no longer lives in
+    # Retained as a regression guard on the CONDITIONAL writes: none of them
+    # names metadata, so a flag written concurrently must survive. save() -- the
+    # whole-row write this once guarded against -- is gone, and if a future
+    # writer starts naming metadata again this is what notices. This used to seed refund_owed_cents, which no longer lives in
     # metadata -- the assertion still passed but graded nothing. The flag is
     # what save() can still destroy, and losing it loses the only record that a
     # share needs a human.

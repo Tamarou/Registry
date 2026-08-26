@@ -319,9 +319,17 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # path: re-completed, re-demoted by the capacity gate below, and refunded
         # again. Redelivery makes this reachable without any concurrency, because
         # a retry carries a different event id and the dedup claim lets it past.
-        unless ( Registry::DAO::Payment->_money_has_moved( $payment->status ) ) {
-            $payment->mark_completed($db, $intent->{id});
-        }
+        # The write decides, and says so if it refuses. The _money_has_moved
+        # test above it and mark_completed's own predicate answer the same
+        # question, and agreeing by coincidence is exactly the two-classifiers
+        # shape this leg exists to remove -- so the guard is gone and the
+        # statement is the authority.
+        #
+        # payment_method is passed because save() used to carry that column and
+        # nothing else writes it.
+        $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} )
+            or $self->app->log->info(
+                "payment $payment_id not completed from status @{[ $payment->status ]}");
 
         # Non-zero when the capacity gate demoted someone: the caller refunds
         # after the COMMIT. Returns the payment id rather than the amount so the
