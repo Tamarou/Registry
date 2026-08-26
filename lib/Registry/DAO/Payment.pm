@@ -209,38 +209,11 @@ field $_stripe_client = undef;
         };
     }
 
-    # Stamp the created intent onto the payment row and hand back the pair the
-    # checkout form needs.
-    # save rather than update: the inherited update() carps and continues on a
-    # database error, so a Stripe intent that exists but was never recorded
-    # would pass silently and the parent would be charged against a row that
-    # does not know its own intent id. Note this stays 'pending' -- recording an
-    # intent is not completing a payment.
-    # Every whole-row write to a payment takes the lock, re-reads under it, and
-    # refuses a row whose money has already moved.
-    #
-    # save() writes six columns from the in-memory object. From a stale object
-    # that is not a field update, it is a whole-row restore: the old status, a
-    # nulled completed_at, a superseded intent id. The decline-retry path
-    # produces exactly such an object -- it cancels the old intent over the
-    # network, outside any transaction, and a webhook can capture the payment
-    # while that round trip is in flight. The retry then walks the captured row
-    # back to pending and hands the parent a live card form for money already
-    # taken.
-    method _guard_settled_write ($db, $what) {
-        $self->_lock_and_refresh($db)
-            or die "$what: payment $id no longer exists\n";
-        return 0 if __CLASS__->_money_has_moved($status);
-        return 1;
-    }
 
     method _record_intent ($db, $intent) {
-        return { client_secret => $intent->{client_secret},
-                 payment_intent_id => $intent->{id} }
-            unless $self->_guard_settled_write( $db, '_record_intent' );
-
-        $stripe_payment_intent_id = $intent->{id};
-        $self->save($db);
+        # The refusal and the write are one statement now: no lock, no refresh,
+        # and no window between deciding and doing.
+        $self->_record_intent_id( $db, $intent->{id} );
 
         return {
             client_secret => $intent->{client_secret},
@@ -253,13 +226,7 @@ field $_stripe_client = undef;
     method _record_intent_failure ($db, $error) {
         # A row whose money has moved is not failed by a later decline: the
         # webhook that captured it wins over an in-flight retry.
-        unless ( $self->_guard_settled_write( $db, '_record_intent_failure' ) ) {
-            die "Failed to create payment intent: $error";
-        }
-
-        $error_message = $error;
-        $status = 'failed';
-        $self->save($db);
+        $self->_record_intent_failure_write( $db, $error );
         die "Failed to create payment intent: $error";
     }
 
@@ -310,9 +277,7 @@ field $_stripe_client = undef;
             };
         }
 
-        $error_message = $error;
-        $status = 'failed';
-        $self->save($db);
+        $self->_record_intent_failure_write( $db, $error );
         return { success => 0, error => $error };
     }
 
@@ -375,6 +340,11 @@ field $_stripe_client = undef;
     }
 
     method _apply_intent ($db, $intent, $payment_intent_id) {
+        # Still refreshed, for the READ decisions below -- the ownership check
+        # and the already-settled report both need current data to answer
+        # correctly. The WRITES no longer depend on it: each carries its own
+        # legality, so a decision made on stale data is refused by the statement
+        # rather than acted on. _guard_settled_write is gone with them.
         $self->_lock_and_refresh($db);
 
         # The posted intent id is client-controlled: only honor an intent that
@@ -439,14 +409,12 @@ field $_stripe_client = undef;
 
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
-            $status = 'processing';
-            $self->save($db);
+            $self->_record_processing($db);
 
             return { success => 0, processing => 1 };
         } else {
-            $status = 'failed';
-            $error_message = $intent->{last_payment_error}->{message} // 'Payment failed';
-            $self->save($db);
+            $self->_record_intent_failure_write( $db,
+                $intent->{last_payment_error}->{message} // 'Payment failed' );
 
             # Surface the raw intent status: the caller must distinguish a true
             # decline (requires_payment_method) from a customer mid-3DS
@@ -979,27 +947,106 @@ SQL
     # a still-pending row and _record_intent_failure marks a failure.  Neither
     # completes anything, and routing them through here would complete a payment
     # at intent-creation time and again on failure.
+    # status = 'failed', with its legality in the WHERE. Three call sites wrote
+    # this: the two intent-creation failures and the retrieval failure. Each
+    # guarded it differently -- one with _guard_settled_write, one with
+    # _money_has_moved, one not at all -- which is how a failure branch once
+    # routed into the success path. One writer, one predicate.
+    method _record_intent_failure_write ($db, $error) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $from  = __CLASS__->_legal_predecessors('failed');
+        my $moved = $db->query( <<'SQL', $error, $id, $from )->rows;
+            UPDATE payments
+               SET status = 'failed', error_message = ?
+             WHERE id = ? AND status = ANY(?)
+SQL
+        return 0 unless $moved;
+
+        $status        = 'failed';
+        $error_message = $error;
+        return 1;
+    }
+
+    # status = 'processing'. Same shape; only pending may precede it.
+    method _record_processing ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $from  = __CLASS__->_legal_predecessors('processing');
+        my $moved = $db->query( <<'SQL', $id, $from )->rows;
+            UPDATE payments SET status = 'processing'
+             WHERE id = ? AND status = ANY(?)
+SQL
+        return 0 unless $moved;
+        $status = 'processing';
+        return 1;
+    }
+
+    # The intent id, which is not a status transition: it is legal exactly while
+    # the money has not moved. Named alone, so it cannot restore five other
+    # columns from a stale object on its way past.
+    method _record_intent_id ($db, $intent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $moved = $db->query( <<'SQL', $intent_id, $id )->rows;
+            UPDATE payments SET stripe_payment_intent_id = ?
+             WHERE id = ?
+               AND status NOT IN ('completed','refunded','partially_refunded','refund_pending')
+SQL
+        return 0 unless $moved;
+        $stripe_payment_intent_id = $intent_id;
+        return 1;
+    }
+
     method mark_completed ($db, $payment_intent_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Names three columns and carries its own legality. Zero rows is the
+        # refusal, by construction -- no lock, no prior read, and no return
+        # shape a caller can misread as success. save() wrote six columns from
+        # the in-memory object, so a walk-back was a restore of whatever that
+        # object last held.
+        my $from  = __CLASS__->_legal_predecessors('completed');
+        my $moved = $db->query( <<'SQL', $payment_intent_id, $id, $from )->rows;
+            UPDATE payments
+               SET status = 'completed',
+                   stripe_payment_intent_id = ?,
+                   completed_at = NOW()
+             WHERE id = ?
+               AND status = ANY(?)
+SQL
+        return 0 unless $moved;
+
         $status                   = 'completed';
         $stripe_payment_intent_id = $payment_intent_id;
-        $completed_at             = \'NOW()';
-        $self->save($db);
         return $self;
     }
 
     # Replace the idempotency token with a fresh UUID and persist immediately.
     # Call this before retrying a declined intent so the retry is a genuinely
     # new Stripe charge rather than a duplicate of the failed one.
+    # The token, alone. Legal exactly while the money has not moved -- and the
+    # refusal is the same statement as the write, so nothing can settle between
+    # the two.
     method rotate_idempotency_token ($db) {
-        # Rotating the token on a settled row would save() the stale object
-        # over a captured payment. Nothing to rotate once the money moved.
-        return unless $self->_guard_settled_write( $db, 'rotate_idempotency_token' );
-
         $db = $db->db if $db isa Registry::DAO;
-        $metadata->{idempotency_token} = $db->query(
-            'SELECT gen_random_uuid()::text AS uuid'
-        )->hash->{uuid};
-        $self->save($db);
+
+        # One statement: generate, merge into the jsonb, and refuse a settled
+        # row -- rather than read, decide, then save six columns from an object
+        # that may have gone stale in between. Returns the new token, or undef
+        # if the row was settled.
+        my $row = $db->query( <<'SQL', $id )->hash;
+            UPDATE payments
+               SET metadata = jsonb_set( COALESCE(metadata, '{}'::jsonb),
+                       '{idempotency_token}', to_jsonb(gen_random_uuid()::text) )
+             WHERE id = ?
+               AND status NOT IN ('completed','refunded','partially_refunded','refund_pending')
+         RETURNING metadata->>'idempotency_token' AS token
+SQL
+        return unless $row;
+
+        $metadata->{idempotency_token} = $row->{token};
+        return $row->{token};
     }
 
     # One child's share of a family cart.
@@ -1072,6 +1119,26 @@ SQL
     # undone safely: if such a state ever does arise, a gate that refuses to
     # adjudicate strands a paid-for child with no seat and no refund. Leaving
     # the row adjudicable is a no-op in every path we can find.
+    # Which statuses may precede which. The one place a state is added, and the
+    # WHERE clause of every status write is built from it.
+    #
+    # This is what section 2.3 of the settlement spec keeps from the state
+    # table: a pure predicate, not a god-method taking an untyped column bag
+    # through which {status => 'completed'} would bypass the machine entirely.
+    # Each write still names its own columns; only legality is shared.
+    sub _legal_predecessors ($class, $to = undef) {
+        state $graph = {
+            processing         => [qw( pending )],
+            completed          => [qw( pending processing )],
+            failed             => [qw( pending processing )],
+            refund_pending     => [qw( completed refund_pending )],
+            refunded           => [qw( refund_pending partially_refunded )],
+            partially_refunded => [qw( refund_pending )],
+        };
+        return $graph unless defined $to;
+        return $graph->{$to} // [];
+    }
+
     sub _money_returned ($class, $status) {
         return ( $status // '' )
             =~ /\A (?: refunded | partially_refunded ) \z/x
