@@ -80,11 +80,22 @@ subtest 'recording an intent failure does not fail a settled payment' => sub {
 subtest 'rotating the idempotency token does not resurrect a settled payment' => sub {
     my $stale = stale_after_settlement('completed');
 
-    eval { $stale->rotate_idempotency_token($db); 1 };
+    # ->expand, because row_of does not: metadata comes back as raw JSON text.
+    my $token_of = sub {
+        $db->select('payments', ['metadata'], { id => $stale->id })
+           ->expand->hash->{metadata}{idempotency_token};
+    };
+    my $before = $token_of->();
+    my $out = eval { $stale->rotate_idempotency_token($db) };
 
     my $row = row_of($stale);
-    is $row->{status}, 'completed', 'the settled status survives a token rotation';
-    ok defined $row->{completed_at}, 'and so does completed_at';
+    # Asserted on the column rotate actually writes. The status and completed_at
+    # assertions this replaces could not fail once rotate stopped writing six
+    # columns -- they passed whether or not the guard existed, which mutation
+    # proved by deleting it.
+    is $token_of->(), $before, 'the token is not rotated on a settled row';
+    ok !$out, 'and the refusal is reported to the caller';
+    is $row->{status}, 'completed', 'the settled status survives';
 };
 
 subtest 'a still-pending payment is unaffected by the guards' => sub {

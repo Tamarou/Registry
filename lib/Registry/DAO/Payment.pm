@@ -8,6 +8,7 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 use Registry::Service::Stripe;
 use Registry::PriceOps::RevenueShare;
 use Mojo::JSON qw(encode_json decode_json);
+use experimental 'keyword_any';
 
 field $id :param :reader = undef;
 field $user_id :param :reader = undef;
@@ -253,10 +254,18 @@ field $_stripe_client = undef;
     # Every place that used to ask "is this completed?" to mean "has this been
     # settled?" has to ask this instead, or a later delivery walks a refunded
     # row back to completed and settles it again.
+    # The statuses in which money has moved, as a list the SQL can bind.
+    # _money_has_moved is the same set as a predicate; this is the same set as
+    # data. Two conditional writes were carrying it as a hardcoded SQL literal,
+    # which is a fifth and sixth encoding of "settled" in a file whose whole
+    # point is that there were already too many.
+    sub _settled_statuses ($class) {
+        return [qw( completed refunded partially_refunded refund_pending )];
+    }
+
     sub _money_has_moved ($class, $status) {
-        return ( $status // '' )
-            =~ /\A (?: completed | refunded | partially_refunded | refund_pending ) \z/x
-            ? 1 : 0;
+        my $s = $status // '';
+        return ( any { $_ eq $s } @{ $class->_settled_statuses } ) ? 1 : 0;
     }
 
     method _record_retrieval_failure ($db, $error) {
@@ -404,8 +413,17 @@ field $_stripe_client = undef;
                 };
             }
 
-            $stripe_payment_method_id = $intent->{payment_method};
-            $self->mark_completed($db, $stripe_payment_intent_id // $intent->{id});
+            # Branch on the write, not past it. Reporting success for a write
+            # the database refused is how a captured charge ends up recorded as
+            # something else while the caller carries on enrolling children.
+            unless ( $self->mark_completed( $db,
+                        $stripe_payment_intent_id // $intent->{id},
+                        $intent->{payment_method} ) ) {
+                return {
+                    success => 0,
+                    error   => "Payment could not be completed from status '$status'",
+                };
+            }
 
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
@@ -918,35 +936,7 @@ SQL
         return $items;
     }
     
-    # Persist the current in-memory field values back to the database row.
-    # Called by state-mutation methods (refund, process_payment) after they
-    # update fields like $status, $metadata, $completed_at, and $error_message.
-    #
-    # Intentionally bypasses the inherited Registry::DAO::Object::update(), which
-    # silently carps and continues on database errors. Refund and payment state
-    # must fail loudly: a Stripe refund that succeeds but whose DB record was not
-    # updated would leave money in an inconsistent state.
-    method save ($db) {
-        $db = $db->db if $db isa Registry::DAO;
-        $db->update($self->table, {
-            status                   => $status,
-            stripe_payment_intent_id => $stripe_payment_intent_id,
-            stripe_payment_method_id => $stripe_payment_method_id,
-            metadata                 => { -json => ($metadata // {}) },
-            completed_at             => $completed_at,
-            error_message            => $error_message,
-        }, { id => $id });
-    }
 
-    # The one way a payment reaches 'completed'.  Both settlement paths call it,
-    # so a webhook-settled payment and a callback-settled one end up the same
-    # shape -- before this, only the callback path stamped completed_at and the
-    # webhook left it NULL on an otherwise identical row.
-    #
-    # Not a swap for the intent-recording writes: _record_intent stamps an id on
-    # a still-pending row and _record_intent_failure marks a failure.  Neither
-    # completes anything, and routing them through here would complete a payment
-    # at intent-creation time and again on failure.
     # status = 'failed', with its legality in the WHERE. Three call sites wrote
     # this: the two intent-creation failures and the retrieval failure. Each
     # guarded it differently -- one with _guard_settled_write, one with
@@ -988,17 +978,25 @@ SQL
     method _record_intent_id ($db, $intent_id) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $moved = $db->query( <<'SQL', $intent_id, $id )->rows;
+        my $moved = $db->query( <<'SQL', $intent_id, $id, __CLASS__->_settled_statuses )->rows;
             UPDATE payments SET stripe_payment_intent_id = ?
-             WHERE id = ?
-               AND status NOT IN ('completed','refunded','partially_refunded','refund_pending')
+             WHERE id = ? AND NOT (status = ANY(?))
 SQL
         return 0 unless $moved;
         $stripe_payment_intent_id = $intent_id;
         return 1;
     }
 
-    method mark_completed ($db, $payment_intent_id) {
+    # The one way a payment reaches 'completed'.  Both settlement paths call it,
+    # so a webhook-settled payment and a callback-settled one end up the same
+    # shape -- before this, only the callback path stamped completed_at and the
+    # webhook left it NULL on an otherwise identical row.
+    #
+    # Not a swap for the intent-recording writes: _record_intent stamps an id on
+    # a still-pending row and _record_intent_failure marks a failure.  Neither
+    # completes anything, and routing them through here would complete a payment
+    # at intent-creation time and again on failure.
+    method mark_completed ($db, $payment_intent_id, $payment_method_id = undef) {
         $db = $db->db if $db isa Registry::DAO;
 
         # Names three columns and carries its own legality. Zero rows is the
@@ -1007,10 +1005,17 @@ SQL
         # the in-memory object, so a walk-back was a restore of whatever that
         # object last held.
         my $from  = __CLASS__->_legal_predecessors('completed');
-        my $moved = $db->query( <<'SQL', $payment_intent_id, $id, $from )->rows;
+        # All binds on the <<'SQL' line: a continuation line after it is
+        # swallowed into the heredoc body.
+        my @bind = ( $payment_intent_id, $payment_method_id, $id, $from );
+        my $moved = $db->query( <<'SQL', @bind )->rows;
             UPDATE payments
                SET status = 'completed',
                    stripe_payment_intent_id = ?,
+                   -- COALESCE, so a caller with no method in hand does not
+                   -- erase one already recorded. save() carried this column and
+                   -- the first conversion dropped it entirely, silently.
+                   stripe_payment_method_id = COALESCE(?, stripe_payment_method_id),
                    completed_at = NOW()
              WHERE id = ?
                AND status = ANY(?)
@@ -1019,6 +1024,7 @@ SQL
 
         $status                   = 'completed';
         $stripe_payment_intent_id = $payment_intent_id;
+        $stripe_payment_method_id = $payment_method_id if $payment_method_id;
         return $self;
     }
 
@@ -1035,12 +1041,11 @@ SQL
         # row -- rather than read, decide, then save six columns from an object
         # that may have gone stale in between. Returns the new token, or undef
         # if the row was settled.
-        my $row = $db->query( <<'SQL', $id )->hash;
+        my $row = $db->query( <<'SQL', $id, __CLASS__->_settled_statuses )->hash;
             UPDATE payments
                SET metadata = jsonb_set( COALESCE(metadata, '{}'::jsonb),
                        '{idempotency_token}', to_jsonb(gen_random_uuid()::text) )
-             WHERE id = ?
-               AND status NOT IN ('completed','refunded','partially_refunded','refund_pending')
+             WHERE id = ? AND NOT (status = ANY(?))
          RETURNING metadata->>'idempotency_token' AS token
 SQL
         return unless $row;
@@ -1119,24 +1124,43 @@ SQL
     # undone safely: if such a state ever does arise, a gate that refuses to
     # adjudicate strands a paid-for child with no seat and no refund. Leaving
     # the row adjudicable is a no-op in every path we can find.
-    # Which statuses may precede which. The one place a state is added, and the
-    # WHERE clause of every status write is built from it.
+    # Which statuses may precede which, for the writes on the intent path.
+    #
+    # It covers those three and no more. An earlier version listed
+    # refund_pending, refunded and partially_refunded too, which no writer
+    # consulted and which contradicted the predicates the real refund writers
+    # use -- record_capacity_obligation and _apply_refund_result carry headroom
+    # and increment conditions this table cannot express. A table that is half
+    # documentation and half false is worse than a smaller true one, in the
+    # place a future author will trust.
     #
     # This is what section 2.3 of the settlement spec keeps from the state
     # table: a pure predicate, not a god-method taking an untyped column bag
     # through which {status => 'completed'} would bypass the machine entirely.
     # Each write still names its own columns; only legality is shared.
     sub _legal_predecessors ($class, $to = undef) {
+        # 'failed' is NOT terminal here, and treating it as such strands
+        # captured money. _apply_intent writes 'failed' for any intent status it
+        # does not recognise -- including requires_action, an ordinary 3DS
+        # payment mid-authentication -- and the decline-retry path deliberately
+        # reuses the same row rather than orphaning it. Both legitimately reach
+        # completed when the money lands. Refusing that leaves a charge Stripe
+        # took sitting at 'failed' with completed_at NULL, outside
+        # _refundable_status and so unrefundable forever, while
+        # finalize_enrollment still seats the child.
+        #
+        # failed -> failed is legal because each decline must record its own
+        # reason; refusing it showed the parent the previous card's error.
         state $graph = {
-            processing         => [qw( pending )],
-            completed          => [qw( pending processing )],
-            failed             => [qw( pending processing )],
-            refund_pending     => [qw( completed refund_pending )],
-            refunded           => [qw( refund_pending partially_refunded )],
-            partially_refunded => [qw( refund_pending )],
+            processing         => [qw( pending failed )],
+            completed          => [qw( pending processing failed )],
+            failed             => [qw( pending processing failed )],
         };
         return $graph unless defined $to;
-        return $graph->{$to} // [];
+        # die, not `// []`. An empty list makes `status = ANY('{}')` -- a writer
+        # that refuses every row, silently, which is the worst possible response
+        # to a typo in a status name.
+        return $graph->{$to} // die "no transition rule for status '$to'\n";
     }
 
     sub _money_returned ($class, $status) {
