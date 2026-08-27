@@ -131,4 +131,82 @@ subtest 'and two cancelled rows may coexist -- a child can drop twice' => sub {
         'two drops leave two cancelled rows, and neither blocks the other';
 };
 
+# M2 from the review: nothing distinguished `status <> 'cancelled'` from
+# `status = 'active'`. Narrowing the index that way passed both files, and it is
+# the narrowing that lets a waitlisted or pending row stop occupying its seat --
+# so two live rows for one child could then coexist.
+subtest 'every non-cancelled status occupies the seat, not just active' => sub {
+    for my $held (qw( active pending waitlisted )) {
+        my $session = a_session();
+        my $child   = a_child();
+
+        Registry::DAO::Enrollment->create_for_payment($db, {
+            session_id => $session->id, family_member_id => $child->id,
+            parent_id => $parent->id, status => $held, payment_id => a_payment()->id });
+
+        my $err = do {
+            local $@;
+            eval { Registry::DAO::Enrollment->create_for_payment($db, {
+                session_id => $session->id, family_member_id => $child->id,
+                parent_id => $parent->id, status => 'active',
+                payment_id => a_payment()->id }); 1 };
+            $@;
+        };
+        like $err, qr/enrollments_session_student_type_live/,
+            "a '$held' row still occupies the seat -- a second live row is refused";
+    }
+};
+
+# And the cancelled row must actually survive the drop. If drops ever started
+# deleting instead of cancelling, subtest 1 would pass for the wrong reason.
+subtest 'the cancelled row is still there after the re-enrolment' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $first   = a_payment();
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $first->id });
+    $db->update('enrollments', { status => 'cancelled' },
+        { session_id => $session->id, student_id => $child->id });
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => a_payment()->id });
+
+    is $db->query(q{SELECT COUNT(*) FROM enrollments
+                     WHERE session_id = ? AND student_id = ? AND status = 'cancelled'},
+        $session->id, $child->id)->array->[0], 1,
+        'the dropped row is cancelled, not deleted -- the history survives';
+};
+
+# M3: nothing distinguished `IS DISTINCT FROM 'cancelled'` from `<> 'cancelled'`,
+# which is the whole reason the deploy script argues for the former in a comment.
+# NULL <> 'cancelled' is NULL, so under `<>` a NULL-status row falls outside the
+# index entirely and any number of them can pile up on one seat.
+#
+# Both DAO write paths default the column (create_for_payment and create both
+# `//=`), so this state is reachable only by raw SQL -- which is exactly what
+# this subtest uses. The predicate is defence in depth, and depth that nothing
+# grades is depth that silently rots back to `<>` the next time someone
+# regenerates the schema.
+subtest 'a NULL-status row still occupies the seat' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+
+    $db->query(
+        'INSERT INTO enrollments (session_id, student_id, student_type, status)
+         VALUES (?, ?, ?, NULL)', $session->id, $child->id, 'family_member' );
+
+    my $err = do {
+        local $@;
+        eval { $db->query(
+            'INSERT INTO enrollments (session_id, student_id, student_type, status)
+             VALUES (?, ?, ?, NULL)', $session->id, $child->id, 'family_member' ); 1 };
+        $@;
+    };
+    like $err, qr/enrollments_session_student_type_live/,
+        'a second NULL-status row is refused -- NULL is not a free seat';
+};
+
 done_testing;

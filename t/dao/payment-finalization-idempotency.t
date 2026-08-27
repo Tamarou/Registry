@@ -76,8 +76,8 @@ subtest 'a re-registration after a drop is seated, not refused' => sub {
     # This subtest used to assert the opposite: that finalize RAISES here.
     #
     # That was the least-bad option available at the time. Dropping cancels the
-    # row in place, and the old total constraint
-    # (enrollments_session_student_type_unique) meant a re-registration collided
+    # row in place, and the total constraint that preceded
+    # enrollments_session_student_type_live meant a re-registration collided
     # with the dead row -- so the choice was between raising and silently
     # skipping a seat the parent had paid for. Its own comment says why raising
     # is bad: Stripe has already captured by the time finalize runs, so the

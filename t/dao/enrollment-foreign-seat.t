@@ -152,4 +152,83 @@ subtest 'a cart that paid for a seat the child already holds is owed a refund' =
     is $row->{status}, 'refund_pending', 'and the row says so';
 };
 
+# The three cases #315 names that a schema predicate alone does not cover. Each
+# is a row cart_seat_state must report as 'foreign' even though the seat-holding
+# vocabulary says it holds no seat: the uniqueness rule collides with it either
+# way, inside a settlement Stripe has already captured.
+subtest 'a waitlisted row belonging to another payment is seen, not stepped on' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    my $ours    = a_paid_cart( $session, $child, 6200 );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'waitlisted', payment_id => $theirs->id });
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'foreign',
+        'a foreign waitlisted row is foreign, not none';
+
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Payment->find($db, { id => $ours->id })
+                   ->finalize_enrollment($db); 1 };
+        $@;
+    };
+    is $err, '', 'and the settlement does not raise on it';
+};
+
+# An admin-created enrollment carries no payment_id at all.
+subtest 'an admin-created enrollment is seen by the cart that pays afterwards' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $ours    = a_paid_cart( $session, $child, 4400 );
+
+    Registry::DAO::Enrollment->create($db, {
+        session_id => $session->id, student_id => $child->id,
+        family_member_id => $child->id, parent_id => $parent->id,
+        status => 'pending' });
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'foreign',
+        'a row with no payment_id is foreign to this cart';
+
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Payment->find($db, { id => $ours->id })
+                   ->finalize_enrollment($db); 1 };
+        $@;
+    };
+    is $err, '', 'and the settlement does not raise on it';
+};
+
+# A cancelled foreign row must NOT read as foreign -- it holds no seat, and the
+# relaxed index lets the insert through. Reporting it as foreign would refuse a
+# seat the parent legitimately paid for.
+subtest 'a cancelled foreign row leaves the seat available' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    my $ours    = a_paid_cart( $session, $child );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+    $db->update('enrollments', { status => 'cancelled' },
+        { session_id => $session->id, student_id => $child->id });
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'none',
+        'a dead row is not a foreign seat';
+
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+
+    is $db->query(q{SELECT COUNT(*) FROM enrollments
+                     WHERE session_id = ? AND student_id = ? AND payment_id = ?
+                       AND status <> 'cancelled'},
+        $session->id, $child->id, $ours->id)->array->[0], 1,
+        'and the paying cart gets its seat';
+};
+
 done_testing;

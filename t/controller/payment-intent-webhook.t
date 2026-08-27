@@ -281,8 +281,8 @@ subtest 'a delivery onto a settled row does not re-complete it (Leg 0 Task 3)' =
     # a no-op and it re-completing a refunded row -- which the capacity gate then
     # re-demotes and refunds a second time. Every other fixture in this file
     # builds a 'pending' payment, so the widened arm was never exercised.
-    # A distinct child per status: enrollments_session_student_type_unique is
-    # status-blind, so reusing one child would make the second iteration's
+    # A distinct child per status: enrollments_session_student_type_live covers
+    # every non-cancelled row, so reusing one child would make the second iteration's
     # finalize_enrollment raise inside the settlement transaction and answer
     # 500 -- a real defect, but not the one under test here.
     my %kid;

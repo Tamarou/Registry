@@ -75,11 +75,11 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     #
     # The arbiter is named deliberately. A bare ON CONFLICT DO NOTHING has no
     # arbiter and so absorbs a violation of every unique constraint on the
-    # table, including the status-blind enrollments_session_student_type_unique
-    # -- which a parent re-registering a child for a session they dropped will
-    # hit. Stripe has captured by the time this runs, so swallowing that insert
-    # means money taken and no enrollment, silently. Only the payment replay is
-    # meant to be quiet; everything else must raise.
+    # table, including enrollments_session_student_type_live -- which any
+    # pre-existing live row for this (session, student) will hit, whatever
+    # payment it belongs to. Stripe has captured by the time this runs, so
+    # swallowing that insert means money taken and no enrollment, silently.
+    # Only the payment replay is meant to be quiet; everything else must raise.
     sub create_for_payment ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -282,13 +282,25 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         # rows in $taken, so crediting one to this cart's %granted would count
         # the same seat twice and under-count the capacity left for the next
         # sibling in the cart.
-        my $elsewhere = $db->select(
-            $class->table, ['status'],
-            {   session_id => $session_id,
-                student_id => $child_id,
-                status     => { -in => $class->seat_holding_statuses },
-            },
-        )->hash;
+        # Every row the uniqueness rule covers, not only the ones holding a
+        # seat. The predicate mirrors enrollments_session_student_type_live
+        # exactly: if the index would refuse the insert, this must report it.
+        #
+        # Narrowing this to the seat-holding statuses is the tempting mistake,
+        # and it hides two rows that collide anyway: a waitlisted row, which
+        # the platform's own capacity gate writes and nothing in lib/ ever
+        # moves back out of, and an admin-created row, which carries no
+        # payment_id at all. The caller then finds out by raising inside a
+        # settlement Stripe has already captured.
+        #
+        # cancelled is excluded because the index excludes it -- that seat
+        # really is free.
+        my $elsewhere = $db->query( <<'SQL', $session_id, $child_id )->hash;
+            SELECT status FROM enrollments
+             WHERE session_id = ? AND student_id = ?
+               AND status IS DISTINCT FROM 'cancelled'
+             LIMIT 1
+SQL
 
         return $elsewhere ? 'foreign' : 'none';
     }
