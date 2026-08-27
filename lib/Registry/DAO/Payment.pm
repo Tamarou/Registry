@@ -565,6 +565,28 @@ field $_stripe_client = undef;
             # prevent, reintroduced one item at a time.
             next if $held eq 'waitlisted';
 
+            # The child already holds a live seat from another payment, so there
+            # is nothing to seat -- and trying would collide with the live-only
+            # uniqueness rule, inside a settlement Stripe has already captured.
+            # This cart paid for a seat it did not need, so its share is owed
+            # back. Not demoted: there is no row of ours to demote, and the row
+            # that exists belongs to whoever paid for it first.
+            if ( $held eq 'foreign' ) {
+                try {
+                    $owed_cents += $self->refund_share_for(
+                        $db, $item->{child_id}, $session_id );
+                    push @owed_children, $item->{child_id};
+                }
+                catch ($e) {
+                    $self->flag_refund_manual_review(
+                        $db, $item->{child_id}, $session_id );
+                    warn "finalize_enrollment: unresolvable duplicate-seat share for "
+                       . "child $item->{child_id} in session $session_id "
+                       . "(payment $id): $e";
+                }
+                next;
+            }
+
             # The seat was checked before the parent paid and is granted after.
             # In between is a Stripe round trip, so it is re-checked here, under
             # the lock taken above, before anything is written.
