@@ -72,13 +72,23 @@ subtest 'second finalize (dual-path) does not duplicate' => sub {
     is scalar(@$notes), 1, 'still exactly one confirmation notification';
 };
 
-subtest 'a collision the dedup index does not cover is not swallowed' => sub {
-    # Dropping an enrollment cancels the row in place; nothing deletes it. So a
-    # parent re-registering the same child for the same session collides with
-    # enrollments_session_student_type_unique, which the payment dedup index does
-    # not cover. Stripe has already captured by the time finalize runs, so a
-    # skipped insert here means money taken, no enrollment row, no exception,
-    # and a confirmation email sent anyway. It has to raise.
+subtest 'a re-registration after a drop is seated, not refused' => sub {
+    # This subtest used to assert the opposite: that finalize RAISES here.
+    #
+    # That was the least-bad option available at the time. Dropping cancels the
+    # row in place, and the old total constraint
+    # (enrollments_session_student_type_unique) meant a re-registration collided
+    # with the dead row -- so the choice was between raising and silently
+    # skipping a seat the parent had paid for. Its own comment says why raising
+    # is bad: Stripe has already captured by the time finalize runs, so the
+    # raise rolls back a captured settlement, releases the webhook dedup claim,
+    # and every redelivery reproduces it. Forever.
+    #
+    # enrollment-reenrol-after-drop removed the dilemma. The rule is now a
+    # partial unique index over live rows only, so a cancelled row stops
+    # occupying the seat and the third option -- just enrol the child -- exists.
+    # A child dropping and re-joining is ordinary in after-school programmes and
+    # the schema now says so.
     $db->update('enrollments', { status => 'cancelled' }, { payment_id => $payment->id });
 
     my $repay = Registry::DAO::Payment->create($db, {
@@ -90,15 +100,21 @@ subtest 'a collision the dedup index does not cover is not swallowed' => sub {
         },
     });
 
-    my $ok = eval { $repay->finalize_enrollment($db); 1 };
+    my $ok  = eval { $repay->finalize_enrollment($db); 1 };
     my $err = $@;
 
-    ok !$ok, 'finalize raises instead of dropping the insert on the floor';
-    like $err, qr/enrollments_session_student_type_unique/,
-        'the error names the constraint that actually fired';
+    ok $ok, 'finalize does not raise inside a settlement Stripe already captured'
+        or diag "raised: $err";
 
     my $rows = $db->select('enrollments', '*', { payment_id => $repay->id })->hashes;
-    is scalar(@$rows), 0, 'no enrollment row for the new payment (the raise is the only signal)';
+    is scalar(@$rows), 1, 'the re-registered child gets an enrollment row';
+    isnt $rows->[0]{status}, 'cancelled', 'and it is a live one';
+
+    my $live = $db->query(
+        q{SELECT COUNT(*) FROM enrollments
+           WHERE session_id = ? AND student_id = ? AND status <> 'cancelled'},
+        $session->id, $child->id)->array->[0];
+    is $live, 1, 'exactly one live seat -- the cancelled row does not become a second';
 };
 
 done_testing;

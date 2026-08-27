@@ -32,6 +32,7 @@ my @CHANGES = qw(
     drop-installment-schedules
     webhook-events-processed-at
     payments-typed-obligation
+    enrollment-reenrol-after-drop
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
