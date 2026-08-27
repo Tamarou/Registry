@@ -41,15 +41,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS enrollments_session_student_type_live
  -- turning a rule the old constraint enforced totally into one with a hole.
  WHERE status IS DISTINCT FROM 'cancelled';
 
--- Remember each tenant's constraint name before dropping it, so the revert can
--- put back what was actually there. A tenant provisioned by
--- flexible-enrollment-architecture's own loop carries the registry name, and
--- that change's revert drops it by that name -- restoring everything unnamed
--- would strand a total constraint when the earlier change is later reverted.
-CREATE TABLE IF NOT EXISTS registry.tenant_reenrol_revert_names (
-    schema_name     name PRIMARY KEY,
-    constraint_name name NOT NULL
-);
+-- An earlier draft remembered each tenant's constraint name in a table here, on
+-- the theory that restoring everything unnamed would strand a total constraint
+-- when flexible-enrollment-architecture is later reverted. Measured, that is
+-- false: THAT revert runs ALTER TABLE ... DROP COLUMN student_type, and the
+-- constraint goes with the column whatever it is called. The table bought
+-- nothing and cost real damage -- clone_schema copies every registry table, so
+-- each tenant got its own copy of migration bookkeeping, and this change's
+-- revert dropped only the registry one, stranding one per tenant forever.
+DROP TABLE IF EXISTS registry.tenant_reenrol_revert_names;
 
 DO $$
 DECLARE
@@ -84,10 +84,12 @@ BEGIN
                          ON att.attrelid = con.conrelid AND att.attnum = k )
                    = ARRAY['session_id','student_id','student_type']
         LOOP
-            INSERT INTO registry.tenant_reenrol_revert_names (schema_name, constraint_name)
-                 VALUES (s, c) ON CONFLICT (schema_name) DO NOTHING;
             EXECUTE format('ALTER TABLE %I.enrollments DROP CONSTRAINT %I', s, c);
         END LOOP;
+
+        -- Clean up the stranded copies an earlier draft cloned into tenants.
+        EXECUTE format(
+            'DROP TABLE IF EXISTS %I.tenant_reenrol_revert_names', s);
 
         EXECUTE format(
             'CREATE UNIQUE INDEX IF NOT EXISTS enrollments_session_student_type_live

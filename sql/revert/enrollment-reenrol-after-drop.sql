@@ -24,9 +24,8 @@ ALTER TABLE registry.enrollments
 
 DO $$
 DECLARE
-    s    name;
-    ix   name;
-    orig name;
+    s  name;
+    ix name;
 BEGIN
     FOR s IN SELECT slug FROM registry.tenants WHERE slug != 'registry' LOOP
         CONTINUE WHEN NOT EXISTS (
@@ -59,34 +58,16 @@ BEGIN
             EXECUTE format('DROP INDEX %I.%I', s, ix);
         END LOOP;
 
-        -- Restore under the name this tenant actually had. A tenant provisioned
-        -- by flexible-enrollment-architecture's own loop carries the registry
-        -- name, and THAT change's revert drops it by that name -- so restoring
-        -- everything unnamed left a total constraint stranded on enrollments
-        -- when the earlier change was later reverted. A clone-provisioned
-        -- tenant has the generated name, which an unnamed ADD UNIQUE
-        -- reproduces.
-        SELECT conname INTO orig
-          FROM pg_constraint
-         WHERE conname = 'enrollments_session_student_type_unique'
-           AND conrelid = format('%I.enrollments', s)::regclass;
-
-        IF EXISTS ( SELECT 1 FROM registry.tenant_reenrol_revert_names
-                     WHERE schema_name = s )
-        THEN
-            SELECT constraint_name INTO orig
-              FROM registry.tenant_reenrol_revert_names WHERE schema_name = s;
-            EXECUTE format(
-                'ALTER TABLE %I.enrollments ADD CONSTRAINT %I
-                     UNIQUE (session_id, student_id, student_type)', s, orig);
-        ELSE
-            EXECUTE format(
-                'ALTER TABLE %I.enrollments
-                    ADD UNIQUE (session_id, student_id, student_type)', s);
-        END IF;
+        -- Unnamed, which reproduces exactly the name Postgres generated for a
+        -- clone-provisioned tenant. Restoring a REMEMBERED name was the earlier
+        -- design; it is unnecessary because
+        -- flexible-enrollment-architecture's revert drops the student_type
+        -- column, and any constraint on that column goes with it regardless of
+        -- name. Nothing is stranded either way.
+        EXECUTE format(
+            'ALTER TABLE %I.enrollments
+                ADD UNIQUE (session_id, student_id, student_type)', s);
     END LOOP;
 END $$;
-
-DROP TABLE IF EXISTS registry.tenant_reenrol_revert_names;
 
 COMMIT;

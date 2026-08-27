@@ -59,6 +59,14 @@ BEGIN
            AND i.indisunique
            AND i.indpred IS NOT NULL
            AND pg_get_expr(i.indpred, i.indrelid) LIKE '%cancelled%'
+           -- IS DISTINCT FROM, not <>. Matching only '%cancelled%' accepts the
+           -- <> form, which is the NULL hole the deploy's own comment says it
+           -- fixed: a NULL status falls outside a <> predicate, so two
+           -- NULL-status rows can hold one seat. Without this term the script
+           -- cannot see the single defect it was rewritten to catch, and a
+           -- database deployed from an older copy of the deploy script verifies
+           -- green forever.
+           AND pg_get_expr(i.indpred, i.indrelid) LIKE '%IS DISTINCT FROM%'
            AND ( SELECT array_agg(a.attname::text ORDER BY a.attname::text)
                    FROM unnest(i.indkey) k
                    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k )
