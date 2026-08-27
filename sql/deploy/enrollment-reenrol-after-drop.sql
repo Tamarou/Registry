@@ -36,7 +36,20 @@ ALTER TABLE registry.enrollments
 -- session, which is the rule that was actually wanted.
 CREATE UNIQUE INDEX IF NOT EXISTS enrollments_session_student_type_live
     ON registry.enrollments (session_id, student_id, student_type)
- WHERE status <> 'cancelled';
+ -- IS DISTINCT FROM, not <>. status is nullable, and NULL <> 'cancelled' is
+ -- NULL, so a NULL-status row would be excluded from the index altogether --
+ -- turning a rule the old constraint enforced totally into one with a hole.
+ WHERE status IS DISTINCT FROM 'cancelled';
+
+-- Remember each tenant's constraint name before dropping it, so the revert can
+-- put back what was actually there. A tenant provisioned by
+-- flexible-enrollment-architecture's own loop carries the registry name, and
+-- that change's revert drops it by that name -- restoring everything unnamed
+-- would strand a total constraint when the earlier change is later reverted.
+CREATE TABLE IF NOT EXISTS registry.tenant_reenrol_revert_names (
+    schema_name     name PRIMARY KEY,
+    constraint_name name NOT NULL
+);
 
 DO $$
 DECLARE
@@ -47,6 +60,9 @@ BEGIN
         CONTINUE WHEN NOT EXISTS (
             SELECT 1 FROM information_schema.schemata WHERE schema_name = s
         );
+        -- Schema existence is not table existence: a half-provisioned tenant
+        -- would abort the whole migration on the CREATE INDEX below.
+        CONTINUE WHEN to_regclass(format('%I.enrollments', s)) IS NULL;
 
         -- By DISCOVERED name, not the canonical one. clone_schema's
         -- LIKE ... INCLUDING ALL copies the constraint under a name Postgres
@@ -68,13 +84,15 @@ BEGIN
                          ON att.attrelid = con.conrelid AND att.attnum = k )
                    = ARRAY['session_id','student_id','student_type']
         LOOP
+            INSERT INTO registry.tenant_reenrol_revert_names (schema_name, constraint_name)
+                 VALUES (s, c) ON CONFLICT (schema_name) DO NOTHING;
             EXECUTE format('ALTER TABLE %I.enrollments DROP CONSTRAINT %I', s, c);
         END LOOP;
 
         EXECUTE format(
             'CREATE UNIQUE INDEX IF NOT EXISTS enrollments_session_student_type_live
                 ON %I.enrollments (session_id, student_id, student_type)
-             WHERE status <> ''cancelled''', s);
+             WHERE status IS DISTINCT FROM ''cancelled''', s);
     END LOOP;
 END $$;
 
