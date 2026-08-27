@@ -1,0 +1,155 @@
+#!/usr/bin/env perl
+# ABOUTME: A seat held by a DIFFERENT payment is visible to the cart adjudicating against it.
+# ABOUTME: Scoping the seat lookup by payment_id made a foreign row read as no row at all.
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::DB;
+use Registry::DAO::Enrollment;
+use Registry::DAO::Payment;
+
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_foreign_seat';
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
+my $db      = $dao->db;
+
+my $parent = $dao->create(User => {
+    username => 'fs_parent', name => 'FS Parent', user_type => 'parent',
+    email => 'fs@test.local' });
+
+my $n = 0;
+sub a_child () {
+    $n++;
+    Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => "FS Kid $n", birth_date => '2015-01-01', grade => '4',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
+}
+sub a_session ($capacity = 10) {
+    $n++;
+    my $loc = Registry::DAO::Location->create($db, {
+        name => "FS Loc $n$$", slug => "fs_loc_$n$$", address_info => {}, metadata => {} });
+    my $proj = Registry::DAO::Project->create($db, {
+        name => "FS Proj $n$$", status => 'published',
+        program_type_slug => 'summer-camp', metadata => {} });
+    my $teacher = $dao->create(User => {
+        username => "fs_t_$n$$", name => 'FS T', user_type => 'staff',
+        email => "fs_t_$n$$\@test.local" });
+    my $event = Registry::DAO::Event->create($db, {
+        location_id => $loc->id, project_id => $proj->id, teacher_id => $teacher->id,
+        time => \'NOW()', duration => 60, capacity => $capacity, metadata => {} });
+    my $s = Registry::DAO::Session->create($db, {
+        name => "FS Session $n$$", status => 'published',
+        capacity => $capacity, metadata => {} });
+    $s->add_events($db, $event->id);
+    return $s;
+}
+sub a_paid_cart ($session, $child, $cents = 10000) {
+    my $p = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => $cents, status => 'completed',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
+            tenant_slug      => undef } });
+    $db->insert('payment_items', {
+        payment_id => $p->id, description => 'seat', amount_cents => $cents,
+        metadata => { -json => { child_id => $child->id, session_id => $session->id } } });
+    return Registry::DAO::Payment->find($db, { id => $p->id });
+}
+
+# The gap, stated directly. cart_seat_state scoped its lookup by payment_id, so
+# a live seat held by ANOTHER payment read as 'none' -- the caller then
+# adjudicated as if the child were unseated and tried to insert, colliding with
+# enrollments_session_student_type_live inside a settlement Stripe had already
+# captured.
+subtest 'a seat held by another payment is visible, and distinct from our own' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    my $ours    = a_paid_cart( $session, $child );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $theirs->id, $session->id, $child->id ), 'seated',
+        'the payment that holds it sees its own seat';
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'foreign',
+        'and another cart sees it as foreign -- not as no seat at all';
+};
+
+# 'foreign' has to be its own category rather than 'seated'.
+# payment_fits_session already counts foreign rows in $taken, so crediting one
+# to %granted would count the same seat twice and under-count the capacity left
+# for the next sibling in the cart.
+subtest 'a foreign seat is not credited to this cart' => sub {
+    my $session = a_session(2);
+    my $kid_a   = a_child();
+    my $kid_b   = a_child();
+    my $theirs  = a_paid_cart( $session, $kid_a );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $kid_a->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    # Our cart names both children; kid_a is already seated by $theirs.
+    my $ours = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 20000, status => 'completed',
+        metadata => { tenant_slug => undef, enrollment_items => [
+            { session_id => $session->id, child_id => $kid_a->id },
+            { session_id => $session->id, child_id => $kid_b->id } ] } });
+    for my $kid ( $kid_a, $kid_b ) {
+        $db->insert('payment_items', {
+            payment_id => $ours->id, description => 'seat', amount_cents => 10000,
+            metadata => { -json => { child_id => $kid->id, session_id => $session->id } } });
+    }
+
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Payment->find($db, { id => $ours->id })
+                   ->finalize_enrollment($db); 1 };
+        $@;
+    };
+    is $err, '', 'the settlement does not raise on the collision';
+
+    my $seated_b = $db->query(
+        q{SELECT COUNT(*) FROM enrollments
+           WHERE session_id = ? AND student_id = ? AND payment_id = ?
+             AND status IN ('active','pending')},
+        $session->id, $kid_b->id, $ours->id)->array->[0];
+    is $seated_b, 1,
+        'the sibling who needed a seat gets one -- the foreign seat did not '
+        . 'consume the capacity twice';
+
+    my $live_a = $db->query(
+        q{SELECT COUNT(*) FROM enrollments
+           WHERE session_id = ? AND student_id = ? AND status <> 'cancelled'},
+        $session->id, $kid_a->id)->array->[0];
+    is $live_a, 1, 'and the already-seated child still holds exactly one seat';
+};
+
+# The parent paid for a seat their child already had. That money is owed back.
+subtest 'a cart that paid for a seat the child already holds is owed a refund' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    my $ours    = a_paid_cart( $session, $child, 7500 );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+
+    my $row = $db->select('payments', '*', { id => $ours->id })->expand->hash;
+    is $row->{refund_owed_cents}, 7500,
+        'the duplicate payment owes its share back rather than keeping it';
+    is $row->{status}, 'refund_pending', 'and the row says so';
+};
+
+done_testing;

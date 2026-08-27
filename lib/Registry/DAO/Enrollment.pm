@@ -254,6 +254,7 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
         $db = $db->db if $db isa Registry::DAO;
 
+        # Our own row first: its state is what this cart holds.
         my $row = $db->select(
             $class->table, ['status'],
             {   payment_id => $payment_id,
@@ -262,13 +263,34 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             },
         )->hash;
 
-        return 'none' unless $row;
+        if ($row) {
+            my $status = $row->{status} // '';
+            return 'seated'
+                if any { $_ eq $status } @{ $class->seat_holding_statuses };
+            return 'waitlisted' if $status eq 'waitlisted';
+            return 'closed';
+        }
 
-        my $status = $row->{status} // '';
-        return 'seated'
-            if any { $_ eq $status } @{ $class->seat_holding_statuses };
-        return 'waitlisted' if $status eq 'waitlisted';
-        return 'closed';
+        # No row of ours -- but the child may already hold a live seat from a
+        # DIFFERENT payment: a free enrolment with payment_id IS NULL, an admin
+        # add, an earlier purchase. Scoping this lookup by payment_id made that
+        # read as 'none', so the caller adjudicated as though the child were
+        # unseated and tried to insert -- colliding with the live-only
+        # uniqueness rule inside a settlement Stripe had already captured.
+        #
+        # 'foreign', not 'seated': payment_fits_session already counts foreign
+        # rows in $taken, so crediting one to this cart's %granted would count
+        # the same seat twice and under-count the capacity left for the next
+        # sibling in the cart.
+        my $elsewhere = $db->select(
+            $class->table, ['status'],
+            {   session_id => $session_id,
+                student_id => $child_id,
+                status     => { -in => $class->seat_holding_statuses },
+            },
+        )->hash;
+
+        return $elsewhere ? 'foreign' : 'none';
     }
 
     # Move a paid child to the waitlist because the seat went while they paid.
