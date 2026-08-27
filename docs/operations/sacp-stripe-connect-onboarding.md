@@ -205,10 +205,34 @@ booleans `'true'`/`'false'` required by Stripe's form-encoded API.
 
 ### Clearing a stranded `refund_pending` payment
 
-`refund_pending` means the platform owes a refund it has not yet issued. A
-capacity re-check at capture found a child's seat gone, waitlisted them, and
-recorded the debt -- and then the refund call itself failed after the
-settlement transaction had already committed.
+`refund_pending` means the platform owes a refund it has not yet issued, and
+the refund call itself failed after the settlement transaction had already
+committed. Two different things put a row here, and they leave DIFFERENT
+enrollment state behind:
+
+- **The seat was gone.** A capacity re-check at capture found the child's seat
+  taken, waitlisted them, and recorded the debt. The child holds a
+  `waitlisted` enrollment row belonging to this payment.
+- **The seat was already theirs.** The child already held a live seat from a
+  DIFFERENT payment -- a free enrolment, an admin add, an earlier purchase --
+  so this cart paid for something it did not need. Nothing is waitlisted;
+  instead this payment gets a `cancelled` enrollment row recording that it
+  bought a seat it never received, and the live seat still belongs to whoever
+  paid for it first.
+
+Do not treat a missing waitlisted row as corruption. Check which case you are
+in before deciding anything:
+
+```bash
+psql $DATABASE_URL -c \
+  "SELECT e.status, e.payment_id, e.student_id
+     FROM \"<sacp-slug>\".enrollments e
+    WHERE e.payment_id = '<payment_id>'"
+```
+
+`waitlisted` is the first case, `cancelled` the second. Either way the refund
+owed is this payment's share for that child, and the procedure below is the
+same.
 
 **Stripe's redelivery does not heal this.** The dedup claim in
 `registry.webhook_events` commits in the same transaction as the settlement, by
@@ -248,8 +272,18 @@ one refund per increment whose `settled_at` is null, **for that increment's own
 total by construction, and sending the total is how one debt gets paid twice.
 
 A row with `refund_manual_review` set reached a state the automatic path could
-not resolve -- a child whose share could not be computed -- and needs a human
-decision on the amount. Such a row stays `refund_pending` even when
+not resolve and needs a human decision on the amount. Two causes, and they call
+for different actions:
+
+- **No line item for the child.** `calculate_enrollment_total` skips a child
+  whose plan returns no price, so they ride along in the cart with nothing
+  behind them. Decide the amount from what the family was actually charged.
+- **A nonsense share.** The line item exists but is negative, which means a
+  pricing plan is misconfigured -- `percentage_discount` is unbounded, so a
+  plan above 100 produces one. Fix the plan as well as the refund, or it will
+  keep happening. Do not simply refund the negative number.
+
+Such a row stays `refund_pending` even when
 `refund_owed_cents` is zero and every increment is settled, deliberately: that
 is the only way it stays in this query's results until someone acts on it.
 

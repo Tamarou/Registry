@@ -417,4 +417,43 @@ subtest 'a negative share does not silently net off a sibling real debt' => sub 
     ok $row->{flag}, 'and the nonsense share is put in front of a human';
 };
 
+# The operator runbook tells whoever is clearing a stranded refund_pending row
+# to look at the enrollment state to work out WHICH failure they are holding:
+# a demoted child leaves a waitlisted row, a duplicate seat leaves a cancelled
+# one. That is a documented diagnostic, so it is a promise the code has to keep
+# -- and it is invisible to every other test here, which look at payments.
+subtest 'the two routes to refund_pending leave distinguishable enrollment state' => sub {
+    # Route 1: the seat was gone, so the child was demoted.
+    my $full   = a_session(1);
+    my $hog    = a_child();
+    my $late   = a_child();
+    my $held   = a_paid_cart( $full, $hog );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $full->id, family_member_id => $hog->id,
+        parent_id => $parent->id, status => 'active', payment_id => $held->id });
+    my $gone = a_paid_cart( $full, $late, 5000 );
+    Registry::DAO::Payment->find($db, { id => $gone->id })->finalize_enrollment($db);
+
+    # Route 2: the seat was already theirs, from a different payment.
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+    my $dup = a_paid_cart( $session, $child, 5000 );
+    Registry::DAO::Payment->find($db, { id => $dup->id })->finalize_enrollment($db);
+
+    for my $case ( [ 'a demoted child', $gone, 'waitlisted' ],
+                   [ 'a duplicate seat', $dup, 'cancelled' ] ) {
+        my ( $name, $payment, $want ) = @$case;
+        is_deeply $db->query(
+            'SELECT status FROM enrollments WHERE payment_id = ?', $payment->id
+        )->arrays->flatten->to_array, [$want],
+            "$name leaves exactly one '$want' row for its payment";
+        is $db->query( 'SELECT status FROM payments WHERE id = ?', $payment->id
+        )->array->[0], 'refund_pending', "$name reaches refund_pending";
+    }
+};
+
 done_testing;
