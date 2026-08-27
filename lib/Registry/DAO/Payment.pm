@@ -592,33 +592,44 @@ field $_stripe_client = undef;
             # back. Not demoted: there is no row of ours to demote, and the row
             # that exists belongs to whoever paid for it first.
             if ( $held eq 'foreign' ) {
-                # Record the non-delivery BEFORE owing for it.
+                # Resolve the debt first, then record it. Both orderings look
+                # defensible and only one is safe.
                 #
-                # Every other branch of this loop is idempotent because it wrote
-                # something a later pass reads back: demotion leaves a
-                # waitlisted row, a drop leaves a cancelled one. Owing without
-                # writing leaves cart_seat_state answering 'foreign' forever, so
-                # each redelivery owes the same child again -- under a fresh
-                # refund_seq, so a fresh idempotency key, so Stripe does NOT
-                # deduplicate it. A page refresh was enough: _apply_intent calls
-                # this on already_completed, which includes refund_pending.
+                # The marker is what makes this branch idempotent: cart_seat_state
+                # reads our own cancelled row as 'closed' on the next delivery, so
+                # the child is not owed for twice. Without it every redelivery owed
+                # the same child again under a fresh refund_seq -- a fresh Stripe
+                # idempotency key, which Stripe does not deduplicate.
                 #
-                # A cancelled row is the honest record -- this cart paid for a
-                # seat it did not receive -- and it is the state cart_seat_state
-                # already reads as 'closed' and skips. cancelled sits outside
-                # enrollments_session_student_type_live, so it cannot collide
-                # with the seat the other payment holds.
-                Registry::DAO::Enrollment->create_for_payment( $db, {
-                    session_id       => $session_id,
-                    family_member_id => $item->{child_id},
-                    parent_id        => $user_id,
-                    status           => 'cancelled',
-                    payment_id       => $id,
-                } );
-
+                # But writing it BEFORE the share resolves makes an unresolvable
+                # share permanently unresolvable: the row lands, the state flips to
+                # 'closed', and no later delivery will look at this child again --
+                # not even after a human supplies the missing line item. That trades
+                # a debt owed repeatedly for a debt owed never, and only the second
+                # cannot be recovered. Leaving the state at 'foreign' is precisely
+                # what lets the retry work, and the manual-review flag is what stops
+                # the cart settling clean in the meantime.
+                #
+                # A cancelled row is the honest record -- this cart paid for a seat
+                # it did not receive -- and it sits outside
+                # enrollments_session_student_type_live, so it cannot collide with
+                # the seat the other payment holds. drop_reason is set because this
+                # is not a drop, and the unfiltered admin readers would otherwise
+                # show a family dropping a session their child still attends.
                 try {
-                    $owed_cents += $self->refund_share_for(
+                    my $share = $self->refund_share_for(
                         $db, $item->{child_id}, $session_id );
+
+                    Registry::DAO::Enrollment->create_for_payment( $db, {
+                        session_id       => $session_id,
+                        family_member_id => $item->{child_id},
+                        parent_id        => $user_id,
+                        status           => 'cancelled',
+                        payment_id       => $id,
+                        drop_reason      => 'duplicate_seat_refunded',
+                    } );
+
+                    $owed_cents += $share;
                     push @owed_children, $item->{child_id};
                 }
                 catch ($e) {
@@ -686,7 +697,7 @@ field $_stripe_client = undef;
                 next;
             }
 
-            Registry::DAO::Enrollment->create_for_payment($db, {
+            my $enrollment_id = Registry::DAO::Enrollment->create_for_payment($db, {
                 session_id       => $session_id,
                 family_member_id => $item->{child_id},
                 parent_id        => $user_id,
@@ -700,9 +711,10 @@ field $_stripe_client = undef;
             # the critical step; the email can be retried or re-sent later.
             try {
                 Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
-                    user_id    => $user_id,
-                    session_id => $session_id,
-                    child_id   => $item->{child_id},
+                    user_id       => $user_id,
+                    session_id    => $session_id,
+                    child_id      => $item->{child_id},
+                    enrollment_id => $enrollment_id,
                 });
             }
             catch ($e) {

@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Payment;
+use Registry::DAO::Notification;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_foreign_seat';
 
@@ -454,6 +455,89 @@ subtest 'the two routes to refund_pending leave distinguishable enrollment state
         is $db->query( 'SELECT status FROM payments WHERE id = ?', $payment->id
         )->array->[0], 'refund_pending', "$name reaches refund_pending";
     }
+};
+
+# The whole path, not just the notifier: a mutant that stops finalize_enrollment
+# passing the enrolment id would leave the unit test green.
+subtest 'pay, drop, pay again -- both enrolments are confirmed' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $emails  = sub {
+        $db->query( q{SELECT COUNT(*) FROM notifications
+                       WHERE type = 'enrollment_confirmation'
+                         AND metadata->>'session_id' = ?},
+            $session->id )->array->[0];
+    };
+
+    my $first = a_paid_cart( $session, $child, 5000 );
+    Registry::DAO::Payment->find($db, { id => $first->id })->finalize_enrollment($db);
+    is $emails->(), 1, 'the first paid enrolment is confirmed';
+
+    Registry::DAO::Payment->find($db, { id => $first->id })->finalize_enrollment($db);
+    is $emails->(), 1, 'a redelivery does not send a second confirmation';
+
+    $db->update('enrollments', { status => 'cancelled' },
+        { session_id => $session->id, student_id => $child->id });
+
+    my $second = a_paid_cart( $session, $child, 5000 );
+    Registry::DAO::Payment->find($db, { id => $second->id })->finalize_enrollment($db);
+    is $emails->(), 2, 'and the enrolment they paid for after dropping is too';
+};
+
+# A duplicate-seat marker is not a drop, and must not read as one.
+subtest 'the duplicate-seat marker says why it is cancelled' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    my $ours = a_paid_cart( $session, $child, 5000 );
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+
+    is $db->query( 'SELECT drop_reason FROM enrollments WHERE payment_id = ?',
+        $ours->id )->array->[0], 'duplicate_seat_refunded',
+        'the marker carries a reason, so an export cannot read it as a drop';
+};
+
+# The marker must not be written until the debt it stands for is resolved.
+#
+# Writing it first looks safer -- the evidence lands even if the share throws --
+# but it is the opposite. cart_seat_state then reads 'closed' on every later
+# delivery, so a share that could not be computed can NEVER be computed again,
+# even after the cause is repaired. That trades a debt owed repeatedly for a
+# debt owed never, and only the second one is unrecoverable.
+subtest 'an unresolvable share stays retryable until it resolves' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    my $ours = a_cart_without_line_item( $session, $child );
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+
+    my $row = $db->query(q{SELECT refund_owed_cents,
+                                  metadata->'refund_manual_review' AS flag
+                             FROM payments WHERE id = ?}, $ours->id)->hash;
+    is $row->{refund_owed_cents}, 0, 'nothing could be owed yet';
+    ok $row->{flag}, 'and a human was told';
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'foreign',
+        'the cart is still adjudicating this child, not done with them';
+
+    # A human supplies the missing line item, and the next delivery settles it.
+    $db->insert('payment_items', {
+        payment_id => $ours->id, description => 'seat', amount_cents => 5000,
+        metadata => { -json => { child_id => $child->id, session_id => $session->id } } });
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+
+    is $db->query('SELECT refund_owed_cents FROM payments WHERE id = ?',
+        $ours->id)->array->[0], 5000,
+        'the repaired share is owed on the next delivery';
 };
 
 done_testing;

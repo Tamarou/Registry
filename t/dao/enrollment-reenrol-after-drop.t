@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Payment;
+use Registry::DAO::Notification;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_reenrol';
 
@@ -239,6 +240,57 @@ subtest 'create_for_payment absorbs its own replay' => sub {
                      WHERE session_id = ? AND student_id = ? AND payment_id = ?},
         $session->id, $child->id, $payment->id)->array->[0], 1,
         'and it left exactly one row';
+};
+
+# Re-enrolling is what this migration exists to allow, and the confirmation
+# email is the only email the paid path sends. The dedup key was
+# (user, type, session, child) with no time bound and nothing deleting the
+# notification on a drop -- which could never misfire while the total constraint
+# made a second enrolment for that pair impossible. It is now the happy path, so
+# the stale row from the enrolment the family already dropped silences the
+# confirmation for the one they just paid for.
+subtest 'a re-enrolment is confirmed, not silenced by the dropped one' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+
+    my $count = sub {
+        $db->query( q{SELECT COUNT(*) FROM notifications
+                       WHERE user_id = ? AND type = 'enrollment_confirmation'
+                         AND metadata->>'session_id' = ?},
+            $parent->id, $session->id )->array->[0];
+    };
+
+    my %row = ( session_id => $session->id, family_member_id => $child->id,
+                parent_id => $parent->id, status => 'active' );
+    my $confirm = sub ($enrollment_id) {
+        Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
+            user_id       => $parent->id, session_id => $session->id,
+            child_id      => $child->id, enrollment_id => $enrollment_id });
+    };
+
+    my $first = Registry::DAO::Enrollment->create_for_payment(
+        $db, { %row, payment_id => a_payment()->id } );
+    $confirm->($first);
+    is $count->(), 1, 'the first enrolment is confirmed';
+
+    # The same delivery arriving twice must NOT produce a second email. The
+    # arbiter absorbs the insert and hands back the SAME enrolment id, which is
+    # what makes the dedup hold.
+    my $replay = Registry::DAO::Enrollment->create_for_payment(
+        $db, { %row, payment_id => $db->query(
+            'SELECT payment_id FROM enrollments WHERE id = ?', $first)->array->[0] } );
+    is $replay, $first, 'a replay resolves to the same enrolment';
+    $confirm->($replay);
+    is $count->(), 1, 'a redelivery of that enrolment is still one email';
+
+    $db->update('enrollments', { status => 'cancelled' },
+        { session_id => $session->id, student_id => $child->id });
+
+    my $second = Registry::DAO::Enrollment->create_for_payment(
+        $db, { %row, payment_id => a_payment()->id } );
+    isnt $second, $first, 're-enrolling creates a new enrolment, not a revival';
+    $confirm->($second);
+    is $count->(), 2, 'the re-enrolment the family paid for is confirmed too';
 };
 
 done_testing;

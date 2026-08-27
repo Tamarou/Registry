@@ -92,9 +92,22 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             $data->{metadata} = { -json => $data->{metadata} };
         }
 
-        $db->insert( $class->table, $data, {
-            on_conflict => \'(session_id, student_id, payment_id) WHERE payment_id IS NOT NULL DO NOTHING'
-        } );
+        my $inserted = $db->insert( $class->table, $data, {
+            on_conflict => \'(session_id, student_id, payment_id) WHERE payment_id IS NOT NULL DO NOTHING',
+            returning   => 'id',
+        } )->hash;
+        return $inserted->{id} if $inserted;
+
+        # The arbiter absorbed it, so this is a replay of a row that already
+        # exists. Return the id of the row that won: callers need a stable
+        # handle on "the enrolment this child holds for this payment" that is
+        # the same on every delivery, or anything keyed on it -- the
+        # confirmation email in particular -- fires again per redelivery.
+        return $db->select( $class->table, ['id'], {
+            session_id => $data->{session_id},
+            student_id => $data->{student_id},
+            payment_id => $data->{payment_id},
+        } )->hash->{id};
     }
 
     # Enroll a list of children into sessions with no payment: create each active
@@ -105,16 +118,17 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         require Registry::DAO::Notification;
         my $count = 0;
         for my $item (@$items) {
-            $class->create( $db, {
+            my $enrollment = $class->create( $db, {
                 session_id       => $item->{session_id},
                 family_member_id => $item->{child_id},
                 parent_id        => $parent_id,
                 status           => 'active',
             } );
             Registry::DAO::Notification->ensure_enrollment_confirmation( $db, {
-                user_id    => $parent_id,
-                session_id => $item->{session_id},
-                child_id   => $item->{child_id},
+                user_id       => $parent_id,
+                session_id    => $item->{session_id},
+                child_id      => $item->{child_id},
+                enrollment_id => $enrollment->id,
             } );
             $count++;
         }
