@@ -9,6 +9,12 @@ use Test::PostgreSQL;
 use App::Sqitch;
 use File::Temp qw(tempdir);
 use File::Spec;
+use Mojo::Pg;
+
+# Must match Test::Registry::DB::_find_pg_tool. If this file dumps with a
+# different major version than `make test-schema` writes with, every comparison
+# below is a permanent false failure on that host.
+our @PG_VERSIONS = ( 17, 16, 15, 14 );
 
 # The dump is a generated artefact that goes stale in silence. `make test`
 # regenerates it through its sql/deploy/*.sql dependency, but CI runs a bare
@@ -51,7 +57,7 @@ App::Sqitch->new->run( 'sqitch', 'deploy', '-t', $pg->uri );
 
 my ($pg_dump) = grep { -x } (
     '/usr/bin/pg_dump',
-    ( map { "/usr/lib/postgresql/$_/bin/pg_dump" } 18, 17, 16, 15, 14 ),
+    ( map { "/usr/lib/postgresql/$_/bin/pg_dump" } @PG_VERSIONS ),
 );
 $pg_dump //= 'pg_dump';
 system("$pg_dump '" . $pg->uri . "' > '$out' 2>/dev/null") == 0
@@ -78,5 +84,45 @@ ok !defined $first_diff,
         $first_diff + 1,
         $fresh->[$first_diff] // "(nothing -- committed dump is longer)\n",
         $have->[$first_diff]  // "(nothing -- committed dump is shorter)\n";
+
+# DDL is not the whole artefact. The seeded pricing plans live in a COPY block,
+# which ddl_only discards by design -- and the platform's revenue-share rate is
+# one of those rows. Registry's rule is that rate assertions read the DB and
+# never a literal, so t/priceops/revenue-share.t reads THIS FILE. A migration
+# that moves the launch rate without `make test-schema` therefore leaves both
+# that test and the DDL comparison above green while the deployed rate differs:
+#
+#     migration says 0.025, committed dump says 0.02
+#     staleness detector: PASS      rate test: PASS
+#
+# Measured, in that direction. So compare the money seed too -- a narrow, stable
+# projection with no ids and no timestamps, which is exactly the subset the COPY
+# skip exists to avoid.
+subtest 'the seeded money configuration matches what the migrations produce' => sub {
+    my $committed_pg = Test::PostgreSQL->new;
+    my $psql = ( grep { -x } '/usr/bin/psql',
+        ( map { "/usr/lib/postgresql/$_/bin/psql" } @PG_VERSIONS ) )[0] // 'psql';
+    system( "$psql '" . $committed_pg->uri . "' < '$committed' >/dev/null 2>&1" ) == 0
+        or die 'loading the committed dump failed';
+
+    my $projection = q{
+        SELECT plan_scope, plan_name, plan_type, pricing_model_type, amount_cents,
+               pricing_configuration->>'percentage'            AS pct,
+               pricing_configuration->>'monthly_base'          AS base,
+               pricing_configuration->>'refund_application_fee' AS refund_fee
+          FROM registry.pricing_plans
+         ORDER BY plan_scope, plan_name
+    };
+
+    my $from_migrations = Mojo::Pg->new( $pg->uri )->db->query($projection)->hashes->to_array;
+    my $from_dump = Mojo::Pg->new( $committed_pg->uri )->db->query($projection)->hashes->to_array;
+
+    ok scalar @$from_migrations,
+        'the migrations seed at least one pricing plan' or return;
+    is_deeply $from_dump, $from_migrations,
+        'the committed dump seeds the same plans, rates and amounts as sql/deploy/'
+        or diag 'run `make test-schema` -- a rate assertion that reads the DB is '
+              . 'reading this dump, not the migrations';
+};
 
 done_testing;

@@ -131,4 +131,25 @@ subtest 'all three consumers agree, status by status' => sub {
     }
 };
 
+# payment_fits_session runs inside a settlement Stripe has already captured, so
+# how it fails matters. It used to deref ->hash unguarded and raise "Can't use
+# an undefined value as a HASH reference"; there is no recovery available --
+# reporting the session as unlimited seats the child and the FK refuses the
+# insert one line later -- so the only thing to get right is that it says what
+# happened. Nothing graded that: returning 1 or 0 instead left 192 files and
+# 1547 tests green.
+subtest 'a session the settling connection cannot see raises legibly' => sub {
+    my $err = do {
+        local $@;
+        eval {
+            Registry::DAO::Enrollment->payment_fits_session(
+                $db, a_payment(), '00000000-0000-0000-0000-000000000000' );
+            1;
+        };
+        $@;
+    };
+    like $err, qr/payment_fits_session: session .* not found/,
+        'it names the missing session rather than guessing at capacity';
+};
+
 done_testing;

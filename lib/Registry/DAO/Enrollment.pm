@@ -270,12 +270,22 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
 
         # Our own row first: its state is what this cart holds.
+        #
+        # Keyed WITHOUT student_type, deliberately, even though the foreign
+        # lookup below carries it. The two queries answer different questions
+        # against different rules. This one asks "does this cart already hold a
+        # row here", and what decides that is enrollments_payment_dedup --
+        # (session_id, student_id, payment_id), no student_type -- because that
+        # arbiter is what silently absorbs our insert. Adding the column here
+        # would make a row of another type invisible to us, so we would report
+        # 'none', insert, and have the arbiter swallow it: money taken, no
+        # enrollment. The foreign lookup asks "would the unique INDEX refuse
+        # this insert", and that index does key on student_type.
         my $row = $db->select(
             $class->table, ['status'],
-            {   payment_id   => $payment_id,
-                session_id   => $session_id,
-                student_id   => $child_id,
-                student_type => $student_type,
+            {   payment_id => $payment_id,
+                session_id => $session_id,
+                student_id => $child_id,
             },
         )->hash;
 
