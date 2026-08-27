@@ -47,6 +47,25 @@ sub a_session ($capacity = 10) {
     $s->add_events($db, $event->id);
     return $s;
 }
+# A cart with a sibling in it. The single-child helper cannot expose a
+# re-owed debt: with one child the first debt equals the whole cart, and
+# record_capacity_obligation's clamp absorbs every later one. Headroom is what
+# makes a second increment representable, so a sibling is load-bearing here.
+sub a_paid_cart_for (@children) {
+    my ($session, @kids) = @children;
+    my $each = 5000;
+    my $p = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => $each * @kids, status => 'completed',
+        metadata => {
+            enrollment_items => [ map { { session_id => $session->id, child_id => $_->id } } @kids ],
+            tenant_slug      => undef } });
+    $db->insert('payment_items', {
+        payment_id => $p->id, description => 'seat', amount_cents => $each,
+        metadata => { -json => { child_id => $_->id, session_id => $session->id } } })
+        for @kids;
+    return Registry::DAO::Payment->find($db, { id => $p->id });
+}
+
 sub a_paid_cart ($session, $child, $cents = 10000) {
     my $p = Registry::DAO::Payment->create($db, {
         user_id => $parent->id, amount_cents => $cents, status => 'completed',
@@ -229,6 +248,45 @@ subtest 'a cancelled foreign row leaves the seat available' => sub {
                        AND status <> 'cancelled'},
         $session->id, $child->id, $ours->id)->array->[0], 1,
         'and the paying cart gets its seat';
+};
+
+# The duplicate-seat branch owes money. Every OTHER branch in that loop is
+# idempotent because it WROTE something a later pass reads back: demotion leaves
+# a waitlisted row, a drop leaves a cancelled one. This branch used to write
+# nothing, so cart_seat_state answered 'foreign' forever and every redelivery
+# owed the same child again -- under a fresh refund_seq, which means a fresh
+# Stripe idempotency key, which means Stripe does NOT deduplicate it.
+#
+# A page refresh is enough. _apply_intent reports already_completed for any
+# settled status, and refund_pending is one; finalize_enrollment's own gate is
+# _money_returned, which deliberately is not.
+subtest 'a duplicate seat is owed once, however many deliveries arrive' => sub {
+    my $session = a_session();
+    my $dup     = a_child();   # already seated by someone else
+    my $sibling = a_child();   # seats normally, and leaves the headroom
+    my $theirs  = a_paid_cart( $session, $dup );
+    my $ours    = a_paid_cart_for( $session, $dup, $sibling );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $dup->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+    my $first = $db->query('SELECT refund_owed_cents FROM payments WHERE id = ?',
+        $ours->id)->array->[0];
+    is $first, 5000, 'the first delivery owes the duplicate share back';
+
+    # The redelivery, driven exactly as the settlement callers drive it.
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+
+    my $row = $db->query(q{SELECT refund_owed_cents, refund_seq,
+                                  jsonb_array_length(refund_increments) AS n
+                             FROM payments WHERE id = ?}, $ours->id)->hash;
+    is $row->{refund_owed_cents}, 5000,
+        'three deliveries owe one debt, not three';
+    is $row->{n}, 1,
+        'and record exactly one increment -- a second would carry a new Stripe key';
 };
 
 done_testing;

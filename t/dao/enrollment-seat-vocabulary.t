@@ -118,8 +118,16 @@ subtest 'all three consumers agree, status by status' => sub {
         my $now = $db->select('enrollments', ['status'],
             { session_id => $session->id, student_id => $child->id,
               payment_id => $payment->id })->hash->{status};
-        is $now eq 'waitlisted' && $status ne 'waitlisted' ? 1 : 0, $seated,
-            "demote_to_waitlisted: '$status' is " . ( $seated ? '' : 'not ' ) . 'demotable';
+        # Grade the RETURN, not the resulting status. For an already-waitlisted
+        # row the status cannot change, so a status assertion reads is(0,0) and
+        # holds however demote_to_waitlisted behaves. The return is what the
+        # settlement loop relies on to owe a share exactly once.
+        is $demoted ? 1 : 0, $seated,
+            "demote_to_waitlisted: '$status' reports "
+            . ( $seated ? 'a transition' : 'no transition' );
+        is $now, ( $seated ? 'waitlisted' : $status ),
+            "demote_to_waitlisted: '$status' "
+            . ( $seated ? 'lands on waitlisted' : 'is left alone' );
     }
 };
 

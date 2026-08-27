@@ -39,7 +39,11 @@ my $before = $db->query(q{
       JOIN pg_class t ON t.oid = i.indrelid
       JOIN pg_namespace n ON n.oid = t.relnamespace
      WHERE n.nspname = ? AND t.relname = 'enrollments'
-       AND i.indisunique AND i.indpred IS NULL}, $slug)->arrays->flatten->to_array;
+       AND i.indisunique AND i.indpred IS NULL
+       AND ( SELECT array_agg(a.attname::text ORDER BY a.attname::text)
+               FROM unnest(i.indkey) k
+               JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k )
+           = ARRAY['session_id','student_id','student_type']}, $slug)->arrays->flatten->to_array;
 ok scalar @$before, 'the cloned tenant starts with a total uniqueness rule'
     or diag 'nothing to remove -- the fixture proves nothing';
 diag "  tenant's rule is named: @$before";
