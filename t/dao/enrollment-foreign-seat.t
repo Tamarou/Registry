@@ -66,6 +66,18 @@ sub a_paid_cart_for (@children) {
     return Registry::DAO::Payment->find($db, { id => $p->id });
 }
 
+# A cart whose line item is missing or nonsensical. calculate_enrollment_total
+# skips any child whose plan returns no price, so a child can ride in
+# enrollment_items with nothing behind them.
+sub a_cart_without_line_item ($session, $child, $cents = 5000) {
+    my $p = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => $cents, status => 'completed',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
+            tenant_slug      => undef } });
+    return Registry::DAO::Payment->find($db, { id => $p->id });
+}
+
 sub a_paid_cart ($session, $child, $cents = 10000) {
     my $p = Registry::DAO::Payment->create($db, {
         user_id => $parent->id, amount_cents => $cents, status => 'completed',
@@ -287,6 +299,122 @@ subtest 'a duplicate seat is owed once, however many deliveries arrive' => sub {
         'three deliveries owe one debt, not three';
     is $row->{n}, 1,
         'and record exactly one increment -- a second would carry a new Stripe key';
+};
+
+# A NULL status is legal: the column is nullable and enrollments_status_check
+# is `status = ANY(...)`, which is NULL rather than false for NULL, so the CHECK
+# passes. Such a row sits INSIDE the live index (NULL IS DISTINCT FROM
+# 'cancelled' is true), so the insert really would collide. Under a `<>`
+# predicate this classifier would report 'none' and the caller would find out by
+# raising inside a captured settlement -- the exact failure this file exists to
+# prevent. The index is graded for this one file over; the DAO mirror was not.
+subtest 'a NULL-status foreign row is a collision, not an empty seat' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $ours    = a_paid_cart( $session, $child, 5000 );
+
+    $db->query(
+        'INSERT INTO enrollments (session_id, student_id, student_type, status)
+         VALUES (?, ?, ?, NULL)', $session->id, $child->id, 'family_member' );
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'foreign',
+        'a NULL-status row is seen';
+
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Payment->find($db, { id => $ours->id })
+                   ->finalize_enrollment($db); 1 };
+        $@;
+    };
+    is $err, '', 'and the settlement does not raise on it';
+};
+
+# The index keys on student_type. A row of a different type is not a collision,
+# so reporting it as one refunds a seat the insert would have granted.
+subtest 'a foreign row of a different student_type is not a collision' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $ours    = a_paid_cart( $session, $child, 5000 );
+
+    $db->query(
+        q{INSERT INTO enrollments (session_id, student_id, student_type, status)
+          VALUES (?, ?, 'individual', 'active')}, $session->id, $child->id );
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'none',
+        'a different student_type leaves the seat free';
+
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+    is $db->query(q{SELECT COUNT(*) FROM enrollments
+                     WHERE session_id = ? AND student_id = ? AND payment_id = ?},
+        $session->id, $child->id, $ours->id)->array->[0], 1,
+        'and the cart gets the seat the index would have granted it';
+};
+
+# The duplicate-seat branch flags for review when the share cannot be resolved.
+# Deleting that flag changed nothing observable: the identical catch on the
+# demotion path is graded by three subtests, this one by none.
+subtest 'an unresolvable duplicate share is flagged, not settled clean' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    my $ours    = a_cart_without_line_item( $session, $child );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+
+    my $row = $db->query(q{SELECT status, metadata->'refund_manual_review' AS flag
+                             FROM payments WHERE id = ?}, $ours->id)->hash;
+    ok $row->{flag}, 'the unresolvable share is flagged for a human';
+    isnt $row->{status}, 'completed',
+        'and the cart does not settle looking clean';
+};
+
+# A negative share must not net off a sibling's real debt. The obligation writer
+# guards the cart TOTAL, so a cart of +5000 and -2000 recorded 3000, tripped no
+# guard, wrote no flag and warned nobody -- leaving the child who really lost
+# their seat under-refunded by 2000 with nothing to find. One child alone does
+# not grade this: the total is then negative and the aggregate guard does fire.
+# The masking needs a sibling, which is the whole point.
+subtest 'a negative share does not silently net off a sibling real debt' => sub {
+    my $session  = a_session();
+    my $honest   = a_child();
+    my $nonsense = a_child();
+
+    my $p = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 5000, status => 'completed',
+        metadata => { tenant_slug => undef, enrollment_items => [
+            { session_id => $session->id, child_id => $honest->id },
+            { session_id => $session->id, child_id => $nonsense->id } ] } });
+    $db->insert('payment_items', {
+        payment_id => $p->id, description => 'seat', amount_cents => 5000,
+        metadata => { -json => { child_id => $honest->id, session_id => $session->id } } });
+    $db->insert('payment_items', {
+        payment_id => $p->id, description => 'discounted past zero',
+        amount_cents => -2000,
+        metadata => { -json => { child_id => $nonsense->id, session_id => $session->id } } });
+
+    # Both children already hold seats from elsewhere, so both take the
+    # duplicate-seat branch and both shares are accumulated.
+    for my $kid ( $honest, $nonsense ) {
+        my $theirs = a_paid_cart( $session, $kid );
+        Registry::DAO::Enrollment->create_for_payment($db, {
+            session_id => $session->id, family_member_id => $kid->id,
+            parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+    }
+
+    Registry::DAO::Payment->find($db, { id => $p->id })->finalize_enrollment($db);
+
+    my $row = $db->query(q{SELECT refund_owed_cents,
+                                  metadata->'refund_manual_review' AS flag
+                             FROM payments WHERE id = ?}, $p->id)->hash;
+    is $row->{refund_owed_cents}, 5000,
+        'the honest share is owed in full, not reduced by the nonsense one';
+    ok $row->{flag}, 'and the nonsense share is put in front of a human';
 };
 
 done_testing;

@@ -209,4 +209,36 @@ subtest 'a NULL-status row still occupies the seat' => sub {
         'a second NULL-status row is refused -- NULL is not a free seat';
 };
 
+# The named arbiter's OTHER job. create_for_payment's comment says the arbiter
+# makes calling it twice for the same payment safe, and nothing graded that:
+# replacing the arbiter so a same-payment replay RAISES left every test in the
+# money path green. The reason is a conjunction trap -- finalize_enrollment's
+# `next if $held eq 'seated'` short-circuits before the second insert on every
+# replay path a test drives, so the arbiter is never actually asked. It is asked
+# when two deliveries race and both read 'none'.
+#
+# So ask it directly, with no settlement loop in the way.
+subtest 'create_for_payment absorbs its own replay' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $payment = a_payment();
+
+    my %row = ( session_id => $session->id, family_member_id => $child->id,
+                parent_id => $parent->id, status => 'active',
+                payment_id => $payment->id );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {%row});
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Enrollment->create_for_payment($db, {%row}); 1 };
+        $@;
+    };
+    is $err, '', 'the identical second insert is absorbed, not raised';
+
+    is $db->query(q{SELECT COUNT(*) FROM enrollments
+                     WHERE session_id = ? AND student_id = ? AND payment_id = ?},
+        $session->id, $child->id, $payment->id)->array->[0], 1,
+        'and it left exactly one row';
+};
+
 done_testing;

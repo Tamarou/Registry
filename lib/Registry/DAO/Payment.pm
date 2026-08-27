@@ -474,6 +474,26 @@ field $_stripe_client = undef;
 
         return unless @session_ids;
 
+        # This statement locks `sessions`, but what it is really protecting is
+        # `enrollments` -- and the connection between the two is a foreign key,
+        # not anything visible here.
+        #
+        # enrollments_session_id_fkey makes every INSERT into enrollments take
+        # FOR KEY SHARE on the referenced sessions row, and FOR KEY SHARE
+        # conflicts with FOR UPDATE. So holding this lock blocks every
+        # concurrent enrollment insert for these sessions, including from code
+        # paths that have never heard of it. That is what stops two settlements
+        # both reading 'none' from cart_seat_state and both inserting, which
+        # would raise inside a captured settlement.
+        #
+        # Two consequences worth knowing before touching either side. Dropping
+        # or deferring that FK silently removes the mutual exclusion while this
+        # statement still looks like it provides it. And the protection covers
+        # INSERTs only: an UPDATE that changes `status` without touching
+        # `session_id` takes no lock here, so flipping a cancelled row back to
+        # live races this freely. Nothing in lib/ does that today -- there is no
+        # caller of the enrollment activate/pend helpers -- which is the only
+        # reason it is not a live defect. See #327.
         $db->query(
             'SELECT id FROM sessions WHERE id = ANY(?) ORDER BY id FOR UPDATE',
             \@session_ids
@@ -1132,6 +1152,19 @@ SQL
         die "refund_share_for: no line item for child $child_id in session "
           . "$session_id on payment $id\n"
             unless $row->{n};
+
+        # Refuse a negative share HERE, where both accumulation sites route
+        # through it, rather than at the obligation writer. That writer guards
+        # the cart TOTAL, so one child's negative share silently cancelled
+        # another child's real debt: +5000 and -2000 recorded 3000, tripped no
+        # guard, wrote no manual-review flag and warned nobody, leaving the
+        # child who actually lost their seat under-refunded by 2000 with
+        # nothing to find. Reachable because PricingPlan's percentage_discount
+        # is unbounded and payment_items.amount_cents carries no CHECK.
+        # Dying here reaches the caller's catch, which flags for review.
+        die "refund_share_for: negative share $row->{cents} for child "
+          . "$child_id in session $session_id on payment $id\n"
+            if $row->{cents} < 0;
 
         return $row->{cents};
     }

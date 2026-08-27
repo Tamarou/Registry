@@ -251,15 +251,17 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # is a different question that happens to have the same answer today.
     sub seat_holding_statuses ($class) { return [qw( active pending )] }
 
-    sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
+    sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id,
+                         $student_type = 'family_member') {
         $db = $db->db if $db isa Registry::DAO;
 
         # Our own row first: its state is what this cart holds.
         my $row = $db->select(
             $class->table, ['status'],
-            {   payment_id => $payment_id,
-                session_id => $session_id,
-                student_id => $child_id,
+            {   payment_id   => $payment_id,
+                session_id   => $session_id,
+                student_id   => $child_id,
+                student_type => $student_type,
             },
         )->hash;
 
@@ -294,10 +296,12 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         # settlement Stripe has already captured.
         #
         # cancelled is excluded because the index excludes it -- that seat
-        # really is free.
-        my $elsewhere = $db->query( <<'SQL', $session_id, $child_id )->hash;
+        # really is free. student_type is in the predicate for the same reason:
+        # the index keys on it, so a row of a different type is not a collision
+        # and reporting it as one refunds a seat the insert would have granted.
+        my $elsewhere = $db->query( <<'SQL', $session_id, $child_id, $student_type )->hash;
             SELECT status FROM enrollments
-             WHERE session_id = ? AND student_id = ?
+             WHERE session_id = ? AND student_id = ? AND student_type = ?
                AND status IS DISTINCT FROM 'cancelled'
              LIMIT 1
 SQL
@@ -375,9 +379,16 @@ SQL
     sub payment_fits_session ($class, $db, $payment, $session_id, $already_granted = 0) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $capacity = $db->query(
+        # ->hash is undef when the session is not visible to this connection,
+        # and the deref used to raise "Can't use an undefined value as a HASH
+        # reference" from inside a settlement Stripe has already captured. There
+        # is no recovery here -- treating it as unlimited seats the child and
+        # the FK refuses the insert one line later -- so the only improvement
+        # available is an error that says what happened.
+        my $row = $db->query(
             'SELECT capacity FROM sessions WHERE id = ?', $session_id
-        )->hash->{capacity};
+        )->hash or die "payment_fits_session: session $session_id not found\n";
+        my $capacity = $row->{capacity};
         return 1 unless $capacity;    # NULL or 0 -- unlimited
 
         my $taken = $db->query(
