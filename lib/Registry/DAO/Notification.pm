@@ -437,6 +437,12 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     # dropped, so the stale row silenced the confirmation for the enrolment the
     # family had just paid for. The confirmation is about an enrolment, so the
     # enrolment is what it is keyed on.
+    #
+    # Rows queued before this re-key carry no enrollment_id, so they no longer
+    # silence anything and are not backfilled. Reaching that would need a
+    # redelivery for a child who is already seated, and finalize_enrollment
+    # skips those before it ever gets here -- and after a drop and re-enrol a
+    # second confirmation is the correct outcome anyway.
     sub ensure_enrollment_confirmation ( $class, $db, $args ) {
         $db = $db->db if $db isa Registry::DAO;
 

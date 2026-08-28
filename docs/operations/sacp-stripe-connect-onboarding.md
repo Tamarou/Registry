@@ -230,9 +230,20 @@ psql $DATABASE_URL -c \
     WHERE e.payment_id = '<payment_id>'"
 ```
 
-`waitlisted` is the first case, `cancelled` the second. Either way the refund
-owed is this payment's share for that child, and the procedure below is the
-same.
+`waitlisted` is the first case, `cancelled` the second.
+
+**No rows at all is a third case**, and it means the share could not be
+computed: the marker is written only once the debt it stands for resolves, so an
+unresolvable share leaves the payment `refund_pending` with nothing recorded
+against it. Such a row always carries `metadata.refund_manual_review`, which is
+why Step 1 searches on that as well as on status. Treat it as the manual-review
+path below -- decide the amount by hand -- and expect `refund_owed_cents` to be
+0 rather than the share you are about to send. It is deliberately still
+retryable: fix the underlying line item and the next delivery settles it
+automatically.
+
+In the first two cases the refund owed is this payment's share for that child,
+and the procedure below is the same.
 
 **Stripe's redelivery does not heal this.** The dedup claim in
 `registry.webhook_events` commits in the same transaction as the settlement, by

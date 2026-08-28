@@ -540,4 +540,38 @@ subtest 'an unresolvable share stays retryable until it resolves' => sub {
         'the repaired share is owed on the next delivery';
 };
 
+# Only the READ belongs in that try. A database error on the marker INSERT
+# aborts the surrounding transaction, and the catch's first act is an UPDATE --
+# which cannot run on an aborted transaction. It dies there, so the genuine
+# error is replaced by "current transaction is aborted", no manual-review flag
+# is written, and the webhook retries forever on an error nobody can read.
+subtest 'a DB failure on the marker does not destroy the real error' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+    my $ours = a_paid_cart( $session, $child, 5000 );
+
+    $db->query(q{
+        CREATE OR REPLACE FUNCTION probe_marker_boom() RETURNS trigger AS $$
+        BEGIN RAISE EXCEPTION 'simulated failure writing the duplicate-seat marker';
+        END $$ LANGUAGE plpgsql});
+    $db->query(q{CREATE TRIGGER probe_marker_boom_t BEFORE INSERT ON enrollments
+                 FOR EACH ROW WHEN (NEW.status = 'cancelled')
+                 EXECUTE FUNCTION probe_marker_boom()});
+
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Payment->find($db, { id => $ours->id })
+                   ->finalize_enrollment($db); 1 };
+        $@;
+    };
+    like $err, qr/simulated failure writing the duplicate-seat marker/,
+        'the escaping error names the real cause, not "transaction is aborted"';
+
+    $db->query('DROP TRIGGER probe_marker_boom_t ON enrollments');
+};
+
 done_testing;

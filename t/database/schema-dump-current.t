@@ -79,7 +79,12 @@ sub dump_to ($uri, $name) {
 }
 
 sub load_into ($uri, $file) {
-    system( "$psql '$uri' < '$file' >/dev/null 2>&1" ) == 0
+    # ON_ERROR_STOP, or the `or die` is decoration: psql exits 0 even when every
+    # statement in the file failed. Without it a dump that will not load shows up
+    # as the DDL comparison failing with "run `make test-schema`" -- the wrong
+    # instruction for the wrong cause, on the one test whose job is to diagnose
+    # exactly this artefact.
+    system( "$psql -v ON_ERROR_STOP=1 '$uri' < '$file' >/dev/null" ) == 0
         or die "loading $file failed";
 }
 

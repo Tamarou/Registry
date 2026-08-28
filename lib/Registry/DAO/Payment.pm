@@ -616,10 +616,46 @@ field $_stripe_client = undef;
                 # the seat the other payment holds. drop_reason is set because this
                 # is not a drop, and the unfiltered admin readers would otherwise
                 # show a family dropping a session their child still attends.
+                # Only the READ goes in the try. Putting the marker INSERT in
+                # here as well looked tidier and is a trap: any database error
+                # on that insert -- deadlock, serialization failure, a
+                # statement_timeout cancel, a trigger -- aborts the surrounding
+                # transaction, and the catch's first act is to UPDATE payments,
+                # which cannot run on an aborted transaction. It dies there, so
+                # the genuine error never reaches the warn below, no
+                # manual-review flag is written, and the webhook 500s into a
+                # retry loop reproducing it forever. Three failures for one
+                # fault, and the one piece of evidence a human needs is the part
+                # that gets destroyed.
+                my $share;
                 try {
-                    my $share = $self->refund_share_for(
+                    $share = $self->refund_share_for(
                         $db, $item->{child_id}, $session_id );
+                }
+                catch ($e) {
+                    $self->flag_refund_manual_review(
+                        $db, $item->{child_id}, $session_id );
+                    warn "finalize_enrollment: unresolvable duplicate-seat share for "
+                       . "child $item->{child_id} in session $session_id "
+                       . "(payment $id): $e";
+                }
 
+                # Recorded only once the debt it stands for is resolved. The
+                # marker is what makes this branch idempotent -- cart_seat_state
+                # reads our own cancelled row as 'closed' next delivery, so the
+                # child is not owed for twice, and without it every redelivery
+                # owed the same child again under a fresh refund_seq, which is a
+                # fresh Stripe idempotency key and therefore not deduplicated.
+                # Writing it before the share resolved was the opposite error:
+                # the state flipped to 'closed' and an unresolvable share could
+                # then never be resolved, not even after a human supplied the
+                # missing line item.
+                #
+                # If this insert fails there is no marker and no debt, the error
+                # propagates, and the redelivery retries the whole item -- which
+                # is right, because a marker we could not write is a promise we
+                # cannot keep.
+                if ( defined $share ) {
                     Registry::DAO::Enrollment->create_for_payment( $db, {
                         session_id       => $session_id,
                         family_member_id => $item->{child_id},
@@ -632,13 +668,7 @@ field $_stripe_client = undef;
                     $owed_cents += $share;
                     push @owed_children, $item->{child_id};
                 }
-                catch ($e) {
-                    $self->flag_refund_manual_review(
-                        $db, $item->{child_id}, $session_id );
-                    warn "finalize_enrollment: unresolvable duplicate-seat share for "
-                       . "child $item->{child_id} in session $session_id "
-                       . "(payment $id): $e";
-                }
+
                 next;
             }
 
