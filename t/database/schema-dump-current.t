@@ -11,11 +11,6 @@ use File::Temp qw(tempdir);
 use File::Spec;
 use Mojo::Pg;
 
-# Must match Test::Registry::DB::_find_pg_tool. If this file dumps with a
-# different major version than `make test-schema` writes with, every comparison
-# below is a permanent false failure on that host.
-our @PG_VERSIONS = ( 17, 16, 15, 14 );
-
 # The dump is a generated artefact that goes stale in silence. `make test`
 # regenerates it through its sql/deploy/*.sql dependency, but CI runs a bare
 # `carton exec prove -lr t/` and every documented single-file invocation is bare
@@ -25,9 +20,31 @@ our @PG_VERSIONS = ( 17, 16, 15, 14 );
 # had moved to `IS DISTINCT FROM`, and was missing a table, while the suite ran
 # green against it.
 #
+# BOTH sides are re-dumped here, by the same binary against the same server, in
+# this run. Comparing a fresh dump against the committed FILE looks simpler and
+# is wrong: pg_dump's output is version-specific, so a dump written on 18.4
+# begins `SET transaction_timeout = 0`, a parameter that does not exist on 14,
+# and the comparison diverges at line 4 of the preamble on a schema that is
+# perfectly current. That is not hypothetical either -- it is how this file
+# first failed in CI, which runs postgres:14 while this workstation runs 18.4.
+# Round-tripping the committed dump through a database cancels every
+# version-specific rendering difference and leaves only real divergence.
+#
 # The obvious gate -- `make test-schema && git diff --exit-code` -- cannot work,
 # because generate_dump dumps seed rows whose UUIDs and timestamps are fresh on
-# every run. So compare the DDL only.
+# every run. So compare the DDL only, plus a stable projection of the money seed.
+
+sub pg_tool ($tool) {
+    # Same search order as Test::Registry::DB::_find_pg_tool: this file must
+    # dump with whatever `make test-schema` writes with, or every comparison
+    # below is a permanent false failure on that host.
+    for my $path ( $tool, "/usr/bin/$tool",
+        ( map { "/usr/lib/postgresql/$_/bin/$tool" } 17, 16, 15, 14 ) )
+    {
+        return $path if -x $path || system("which $path >/dev/null 2>&1") == 0;
+    }
+    return $tool;
+}
 
 sub ddl_only ($path) {
     open my $fh, '<', $path or die "open $path: $!";
@@ -35,7 +52,8 @@ sub ddl_only ($path) {
     my $in_copy = 0;
     while ( my $line = <$fh> ) {
         # COPY payloads carry gen_random_uuid()/now() values that differ on
-        # every regeneration. The DDL is what this test is about.
+        # every regeneration. The DDL is what this comparison is about; the
+        # money seed is graded separately below.
         if ($in_copy) { $in_copy = 0 if $line =~ /\A\\\.\s*\z/; next }
         $in_copy = 1, next if $line =~ /\ACOPY .* FROM stdin;/;
 
@@ -48,29 +66,53 @@ sub ddl_only ($path) {
 }
 
 my $committed = File::Spec->catfile(qw(sql test-schema.sql));
-ok -s $committed, 'the committed dump exists and is not empty' or done_testing, exit;
+ok -s $committed, 'the committed dump exists and is not empty' or do { done_testing; exit };
 
-my $pg  = Test::PostgreSQL->new;
-my $out = File::Spec->catfile( tempdir( CLEANUP => 1 ), 'fresh.sql' );
+my $pg_dump = pg_tool('pg_dump');
+my $psql    = pg_tool('psql');
+my $tmp     = tempdir( CLEANUP => 1 );
 
-App::Sqitch->new->run( 'sqitch', 'deploy', '-t', $pg->uri );
+sub dump_to ($uri, $name) {
+    my $out = File::Spec->catfile( $tmp, $name );
+    system("$pg_dump '$uri' > '$out' 2>/dev/null") == 0 or die "pg_dump failed";
+    return $out;
+}
 
-my ($pg_dump) = grep { -x } (
-    '/usr/bin/pg_dump',
-    ( map { "/usr/lib/postgresql/$_/bin/pg_dump" } @PG_VERSIONS ),
-);
-$pg_dump //= 'pg_dump';
-system("$pg_dump '" . $pg->uri . "' > '$out' 2>/dev/null") == 0
-    or die 'pg_dump failed';
+sub load_into ($uri, $file) {
+    system( "$psql '$uri' < '$file' >/dev/null 2>&1" ) == 0
+        or die "loading $file failed";
+}
 
-my $fresh = ddl_only($out);
-my $have  = ddl_only($committed);
+# Both sides are compared after the SAME number of parse cycles, because
+# Postgres re-renders some expressions when it re-reads them. A CHECK written
+# once as
+#     ANY ((ARRAY['pending'::character varying, ...])::text[])
+# comes back as
+#     ANY (ARRAY[('pending'::character varying)::text, ...])
+# after a load-and-dump. Both spellings mean the same thing, so a side that has
+# been through one more round trip than the other diverges on a schema that is
+# perfectly current.
+#
+# Side A: the migrations, dumped, reloaded, dumped again.
+my $migrated = Test::PostgreSQL->new;
+App::Sqitch->new->run( 'sqitch', 'deploy', '-t', $migrated->uri );
 
-is scalar @$fresh, scalar @$have,
+my $migrated_rt = Test::PostgreSQL->new;
+load_into( $migrated_rt->uri, dump_to( $migrated->uri, 'from-migrations.sql' ) );
+
+# Side B: the committed dump -- itself already a first-generation dump -- loaded
+# and dumped once, which is the same one cycle side A just took.
+my $restored = Test::PostgreSQL->new;
+load_into( $restored->uri, $committed );
+
+my $fresh = ddl_only( dump_to( $migrated_rt->uri, 'migrations-rt.sql' ) );
+my $have  = ddl_only( dump_to( $restored->uri,    'committed-rt.sql' ) );
+
+is scalar @$have, scalar @$fresh,
     'the committed dump has as many DDL lines as a fresh deploy produces';
 
 my $first_diff;
-for my $i ( 0 .. $#{ [ @$fresh > @$have ? @$fresh : @$have ] } ) {
+for my $i ( 0 .. ( @$fresh > @$have ? $#$fresh : $#$have ) ) {
     my ( $a, $b ) = ( $fresh->[$i], $have->[$i] );
     next if defined $a && defined $b && $a eq $b;
     $first_diff = $i;
@@ -99,26 +141,22 @@ ok !defined $first_diff,
 # projection with no ids and no timestamps, which is exactly the subset the COPY
 # skip exists to avoid.
 subtest 'the seeded money configuration matches what the migrations produce' => sub {
-    my $committed_pg = Test::PostgreSQL->new;
-    my $psql = ( grep { -x } '/usr/bin/psql',
-        ( map { "/usr/lib/postgresql/$_/bin/psql" } @PG_VERSIONS ) )[0] // 'psql';
-    system( "$psql '" . $committed_pg->uri . "' < '$committed' >/dev/null 2>&1" ) == 0
-        or die 'loading the committed dump failed';
-
     my $projection = q{
         SELECT plan_scope, plan_name, plan_type, pricing_model_type, amount_cents,
-               pricing_configuration->>'percentage'            AS pct,
-               pricing_configuration->>'monthly_base'          AS base,
+               pricing_configuration->>'percentage'             AS pct,
+               pricing_configuration->>'monthly_base'           AS base,
                pricing_configuration->>'refund_application_fee' AS refund_fee
           FROM registry.pricing_plans
          ORDER BY plan_scope, plan_name
     };
 
-    my $from_migrations = Mojo::Pg->new( $pg->uri )->db->query($projection)->hashes->to_array;
-    my $from_dump = Mojo::Pg->new( $committed_pg->uri )->db->query($projection)->hashes->to_array;
+    my $from_migrations =
+        Mojo::Pg->new( $migrated->uri )->db->query($projection)->hashes->to_array;
+    my $from_dump =
+        Mojo::Pg->new( $restored->uri )->db->query($projection)->hashes->to_array;
 
-    ok scalar @$from_migrations,
-        'the migrations seed at least one pricing plan' or return;
+    ok scalar @$from_migrations, 'the migrations seed at least one pricing plan'
+        or return;
     is_deeply $from_dump, $from_migrations,
         'the committed dump seeds the same plans, rates and amounts as sql/deploy/'
         or diag 'run `make test-schema` -- a rate assertion that reads the DB is '
