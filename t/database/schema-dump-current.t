@@ -78,14 +78,34 @@ sub dump_to ($uri, $name) {
     return $out;
 }
 
+my $load_seq = 0;
+
 sub load_into ($uri, $file) {
-    # ON_ERROR_STOP, or the `or die` is decoration: psql exits 0 even when every
-    # statement in the file failed. Without it a dump that will not load shows up
-    # as the DDL comparison failing with "run `make test-schema`" -- the wrong
-    # instruction for the wrong cause, on the one test whose job is to diagnose
-    # exactly this artefact.
-    system( "$psql -v ON_ERROR_STOP=1 '$uri' < '$file' >/dev/null" ) == 0
-        or die "loading $file failed";
+    # ON_ERROR_STOP, or the `or die` below is decoration: psql exits 0 even when
+    # every statement in the file failed. Without it a dump that will not load
+    # shows up as the DDL comparison failing with "run `make test-schema`" --
+    # the wrong instruction for the wrong cause, on the one test whose job is to
+    # diagnose exactly this artefact.
+    #
+    # Which then requires dropping pg_dump's preamble SETs. They are session
+    # settings that cannot affect the resulting schema, and they are the one
+    # part of a dump that is not portable across majors: a dump written on 18.4
+    # opens with `SET transaction_timeout = 0`, and PostgreSQL 14 -- which CI
+    # runs -- rejects it as an unrecognized parameter. Measured against 14, that
+    # line is the ONLY statement in the committed dump that fails; every piece
+    # of DDL loads. Both sides get their preamble from the re-dump anyway, so
+    # discarding it here costs the comparison nothing.
+    my $portable = File::Spec->catfile( $tmp, 'portable-' . $load_seq++ . '.sql' );
+    open my $in,  '<', $file     or die "open $file: $!";
+    open my $out, '>', $portable or die "open $portable: $!";
+    while ( my $line = <$in> ) {
+        next if $line =~ /\A\s*SET\s+\w+\s*=/;
+        print {$out} $line;
+    }
+    close $out;
+
+    system( "$psql -v ON_ERROR_STOP=1 '$uri' < '$portable' >/dev/null" ) == 0
+        or die "loading $file failed (see stderr above)";
 }
 
 # Both sides are compared after the SAME number of parse cycles, because

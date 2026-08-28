@@ -43,7 +43,19 @@ package Test::Registry::DB {
 
         my $pg_dump = _find_pg_tool('pg_dump');
         my $out = $DUMP_FILE;
-        system("$pg_dump '$uri' > '$out' 2>/dev/null") == 0
+
+        # Strip pg_dump's preamble SETs on the way out, so the committed
+        # artefact loads on every major we support rather than only on whichever
+        # one generated it. They are session settings that cannot affect the
+        # resulting schema, and they are the one part of a dump that is not
+        # portable: 17 and 18 emit `SET transaction_timeout = 0`, which 14, 15
+        # and 16 reject as an unrecognized parameter. Measured, that line is the
+        # ONLY statement in this dump that fails to load on 14 -- every piece of
+        # DDL is accepted -- but psql exits 0 through errors unless told
+        # otherwise, so the failure was invisible for as long as nobody looked.
+        # Filtering here rather than at each reader is what lets both loaders
+        # run with ON_ERROR_STOP and mean it.
+        system("$pg_dump '$uri' | grep -v '^SET [a-z_]* =' > '$out'") == 0
             or die "pg_dump failed";
 
         warn "Schema dump written to $out\n";
@@ -54,7 +66,14 @@ package Test::Registry::DB {
         my ($self) = @_;
         my $uri  = $self->{pgsql}->uri;
         my $psql = _find_pg_tool('psql');
-        system("$psql '$uri' < '$DUMP_FILE' >/dev/null 2>&1") == 0
+
+        # ON_ERROR_STOP, and stderr left alone. Without the flag psql exits 0
+        # even when every statement in the file failed, so this `or die` could
+        # not fire and every test in the suite would run against whatever
+        # fraction of the schema happened to load. Safe to arm now that
+        # generate_dump writes a portable file; before that it would have
+        # rejected the dump on any server older than the one that made it.
+        system("$psql -v ON_ERROR_STOP=1 '$uri' < '$DUMP_FILE' >/dev/null") == 0
             or die "psql load failed";
     }
 
