@@ -592,30 +592,6 @@ field $_stripe_client = undef;
             # back. Not demoted: there is no row of ours to demote, and the row
             # that exists belongs to whoever paid for it first.
             if ( $held eq 'foreign' ) {
-                # Resolve the debt first, then record it. Both orderings look
-                # defensible and only one is safe.
-                #
-                # The marker is what makes this branch idempotent: cart_seat_state
-                # reads our own cancelled row as 'closed' on the next delivery, so
-                # the child is not owed for twice. Without it every redelivery owed
-                # the same child again under a fresh refund_seq -- a fresh Stripe
-                # idempotency key, which Stripe does not deduplicate.
-                #
-                # But writing it BEFORE the share resolves makes an unresolvable
-                # share permanently unresolvable: the row lands, the state flips to
-                # 'closed', and no later delivery will look at this child again --
-                # not even after a human supplies the missing line item. That trades
-                # a debt owed repeatedly for a debt owed never, and only the second
-                # cannot be recovered. Leaving the state at 'foreign' is precisely
-                # what lets the retry work, and the manual-review flag is what stops
-                # the cart settling clean in the meantime.
-                #
-                # A cancelled row is the honest record -- this cart paid for a seat
-                # it did not receive -- and it sits outside
-                # enrollments_session_student_type_live, so it cannot collide with
-                # the seat the other payment holds. drop_reason is set because this
-                # is not a drop, and the unfiltered admin readers would otherwise
-                # show a family dropping a session their child still attends.
                 # Only the READ goes in the try. Putting the marker INSERT in
                 # here as well looked tidier and is a trap: any database error
                 # on that insert -- deadlock, serialization failure, a
@@ -640,16 +616,28 @@ field $_stripe_client = undef;
                        . "(payment $id): $e";
                 }
 
-                # Recorded only once the debt it stands for is resolved. The
-                # marker is what makes this branch idempotent -- cart_seat_state
+                # The marker is recorded only once the debt it stands for
+                # resolves, and both halves of that carry weight.
+                #
+                # Recording it makes the branch idempotent: cart_seat_state
                 # reads our own cancelled row as 'closed' next delivery, so the
-                # child is not owed for twice, and without it every redelivery
-                # owed the same child again under a fresh refund_seq, which is a
-                # fresh Stripe idempotency key and therefore not deduplicated.
-                # Writing it before the share resolved was the opposite error:
-                # the state flipped to 'closed' and an unresolvable share could
-                # then never be resolved, not even after a human supplied the
-                # missing line item.
+                # child is not owed for twice. Without it every redelivery owes
+                # the same child again under a fresh refund_seq -- a fresh
+                # Stripe idempotency key, which Stripe does not deduplicate.
+                #
+                # Recording it only on success keeps an unresolvable share
+                # resolvable: while the state stays 'foreign' a later delivery
+                # looks at this child again, so supplying the missing line item
+                # settles it. The manual-review flag is what stops the cart
+                # settling clean in the meantime.
+                #
+                # A cancelled row is the honest record -- this cart paid for a
+                # seat it did not receive -- and it sits outside
+                # enrollments_session_student_type_live, so it cannot collide
+                # with the seat the other payment holds. drop_reason is set
+                # because this is not a drop: the unfiltered admin readers would
+                # otherwise show a family dropping a session their child is
+                # still attending.
                 #
                 # If this insert fails there is no marker and no debt, the error
                 # propagates, and the redelivery retries the whole item -- which

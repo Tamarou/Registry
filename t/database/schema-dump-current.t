@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::PostgreSQL;
+use Test::Registry::DB ();
 use App::Sqitch;
 use File::Temp qw(tempdir);
 use File::Spec;
@@ -34,17 +35,10 @@ use Mojo::Pg;
 # because generate_dump dumps seed rows whose UUIDs and timestamps are fresh on
 # every run. So compare the DDL only, plus a stable projection of the money seed.
 
-sub pg_tool ($tool) {
-    # Same search order as Test::Registry::DB::_find_pg_tool: this file must
-    # dump with whatever `make test-schema` writes with, or every comparison
-    # below is a permanent false failure on that host.
-    for my $path ( $tool, "/usr/bin/$tool",
-        ( map { "/usr/lib/postgresql/$_/bin/$tool" } 17, 16, 15, 14 ) )
-    {
-        return $path if -x $path || system("which $path >/dev/null 2>&1") == 0;
-    }
-    return $tool;
-}
+# Borrowed, not copied. This file must dump with whatever `make test-schema`
+# writes with; a second search order that drifts from that one makes every
+# comparison below a permanent false failure on the host where they disagree.
+sub pg_tool ($tool) { Test::Registry::DB::_find_pg_tool($tool) }
 
 sub ddl_only ($path) {
     open my $fh, '<', $path or die "open $path: $!";
@@ -99,7 +93,12 @@ sub load_into ($uri, $file) {
     open my $in,  '<', $file     or die "open $file: $!";
     open my $out, '>', $portable or die "open $portable: $!";
     while ( my $line = <$in> ) {
-        next if $line =~ /\A\s*SET\s+\w+\s*=/;
+        # Column 0, by name -- see the note in Test::Registry::DB. Allowing
+        # leading whitespace strips indented SETs out of plpgsql bodies on BOTH
+        # sides of this comparison, which is worse here than anywhere: it makes
+        # real drift on those lines invisible to the one test whose job is to
+        # see it.
+        next if $line =~ /\ASET\s+transaction_timeout\s*=/;
         print {$out} $line;
     }
     close $out;

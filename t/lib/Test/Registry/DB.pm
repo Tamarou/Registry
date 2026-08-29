@@ -55,8 +55,49 @@ package Test::Registry::DB {
         # otherwise, so the failure was invisible for as long as nobody looked.
         # Filtering here rather than at each reader is what lets both loaders
         # run with ON_ERROR_STOP and mean it.
-        system("$pg_dump '$uri' | grep -v '^SET [a-z_]* =' > '$out'") == 0
-            or die "pg_dump failed";
+        # Dumped and filtered in two steps, because a shell pipeline reports
+        # only its LAST command's status: `pg_dump | grep > out` returns grep's
+        # 0 even when pg_dump died partway, which would commit a truncated
+        # sql/test-schema.sql without a word. Measured -- `(emit a line; exit 3)
+        # | grep -v ...` gives rc=0. That is the exact failure the rest of this
+        # work exists to make impossible, so it does not get to hide in the
+        # generator.
+        my $raw = "$out.raw";
+        system("$pg_dump '$uri' > '$raw'") == 0 or die "pg_dump failed";
+
+        open my $in,  '<', $raw  or die "open $raw: $!";
+        open my $dst, '>', $out  or die "open $out: $!";
+        while ( my $line = <$in> ) {
+            # pg_dump's preamble SETs are the one part of a dump that is not
+            # portable across majors: 17 and 18 emit `SET transaction_timeout`,
+            # which 14, 15 and 16 reject outright. Dropping them lets every
+            # reader load this file with ON_ERROR_STOP and mean it. The rest are
+            # server defaults on any database we load into, so re-establishing
+            # them is not the artefact's job.
+            # By NAME, at column 0, and only the ones that are not portable.
+            #
+            # Column 0 because plpgsql bodies contain INDENTED `SET` --
+            # registry.copy_workflow has two, inside a dynamic EXECUTE string.
+            # Stripping those leaves CREATE FUNCTION succeeding (they are inside
+            # a string literal), so the artefact loads clean and tenant cloning
+            # then dies on `UPDATE ... WHERE` with no SET clause.
+            #
+            # By name because the rest of pg_dump's preamble is not decoration.
+            # check_function_bodies = false is why a dump whose functions are
+            # written before its tables loads at all; client_min_messages =
+            # warning is what keeps NOTICE off stderr and out of TAP. Dropping
+            # the whole preamble to solve one incompatible line traded a known
+            # problem for two latent ones.
+            #
+            # transaction_timeout arrived in PostgreSQL 17, so a dump written on
+            # 17 or 18 is rejected outright by 14, 15 and 16. If a later release
+            # adds another, this load fails loudly naming it -- which is the
+            # right way to find out.
+            next if $line =~ /\ASET\s+transaction_timeout\s*=/;
+            print {$dst} $line;
+        }
+        close $dst;
+        unlink $raw;
 
         warn "Schema dump written to $out\n";
         undef $template_db;

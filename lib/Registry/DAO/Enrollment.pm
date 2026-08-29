@@ -225,24 +225,6 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method cancel($db)   { $self->$update_status( $db, 'cancelled' ) }
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
     
-    # Count enrollments for a session by status
-    # What does this payment already hold for this (session, child)?
-    #
-    # One predicate with three answers, because every consumer of this question
-    # must agree on it. A cancelled row in particular must be neither
-    # re-adjudicated nor treated as a fresh demotion: doing the first
-    # un-cancels an admin's drop, and doing the second owes its share a second
-    # time under an idempotency key Stripe has never seen, against money the
-    # enrollment's own refund_status already records as returned.
-    #
-    #   seated     -- active or pending. A seat in hand: leave it, and count it
-    #                 against this cart's own capacity.
-    #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
-    #   closed     -- cancelled. `enrollments_status_check` bounds this column to
-    #                 pending|active|cancelled|waitlisted, so cancelled is the
-    #                 whole category: a terminal drop another system owns, and
-    #                 not ours to re-adjudicate.
-    #   none       -- nothing here; adjudicate normally.
     # The one place that answers "does this enrollment status hold a seat".
     #
     # Three consumers used to carry their own copy of this list: this class's
@@ -265,8 +247,30 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # is a different question that happens to have the same answer today.
     sub seat_holding_statuses ($class) { return [qw( active pending )] }
 
-    sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id,
-                         $student_type = 'family_member') {
+    # What does this payment already hold for this (session, child)?
+    #
+    # Two predicates and five answers, because every consumer of this question
+    # must agree on it. A cancelled row in particular must be neither
+    # re-adjudicated nor treated as a fresh demotion: doing the first
+    # un-cancels an admin's drop, and doing the second owes its share a second
+    # time under an idempotency key Stripe has never seen, against money the
+    # enrollment's own refund_status already records as returned.
+    #
+    #   seated     -- active or pending. A seat in hand: leave it, and count it
+    #                 against this cart's own capacity.
+    #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
+    #   closed     -- cancelled. `enrollments_status_check` bounds this column to
+    #                 pending|active|cancelled|waitlisted, so cancelled is the
+    #                 whole category: a terminal drop another system owns, and
+    #                 not ours to re-adjudicate.
+    #   foreign    -- no row of ours, but a live row belongs to a DIFFERENT
+    #                 payment: a free enrolment, an admin add, an earlier
+    #                 purchase. Nothing to seat, and inserting would collide
+    #                 with the live-only uniqueness rule inside a settlement
+    #                 Stripe has already captured, so this cart owes its share
+    #                 back instead.
+    #   none       -- nothing here; adjudicate normally.
+    sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
         $db = $db->db if $db isa Registry::DAO;
 
         # Our own row first: its state is what this cart holds.
@@ -304,10 +308,12 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         # unseated and tried to insert -- colliding with the live-only
         # uniqueness rule inside a settlement Stripe had already captured.
         #
-        # 'foreign', not 'seated': payment_fits_session already counts foreign
-        # rows in $taken, so crediting one to this cart's %granted would count
-        # the same seat twice and under-count the capacity left for the next
-        # sibling in the cart.
+        # 'foreign', not 'seated'. %granted credits this cart for seats it
+        # holds, and this is not one of them -- the row belongs to another
+        # payment. A foreign row that actually occupies a seat is already in
+        # payment_fits_session's $taken, which counts every seat-holding row it
+        # does not own, so crediting it here as well would count one seat twice
+        # and under-count the capacity left for the next sibling in the cart.
         # Every row the uniqueness rule covers, not only the ones holding a
         # seat. The predicate mirrors enrollments_session_student_type_live
         # exactly: if the index would refuse the insert, this must report it.
@@ -323,7 +329,12 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         # really is free. student_type is in the predicate for the same reason:
         # the index keys on it, so a row of a different type is not a collision
         # and reporting it as one refunds a seat the insert would have granted.
-        my $elsewhere = $db->query( <<'SQL', $session_id, $child_id, $student_type )->hash;
+        # ponytail: 'family_member' inline, because it is the only student_type
+        # anything writes -- Enrollment and Waitlist both hardcode it. Widen this
+        # to a parameter when a second type gets a writer, and widen
+        # enrollments_payment_dedup with it, or the own-row lookup above goes
+        # blind to a row of another type and the arbiter swallows our insert.
+        my $elsewhere = $db->query( <<'SQL', $session_id, $child_id, 'family_member' )->hash;
             SELECT status FROM enrollments
              WHERE session_id = ? AND student_id = ? AND student_type = ?
                AND status IS DISTINCT FROM 'cancelled'

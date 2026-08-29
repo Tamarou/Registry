@@ -41,23 +41,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS enrollments_session_student_type_live
  -- turning a rule the old constraint enforced totally into one with a hole.
  WHERE status IS DISTINCT FROM 'cancelled';
 
--- NOTE ON REACH: sqitch never re-runs a change that is already deployed, so
--- these DROPs only fire on databases deploying this change for the first time.
--- A database that took the earlier draft still carries the table, in registry
--- and in every tenant cloned since, and nothing here will remove it. The table
--- is inert, so on this pre-alpha system that residue is cosmetic and is cleared
--- by hand; it is written down because the alternative is believing it was.
---
--- An earlier draft remembered each tenant's constraint name in a table here, on
--- the theory that restoring everything unnamed would strand a total constraint
--- when flexible-enrollment-architecture is later reverted. Measured, that is
--- false: THAT revert runs ALTER TABLE ... DROP COLUMN student_type, and the
--- constraint goes with the column whatever it is called. The table bought
--- nothing and cost real damage -- clone_schema copies every registry table, so
--- each tenant got its own copy of migration bookkeeping, and this change's
--- revert dropped only the registry one, stranding one per tenant forever.
-DROP TABLE IF EXISTS registry.tenant_reenrol_revert_names;
-
 DO $$
 DECLARE
     s name;
@@ -67,13 +50,6 @@ BEGIN
         CONTINUE WHEN NOT EXISTS (
             SELECT 1 FROM information_schema.schemata WHERE schema_name = s
         );
-        -- Above the enrollments guard on purpose: an earlier draft's bookkeeping
-        -- table was cloned into tenants independently of whether that tenant
-        -- ever got an enrollments table, so a half-provisioned tenant would
-        -- keep its copy forever if this sat below the CONTINUE.
-        EXECUTE format(
-            'DROP TABLE IF EXISTS %I.tenant_reenrol_revert_names', s);
-
         -- Schema existence is not table existence: a half-provisioned tenant
         -- would abort the whole migration on the CREATE INDEX below.
         CONTINUE WHEN to_regclass(format('%I.enrollments', s)) IS NULL;

@@ -10,7 +10,6 @@ use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Payment;
-use Registry::DAO::Notification;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_foreign_seat';
 
@@ -70,6 +69,19 @@ sub a_paid_cart_for (@children) {
 # A cart whose line item is missing or nonsensical. calculate_enrollment_total
 # skips any child whose plan returns no price, so a child can ride in
 # enrollment_items with nothing behind them.
+# The duplicate-seat path warns when it cannot resolve a share, and three
+# subtests below trigger that on purpose. Captured rather than left on stderr:
+# the project requires pristine test output, and a diagnostic an operator is
+# expected to act on deserves an assertion rather than a scroll past.
+sub warnings_from ($code) {
+    my @warnings;
+    {
+        local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+        $code->();
+    }
+    return \@warnings;
+}
+
 sub a_cart_without_line_item ($session, $child, $cents = 5000) {
     my $p = Registry::DAO::Payment->create($db, {
         user_id => $parent->id, amount_cents => $cents, status => 'completed',
@@ -366,7 +378,11 @@ subtest 'an unresolvable duplicate share is flagged, not settled clean' => sub {
         session_id => $session->id, family_member_id => $child->id,
         parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
 
-    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+    my $warnings = warnings_from( sub {
+        Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+    } );
+    like $warnings->[0] // '', qr/no line item for child/,
+        'and it says which child it could not price';
 
     my $row = $db->query(q{SELECT status, metadata->'refund_manual_review' AS flag
                              FROM payments WHERE id = ?}, $ours->id)->hash;
@@ -408,7 +424,11 @@ subtest 'a negative share does not silently net off a sibling real debt' => sub 
             parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
     }
 
-    Registry::DAO::Payment->find($db, { id => $p->id })->finalize_enrollment($db);
+    my $warnings = warnings_from( sub {
+        Registry::DAO::Payment->find($db, { id => $p->id })->finalize_enrollment($db);
+    } );
+    like $warnings->[0] // '', qr/negative share -2000/,
+        'the warning names the nonsense amount, not just the child';
 
     my $row = $db->query(q{SELECT refund_owed_cents,
                                   metadata->'refund_manual_review' AS flag
@@ -517,7 +537,11 @@ subtest 'an unresolvable share stays retryable until it resolves' => sub {
         parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
 
     my $ours = a_cart_without_line_item( $session, $child );
-    Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+    my $warnings = warnings_from( sub {
+        Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
+    } );
+    like $warnings->[0] // '', qr/no line item for child/,
+        'the first delivery says why it could not settle';
 
     my $row = $db->query(q{SELECT refund_owed_cents,
                                   metadata->'refund_manual_review' AS flag
@@ -572,6 +596,48 @@ subtest 'a DB failure on the marker does not destroy the real error' => sub {
         'the escaping error names the real cause, not "transaction is aborted"';
 
     $db->query('DROP TRIGGER probe_marker_boom_t ON enrollments');
+};
+
+# Issue #315 names TWO write paths that can abort a captured settlement. The
+# seating path is covered above. This is the other one: demote_to_waitlisted's
+# fallback INSERT, reached when neither its UPDATE nor its SELECT -- both
+# payment_id-scoped -- finds a row, which is exactly what a foreign live row
+# looks like from this payment's point of view.
+#
+# It is closed by ORDERING, not by anything in the demotion code: the duplicate
+# branch runs before the capacity gate, so a foreign child never reaches
+# demotion. That ordering is load-bearing and nothing else pins it -- move the
+# capacity gate above the foreign check and the fallback INSERT collides again,
+# inside the transaction, after capture.
+subtest 'a full session plus a foreign seat still does not collide' => sub {
+    my $session = a_session(1);          # capacity 1, so this cart cannot fit
+    my $child   = a_child();
+    my $hog     = a_child();
+
+    my $theirs = a_paid_cart( $session, $hog );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $hog->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    my $earlier = a_paid_cart( $session, $child );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $earlier->id });
+
+    my $ours = a_paid_cart( $session, $child, 5000 );
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Payment->find($db, { id => $ours->id })
+                   ->finalize_enrollment($db); 1 };
+        $@;
+    };
+    is $err, '', 'the settlement does not raise';
+
+    is_deeply $db->query( 'SELECT status FROM enrollments WHERE payment_id = ?',
+        $ours->id )->arrays->flatten->to_array, ['cancelled'],
+        'the duplicate branch claimed it, not the demotion path';
+    is $db->query( 'SELECT status FROM payments WHERE id = ?', $ours->id
+    )->array->[0], 'refund_pending', 'and the cart owes its money back';
 };
 
 done_testing;
