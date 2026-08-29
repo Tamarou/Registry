@@ -32,6 +32,24 @@ package Test::Registry::DB {
         return $tool; # fallback, let PATH handle it
     }
 
+    # The lines a portable dump must not carry. Shared, because the comparison
+    # in t/database/schema-dump-current.t has to filter identically or its two
+    # sides differ for reasons that are not drift.
+    #
+    # transaction_timeout arrived in PostgreSQL 17, so 14, 15 and 16 reject it.
+    # \restrict / \unrestrict are psql meta-commands from the Aug-2025 minors;
+    # an older client calls them invalid, which ON_ERROR_STOP turns into an
+    # abort before any DDL runs.
+    #
+    # Anchored at column 0. pg_dump writes these unindented, while plpgsql
+    # bodies contain indented text that merely looks similar -- and stripping
+    # THAT corrupts the artefact silently, because it lives inside string
+    # literals the server never parses at load time.
+    sub is_nonportable_line ($line) {
+        return $line =~ /\ASET\s+transaction_timeout\s*=/
+            || $line =~ /\A\\(un)?restrict\b/;
+    }
+
     sub generate_dump {
         # Deploy schema via Sqitch into a temp DB, then pg_dump it.
         # Called by `make test-schema` or manually when migrations change.
@@ -67,6 +85,11 @@ package Test::Registry::DB {
 
         open my $in,  '<', $raw  or die "open $raw: $!";
         open my $dst, '>', $out  or die "open $out: $!";
+        # print and close are checked too. A write that fails partway -- a full
+        # disk is the ordinary case -- would otherwise ship a truncated
+        # sql/test-schema.sql, announce success, and unlink the only complete
+        # copy. The pipeline this replaced caught that; losing it while fixing
+        # the other half would have been a poor trade.
         while ( my $line = <$in> ) {
             # pg_dump's preamble SETs are the one part of a dump that is not
             # portable across majors: 17 and 18 emit `SET transaction_timeout`,
@@ -93,11 +116,12 @@ package Test::Registry::DB {
             # 17 or 18 is rejected outright by 14, 15 and 16. If a later release
             # adds another, this load fails loudly naming it -- which is the
             # right way to find out.
-            next if $line =~ /\ASET\s+transaction_timeout\s*=/;
-            print {$dst} $line;
+            next if is_nonportable_line($line);
+
+            print {$dst} $line or die "write $out: $!";
         }
-        close $dst;
-        unlink $raw;
+        close $dst or die "close $out: $!";
+        unlink $raw or die "unlink $raw: $!";
 
         warn "Schema dump written to $out\n";
         undef $template_db;

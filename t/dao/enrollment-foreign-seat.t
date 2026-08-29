@@ -383,6 +383,7 @@ subtest 'an unresolvable duplicate share is flagged, not settled clean' => sub {
     } );
     like $warnings->[0] // '', qr/no line item for child/,
         'and it says which child it could not price';
+    is scalar @$warnings, 1, 'and nothing else warned';
 
     my $row = $db->query(q{SELECT status, metadata->'refund_manual_review' AS flag
                              FROM payments WHERE id = ?}, $ours->id)->hash;
@@ -429,6 +430,7 @@ subtest 'a negative share does not silently net off a sibling real debt' => sub 
     } );
     like $warnings->[0] // '', qr/negative share -2000/,
         'the warning names the nonsense amount, not just the child';
+    is scalar @$warnings, 1, 'and nothing else warned';
 
     my $row = $db->query(q{SELECT refund_owed_cents,
                                   metadata->'refund_manual_review' AS flag
@@ -516,8 +518,12 @@ subtest 'the duplicate-seat marker says why it is cancelled' => sub {
     my $ours = a_paid_cart( $session, $child, 5000 );
     Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db);
 
-    is $db->query( 'SELECT drop_reason FROM enrollments WHERE payment_id = ?',
-        $ours->id )->array->[0], 'duplicate_seat_refunded',
+    # // [] because this queries a table that can legitimately return no rows:
+    # without it, a regression that writes no marker aborts the whole file on an
+    # undef deref and takes every later subtest's verdict with it.
+    my $reason = $db->query( 'SELECT drop_reason FROM enrollments WHERE payment_id = ?',
+        $ours->id )->array // [];
+    is $reason->[0], 'duplicate_seat_refunded',
         'the marker carries a reason, so an export cannot read it as a drop';
 };
 
@@ -542,6 +548,7 @@ subtest 'an unresolvable share stays retryable until it resolves' => sub {
     } );
     like $warnings->[0] // '', qr/no line item for child/,
         'the first delivery says why it could not settle';
+    is scalar @$warnings, 1, 'and nothing else warned';
 
     my $row = $db->query(q{SELECT refund_owed_cents,
                                   metadata->'refund_manual_review' AS flag
@@ -638,6 +645,48 @@ subtest 'a full session plus a foreign seat still does not collide' => sub {
         'the duplicate branch claimed it, not the demotion path';
     is $db->query( 'SELECT status FROM payments WHERE id = ?', $ours->id
     )->array->[0], 'refund_pending', 'and the cart owes its money back';
+};
+
+# Both settlement callers run inside a transaction -- Webhooks opens one, and
+# process_payment_async opens one around the parent-return callback -- but every
+# subtest above runs in autocommit, where a failed statement poisons nothing. So
+# the hazard the recovery path exists for is structurally invisible to them.
+#
+# Inside a transaction, a share lookup that fails at the DATABASE level aborts
+# it, and the catch's manual-review write is then refused too: the real cause is
+# replaced by "current transaction is aborted", no flag lands, and the warn
+# never runs. This settles inside $db->begin and breaks the lookup at the
+# database level, which is what a statement_timeout cancel, a deadlock or a
+# serialization failure would do.
+subtest 'a share lookup that fails mid-transaction still reports and flags' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+    my $ours = a_paid_cart( $session, $child, 5000 );
+
+    my $tx = $db->begin;
+    # DDL is transactional, so the rollback at scope exit puts this back.
+    $db->query('ALTER TABLE payment_items RENAME COLUMN amount_cents TO gone');
+
+    my @warnings;
+    my $err = do {
+        local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+        local $@;
+        eval { Registry::DAO::Payment->find($db, { id => $ours->id })
+                   ->finalize_enrollment($db); 1 };
+        $@;
+    };
+
+    unlike $err, qr/current transaction is aborted/,
+        'the real cause is not replaced by the transaction state';
+    like $warnings[0] // '', qr/does not exist/,
+        'and the actual database error reaches the log';
+    ok $db->query( q{SELECT metadata->'refund_manual_review' FROM payments
+                      WHERE id = ?}, $ours->id )->array->[0],
+        'the manual-review flag is written despite the failure';
 };
 
 done_testing;

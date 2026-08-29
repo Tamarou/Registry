@@ -329,11 +329,14 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         # really is free. student_type is in the predicate for the same reason:
         # the index keys on it, so a row of a different type is not a collision
         # and reporting it as one refunds a seat the insert would have granted.
-        # ponytail: 'family_member' inline, because it is the only student_type
-        # anything writes -- Enrollment and Waitlist both hardcode it. Widen this
-        # to a parameter when a second type gets a writer, and widen
-        # enrollments_payment_dedup with it, or the own-row lookup above goes
-        # blind to a row of another type and the arbiter swallows our insert.
+        # ponytail: 'family_member' inline, because no production caller ever
+        # supplies anything else -- Waitlist hardcodes it, and the two create
+        # paths default it with //=, which only tests override. The trigger for
+        # widening this to a parameter is therefore a production caller starting
+        # to pass student_type through, not merely a second type existing. Widen
+        # enrollments_payment_dedup at the same time, or the own-row lookup above
+        # goes blind to a row of another type and the arbiter swallows our
+        # insert.
         my $elsewhere = $db->query( <<'SQL', $session_id, $child_id, 'family_member' )->hash;
             SELECT status FROM enrollments
              WHERE session_id = ? AND student_id = ? AND student_type = ?

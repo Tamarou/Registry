@@ -58,7 +58,18 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             # a selection for anyone else would be enrolled unchecked -- and
             # unpriced, since Payment totals the children snapshot. Selections
             # must be a subset of the children this run actually chose.
-            my %is_selected = map { $_ => 1 } @$selected_child_ids;
+            #
+            # Keyed on @children -- the ids that RESOLVED to a row -- not on
+            # $selected_child_ids, which is client data: SelectChildren harvests
+            # child_<id>=1 checkboxes without checking they name anything. Keying
+            # on the raw list validates the input against itself, and an
+            # unresolvable id then rides into the cart priced by nothing, because
+            # calculate_enrollment_total also iterates the resolved children. The
+            # charge looks normal and settlement dies on
+            # enrollments_family_member_id_fkey, inside the transaction, after
+            # capture -- rolling back the paying child's enrollment and the
+            # webhook dedup claim with it, so every redelivery reproduces it.
+            my %is_selected = map { $_->id => 1 } @children;
             for my $key (keys %$form_data) {
                 if ($key =~ /^session_for_(.+)$/) {
                     my $child_id = $1;

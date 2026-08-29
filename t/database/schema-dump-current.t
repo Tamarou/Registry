@@ -51,8 +51,18 @@ sub ddl_only ($path) {
         if ($in_copy) { $in_copy = 0 if $line =~ /\A\\\.\s*\z/; next }
         $in_copy = 1, next if $line =~ /\ACOPY .* FROM stdin;/;
 
-        next if $line =~ /\A\s*--/;              # comments, incl. the pg_dump banner
-        next if $line =~ /\A\\(un)?restrict\b/;  # per-dump nonce (CVE-2025-8714)
+        # Also dropped here: \restrict carries a per-dump random nonce, so the
+        # two sides never match on it, and transaction_timeout is absent from
+        # the committed artefact but present in a fresh dump.
+        next if Test::Registry::DB::is_nonportable_line($line);
+
+        # Column 0 for comments, for the same reason the portability filter is
+        # anchored: pg_dump's own annotations are unindented, while plpgsql
+        # bodies carry indented comment lines that are content. Stripping those
+        # from both sides makes drift on them invisible here.
+        next if $line =~ /\A--/;
+        # Blank lines stay unanchored -- a blank line is blank wherever it sits,
+        # and pg_dump's spacing between statements is not drift worth grading.
         next if $line =~ /\A\s*\z/;
         push @ddl, $line;
     }
@@ -93,12 +103,7 @@ sub load_into ($uri, $file) {
     open my $in,  '<', $file     or die "open $file: $!";
     open my $out, '>', $portable or die "open $portable: $!";
     while ( my $line = <$in> ) {
-        # Column 0, by name -- see the note in Test::Registry::DB. Allowing
-        # leading whitespace strips indented SETs out of plpgsql bodies on BOTH
-        # sides of this comparison, which is worse here than anywhere: it makes
-        # real drift on those lines invisible to the one test whose job is to
-        # see it.
-        next if $line =~ /\ASET\s+transaction_timeout\s*=/;
+        next if Test::Registry::DB::is_nonportable_line($line);
         print {$out} $line;
     }
     close $out;

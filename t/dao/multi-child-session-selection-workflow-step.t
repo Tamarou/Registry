@@ -452,4 +452,46 @@ subtest 'session_for_<id> for a child that was never selected' => sub {
         'no session selections are stored';
 };
 
+# A cart item for a child that does not exist must not reach the payment.
+#
+# selected_child_ids is CLIENT data -- SelectChildren harvests child_<id>=1
+# checkboxes without checking the ids resolve -- so validating selections
+# against it validates the input against itself. @children holds only the ids
+# that actually resolved, which is the set this step's own comment means by
+# "the children this run actually chose".
+#
+# An unresolvable id is priced by nothing (calculate_enrollment_total iterates
+# the resolved children), so the cart total and the Stripe charge look normal.
+# It detonates at settlement, on enrollments_family_member_id_fkey, inside the
+# transaction after capture -- rolling back the paying child's enrollment and
+# the webhook dedup claim with it, so every redelivery reproduces it. That is
+# precisely the "money taken, no enrollment, forever" failure this milestone
+# exists to remove, reached through the front door.
+subtest 'a session selection for a child that does not exist is refused' => sub {
+    my $run = $workflow->new_run($db);
+    my $ghost = '00000000-0000-0000-0000-0000000000ff';
+    $run->update_data($db, {
+        user_id => $parent->id,
+        # As a hostile client would leave it: one real child, one invented.
+        selected_child_ids => [ $child1->id, $ghost ],
+        location_id => $location->id,
+        program_id => $project->id,
+    });
+
+    my $step = $workflow->get_step($db, { slug => 'session-selection' });
+    my $result = $step->process($db, {
+        action                    => 'select_sessions',
+        "session_for_" . $child1->id => $session1->id,
+        "session_for_$ghost"         => $session1->id,
+    });
+
+    ok $result->{errors}, 'the selection is rejected';
+    like join( ' ', @{ $result->{errors} } ), qr/not part of this registration/,
+        'and it says why';
+
+    my $items = $run->data->{enrollment_items} // [];
+    ok !( grep { ( $_->{child_id} // '' ) eq $ghost } @$items ),
+        'no cart item names a child that does not exist';
+};
+
 done_testing;
