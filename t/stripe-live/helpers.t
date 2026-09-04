@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
 # ABOUTME: Self-test for Test::Registry::StripeConfirm and Test::Registry::StripeWebhook helpers.
-# ABOUTME: Skips unless STRIPE_SECRET_KEY (sk_test_) is set; never touches live Stripe.
+# ABOUTME: Skips unless STRIPE_SECRET_KEY (sk_test_) is set; needs STRIPE_WEBHOOK_SECRET from the
+# ABOUTME: caller for the webhook self-test, which dies without it. Never touches live Stripe.
 #
 # Deviation from the issue contract (C2): the issue states these helpers are
 # "exercised by t/stripe-live/paid-enrollment.t" (C3, not yet written).  The
@@ -116,9 +117,9 @@ subtest 'StripeWebhook: post_succeeded finalizes payment and deduplicates' => su
     });
 
     my $payment = Registry::DAO::Payment->create($db, {
-        user_id  => $parent->id,
-        amount   => 500,
-        status   => 'pending',
+        user_id      => $parent->id,
+        amount_cents => 500,
+        status       => 'pending',
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
             tenant_slug      => undef,
