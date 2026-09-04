@@ -21,6 +21,15 @@ class Registry::DAO::Family {
     # List all children in a family
     sub list_children ($class, $db, $family_id) {
         $db = $db->db if $db isa Registry::DAO;
+
+        # Refuse structure. This lands in a WHERE clause, where SQL::Abstract
+        # reads a hashref as an OPERATOR rather than a value -- { '!=' => $x }
+        # renders `family_id != ?` and returns every other family's children,
+        # names, ages, grades and allergies included. The argument comes from
+        # workflow run data, which a client can shape, so the refusal belongs
+        # here rather than in each caller.
+        croak 'list_children: family id must be a scalar'
+            if ref $family_id;
         my $results = $db->select(
             'family_members',
             undef,

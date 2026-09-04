@@ -38,6 +38,10 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         # their share and never seats them. family_members.family_id is the
         # run's user_id (Family::add_child sets it), so this is exact.
         my $family_id = $run->data->{user_id};
+        # Never let structure become an operator. The controller strips
+        # bracketed server-owned keys now, so this is belt to that brace --
+        # and undef fails closed, because family_id is NOT NULL.
+        $family_id = undef if ref $family_id;
         my @children;
         for my $child_id (@$selected_child_ids) {
             my $child = Registry::DAO::FamilyMember->find(
@@ -205,6 +209,10 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         # a child we would refuse to process discloses their name and age, and
         # hands the client a session_for_<id> control aimed at them.
         my $family_id = $run->data->{user_id};
+        # Never let structure become an operator. The controller strips
+        # bracketed server-owned keys now, so this is belt to that brace --
+        # and undef fails closed, because family_id is NOT NULL.
+        $family_id = undef if ref $family_id;
         my @children;
         for my $child_id (@$selected_child_ids) {
             my $child = Registry::DAO::FamilyMember->find(

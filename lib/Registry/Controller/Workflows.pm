@@ -62,6 +62,23 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     # and whose charge this is. Both are dropped when there is nothing to derive
     # -- an absent session is not a licence to invent a user.
     method _apply_server_owned_data ($data) {
+        # Deleting the exact key is not enough. This runs on the FLAT param
+        # hash; expand_form_params runs afterwards, inside WorkflowStep, and
+        # rebuilds bracketed keys into nested structure -- its bracket branch
+        # does `$ref->{$p} = {} unless ref $ref->{$p} eq 'HASH'`, which
+        # destroys whatever scalar we set here and replaces it with data the
+        # client chose. So user_id[!=]=<uuid> survived this method untouched
+        # and then overwrote the authenticated user_id downstream.
+        #
+        # The result is not merely a wrong value. Both keys are used as
+        # SQL::Abstract WHERE values, where a hashref is an OPERATOR rather
+        # than a value: family_id => { '!=' => $x } renders `family_id != ?`
+        # and matches every other family in the tenant.
+        for my $key ( keys %$data ) {
+            delete $data->{$key}
+                if $key =~ /\A(?:user_id|__tenant_slug)\[/;
+        }
+
         my $tenant_slug = $self->tenant;
         if ( $tenant_slug && $tenant_slug ne 'registry' ) {
             $data->{__tenant_slug} = $tenant_slug;

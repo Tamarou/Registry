@@ -297,4 +297,21 @@ subtest 'Flexible enrollment architecture' => sub {
        'Both enrollment types can exist in same session');
 };
 
+
+# family_id reaches SQL::Abstract as a WHERE value, where a hashref is an
+# OPERATOR rather than a value: { '!=' => $x } renders `family_id != ?` and
+# returns every other family's children. The value arrives from workflow run
+# data, which a client could shape via bracketed form keys, so the identity
+# argument has to refuse structure at the door rather than trust its caller.
+subtest 'list_children refuses a non-scalar family id' => sub {
+    my $mine = Registry::DAO::Family->list_children($db, $parent1->id);
+    ok scalar @$mine, 'the honest call still returns this family';
+
+    throws_ok {
+        Registry::DAO::Family->list_children($db,
+            { '!=' => '00000000-0000-0000-0000-000000000000' });
+    } qr/family id/i, 'an operator hashref is refused, not honoured';
+};
+
+
 done_testing;
