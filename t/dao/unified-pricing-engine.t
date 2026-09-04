@@ -51,7 +51,7 @@ subtest 'Platform pricing plans exist' => sub {
 
     # Verify revenue share plan (alphabetically second)
     my $revenue_share = $plans->[1];
-    is($revenue_share->{plan_name}, 'Registry Revenue Share - 2%', 'Revenue share plan exists');
+    is($revenue_share->{plan_name}, 'Registry Revenue Share', 'Revenue share plan exists');
     is($revenue_share->{pricing_model_type}, 'percentage', 'Revenue share is percentage type');
     is($revenue_share->{plan_scope}, 'tenant', 'Revenue share is tenant scope');
 

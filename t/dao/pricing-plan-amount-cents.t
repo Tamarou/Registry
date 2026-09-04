@@ -79,11 +79,17 @@ subtest 'the seeded plans are backfilled by meaning, not blindly' => sub {
     is $plus->{rate}, '0.01', 'and its rate stays in pricing_configuration';
 
     # The percentage plans never had a dollar amount -- the column was holding
-    # their rate. Multiplying 0.02 by 100 would invent a 2-cent charge.
-    my $share = $seeded{'Registry Revenue Share - 2%'};
+    # their rate. Multiplying the rate by 100 would invent a charge out of it,
+    # which is the hazard these two assertions exist for. Stated as the property
+    # rather than as a number: the rate is whatever the launch decision made it,
+    # and this test is about the cents conversion, not about that decision.
+    my $share = $seeded{'Registry Revenue Share'};
     is $share->{amount_cents}, 0,
         'a percentage plan has no dollar amount, so amount_cents is 0';
-    is $share->{rate}, '0.02', 'its rate survives, in pricing_configuration';
+    cmp_ok $share->{rate}, '>', 0,
+        'its rate survives, in pricing_configuration';
+    cmp_ok $share->{rate}, '<=', 1,
+        'and it is still a fraction, not a rate multiplied into cents';
 
     my $free = $seeded{'Registry Free'};
     is $free->{amount_cents}, 0, 'the Free plan has no dollar amount either';
@@ -100,8 +106,12 @@ subtest 'the revenue-share rate no longer comes from the money column' => sub {
     })->hash->{slug};
     ok $slug, "found a tenant on the revenue-share plan (slug=$slug)";
 
-    cmp_ok abs( revenue_share_fraction_for_tenant( $db, $slug ) - 0.02 ), '<', 1e-9,
-        'the rate still resolves to 0.02';
+    # Whatever the plan carries. The property under test is that a dollar amount
+    # in the money column cannot move the rate -- not what the rate happens to
+    # be, which is a launch decision this test has no business restating.
+    my $before = revenue_share_fraction_for_tenant( $db, $slug );
+    cmp_ok $before, '>', 0,
+        'the rate resolves from pricing_configuration';
 
     # The whole point of the split. Put a plausible dollar amount on the plan;
     # if anything still reads this column as a rate, the fraction moves and
@@ -111,7 +121,7 @@ subtest 'the revenue-share rate no longer comes from the money column' => sub {
          WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant'
     });
 
-    cmp_ok abs( revenue_share_fraction_for_tenant( $db, $slug ) - 0.02 ), '<', 1e-9,
+    cmp_ok abs( revenue_share_fraction_for_tenant( $db, $slug ) - $before ), '<', 1e-9,
         'a $50.00 amount_cents on the plan does not move the rate';
 };
 

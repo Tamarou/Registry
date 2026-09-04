@@ -127,13 +127,14 @@ my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
 like $pricing_page, qr/selected_plan_id/,
     'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
 like $pricing_page, qr/Registry Revenue Share/,
-    'pricing page shows the seeded 2% revenue-share plan name';
+    'pricing page shows the seeded revenue-share plan name';
 
 # -- Capture the displayed rate for the rate-consistency assertion below ----
-# The plan description contains "2% of all customer payments"; the plan name
-# contains "2%".  Extract the rate as a number for numeric comparison.
-# (If the field ever gains a revenue_share_percent key, this pattern still
-# works because the surrounding text will still mention the rate.)
+# The page renders the rate from pricing_configuration, as "N% of processed
+# revenue". Extract it as a number for numeric comparison. The fallbacks below
+# cover a plan that carries its own description, or one whose name states a
+# rate -- neither is how the seeded plan reaches the customer any more, and the
+# rate must not be read from a plan name again.
 my ($displayed_rate_str) = $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+(?:all\s+)?customer\s+payments/i;
 $displayed_rate_str //= do {
     # Fallback: extract the rate from the plan name "Revenue Share - N%"
@@ -277,8 +278,8 @@ subtest '#267: tenant->plan link persisted on the tenant row' => sub {
 # ---------------------------------------------------------------------------
 # Assertion 3 (#267): rate-consistency -- displayed rate equals charged rate.
 #
-# The pricing page advertises a rate (plan name "Registry Revenue Share - 2%"
-# and description "2% of all customer payments").  The CHARGED rate is what the
+# The pricing page advertises a rate, rendered from the plan's own
+# pricing_configuration.  The CHARGED rate is what the
 # Stripe application fee is computed from: Registry::DAO::Payment::_connect_params
 # derives it via Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant
 # for the provisioned tenant.  This subtest resolves the rate through that same

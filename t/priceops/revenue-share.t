@@ -25,15 +25,66 @@ my $seeded_slug = $db->query(q{
 
 ok $seeded_slug, "found a seeded tenant backfilled to the revenue-share plan (slug=$seeded_slug)";
 
-subtest 'backfilled tenant resolves to 0.02' => sub {
+# The rate this tenant's plan carries. The subtests below are about mechanisms --
+# DAO coercion, search_path isolation -- and pinning them to a literal made them
+# fail on a rate change for reasons that have nothing to do with what they test.
+my $seeded_rate = $db->query(q{
+    SELECT (p.pricing_configuration->>'percentage')::numeric
+      FROM registry.tenants t
+      JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
+     WHERE t.slug = ?
+}, $seeded_slug)->array->[0];
+
+# Against the plan's own row, not a literal. A test that hardcodes the rate
+# fails the day the rate moves, and the obvious repair is to edit the number --
+# which is exactly the drift that let three different rates be live at once.
+subtest 'a linked tenant is charged its plan rate' => sub {
     my $fraction = revenue_share_fraction_for_tenant($db, $seeded_slug);
     ok defined $fraction, 'got a defined fraction';
-    cmp_ok abs($fraction - 0.02), '<', 1e-9, "fraction is 0.02 (got $fraction)";
+
+    my $on_the_plan = $db->query(q{
+        SELECT (p.pricing_configuration->>'percentage')::numeric
+          FROM registry.tenants t
+          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
+         WHERE t.slug = ?
+    }, $seeded_slug)->array->[0];
+
+    cmp_ok abs($fraction - $on_the_plan), '<', 1e-9,
+        "the resolver returns what the plan carries (got $fraction)";
+};
+
+# The launch rate is a decision, and a decision belongs in one named place.
+# revenue_share_fraction_for_tenant answers "what is THIS tenant charged";
+# platform_launch_fraction answers "what does the platform sell", which is what
+# the marketing copy quotes. platform_default_fraction is neither -- it is the
+# no-plan fallback, and reading the launch rate off it returns the Free plan's
+# zero, which is how the copy came to promise a rate nothing charged.
+subtest 'the launch rate has one named source' => sub {
+    my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    ok defined $launch, 'platform_launch_fraction returns a rate';
+    cmp_ok $launch, '>', 0,
+        'and it is not the Free-plan zero';
+
+    my $marked = $db->query(q{
+        SELECT COUNT(*) FROM registry.pricing_plans
+         WHERE metadata->>'launch_rate' = 'true'
+    })->array->[0];
+    is $marked, 1,
+        'exactly one plan is marked as the launch plan -- not inferred from ordering';
+};
+
+# The whole point of naming it: displayed and charged cannot drift apart.
+subtest 'a tenant on the launch plan is charged the launch rate' => sub {
+    my $launch  = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    my $charged = revenue_share_fraction_for_tenant($db, $seeded_slug);
+    cmp_ok abs($charged - $launch), '<', 1e-9,
+        'what the seeded tenant is charged is what the platform advertises';
 };
 
 subtest 'Registry::DAO coercion - accepts DAO object as well as raw db handle' => sub {
     my $fraction = revenue_share_fraction_for_tenant($dao, $seeded_slug);
-    cmp_ok abs($fraction - 0.02), '<', 1e-9, "coercion works: DAO->db transparently";
+    cmp_ok abs($fraction - $seeded_rate), '<', 1e-9,
+        "coercion works: DAO->db transparently";
 };
 
 subtest 'NULL platform_pricing_plan_id falls back to Free plan (0.00)' => sub {
@@ -62,7 +113,8 @@ subtest 'search_path isolation - resolver works when search_path excludes regist
     my $fraction;
     eval { $fraction = revenue_share_fraction_for_tenant($db, $seeded_slug) };
     ok !$@, "no error when search_path = public: $@";
-    cmp_ok abs($fraction - 0.02), '<', 1e-9, "correct fraction even with search_path=public";
+    cmp_ok abs($fraction - $seeded_rate), '<', 1e-9,
+        "correct fraction even with search_path=public";
     # Restore search_path
     $db->query("SET search_path TO registry, public");
 };

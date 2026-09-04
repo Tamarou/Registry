@@ -62,9 +62,18 @@
               <span class="price-period">/mo</span>
             % }
 
-            % if ($plan->{pricing_configuration}->{revenue_share_percent}) {
+            %# The rate comes off pricing_configuration, which is the one place
+            %# anything reads it. It used to reach the customer only because the
+            %# plan was NAMED "- 2%" -- a second copy that no code consults and
+            %# that goes stale the moment the rate moves. percentage is a
+            %# fraction (0.025); revenue_share_percent, where a plan carries it,
+            %# is already a percent.
+            % my $cfg = $plan->{pricing_configuration} || {};
+            % my $share_pct = $cfg->{revenue_share_percent}
+            %     // ( defined $cfg->{percentage} ? $cfg->{percentage} * 100 : undef );
+            % if ($share_pct) {
               <div class="revenue-share-info">
-                + <%= $plan->{pricing_configuration}->{revenue_share_percent} %>% of processed revenue
+                + <%= 0 + sprintf '%g', $share_pct %>% of processed revenue
               </div>
             % }
 
