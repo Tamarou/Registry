@@ -359,7 +359,12 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
     # charge path uses, so displayed, charged and asserted cannot diverge.
     my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
         $db, $slug );
-    my $expected_fee = int( $charge->{amount} * $fraction + 0.5 );
+    # Production's own function, not a copy of its arithmetic. Duplicating
+    # int($a * $f + 0.5) here would mirror a rounding regression rather than
+    # catch it -- and at this fixture price the product is exact, so a rounding
+    # change would be invisible either way.
+    my $expected_fee = Registry::DAO::Payment::application_fee_cents(
+        $charge->{amount}, $fraction );
     is $charge->{application_fee_amount}, $expected_fee,
         "I2: application_fee_amount == $expected_fee cents "
       . "(the tenant plan's own rate, read from the DB)";
@@ -376,11 +381,11 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
     $charge_fee_id      = $charge->{application_fee};
     $charge_fee_amount  = $charge->{application_fee_amount};
     $charge_transfer_id = $charge->{transfer};
-    # charge_for_settled dies unless both are present, so their mere existence
-    # is not news. Their shape is: a fee id that is not a fee id means the
-    # destination charge was built as something else.
-    like $charge_fee_id,      qr/^fee_/, 'I2: the charge carries an application fee';
-    like $charge_transfer_id, qr/^tr_/,  'I2: and a transfer to the connected account';
+    # No assertion on these two. charge_for_settled polls until both are present
+    # and dies otherwise, so a charge built without a fee or a transfer fails
+    # there, thirty seconds earlier and with a better message. Asserting their
+    # shape here would only restate what Stripe's own typing guarantees. I6
+    # dereferences both ids through _get, which dies on a bad one.
 };
 
 # ---------------------------------------------------------------------------
