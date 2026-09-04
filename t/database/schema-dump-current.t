@@ -192,4 +192,42 @@ subtest 'the seeded money configuration matches what the migrations produce' => 
               . 'reading this dump, not the migrations';
 };
 
+
+# The plans projection above answers "what rates exist". It does not answer
+# "which of them is on offer", and that is a separate row in a separate table:
+# registry.pricing_relationships carries the status, and two whole migrations
+# exist only to move rows in it -- suspend-rateless-tenant-plans and
+# retire-registry-plus-plan. A dump that still shows a retired plan as active
+# leaves the plans comparison green, because the plan itself did not change.
+#
+# Measured in that direction: flipping the suspend-rateless-tenant-plans row
+# from 'suspended' back to 'active' in the committed dump left both this file
+# and t/priceops/revenue-share.t passing, with the suite running against a
+# rateless plan the migrations had retired.
+#
+# Same stability property as the plans projection: no ids, no timestamps.
+subtest 'the seeded plan relationships match what the migrations produce' => sub {
+    my $projection = q{
+        SELECT r.status, p.plan_scope, p.plan_name,
+               r.metadata->>'created_by_migration'   AS created_by,
+               r.metadata->>'suspended_by_migration' AS suspended_by
+          FROM registry.pricing_relationships r
+          JOIN registry.pricing_plans p ON p.id = r.pricing_plan_id
+         ORDER BY p.plan_name, r.status
+    };
+
+    my $from_migrations =
+        Mojo::Pg->new( $migrated->uri )->db->query($projection)->hashes->to_array;
+    my $from_dump =
+        Mojo::Pg->new( $restored->uri )->db->query($projection)->hashes->to_array;
+
+    ok scalar @$from_migrations, 'the migrations seed at least one relationship'
+        or return;
+    is_deeply $from_dump, $from_migrations,
+        'the committed dump offers the same plans as sql/deploy/'
+        or diag 'run `make test-schema` -- a plan retired by a migration is '
+              . 'still on offer in this dump';
+};
+
+
 done_testing;
