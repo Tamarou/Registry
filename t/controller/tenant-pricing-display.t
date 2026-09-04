@@ -142,11 +142,13 @@ subtest 'pricing step renders plan cards with coming-soon styling' => sub {
     $t->get_ok($pricing_url)
       ->status_is(200)
       ->content_like(qr/data-plan="Solo"/, 'pricing page shows Solo plan')
-      ->content_like(qr/Studio/, 'pricing page shows Studio plan')
-      ->content_like(qr/Empire/, 'pricing page shows Empire plan')
+      ->content_like(qr/data-plan="Studio"/, 'pricing page shows Studio plan')
+      ->content_like(qr/data-plan="Empire"/, 'pricing page shows Empire plan')
       ->content_like(qr/<input[^>]*name="selected_plan_id"/, 'pricing page has plan selection radio buttons')
       ->content_like(qr/Coming Soon/, 'pricing page shows Coming Soon badges')
-      ->content_like(qr/<article[^>]*data-coming-soon="true"/, 'pricing page marks coming-soon cards');
+      ->content_like(qr/<article[^>]*data-coming-soon="true"/, 'pricing page marks coming-soon cards')
+      ->content_like(qr/<article[^>]*data-featured="true"/,
+          'and marks the featured card -- the other half of the same escaping fix');
 };
 
 subtest 'selected plan appears on review step dynamically' => sub {

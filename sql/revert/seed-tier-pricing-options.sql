@@ -22,10 +22,19 @@ DELETE FROM registry.pricing_plans
 
 UPDATE registry.pricing_plans
    SET plan_name = 'Registry Revenue Share',
-       metadata  = ( metadata - 'display_order' ) - 'featured',
-       -- The description goes back too. Leaving it means a revert lands a
-       -- state the parent never had -- and this key is rendered on the signup
-       -- card and reaches a Stripe product description, so it is not inert.
+       -- Both descriptions go back to what the parent had: the one this change
+       -- wrote into pricing_configuration is removed, and the one it deleted
+       -- from metadata is restored. Restating that string is the cost of the
+       -- deploy having deleted it; a revert that drops a key its parent carried
+       -- lands a state that never existed, which is the whole point of the
+       -- assertion in t/database/seed-tier-pricing-options.t.
+       --
+       -- One assignment: Postgres refuses two SETs of the same column, and
+       -- splitting them into two statements would make the revert's order
+       -- load-bearing for no reason.
+       metadata = ( ( metadata - 'display_order' ) - 'featured' )
+                || jsonb_build_object('description',
+                       'Revenue share on customer payments, no minimums'),
        pricing_configuration = pricing_configuration - 'description',
        updated_at = CURRENT_TIMESTAMP
  WHERE metadata->>'launch_rate' = 'true';

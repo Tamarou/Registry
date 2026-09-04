@@ -172,6 +172,17 @@ subtest 'selected_pricing_plan cannot be planted by a client' => sub {
 
     ok !exists data_for($run->id)->{selected_pricing_plan},
         'a posted selected_pricing_plan is not stored';
+
+    # The flat form too. The strip matches (?:\[|\z), and the \z branch is
+    # load-bearing only for this key -- user_id and __tenant_slug are re-derived
+    # immediately below it, so a bare posted value would be overwritten anyway.
+    $run = run_on_second_step();
+    $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
+        selected_pricing_plan => 'Empire',
+    })->status_is(201);
+
+    ok !exists data_for($run->id)->{selected_pricing_plan},
+        'a posted selected_pricing_plan is not stored';
 };
 
 # authenticate_as installs a permanent before_dispatch hook, so every request

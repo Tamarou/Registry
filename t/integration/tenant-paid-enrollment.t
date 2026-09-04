@@ -276,8 +276,18 @@ subtest 'Stripe params carry correct destination-charge and metadata keys' => su
     # obvious repair -- editing the number -- is the drift that let three rates be
     # live at once. The half-up rule is unit-tested against literals in
     # t/dao/payment-intent-destination-charge.t, which is where it belongs.
-    my $fraction =
-        Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, $slug );
+    # Read from the plan row directly, NOT through
+    # revenue_share_fraction_for_tenant. _connect_params builds
+    # application_fee_amount from that same resolver, so calling it here would
+    # compute the expectation with the function under test -- a 3x bug in the
+    # resolver moves both sides together and this passes. The plan row is an
+    # oracle the charge path does not share.
+    my $fraction = $db->query( q{
+        SELECT (p.pricing_configuration->>'percentage')::numeric
+          FROM registry.tenants t
+          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
+         WHERE t.slug = ?
+    }, $slug )->array->[0];
     my $expected_fee =
         Registry::DAO::Payment::application_fee_cents( $PLAN_AMOUNT_CENTS, $fraction );
     cmp_ok $expected_fee, '>', 0,

@@ -132,7 +132,7 @@ subtest 'tenant payment with connect account -> destination charge params' => su
     is $captured->{'on_behalf_of'}, 'acct_test123',
         'on_behalf_of is the tenant connect account';
     is $captured->{'application_fee_amount'}, $expected_fee_2pct,
-        "application_fee_amount is the plan's rate on 10000 cents (\$expected_fee_2pct)";
+        "application_fee_amount is the plan's rate on 10000 cents ($expected_fee_2pct)";
 };
 
 # ---- (a2) tenant with NULL plan link -> Free 0% fee, destination still set ------
@@ -350,7 +350,7 @@ subtest 'async create_payment_intent_async carries connect params for tenant pay
     is $async_captured->{'on_behalf_of'}, 'acct_test123',
         'async: on_behalf_of is the tenant connect account';
     is $async_captured->{'application_fee_amount'}, $expected_fee_2pct,
-        "async: application_fee_amount is \$expected_fee_2pct cents";
+        "async: application_fee_amount is $expected_fee_2pct cents";
 };
 
 $test_db->cleanup_test_database;

@@ -84,16 +84,21 @@ BEGIN
             ('Empire', 99900, 0.01,  3, 'Everything in Studio, plus priority support')
         ) AS t(plan_name, amount_cents, rate, display_order, description)
     LOOP
-        -- Skip a tier this change already seeded. Keyed on the stamp AND the
-        -- name, so a stamped row someone has since renamed is not silently
-        -- re-created alongside itself. Keying on the name alone cannot tell
-        -- "I already ran" from "someone else got here first", and those need
-        -- opposite handling: the first is a no-op, the second is the collision
-        -- the RAISE below reports.
+        -- Skip a tier this change already seeded, identified by seeded_tier
+        -- rather than by plan_name. The name is mutable: keying on it means a
+        -- stamped row someone has renamed no longer matches, so the loop
+        -- inserts a second one beside it -- and then verify counts three,
+        -- deploy.verify reverts, and the revert deletes all three including
+        -- the row that was renamed. seeded_tier is written once and never
+        -- changes, so "have I already seeded this tier" has one answer.
+        --
+        -- Keying on the name alone cannot tell "I already ran" from "someone
+        -- else got here first" either, and those need opposite handling: the
+        -- first is a no-op, the second is the collision the RAISE below reports.
         CONTINUE WHEN EXISTS (
             SELECT 1 FROM registry.pricing_plans
              WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'
-               AND plan_name = tier.plan_name
+               AND metadata->>'seeded_tier' = tier.plan_name
         );
 
         -- A name we did not create is not ours to adopt, rename or delete.
@@ -133,7 +138,10 @@ BEGIN
                 'description',   tier.description,
                 -- Provenance, so the revert can delete exactly what this change
                 -- created rather than everything that looks like it.
-                'created_by_migration', 'seed-tier-pricing-options'
+                'created_by_migration', 'seed-tier-pricing-options',
+                -- Stable identity. plan_name can be edited; this cannot, so the
+                -- idempotency skip above has something that stays true.
+                'seeded_tier',          tier.plan_name
             )
         )
         RETURNING id INTO new_plan_id;

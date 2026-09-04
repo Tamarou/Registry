@@ -9,6 +9,8 @@ use Test::Exception;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
+use Mojo::JSON qw( decode_json );
+use JSON::PP ();
 
 use constant PLATFORM_UUID => '00000000-0000-0000-0000-000000000000';
 use constant CHANGE        => 'seed-tier-pricing-options';
@@ -81,7 +83,8 @@ subtest 'the revert removes only what the deploy created' => sub {
     # rather than leave the plan called Solo with no tier ladder around it.
     my $solo = $db->query(q{
         SELECT plan_name,
-               pricing_configuration->>'description' AS blurb
+               pricing_configuration->>'description' AS blurb,
+               metadata::text                        AS meta
           FROM registry.pricing_plans
          WHERE metadata->>'launch_rate' = 'true'
     })->hash;
@@ -89,11 +92,23 @@ subtest 'the revert removes only what the deploy created' => sub {
     is $solo->{plan_name}, 'Registry Revenue Share',
         'and the buyable plan is handed back to the previous change';
 
-    # A revert must not leave state the parent never had. Both of these are
-    # rendered: the description on the signup card and, through
-    # get_subscription_config, as a Stripe product description.
+    # A revert must not leave state the parent never had. The description is
+    # rendered on the signup card and reaches a Stripe product description, so
+    # neither direction is inert.
     is $solo->{blurb}, undef,
-        'the description this change added is gone with it';
+        'the description this change added to pricing_configuration is gone';
+
+    # The WHOLE blob, not two hand-picked keys. The first version of this
+    # assertion read only the keys the deploy was known to touch, so when the
+    # deploy started deleting metadata.description the revert stopped restoring
+    # it and this test stayed green -- the exact defect it was written for.
+    my $meta = decode_json( $solo->{meta} );
+    is_deeply $meta,
+        {   default     => JSON::PP::false,
+            launch_rate => JSON::PP::true,
+            description => 'Revenue share on customer payments, no minimums',
+        },
+        'and the metadata is exactly what the parent had, key for key';
 
     is $db->query(q{
         SELECT pr.metadata->>'plan_name'

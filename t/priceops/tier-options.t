@@ -128,7 +128,7 @@ subtest 'the launch rate is the rate the platform advertises' => sub {
 
         unlike $copy,
             qr/(?<![\d.])(?!\Q$pct\E%)\d+(?:\.\d+)?%\s+(?:of\s+)?(?:processed\s+)?revenue/,
-            "$tpl quotes no OTHER revenue-share rate";
+            "$tpl quotes no other rate alongside it, in the phrasings this checks";
     }
 };
 

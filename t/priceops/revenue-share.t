@@ -60,17 +60,15 @@ subtest 'a linked tenant is charged its plan rate' => sub {
 # no-plan fallback, and reading the launch rate off it returns the Free plan's
 # zero, which is how the copy came to promise a rate nothing charged.
 subtest 'the launch rate has one named source' => sub {
+    # Only one assertion here, deliberately. platform_launch_fraction dies on
+    # zero marked plans, on more than one, and on a rate that is undefined,
+    # non-numeric or outside [0,1] -- so `defined $launch` and a count of marked
+    # plans both restate its die conditions, and any state that would fail them
+    # kills the subtest before they run. A zero rate is inside the accepted
+    # range, so this is the one thing the function can return that is wrong.
     my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
-    ok defined $launch, 'platform_launch_fraction returns a rate';
     cmp_ok $launch, '>', 0,
-        'and it is not the Free-plan zero';
-
-    my $marked = $db->query(q{
-        SELECT COUNT(*) FROM registry.pricing_plans
-         WHERE metadata->>'launch_rate' = 'true'
-    })->array->[0];
-    is $marked, 1,
-        'exactly one plan is marked as the launch plan -- not inferred from ordering';
+        'the launch rate is not the Free-plan zero';
 };
 
 # The whole point of naming it: displayed and charged cannot drift apart.
