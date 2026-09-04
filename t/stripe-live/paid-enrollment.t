@@ -158,18 +158,24 @@ Registry::DAO::WorkflowStep->create($tdb, {
 $workflow->update($tdb, { first_step => 'payment' }, { id => $workflow->id });
 
 sub make_e2e_run {
+    # Optional child, because every run built here otherwise enrols the SAME
+    # child into the SAME session. Once any subtest has seated them, a later
+    # cart correctly reads 'foreign', owes the share back and settles
+    # refunded/cancelled -- which is #324 working, not a failure, but it makes
+    # that subtest a duplicate-seat test rather than whatever it meant to be.
+    my $who = shift // $child;
     my $run = $workflow->new_run($tdb);
     $run->update_data($tdb, {
         user_id            => $parent->id,
         children           => [ {
-            id         => $child->id,
+            id         => $who->id,
             first_name => 'C3',
             last_name  => 'Child',
             birth_date => '2018-03-15',
             grade      => '3',
         } ],
-        session_selections => { $child->id => $session->id },
-        enrollment_items   => [ { child_id => $child->id, session_id => $session->id } ],
+        session_selections => { $who->id => $session->id },
+        enrollment_items   => [ { child_id => $who->id, session_id => $session->id } ],
         __tenant_slug      => $slug,
     });
     return $run;
@@ -196,7 +202,17 @@ sub process_payment_step ( $step, $run ) {
 # ---------------------------------------------------------------------------
 
 my $t = Test::Registry::Mojo->new('Registry');
-$t->app->helper(dao => sub { $dao });
+# Mirror the production helper (Registry.pm) rather than pinning one schema.
+# It resolves the tenant per request, which is what a tenant-scoped workflow
+# GET needs: pinning the base dao made the workflow lookup miss the tenant
+# schema, so $self->workflow() came back undef and the browser return 500'd on
+# the harness rather than on anything real. Webhook subtests are unaffected --
+# they route by the event's metadata.tenant_slug and re-establish search_path
+# themselves.
+$t->app->helper(dao => sub ($c, $tenant = undef) {
+    $tenant = $c->tenant($tenant);
+    return Registry::DAO->new( url => $test_db->uri, schema => $tenant );
+});
 
 # ---------------------------------------------------------------------------
 # 3. Obtain both Stripe test accounts.
@@ -280,7 +296,7 @@ subtest 'I1+I2: destination charge routes to ready account with correct 2% fee' 
     ok !$result->{errors}, 'I1/I2: no gate error for ready tenant'
         or diag explain $result->{errors};
 
-    $main_payment_id = $result->{data}{payment_id};
+    $main_payment_id = $result->{data}{step_data}{payment_id};
     ok $main_payment_id, 'I1/I2: payment_id present in result';
 
     my $payment = Registry::DAO::Payment->find($tdb, { id => $main_payment_id });
@@ -299,6 +315,14 @@ subtest 'I1+I2: destination charge routes to ready account with correct 2% fee' 
         'I1: charge.transfer_data.destination is the ready account';
     is $charge->{application_fee_amount}, $EXPECTED_FEE_CENTS,
         "I2: application_fee_amount == $EXPECTED_FEE_CENTS cents (2% of \$150.00)";
+
+    # Runbook section 5 step 3 asks for this on the charge itself. It was
+    # asserted only against captured params in t/integration, which cannot show
+    # what Stripe actually recorded. on_behalf_of is what makes the tenant the
+    # settlement merchant -- bearer of Stripe's fees and of the descriptor the
+    # parent sees on their statement.
+    is $charge->{on_behalf_of}, $ready_acct,
+        'I2: charge.on_behalf_of is the tenant account';
 
     # Save charge fields for I6 refund assertions
     $charge_fee_id      = $charge->{application_fee};
@@ -348,7 +372,7 @@ subtest 'I3: declined card fails with card_declined and creates no enrollment' =
     ok !$result3->{errors}, 'I3: step creates intent without gate error'
         or diag explain $result3->{errors};
 
-    my $pay3    = Registry::DAO::Payment->find($tdb, { id => $result3->{data}{payment_id} });
+    my $pay3    = Registry::DAO::Payment->find($tdb, { id => $result3->{data}{step_data}{payment_id} });
     my $pi_id3  = $pay3->stripe_payment_intent_id;
     like $pi_id3, qr/^pi_/, 'I3: fresh real PI created for decline test';
 
@@ -407,7 +431,7 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
     ok !$result7a->{errors}, 'I7: first process succeeds'
         or diag explain $result7a->{errors};
 
-    my $pay7    = Registry::DAO::Payment->find($tdb, { id => $result7a->{data}{payment_id} });
+    my $pay7    = Registry::DAO::Payment->find($tdb, { id => $result7a->{data}{step_data}{payment_id} });
     my $pi_id_a = $pay7->stripe_payment_intent_id;
     like $pi_id_a, qr/^pi_/, 'I7: first process created a real Stripe PI';
 
@@ -436,6 +460,69 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
     my $pi_id_c = $rotated->{payment_intent_id};
     like $pi_id_c, qr/^pi_/, 'I7: rotated create returns a pi_ id';
     isnt $pi_id_c, $pi_id_a, 'I7: rotated token yields a DISTINCT Stripe PI id';
+};
+
+
+# ---------------------------------------------------------------------------
+# I8: The parent's browser return finalizes, against a real confirmed intent.
+#
+# Runbook section 5 step 2 asks for a paid enrollment "through the
+# application". Every other subtest here drives $step->process directly, and
+# I4 delivers a webhook -- neither exercises the leg the parent actually
+# travels: Stripe redirects the browser back to return_url with
+# payment_intent and redirect_status appended, as a GET.
+#
+# That GET was unreachable until get_workflow_run_step learned to hand the
+# intent to the step (B-4). It is otherwise covered only by
+# t/controller/payment-return-callback.t, which mocks Stripe. This asserts it
+# against a real confirmed intent, and deliberately sends NO webhook, so a
+# pass means the browser path alone completed the enrollment.
+# ---------------------------------------------------------------------------
+
+subtest "I8: the browser return alone finalizes a real payment" => sub {
+    # A child of their own: this asserts a first enrolment completing through
+    # the browser, not the duplicate-seat path an already-seated child takes.
+    my $i8_child = Registry::DAO::Family->add_child( $tdb, $parent->id, {
+        child_name        => 'C3 Browser Child',
+        birth_date        => '2018-03-15',
+        grade             => '3',
+        medical_info      => {},
+        emergency_contact => { name => 'Emergency', phone => '555-0199' },
+    });
+
+    my $run    = make_e2e_run($i8_child);
+    my $step   = get_payment_step();
+    my $result = process_payment_step( $step, $run );
+
+    ok !$result->{errors}, 'I8: intent created for the browser leg'
+        or diag explain $result->{errors};
+
+    my $payment_id = $result->{data}{step_data}{payment_id};
+    my $payment    = Registry::DAO::Payment->find( $tdb, { id => $payment_id } );
+    my $pi_id      = $payment->stripe_payment_intent_id;
+    like $pi_id, qr/^pi_/, 'I8: a real intent to return from';
+
+    my $confirmed = Test::Registry::StripeConfirm::confirm($pi_id);
+    is $confirmed->{status}, 'succeeded', 'I8: intent confirmed as the browser would';
+
+    # Exactly what Stripe appends to return_url.
+    my $return_url = sprintf '/%s/%s/payment?payment_intent=%s&redirect_status=succeeded',
+        $workflow->slug, $run->id, $pi_id;
+
+    $t->get_ok( $return_url, { Host => "$slug.localhost" } );
+    note "I8: return status was @{[ $t->tx->res->code // 'none' ]}";
+    isnt $t->tx->res->code, 500, 'I8: the return does not error';
+
+    my $settled = Registry::DAO::Payment->find( $tdb, { id => $payment_id } );
+    is $settled->status, 'completed',
+        'I8: the browser return alone marked the payment completed';
+
+    my $enrs = $tdb->select( 'enrollments', '*', { payment_id => $payment_id } )->hashes;
+    is scalar @$enrs, 1, 'I8: exactly one enrollment, in the tenant schema';
+    is $enrs->[0]{status}, 'active', 'I8: and it is active';
+
+    my $reg = $db->select( 'registry.payments', ['id'], { id => $payment_id } )->hash;
+    ok !$reg, 'I8: nothing landed in registry.payments';
 };
 
 $test_db->cleanup_test_database;
