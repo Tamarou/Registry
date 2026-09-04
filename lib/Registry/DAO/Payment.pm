@@ -851,18 +851,28 @@ SQL
     method flag_refund_manual_review ($db, $child_id, $session_id) {
         $db = $db->db if $db isa Registry::DAO;
 
-        # The flag is written unconditionally. It records that a human has to
-        # look at something, which is true whatever the status says -- and the
-        # case that most needs recording is a debt on a row that already reached
-        # a terminal refund status, since that debt cannot be represented as an
-        # obligation at all. An earlier version guarded the whole statement on
-        # the status, so exactly that case wrote nothing anywhere.
-        $db->query( <<'SQL', encode_json([ { child_id => $child_id, session_id => $session_id } ]), $id );
+        # The flag is written whatever the STATUS says -- the case that most
+        # needs recording is a debt on a row that already reached a terminal
+        # refund status, since that debt cannot be represented as an obligation
+        # at all. An earlier version guarded the whole statement on the status,
+        # so exactly that case wrote nothing anywhere.
+        #
+        # It is guarded on the PAIR, though, because the same fault recurs. The
+        # duplicate-seat branch deliberately writes no marker row when the share
+        # is unresolvable, so the state stays 'foreign' and every later delivery
+        # re-enters -- and finalize_enrollment does not early-return on
+        # refund_pending, so a parent refreshing the Stripe return URL re-enters
+        # it too. Appending unconditionally grew this array without bound on a
+        # money row, and made the runbook read one fault as N.
+        my $entry = encode_json([ { child_id => $child_id, session_id => $session_id } ]);
+        $db->query( <<'SQL', $entry, $id, $entry );
             UPDATE payments
                SET metadata = jsonb_set( COALESCE(metadata, '{}'::jsonb),
                        '{refund_manual_review}',
                        COALESCE(metadata->'refund_manual_review', '[]'::jsonb) || ?::jsonb )
              WHERE id = ?
+               AND NOT COALESCE(metadata->'refund_manual_review', '[]'::jsonb)
+                       @> ?::jsonb
 SQL
 
         # The status move is separate, and still refuses to walk a terminal row

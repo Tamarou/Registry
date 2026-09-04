@@ -689,4 +689,45 @@ subtest 'a share lookup that fails mid-transaction still reports and flags' => s
         'the manual-review flag is written despite the failure';
 };
 
+
+# The unresolvable case is deliberately NOT made sticky -- no marker row is
+# written, so the state stays 'foreign' and a later delivery can still settle
+# it once the line item is repaired. That retryability is graded above.
+#
+# Its cost is that the branch re-enters on every delivery, and the flag writer
+# appended unconditionally. finalize_enrollment does not early-return on
+# refund_pending (_money_returned is only refunded|partially_refunded), and a
+# parent refreshing the Stripe return URL re-enters the finalizer through
+# already_completed -- so the array grew by one identical entry per refresh,
+# without bound, on a money row. The runbook prints the array, so one fault
+# read as N faults.
+#
+# The sibling demotion branch never had this shape: demote_to_waitlisted
+# writes its row before the share is resolved, so $newly_demoted is false on
+# redelivery and it flags exactly once.
+subtest 'a fault that recurs is recorded once, not once per delivery' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    my $ours    = a_cart_without_line_item( $session, $child );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    warnings_from( sub {
+        Registry::DAO::Payment->find($db, { id => $ours->id })->finalize_enrollment($db)
+            for 1 .. 3;
+    } );
+
+    is $db->query( q{SELECT jsonb_array_length(metadata->'refund_manual_review')
+                       FROM payments WHERE id = ?}, $ours->id )->array->[0], 1,
+        'three deliveries of the same fault leave one entry';
+
+    is $db->query( q{SELECT status FROM payments WHERE id = ?},
+        $ours->id )->array->[0], 'refund_pending',
+        'and the row still says a human has to look at it';
+};
+
+
 done_testing;
