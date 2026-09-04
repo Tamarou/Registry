@@ -1,4 +1,4 @@
-# ABOUTME: Gated real-Stripe test suite proving invariants I1-I7 for the money path.
+# ABOUTME: Gated real-Stripe test suite proving invariants I1-I8 for the money path.
 # ABOUTME: Requires STRIPE_SECRET_KEY (sk_test_) + STRIPE_WEBHOOK_SECRET; skips silently otherwise.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -19,6 +19,7 @@ use Registry::DAO::User;
 use Registry::DAO::Family;
 use Registry::DAO::Session;
 use Registry::DAO::PricingPlan;
+use Registry::PriceOps::RevenueShare;
 use Registry::DAO::Project;
 use Registry::DAO::Event;
 use Registry::DAO::Location;
@@ -34,6 +35,12 @@ plan skip_all => 'STRIPE_SECRET_KEY (sk_test_) not set'
 # DO NOT localise STRIPE_SECRET_KEY -- the real key must reach the production
 # create_payment_intent call inside each subtest that drives the workflow step.
 local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_c3_local';
+
+# I8 resolves its tenant from a <slug>.localhost Host header, and the base-domain
+# list is an environment variable with a default. A shell configured for staging
+# work that omits localhost would make tenant resolution fall back to the
+# platform schema. Pin it rather than inherit it.
+local $ENV{REGISTRY_BASE_DOMAINS} = 'tinyartempire.com,localhost';
 
 # ---------------------------------------------------------------------------
 # 1. Provision a fresh tenant and build all fixtures in the tenant schema.
@@ -64,6 +71,17 @@ ok $tenant, 'tenant provisioned';
 my $tdao = Registry::DAO->new(url => $test_db->uri, schema => $slug);
 my $tdb  = $tdao->db;
 
+# Derived, not hardcoded. Nothing on the settle path reads these today --
+# calculate_price only branches on dates for early_bird plans, and this fixture
+# is 'standard' -- but I8 is the first subtest here to drive the controller,
+# which is where a "session has not started" guard would land. A fixture that
+# expires turns that into what looks like a Stripe failure. Same reasoning the
+# storefront and listing suites already carry.
+my @D = localtime( time + 7 * 86_400 );
+my $SESSION_START = sprintf '%04d-%02d-%02d', $D[5] + 1900, $D[4] + 1, $D[3];
+my @E = localtime( time + 14 * 86_400 );
+my $SESSION_END   = sprintf '%04d-%02d-%02d', $E[5] + 1900, $E[4] + 1, $E[3];
+
 # --- fixtures in the tenant schema ---
 
 my $location = Registry::DAO::Location->create($tdb, {
@@ -88,7 +106,7 @@ my $project = Registry::DAO::Project->create($tdb, {
 });
 
 my $event = Registry::DAO::Event->create($tdb, {
-    time        => '2026-08-01 10:00:00',
+    time        => "$SESSION_START 10:00:00",
     duration    => 120,
     location_id => $location->id,
     project_id  => $project->id,
@@ -97,14 +115,15 @@ my $event = Registry::DAO::Event->create($tdb, {
     metadata    => {},
 });
 
-# $150.00 paid session -- 2% fee = 300 cents
+# $150.00 paid session. The fee is asserted against the tenant plan's own rate
+# read from the database, never against a literal derived from this number.
 my $PLAN_AMOUNT = 150.00;
-my $EXPECTED_FEE_CENTS = 300;  # 2% of 15000 cents
+
 
 my $session = Registry::DAO::Session->create($tdb, {
     name       => 'C3 Week',
-    start_date => '2026-08-01',
-    end_date   => '2026-08-07',
+    start_date => $SESSION_START,
+    end_date   => $SESSION_END,
     status     => 'published',
     capacity   => 20,
     metadata   => {},
@@ -169,8 +188,8 @@ sub make_e2e_run {
         user_id            => $parent->id,
         children           => [ {
             id         => $who->id,
-            first_name => 'C3',
-            last_name  => 'Child',
+            first_name => $who->child_name,
+            last_name  => '',
             birth_date => '2018-03-15',
             grade      => '3',
         } ],
@@ -202,17 +221,18 @@ sub process_payment_step ( $step, $run ) {
 # ---------------------------------------------------------------------------
 
 my $t = Test::Registry::Mojo->new('Registry');
-# Mirror the production helper (Registry.pm) rather than pinning one schema.
-# It resolves the tenant per request, which is what a tenant-scoped workflow
-# GET needs: pinning the base dao made the workflow lookup miss the tenant
-# schema, so $self->workflow() came back undef and the browser return 500'd on
-# the harness rather than on anything real. Webhook subtests are unaffected --
-# they route by the event's metadata.tenant_slug and re-establish search_path
-# themselves.
-$t->app->helper(dao => sub ($c, $tenant = undef) {
-    $tenant = $c->tenant($tenant);
-    return Registry::DAO->new( url => $test_db->uri, schema => $tenant );
-});
+
+# I8 asserts on the redirect itself, and Mojo::UserAgent's default is
+# $ENV{MOJO_MAX_REDIRECTS} || 0 -- so an ambient value would follow the 302 and
+# move the assertion's target. Pin it, as t/controller/payment-return-callback.t
+# does for the same assertion.
+$t->ua->max_redirects(0);
+# No dao helper override. Test::Registry::DB::new sets $ENV{DB_URL} to this
+# instance, which is exactly what the production helper in Registry.pm reads --
+# so overriding it would hand I8 a private copy of tenant resolution and let a
+# regression in the real one pass unnoticed. The earlier override pinned a
+# single schema, which is why a tenant-scoped workflow GET looked the workflow
+# up in registry and 500'd.
 
 # ---------------------------------------------------------------------------
 # 3. Obtain both Stripe test accounts.
@@ -282,7 +302,8 @@ $db->query(q{
 }, $slug);
 
 # Shared state populated by I1+I2 and consumed by I4 and I6.
-my ($main_payment_id, $main_pi_id, $charge_fee_id, $charge_transfer_id);
+my ($main_payment_id, $main_pi_id, $charge_fee_id, $charge_transfer_id,
+    $charge_fee_amount);
 
 # ---------------------------------------------------------------------------
 # I1+I2: Real Stripe destination charge, correct routing and fee.
@@ -313,8 +334,27 @@ subtest 'I1+I2: destination charge routes to ready account with correct 2% fee' 
 
     is $charge->{transfer_data}{destination}, $ready_acct,
         'I1: charge.transfer_data.destination is the ready account';
-    is $charge->{application_fee_amount}, $EXPECTED_FEE_CENTS,
-        "I2: application_fee_amount == $EXPECTED_FEE_CENTS cents (2% of \$150.00)";
+    # The amount, not just the fee. int($a * 0.02 + 0.5) == 300 holds for every
+    # charge from 14975 to 15024 cents, so the fee assertion alone accepts any
+    # price between $149.75 and $150.24. Both the displayed total and the Stripe
+    # amount descend from calculate_enrollment_total, so a regression there moves
+    # them together and nothing here would notice. This is the cart-versus-charge
+    # assertion: what Stripe took equals what the parent was shown.
+    is $charge->{amount}, $result->{data}{step_data}{total},
+        'I2: the amount Stripe charged is the total the cart displayed';
+
+    # Read the rate from the database, never from a literal. That is the
+    # project's standing rule, and the reason for it is this file: a launch-rate
+    # change would otherwise fail here as a stale constant, and the obvious
+    # repair is to edit the constant -- which is precisely the drift the rule
+    # exists to stop. revenue_share_fraction_for_tenant is the same resolver the
+    # charge path uses, so displayed, charged and asserted cannot diverge.
+    my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+        $db, $slug );
+    my $expected_fee = int( $charge->{amount} * $fraction + 0.5 );
+    is $charge->{application_fee_amount}, $expected_fee,
+        "I2: application_fee_amount == $expected_fee cents "
+      . "(the tenant plan's own rate, read from the DB)";
 
     # Runbook section 5 step 3 asks for this on the charge itself. It was
     # asserted only against captured params in t/integration, which cannot show
@@ -326,6 +366,7 @@ subtest 'I1+I2: destination charge routes to ready account with correct 2% fee' 
 
     # Save charge fields for I6 refund assertions
     $charge_fee_id      = $charge->{application_fee};
+    $charge_fee_amount  = $charge->{application_fee_amount};
     $charge_transfer_id = $charge->{transfer};
     ok $charge_fee_id,      'I2: charge carries an application_fee id';
     ok $charge_transfer_id, 'I2: charge carries a transfer id';
@@ -409,8 +450,13 @@ subtest 'I6: refund reverses transfer and returns application fee per 2% plan po
     # The 2% plan has refund_application_fee=true, so the $3.00 platform fee must come back.
     # ponytail: _get is package-private by convention; calling cross-package is intentional
     my $fee = Test::Registry::StripeConfirm::_get("/application_fees/$charge_fee_id");
-    is $fee->{amount_refunded}, $EXPECTED_FEE_CENTS,
-        "I6: application_fee.amount_refunded == $EXPECTED_FEE_CENTS cents (fee fully returned)";
+    # Against the fee actually charged, not a literal. "The platform returns what
+    # it took" is the property under test, and it stays true at any rate -- so
+    # this assertion does not need editing when the launch rate moves, and
+    # cannot quietly certify the wrong one.
+    is $fee->{amount_refunded}, $charge_fee_amount,
+        "I6: application_fee.amount_refunded == the $charge_fee_amount cents charged "
+      . "(fee fully returned)";
 
     # Transfer reversal: verify the connected-account transfer was reversed.
     my $transfer = Test::Registry::StripeConfirm::_get("/transfers/$charge_transfer_id");
@@ -505,13 +551,30 @@ subtest "I8: the browser return alone finalizes a real payment" => sub {
     my $confirmed = Test::Registry::StripeConfirm::confirm($pi_id);
     is $confirmed->{status}, 'succeeded', 'I8: intent confirmed as the browser would';
 
+    # The "alone" in this subtest's name, pinned rather than argued. Confirming
+    # at Stripe does not touch our database, and _settle_callback treats
+    # already_completed exactly like success -- so without this line a future
+    # webhook forwarder, or a change that completes the row at intent creation,
+    # would turn the assertions below into a no-op that still passes.
+    is Registry::DAO::Payment->find( $tdb, { id => $payment_id } )->status,
+        'pending',
+        'I8: still unsettled before the return -- only the GET can complete it';
+
     # Exactly what Stripe appends to return_url.
     my $return_url = sprintf '/%s/%s/payment?payment_intent=%s&redirect_status=succeeded',
         $workflow->slug, $run->id, $pi_id;
 
-    $t->get_ok( $return_url, { Host => "$slug.localhost" } );
-    note "I8: return status was @{[ $t->tx->res->code // 'none' ]}";
-    isnt $t->tx->res->code, 500, 'I8: the return does not error';
+    # status_is(302) + Location, not isnt(500). The regression this leg exists
+    # to prevent is named in get_workflow_run_step's own comment -- "re-rendering
+    # the card form would strand them on a paid-but-unconfirmed page". A step
+    # result that settled the money but returned stay => 1 would re-render, miss
+    # this synthetic workflow's template, 404, and sail past isnt(500) with the
+    # payment completed and the parent stranded. The mocked sibling
+    # (t/controller/payment-return-callback.t) already asserts the redirect.
+    $t->get_ok( $return_url, { Host => "$slug.localhost" } )
+      ->status_is(302, 'I8: the return redirects rather than re-rendering')
+      ->header_like( Location => qr{/complete$},
+          'I8: and sends the parent on to completion, not back to the card form' );
 
     my $settled = Registry::DAO::Payment->find( $tdb, { id => $payment_id } );
     is $settled->status, 'completed',
@@ -521,8 +584,14 @@ subtest "I8: the browser return alone finalizes a real payment" => sub {
     is scalar @$enrs, 1, 'I8: exactly one enrollment, in the tenant schema';
     is $enrs->[0]{status}, 'active', 'I8: and it is active';
 
-    my $reg = $db->select( 'registry.payments', ['id'], { id => $payment_id } )->hash;
-    ok !$reg, 'I8: nothing landed in registry.payments';
+    # Keyed on user_id, not on $payment_id. The id is minted by the INSERT into
+    # the tenant schema, so nothing could ever carry it into registry.payments
+    # and that form passes however broken the tenant path is. A real leak writes
+    # a DIFFERENT id against this parent, which only this form catches. I5 gets
+    # this right at the gate; I8 should too.
+    is $db->select( 'registry.payments', ['id'], { user_id => $parent->id } )
+           ->hashes->size, 0,
+        'I8: nothing landed in registry.payments for this parent';
 };
 
 $test_db->cleanup_test_database;

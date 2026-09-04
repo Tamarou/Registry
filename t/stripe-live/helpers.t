@@ -117,9 +117,6 @@ subtest 'StripeWebhook: post_succeeded finalizes payment and deduplicates' => su
 
     my $payment = Registry::DAO::Payment->create($db, {
         user_id      => $parent->id,
-        # amount_cents, not amount: the payments-amount-cents migration renamed
-        # the column. This suite is gated out of CI, so the rename went
-        # unnoticed here for as long as nobody ran it by hand.
         amount_cents => 500,
         status       => 'pending',
         metadata => {
