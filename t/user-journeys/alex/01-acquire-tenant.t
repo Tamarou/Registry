@@ -148,10 +148,10 @@ my $pricing_url = $t->tx->res->headers->location;
 # buttons, and the assertion below catches that silently-broken path.
 my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
 
-like $pricing_page, qr/selected_plan_id/,
+like $pricing_page, qr/<input[^>]*name="selected_plan_id"/,
     'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
-like $pricing_page, qr/\bSolo\b/,
-    'pricing page shows the buyable tier by its customer-facing name';
+like $pricing_page, qr/data-plan="Solo"/,
+    'the buyable tier renders as a card, not merely as page copy';
 
 # -- Step: pricing (POST) -- select the seeded plan -----------------------
 # 'selected_plan_id' is consumed via exists $form_data->{selected_plan_id}

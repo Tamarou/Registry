@@ -124,10 +124,10 @@ like $pricing_url, qr{/tenant-signup/[^/]+/pricing}, 'redirected to pricing step
 # radio buttons, and this assertion catches that silently-broken path.
 my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
 
-like $pricing_page, qr/selected_plan_id/,
+like $pricing_page, qr/<input[^>]*name="selected_plan_id"/,
     'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
-like $pricing_page, qr/\bSolo\b/,
-    'pricing page shows the buyable tier by its customer-facing name';
+like $pricing_page, qr/data-plan="Solo"/,
+    'the buyable tier renders as a card, not merely as page copy';
 
 # -- Capture the displayed rate for the rate-consistency assertion below ----
 # The page renders the rate from pricing_configuration, as "N% of processed
@@ -135,8 +135,15 @@ like $pricing_page, qr/\bSolo\b/,
 # cover a plan that carries its own description, or one whose name states a
 # rate -- neither is how the seeded plan reaches the customer any more, and the
 # rate must not be read from a plan name again.
+# Scoped to the buyable card, not the whole page. The ladder renders three
+# rates; taking the first agrees with the charged rate only because Solo happens
+# to sort first, and would silently start comparing an unselected anchor's rate
+# the day the order changes or a cheaper tier launches.
+my ($solo_card) = $pricing_page =~ /(<article[^>]*data-plan="Solo".*?<\/article>)/s;
+ok $solo_card, 'found the buyable tier card to read the advertised rate from';
+
 my ($displayed_rate_str) =
-    $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+processed\s+revenue/i;
+    ( $solo_card // '' ) =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+processed\s+revenue/i;
 
 # One fallback, for a plan that supplies its own description naming the rate.
 # There is deliberately no fallback that reads the rate out of a plan NAME:

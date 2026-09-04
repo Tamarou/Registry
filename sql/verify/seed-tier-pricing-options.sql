@@ -20,12 +20,24 @@ BEGIN
        AND pr.status = 'active'
        AND p.plan_scope = 'tenant';
 
-    IF buyable <> 1 THEN
-        RAISE EXCEPTION 'expected exactly one buyable tier on offer, found %', buyable;
+    -- What this change DID, not what the market looks like now. "Exactly one
+    -- buyable tier" is true today and is asserted by the deploy, where it
+    -- belongs; as a verify it fails the day a second tier launches, and the
+    -- only fix is editing an already-shipped script. Every verify re-runs
+    -- against the final schema, so this one asserts only that the two tiers it
+    -- seeded still exist and are still offered.
+    IF anchors + buyable < 3 THEN
+        RAISE EXCEPTION
+            'expected the three seeded tiers to still be offered, found %',
+            anchors + buyable;
     END IF;
 
-    IF anchors < 2 THEN
-        RAISE EXCEPTION 'expected at least two coming-soon anchor tiers, found %', anchors;
+    IF NOT EXISTS (
+        SELECT 1 FROM registry.pricing_plans
+         WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'
+        HAVING COUNT(*) = 2
+    ) THEN
+        RAISE EXCEPTION 'the two anchor tiers this change seeded are not both present';
     END IF;
 
     -- Every offered tier needs a display_order, or the ladder sorts by price and

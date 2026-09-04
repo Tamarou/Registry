@@ -144,7 +144,7 @@ subtest 'pricing step renders plan cards with coming-soon styling' => sub {
       ->content_like(qr/Solo/, 'pricing page shows Solo plan')
       ->content_like(qr/Studio/, 'pricing page shows Studio plan')
       ->content_like(qr/Empire/, 'pricing page shows Empire plan')
-      ->content_like(qr/selected_plan_id/, 'pricing page has plan selection radio buttons')
+      ->content_like(qr/<input[^>]*name="selected_plan_id"/, 'pricing page has plan selection radio buttons')
       ->content_like(qr/Coming Soon/, 'pricing page shows Coming Soon badges')
       ->content_like(qr/data-coming-soon/, 'pricing page marks coming-soon cards');
 };

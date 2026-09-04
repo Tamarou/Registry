@@ -22,6 +22,30 @@ UPDATE registry.pricing_plans
        updated_at = CURRENT_TIMESTAMP
  WHERE metadata->>'launch_rate' = 'true';
 
+-- The description moves with the name. The previous change put Solo's into
+-- metadata on the reasoning that nothing reads it -- but the signup pricing and
+-- review templates both read pricing_configuration.description, so that left the
+-- one buyable tier as the only card with no blurb. The rate is deliberately not
+-- in the string: the card renders it from percentage.
+UPDATE registry.pricing_plans
+   SET pricing_configuration = pricing_configuration
+         || jsonb_build_object('description',
+                'Revenue share on customer payments. No monthly fee, no minimums.'),
+       updated_at = CURRENT_TIMESTAMP
+ WHERE metadata->>'launch_rate' = 'true';
+
+-- And the relationship's name snapshot, which the previous change refreshed
+-- with a comment saying it could not go stale -- then this one renamed the plan.
+-- Refreshed the same way, from the plan, so the claim is true at the end of the
+-- migration chain rather than in the middle of it.
+UPDATE registry.pricing_relationships pr
+   SET metadata   = pr.metadata || jsonb_build_object('plan_name', p.plan_name),
+       updated_at = CURRENT_TIMESTAMP
+  FROM registry.pricing_plans p
+ WHERE p.id = pr.pricing_plan_id
+   AND p.metadata->>'launch_rate' = 'true'
+   AND pr.metadata->>'plan_name' IS DISTINCT FROM p.plan_name;
+
 -- Studio and Empire exist to be looked at. They anchor Solo's price and show
 -- that the platform has somewhere to grow to; neither is purchasable, and
 -- PricingPlanSelection refuses them at selection rather than trusting the
@@ -56,17 +80,39 @@ BEGIN
             ('Empire', 99900, 0.01,  3, 'Everything in Studio, plus priority support')
         ) AS t(plan_name, amount_cents, rate, display_order, description)
     LOOP
-        -- Idempotent on the name: a re-deploy after a partial failure must not
-        -- put a second Studio on the signup page.
+        -- Idempotent on the STAMP, not the name. Keying the skip on a name
+        -- this change does not own cannot tell "I already ran" from "someone
+        -- else got here first", and those need opposite handling: the first is
+        -- a no-op, the second is a collision the operator has to resolve.
         CONTINUE WHEN EXISTS (
             SELECT 1 FROM registry.pricing_plans
-             WHERE plan_name = tier.plan_name AND plan_scope = 'tenant'
+             WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'
+               AND plan_name = tier.plan_name
         );
+
+        -- A name we did not create is not ours to adopt, rename or delete.
+        -- Silently adopting one leaves it with no relationship, which the
+        -- verify then reads as a missing anchor -- and with deploy.verify on,
+        -- sqitch reverts what it just deployed. Fail here instead, where the
+        -- message can say what to do about it.
+        IF EXISTS (
+            SELECT 1 FROM registry.pricing_plans
+             WHERE plan_name = tier.plan_name AND plan_scope = 'tenant'
+        ) THEN
+            RAISE EXCEPTION
+                'a tenant plan named % already exists and was not created by '
+                'this change; rename or remove it before deploying', tier.plan_name;
+        END IF;
 
         INSERT INTO registry.pricing_plans (
             plan_scope, plan_name, plan_type, pricing_model_type,
             amount_cents, currency, pricing_configuration, metadata
         ) VALUES (
+            -- plan_type 'standard', not 'hybrid': these are economically the
+            -- same shape as the retired Registry Plus, and
+            -- verify/retire-registry-plus-plan.sql refuses an offered tenant
+            -- plan of plan_type 'hybrid'. The label is what keeps that older
+            -- invariant true, so it is load-bearing rather than cosmetic.
             'tenant', tier.plan_name, 'standard', 'hybrid',
             tier.amount_cents, 'USD',
             jsonb_build_object(
@@ -78,7 +124,10 @@ BEGIN
             jsonb_build_object(
                 'display_order', tier.display_order,
                 'coming_soon',   true,
-                'description',   tier.description
+                'description',   tier.description,
+                -- Provenance, so the revert can delete exactly what this change
+                -- created rather than everything that looks like it.
+                'created_by_migration', 'seed-tier-pricing-options'
             )
         )
         RETURNING id INTO new_plan_id;
@@ -102,7 +151,7 @@ DO $$
 DECLARE
     buyable integer;
 BEGIN
-    SELECT COUNT(*) INTO buyable
+    SELECT COUNT(DISTINCT p.id) INTO buyable
       FROM registry.pricing_relationships pr
       JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
      WHERE pr.provider_id = '00000000-0000-0000-0000-000000000000'::UUID

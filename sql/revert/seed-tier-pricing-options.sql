@@ -13,13 +13,12 @@ SET client_min_messages = 'warning';
 DELETE FROM registry.pricing_relationships
  WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options';
 
-DELETE FROM registry.pricing_plans p
- WHERE p.plan_scope = 'tenant'
-   AND p.metadata->>'coming_soon' = 'true'
-   AND NOT EXISTS (
-       SELECT 1 FROM registry.pricing_relationships pr
-        WHERE pr.pricing_plan_id = p.id
-   );
+-- By the stamp the deploy wrote, not by shape. Deleting every unreferenced
+-- coming-soon tenant plan would take an operator's own row with it -- and it
+-- would, because deploy.verify is on: a collision makes verify fail, sqitch
+-- reverts the change it just deployed, and this statement runs.
+DELETE FROM registry.pricing_plans
+ WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options';
 
 UPDATE registry.pricing_plans
    SET plan_name = 'Registry Revenue Share',

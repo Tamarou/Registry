@@ -68,10 +68,16 @@
             %# that goes stale the moment the rate moves. percentage is a
             %# fraction (0.025); revenue_share_percent, where a plan carries it,
             %# is already a percent.
+            %# percentage, and only percentage -- the key the charge path reads.
+            %# An earlier draft preferred a revenue_share_percent key if a plan
+            %# carried one, which is a second source for the same number and
+            %# would quote one rate while billing another. That is the bug this
+            %# whole change exists to remove, reintroduced in the renderer.
             % my $cfg = $plan->{pricing_configuration} || {};
-            % my $share_pct = $cfg->{revenue_share_percent}
-            %     // ( defined $cfg->{percentage} ? $cfg->{percentage} * 100 : undef );
-            % if ($share_pct) {
+            % my $share_pct = defined $cfg->{percentage} ? $cfg->{percentage} * 100 : undef;
+            %# defined, not truthy: a genuine 0% tier must say "0%", because
+            %# silence reads as "unspecified" rather than "free".
+            % if (defined $share_pct) {
               <div class="revenue-share-info">
                 + <%= 0 + sprintf '%g', $share_pct %>% of processed revenue
               </div>

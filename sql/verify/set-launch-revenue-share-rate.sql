@@ -24,8 +24,16 @@ BEGIN
       FROM registry.pricing_plans
      WHERE metadata->>'launch_rate' = 'true';
 
-    IF rate IS DISTINCT FROM 0.025 THEN
-        RAISE EXCEPTION 'launch plan carries rate %, expected 0.025', rate;
+    -- A rate, not THE rate. sqitch re-runs every verify against the final
+    -- schema (t/database/migration-verification.t), so a verify that pins a
+    -- business decision becomes a tripwire on the next change that moves it --
+    -- which is a change of exactly this shape. The value of the launch rate is
+    -- pinned in t/priceops/tier-options.t, which is versioned with the code
+    -- that quotes it. What must hold forever is that the marked plan carries a
+    -- usable fraction at all.
+    IF rate IS NULL OR rate <= 0 OR rate > 1 THEN
+        RAISE EXCEPTION
+            'launch plan carries rate %, which is not a usable fraction', rate;
     END IF;
 
     -- The rate belongs in pricing_configuration and nowhere else. A name that
