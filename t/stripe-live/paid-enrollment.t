@@ -227,12 +227,10 @@ my $t = Test::Registry::Mojo->new('Registry');
 # move the assertion's target. Pin it, as t/controller/payment-return-callback.t
 # does for the same assertion.
 $t->ua->max_redirects(0);
-# No dao helper override. Test::Registry::DB::new sets $ENV{DB_URL} to this
-# instance, which is exactly what the production helper in Registry.pm reads --
-# so overriding it would hand I8 a private copy of tenant resolution and let a
-# regression in the real one pass unnoticed. The earlier override pinned a
-# single schema, which is why a tenant-scoped workflow GET looked the workflow
-# up in registry and 500'd.
+# No dao helper override: Test::Registry::DB::new sets $ENV{DB_URL} to this
+# instance, which is what the production helper in Registry.pm reads. Overriding
+# it would hand this suite a private copy of tenant resolution, and let a
+# regression in the real one pass here.
 
 # ---------------------------------------------------------------------------
 # 3. Obtain both Stripe test accounts.
@@ -260,7 +258,7 @@ subtest 'I5: unready-tenant gate fires, no payment rows, Stripe never called' =>
         $unready_acct, $slug,
     );
 
-    ok !$tenant->stripe_connect_ready,
+    ok !Registry::DAO::Tenant->find( $db, { slug => $slug } )->stripe_connect_ready,
         'precondition: tenant stripe_connect_ready is false (charges_enabled=FALSE)';
 
     my $run  = make_e2e_run();
@@ -309,7 +307,7 @@ my ($main_payment_id, $main_pi_id, $charge_fee_id, $charge_transfer_id,
 # I1+I2: Real Stripe destination charge, correct routing and fee.
 # ---------------------------------------------------------------------------
 
-subtest 'I1+I2: destination charge routes to ready account with correct 2% fee' => sub {
+subtest 'I1+I2: destination charge routes to ready account with the fee its plan declares' => sub {
     my $run  = make_e2e_run();
     my $step = get_payment_step();
     my $result = process_payment_step($step, $run);
@@ -342,6 +340,14 @@ subtest 'I1+I2: destination charge routes to ready account with correct 2% fee' 
     # assertion: what Stripe took equals what the parent was shown.
     is $charge->{amount}, $result->{data}{step_data}{total},
         'I2: the amount Stripe charged is the total the cart displayed';
+
+    # And against the fixture price, which the line above cannot do: both the
+    # displayed total and the Stripe amount descend from
+    # calculate_enrollment_total, so a regression there moves them together and
+    # agrees with itself. This is the only assertion here anchored outside that
+    # function.
+    is $charge->{amount}, int( $PLAN_AMOUNT * 100 ),
+        'I2: and it is the price the plan actually carries';
 
     # Read the rate from the database, never from a literal. That is the
     # project's standing rule, and the reason for it is this file: a launch-rate
@@ -436,7 +442,7 @@ subtest 'I3: declined card fails with card_declined and creates no enrollment' =
 # I6: Refund honors plan policy: transfer reversed, application fee returned.
 # ---------------------------------------------------------------------------
 
-subtest 'I6: refund reverses transfer and returns application fee per 2% plan policy' => sub {
+subtest 'I6: refund reverses transfer and returns the application fee per plan policy' => sub {
     my $main_payment = Registry::DAO::Payment->find($tdb, { id => $main_payment_id });
     is $main_payment->status, 'completed',
         'I6 precondition: I1 payment is completed (I4 webhook ran)';
@@ -447,7 +453,8 @@ subtest 'I6: refund reverses transfer and returns application fee per 2% plan po
     my $refund = settle( $main_payment->refund_async($tdb) );
     ok $refund->{id}, 'I6: refund object returned from Stripe';
 
-    # The 2% plan has refund_application_fee=true, so the $3.00 platform fee must come back.
+    # The plan carries refund_application_fee=true, so whatever the platform took
+    # must come back -- asserted against the fee actually charged, not an amount.
     # ponytail: _get is package-private by convention; calling cross-package is intentional
     my $fee = Test::Registry::StripeConfirm::_get("/application_fees/$charge_fee_id");
     # Against the fee actually charged, not a literal. "The platform returns what
@@ -497,8 +504,15 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
 
     my $charge7 = Test::Registry::StripeConfirm::charge_for($pi_id_a);
     ok $charge7->{id}, 'I7: charge_for returns a charge for the single confirmed intent';
-    is $charge7->{payment_intent}, $pi_id_a,
-        'I7: charge.payment_intent matches the single PI (one charge for one confirm)';
+
+    # Counted, not identified. charge_for follows latest_charge off the intent,
+    # so its payment_intent is that intent by construction -- asserting it says
+    # nothing. "One confirm, one charge" is a count, and the count is what a
+    # double-charge regression would break.
+    my $charges7 = Test::Registry::StripeConfirm::_get(
+        "/charges?payment_intent=$pi_id_a" );
+    is scalar @{ $charges7->{data} // [] }, 1,
+        'I7: exactly one charge exists for the confirmed intent';
 
     # Rotate the idempotency token -> a genuinely new Stripe PI.
     $pay7->rotate_idempotency_token($tdb);
@@ -567,10 +581,11 @@ subtest "I8: the browser return alone finalizes a real payment" => sub {
     # status_is(302) + Location, not isnt(500). The regression this leg exists
     # to prevent is named in get_workflow_run_step's own comment -- "re-rendering
     # the card form would strand them on a paid-but-unconfirmed page". A step
-    # result that settled the money but returned stay => 1 would re-render, miss
-    # this synthetic workflow's template, 404, and sail past isnt(500) with the
-    # payment completed and the parent stranded. The mocked sibling
-    # (t/controller/payment-return-callback.t) already asserts the redirect.
+    # result that settled the money but returned stay => 1 would re-render
+    # instead of redirecting, and any status it produced would have satisfied
+    # isnt(500) while the payment sat completed and the parent stranded.
+    # Asserting the redirect itself is what closes that, and it is what the
+    # mocked sibling (t/controller/payment-return-callback.t) already does.
     $t->get_ok( $return_url, { Host => "$slug.localhost" } )
       ->status_is(302, 'I8: the return redirects rather than re-rendering')
       ->header_like( Location => qr{/complete$},
@@ -589,9 +604,15 @@ subtest "I8: the browser return alone finalizes a real payment" => sub {
     # and that form passes however broken the tenant path is. A real leak writes
     # a DIFFERENT id against this parent, which only this form catches. I5 gets
     # this right at the gate; I8 should too.
+    # The tenant side is the assertion that can bite. registry.payments.user_id
+    # is NOT NULL REFERENCES registry.users, and this parent exists only in
+    # <slug>.users -- so a misrouted INSERT raises an FK violation rather than
+    # depositing a row, and the negative below would stay green either way.
+    is $tdb->select( 'payments', ['id'], { id => $payment_id } )->hashes->size, 1,
+        "I8: this run's payment row lives in the tenant schema";
     is $db->select( 'registry.payments', ['id'], { user_id => $parent->id } )
            ->hashes->size, 0,
-        'I8: nothing landed in registry.payments for this parent';
+        'I8: and none in registry.payments';
 };
 
 $test_db->cleanup_test_database;
