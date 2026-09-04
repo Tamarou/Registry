@@ -294,7 +294,21 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         )->hash;
 
         if ($row) {
-            my $status = $row->{status} // '';
+            my $status = $row->{status};
+
+            # NULL is not terminal, and `// ''` used to send it down the
+            # 'closed' branch. The foreign lookup below mirrors
+            # enrollments_session_student_type_live -- status IS DISTINCT FROM
+            # 'cancelled' -- so a NULL-status row occupies the seat there. One
+            # row then gave two contradictory answers: another cart saw a
+            # collision it must not duplicate, while the cart that owns the row
+            # skipped the child entirely -- not seated, not demoted, not owed a
+            # refund, nothing flagged, and the payment settled looking clean.
+            # The column is nullable and its CHECK passes on NULL (#328);
+            # nothing in lib/ writes one, so this is reachable by hand-written
+            # SQL or an import rather than by the application today.
+            return 'seated' unless defined $status;
+
             return 'seated'
                 if any { $_ eq $status } @{ $class->seat_holding_statuses };
             return 'waitlisted' if $status eq 'waitlisted';

@@ -780,4 +780,41 @@ subtest 'the foreign seat cannot be dropped while a cart adjudicates against it'
 };
 
 
+
+# The two halves of cart_seat_state have to agree about a row, because they
+# describe the same index. The foreign half mirrors
+# enrollments_session_student_type_live exactly -- status IS DISTINCT FROM
+# 'cancelled' -- so a NULL-status row is a collision, which the subtest above
+# pins. The own-row half read the same row as 'closed', because `// ''` sent
+# NULL down the terminal branch.
+#
+# One row, two contradictory answers: another cart saw a seat it must not
+# duplicate, while the cart that owns the row skipped the child entirely --
+# not seated, not demoted, not owed a refund, nothing flagged. The payment
+# settles 'completed' looking clean.
+#
+# 'cancelled' keeps its terminal reading; that branch is load-bearing, because
+# the duplicate-seat marker is a cancelled row of our own and the loop is meant
+# to skip it. Only NULL moves.
+subtest 'a NULL-status row of our own holds the seat, as the index says it does' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $ours    = a_paid_cart( $session, $child, 5000 );
+    my $theirs  = a_paid_cart( $session, $child, 5000 );
+
+    $db->query(
+        'INSERT INTO enrollments (session_id, student_id, student_type, status, payment_id)
+         VALUES (?, ?, ?, NULL, ?)',
+        $session->id, $child->id, 'family_member', $ours->id );
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'seated',
+        'the cart that owns it reads it as a seat it holds';
+
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $theirs->id, $session->id, $child->id ), 'foreign',
+        'and another cart reads the same row as a collision';
+};
+
+
 done_testing;
