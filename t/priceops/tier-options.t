@@ -109,10 +109,27 @@ subtest 'the launch rate is the rate the platform advertises' => sub {
     # And the static copy agrees with it. This is the loop the whole rate
     # exercise exists to close: a number in a template that nothing compares
     # against the database is how three rates came to be live at once.
-    my $copy = path('templates/tenant-signup/index.html.ep')->slurp;
-    my $pct  = 0 + sprintf '%g', $launch * 100;
-    like $copy, qr/\Q$pct\E%\s+of\s+processed\s+revenue/,
-        "the signup copy quotes ${pct}% -- the rate the platform actually charges";
+    my $pct = 0 + sprintf '%g', $launch * 100;
+
+    # Every template that quotes a rate, not just the one that prompted this.
+    # Closing the loop on a single file makes a rate move update that file and
+    # leave its siblings saying the old number -- which is the same drift, minus
+    # one door. Adding marketing copy that quotes a rate means adding it here.
+    for my $tpl (
+        'templates/tenant-signup/index.html.ep',
+        'templates/registry/tenant-storefront-program-listing.html.ep',
+    ) {
+        my $copy = path($tpl)->slurp;
+
+        # (?<![\d.]) or "12.5%" satisfies a check for "2.5%" -- the typo the
+        # assertion exists to catch would have passed it.
+        like $copy, qr/(?<![\d.])\Q$pct\E%/,
+            "$tpl quotes ${pct}%, the rate the platform actually charges";
+
+        unlike $copy,
+            qr/(?<![\d.])(?!\Q$pct\E%)\d+(?:\.\d+)?%\s+(?:of\s+)?(?:processed\s+)?revenue/,
+            "$tpl quotes no OTHER revenue-share rate";
+    }
 };
 
 subtest 'the buyable tier is the one carrying the advertised rate' => sub {

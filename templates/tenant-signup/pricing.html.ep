@@ -37,8 +37,15 @@
         % my $is_coming_soon = ($plan->{metadata}->{coming_soon} // 0);
         <article data-component="pricing-card"
                  data-plan="<%= $plan->{plan_name} %>"
-                 <%= $is_coming_soon ? 'data-coming-soon="true"' : '' %>
-                 <%= ($plan->{metadata}->{featured} // 0) ? 'data-featured="true"' : '' %>>
+                 %# <%== %>, not <%= %>: these emit MARKUP, and the escaping form
+                 %# turns data-coming-soon="true" into data-coming-soon=&quot;true&quot;.
+                 %# The presence selectors still matched, so the anchors stayed
+                 %# correctly unselectable -- but [data-coming-soon="true"] and
+                 %# [data-featured="true"], which do the actual greying and
+                 %# highlighting, never matched. The anchors did not look like
+                 %# anchors, and an assertion on the substring could not tell.
+                 <%== $is_coming_soon ? 'data-coming-soon="true"' : '' %>
+                 <%== ($plan->{metadata}->{featured} // 0) ? 'data-featured="true"' : '' %>>
 
           % if ($is_coming_soon) {
             <div class="plan-badge">
