@@ -1,5 +1,5 @@
 # ABOUTME: Gated real-Stripe test suite proving invariants I1-I8 for the money path.
-# ABOUTME: Requires STRIPE_SECRET_KEY (sk_test_) + STRIPE_WEBHOOK_SECRET; skips silently otherwise.
+# ABOUTME: Requires STRIPE_SECRET_KEY (sk_test_); skips entirely without one, and signs its own webhooks.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -118,7 +118,6 @@ my $event = Registry::DAO::Event->create($tdb, {
 # $150.00 paid session. The fee is asserted against the tenant plan's own rate
 # read from the database, never against a literal derived from this number.
 my $PLAN_AMOUNT = 150.00;
-
 
 my $session = Registry::DAO::Session->create($tdb, {
     name       => 'C3 Week',
@@ -273,6 +272,10 @@ subtest 'I5: unready-tenant gate fires, no payment rows, Stripe never called' =>
     my $tenant_count = $tdb->select('payments', ['id'], { user_id => $parent->id })->hashes->size;
     is $tenant_count, 0, 'I5: zero payment rows in tenant schema';
 
+    # The same cross-schema tripwire as I8, and unfailable for the same reason --
+    # see the note beside that one. Here the gate fires before any INSERT is
+    # attempted at all, so the load-bearing assertion is the tenant-schema count
+    # above.
     my $registry_count = $db->select('registry.payments', ['id'], { user_id => $parent->id })->hashes->size;
     is $registry_count, 0, 'I5: zero payment rows in registry schema (Stripe never called)';
 };
@@ -364,8 +367,9 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
     # t/dao/payment-intent-destination-charge.t does that against literals, and
     # at this fixture price the product is exact anyway. What it tests is that
     # the fee was taken on the amount actually charged, at the rate the tenant's
-    # own plan carries: a fee on a different basis, a reintroduced constant, or
-    # no fee at all all fail here.
+    # own plan carries. A fee on a different basis, or a rate that stops coming
+    # from the tenant's plan, fail here; no fee at all fails earlier, in
+    # charge_for_settled, which is where this file already credits it.
     my $expected_fee = Registry::DAO::Payment::application_fee_cents(
         $charge->{amount}, $fraction );
     is $charge->{application_fee_amount}, $expected_fee,
