@@ -47,24 +47,27 @@ subtest 'Platform pricing plans exist' => sub {
     );
     my $plans = $result->hashes;
 
-    is(scalar @$plans, 3, 'Three platform pricing plans exist');
+    # Keyed by name rather than by alphabetical position: the seeded inventory
+    # grows as tiers are added, and an index turns every such addition into a
+    # failure in a test that is about plan SHAPES, not about how many exist.
+    my %plan = map { $_->{plan_name} => $_ } @$plans;
 
-    # Verify revenue share plan (alphabetically second)
-    my $revenue_share = $plans->[1];
-    is($revenue_share->{plan_name}, 'Registry Revenue Share', 'Revenue share plan exists');
-    is($revenue_share->{pricing_model_type}, 'percentage', 'Revenue share is percentage type');
-    is($revenue_share->{plan_scope}, 'tenant', 'Revenue share is tenant scope');
+    # The customer-facing ladder, seeded by seed-tier-pricing-options.
+    is($plan{Solo}{pricing_model_type}, 'percentage', 'Solo is a pure revenue share');
+    is($plan{Solo}{plan_scope}, 'tenant', 'Solo is tenant scope');
+    is($plan{Solo}{amount_cents}, 0, 'Solo carries no monthly base');
 
-    # Verify standard subscription plan (alphabetically third)
-    my $standard = $plans->[2];
-    is($standard->{plan_name}, 'Registry Standard - $200/month', 'Standard plan exists');
-    is($standard->{pricing_model_type}, 'fixed', 'Standard is fixed type');
-    is($standard->{amount_cents}, 20000, 'Standard plan amount is $200');
+    is($plan{Studio}{pricing_model_type}, 'hybrid', 'Studio is base plus share');
+    is($plan{Empire}{pricing_model_type}, 'hybrid', 'Empire is base plus share');
 
-    # Verify hybrid plan
-    my $hybrid = $plans->[0];
-    is($hybrid->{plan_name}, 'Registry Plus - $100/month + 1%', 'Hybrid plan exists');
-    is($hybrid->{pricing_model_type}, 'hybrid', 'Hybrid is hybrid type');
+    # Retired, but still present -- they are suspended from the offer rather
+    # than deleted, so their shapes still have to hold.
+    is($plan{'Registry Standard - $200/month'}{pricing_model_type}, 'fixed',
+        'the retired Standard plan is fixed type');
+    is($plan{'Registry Standard - $200/month'}{amount_cents}, 20000,
+        'and still $200');
+    is($plan{'Registry Plus - $100/month + 1%'}{pricing_model_type}, 'hybrid',
+        'the retired Plus plan is hybrid type');
 };
 
 subtest 'Create tenant-to-tenant pricing relationship' => sub {

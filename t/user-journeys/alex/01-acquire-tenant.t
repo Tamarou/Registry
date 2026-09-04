@@ -150,8 +150,8 @@ my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
 
 like $pricing_page, qr/selected_plan_id/,
     'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
-like $pricing_page, qr/Registry Revenue Share/,
-    'pricing page shows the seeded revenue-share plan name';
+like $pricing_page, qr/\bSolo\b/,
+    'pricing page shows the buyable tier by its customer-facing name';
 
 # -- Step: pricing (POST) -- select the seeded plan -----------------------
 # 'selected_plan_id' is consumed via exists $form_data->{selected_plan_id}

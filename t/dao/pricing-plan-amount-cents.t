@@ -83,7 +83,7 @@ subtest 'the seeded plans are backfilled by meaning, not blindly' => sub {
     # which is the hazard these two assertions exist for. Stated as the property
     # rather than as a number: the rate is whatever the launch decision made it,
     # and this test is about the cents conversion, not about that decision.
-    my $share = $seeded{'Registry Revenue Share'};
+    my $share = $seeded{'Solo'};
     is $share->{amount_cents}, 0,
         'a percentage plan has no dollar amount, so amount_cents is 0';
     cmp_ok $share->{rate}, '>', 0,

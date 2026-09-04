@@ -126,8 +126,8 @@ my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
 
 like $pricing_page, qr/selected_plan_id/,
     'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
-like $pricing_page, qr/Registry Revenue Share/,
-    'pricing page shows the seeded revenue-share plan name';
+like $pricing_page, qr/\bSolo\b/,
+    'pricing page shows the buyable tier by its customer-facing name';
 
 # -- Capture the displayed rate for the rate-consistency assertion below ----
 # The page renders the rate from pricing_configuration, as "N% of processed
@@ -135,11 +135,15 @@ like $pricing_page, qr/Registry Revenue Share/,
 # cover a plan that carries its own description, or one whose name states a
 # rate -- neither is how the seeded plan reaches the customer any more, and the
 # rate must not be read from a plan name again.
-my ($displayed_rate_str) = $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+(?:all\s+)?customer\s+payments/i;
-$displayed_rate_str //= do {
-    # Fallback: extract the rate from the plan name "Revenue Share - N%"
-    ($pricing_page =~ /Revenue Share[^%]*?(\d+(?:\.\d+)?)\s*%/i)[0];
-};
+my ($displayed_rate_str) =
+    $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+processed\s+revenue/i;
+
+# One fallback, for a plan that supplies its own description naming the rate.
+# There is deliberately no fallback that reads the rate out of a plan NAME:
+# that is how "Registry Revenue Share - 2%" survived a move to 2.5%, and the
+# name is not a place the rate is allowed to live.
+$displayed_rate_str //=
+    ( $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+(?:all\s+)?customer\s+payments/i )[0];
 
 # -- Step: pricing (POST) -- select the seeded plan ----------------------
 $t->post_ok($pricing_url => form => {
