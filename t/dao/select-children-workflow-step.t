@@ -306,4 +306,37 @@ subtest 'HTMX response for add child' => sub {
     is $result->{child}->child_name, 'Diana Smith', 'Correct child returned';
 };
 
+
+# The template used to resolve identity itself:
+#
+#     % my $user_id = $data->{user_id};
+#     % my $children = Registry::DAO::Family->list_children($self->dao->db, $user_id);
+#
+# reading the family id straight out of run data and rendering whatever came
+# back -- name, age, grade, allergies, each with a ready-made child_<id>
+# checkbox. Run data is client-shapable, so that call was the widest door onto
+# other families' children, and it sat in a layer with no way to refuse.
+#
+# A step decides who the children are; a template only renders what it is
+# handed.
+subtest 'the step supplies the run family children, not the template' => sub {
+    my $other = Registry::DAO::User->create($db, {
+        email => 'sc-other@example.com', username => 'scother',
+        password => 'password123', name => 'Other Parent', user_type => 'parent' });
+    Registry::DAO::Family->add_child($db, $other->id, {
+        child_name => 'Not Yours', birth_date => '2015-06-15', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
+
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, { user_id => $parent->id });
+
+    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $data = $step->prepare_template_data($db, $run);
+
+    ok $data->{children}, 'the step hands the template a children list';
+    ok !( grep { $_->child_name eq 'Not Yours' } @{ $data->{children} } ),
+        "and it holds no other family's child";
+};
+
+
 done_testing;

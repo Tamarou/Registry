@@ -32,6 +32,24 @@ package Test::Registry::DB {
         return $tool; # fallback, let PATH handle it
     }
 
+    # The lines a portable dump must not carry. Shared, because the comparison
+    # in t/database/schema-dump-current.t has to filter identically or its two
+    # sides differ for reasons that are not drift.
+    #
+    # transaction_timeout arrived in PostgreSQL 17, so 14, 15 and 16 reject it.
+    # \restrict / \unrestrict are psql meta-commands from the Aug-2025 minors;
+    # an older client calls them invalid, which ON_ERROR_STOP turns into an
+    # abort before any DDL runs.
+    #
+    # Anchored at column 0. pg_dump writes these unindented, while plpgsql
+    # bodies contain indented text that merely looks similar -- and stripping
+    # THAT corrupts the artefact silently, because it lives inside string
+    # literals the server never parses at load time.
+    sub is_nonportable_line ($line) {
+        return $line =~ /\ASET\s+transaction_timeout\s*=/
+            || $line =~ /\A\\(un)?restrict\b/;
+    }
+
     sub generate_dump {
         # Deploy schema via Sqitch into a temp DB, then pg_dump it.
         # Called by `make test-schema` or manually when migrations change.
@@ -43,8 +61,67 @@ package Test::Registry::DB {
 
         my $pg_dump = _find_pg_tool('pg_dump');
         my $out = $DUMP_FILE;
-        system("$pg_dump '$uri' > '$out' 2>/dev/null") == 0
-            or die "pg_dump failed";
+
+        # Strip pg_dump's preamble SETs on the way out, so the committed
+        # artefact loads on every major we support rather than only on whichever
+        # one generated it. They are session settings that cannot affect the
+        # resulting schema, and they are the one part of a dump that is not
+        # portable: 17 and 18 emit `SET transaction_timeout = 0`, which 14, 15
+        # and 16 reject as an unrecognized parameter. Measured, that line is the
+        # ONLY statement in this dump that fails to load on 14 -- every piece of
+        # DDL is accepted -- but psql exits 0 through errors unless told
+        # otherwise, so the failure was invisible for as long as nobody looked.
+        # Filtering here rather than at each reader is what lets both loaders
+        # run with ON_ERROR_STOP and mean it.
+        # Dumped and filtered in two steps, because a shell pipeline reports
+        # only its LAST command's status: `pg_dump | grep > out` returns grep's
+        # 0 even when pg_dump died partway, which would commit a truncated
+        # sql/test-schema.sql without a word. Measured -- `(emit a line; exit 3)
+        # | grep -v ...` gives rc=0. That is the exact failure the rest of this
+        # work exists to make impossible, so it does not get to hide in the
+        # generator.
+        my $raw = "$out.raw";
+        system("$pg_dump '$uri' > '$raw'") == 0 or die "pg_dump failed";
+
+        open my $in,  '<', $raw  or die "open $raw: $!";
+        open my $dst, '>', $out  or die "open $out: $!";
+        # print and close are checked too. A write that fails partway -- a full
+        # disk is the ordinary case -- would otherwise ship a truncated
+        # sql/test-schema.sql, announce success, and unlink the only complete
+        # copy. The pipeline this replaced caught that; losing it while fixing
+        # the other half would have been a poor trade.
+        while ( my $line = <$in> ) {
+            # pg_dump's preamble SETs are the one part of a dump that is not
+            # portable across majors: 17 and 18 emit `SET transaction_timeout`,
+            # which 14, 15 and 16 reject outright. Dropping them lets every
+            # reader load this file with ON_ERROR_STOP and mean it. The rest are
+            # server defaults on any database we load into, so re-establishing
+            # them is not the artefact's job.
+            # By NAME, at column 0, and only the ones that are not portable.
+            #
+            # Column 0 because plpgsql bodies contain INDENTED `SET` --
+            # registry.copy_workflow has two, inside a dynamic EXECUTE string.
+            # Stripping those leaves CREATE FUNCTION succeeding (they are inside
+            # a string literal), so the artefact loads clean and tenant cloning
+            # then dies on `UPDATE ... WHERE` with no SET clause.
+            #
+            # By name because the rest of pg_dump's preamble is not decoration.
+            # check_function_bodies = false is why a dump whose functions are
+            # written before its tables loads at all; client_min_messages =
+            # warning is what keeps NOTICE off stderr and out of TAP. Dropping
+            # the whole preamble to solve one incompatible line traded a known
+            # problem for two latent ones.
+            #
+            # transaction_timeout arrived in PostgreSQL 17, so a dump written on
+            # 17 or 18 is rejected outright by 14, 15 and 16. If a later release
+            # adds another, this load fails loudly naming it -- which is the
+            # right way to find out.
+            next if is_nonportable_line($line);
+
+            print {$dst} $line or die "write $out: $!";
+        }
+        close $dst or die "close $out: $!";
+        unlink $raw or die "unlink $raw: $!";
 
         warn "Schema dump written to $out\n";
         undef $template_db;
@@ -54,7 +131,14 @@ package Test::Registry::DB {
         my ($self) = @_;
         my $uri  = $self->{pgsql}->uri;
         my $psql = _find_pg_tool('psql');
-        system("$psql '$uri' < '$DUMP_FILE' >/dev/null 2>&1") == 0
+
+        # ON_ERROR_STOP, and stderr left alone. Without the flag psql exits 0
+        # even when every statement in the file failed, so this `or die` could
+        # not fire and every test in the suite would run against whatever
+        # fraction of the schema happened to load. Safe to arm now that
+        # generate_dump writes a portable file; before that it would have
+        # rejected the dump on any server older than the one that made it.
+        system("$psql -v ON_ERROR_STOP=1 '$uri' < '$DUMP_FILE' >/dev/null") == 0
             or die "psql load failed";
     }
 

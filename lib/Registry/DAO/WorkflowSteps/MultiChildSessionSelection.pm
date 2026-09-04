@@ -27,9 +27,25 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         require Registry::DAO::ProgramType;
         require Registry::DAO::Session;
         
+        # Scoped to the run's own family. An id that resolves is not thereby
+        # ours: FamilyMember->find carries no family_id predicate and
+        # SelectChildren harvests child_<id>=1 without an ownership check, so
+        # an unscoped lookup admits any row in the tenant. That is not merely a
+        # stranger's enrollment -- the snapshot below carries child_name,
+        # birth_date and grade into the run, the payment metadata and the
+        # confirmation email, and the live row it creates makes the victim
+        # family's own paid cart read 'foreign', so their settlement refunds
+        # their share and never seats them. family_members.family_id is the
+        # run's user_id (Family::add_child sets it), so this is exact.
+        my $family_id = $run->data->{user_id};
+        # Never let structure become an operator. The controller strips
+        # bracketed server-owned keys now, so this is belt to that brace --
+        # and undef fails closed, because family_id is NOT NULL.
+        $family_id = undef if ref $family_id;
         my @children;
         for my $child_id (@$selected_child_ids) {
-            my $child = Registry::DAO::FamilyMember->find($db, { id => $child_id });
+            my $child = Registry::DAO::FamilyMember->find(
+                $db, { id => $child_id, family_id => $family_id } );
             push @children, $child if $child;
         }
         
@@ -58,7 +74,18 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             # a selection for anyone else would be enrolled unchecked -- and
             # unpriced, since Payment totals the children snapshot. Selections
             # must be a subset of the children this run actually chose.
-            my %is_selected = map { $_ => 1 } @$selected_child_ids;
+            #
+            # Keyed on @children -- the ids that RESOLVED to a row -- not on
+            # $selected_child_ids, which is client data: SelectChildren harvests
+            # child_<id>=1 checkboxes without checking they name anything. Keying
+            # on the raw list validates the input against itself, and an
+            # unresolvable id then rides into the cart priced by nothing, because
+            # calculate_enrollment_total also iterates the resolved children. The
+            # charge looks normal and settlement dies on
+            # enrollments_family_member_id_fkey, inside the transaction, after
+            # capture -- rolling back the paying child's enrollment and the
+            # webhook dedup claim with it, so every redelivery reproduces it.
+            my %is_selected = map { $_->id => 1 } @children;
             for my $key (keys %$form_data) {
                 if ($key =~ /^session_for_(.+)$/) {
                     my $child_id = $1;
@@ -178,9 +205,18 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         my $program_id  = $run->data->{program_id};
 
         # Expand child IDs into the flat-hash format the template expects.
+        # Scoped to the run's family for the same reason process is: rendering
+        # a child we would refuse to process discloses their name and age, and
+        # hands the client a session_for_<id> control aimed at them.
+        my $family_id = $run->data->{user_id};
+        # Never let structure become an operator. The controller strips
+        # bracketed server-owned keys now, so this is belt to that brace --
+        # and undef fails closed, because family_id is NOT NULL.
+        $family_id = undef if ref $family_id;
         my @children;
         for my $child_id (@$selected_child_ids) {
-            my $child = Registry::DAO::FamilyMember->find($db, { id => $child_id });
+            my $child = Registry::DAO::FamilyMember->find(
+                $db, { id => $child_id, family_id => $family_id } );
             next unless $child;
             # Compute age as integer years from birth_date (ISO string).
             my $age = $child->age // 0;

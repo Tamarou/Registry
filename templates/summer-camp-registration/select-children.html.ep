@@ -13,9 +13,12 @@
     <div class="mb-8">
       <h3 class="text-xl font-semibold mb-4">Your Children</h3>
       
-      % use Registry::DAO::Family;
-      % my $children = Registry::DAO::Family->list_children($self->dao->db, $user_id);
-      
+      %# Handed down by SelectChildren::prepare_template_data. A template must
+      %# not resolve identity: reading the family id out of run data and
+      %# querying with it made this page the widest door onto other families'
+      %# children.
+      % my $children = stash('children') || [];
+
       % if (@$children) {
         <form method="post" action="<%= $action %>" id="children-form">
           <input type="hidden" name="action" value="continue">

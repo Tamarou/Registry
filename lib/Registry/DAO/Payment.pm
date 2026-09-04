@@ -474,6 +474,26 @@ field $_stripe_client = undef;
 
         return unless @session_ids;
 
+        # This statement locks `sessions`, but what it is really protecting is
+        # `enrollments` -- and the connection between the two is a foreign key,
+        # not anything visible here.
+        #
+        # enrollments_session_id_fkey makes every INSERT into enrollments take
+        # FOR KEY SHARE on the referenced sessions row, and FOR KEY SHARE
+        # conflicts with FOR UPDATE. So holding this lock blocks every
+        # concurrent enrollment insert for these sessions, including from code
+        # paths that have never heard of it. That is what stops two settlements
+        # both reading 'none' from cart_seat_state and both inserting, which
+        # would raise inside a captured settlement.
+        #
+        # Two consequences worth knowing before touching either side. Dropping
+        # or deferring that FK silently removes the mutual exclusion while this
+        # statement still looks like it provides it. And the protection covers
+        # INSERTs only: an UPDATE that changes `status` without touching
+        # `session_id` takes no lock here, so flipping a cancelled row back to
+        # live races this freely. Nothing in lib/ does that today -- there is no
+        # caller of the enrollment activate/pend helpers -- which is the only
+        # reason it is not a live defect. See #327.
         $db->query(
             'SELECT id FROM sessions WHERE id = ANY(?) ORDER BY id FOR UPDATE',
             \@session_ids
@@ -565,6 +585,71 @@ field $_stripe_client = undef;
             # prevent, reintroduced one item at a time.
             next if $held eq 'waitlisted';
 
+            # The child already holds a live seat from another payment, so there
+            # is nothing to seat -- and trying would collide with the live-only
+            # uniqueness rule, inside a settlement Stripe has already captured.
+            # This cart paid for a seat it did not need, so its share is owed
+            # back. Not demoted: there is no row of ours to demote, and the row
+            # that exists belongs to whoever paid for it first.
+            if ( $held eq 'foreign' ) {
+                # Only the READ goes in the try. Putting the marker INSERT in
+                # here as well looked tidier and is a trap: any database error
+                # on that insert -- deadlock, serialization failure, a
+                # statement_timeout cancel, a trigger -- aborts the surrounding
+                # transaction, and the catch's first act is to UPDATE payments,
+                # which cannot run on an aborted transaction. It dies there, so
+                # the genuine error never reaches the warn below, no
+                # manual-review flag is written, and the webhook 500s into a
+                # retry loop reproducing it forever. Three failures for one
+                # fault, and the one piece of evidence a human needs is the part
+                # that gets destroyed.
+                my $share = $self->_share_or_flag(
+                    $db, $item->{child_id}, $session_id, 'duplicate-seat share' );
+
+                # The marker is recorded only once the debt it stands for
+                # resolves, and both halves of that carry weight.
+                #
+                # Recording it makes the branch idempotent: cart_seat_state
+                # reads our own cancelled row as 'closed' next delivery, so the
+                # child is not owed for twice. Without it every redelivery owes
+                # the same child again under a fresh refund_seq -- a fresh
+                # Stripe idempotency key, which Stripe does not deduplicate.
+                #
+                # Recording it only on success keeps an unresolvable share
+                # resolvable: while the state stays 'foreign' a later delivery
+                # looks at this child again, so supplying the missing line item
+                # settles it. The manual-review flag is what stops the cart
+                # settling clean in the meantime.
+                #
+                # A cancelled row is the honest record -- this cart paid for a
+                # seat it did not receive -- and it sits outside
+                # enrollments_session_student_type_live, so it cannot collide
+                # with the seat the other payment holds. drop_reason is set
+                # because this is not a drop: the unfiltered admin readers would
+                # otherwise show a family dropping a session their child is
+                # still attending.
+                #
+                # If this insert fails there is no marker and no debt, the error
+                # propagates, and the redelivery retries the whole item -- which
+                # is right, because a marker we could not write is a promise we
+                # cannot keep.
+                if ( defined $share ) {
+                    Registry::DAO::Enrollment->create_for_payment( $db, {
+                        session_id       => $session_id,
+                        family_member_id => $item->{child_id},
+                        parent_id        => $user_id,
+                        status           => 'cancelled',
+                        payment_id       => $id,
+                        drop_reason      => 'duplicate_seat_refunded',
+                    } );
+
+                    $owed_cents += $share;
+                    push @owed_children, $item->{child_id};
+                }
+
+                next;
+            }
+
             # The seat was checked before the parent paid and is granted after.
             # In between is a Stripe round trip, so it is re-checked here, under
             # the lock taken above, before anything is written.
@@ -599,28 +684,23 @@ field $_stripe_client = undef;
                     # returns no price, so they ride along in enrollment_items
                     # with nothing behind them. Flag it for a human and let the
                     # rest of the cart settle.
-                    try {
-                        $owed_cents += $self->refund_share_for($db, $item->{child_id}, $session_id);
+                    # Flagged, not left on $metadata for a later save(): the
+                    # obligation writer stopped calling save() when the debt
+                    # moved to typed columns, so an in-memory flag would never
+                    # reach the row, and a cart whose ONLY problem is an
+                    # unpriced child would settle looking clean with nothing for
+                    # the runbook to find.
+                    my $share = $self->_share_or_flag(
+                        $db, $item->{child_id}, $session_id, 'refund share' );
+                    if ( defined $share ) {
+                        $owed_cents += $share;
                         push @owed_children, $item->{child_id};
-                    }
-                    catch ($e) {
-                        # Persisted here, not left on $metadata for a later
-                        # save(). The obligation writer stopped calling save()
-                        # when the debt moved to typed columns, so an in-memory
-                        # flag would never reach the row -- and a cart whose
-                        # ONLY problem is an unpriced child would settle looking
-                        # clean, with nothing for the runbook to find.
-                        $self->flag_refund_manual_review(
-                            $db, $item->{child_id}, $session_id );
-                        warn "finalize_enrollment: unresolvable refund share for "
-                           . "child $item->{child_id} in session $session_id "
-                           . "(payment $id): $e";
                     }
                 }
                 next;
             }
 
-            Registry::DAO::Enrollment->create_for_payment($db, {
+            my $enrollment_id = Registry::DAO::Enrollment->create_for_payment($db, {
                 session_id       => $session_id,
                 family_member_id => $item->{child_id},
                 parent_id        => $user_id,
@@ -634,9 +714,10 @@ field $_stripe_client = undef;
             # the critical step; the email can be retried or re-sent later.
             try {
                 Registry::DAO::Notification->ensure_enrollment_confirmation($db, {
-                    user_id    => $user_id,
-                    session_id => $session_id,
-                    child_id   => $item->{child_id},
+                    user_id       => $user_id,
+                    session_id    => $session_id,
+                    child_id      => $item->{child_id},
+                    enrollment_id => $enrollment_id,
                 });
             }
             catch ($e) {
@@ -770,18 +851,28 @@ SQL
     method flag_refund_manual_review ($db, $child_id, $session_id) {
         $db = $db->db if $db isa Registry::DAO;
 
-        # The flag is written unconditionally. It records that a human has to
-        # look at something, which is true whatever the status says -- and the
-        # case that most needs recording is a debt on a row that already reached
-        # a terminal refund status, since that debt cannot be represented as an
-        # obligation at all. An earlier version guarded the whole statement on
-        # the status, so exactly that case wrote nothing anywhere.
-        $db->query( <<'SQL', encode_json([ { child_id => $child_id, session_id => $session_id } ]), $id );
+        # The flag is written whatever the STATUS says -- the case that most
+        # needs recording is a debt on a row that already reached a terminal
+        # refund status, since that debt cannot be represented as an obligation
+        # at all. An earlier version guarded the whole statement on the status,
+        # so exactly that case wrote nothing anywhere.
+        #
+        # It is guarded on the PAIR, though, because the same fault recurs. The
+        # duplicate-seat branch deliberately writes no marker row when the share
+        # is unresolvable, so the state stays 'foreign' and every later delivery
+        # re-enters -- and finalize_enrollment does not early-return on
+        # refund_pending, so a parent refreshing the Stripe return URL re-enters
+        # it too. Appending unconditionally grew this array without bound on a
+        # money row, and made the runbook read one fault as N.
+        my $entry = encode_json([ { child_id => $child_id, session_id => $session_id } ]);
+        $db->query( <<'SQL', $entry, $id, $entry );
             UPDATE payments
                SET metadata = jsonb_set( COALESCE(metadata, '{}'::jsonb),
                        '{refund_manual_review}',
                        COALESCE(metadata->'refund_manual_review', '[]'::jsonb) || ?::jsonb )
              WHERE id = ?
+               AND NOT COALESCE(metadata->'refund_manual_review', '[]'::jsonb)
+                       @> ?::jsonb
 SQL
 
         # The status move is separate, and still refuses to walk a terminal row
@@ -1069,6 +1160,53 @@ SQL
     # Refuses rather than defaulting. A silent fallback to the cart total is
     # precisely the mistake this exists to prevent, and it is the expensive
     # direction to be wrong in.
+    # Resolve one child's share, or flag it for a human and return undef.
+    #
+    # Wrapped in a SAVEPOINT because the callers run inside a transaction --
+    # Webhooks opens one, and process_payment_async opens one around the
+    # parent-return callback. A statement that fails at the DATABASE level
+    # (statement_timeout cancel, deadlock, serialization failure, a trigger)
+    # aborts that transaction, after which every further statement on the
+    # connection is refused. The catch's job is to write a manual-review flag,
+    # which is a statement, so without the savepoint the recovery path is itself
+    # refused: the real cause is replaced by "current transaction is aborted",
+    # no flag is written, and the warn never runs because it sits after the
+    # write. Three failures for one fault, and the evidence a human needs is the
+    # part destroyed.
+    #
+    # The guard is conditional because a savepoint outside a transaction is an
+    # error in its own right, and the tests -- like any autocommit caller --
+    # have no enclosing transaction. There, a failed statement poisons nothing
+    # and no savepoint is wanted.
+    #
+    # The warn comes FIRST. If the flag write fails for any reason, the cause
+    # has already reached the log.
+    method _share_or_flag ($db, $child_id, $session_id, $what) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $in_txn = !$db->dbh->{AutoCommit};
+        $db->query('SAVEPOINT registry_share_lookup') if $in_txn;
+
+        my $share;
+        try {
+            $share = $self->refund_share_for( $db, $child_id, $session_id );
+            $db->query('RELEASE SAVEPOINT registry_share_lookup') if $in_txn;
+        }
+        catch ($e) {
+            if ($in_txn) {
+                # ROLLBACK TO undoes the failed statement but LEAVES the
+                # savepoint defined; without the RELEASE a cart re-issuing the
+                # same name once per child stacks a subtransaction per failure.
+                $db->query('ROLLBACK TO SAVEPOINT registry_share_lookup');
+                $db->query('RELEASE SAVEPOINT registry_share_lookup');
+            }
+            warn "finalize_enrollment: unresolvable $what for child $child_id "
+               . "in session $session_id (payment $id): $e";
+            $self->flag_refund_manual_review( $db, $child_id, $session_id );
+        }
+        return $share;
+    }
+
     method refund_share_for ($db, $child_id, $session_id) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -1086,6 +1224,19 @@ SQL
         die "refund_share_for: no line item for child $child_id in session "
           . "$session_id on payment $id\n"
             unless $row->{n};
+
+        # Refuse a negative share HERE, where both accumulation sites route
+        # through it, rather than at the obligation writer. That writer guards
+        # the cart TOTAL, so one child's negative share silently cancelled
+        # another child's real debt: +5000 and -2000 recorded 3000, tripped no
+        # guard, wrote no manual-review flag and warned nobody, leaving the
+        # child who actually lost their seat under-refunded by 2000 with
+        # nothing to find. Reachable because PricingPlan's percentage_discount
+        # is unbounded and payment_items.amount_cents carries no CHECK.
+        # Dying here reaches the caller's catch, which flags for review.
+        die "refund_share_for: negative share $row->{cents} for child "
+          . "$child_id in session $session_id on payment $id\n"
+            if $row->{cents} < 0;
 
         return $row->{cents};
     }

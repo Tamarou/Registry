@@ -496,11 +496,12 @@ subtest 'a waitlisted child is not re-adjudicated when a seat frees up' => sub {
 
     # This count is the only assertion here that catches the regression -- the
     # status assertion above passes either way. It depends on the fixture:
-    # ensure_enrollment_confirmation dedupes on (user_id, type, session_id,
-    # child_id), so had this child ever been seated in this session, the
-    # spurious call would be swallowed and the count would stay flat with the
-    # bug present. They are waitlisted on the first pass and never seated, so
-    # the count genuinely rises. Fragile in the missed-detection direction
+    # ensure_enrollment_confirmation dedupes per ENROLMENT, on (user_id, type,
+    # session_id, child_id, enrollment_id), so a child who already holds a
+    # confirmed enrolment here would have the spurious call swallowed and the
+    # count would stay flat with the bug present. They are waitlisted on the
+    # first pass and never seated, so no enrolment of theirs is ever confirmed
+    # and the count genuinely rises. Fragile in the missed-detection direction
     # only; there is no false-failure path.
     is $db->query(q{SELECT COUNT(*) FROM notifications WHERE user_id = ?},
         $parent->id)->array->[0], $notes_before,

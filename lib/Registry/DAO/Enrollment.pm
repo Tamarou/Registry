@@ -75,11 +75,11 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     #
     # The arbiter is named deliberately. A bare ON CONFLICT DO NOTHING has no
     # arbiter and so absorbs a violation of every unique constraint on the
-    # table, including the status-blind enrollments_session_student_type_unique
-    # -- which a parent re-registering a child for a session they dropped will
-    # hit. Stripe has captured by the time this runs, so swallowing that insert
-    # means money taken and no enrollment, silently. Only the payment replay is
-    # meant to be quiet; everything else must raise.
+    # table, including enrollments_session_student_type_live -- which any
+    # pre-existing live row for this (session, student) will hit, whatever
+    # payment it belongs to. Stripe has captured by the time this runs, so
+    # swallowing that insert means money taken and no enrollment, silently.
+    # Only the payment replay is meant to be quiet; everything else must raise.
     sub create_for_payment ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -92,9 +92,22 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             $data->{metadata} = { -json => $data->{metadata} };
         }
 
-        $db->insert( $class->table, $data, {
-            on_conflict => \'(session_id, student_id, payment_id) WHERE payment_id IS NOT NULL DO NOTHING'
-        } );
+        my $inserted = $db->insert( $class->table, $data, {
+            on_conflict => \'(session_id, student_id, payment_id) WHERE payment_id IS NOT NULL DO NOTHING',
+            returning   => 'id',
+        } )->hash;
+        return $inserted->{id} if $inserted;
+
+        # The arbiter absorbed it, so this is a replay of a row that already
+        # exists. Return the id of the row that won: callers need a stable
+        # handle on "the enrolment this child holds for this payment" that is
+        # the same on every delivery, or anything keyed on it -- the
+        # confirmation email in particular -- fires again per redelivery.
+        return $db->select( $class->table, ['id'], {
+            session_id => $data->{session_id},
+            student_id => $data->{student_id},
+            payment_id => $data->{payment_id},
+        } )->hash->{id};
     }
 
     # Enroll a list of children into sessions with no payment: create each active
@@ -105,16 +118,17 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         require Registry::DAO::Notification;
         my $count = 0;
         for my $item (@$items) {
-            $class->create( $db, {
+            my $enrollment = $class->create( $db, {
                 session_id       => $item->{session_id},
                 family_member_id => $item->{child_id},
                 parent_id        => $parent_id,
                 status           => 'active',
             } );
             Registry::DAO::Notification->ensure_enrollment_confirmation( $db, {
-                user_id    => $parent_id,
-                session_id => $item->{session_id},
-                child_id   => $item->{child_id},
+                user_id       => $parent_id,
+                session_id    => $item->{session_id},
+                child_id      => $item->{child_id},
+                enrollment_id => $enrollment->id,
             } );
             $count++;
         }
@@ -211,24 +225,6 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     method cancel($db)   { $self->$update_status( $db, 'cancelled' ) }
     method pend($db)     { $self->$update_status( $db, 'pending' ) }
     
-    # Count enrollments for a session by status
-    # What does this payment already hold for this (session, child)?
-    #
-    # One predicate with three answers, because every consumer of this question
-    # must agree on it. A cancelled row in particular must be neither
-    # re-adjudicated nor treated as a fresh demotion: doing the first
-    # un-cancels an admin's drop, and doing the second owes its share a second
-    # time under an idempotency key Stripe has never seen, against money the
-    # enrollment's own refund_status already records as returned.
-    #
-    #   seated     -- active or pending. A seat in hand: leave it, and count it
-    #                 against this cart's own capacity.
-    #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
-    #   closed     -- cancelled. `enrollments_status_check` bounds this column to
-    #                 pending|active|cancelled|waitlisted, so cancelled is the
-    #                 whole category: a terminal drop another system owns, and
-    #                 not ours to re-adjudicate.
-    #   none       -- nothing here; adjudicate normally.
     # The one place that answers "does this enrollment status hold a seat".
     #
     # Three consumers used to carry their own copy of this list: this class's
@@ -251,9 +247,44 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     # is a different question that happens to have the same answer today.
     sub seat_holding_statuses ($class) { return [qw( active pending )] }
 
+    # What does this payment already hold for this (session, child)?
+    #
+    # Two predicates and five answers, because every consumer of this question
+    # must agree on it. A cancelled row in particular must be neither
+    # re-adjudicated nor treated as a fresh demotion: doing the first
+    # un-cancels an admin's drop, and doing the second owes its share a second
+    # time under an idempotency key Stripe has never seen, against money the
+    # enrollment's own refund_status already records as returned.
+    #
+    #   seated     -- active or pending. A seat in hand: leave it, and count it
+    #                 against this cart's own capacity.
+    #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
+    #   closed     -- cancelled. `enrollments_status_check` bounds this column to
+    #                 pending|active|cancelled|waitlisted, so cancelled is the
+    #                 whole category: a terminal drop another system owns, and
+    #                 not ours to re-adjudicate.
+    #   foreign    -- no row of ours, but a live row belongs to a DIFFERENT
+    #                 payment: a free enrolment, an admin add, an earlier
+    #                 purchase. Nothing to seat, and inserting would collide
+    #                 with the live-only uniqueness rule inside a settlement
+    #                 Stripe has already captured, so this cart owes its share
+    #                 back instead.
+    #   none       -- nothing here; adjudicate normally.
     sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
         $db = $db->db if $db isa Registry::DAO;
 
+        # Our own row first: its state is what this cart holds.
+        #
+        # Keyed WITHOUT student_type, deliberately, even though the foreign
+        # lookup below carries it. The two queries answer different questions
+        # against different rules. This one asks "does this cart already hold a
+        # row here", and what decides that is enrollments_payment_dedup --
+        # (session_id, student_id, payment_id), no student_type -- because that
+        # arbiter is what silently absorbs our insert. Adding the column here
+        # would make a row of another type invisible to us, so we would report
+        # 'none', insert, and have the arbiter swallow it: money taken, no
+        # enrollment. The foreign lookup asks "would the unique INDEX refuse
+        # this insert", and that index does key on student_type.
         my $row = $db->select(
             $class->table, ['status'],
             {   payment_id => $payment_id,
@@ -262,13 +293,91 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             },
         )->hash;
 
-        return 'none' unless $row;
+        if ($row) {
+            my $status = $row->{status};
 
-        my $status = $row->{status} // '';
-        return 'seated'
-            if any { $_ eq $status } @{ $class->seat_holding_statuses };
-        return 'waitlisted' if $status eq 'waitlisted';
-        return 'closed';
+            # NULL is not terminal, and `// ''` used to send it down the
+            # 'closed' branch. The foreign lookup below mirrors
+            # enrollments_session_student_type_live -- status IS DISTINCT FROM
+            # 'cancelled' -- so a NULL-status row occupies the seat there, and
+            # one row gave two contradictory answers about the same index.
+            #
+            # What this actually changes is the capacity credit, not the
+            # adjudication: finalize_enrollment takes the same `next` for
+            # 'seated' and 'closed', so the child is skipped either way. But
+            # payment_fits_session excludes this payment's own rows from
+            # $taken, so a seat we hold has to be counted in %granted or the
+            # cart is invisible to itself and oversells the session on the next
+            # delivery. 'closed' did not count it; 'seated' does.
+            #
+            # The column is nullable and its CHECK passes on NULL (#328);
+            # nothing in lib/ writes one, so this is reachable by hand-written
+            # SQL or an import rather than by the application today.
+            return 'seated' unless defined $status;
+
+            return 'seated'
+                if any { $_ eq $status } @{ $class->seat_holding_statuses };
+            return 'waitlisted' if $status eq 'waitlisted';
+            return 'closed';
+        }
+
+        # No row of ours -- but the child may already hold a live seat from a
+        # DIFFERENT payment: a free enrolment with payment_id IS NULL, an admin
+        # add, an earlier purchase. Scoping this lookup by payment_id made that
+        # read as 'none', so the caller adjudicated as though the child were
+        # unseated and tried to insert -- colliding with the live-only
+        # uniqueness rule inside a settlement Stripe had already captured.
+        #
+        # 'foreign', not 'seated'. %granted credits this cart for seats it
+        # holds, and this is not one of them -- the row belongs to another
+        # payment. A foreign row that actually occupies a seat is already in
+        # payment_fits_session's $taken, which counts every seat-holding row it
+        # does not own, so crediting it here as well would count one seat twice
+        # and under-count the capacity left for the next sibling in the cart.
+        # Every row the uniqueness rule covers, not only the ones holding a
+        # seat. The predicate mirrors enrollments_session_student_type_live
+        # exactly: if the index would refuse the insert, this must report it.
+        #
+        # Narrowing this to the seat-holding statuses is the tempting mistake,
+        # and it hides two rows that collide anyway: a waitlisted row, which
+        # the platform's own capacity gate writes and nothing in lib/ ever
+        # moves back out of, and an admin-created row, which carries no
+        # payment_id at all. The caller then finds out by raising inside a
+        # settlement Stripe has already captured.
+        #
+        # cancelled is excluded because the index excludes it -- that seat
+        # really is free. student_type is in the predicate for the same reason:
+        # the index keys on it, so a row of a different type is not a collision
+        # and reporting it as one refunds a seat the insert would have granted.
+        # ponytail: 'family_member' inline, because no production caller ever
+        # supplies anything else -- Waitlist hardcodes it, and the two create
+        # paths default it with //=, which only tests override. The trigger for
+        # widening this to a parameter is therefore a production caller starting
+        # to pass student_type through, not merely a second type existing. Widen
+        # enrollments_payment_dedup at the same time, or the own-row lookup above
+        # goes blind to a row of another type and the arbiter swallows our
+        # insert.
+        # FOR UPDATE, because the caller's lock does not reach this row. The
+        # FOR UPDATE _lock_cart_sessions takes on sessions serialises concurrent
+        # INSERTs into enrollments through the FK's FOR KEY SHARE, and that is
+        # the only thing it serialises. Both drop paths -- ProcessEnrollmentDrop
+        # and DropRequest -- UPDATE status alone, touching no session_id, so
+        # RI_FKey_check_upd short-circuits and they take no lock on sessions at
+        # all. Without a lock here the foreign row can be cancelled between this
+        # read and the marker write two statements later: this cart then refunds
+        # its share for a seat that just became free and writes a cancelled
+        # marker, which makes this function answer 'closed' forever after, so no
+        # later delivery re-adjudicates. Refunded, and holding no seat in a
+        # session that has room.
+        my $elsewhere = $db->query( <<'SQL', $session_id, $child_id, 'family_member' )->hash;
+            SELECT status FROM enrollments
+             WHERE session_id = ? AND student_id = ? AND student_type = ?
+               AND status IS DISTINCT FROM 'cancelled'
+             LIMIT 1
+             FOR UPDATE
+SQL
+
+        return $elsewhere ? 'foreign' : 'none';
     }
 
     # Move a paid child to the waitlist because the seat went while they paid.
@@ -341,9 +450,16 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     sub payment_fits_session ($class, $db, $payment, $session_id, $already_granted = 0) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $capacity = $db->query(
+        # ->hash is undef when the session is not visible to this connection,
+        # and the deref used to raise "Can't use an undefined value as a HASH
+        # reference" from inside a settlement Stripe has already captured. There
+        # is no recovery here -- treating it as unlimited seats the child and
+        # the FK refuses the insert one line later -- so the only improvement
+        # available is an error that says what happened.
+        my $row = $db->query(
             'SELECT capacity FROM sessions WHERE id = ?', $session_id
-        )->hash->{capacity};
+        )->hash or die "payment_fits_session: session $session_id not found\n";
+        my $capacity = $row->{capacity};
         return 1 unless $capacity;    # NULL or 0 -- unlimited
 
         my $taken = $db->query(

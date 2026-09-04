@@ -125,6 +125,32 @@ subtest 'on a tenant host a later step gets the host tenant, not the posted one'
         'run data carries the tenant the request actually arrived at';
 };
 
+subtest 'a bracketed variant cannot smuggle a structure into a server-owned key' => sub {
+    my $run = run_on_second_step();
+
+    # _apply_server_owned_data vets the FLAT param hash and touches only the
+    # exact keys. expand_form_params runs afterwards, inside WorkflowStep, and
+    # its bracket branch does `$ref->{$p} = {} unless ref $ref->{$p} eq 'HASH'`
+    # -- destroying whatever scalar the server just put there and replacing it
+    # with client-built structure. The scalar form of this attack is refused
+    # above; the bracketed form went straight through.
+    #
+    # A structure here is not merely a wrong value. These keys are fed to
+    # SQL::Abstract as WHERE values, where a hashref becomes an OPERATOR:
+    # family_id => { '!=' => ... } renders `family_id != ?` and matches every
+    # other family in the tenant.
+    $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
+        'user_id[!=]'       => $other_user->id,
+        '__tenant_slug[!=]' => 'victim_tenant',
+    })->status_is(201);
+
+    my $data = data_for($run->id);
+    ok !ref $data->{user_id},
+        'user_id is not a client-built structure';
+    ok !ref $data->{__tenant_slug},
+        '__tenant_slug is not a client-built structure';
+};
+
 # authenticate_as installs a permanent before_dispatch hook, so every request
 # from here on is authenticated. Keep this subtest last.
 subtest 'user_id comes from the session, not the request' => sub {

@@ -159,7 +159,7 @@ subtest 'the settlement holds the payment row while it decides' => sub {
     # real settlement instead: if _lock_and_refresh is doing its job, a second
     # backend cannot take the row while finalize_enrollment runs.
     # Its own child: the shared one is already enrolled in this session by the
-    # subtest above, and enrollments_session_student_type_unique would reject a
+    # subtest above, and enrollments_session_student_type_live would reject a
     # second row for the pair before the probe ever ran.
     my $probe_child = Registry::DAO::Family->add_child($db, $parent->id, {
         child_name => 'CB Lock Kid', birth_date => '2017-05-05', grade => '4',
@@ -232,8 +232,9 @@ subtest 'the settlement holds the payment row while it decides' => sub {
 # is ever demoted, no debt is ever recorded, and the loop never runs. This is
 # the ordinary-card path, not just 3DS.
 subtest 'the parent-return path refunds each increment separately' => sub {
-    # Its own child. enrollments_session_student_type_unique is payment-blind
-    # (issue #315), and the shared $child is already enrolled in $session by an
+    # Its own child. enrollments_session_student_type_live is payment-blind --
+    # it keys on (session, student, type) only, so a row created by any other
+    # payment collides just the same -- and the shared $child is already enrolled in $session by an
     # earlier subtest, so reusing it makes finalize_enrollment raise for a
     # reason that has nothing to do with refunds.
     my $kid = Registry::DAO::Family->add_child($db, $parent->id, {
