@@ -175,6 +175,38 @@ subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
     ok !$plans->[0]{metadata}{coming_soon}, 'Solo is not coming_soon';
 };
 
+# A greyed-out card is CSS. The plan still has an active relationship -- it must,
+# or prepare_pricing_data would not return it to be rendered at all -- so the
+# only thing standing between a client and a tier the business has not launched
+# is the disabled attribute on a radio button. Posting the id directly skips it.
+#
+# The cost is not cosmetic: Studio and Empire carry a monthly base, so a signup
+# on one of them creates a subscription for a product that does not exist yet.
+subtest 'a coming-soon plan cannot be selected, however it is posted' => sub {
+    my $workflow = $db->find(Workflow => { slug => 'tenant-signup' });
+    my $step = Registry::DAO::WorkflowStep->find($db->db, {
+        workflow_id => $workflow->id,
+        slug        => 'pricing',
+    });
+
+    ok !$step->validate_plan_selection( $db->db, $studio_plan->id ),
+        'Studio is refused: it is on offer to look at, not to buy';
+    ok !$step->validate_plan_selection( $db->db, $empire_plan->id ),
+        'Empire is refused too';
+
+    ok $step->validate_plan_selection( $db->db, $solo_plan->id ),
+        'and the tier that IS launched still selects';
+
+    my $run = $workflow->new_run($db->db);
+    my $result = $step->process( $db->db,
+        { selected_plan_id => $studio_plan->id }, $run );
+
+    ok $result->{_validation_errors},
+        'processing the step with a coming-soon plan is rejected';
+    ok !$run->data->{selected_pricing_plan},
+        'and nothing is written to the run';
+};
+
 subtest 'pricing step renders plan cards with coming-soon styling' => sub {
     # Start workflow and advance to pricing
     $t->post_ok('/tenant-signup')->status_is(302);
