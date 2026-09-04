@@ -286,8 +286,11 @@ $db->query(
     $ready_acct, $slug,
 );
 
-# Link the tenant to the seeded 2% revenue-share plan so the fee resolver
-# applies a 2% fee at charge time. Same UPDATE as tenant-paid-enrollment.t.
+# Link the tenant to the seeded tenant-scope percentage plan, so the fee resolver
+# has a plan to read a rate from. The SQL selects by scope and model type, never
+# by rate -- the rate itself is whatever that plan carries, and the assertions
+# read it from the database rather than assuming it here. Same UPDATE as
+# tenant-paid-enrollment.t.
 $db->query(q{
     UPDATE registry.tenants SET platform_pricing_plan_id = (
         SELECT id FROM registry.pricing_plans
@@ -332,19 +335,18 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
 
     is $charge->{transfer_data}{destination}, $ready_acct,
         'I1: charge.transfer_data.destination is the ready account';
-    # The amount, not just the fee. int($a * 0.02 + 0.5) == 300 holds for every
-    # charge from 14975 to 15024 cents, so the fee assertion alone accepts any
-    # price between $149.75 and $150.24. Both the displayed total and the Stripe
-    # amount descend from calculate_enrollment_total, so a regression there moves
-    # them together and nothing here would notice. This is the cart-versus-charge
-    # assertion: what Stripe took equals what the parent was shown.
+    # The amount, not just the fee. Rounding a fee to whole cents makes the fee
+    # assertion tolerate a band of charge amounts either side of the true one, so
+    # a fee that looks right does not establish that the right amount was taken.
+    # This is the cart-versus-charge assertion: what Stripe took equals what the
+    # parent was shown.
     is $charge->{amount}, $result->{data}{step_data}{total},
         'I2: the amount Stripe charged is the total the cart displayed';
 
-    # And against the fixture price, which the line above cannot do: both the
+    # Anchored to the fixture price, which the line above cannot be: both the
     # displayed total and the Stripe amount descend from
     # calculate_enrollment_total, so a regression there moves them together and
-    # agrees with itself. This is the only assertion here anchored outside that
+    # agrees with itself. This is the only amount here anchored outside that
     # function.
     is $charge->{amount}, int( $PLAN_AMOUNT * 100 ),
         'I2: and it is the price the plan actually carries';
@@ -374,8 +376,11 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
     $charge_fee_id      = $charge->{application_fee};
     $charge_fee_amount  = $charge->{application_fee_amount};
     $charge_transfer_id = $charge->{transfer};
-    ok $charge_fee_id,      'I2: charge carries an application_fee id';
-    ok $charge_transfer_id, 'I2: charge carries a transfer id';
+    # charge_for_settled dies unless both are present, so their mere existence
+    # is not news. Their shape is: a fee id that is not a fee id means the
+    # destination charge was built as something else.
+    like $charge_fee_id,      qr/^fee_/, 'I2: the charge carries an application fee';
+    like $charge_transfer_id, qr/^tr_/,  'I2: and a transfer to the connected account';
 };
 
 # ---------------------------------------------------------------------------
@@ -401,7 +406,9 @@ subtest 'I4: webhook dedup -- first delivery enrolls, same event_id replay is a 
     Test::Registry::StripeWebhook::post_succeeded(
         $t, $main_payment_id, $slug, $main_pi_id,
         event_id => $evt1,
-    )->status_is(200, 'I4: replay of same event_id returns 200');
+    )->status_is(200, 'I4: replay of same event_id returns 200')
+     ->content_is('OK (duplicate)',
+        'I4: absorbed by the dedup ledger, not merely re-run idempotently');
 
     my $enrs2 = $tdb->select('enrollments', '*', { payment_id => $main_payment_id })->hashes;
     is scalar @$enrs2, 1, 'I4: still exactly one enrollment after replay';
@@ -434,8 +441,11 @@ subtest 'I3: declined card fails with card_declined and creates no enrollment' =
     is $enr3_count, 0, 'I3: no enrollment created for declined card';
 
     my $pay3_fresh = Registry::DAO::Payment->find($tdb, { id => $pay3->id });
-    isnt $pay3_fresh->status, 'completed',
-        'I3: payment status is NOT completed after decline';
+    # 'pending', not merely "not completed". Nothing tells Registry about the
+    # decline -- no webhook, no browser return -- so the row must be untouched,
+    # and isnt() would also accept a future 'failed' arriving unnoticed.
+    is $pay3_fresh->status, 'pending',
+        'I3: the declined run leaves its payment row untouched';
 };
 
 # ---------------------------------------------------------------------------
@@ -451,7 +461,10 @@ subtest 'I6: refund reverses transfer and returns the application fee per plan p
     # removed. This file runs outside the daemon's event loop, so settle() can
     # block on the promise here in a way the web path never could.
     my $refund = settle( $main_payment->refund_async($tdb) );
-    ok $refund->{id}, 'I6: refund object returned from Stripe';
+    # The amount, not the object's existence: settle() dies on rejection, so a
+    # refund object is always present by the time this line runs.
+    is $refund->{amount}, $main_payment->amount_cents,
+        'I6: the parent gets the full amount back';
 
     # The plan carries refund_application_fee=true, so whatever the platform took
     # must come back -- asserted against the fee actually charged, not an amount.
@@ -467,8 +480,11 @@ subtest 'I6: refund reverses transfer and returns the application fee per plan p
 
     # Transfer reversal: verify the connected-account transfer was reversed.
     my $transfer = Test::Registry::StripeConfirm::_get("/transfers/$charge_transfer_id");
-    ok $transfer->{amount_reversed} > 0,
-        'I6: transfer.amount_reversed > 0 (transfer was reversed)';
+    # The whole transfer, not merely a positive amount. refund_async always sends
+    # reverse_transfer, so `> 0` fails only if that is dropped entirely -- a
+    # regression that reversed the wrong amount stays green.
+    is $transfer->{amount_reversed}, $transfer->{amount},
+        'I6: the whole transfer was reversed, not part of it';
 };
 
 # ---------------------------------------------------------------------------
@@ -493,6 +509,14 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
     ok !$result7b->{errors}, 'I7: second process succeeds'
         or diag explain $result7b->{errors};
 
+    # The row, before the intent. Re-reading $pay7 by its own id only detects a
+    # mutation of the first row -- if _reusable_payment_row or the run's
+    # payment_id stamp regressed, the second submit would mint a SECOND row with
+    # a second confirmable intent, which is exactly what create_payment's comment
+    # forbids, and every assertion below would still pass.
+    is $result7b->{data}{step_data}{payment_id}, $pay7->id,
+        'I7: the second submit reused the same payment row';
+
     $pay7 = Registry::DAO::Payment->find($tdb, { id => $pay7->id });
     my $pi_id_b = $pay7->stripe_payment_intent_id;
     is $pi_id_b, $pi_id_a,
@@ -502,17 +526,15 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
     my $confirmed7 = Test::Registry::StripeConfirm::confirm($pi_id_a);
     is $confirmed7->{status}, 'succeeded', 'I7: intent confirms as succeeded';
 
-    my $charge7 = Test::Registry::StripeConfirm::charge_for($pi_id_a);
-    ok $charge7->{id}, 'I7: charge_for returns a charge for the single confirmed intent';
-
-    # Counted, not identified. charge_for follows latest_charge off the intent,
-    # so its payment_intent is that intent by construction -- asserting it says
-    # nothing. "One confirm, one charge" is a count, and the count is what a
-    # double-charge regression would break.
+    # A count, not an identity: charge_for follows latest_charge off the intent,
+    # so comparing the charge's payment_intent to that intent says nothing. This
+    # is a guard on Stripe's side of the contract -- one confirm yields one
+    # charge -- and only the test confirms, so no Registry change moves it. The
+    # Registry-side half of "no double charge" is the payment-row assertion above.
     my $charges7 = Test::Registry::StripeConfirm::_get(
         "/charges?payment_intent=$pi_id_a" );
     is scalar @{ $charges7->{data} // [] }, 1,
-        'I7: exactly one charge exists for the confirmed intent';
+        'I7: one confirm yielded exactly one charge';
 
     # Rotate the idempotency token -> a genuinely new Stripe PI.
     $pay7->rotate_idempotency_token($tdb);
@@ -599,17 +621,12 @@ subtest "I8: the browser return alone finalizes a real payment" => sub {
     is scalar @$enrs, 1, 'I8: exactly one enrollment, in the tenant schema';
     is $enrs->[0]{status}, 'active', 'I8: and it is active';
 
-    # Keyed on user_id, not on $payment_id. The id is minted by the INSERT into
-    # the tenant schema, so nothing could ever carry it into registry.payments
-    # and that form passes however broken the tenant path is. A real leak writes
-    # a DIFFERENT id against this parent, which only this form catches. I5 gets
-    # this right at the gate; I8 should too.
-    # The tenant side is the assertion that can bite. registry.payments.user_id
-    # is NOT NULL REFERENCES registry.users, and this parent exists only in
-    # <slug>.users -- so a misrouted INSERT raises an FK violation rather than
-    # depositing a row, and the negative below would stay green either way.
-    is $tdb->select( 'payments', ['id'], { id => $payment_id } )->hashes->size, 1,
-        "I8: this run's payment row lives in the tenant schema";
+    # registry.payments.user_id is NOT NULL REFERENCES registry.users, and this
+    # parent exists only in <slug>.users -- so a misrouted INSERT raises rather
+    # than depositing a row, and this negative would stay green either way. It is
+    # kept as a cheap cross-schema tripwire, not as the evidence that routing
+    # worked. The assertion that detects misrouting is the enrollment count
+    # above: a row written to the wrong schema leaves that select empty.
     is $db->select( 'registry.payments', ['id'], { user_id => $parent->id } )
            ->hashes->size, 0,
         'I8: and none in registry.payments';
