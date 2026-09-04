@@ -79,11 +79,29 @@ subtest 'the revert removes only what the deploy created' => sub {
 
     # The rate change owns the name; reverting the tier change must hand it back
     # rather than leave the plan called Solo with no tier ladder around it.
-    is $db->query(q{
-        SELECT plan_name FROM registry.pricing_plans
+    my $solo = $db->query(q{
+        SELECT plan_name,
+               pricing_configuration->>'description' AS blurb
+          FROM registry.pricing_plans
          WHERE metadata->>'launch_rate' = 'true'
-    })->array->[0], 'Registry Revenue Share',
+    })->hash;
+
+    is $solo->{plan_name}, 'Registry Revenue Share',
         'and the buyable plan is handed back to the previous change';
+
+    # A revert must not leave state the parent never had. Both of these are
+    # rendered: the description on the signup card and, through
+    # get_subscription_config, as a Stripe product description.
+    is $solo->{blurb}, undef,
+        'the description this change added is gone with it';
+
+    is $db->query(q{
+        SELECT pr.metadata->>'plan_name'
+          FROM registry.pricing_relationships pr
+          JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
+         WHERE p.metadata->>'launch_rate' = 'true'
+    })->array->[0], 'Registry Revenue Share',
+        'and the name snapshot follows the rename back, rather than saying Solo';
 };
 
 subtest 'the deploy refuses a name it did not create' => sub {

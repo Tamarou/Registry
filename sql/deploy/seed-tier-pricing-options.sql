@@ -31,6 +31,10 @@ UPDATE registry.pricing_plans
    SET pricing_configuration = pricing_configuration
          || jsonb_build_object('description',
                 'Revenue share on customer payments. No monthly fee, no minimums.'),
+       -- and removed from metadata in the same statement. Leaving it would give
+       -- one plan two copies of customer-facing copy that already disagree,
+       -- which is the duplication this branch removed for the rate.
+       metadata = metadata - 'description',
        updated_at = CURRENT_TIMESTAMP
  WHERE metadata->>'launch_rate' = 'true';
 
@@ -80,10 +84,12 @@ BEGIN
             ('Empire', 99900, 0.01,  3, 'Everything in Studio, plus priority support')
         ) AS t(plan_name, amount_cents, rate, display_order, description)
     LOOP
-        -- Idempotent on the STAMP, not the name. Keying the skip on a name
-        -- this change does not own cannot tell "I already ran" from "someone
-        -- else got here first", and those need opposite handling: the first is
-        -- a no-op, the second is a collision the operator has to resolve.
+        -- Skip a tier this change already seeded. Keyed on the stamp AND the
+        -- name, so a stamped row someone has since renamed is not silently
+        -- re-created alongside itself. Keying on the name alone cannot tell
+        -- "I already ran" from "someone else got here first", and those need
+        -- opposite handling: the first is a no-op, the second is the collision
+        -- the RAISE below reports.
         CONTINUE WHEN EXISTS (
             SELECT 1 FROM registry.pricing_plans
              WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'

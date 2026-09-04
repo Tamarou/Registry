@@ -23,7 +23,22 @@ DELETE FROM registry.pricing_plans
 UPDATE registry.pricing_plans
    SET plan_name = 'Registry Revenue Share',
        metadata  = ( metadata - 'display_order' ) - 'featured',
+       -- The description goes back too. Leaving it means a revert lands a
+       -- state the parent never had -- and this key is rendered on the signup
+       -- card and reaches a Stripe product description, so it is not inert.
+       pricing_configuration = pricing_configuration - 'description',
        updated_at = CURRENT_TIMESTAMP
  WHERE metadata->>'launch_rate' = 'true';
+
+-- And the name snapshot, mirroring the deploy. Without this the revert leaves
+-- the snapshot reading 'Solo' against a plan called 'Registry Revenue Share' --
+-- the same staleness the deploy exists to prevent, in the other direction.
+UPDATE registry.pricing_relationships pr
+   SET metadata   = pr.metadata || jsonb_build_object('plan_name', p.plan_name),
+       updated_at = CURRENT_TIMESTAMP
+  FROM registry.pricing_plans p
+ WHERE p.id = pr.pricing_plan_id
+   AND p.metadata->>'launch_rate' = 'true'
+   AND pr.metadata->>'plan_name' IS DISTINCT FROM p.plan_name;
 
 COMMIT;

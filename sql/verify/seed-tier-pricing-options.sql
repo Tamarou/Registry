@@ -7,51 +7,38 @@ BEGIN;
 
 DO $$
 DECLARE
-    buyable  integer;
-    anchors  integer;
+    seeded    integer;
     unordered integer;
 BEGIN
-    SELECT COUNT(*) FILTER (WHERE COALESCE(p.metadata->>'coming_soon','false') <> 'true'),
-           COUNT(*) FILTER (WHERE p.metadata->>'coming_soon' = 'true')
-      INTO buyable, anchors
-      FROM registry.pricing_relationships pr
-      JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
-     WHERE pr.provider_id = '00000000-0000-0000-0000-000000000000'::UUID
-       AND pr.status = 'active'
-       AND p.plan_scope = 'tenant';
-
     -- What this change DID, not what the market looks like now. "Exactly one
-    -- buyable tier" is true today and is asserted by the deploy, where it
-    -- belongs; as a verify it fails the day a second tier launches, and the
-    -- only fix is editing an already-shipped script. Every verify re-runs
-    -- against the final schema, so this one asserts only that the two tiers it
-    -- seeded still exist and are still offered.
-    IF anchors + buyable < 3 THEN
+    -- buyable tier" is true today and the deploy asserts it, which is the right
+    -- place: a deploy runs once, against the state it was written for. A verify
+    -- re-runs forever against the final schema, so asserting a market fact here
+    -- makes the next tier launch -- or the next retirement, which this repo
+    -- performs by suspending a relationship -- fail a shipped script with no fix
+    -- inside it.
+    SELECT COUNT(*) INTO seeded
+      FROM registry.pricing_plans
+     WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options';
+
+    IF seeded <> 2 THEN
         RAISE EXCEPTION
-            'expected the three seeded tiers to still be offered, found %',
-            anchors + buyable;
+            'expected the 2 anchor tiers this change seeded, found %', seeded;
     END IF;
 
-    IF NOT EXISTS (
-        SELECT 1 FROM registry.pricing_plans
-         WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'
-        HAVING COUNT(*) = 2
-    ) THEN
-        RAISE EXCEPTION 'the two anchor tiers this change seeded are not both present';
-    END IF;
-
-    -- Every offered tier needs a display_order, or the ladder sorts by price and
-    -- the free tier lands wherever that puts it.
+    -- Scoped to those same rows. Applied to every offered tenant plan this
+    -- would be the tripwire the paragraph above argues against -- it would fire
+    -- the day anyone offers a plan without a display_order, which is a choice
+    -- this change has no opinion about.
     SELECT COUNT(*) INTO unordered
-      FROM registry.pricing_relationships pr
-      JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
-     WHERE pr.provider_id = '00000000-0000-0000-0000-000000000000'::UUID
-       AND pr.status = 'active'
-       AND p.plan_scope = 'tenant'
-       AND p.metadata->>'display_order' IS NULL;
+      FROM registry.pricing_plans
+     WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'
+       AND metadata->>'display_order' IS NULL;
 
     IF unordered > 0 THEN
-        RAISE EXCEPTION '% offered tier(s) carry no display_order', unordered;
+        RAISE EXCEPTION
+            '% seeded tier(s) carry no display_order; the ladder would sort by '
+            'price and put the free tier wherever that lands', unordered;
     END IF;
 END $$;
 
