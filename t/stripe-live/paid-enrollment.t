@@ -359,10 +359,13 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
     # charge path uses, so displayed, charged and asserted cannot diverge.
     my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
         $db, $slug );
-    # Production's own function, not a copy of its arithmetic. Duplicating
-    # int($a * $f + 0.5) here would mirror a rounding regression rather than
-    # catch it -- and at this fixture price the product is exact, so a rounding
-    # change would be invisible either way.
+    # Production's own function, so this expectation cannot drift from the charge
+    # path's arithmetic. It deliberately does not test the rounding --
+    # t/dao/payment-intent-destination-charge.t does that against literals, and
+    # at this fixture price the product is exact anyway. What it tests is that
+    # the fee was taken on the amount actually charged, at the rate the tenant's
+    # own plan carries: a fee on a different basis, a reintroduced constant, or
+    # no fee at all all fail here.
     my $expected_fee = Registry::DAO::Payment::application_fee_cents(
         $charge->{amount}, $fraction );
     is $charge->{application_fee_amount}, $expected_fee,
