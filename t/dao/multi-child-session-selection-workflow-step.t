@@ -559,7 +559,9 @@ subtest "a session selection for another family's child is refused" => sub {
         "no cart item names another family's child";
 
     my $children = $run->data->{children} // [];
-    ok !( grep { ( $_->{child_name} // '' ) eq 'Mallory Other' } @$children ),
+    # first_name, not child_name: the snapshot renames the column, and
+    # asserting on the wrong key passes whether or not the hole is open.
+    ok !( grep { ( $_->{first_name} // '' ) eq 'Mallory Other' } @$children ),
         "and their name is not snapshotted into the run";
 };
 

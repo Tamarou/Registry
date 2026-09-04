@@ -299,11 +299,17 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
             # NULL is not terminal, and `// ''` used to send it down the
             # 'closed' branch. The foreign lookup below mirrors
             # enrollments_session_student_type_live -- status IS DISTINCT FROM
-            # 'cancelled' -- so a NULL-status row occupies the seat there. One
-            # row then gave two contradictory answers: another cart saw a
-            # collision it must not duplicate, while the cart that owns the row
-            # skipped the child entirely -- not seated, not demoted, not owed a
-            # refund, nothing flagged, and the payment settled looking clean.
+            # 'cancelled' -- so a NULL-status row occupies the seat there, and
+            # one row gave two contradictory answers about the same index.
+            #
+            # What this actually changes is the capacity credit, not the
+            # adjudication: finalize_enrollment takes the same `next` for
+            # 'seated' and 'closed', so the child is skipped either way. But
+            # payment_fits_session excludes this payment's own rows from
+            # $taken, so a seat we hold has to be counted in %granted or the
+            # cart is invisible to itself and oversells the session on the next
+            # delivery. 'closed' did not count it; 'seated' does.
+            #
             # The column is nullable and its CHECK passes on NULL (#328);
             # nothing in lib/ writes one, so this is reachable by hand-written
             # SQL or an import rather than by the application today.
