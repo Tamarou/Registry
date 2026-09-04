@@ -730,4 +730,54 @@ subtest 'a fault that recurs is recorded once, not once per delivery' => sub {
 };
 
 
+
+# _lock_cart_sessions takes FOR UPDATE on the sessions rows, and the comment
+# there explains that this serialises concurrent INSERTs into enrollments via
+# the FK's FOR KEY SHARE. That mechanism is real, and it does not cover the
+# way a foreign seat actually disappears: ProcessEnrollmentDrop and DropRequest
+# both UPDATE status alone, touching no session_id, so RI_FKey_check_upd
+# short-circuits and they take no lock on sessions at all.
+#
+# So the foreign row could be cancelled between this read and the marker write
+# two statements later. This cart then refunds its share for a seat that just
+# became free and writes a cancelled marker, which makes cart_seat_state answer
+# 'closed' forever after -- no later delivery re-adjudicates. The family is
+# refunded, but the child holds no seat in a session that has room, silently.
+#
+# Locking the row we are adjudicating against is what closes it, and it makes
+# the lock comment above true in both directions rather than only for INSERTs.
+subtest 'the foreign seat cannot be dropped while a cart adjudicates against it' => sub {
+    my $session = a_session();
+    my $child   = a_child();
+    my $theirs  = a_paid_cart( $session, $child );
+    my $ours    = a_paid_cart( $session, $child );
+
+    Registry::DAO::Enrollment->create_for_payment($db, {
+        session_id => $session->id, family_member_id => $child->id,
+        parent_id => $parent->id, status => 'active', payment_id => $theirs->id });
+
+    my $tx = $db->begin;
+    is Registry::DAO::Enrollment->cart_seat_state(
+        $db, $ours->id, $session->id, $child->id ), 'foreign',
+        'the cart sees the foreign seat';
+
+    # The drop path's own statement, from another connection.
+    my $other = Registry::DAO->new( url => $test_db->uri )->db;
+    $other->query(q{SET lock_timeout = '750ms'});
+    my $dropped = eval {
+        $other->query( q{UPDATE enrollments SET status = 'cancelled'
+                          WHERE session_id = ? AND student_id = ?},
+            $session->id, $child->id );
+        1;
+    };
+    my $err = $@ // '';
+
+    ok !$dropped, 'a concurrent drop of that seat does not proceed';
+    like $err, qr/lock timeout|canceling statement/i,
+        'it blocks on the row lock rather than racing past it';
+
+    undef $tx;   # Mojo::Pg::Transaction rolls back unless committed
+};
+
+
 done_testing;

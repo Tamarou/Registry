@@ -337,11 +337,24 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         # enrollments_payment_dedup at the same time, or the own-row lookup above
         # goes blind to a row of another type and the arbiter swallows our
         # insert.
+        # FOR UPDATE, because the caller's lock does not reach this row. The
+        # FOR UPDATE _lock_cart_sessions takes on sessions serialises concurrent
+        # INSERTs into enrollments through the FK's FOR KEY SHARE, and that is
+        # the only thing it serialises. Both drop paths -- ProcessEnrollmentDrop
+        # and DropRequest -- UPDATE status alone, touching no session_id, so
+        # RI_FKey_check_upd short-circuits and they take no lock on sessions at
+        # all. Without a lock here the foreign row can be cancelled between this
+        # read and the marker write two statements later: this cart then refunds
+        # its share for a seat that just became free and writes a cancelled
+        # marker, which makes this function answer 'closed' forever after, so no
+        # later delivery re-adjudicates. Refunded, and holding no seat in a
+        # session that has room.
         my $elsewhere = $db->query( <<'SQL', $session_id, $child_id, 'family_member' )->hash;
             SELECT status FROM enrollments
              WHERE session_id = ? AND student_id = ? AND student_type = ?
                AND status IS DISTINCT FROM 'cancelled'
              LIMIT 1
+             FOR UPDATE
 SQL
 
         return $elsewhere ? 'foreign' : 'none';
