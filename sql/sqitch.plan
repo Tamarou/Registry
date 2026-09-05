@@ -70,3 +70,5 @@ retire-registry-plus-plan [suspend-rateless-tenant-plans] 2026-08-13T14:37:13Z C
 webhook-events-processed-at [webhook-event-dedup] 2026-08-15T14:37:28Z Chris Prather <chris.prather@tamarou.com> # Add processed_at to registry.webhook_events for received-to-processed latency
 payments-typed-obligation [refund-amounts-cents] 2026-08-22T23:30:00Z Chris Prather <chris.prather@tamarou.com> # Typed columns for the capacity-refund obligation, and a CHECK on payments.status
 enrollment-reenrol-after-drop [flexible-enrollment-architecture] 2026-08-26T22:00:00Z Chris Prather <chris.prather@tamarou.com> # A cancelled enrollment stops occupying its seat, so a dropped child can re-join
+set-launch-revenue-share-rate [retire-registry-plus-plan] 2026-09-04T14:50:00Z Chris Prather <chris.prather@tamarou.com> # Move the offered revenue-share plan to the launch rate and mark it as the launch plan
+seed-tier-pricing-options [set-launch-revenue-share-rate] 2026-09-04T16:05:00Z Chris Prather <chris.prather@tamarou.com> # Put the Solo/Studio/Empire tier model into the plans the signup page renders

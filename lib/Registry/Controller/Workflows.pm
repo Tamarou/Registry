@@ -74,9 +74,15 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # SQL::Abstract WHERE values, where a hashref is an OPERATOR rather
         # than a value: family_id => { '!=' => $x } renders `family_id != ?`
         # and matches every other family in the tenant.
+        # selected_pricing_plan joins them: only the pricing step may write it,
+        # because it rebuilds the blob from the plan row it has just validated,
+        # and that validation is where the coming-soon refusal lives. Both
+        # consumers trust the blob verbatim -- one bills its amount_cents, the
+        # other links its id as the charge-time rate authority -- so a client
+        # -authored one is a rate and a price of the client's choosing.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user_id|__tenant_slug)\[/;
+                if $key =~ /\A(?:user_id|__tenant_slug|selected_pricing_plan)(?:\[|\z)/;
         }
 
         my $tenant_slug = $self->tenant;

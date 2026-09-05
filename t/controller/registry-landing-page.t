@@ -9,6 +9,7 @@ use warnings;
 use utf8;
 
 use lib qw(lib t/lib);
+use Registry::PriceOps::RevenueShare;
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
@@ -135,7 +136,16 @@ subtest 'alignment section with pricing' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    $t->content_like(qr/2\.5%/, 'Revenue share percentage visible')
+    # Resolved, not restated. A literal here pins the page against itself: move
+    # the launch rate and this test keeps passing on the old number while the
+    # page keeps quoting it. t/priceops/tier-options.t holds the one place the
+    # rate's value is written down.
+    my $pct = 0 + sprintf '%g',
+        Registry::PriceOps::RevenueShare::platform_launch_fraction(
+            $t->app->dao->db ) * 100;
+
+    $t->content_like(qr/(?<![\d.])\Q$pct\E%/,
+        "revenue share shown as ${pct}%, the rate the platform charges")
       ->content_like(qr/Free to Start/i, 'Free to start messaging visible');
 };
 

@@ -205,14 +205,24 @@ subtest 'PricingPlanSelection step functionality' => sub {
     ok $result->{data}->{pricing_plans}, 'Pricing plans available';
     cmp_ok scalar(@{$result->{data}->{pricing_plans}}), '>=', 3, 'At least three pricing plans available';
 
-    # Verify plans are ordered correctly
+    # By name, not by position. This file seeds its own plans, and the shipped
+    # seed offers the Solo/Studio/Empire ladder alongside them -- so an index is
+    # a statement about what else happens to be on offer, which is not what this
+    # subtest is about. Their relative order is asserted directly instead.
     my $plans = $result->{data}->{pricing_plans};
-    is $plans->[0]->{plan_name}, 'Registry Basic', 'First plan is Basic';
-    is $plans->[1]->{plan_name}, 'Registry Professional', 'Second plan is Professional';
-    is $plans->[2]->{plan_name}, 'Registry Enterprise', 'Third plan is Enterprise';
+    my %pos   = map { $plans->[$_]{plan_name} => $_ } 0 .. $#$plans;
+
+    ok defined $pos{'Registry Basic'},        'Basic is on offer';
+    ok defined $pos{'Registry Professional'}, 'Professional is on offer';
+    ok defined $pos{'Registry Enterprise'},   'Enterprise is on offer';
+
+    cmp_ok $pos{'Registry Basic'}, '<', $pos{'Registry Professional'},
+        'Basic sorts before Professional';
+    cmp_ok $pos{'Registry Professional'}, '<', $pos{'Registry Enterprise'},
+        'Professional sorts before Enterprise';
 
     # Verify plan data structure
-    my $basic_plan = $plans->[0];
+    my $basic_plan = $plans->[ $pos{'Registry Basic'} ];
     ok $basic_plan->{id}, 'Plan has ID';
     is $basic_plan->{amount_cents}, 10000, 'Plan amount correct';
     is $basic_plan->{currency}, 'USD', 'Plan currency correct';
@@ -236,7 +246,9 @@ subtest 'Plan selection processing' => sub {
     # Get available plans to select from
     my $initial_result = $pricing_step->process($dao->db, {});
     my $plans = $initial_result->{data}->{pricing_plans};
-    my $professional_plan = $plans->[1];  # Professional plan
+    my ($professional_plan) =
+        grep { $_->{plan_name} eq 'Registry Professional' } @$plans;
+    ok $professional_plan, 'Professional is on offer to select';
 
     # Test plan selection through the run (which merges the returned data)
     my $result = $run->process($dao->db, $pricing_step, {

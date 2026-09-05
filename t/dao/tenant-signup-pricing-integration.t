@@ -128,8 +128,12 @@ subtest 'Full tenant signup integration test' => sub {
     ok $pricing_result->{data}->{pricing_plans}, 'Pricing plans available';
     cmp_ok scalar(@{$pricing_result->{data}->{pricing_plans}}), '>=', 1, 'At least one pricing plan available';
 
-    my $enterprise_plan = $pricing_result->{data}->{pricing_plans}->[0];
-    is $enterprise_plan->{plan_name}, 'Registry Enterprise', 'Enterprise plan available';
+    # By name. This file seeds its own Enterprise plan and the shipped seed offers
+    # the tier ladder beside it, so [0] is a statement about the ladder rather
+    # than about the plan this subtest selects.
+    my ($enterprise_plan) = grep { $_->{plan_name} eq 'Registry Enterprise' }
+        @{ $pricing_result->{data}->{pricing_plans} };
+    ok $enterprise_plan, 'Enterprise plan available';
     is $enterprise_plan->{amount_cents}, 50000, 'Plan amount correct';
 
     # Select the enterprise plan through the run (which merges returned data)
