@@ -124,21 +124,33 @@ like $pricing_url, qr{/tenant-signup/[^/]+/pricing}, 'redirected to pricing step
 # radio buttons, and this assertion catches that silently-broken path.
 my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
 
-like $pricing_page, qr/selected_plan_id/,
+like $pricing_page, qr/<input[^>]*name="selected_plan_id"/,
     'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
-like $pricing_page, qr/Registry Revenue Share/,
-    'pricing page shows the seeded 2% revenue-share plan name';
+like $pricing_page, qr/data-plan="Solo"/,
+    'the buyable tier renders as a card, not merely as page copy';
 
 # -- Capture the displayed rate for the rate-consistency assertion below ----
-# The plan description contains "2% of all customer payments"; the plan name
-# contains "2%".  Extract the rate as a number for numeric comparison.
-# (If the field ever gains a revenue_share_percent key, this pattern still
-# works because the surrounding text will still mention the rate.)
-my ($displayed_rate_str) = $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+(?:all\s+)?customer\s+payments/i;
-$displayed_rate_str //= do {
-    # Fallback: extract the rate from the plan name "Revenue Share - N%"
-    ($pricing_page =~ /Revenue Share[^%]*?(\d+(?:\.\d+)?)\s*%/i)[0];
-};
+# The page renders the rate from pricing_configuration, as "N% of processed
+# revenue". Extract it as a number for numeric comparison. The fallbacks below
+# cover a plan that carries its own description, or one whose name states a
+# rate -- neither is how the seeded plan reaches the customer any more, and the
+# rate must not be read from a plan name again.
+# Scoped to the buyable card, not the whole page. The ladder renders three
+# rates; taking the first agrees with the charged rate only because Solo happens
+# to sort first, and would silently start comparing an unselected anchor's rate
+# the day the order changes or a cheaper tier launches.
+my ($solo_card) = $pricing_page =~ /(<article[^>]*data-plan="Solo".*?<\/article>)/s;
+ok $solo_card, 'found the buyable tier card to read the advertised rate from';
+
+my ($displayed_rate_str) =
+    ( $solo_card // '' ) =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+processed\s+revenue/i;
+
+# One fallback, for a plan that supplies its own description naming the rate.
+# There is deliberately no fallback that reads the rate out of a plan NAME:
+# that is how "Registry Revenue Share - 2%" survived a move to 2.5%, and the
+# name is not a place the rate is allowed to live.
+$displayed_rate_str //=
+    ( $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+(?:all\s+)?customer\s+payments/i )[0];
 
 # -- Step: pricing (POST) -- select the seeded plan ----------------------
 $t->post_ok($pricing_url => form => {
@@ -277,8 +289,8 @@ subtest '#267: tenant->plan link persisted on the tenant row' => sub {
 # ---------------------------------------------------------------------------
 # Assertion 3 (#267): rate-consistency -- displayed rate equals charged rate.
 #
-# The pricing page advertises a rate (plan name "Registry Revenue Share - 2%"
-# and description "2% of all customer payments").  The CHARGED rate is what the
+# The pricing page advertises a rate, rendered from the plan's own
+# pricing_configuration.  The CHARGED rate is what the
 # Stripe application fee is computed from: Registry::DAO::Payment::_connect_params
 # derives it via Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant
 # for the provisioned tenant.  This subtest resolves the rate through that same

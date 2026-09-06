@@ -151,6 +151,40 @@ subtest 'a bracketed variant cannot smuggle a structure into a server-owned key'
         '__tenant_slug is not a client-built structure';
 };
 
+subtest 'selected_pricing_plan cannot be planted by a client' => sub {
+    my $run = run_on_second_step();
+
+    # Same shape as the user_id bracket bypass above, on a different key. Only
+    # the pricing step may write this: it rebuilds the blob from the plan row it
+    # just validated, which is where the coming-soon refusal lives. A client-
+    # authored blob skips that refusal, and both of its consumers trust it --
+    # get_subscription_config bills amount_cents and _provision_tenant links the
+    # id as the charge-time rate authority.
+    #
+    # The damage runs the wrong way from the obvious guess: forcing the most
+    # expensive tier buys its LOWEST revenue share, so the platform cuts its own
+    # take, and an attacker-chosen amount_cents bills nothing for the privilege.
+    $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
+        'selected_pricing_plan[id]'           => '00000000-0000-0000-0000-0000000000ff',
+        'selected_pricing_plan[amount_cents]' => 0,
+        'selected_pricing_plan[plan_name]'    => 'Empire',
+    })->status_is(201);
+
+    ok !exists data_for($run->id)->{selected_pricing_plan},
+        'a posted selected_pricing_plan is not stored';
+
+    # The flat form too. The strip matches (?:\[|\z), and the \z branch is
+    # load-bearing only for this key -- user_id and __tenant_slug are re-derived
+    # immediately below it, so a bare posted value would be overwritten anyway.
+    $run = run_on_second_step();
+    $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
+        selected_pricing_plan => 'Empire',
+    })->status_is(201);
+
+    ok !exists data_for($run->id)->{selected_pricing_plan},
+        'a posted selected_pricing_plan is not stored';
+};
+
 # authenticate_as installs a permanent before_dispatch hook, so every request
 # from here on is authenticated. Keep this subtest last.
 subtest 'user_id comes from the session, not the request' => sub {

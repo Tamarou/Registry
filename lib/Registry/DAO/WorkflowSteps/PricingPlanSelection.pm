@@ -146,6 +146,16 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
         return unless @relationships;
         return unless $plan->plan_scope eq 'tenant';
 
+        # A coming-soon plan is on offer to look at, not to buy. It needs an
+        # ACTIVE relationship or prepare_pricing_data would not return it to be
+        # rendered at all -- which means the only thing between a client and an
+        # unlaunched tier was the disabled attribute on a radio button, and a
+        # POST does not send radio buttons. These tiers carry a monthly base, so
+        # a signup on one creates a subscription for a product that does not
+        # exist yet.
+        my $metadata = $plan->metadata || {};
+        return if $metadata->{coming_soon};
+
         return $plan;
     }
 

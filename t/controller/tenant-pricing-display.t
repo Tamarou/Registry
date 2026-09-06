@@ -29,112 +29,25 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 $db->current_tenant('registry');
 
-# Seed platform pricing plans matching Solo/Studio/Empire tier structure
+# No plan fixtures. This file used to seed its own Solo/Studio/Empire, which is
+# why it stayed green for as long as the rendering worked -- while the deployed
+# database carried a single plan called "Registry Revenue Share" and the
+# coming-soon branch below had never executed against real data. A page that
+# renders invented tiers correctly says nothing about what a prospect sees.
+#
+# seed-tier-pricing-options ships the ladder now, so this file renders the real
+# one. t/priceops/tier-options.t asserts the seed's shape; this one asserts what
+# the template does with it.
 my $platform_uuid = '00000000-0000-0000-0000-000000000000';
 
-# Create platform user for pricing relationships
-my $platform_user_id = $db->db->query('SELECT gen_random_uuid()')->array->[0];
-$db->db->query(q{
-    INSERT INTO registry.users (id, username, passhash, user_type)
-    VALUES (?, ?, ?, ?)
-}, $platform_user_id, 'platform_admin_pricing', '$2b$12$DummyHash', 'admin');
-$db->db->query(q{
-    INSERT INTO registry.user_profiles (user_id, email, name)
-    VALUES (?, ?, ?)
-}, $platform_user_id, 'admin@tinyartempire.com', 'Platform Admin');
-$db->db->query(q{
-    INSERT INTO registry.tenant_users (tenant_id, user_id, is_primary)
-    VALUES (?, ?, ?)
-}, $platform_uuid, $platform_user_id, 1);
+my ($solo_plan_id, $studio_plan_id, $empire_plan_id) = map {
+    $db->db->query(
+        'SELECT id FROM registry.pricing_plans WHERE plan_name = ? AND plan_scope = ?',
+        $_, 'tenant' )->array->[0]
+} qw( Solo Studio Empire );
 
-my $solo_plan = Registry::DAO::PricingPlan->create($db->db, {
-    plan_name  => 'Solo',
-    plan_type  => 'standard',
-    plan_scope => 'tenant',
-    pricing_model_type => 'percentage',
-    amount_cents => 0,
-    currency   => 'USD',
-    pricing_configuration => {
-        revenue_share_percent => 2.5,
-        billing_cycle => 'monthly',
-        description   => '2.5% of processed revenue. No monthly fee.',
-        features      => [
-            'Unlimited programs',
-            'Online enrollment',
-            'Payment processing',
-            'Attendance tracking',
-            'Waitlist management',
-        ],
-    },
-    metadata => { display_order => 1, featured => 1 },
-});
-
-Registry::DAO::PricingRelationship->create($db->db, {
-    provider_id     => $platform_uuid,
-    consumer_id     => $platform_user_id,
-    pricing_plan_id => $solo_plan->id,
-    status          => 'active',
-    metadata        => { plan_type => 'tenant_subscription' },
-});
-
-my $studio_plan = Registry::DAO::PricingPlan->create($db->db, {
-    plan_name  => 'Studio',
-    plan_type  => 'standard',
-    plan_scope => 'tenant',
-    pricing_model_type => 'hybrid',
-    amount_cents => 19900,
-    currency   => 'USD',
-    pricing_configuration => {
-        revenue_share_percent => 2,
-        billing_cycle => 'monthly',
-        description   => '$199/mo + 2% of processed revenue.',
-        features      => [
-            'Everything in Solo',
-            'Team seats (up to 5)',
-            'Priority email support',
-            'Advanced analytics',
-        ],
-    },
-    metadata => { display_order => 2, coming_soon => 1 },
-});
-
-Registry::DAO::PricingRelationship->create($db->db, {
-    provider_id     => $platform_uuid,
-    consumer_id     => $platform_user_id,
-    pricing_plan_id => $studio_plan->id,
-    status          => 'active',
-    metadata        => { plan_type => 'tenant_subscription' },
-});
-
-my $empire_plan = Registry::DAO::PricingPlan->create($db->db, {
-    plan_name  => 'Empire',
-    plan_type  => 'standard',
-    plan_scope => 'tenant',
-    pricing_model_type => 'hybrid',
-    amount_cents => 99900,
-    currency   => 'USD',
-    pricing_configuration => {
-        revenue_share_percent => 1,
-        billing_cycle => 'monthly',
-        description   => '$999/mo + 1% of processed revenue.',
-        features      => [
-            'Everything in Studio',
-            'Unlimited team seats',
-            'White-label branding',
-            'Full API access',
-            'Dedicated support',
-        ],
-    },
-    metadata => { display_order => 3, coming_soon => 1 },
-});
-
-Registry::DAO::PricingRelationship->create($db->db, {
-    provider_id     => $platform_uuid,
-    consumer_id     => $platform_user_id,
-    pricing_plan_id => $empire_plan->id,
-    status          => 'active',
-    metadata        => { plan_type => 'tenant_subscription' },
-});
+ok $solo_plan_id && $studio_plan_id && $empire_plan_id,
+    'the shipped seed provides the Solo/Studio/Empire ladder';
 
 subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
     my $workflow = $db->find(Workflow => { slug => 'tenant-signup' });
@@ -175,6 +88,38 @@ subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
     ok !$plans->[0]{metadata}{coming_soon}, 'Solo is not coming_soon';
 };
 
+# A greyed-out card is CSS. The plan still has an active relationship -- it must,
+# or prepare_pricing_data would not return it to be rendered at all -- so the
+# only thing standing between a client and a tier the business has not launched
+# is the disabled attribute on a radio button. Posting the id directly skips it.
+#
+# The cost is not cosmetic: Studio and Empire carry a monthly base, so a signup
+# on one of them creates a subscription for a product that does not exist yet.
+subtest 'a coming-soon plan cannot be selected, however it is posted' => sub {
+    my $workflow = $db->find(Workflow => { slug => 'tenant-signup' });
+    my $step = Registry::DAO::WorkflowStep->find($db->db, {
+        workflow_id => $workflow->id,
+        slug        => 'pricing',
+    });
+
+    ok !$step->validate_plan_selection( $db->db, $studio_plan_id ),
+        'Studio is refused: it is on offer to look at, not to buy';
+    ok !$step->validate_plan_selection( $db->db, $empire_plan_id ),
+        'Empire is refused too';
+
+    ok $step->validate_plan_selection( $db->db, $solo_plan_id ),
+        'and the tier that IS launched still selects';
+
+    my $run = $workflow->new_run($db->db);
+    my $result = $step->process( $db->db,
+        { selected_plan_id => $studio_plan_id }, $run );
+
+    ok $result->{_validation_errors},
+        'processing the step with a coming-soon plan is rejected';
+    ok !$run->data->{selected_pricing_plan},
+        'and nothing is written to the run';
+};
+
 subtest 'pricing step renders plan cards with coming-soon styling' => sub {
     # Start workflow and advance to pricing
     $t->post_ok('/tenant-signup')->status_is(302);
@@ -196,19 +141,21 @@ subtest 'pricing step renders plan cards with coming-soon styling' => sub {
 
     $t->get_ok($pricing_url)
       ->status_is(200)
-      ->content_like(qr/Solo/, 'pricing page shows Solo plan')
-      ->content_like(qr/Studio/, 'pricing page shows Studio plan')
-      ->content_like(qr/Empire/, 'pricing page shows Empire plan')
-      ->content_like(qr/selected_plan_id/, 'pricing page has plan selection radio buttons')
+      ->content_like(qr/data-plan="Solo"/, 'pricing page shows Solo plan')
+      ->content_like(qr/data-plan="Studio"/, 'pricing page shows Studio plan')
+      ->content_like(qr/data-plan="Empire"/, 'pricing page shows Empire plan')
+      ->content_like(qr/<input[^>]*name="selected_plan_id"/, 'pricing page has plan selection radio buttons')
       ->content_like(qr/Coming Soon/, 'pricing page shows Coming Soon badges')
-      ->content_like(qr/data-coming-soon/, 'pricing page marks coming-soon cards');
+      ->content_like(qr/<article[^>]*data-coming-soon="true"/, 'pricing page marks coming-soon cards')
+      ->content_like(qr/<article[^>]*data-featured="true"/,
+          'and marks the featured card -- the other half of the same escaping fix');
 };
 
 subtest 'selected plan appears on review step dynamically' => sub {
     # Continue from previous subtest - select the Solo plan
     my $pricing_url = $t->tx->req->url->path->to_string;
     $t->post_ok($pricing_url => form => {
-        selected_plan_id => $solo_plan->id,
+        selected_plan_id => $solo_plan_id,
     })->status_is(302);
 
     my $review_url = $t->tx->res->headers->location;
@@ -216,7 +163,8 @@ subtest 'selected plan appears on review step dynamically' => sub {
 
     $t->get_ok($review_url)
       ->status_is(200)
-      ->content_like(qr/Solo/, 'review page shows selected plan name')
+      ->content_like(qr{<div class="pricing-badge">\s*Solo},
+            'review page shows the plan chosen, not the pricing page copy')
       ->content_unlike(qr/\$200\/month/, 'review page does not hardcode $200/month');
 };
 

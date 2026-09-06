@@ -172,6 +172,10 @@ ok !defined $first_diff,
 subtest 'the seeded money configuration matches what the migrations produce' => sub {
     my $projection = q{
         SELECT plan_scope, plan_name, plan_type, pricing_model_type, amount_cents,
+               pricing_configuration->>'description'             AS blurb,
+               metadata->>'coming_soon'                          AS coming_soon,
+               metadata->>'launch_rate'                          AS launch_rate,
+               metadata->>'display_order'                        AS display_order,
                pricing_configuration->>'percentage'             AS pct,
                pricing_configuration->>'monthly_base'           AS base,
                pricing_configuration->>'refund_application_fee' AS refund_fee
@@ -209,6 +213,11 @@ subtest 'the seeded money configuration matches what the migrations produce' => 
 subtest 'the seeded plan relationships match what the migrations produce' => sub {
     my $projection = q{
         SELECT r.status, p.plan_scope, p.plan_name,
+               -- The SNAPSHOT, not the joined name. p.plan_name comes through
+               -- the join and is current by construction, so comparing it
+               -- grades nothing about this row. The denormalised copy is the
+               -- one that goes stale when a plan is renamed, and it did.
+               r.metadata->>'plan_name'              AS name_snapshot,
                r.metadata->>'created_by_migration'   AS created_by,
                r.metadata->>'suspended_by_migration' AS suspended_by
           FROM registry.pricing_relationships r

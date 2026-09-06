@@ -37,8 +37,15 @@
         % my $is_coming_soon = ($plan->{metadata}->{coming_soon} // 0);
         <article data-component="pricing-card"
                  data-plan="<%= $plan->{plan_name} %>"
-                 <%= $is_coming_soon ? 'data-coming-soon="true"' : '' %>
-                 <%= ($plan->{metadata}->{featured} // 0) ? 'data-featured="true"' : '' %>>
+                 %# <%== %>, not <%= %>: these emit MARKUP, and the escaping form
+                 %# turns data-coming-soon="true" into data-coming-soon=&quot;true&quot;.
+                 %# The presence selectors still matched, so the anchors stayed
+                 %# correctly unselectable -- but [data-coming-soon="true"] and
+                 %# [data-featured="true"], which do the actual greying and
+                 %# highlighting, never matched. The anchors did not look like
+                 %# anchors, and an assertion on the substring could not tell.
+                 <%== $is_coming_soon ? 'data-coming-soon="true"' : '' %>
+                 <%== ($plan->{metadata}->{featured} // 0) ? 'data-featured="true"' : '' %>>
 
           % if ($is_coming_soon) {
             <div class="plan-badge">
@@ -62,9 +69,24 @@
               <span class="price-period">/mo</span>
             % }
 
-            % if ($plan->{pricing_configuration}->{revenue_share_percent}) {
+            %# The rate comes off pricing_configuration, which is the one place
+            %# anything reads it. It used to reach the customer only because the
+            %# plan was NAMED "- 2%" -- a second copy that no code consults and
+            %# that goes stale the moment the rate moves. percentage is a
+            %# fraction (0.025); revenue_share_percent, where a plan carries it,
+            %# is already a percent.
+            %# percentage, and only percentage -- the key the charge path reads.
+            %# An earlier draft preferred a revenue_share_percent key if a plan
+            %# carried one, which is a second source for the same number and
+            %# would quote one rate while billing another. That is the bug this
+            %# whole change exists to remove, reintroduced in the renderer.
+            % my $cfg = $plan->{pricing_configuration} || {};
+            % my $share_pct = defined $cfg->{percentage} ? $cfg->{percentage} * 100 : undef;
+            %# defined, not truthy: a genuine 0% tier must say "0%", because
+            %# silence reads as "unspecified" rather than "free".
+            % if (defined $share_pct) {
               <div class="revenue-share-info">
-                + <%= $plan->{pricing_configuration}->{revenue_share_percent} %>% of processed revenue
+                + <%= 0 + sprintf '%g', $share_pct %>% of processed revenue
               </div>
             % }
 

@@ -8,7 +8,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is like ok subtest )];
+use Test::More import => [qw( cmp_ok done_testing is like ok subtest )];
 defer { done_testing };
 
 use Mojo::JSON     qw(encode_json);
@@ -32,6 +32,7 @@ use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::DAO::Family;
 use Registry::DAO::Payment;
+use Registry::PriceOps::RevenueShare;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
@@ -93,8 +94,8 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
 ok $tenant, 'tenant provisioned (not yet Stripe Connect ready)';
 ok !$tenant->stripe_connect_ready, 'precondition: tenant not Stripe Connect ready';
 
-# Link the tenant to the seeded 2% revenue-share plan so the charge-time
-# resolver applies a 2% fee. A freshly provisioned tenant has
+# Link the tenant to the seeded revenue-share plan so the charge-time resolver
+# has a rate to apply. A tenant provisioned directly like this has
 # platform_pricing_plan_id NULL (the one-time backfill ran before it existed),
 # which would otherwise resolve to the Free 0% plan.
 $db->query(q{
@@ -450,11 +451,30 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
     is $captured_params->{'on_behalf_of'}, 'acct_journey',
         'on_behalf_of is the connected account id';
 
-    # Application fee: 2% (tenant's linked plan) of 15000 cents = 300 cents
-    my $expected_fee = Registry::DAO::Payment::application_fee_cents($PLAN_AMOUNT_CENTS, 0.02);
-    is $expected_fee, 300, q{sanity: expected fee is 300 cents (2% of 15000 cents)};
+    # Both operands read rather than restated: the amount from the fixture, the
+    # rate through the same resolver the charge path calls. A hardcoded rate here
+    # fails on a launch decision rather than on the behaviour under test, and the
+    # obvious repair -- editing the number -- is the drift that let three rates be
+    # live at once. The half-up rule is unit-tested against literals in
+    # t/dao/payment-intent-destination-charge.t, which is where it belongs.
+    # Read from the plan row directly, NOT through
+    # revenue_share_fraction_for_tenant. _connect_params builds
+    # application_fee_amount from that same resolver, so calling it here would
+    # compute the expectation with the function under test -- a 3x bug in the
+    # resolver moves both sides together and this passes. The plan row is an
+    # oracle the charge path does not share.
+    my $fraction = $db->query( q{
+        SELECT (p.pricing_configuration->>'percentage')::numeric
+          FROM registry.tenants t
+          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
+         WHERE t.slug = ?
+    }, $slug )->array->[0];
+    my $expected_fee =
+        Registry::DAO::Payment::application_fee_cents( $PLAN_AMOUNT_CENTS, $fraction );
+    cmp_ok $expected_fee, '>', 0,
+        'the tenant carries a chargeable rate, not the Free-plan zero';
     is $captured_params->{'application_fee_amount'}, $expected_fee,
-        'application_fee_amount matches platform 2% fee';
+        "application_fee_amount is the tenant plan's own rate on the charge";
 
     # Bracket-notation metadata keys for webhook routing
     ok exists $captured_params->{'metadata[payment_id]'},

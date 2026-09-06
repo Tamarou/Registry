@@ -6,7 +6,7 @@ use experimental 'signatures';
 package Registry::PriceOps::RevenueShare;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction refund_application_fee_for_tenant);
+our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction platform_launch_fraction refund_application_fee_for_tenant);
 
 use Registry::DAO;
 
@@ -69,6 +69,47 @@ sub platform_default_fraction ($db) {
         unless $free_row;
 
     return _coerce_pct($free_row->{pct}, "platform default (Free) plan");
+}
+
+# platform_launch_fraction($db) -> number
+#
+# The rate the platform SELLS -- what the signup copy quotes and what a tenant
+# who takes the offered plan will be charged. Three functions here answer three
+# different questions and are not interchangeable:
+#
+#   revenue_share_fraction_for_tenant  what THIS tenant is charged
+#   platform_launch_fraction           what the platform advertises
+#   platform_default_fraction          the no-plan fallback (the Free plan, 0%)
+#
+# Reading the launch rate off platform_default_fraction returns the Free plan's
+# zero, and that is exactly how the copy came to promise 2.5% while the platform
+# resolved 0% for an unlinked tenant and charged 2% for a linked one -- three
+# rates live at once.
+#
+# Found by an explicit mark rather than by shape or ordering. "The newest
+# tenant-scope percentage plan" is a coincidence that stops being true the
+# moment a second one is seeded, and a resolver that picks between candidates
+# is the ambiguity this exists to remove. Dies rather than guess.
+sub platform_launch_fraction ($db) {
+    $db = $db->db if $db isa Registry::DAO;
+
+    my $rows = $db->query(q{
+        SELECT pricing_configuration->>'percentage' AS pct, plan_name
+          FROM registry.pricing_plans
+         WHERE metadata->>'launch_rate' = 'true'
+    })->hashes;
+
+    die "No launch plan found in registry.pricing_plans "
+      . "(metadata->>'launch_rate' = 'true'). This is a deployment bug - run "
+      . "the set-launch-revenue-share-rate migration."
+        unless $rows->size;
+
+    die "Multiple plans are marked as the launch plan ("
+      . join( ', ', map { $_->{plan_name} // '<unnamed>' } @$rows )
+      . "). Exactly one plan carries the rate the platform advertises."
+        if $rows->size > 1;
+
+    return _coerce_pct( $rows->first->{pct}, 'platform launch plan' );
 }
 
 # refund_application_fee_for_tenant($db, $tenant_slug) -> 1 or 0

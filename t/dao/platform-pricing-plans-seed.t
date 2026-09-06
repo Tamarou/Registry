@@ -16,7 +16,8 @@ my $PLATFORM = '00000000-0000-0000-0000-000000000000';
 subtest 'signup offers selectable plans' => sub {
     # prepare_pricing_data selects: active platform relationship -> tenant-scoped plan.
     my $rows = $db->query(q{
-        SELECT p.plan_name
+        SELECT p.plan_name,
+               COALESCE(p.metadata->>'coming_soon', 'false') = 'true' AS anchor
           FROM registry.pricing_relationships pr
           JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
          WHERE pr.provider_id = ?
@@ -24,8 +25,17 @@ subtest 'signup offers selectable plans' => sub {
            AND p.plan_scope = 'tenant'
     }, $PLATFORM)->hashes;
     ok scalar(@$rows) >= 1, 'at least one selectable plan on a fresh deploy';
-    ok( (grep { $_->{plan_name} =~ /Revenue Share/ } @$rows),
-        'the revenue-share plan is among the selectable plans' );
+
+    # By what the tier IS, not by what it is called. A plan named "Revenue
+    # Share" was the old internal name; the customer-facing one is Solo, and it
+    # will change again. What must hold on a fresh deploy is that exactly one
+    # offered tier can actually be bought -- none and signup is a dead end, more
+    # than one and the ladder has two entry points.
+    my @buyable = grep { !$_->{anchor} } @$rows;
+    is scalar(@buyable), 1,
+        'exactly one offered tier is buyable on a fresh deploy'
+        or diag 'offered: ' . join( ', ',
+            map { "$_->{plan_name}" . ( $_->{anchor} ? ' (anchor)' : '' ) } @$rows );
 };
 
 subtest 'Free platform fallback plan exists and is not selectable' => sub {
