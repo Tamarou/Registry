@@ -14,7 +14,7 @@ test-schema:
 # the sweep is what proves the excluded files still compile.
 test: sql/test-schema.sql
 	STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lr t/auth \
-	  t/controller t/css t/dao t/database t/e2e t/frontend t/integration t/job \
+	  t/controller t/css t/dao t/database t/deploy t/e2e t/frontend t/integration t/job \
 	  t/priceops t/robustness t/security t/seed t/service t/unit t/user-journeys \
 	  t/workflow -j8
 
