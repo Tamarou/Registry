@@ -30,9 +30,9 @@ module.exports = defineConfig({
   projects: [
     {
       name: 'chromium',
-      // deploy-validation runs against the LIVE production site and belongs only
-      // to its own project / the deploy-validation workflow -- never the PR e2e
-      // gate, or every PR goes red whenever prod is unhealthy.
+      // deploy-validation runs against the LIVE production site and belongs to
+      // playwright.deploy.config.js -- never the PR e2e gate, or every PR goes
+      // red whenever prod is unhealthy.
       testIgnore: 'deploy-validation.spec.js',
       use: { ...devices['Desktop Chrome'] },
     },
@@ -40,15 +40,6 @@ module.exports = defineConfig({
       name: 'firefox',
       testIgnore: 'deploy-validation.spec.js',
       use: { ...devices['Desktop Firefox'] },
-    },
-    // Production deploy validation -- runs against the live site, no test DB needed
-    {
-      name: 'deploy-validation',
-      testMatch: 'deploy-validation.spec.js',
-      use: {
-        ...devices['Desktop Chrome'],
-        baseURL: process.env.DEPLOY_VALIDATION_URL || 'https://tinyartempire.com',
-      },
     },
   ],
 });
