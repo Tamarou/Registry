@@ -91,7 +91,8 @@ Most of jj's line count exists because jj lives on a filesystem and must interop
 | Append-only history; "undo" is an insert, never an update | **Take** | §3.4, §5. |
 | Conflicts allowed internally, gated at the publish boundary | **Take** | A tenant may *save* a conflicted template; the renderer refuses to *serve* one. §5.5. |
 | Content-addressed ids | **Take, for blobs only** | A hash names content. It cannot name lineage. §3.3. |
-| Conflicted *trees*, per-path recursion, `.jjconflict-*` dirs, copy tracking, the working copy | **Leave** | All of it is filesystem machinery. We have one blob per template. |
+| Per-path conflict derivation: a term is a *map* of names to content, and conflicts are computed per name | **Take, at depth 1** | Not filesystem machinery. A template has content *and* metadata; a curriculum has five named fields. Merging whole records conflicts on every co-edit. §4.4, §9. |
+| Recursive trees, `.jjconflict-*` dirs, copy tracking, the working copy, `RepoPath` | **Leave** | That *is* filesystem machinery. Our maps are one level deep and never nest. |
 | Operation DAG with merges, op-heads-as-filenames, lock-free concurrency | **Leave** | That subsystem exists to get atomicity on NFS. We have `BEGIN`/`COMMIT`. Our log is linear. |
 | A full `View` object holding every mutable pointer | **Leave for now, with a caveat** | §7. |
 | ID-prefix trie, the undo-stack description-string hack | **Leave** | `LIKE 'abc%'`; and a column instead of a parsed string. |
@@ -105,18 +106,20 @@ One deliberate divergence from jj. jj's forward rewrite mapping is in-memory and
 ### 3.1 Blobs — content, addressed by its hash
 
 ```sql
-CREATE TABLE template_blobs (
+CREATE TABLE document_blobs (
     id         text PRIMARY KEY,          -- 'sha256:' || encode(digest(content,'sha256'),'hex')
     content    text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 ```
 
-Created in **both** the registry schema and every tenant schema. A blob is written into the schema of the revision that first referenced it: platform content lands in `registry.template_blobs`, tenant-authored content in `<slug>.template_blobs`.
+Created in **both** the registry schema and every tenant schema. A blob is written into the schema of the revision that first referenced it: platform content lands in `registry.document_blobs`, tenant-authored content in `<slug>.document_blobs`.
 
 This resolves the shared-versus-per-schema question in the way that matches the isolation model we already have. Platform content — which every tenant shares and which is the bulk of the bytes — is stored once. Tenant-authored content never leaves the tenant schema, so `DROP SCHEMA <slug> CASCADE` still removes everything a tenant wrote. Resolution is: look in the current schema, then in `registry`.
 
 Insert is `ON CONFLICT (id) DO NOTHING`. Identical content written twice is one row, which is exactly what happens today when forty tenants provision from the same platform template and get forty copies of the same bytes.
+
+The table is named for documents rather than templates deliberately. A blob is bytes and a hash; nothing about it is template-specific, and curriculum will want the same store (§9). Making it generic costs nothing now and is a migration later.
 
 ### 3.2 Revisions — append-only, and possibly conflicted
 
@@ -126,7 +129,6 @@ CREATE TABLE template_revisions (
     template_id   uuid NOT NULL REFERENCES templates(id),
     content_ids   text[] NOT NULL CHECK (array_length(content_ids, 1) % 2 = 1),
     labels        text[],
-    metadata      jsonb,
     parent_id     uuid REFERENCES template_revisions(id),
     forked_from   text,          -- URI. No FK. See §3.5.
     operation_id  uuid NOT NULL,
@@ -138,9 +140,11 @@ CREATE TABLE template_revisions (
 
 `content_ids` is jj's `Merge<T>`, and it is the load-bearing choice in this design. An odd-length array whose terms alternate positive, negative, positive: index 0 is a snapshot, and each subsequent pair `(remove, add)` is a diff to apply to it. `['sha256:abc']` is a resolved revision — one snapshot, nothing to reconcile. `[P2, P1, T1]` reads as "platform's new version, plus whatever the tenant changed relative to the version they started from".
 
+Each term is a manifest hash, not a document hash — see §4.4 for why that indirection exists and what it costs.
+
 `labels` runs parallel to it, one human string per term, and must have the same length. Resolved revisions carry no labels.
 
-`metadata` travels with the revision rather than staying on the identity row, because it is authored in the same gesture as content. Nothing on the render path reads it today; confirm that during migration before moving it.
+`metadata` is **not** a column here. It is a part inside the manifest (§4.4), merged like any other, because a metadata-only edit and a content-only edit are not a disagreement. Nothing on the render path reads template metadata today; confirm that during migration.
 
 `parent_id` is the previous revision of this same template. It is what makes per-template history a walk rather than a timestamp sort, and it is nullable only for a template's first revision.
 
@@ -240,9 +244,19 @@ jj resolves `A + (A − B)` to `A` — if all sides made the same change, take i
 
 **Take the rule.** Two tenants who make the same edit the platform later makes should see it resolve, not conflict. Record the choice here so that when it eventually produces a surprising result, the cause is documented rather than rediscovered.
 
-### 4.4 Granularity
+### 4.4 Granularity: what a term is a hash *of*
 
-Merge at the whole-document level first. `content_ids` holds document hashes, and a conflict means "these two documents disagree".
+A term in `content_ids` is the hash of a **manifest** — a canonical JSON map from part name to blob hash — not of the document itself. Merging is then per part, exactly as jj derives a per-path conflict by looking up that path in each of its tree terms. One level deep, never nested.
+
+For a template the manifest has two entries, `content` and `metadata`. For a curriculum it has one per named field (§9). The degenerate one-entry case is a manifest too, so there is a single code path.
+
+This is not generality for its own sake — merging whole records makes any co-edit a conflict. A tenant who changed a template's metadata conflicts with a platform change to its content, and they have not actually disagreed about anything. At curriculum's five-plus fields that failure mode stops being an edge case and becomes the normal outcome.
+
+Two consequences.
+
+**The render path gains an indirection.** `current_revision_id` → manifest → the `content` blob. `DBTemplates` does a lookup per render, so this must resolve in one query — a join through the manifest, not a second round trip. Denormalising the served content back onto `templates` is available if the join measures badly; do not do it pre-emptively.
+
+**Manifests are normalised before storage.** jj builds each side of a conflicted tree so the sides agree everywhere except where they genuinely conflict, which is what keeps "list the conflicted paths" cheap. Do the same: a conflicted revision's manifest terms carry the *resolved* parts identically in every term, and differ only where the merge actually failed. Otherwise "which fields conflict" is a comparison across N manifests on every editor load.
 
 Line-level merging inside the document — producing a partially-merged document with markers around only the hunks that actually conflict — is a strictly better tenant experience and is a separate piece of work. It changes nothing in the schema. If it is built, two rules from jj are not improvisable:
 
@@ -250,6 +264,8 @@ Line-level merging inside the document — producing a partially-merged document
 - **Byte-identical re-materialisation is a no-op, and markers removed means resolved.** Without the first, opening and saving a conflicted template partially resolves it. The second is what makes "delete the markers" the resolution gesture, with no separate button.
 
 Both require storing the marker length and the simplified arity alongside the editor draft — a draft row, not a revision row.
+
+Line-level merging applies within one part. It composes with the manifest rather than replacing it.
 
 ---
 
@@ -265,7 +281,7 @@ Import touches rows with `owner = 'platform'` only. This is the ownership check 
 
 ### 5.2 Tenant provision
 
-`copy_workflow` stops copying content. A tenant gets a `templates` row with `owner = 'tenant'` and `current_revision_id` pointing at a revision whose single term is **the platform blob's hash** and whose `forked_from` is the platform revision's URI. No bytes are copied; the tenant's revision references the blob in `registry.template_blobs`.
+`copy_workflow` stops copying content. A tenant gets a `templates` row with `owner = 'tenant'` and `current_revision_id` pointing at a revision whose single term is **the platform blob's hash** and whose `forked_from` is the platform revision's URI. No bytes are copied; the tenant's revision references the blob in `registry.document_blobs`.
 
 A tenant who never customises anything therefore has no content of their own at all, and picking up a platform update for them is a pointer move.
 
@@ -352,7 +368,7 @@ The interim production `UPDATE` to restore the rate on the pricing card is still
 
 ### 6.2 Then: blobs and revisions
 
-Migrate `templates.content` into `template_blobs` and a single resolved revision per existing row, in both the registry schema and every tenant schema. The migration is mechanical and the row counts are small. Point `head_revision_id` and `current_revision_id` at it, and drop `content`.
+Migrate `templates.content` into `document_blobs` and a single resolved revision per existing row, in both the registry schema and every tenant schema. The migration is mechanical and the row counts are small. Point `head_revision_id` and `current_revision_id` at it, and drop `content`.
 
 Rewrite `TemplateEditor`'s save as an insert and its revert as an insert. At this point tenants have history and the name-matched revert is gone.
 
@@ -380,7 +396,52 @@ Then the rebase queue and the Minion job, then the tenant-facing pick-and-merge 
 
 ---
 
-## 8. Open questions
+## 8. Curriculum
+
+This model is not template-specific, and curriculum is the second user. Recording that here so the first implementation does not foreclose it.
+
+### 8.1 Curriculum is already the same shape
+
+`sql/deploy/events-and-sessions.sql:26` — curriculum is `projects`:
+
+```sql
+CREATE TABLE IF NOT EXISTS projects (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    name text UNIQUE NOT NULL,
+    slug text UNIQUE NOT NULL,
+    metadata jsonb NULL,
+    notes text NULL,
+    ...
+);
+```
+
+That is `templates` with `content` removed and the content living in `metadata` — learning objectives, materials needed, skills developed (`CurriculumDetails.pm`). It forks at provision the same way, and harder: `events-and-sessions.sql:79` does `CREATE TABLE %I.projects AS TABLE registry.projects`, a whole-table copy rather than the per-workflow copy `copy_workflow` does for templates.
+
+So all three defects in §1 are curriculum's defects too, and the identity/revisions/blobs split applies unchanged.
+
+### 8.2 What transfers, and what does not
+
+Unchanged: `document_blobs`, the revision table's shape, the `Merge` algebra, append-only history, the publish gate, the URI scheme.
+
+**Do not build one polymorphic `documents` table.** `templates` and `projects` keep their own identity rows, because identity is domain-specific and `workflow_steps.template_id` already depends on `templates(id)`. What is shared is the blob store, the `Merge` module (pure functions over arrays — it never learns what a template is), and the rebase queue with a kind column. A per-kind revisions table is a few lines of duplicated DDL; a polymorphic identity table costs a broken foreign key.
+
+**The manifest is what curriculum forces.** A curriculum has five-plus independently edited fields. Merging whole records means any co-edit is a conflict, which at that field count is the normal outcome rather than an edge case. §4.4 is written the way it is because of curriculum; templates ship the two-entry case.
+
+### 8.3 The marketplace changes who publishes
+
+#33 is a curriculum marketplace — a tenant sells curriculum to other tenants. Two consequences.
+
+**The source is a peer, not the platform.** `forked_from` is already a URI with an authority, so `registry://jordans-studio/curriculum/<uuid>@<rev>` needs nothing new. The rebase queue in §5.4 is written with `tenant_schema` and platform-shaped URIs; generalise it to a source URI plus a target schema. `owner` stays a two-value enum — a purchased curriculum is owned by the buying tenant.
+
+**Append-only collides with licensing.** A buyer's revision references blobs that were first written in the seller's schema. Append-only forever means an expired or revoked licence does not remove the buyer's access to the content, because the blob is still there and still addressed by its hash.
+
+That is a policy question, not a schema one, and the answer is the same shape as §5.5: **gate at the boundary, not in the store.** A licence check belongs where curriculum is served and where a revision is published, not as a deletion. Deleting blobs to enforce a licence would break every other buyer who deduped onto the same hash.
+
+Worth deciding before the marketplace ships, not before templates do.
+
+---
+
+## 9. Open questions
 
 **Do tenants rename templates?** The URI scheme is built on `template_id` specifically so that renaming is safe. But `name` is `UNIQUE NOT NULL` and `DBTemplates` looks up by name. If tenants can introduce names of their own, the warmup index in `DBTemplates` — which is built from the registry schema and explicitly flagged in its own comment as not tenant-aware — will skip them and they will never be served. That is a bug waiting for the feature, not a bug today.
 
