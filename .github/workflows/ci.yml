@@ -15,7 +15,7 @@ jobs:
     
     services:
       postgres:
-        image: postgres:14
+        image: postgres:18
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: registry_test
@@ -52,7 +52,7 @@ jobs:
         cpanm --notest Carton
 
     - name: Cache Perl dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/perl5
         key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
@@ -81,8 +81,13 @@ jobs:
         # Create test database with proper error handling
         createdb -h localhost -U postgres registry_test || true
         
-        # Verify database was created
-        psql -h localhost -U postgres -lqt | cut -d \| -f 1 | grep -qw registry_test
+        # Verify the database exists by connecting to it, not by listing.
+        # `psql -l` runs a catalog query built by the CLIENT, and the runner ships
+        # postgresql-client 16 while this container is 18, where daticulocale was
+        # renamed datlocale -- so the listing form fails against a newer server
+        # even though the database is fine. Connecting proves more and is not
+        # version-coupled.
+        psql -h localhost -U postgres -d registry_test -c 'SELECT 1' > /dev/null
         echo "Test database registry_test is ready"
         
     - name: Deploy database schema
@@ -113,6 +118,34 @@ jobs:
                    waitlist, sessions, events, session_events, projects, locations, 
                    messages, message_recipients CASCADE;" || true
         echo "Database cleaned for fresh test run"
+
+    # The suite does NOT use the service container above: Test::Registry::DB
+    # calls Test::PostgreSQL->new, which builds its own server, and each test
+    # overwrites DB_URL with that ephemeral URI. Test::PostgreSQL picks the
+    # HIGHEST major it finds (_find_program falls back to
+    # `sort { $b cmp $a } glob "/usr/lib/postgresql/*"`), so the tested version
+    # is an image detail that moves when GitHub rebuilds the runner. Report it,
+    # and fail below the real floor -- the schema uses gen_random_uuid() in 20+
+    # places with no CREATE EXTENSION anywhere in sql/, so it needs the built-in,
+    # which is 13+. (CONTRIBUTING.md and docs/TECHNICAL.md say 12+; they are
+    # wrong, and #334 tracks pinning this to production's major rather than
+    # merely observing it.)
+    - name: Report the PostgreSQL major the suite will actually use
+      run: |
+        # Same selection Test::PostgreSQL::_find_program makes: highest major present.
+        server=$(ls -d /usr/lib/postgresql/* 2>/dev/null | sed 's#.*/##' | sort -rn | head -1)
+        echo "Test::PostgreSQL will use PostgreSQL major: ${server:-unknown}"
+        echo "Production (Render registry-db) runs: 18"
+        case "$server" in
+          ''|*[!0-9]*) echo "::error::could not determine the PostgreSQL major on this runner"; exit 1 ;;
+        esac
+        if [ "$server" -lt 13 ]; then
+          echo "::error::PostgreSQL $server is below the real floor of 13 (gen_random_uuid is built-in from 13; sql/ never CREATE EXTENSION pgcrypto)"
+          exit 1
+        fi
+        if [ "$server" -ne 18 ]; then
+          echo "::warning::the suite is running on PostgreSQL $server, production runs 18 (#334)"
+        fi
 
     - name: Run test suite
       run: |
@@ -197,11 +230,24 @@ jobs:
 
   database-compatibility:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || contains(github.event.head_commit.modified, 'sql/') || contains(github.event.head_commit.modified, 'sqitch')
-    
+    # No `if:` here, deliberately. This job used to be gated on
+    #   contains(github.event.head_commit.modified, 'sql/')
+    # and `head_commit` is null on pull_request events, so both contains() calls
+    # were false and the job skipped on every PR -- including the ones that
+    # rewrite sql/deploy/. It ran only after merge, or on the weekly cron, which
+    # is precisely when a migration-compatibility failure is most expensive.
+    #
+    # Gating correctly on changed paths needs either a third-party filter action
+    # or a base-ref diff with its own edge cases (shallow clones, force pushes,
+    # first push on a branch). Running it every time costs three parallel jobs
+    # and cannot silently skip, which is the property that was missing.
+
     strategy:
       matrix:
-        postgres-version: [14, 15, 16]
+        # The versions that matter: production (Render `registry-db`) runs 18,
+        # and 16/17 cover the majors below it. 14 and 15 were listed here while
+        # the job never ran; nothing deploys them.
+        postgres-version: [16, 17, 18]
     
     services:
       postgres:
@@ -234,10 +280,20 @@ jobs:
           postgresql-client \
           build-essential
 
-    - name: Install Perl dependencies
+    - name: Install cpanm and carton
       run: |
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
+
+    # No cache step here. actions-setup-perl already restores local/ -- PERL5LIB
+    # names it before carton runs -- so `carton install --deployment` completes in
+    # about a tenth of a second. The test job's ~/perl5 cache is pointed at the
+    # wrong directory for the same reason (carton installs into ./local) and saves
+    # nothing; copying it here would only add a second broken cache.
+    - name: Install Perl dependencies
+      run: |
+        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
+        export PATH="$HOME/perl5/bin:$PATH"
         carton install --deployment
 
     - name: Test database migration
@@ -259,21 +315,17 @@ jobs:
         
         echo "Migration test completed successfully"
 
-    - name: Test schema rollback
-      run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
-        export PGPASSWORD=postgres
-        
-        echo "Testing schema rollback..."
-        
-        # Test rollback of last few changes
-        carton exec sqitch revert -n 3 db:pg://postgres@localhost/registry_migration_test || true
-        
-        # Redeploy
-        carton exec sqitch deploy db:pg://postgres@localhost/registry_migration_test
-        
-        echo "Rollback test completed"
+    # The `Test schema rollback` step that used to be here proved nothing and has
+    # been removed rather than repaired. It ran
+    #   carton exec sqitch revert -n 3 ... || true
+    # where `|| true` swallowed any failure, and carton parsed `-n` as its own
+    # --noverbose before sqitch ever saw it, so the revert was never attempted.
+    # The redeploy on the next line then ran against an unreverted database and
+    # succeeded vacuously.
+    #
+    # t/database/revert-round-trip.t grades reverts properly -- per change,
+    # deploy to parent, dump, deploy, revert, dump, diff -- and runs in the test
+    # job. That is the harness; this step was a decoy beside it.
 
   quality:
     runs-on: ubuntu-latest
@@ -281,7 +333,7 @@ jobs:
     
     services:
       postgres:
-        image: postgres:14
+        image: postgres:18
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: registry_test

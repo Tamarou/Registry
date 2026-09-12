@@ -41,20 +41,28 @@ jobs:
         echo "Waiting for deploy to complete at $URL..."
         # Render deploys take ~2-3 minutes after push
         sleep 180
-        # Verify the site is up
+        # Verify the site is up. The loop used to fall out of its last iteration
+        # and let the step succeed, so a site that never came back looked the
+        # same as one that did.
         for i in $(seq 1 10); do
           if curl -sf --max-time 10 "$URL/health" > /dev/null 2>&1; then
             echo "Site is up"
-            break
+            exit 0
           fi
           echo "Attempt $i: site not ready, waiting..."
           sleep 15
         done
+        echo "::error::$URL/health did not respond after 10 attempts"
+        exit 1
 
+    # playwright.deploy.config.js, not the main config: that one's globalSetup is
+    # config-level and spawns `carton exec` to start a local DB and server, which
+    # this job has no Perl for. It failed here with `spawn carton ENOENT` on every
+    # run from 2026-04-12 onward, before reaching a single assertion.
     - name: Run deploy validation
       env:
         DEPLOY_VALIDATION_URL: ${{ github.event.inputs.url || 'https://tinyartempire.com' }}
-      run: npx playwright test --project=deploy-validation --reporter=list
+      run: npx playwright test --config=playwright.deploy.config.js
 
     - name: Upload test results
       uses: actions/upload-artifact@v4

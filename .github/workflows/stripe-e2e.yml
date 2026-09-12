@@ -1,5 +1,5 @@
 # ABOUTME: GitHub Actions workflow for real-Stripe gated test suites (Perl + Playwright).
-# ABOUTME: Informational only -- continue-on-error means failures never block merges.
+# ABOUTME: Blocking -- a failure here is a failure, and a missing test key is reported as one.
 
 name: Stripe E2E
 
@@ -78,17 +78,31 @@ jobs:
         export PATH="$HOME/perl5/bin:$PATH"
         carton exec perl -MTest::PostgreSQL -e 'my $pg = Test::PostgreSQL->new; print "Test::PostgreSQL OK: ", $pg->uri, "\n"'
 
-    # Informational: failures here do not block merges.
+    # Without this, the job passes without testing anything. Every file under
+    # t/stripe-live/ calls Test::Registry::StripeConnect::available(), which is
+    # `$ENV{STRIPE_SECRET_KEY} =~ /^sk_test_/`, and plan skip_all when it is
+    # false. No key was ever provisioned, so the suite reported
+    # `Files=4, Tests=0 ... Result: NOTESTS` -- and prove exits 0 on NOTESTS, so
+    # the checks UI showed a green tick. A SKIP and a PASS must not look alike in
+    # the one suite that guards the money path against real Stripe.
+    - name: Require a Stripe test key
+      run: |
+        case "${STRIPE_SECRET_KEY}" in
+          sk_test_*) echo "Stripe test key present; the live suites will run." ;;
+          "") echo "::error::STRIPE_SECRET_KEY is not set. Add a Stripe TEST-mode secret key (sk_test_...) under Settings -> Secrets and variables -> Actions. Until then this suite tests nothing."
+              exit 1 ;;
+          sk_live_*) echo "::error::STRIPE_SECRET_KEY is a LIVE key. This suite creates real charges against whatever key it is given; only sk_test_ values are permitted."
+              exit 1 ;;
+          *) echo "::error::STRIPE_SECRET_KEY does not start with sk_test_, so every file under t/stripe-live/ will skip_all and report success without testing anything."
+             exit 1 ;;
+        esac
+
     - name: Run real-Stripe Perl suites
-      continue-on-error: true
       run: |
         export PATH="$HOME/perl5/bin:$PATH"
         carton exec prove -lv t/stripe-live/
 
-    # Informational: failures here do not block merges.
-    # payment-smoke.spec.js may not yet exist; the step is a no-op until it does.
     - name: Run Playwright payment smoke test
-      continue-on-error: true
       run: |
         npx playwright test t/playwright/payment-smoke.spec.js --project=chromium
 
