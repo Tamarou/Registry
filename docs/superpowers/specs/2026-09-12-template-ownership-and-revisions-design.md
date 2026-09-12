@@ -443,7 +443,7 @@ Worth deciding before the marketplace ships, not before templates do.
 
 ## 9. Open questions
 
-**Do tenants rename templates?** The URI scheme is built on `template_id` specifically so that renaming is safe. But `name` is `UNIQUE NOT NULL` and `DBTemplates` looks up by name. If tenants can introduce names of their own, the warmup index in `DBTemplates` — which is built from the registry schema and explicitly flagged in its own comment as not tenant-aware — will skip them and they will never be served. That is a bug waiting for the feature, not a bug today.
+**Do tenants rename templates?** The URI scheme is built on `template_id` specifically so that renaming is safe. But `name` is `UNIQUE NOT NULL` and `DBTemplates` looks up by name, gating that lookup on an index built from the registry schema. A tenant-originated name fails the gate and falls through to the filesystem, silently. Filed as **#353**; it is a prerequisite for the marketplace (§8.3) rather than for anything here.
 
 **Should a tenant be able to see the platform's history?** Reverting to stock needs the platform's *current* revision. Offering "go back to the platform version from before the last update" needs its history, and that is a broader cross-schema read than anything currently done. Defer until a tenant asks.
 
