@@ -310,7 +310,7 @@ jobs:
     - name: Install dependencies and tools
       run: |
         curl -L https://cpanmin.us | perl - App::cpanminus
-        cpanm --notest Carton Devel::Cover
+        cpanm --notest Carton
         carton install --deployment
 
     - name: Check dependencies
@@ -357,33 +357,6 @@ jobs:
         time carton exec sqitch deploy db:pg://postgres@localhost/registry_test
         
         echo "Schema deployment completed"
-
-    - name: Generate coverage report
-      run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
-        export PGPASSWORD=postgres
-        export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
-        export EMAIL_SENDER_TRANSPORT=Test
-        # See the note in the test job: this must not wear the sk_test_ prefix.
-        export STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key
-
-        # `cover -test` has no test command of its own: it falls through to
-        # mm_test_command(), which is `make test` -- this repo's full prove -lr
-        # sweep, instrumented. The uninstrumented sweep takes about fourteen
-        # minutes, so bound it rather than let the job's only ceiling be
-        # GitHub's six-hour limit. The test job wraps the same suite the same
-        # way.
-        timeout 30m carton exec cover -test -report html_basic -ignore_re '^t/' || true
-        
-        echo "Coverage report generated"
-
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-report
-        path: cover_db/
-      if: always()
 
     - name: List installed modules
       run: |
