@@ -368,13 +368,18 @@ jobs:
         # See the note in the test job: this must not wear the sk_test_ prefix.
         export STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key
 
-        # Run a sample of tests with coverage
-        carton exec cover -test -report html_basic -ignore_re '^t/' || true
+        # `cover -test` has no test command of its own: it falls through to
+        # mm_test_command(), which is `make test` -- this repo's full prove -lr
+        # sweep, instrumented. The uninstrumented sweep takes about fourteen
+        # minutes, so bound it rather than let the job's only ceiling be
+        # GitHub's six-hour limit. The test job wraps the same suite the same
+        # way.
+        timeout 30m carton exec cover -test -report html_basic -ignore_re '^t/' || true
         
         echo "Coverage report generated"
 
     - name: Upload coverage report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverage-report
         path: cover_db/
@@ -386,7 +391,7 @@ jobs:
         echo "Dependency report generated"
 
     - name: Upload dependency report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: dependency-report
         path: dependency-report.txt
