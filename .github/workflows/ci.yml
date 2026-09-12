@@ -81,8 +81,13 @@ jobs:
         # Create test database with proper error handling
         createdb -h localhost -U postgres registry_test || true
         
-        # Verify database was created
-        psql -h localhost -U postgres -lqt | cut -d \| -f 1 | grep -qw registry_test
+        # Verify the database exists by connecting to it, not by listing.
+        # `psql -l` runs a catalog query built by the CLIENT, and the runner ships
+        # postgresql-client 16 while this container is 18, where daticulocale was
+        # renamed datlocale -- so the listing form fails against a newer server
+        # even though the database is fine. Connecting proves more and is not
+        # version-coupled.
+        psql -h localhost -U postgres -d registry_test -c 'SELECT 1' > /dev/null
         echo "Test database registry_test is ready"
         
     - name: Deploy database schema
@@ -280,16 +285,11 @@ jobs:
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
 
-    # This job now runs on every PR rather than almost never, so its
-    # dependency install is worth caching the way the test job's is.
-    - name: Cache Perl dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/perl5
-        key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
-        restore-keys: |
-          ${{ runner.os }}-perl-
-
+    # No cache step here. actions-setup-perl already restores local/ -- PERL5LIB
+    # names it before carton runs -- so `carton install --deployment` completes in
+    # about a tenth of a second. The test job's ~/perl5 cache is pointed at the
+    # wrong directory for the same reason (carton installs into ./local) and saves
+    # nothing; copying it here would only add a second broken cache.
     - name: Install Perl dependencies
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
