@@ -4,6 +4,8 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Template :isa(Registry::DAO::Object) {
+    use Digest::SHA qw( sha256_hex );
+
     field $id :param :reader;
     field $name :param :reader;
     field $slug :param :reader    = lc( $name =~ s/\s+/-/gr );
@@ -20,6 +22,15 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     ADJUST { $metadata //= {} }
 
     sub table { 'templates' }
+
+    # Hash of a template's bytes. The file arrives as bytes and the database
+    # returns characters, so normalise before hashing or a template containing
+    # anything non-ASCII would look modified the moment it round-tripped.
+    my sub _sha ($text) {
+        my $bytes = $text // '';
+        utf8::encode($bytes) if utf8::is_utf8($bytes);
+        return sha256_hex($bytes);
+    }
 
     sub import_from_file( $class, $dao, $file ) {
         # Parse the template name from the file path
@@ -40,18 +51,51 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
         my $template = $dao->find( 'Registry::DAO::Template' => { name => $name } )
                     || $dao->find( 'Registry::DAO::Template' => { slug => $slug } );
         
-        # If it exists, leave it alone -- tenants may have customized it
-        if ($template) {
-            return $template;
-        }
-        
-        # Create new template - ensure UTF-8 encoding when reading file
+        # Ensure UTF-8 encoding when reading file
         my $content = $file->slurp;  # Mojo::File slurp already handles UTF-8 correctly
+
+        # Whether import may write is a question about this row, not about which
+        # schema it is in. Registry is the root tenant rather than a different
+        # kind of thing, so the same rule governs every schema: a row still
+        # holding exactly what the last import left is unmodified and the file
+        # may carry it forward; a row that has drifted from its stamp was
+        # customised by whoever owns it, and import leaves it alone.
+        #
+        # The previous form returned early on any existing row, which protected
+        # customisation by giving platform templates no deploy path at all --
+        # the file changed, the deployed row did not, and nothing reconciled
+        # them (#352).
+        #
+        # An unstamped row predates this mechanism. Treating it as unmodified is
+        # what lets those rows reconcile the first time; from then on every row
+        # carries a stamp and an edit is protected.
+        if ($template) {
+            my $metadata = $template->metadata // {};
+            my $stamp    = $metadata->{imported_sha256};
+
+            return $template
+              if defined $stamp && $stamp ne _sha( $template->content );
+            return $template if $content eq $template->content;
+
+            $dao->db->update(
+                'templates',
+                {
+                    content  => $content,
+                    metadata =>
+                      { -json => { %$metadata, imported_sha256 => _sha($content) } },
+                    updated_at => \'now()',
+                },
+                { id => $template->id },
+            );
+            return $dao->find( 'Registry::DAO::Template' => { id => $template->id } );
+        }
+
         $template = $dao->create(
             'Registry::DAO::Template' => {
-                name    => $name,
-                slug    => $slug,
-                content => $content,
+                name     => $name,
+                slug     => $slug,
+                content  => $content,
+                metadata => { -json => { imported_sha256 => _sha($content) } },
             }
         );
         
