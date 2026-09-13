@@ -644,9 +644,11 @@ class Registry :isa(Mojolicious) {
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
 
-        # Root route dispatches to the tenant-storefront workflow
-        $self->routes->get('/')->to('workflows#index', workflow => 'tenant-storefront')->name('root_handler');
-        $self->routes->post('/')->to('workflows#start_workflow', workflow => 'tenant-storefront');
+        # Root route dispatches to whichever storefront belongs to the
+        # requester -- see storefront_workflow. It deliberately names no
+        # workflow: a static one here is what made the apex serve a tenant's.
+        $self->routes->get('/')->to('workflows#index')->name('root_handler');
+        $self->routes->post('/')->to('workflows#start_workflow');
 
         my $r = $self->routes;
 
@@ -768,6 +770,20 @@ class Registry :isa(Mojolicious) {
         $w->post('/:run/callcc/:target')->to('#start_continuation')
           ->name("workflow_callcc");
 
+    }
+
+    # Which storefront belongs to the requester.
+    #
+    # The apex has no subdomain, so `tenant` falls back to registry (see the
+    # helper at :169). Pointing the root route at tenant-storefront therefore
+    # made the PLATFORM render a tenant's template -- and the only way to get
+    # the platform's own marketing page onto tinyartempire.com was to hand-edit
+    # registry's copy of that tenant template, which is why exactly one row in
+    # registry.templates has an updated_at that differs from its created_at.
+    #
+    # The platform has its own storefront instead.
+    method storefront_workflow ($tenant) {
+        return $tenant eq 'registry' ? 'registry-storefront' : 'tenant-storefront';
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {

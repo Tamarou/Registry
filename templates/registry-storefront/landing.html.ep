@@ -24,7 +24,7 @@
     <div class="landing-cta-container">
       % if ($project && $session) {
         <form method="POST"
-              action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
+              action="/registry-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
           <input type="hidden" name="session_id" value="<%= $session->id %>">
           <input type="hidden" name="program_id" value="<%= $project->id %>">
           <button type="submit" class="landing-cta-button">Get Started</button>
@@ -97,7 +97,7 @@
       <div class="landing-cta-container">
         % if ($project && $session) {
           <form method="POST"
-                action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
+                action="/registry-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
             <input type="hidden" name="session_id" value="<%= $session->id %>">
             <input type="hidden" name="program_id" value="<%= $project->id %>">
             <button type="submit" class="landing-cta-button">Get Started</button>

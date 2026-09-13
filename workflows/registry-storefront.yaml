@@ -1,0 +1,9 @@
+name: Registry Storefront
+slug: registry-storefront
+description: Public-facing landing page for the platform itself, leading into tenant onboarding
+first_step: landing
+steps:
+  - slug: landing
+    description: Platform Landing Page
+    template: registry-storefront/landing
+    class: Registry::DAO::WorkflowSteps::ProgramListing

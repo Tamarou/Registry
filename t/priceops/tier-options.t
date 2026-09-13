@@ -117,7 +117,7 @@ subtest 'the launch rate is the rate the platform advertises' => sub {
     # one door. Adding marketing copy that quotes a rate means adding it here.
     for my $tpl (
         'templates/tenant-signup/index.html.ep',
-        'templates/registry/tenant-storefront-program-listing.html.ep',
+        'templates/registry-storefront/landing.html.ep',
     ) {
         my $copy = path($tpl)->slurp;
 

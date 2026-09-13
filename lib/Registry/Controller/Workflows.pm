@@ -107,8 +107,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     method index() {
         my $dao = $self->dao;
-        my $workflow = $self->workflow();
-        my $workflow_slug = $self->param('workflow');
+        # The root route names no workflow: which storefront to serve depends on
+        # who is asking. Everything else routes with an explicit slug.
+        my $workflow_slug = $self->param('workflow')
+          // $self->app->storefront_workflow( $self->tenant );
+        my $workflow = $self->workflow($workflow_slug);
 
         # Backwards compatibility: if a {workflow}/index template exists,
         # use the old rendering path (no auto-run).
@@ -171,7 +174,9 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     method start_workflow() {
         my $dao = $self->dao;
-        my $workflow = $self->workflow();
+        my $workflow = $self->workflow(
+            $self->param('workflow')
+              // $self->app->storefront_workflow( $self->tenant ) );
         
         # Now try to start the run with auto-repair in the new_run method
         my $run;
