@@ -64,7 +64,7 @@ $t->app->helper(dao => sub { $dao });
 # Test 1: Filesystem template renders with layout (baseline)
 # ============================================================
 subtest 'filesystem template renders with full layout' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # The default layout includes DOCTYPE, html, head with CSS
@@ -93,7 +93,7 @@ subtest 'DB template override renders with full layout' => sub {
         { name => 'tenant-storefront/program-listing' },
     );
 
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # DB content is rendered
@@ -110,7 +110,7 @@ subtest 'DB template override renders with full layout' => sub {
 # Test 3: DB template layout directives work (stash, title, etc.)
 # ============================================================
 subtest 'DB template layout directives work' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # The title from the DB template should be in the HTML
@@ -136,7 +136,7 @@ subtest 'DB template has access to stash variables' => sub {
         { name => 'tenant-storefront/program-listing' },
     );
 
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     $t->text_like('.program-count', qr/\d+ programs/, 'Programs stash variable accessible')

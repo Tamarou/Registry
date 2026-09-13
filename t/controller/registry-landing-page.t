@@ -20,7 +20,7 @@ use Mojo::Home;
 use Mojo::File;
 use YAML::XS qw(Load);
 
-my $template_file = 'templates/registry/tenant-storefront-program-listing.html.ep';
+my $template_file = 'templates/registry-storefront/landing.html.ep';
 plan skip_all => "Template file $template_file not found" unless -f $template_file;
 
 my $test_db = Test::Registry::DB->new;

@@ -224,7 +224,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # Copy every workflow in registry except tenant-signup
         my @workflows = $db->select('registry.workflows', ['id', 'slug'])->hashes->each;
         for my $wf (@workflows) {
+            # tenant-signup onboards tenants; registry-storefront is the
+            # platform's own shop window. Handing either to a tenant is the
+            # mirror of the bug that made the apex serve a tenant's storefront.
             next if $wf->{slug} eq 'tenant-signup';
+            next if $wf->{slug} eq 'registry-storefront';
             $db->query('SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
                 $tenant->slug, $wf->{id});
         }

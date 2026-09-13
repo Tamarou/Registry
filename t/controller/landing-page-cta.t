@@ -86,7 +86,7 @@ $session->add_events($db->db, $event->id);
 
 # Test callcc registration CTA on landing page
 subtest 'Registration CTA on landing page' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # Program name is visible
@@ -105,7 +105,7 @@ subtest 'Registration CTA on landing page' => sub {
 
 # Test CTA accessibility
 subtest 'CTA accessibility' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # Register buttons are accessible submit buttons
@@ -120,7 +120,7 @@ subtest 'CTA respects registration_workflow metadata' => sub {
         { id => $program->id },
     );
 
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     my $dom = $t->tx->res->dom;

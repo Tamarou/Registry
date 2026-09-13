@@ -1,7 +1,7 @@
 -- Deploy update-registry-landing-copy
 -- Re-load the registry landing page template from the filesystem source of truth.
 
-\set template_content `cat templates/registry/tenant-storefront-program-listing.html.ep`
+\set template_content `cat templates/registry-storefront/landing.html.ep`
 
 SET search_path TO registry, public;
 
