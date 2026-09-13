@@ -1,123 +1,117 @@
 % layout 'default';
-% title stash('page_title') || 'Programs';
+% title 'Tiny Art Empire';
 % stash no_container => 1, enable_background_effects => 1;
 
-% my $registration_workflow_default = 'summer-camp-registration';
+% # Extract data for callcc form
+% my $prog = $programs->[0] || {};
+% my $project = $prog->{project};
+% my $sess_info = ($prog->{sessions} || [])->[0] || {};
+% my $session = $sess_info->{session};
+% my $reg_workflow = ($project && $project->metadata || {})->{registration_workflow} || 'tenant-signup';
 
 <div class="landing-page">
   <nav class="landing-nav">
-    <div class="landing-logo"><%= title %></div>
+    <div class="landing-logo">Tiny Art Empire</div>
   </nav>
 
-  <!-- Filter bar: plain form (GET) with HTMX progressive enhancement -->
-  <section class="landing-features" style="padding: var(--space-6) var(--space-4);">
-    <div class="landing-features-container">
-      <form method="GET" action="/"
-            hx-get="/" hx-target="#program-catalog" hx-select="#program-catalog"
-            hx-trigger="change from:select" hx-push-url="true"
-            style="display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: end;">
-
-        % if (@$filter_locations > 1) {
-          <div>
-            <label for="filter-location" style="display: block; font-size: var(--font-size-sm); color: var(--landing-text-secondary); margin-bottom: var(--space-1);">Location</label>
-            <select name="location" id="filter-location" class="form-select">
-              <option value="">All Locations</option>
-              % for my $loc (@$filter_locations) {
-                <option value="<%= $loc->{id} %>"
-                  <%= (param('location') // '') eq $loc->{id} ? 'selected' : '' %>>
-                  <%= $loc->{name} %>
-                </option>
-              % }
-            </select>
-          </div>
-        % }
-
-        % if (@$filter_program_types > 1) {
-          <div>
-            <label for="filter-type" style="display: block; font-size: var(--font-size-sm); color: var(--landing-text-secondary); margin-bottom: var(--space-1);">Program Type</label>
-            <select name="program_type" id="filter-type" class="form-select">
-              <option value="">All Types</option>
-              % for my $pt (@$filter_program_types) {
-                <option value="<%= $pt->{slug} %>"
-                  <%= (param('program_type') // '') eq $pt->{slug} ? 'selected' : '' %>>
-                  <%= $pt->{name} %>
-                </option>
-              % }
-            </select>
-          </div>
-        % }
-
-        <noscript>
-          <button type="submit" class="btn btn-primary">Filter</button>
-        </noscript>
-      </form>
+  <!-- Hero: The Why -->
+  <section class="landing-hero">
+    <h1>Your art deserves a real business.</h1>
+    <p class="landing-hero-subtitle">
+      Everything you need to fill classes, get paid, and stay organized
+      -- so you can get back to making art.
+    </p>
+    <div class="landing-cta-container">
+      % if ($project && $session) {
+        <form method="POST"
+              action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
+          <input type="hidden" name="session_id" value="<%= $session->id %>">
+          <input type="hidden" name="program_id" value="<%= $project->id %>">
+          <button type="submit" class="landing-cta-button">Get Started</button>
+        </form>
+      % } else {
+        <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">
+          Get Started
+        </a>
+      % }
     </div>
   </section>
 
-  <!-- Program catalog -->
-  <div id="program-catalog">
-    % if (keys %$grouped_programs) {
-      % for my $type_slug (sort keys %$grouped_programs) {
-        % my $group = $grouped_programs->{$type_slug};
-        % my $type_name = $group->[0]{program_type} ? $group->[0]{program_type}->name : ucfirst($type_slug =~ s/-/ /gr);
+  <!-- Problem Cards: The How -->
+  <section class="landing-features">
+    <div class="landing-features-container">
+      <h2>Less paperwork. More studio time.</h2>
+      <div class="landing-features-grid" style="grid-template-columns: repeat(3, 1fr);">
+        <article class="landing-feature-card">
+          <h3 class="landing-feature-title">Fill your classes without the hustle</h3>
+          <p class="landing-feature-description">
+            Parents find your programs and register online -- no back-and-forth
+            emails or paper forms.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <h3 class="landing-feature-title">Get paid before class starts</h3>
+          <p class="landing-feature-description">
+            Online payments at registration. No chasing checks, no awkward reminders.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <h3 class="landing-feature-title">One place for all of it</h3>
+          <p class="landing-feature-description">
+            Scheduling, attendance, waitlists, and families with three kids -- handled.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <h3 class="landing-feature-title">Keep parents in the loop</h3>
+          <p class="landing-feature-description">
+            Automatic updates and notifications so you're not writing the same
+            email twelve times.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <h3 class="landing-feature-title">See how your business is doing</h3>
+          <p class="landing-feature-description">
+            Plain-English reports on revenue, enrollment, and trends.
+            No spreadsheet required.
+          </p>
+        </article>
+        <article class="landing-feature-card">
+          <h3 class="landing-feature-title">Grow when you're ready</h3>
+          <p class="landing-feature-description">
+            Add instructors, locations, and programs without adding chaos.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
 
-        <section class="landing-features">
-          <div class="landing-features-container">
-            <h2><%= $type_name %></h2>
-            <div class="landing-features-grid">
-              % for my $prog (@$group) {
-                % my $project = $prog->{project};
-                % my $reg_workflow = ($project->metadata || {})->{registration_workflow} || $registration_workflow_default;
-                % my $first_session = $prog->{sessions}[0];
-
-                <article class="landing-feature-card">
-                  <h3 class="landing-feature-title"><%= $project->name %></h3>
-
-                  % if ($first_session && $first_session->{location_name}) {
-                    <p class="landing-feature-subtitle"><%= $first_session->{location_name} %></p>
-                  % }
-
-                  % if ($first_session) {
-                    <p class="landing-feature-description">
-                      <%= $first_session->{session}->start_date %> &ndash; <%= $first_session->{session}->end_date %>
-                    </p>
-                  % }
-
-                  % if ($project->notes) {
-                    <p class="landing-feature-description"><%= $project->notes %></p>
-                  % }
-
-                  <div class="landing-cta-container" style="margin-top: var(--space-4);">
-                    % if ($first_session) {
-                      <form method="POST"
-                            action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
-                        <input type="hidden" name="session_id" value="<%= $first_session->{session}->id %>">
-                        <input type="hidden" name="program_id" value="<%= $project->id %>">
-                        % if ($first_session->{location_id}) {
-                          <input type="hidden" name="location_id" value="<%= $first_session->{location_id} %>">
-                        % }
-                        <button type="submit" class="landing-cta-button">
-                          <%= $first_session->{is_full} ? 'Join Waitlist' : 'Register' %>
-                        </button>
-                      </form>
-                    % }
-                  </div>
-                </article>
-              % }
-            </div>
-          </div>
-        </section>
-      % }
-    % } else {
-      <section class="landing-hero">
-        % if (param('location') || param('program_type')) {
-          <h1>No programs match your filters</h1>
-          <p class="landing-hero-subtitle">Try adjusting your filters or <a href="/">view all programs</a>.</p>
+  <!-- Alignment: The Trust -->
+  <section class="landing-features">
+    <div class="landing-features-container" style="text-align: center;">
+      <h2>Free to Start</h2>
+      <p class="landing-hero-subtitle">
+        There are no monthly fees, no set up fees. We have a 2.5% revenue
+        share, so we only make money when you do. Our entire job is to help
+        you succeed!
+      </p>
+      <div class="landing-cta-container">
+        % if ($project && $session) {
+          <form method="POST"
+                action="/tenant-storefront/<%= $run->id %>/callcc/<%= $reg_workflow %>">
+            <input type="hidden" name="session_id" value="<%= $session->id %>">
+            <input type="hidden" name="program_id" value="<%= $project->id %>">
+            <button type="submit" class="landing-cta-button">Get Started</button>
+          </form>
         % } else {
-          <h1>Coming Soon</h1>
-          <p class="landing-hero-subtitle">No programs currently available. Check back soon!</p>
+          <a href="<%= url_for('workflow_start', workflow => 'tenant-signup') %>" class="landing-cta-button">
+            Get Started
+          </a>
         % }
-      </section>
-    % }
-  </div>
+      </div>
+    </div>
+  </section>
+
+  <footer style="text-align: center; padding: var(--space-8); color: var(--landing-text-secondary); font-size: var(--font-size-sm);">
+    <p>A <strong>Tamarou</strong> &amp; <strong>Super Awesome Cool Pottery</strong> project</p>
+  </footer>
 </div>
