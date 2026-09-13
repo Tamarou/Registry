@@ -34,7 +34,7 @@ for my $file (@tmpl_files) {
     Registry::DAO::Template->import_from_file($dao, $file);
 }
 
-my $content = Mojo::File->new('templates/registry/tenant-storefront-program-listing.html.ep')->slurp;
+my $content = Mojo::File->new('templates/registry-storefront/landing.html.ep')->slurp;
 $dao->db->update('templates',
     { content => $content },
     { name => 'tenant-storefront/program-listing' },
