@@ -5,6 +5,7 @@ use Object::Pad;
 
 class Registry::DAO::Template :isa(Registry::DAO::Object) {
     use Digest::SHA qw( sha256_hex );
+    use Mojo::Util   qw( decode );
 
     field $id :param :reader;
     field $name :param :reader;
@@ -23,9 +24,9 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
 
     sub table { 'templates' }
 
-    # Hash of a template's bytes. The file arrives as bytes and the database
-    # returns characters, so normalise before hashing or a template containing
-    # anything non-ASCII would look modified the moment it round-tripped.
+    # Hash of a template's UTF-8 bytes. Both sides of every comparison are now
+    # character strings, but Perl represents an all-ASCII one without the UTF8
+    # flag, so encode conditionally rather than assuming.
     my sub _sha ($text) {
         my $bytes = $text // '';
         utf8::encode($bytes) if utf8::is_utf8($bytes);
@@ -52,7 +53,15 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
                     || $dao->find( 'Registry::DAO::Template' => { slug => $slug } );
         
         # Ensure UTF-8 encoding when reading file
-        my $content = $file->slurp;  # Mojo::File slurp already handles UTF-8 correctly
+        # slurp returns BYTES, and the comment it used to carry was wrong.
+        # Handing bytes to DBD::Pg makes it read them as Latin-1 and encode each
+        # one to UTF-8, so a checkmark stored as three bytes comes back as three
+        # mojibake characters. That is why the deployed pricing template rendered
+        # a mangled glyph for months after #346 fixed the file, and why the row
+        # this import writes hashes to the double-encoded form of its own source.
+        # Decode to characters and the database stores what the file says.
+        my $bytes   = $file->slurp;
+        my $content = decode( 'UTF-8', $bytes ) // $bytes;
 
         # Whether import may write is a question about this row, not about which
         # schema it is in. Registry is the root tenant rather than a different
@@ -73,9 +82,24 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
             my $metadata = $template->metadata // {};
             my $stamp    = $metadata->{imported_sha256};
 
+            # Drifted from its stamp: customised by whoever owns the row.
             return $template
               if defined $stamp && $stamp ne _sha( $template->content );
-            return $template if $content eq $template->content;
+
+            if ( $content eq $template->content ) {
+                # Already says what the file says. Stamp it anyway if it
+                # predates stamping, without moving updated_at -- otherwise it
+                # stays unstamped for good, and a later customisation would be
+                # read as bootstrap and overwritten. Only 29 of 131 production
+                # rows were stamped by the first run for exactly this reason.
+                $dao->db->update(
+                    'templates',
+                    { metadata =>
+                        { -json => { %$metadata, imported_sha256 => _sha($content) } } },
+                    { id => $template->id },
+                ) unless defined $stamp;
+                return $template;
+            }
 
             $dao->db->update(
                 'templates',

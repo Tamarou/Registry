@@ -12,6 +12,15 @@ use Test::Registry::DB;
 use Registry::DAO;
 use Registry::DAO::Template;
 use Mojo::Home;
+use Mojo::Util ();
+use Digest::SHA qw( sha256_hex );
+use Encode qw( encode );
+
+# The same normalisation import_from_file uses, restated here rather than
+# reached into: if the test agreed with the implementation by construction it
+# could not catch the implementation being wrong, which is exactly what
+# happened -- stamps were written from bytes and compared against characters.
+sub sha_of ($text) { sha256_hex( encode( 'UTF-8', $text ) ) }
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -23,7 +32,9 @@ my $db      = $dao->db;
 # named something else entirely.
 my $file = Mojo::Home->new->child('templates/tenant-signup/pricing.html.ep');
 ok -f $file, 'the fixture file exists' or BAIL_OUT "$file is missing";
-my $on_disk = $file->slurp;
+# Decoded, because that is what the database should hold: slurp gives bytes,
+# and storing those directly is what double-encoded every non-ASCII glyph.
+my $on_disk = Mojo::Util::decode( 'UTF-8', $file->slurp );
 
 subtest 'an absent template is created from its file, and stamped' => sub {
     my $template = Registry::DAO::Template->import_from_file( $dao, $file );
@@ -58,6 +69,51 @@ subtest 'an unstamped drifted row is reconciled with its file' => sub {
     ok $after->metadata->{imported_sha256}, 'and stamps it on the way through';
 };
 
+# The defect that made the first release freeze every row it wrote. The stamp
+# was computed from Mojo::File->slurp's BYTES while the value read back is a
+# character string, so they hashed differently by construction: on the next
+# import every stamped row looked customised and was skipped for good.
+subtest 'a stamp still matches after a database round-trip' => sub {
+    my $row = Registry::DAO::Template->find( $db, { name => 'tenant-signup/pricing' } );
+
+    is $row->metadata->{imported_sha256}, sha_of( $row->content ),
+        'the stamp equals the hash of what the database gives back';
+};
+
+# The file has a checkmark and an arrow. Handing slurp's bytes to DBD::Pg makes
+# it read them as Latin-1 and re-encode, so the glyph arrives mangled -- which
+# is why the deployed pricing page showed mojibake for months after #346 fixed
+# the file.
+subtest 'content is stored as characters, not double-encoded bytes' => sub {
+    my $row = Registry::DAO::Template->find( $db, { name => 'tenant-signup/pricing' } );
+
+    like $row->content, qr/\x{2713}/, 'the checkmark survives the round-trip';
+    unlike $row->content, qr/\x{00E2}\x{0153}|\x{00E2}\x{20AC}/,
+        'and no double-encoded sequence appears in its place';
+};
+
+# A stamped row whose content still matches its stamp is unmodified, so a
+# CHANGED file must still carry it forward. Nothing covered this, which is how
+# the round-trip defect shipped.
+subtest 'a stamped but unmodified row still follows the file' => sub {
+    my $row = Registry::DAO::Template->find( $db, { name => 'tenant-signup/pricing' } );
+
+    # Stand in for "the file changed since this row was written": leave the row
+    # internally consistent -- content and stamp agree -- but different from disk.
+    my $old = '<p>what the previous release shipped</p>';
+    $db->update( 'templates',
+        { content  => $old,
+          metadata => { -json => { imported_sha256 => sha_of($old) } } },
+        { id => $row->id } );
+
+    Registry::DAO::Template->import_from_file( $dao, $file );
+
+    my $after = Registry::DAO::Template->find( $db, { id => $row->id } );
+    isnt $after->content, $old, 'the row is not left behind at the old content';
+    is $after->metadata->{imported_sha256}, sha_of( $after->content ),
+        'and its stamp tracks what was written';
+};
+
 subtest 'an unchanged file leaves the row alone' => sub {
     my $before = Registry::DAO::Template->find( $db, { name => 'tenant-signup/pricing' } );
     Registry::DAO::Template->import_from_file( $dao, $file );
@@ -65,6 +121,18 @@ subtest 'an unchanged file leaves the row alone' => sub {
 
     is $after->updated_at, $before->updated_at,
         'updated_at does not move when the content already matches';
+
+    # But it must still be stamped, or it stays in the bootstrap state for good
+    # and a later customisation would be read as "predates stamping" and
+    # overwritten. The first production run stamped only 29 of 131 rows
+    # because a matching row returned before recording anything.
+    $db->update( 'templates',
+        { metadata => { -json => {} } }, { id => $after->id } );
+    Registry::DAO::Template->import_from_file( $dao, $file );
+
+    my $stamped = Registry::DAO::Template->find( $db, { id => $after->id } );
+    is $stamped->metadata->{imported_sha256}, sha_of( $stamped->content ),
+        'an unstamped row that already matches its file is stamped in place';
 };
 
 # The half the old early-return was protecting, now stated so that it protects
