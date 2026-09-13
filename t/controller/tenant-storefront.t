@@ -160,7 +160,7 @@ use Registry::DAO::Family;
 # Test 1: GET / returns 200 with program listing
 # ============================================================
 subtest 'GET / returns 200 with program listing' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # Program name appears
@@ -180,7 +180,7 @@ subtest 'GET / returns 200 with program listing' => sub {
 # Test 2: Only published sessions shown
 # ============================================================
 subtest 'only published sessions with future dates shown' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # Published programs with sessions appear (dates visible)
@@ -194,7 +194,7 @@ subtest 'only published sessions with future dates shown' => sub {
 # Test 3: Full session shows waitlist option
 # ============================================================
 subtest 'program cards have callcc registration links' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # Program card has a callcc form for registration
@@ -208,7 +208,7 @@ subtest 'program cards have callcc registration links' => sub {
 # ============================================================
 subtest 'callcc Register button creates continuation to registration' => sub {
     # First GET to create a run
-    $t->get_ok('/')->status_is(200);
+    $t->get_ok('/tenant-storefront')->status_is(200);
 
     # Find a callcc form that targets summer-camp-registration
     # (the test program has no registration_workflow metadata, so it defaults)
@@ -238,7 +238,7 @@ subtest 'callcc target uses registration_workflow from project metadata' => sub 
         { id => $program->id },
     );
 
-    $t->get_ok('/')->status_is(200);
+    $t->get_ok('/tenant-storefront')->status_is(200);
 
     my $dom = $t->tx->res->dom;
     my $callcc_form = $dom->at('form[action*="callcc"]');
@@ -261,7 +261,7 @@ subtest 'callcc target uses registration_workflow from project metadata' => sub 
 # Test 6: Storefront uses design system classes not Tailwind
 # ============================================================
 subtest 'storefront uses design system classes not Tailwind' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200);
 
     # Design system classes present
@@ -284,7 +284,7 @@ subtest 'no programs shows empty state message' => sub {
 
     # For now, just verify the page doesn't crash when there are programs
     # The empty state is tested implicitly by the template rendering
-    $t->get_ok('/')->status_is(200);
+    $t->get_ok('/tenant-storefront')->status_is(200);
     ok 1, 'Storefront renders without crashing (programs exist)';
 };
 

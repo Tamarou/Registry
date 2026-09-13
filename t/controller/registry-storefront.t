@@ -21,6 +21,16 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
 
+# sql/test-schema.sql seeds tenant-storefront/program-listing with the PLATFORM
+# marketing page -- the production hack (registry's copy of a tenant template,
+# hand-edited on 2026-05-31) baked into the fixture. import_from_file is
+# insert-only, so importing the real file cannot displace it, and provisioning
+# would then copy the platform's page into the tenant. Drop it so the file wins.
+# t/controller/tenant-storefront.t carries the same workaround for the same
+# reason; #352 makes import reconcile and removes the need for both.
+$dao->db->query(
+    q{DELETE FROM templates WHERE name = 'tenant-storefront/program-listing'} );
+
 my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
 for my $file (@files) {
     next if Load($file->slurp)->{draft};
@@ -84,6 +94,14 @@ subtest 'a tenant is not given the platform storefront' => sub {
         'registry-storefront is not copied into the tenant';
     ok $tenant_dao->find( Workflow => { slug => 'tenant-storefront' } ),
         'but tenant-storefront is';
+
+    # And the other half of the branch, over HTTP. `localhost` is a base domain
+    # precisely so <slug>.localhost resolves a tenant in tests; the subdomain is
+    # only honoured once the schema exists, which is why this sits after
+    # provisioning rather than beside the helper assertions above.
+    $t->get_ok( '/' => { Host => 'big_cups.localhost' } )->status_is(200);
+    $t->content_unlike( qr/Your art deserves a real business/,
+        'a tenant root does not serve the platform landing page' );
 };
 
 done_testing;

@@ -115,7 +115,7 @@ subtest 'Storefront is accessible without authentication' => sub {
 };
 
 subtest 'Storefront shows available programs' => sub {
-    $t->get_ok('/')
+    $t->get_ok('/tenant-storefront')
       ->status_is(200)
       ->content_like( qr/After School Arts/i, 'Art program listed' )
       ->content_like( qr/STEM Explorers/i,    'STEM program listed' );
