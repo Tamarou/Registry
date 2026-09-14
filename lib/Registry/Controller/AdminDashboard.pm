@@ -276,6 +276,35 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
                     status => 409,
                 );
             }
+
+            # A priced session must not be listed until the tenant can actually
+            # take money for it.
+            #
+            # WorkflowSteps/Payment.pm:166 already refuses to charge unless the
+            # tenant is stripe_connect_ready -- but that is the checkout, so the
+            # first person to discover an organisation cannot take payment is a
+            # PARENT, told to "contact the program organizer". The same line,
+            # drawn here, is one the tenant can still act on.
+            #
+            # Free sessions are untouched: Payment.pm gates on total > 0 and so
+            # does this. Publishing a free programme with no Connect account is
+            # a legitimate thing to do.
+            my $plans = $session->pricing_plans($dao->db) // [];
+            if ( grep { $_->amount_cents > 0 } @$plans ) {
+                require Registry::DAO::Tenant;
+                my $row = $dao->db->query(
+                    'SELECT * FROM registry.tenants WHERE slug = ?',
+                    $self->tenant )->hash;
+                my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
+
+                unless ( $tenant && $tenant->stripe_connect_ready ) {
+                    return $self->render(
+                        json => { error => 'this organization must finish Stripe Connect '
+                                         . 'onboarding before publishing a paid session' },
+                        status => 409,
+                    );
+                }
+            }
         }
 
         $session->update($dao->db, { status => $status });
