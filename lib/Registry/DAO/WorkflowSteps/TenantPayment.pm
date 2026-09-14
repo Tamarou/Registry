@@ -49,6 +49,21 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             # This handles the test/dev path where no Stripe keys are set.
             if (!$ENV{STRIPE_PUBLISHABLE_KEY} && !$ENV{STRIPE_SECRET_KEY}) {
 
+                # Never in production. Absent keys there is a misconfiguration
+                # -- a half-finished key rotation, say -- and reading that as
+                # "payment is not required" turns anonymous signup into a tenant
+                # factory: a cloned schema and a live wildcard subdomain on our
+                # own TLS per request, plus invitation email to any address the
+                # caller names. Fail closed; a signup that cannot charge should
+                # not proceed.
+                if ( ( $ENV{MOJO_MODE} // '' ) eq 'production' ) {
+                    return {
+                        next_step => $self->id,
+                        errors    => ['Payment is temporarily unavailable. Please try again shortly.'],
+                        data      => $self->prepare_payment_data($db, $run),
+                    };
+                }
+
                 # Build a mock subscription record so the run data is consistent
                 my $mock_subscription = {
                     stripe_subscription_id => 'sub_test_' . time(),
@@ -283,8 +298,22 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
         my $setup_data = $run->data->{payment_setup} || {};
 
+        # The run must carry the setup intent it created. This check used to be
+        # folded into the comparison below, which meant a run that never reached
+        # create_setup_intent skipped it entirely -- leaving only Stripe's own
+        # lookup, and that resolves an intent belonging to any OTHER run on this
+        # account just as happily. Payment for one signup must not complete a
+        # different one.
+        unless ( $setup_data->{setup_intent_id} ) {
+            return {
+                next_step => $self->id,
+                errors    => ['Payment setup was not started for this signup. Please start again.'],
+                data      => $self->prepare_payment_data($db, $run),
+            };
+        }
+
         # Validate the setup_intent_id matches what was stored
-        if ($setup_data->{setup_intent_id} && $setup_data->{setup_intent_id} ne $form_data->{setup_intent_id}) {
+        if ($setup_data->{setup_intent_id} ne $form_data->{setup_intent_id}) {
             return {
                 next_step => $self->id,
                 errors => ['Invalid payment setup. Please try again.'],
