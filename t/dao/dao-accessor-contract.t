@@ -38,6 +38,11 @@ my $tenant = Test::Registry::Fixtures::create_tenant($dao, { name => 'Acc', slug
 $dao->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
 my $user = $dao->create(User => { username => 'acc_admin', user_type => 'admin' });
 
+# Acting as a tenant requires membership of it, not merely a login (#336). This
+# test is about the dao accessor resolving the request tenant, so grant the
+# membership it always implied rather than exercise the authorization rule.
+$tenant->add_user($dao->db, $user);
+
 my $c = $t->app->build_controller;
 $c->req->headers->header('X-As-Tenant' => $tenant->slug);
 $c->stash(current_user => { id => $user->id, user_type => 'admin' });

@@ -113,6 +113,29 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
                     errors => ['Please select at least one child to enroll']
                 };
             }
+
+            # Every id must belong to this family. The checkboxes were taken at
+            # face value, so a cart naming another family's child enrolled that
+            # child under the payer's parent_id: a seat consumed in the victim's
+            # name, their child's name, birth date and grade copied into the
+            # attacker's run data and rendered back on the payment page, and --
+            # if that child already held a seat -- a fabricated cancelled row
+            # with drop_reason 'duplicate_seat_refunded' written against them.
+            #
+            # Refused entire rather than filtered down to the owned subset: a
+            # cart that silently drops half its contents still charges for what
+            # is left, and hides that the attempt happened. Waitlist.pm:53
+            # already refuses this shape on its own path.
+            require Registry::DAO::Family;
+            my %owned = map { $_->id => 1 }
+              @{ Registry::DAO::Family->list_children( $db, $user_id ) };
+
+            if ( grep { !$owned{$_} } @selected_child_ids ) {
+                return {
+                    stay   => 1,
+                    errors => ['One or more selected children are not in your family.'],
+                };
+            }
             
             # Store selected children in run data
             $run->update_data($db, {
