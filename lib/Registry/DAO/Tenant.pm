@@ -19,8 +19,27 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
     sub table { 'tenants' }
 
+    # A slug is a PostgreSQL schema name, a DNS label, and a routing key, and
+    # all three want the same shape.
+    #
+    # clone_schema does `set_config('search_path', dest_schema, true)` on the
+    # UNQUOTED name while quoting it elsewhere, so a mixed-case slug case-folds
+    # in one half of a statement and not the other -- it dies partway through
+    # and leaves a half-built schema. Hyphens are worse still: not every
+    # EXECUTE in there quotes the name, so they are syntax errors.
+    #
+    # Routing already assumes the normalised form regardless.
+    # _extract_tenant_from_subdomain lowercases the Host header, and the tenant
+    # helper's own regex is /\A[a-z][a-z0-9_]{0,62}\z/ -- so a mixed-case
+    # tenant could never have been reached even had clone_schema built it.
+    sub normalize_slug ( $class, $slug ) {
+        return $slug unless defined $slug;
+        return lc($slug) =~ s/-/_/gr;
+    }
+
     sub create ( $class, $db, $data ) {
-        $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
+        $data->{slug} //= $data->{name} =~ s/\s+/_/gr;
+        $data->{slug} = $class->normalize_slug( $data->{slug} );
         $class->SUPER::create( $db, $data );
     }
 
@@ -124,14 +143,14 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # Registry::DAO::User objects or hashrefs with {id}).
     sub provision($class, $db, $data) {
         my $users    = delete $data->{users} // [];
-        $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
 
-        # Normalize slug for use as a PostgreSQL schema name.  clone_schema
-        # does not quote the dest_schema in all its EXECUTE statements, so
-        # identifiers that would require quoting (e.g. those containing '-')
-        # produce syntax errors.  Hyphens are replaced with underscores so
-        # the slug is a safe unquoted PostgreSQL identifier.
-        $data->{slug} =~ s/-/_/g;
+        # Normalised here as well as in create, because the value is used for
+        # clone_schema below before create is ever reached. Previously the
+        # lowercasing applied only when the slug was DERIVED from the name, so
+        # a slug supplied through signup kept its capitals all the way into
+        # clone_schema.
+        $data->{slug} //= $data->{name} =~ s/\s+/_/gr;
+        $data->{slug} = $class->normalize_slug( $data->{slug} );
 
         # Filter to only the columns that exist in the tenants table.
         # Callers may pass a full profile hash; extra keys (billing_*, admin_*,
