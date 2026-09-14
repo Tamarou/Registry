@@ -172,10 +172,32 @@ class Registry :isa(Mojolicious) {
                 # X-As-Tenant and as-tenant cookie are restricted to authenticated
                 # users to prevent unauthenticated cross-tenant access.
                 # Check both session auth and bearer token (API key) auth.
+                # Acting as a tenant requires MEMBERSHIP of it, not merely a
+                # login. This value becomes __tenant_slug, which selects the
+                # Postgres schema every subsequent query runs against and the
+                # Stripe Connect account a charge is destined for -- so
+                # authentication alone let any logged-in user read and write
+                # another tenant's database and point settlement elsewhere.
+                #
+                # req->cookie returns a Mojo::Cookie::Request OBJECT, not a
+                # string. Passing it through stringified it to
+                # "as-tenant=<slug>", which failed the slug regex below and fell
+                # back to registry -- so the cookie half has never worked at all,
+                # including for t/playwright/payment-smoke.spec.js, which sets it
+                # and expects to be routed to a tenant.
+                # Skipped entirely when an explicit tenant is passed. That is
+                # not just an optimisation: the membership check below goes
+                # through $c->dao('registry'), and the dao helper calls
+                # $c->tenant(...) -- so without this short-circuit the recursive
+                # call re-enters here and never terminates. An explicit argument
+                # wins over the header regardless.
                 my $header_tenant;
-                if ($c->session('user_id') || $c->stash('current_user')) {
-                    $header_tenant = $c->req->headers->header('X-As-Tenant')
-                                  || $c->req->cookie('as-tenant');
+                if ( !$explicit_tenant
+                    && ( $c->session('user_id') || $c->stash('current_user') ) ) {
+                    my $cookie    = $c->req->cookie('as-tenant');
+                    my $requested = $c->req->headers->header('X-As-Tenant')
+                                 || ( $cookie ? $cookie->value : undef );
+                    $header_tenant = $self->_acting_tenant_for( $c, $requested );
                 }
 
                 my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
@@ -782,6 +804,40 @@ class Registry :isa(Mojolicious) {
     # registry.templates has an updated_at that differs from its created_at.
     #
     # The platform has its own storefront instead.
+    # Membership of the all-zeros platform tenant. That is how
+    # create-default-pricing-relationships and the tier seed both identify a
+    # platform admin, and production carries exactly one such row.
+    method _PLATFORM_TENANT_ID { '00000000-0000-0000-0000-000000000000' }
+
+    # The tenant an authenticated user is permitted to act as, or undef.
+    # A member may act as their own tenant; a platform admin may act as any.
+    method _acting_tenant_for ($c, $requested) {
+        return undef unless defined $requested && length $requested;
+        # Same shape the caller enforces; checked here too so a malformed value
+        # never reaches the query.
+        return undef unless $requested =~ /\A[a-z][a-z0-9_]{0,62}\z/;
+
+        my $user_id = $c->session('user_id')
+          || ( $c->stash('current_user') // {} )->{id};
+        return undef unless $user_id;
+
+        my $permitted = eval {
+            $c->dao('registry')->db->query( <<~'SQL', $user_id, $requested, $self->_PLATFORM_TENANT_ID )->array;
+                SELECT 1
+                  FROM registry.tenant_users tu
+                 WHERE tu.user_id = ?
+                   AND ( tu.tenant_id = (SELECT id FROM registry.tenants WHERE slug = ?)
+                         OR tu.tenant_id = ?::uuid )
+                 LIMIT 1
+                SQL
+        };
+        if ($@) {
+            $c->app->log->warn("Tenant membership check failed: $@");
+            return undef;
+        }
+        return $permitted ? $requested : undef;
+    }
+
     method storefront_workflow ($tenant) {
         return $tenant eq 'registry' ? 'registry-storefront' : 'tenant-storefront';
     }
