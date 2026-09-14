@@ -64,6 +64,8 @@ is $location->slug, 'test_location', 'location has correct slug';
 # Establish authentication so X-As-Tenant header is respected
 # (the tenant helper only reads X-As-Tenant for authenticated users)
 my $test_user = $dao->create(User => { username => 'loc_test_admin', user_type => 'admin' });
+# X-As-Tenant now requires membership of the tenant, not just a login (#336).
+$tenant->add_user($dao->db, $test_user);
 authenticate_as($t, $test_user);
 
 # Test viewing the location with tenant context
