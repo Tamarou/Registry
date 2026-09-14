@@ -37,9 +37,18 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return lc($slug) =~ s/-/_/gr;
     }
 
+    # create does NOT normalise a supplied slug, deliberately. Rewriting a value
+    # the caller chose breaks find-then-create: t/playwright/setup_registration_test_data.pl
+    # searches for 'super-awesome-cool-pottery' and creates with the same
+    # string, so silently storing 'super_awesome_cool_pottery' meant find never
+    # matched its own row and the second run inserted a duplicate. Three specs
+    # share that seed; the e2e suite caught it.
+    #
+    # Normalisation belongs where a schema name is actually derived -- provision
+    # -- and the tenants_slug_is_lowercase constraint refuses the unsafe case
+    # outright rather than quietly changing it.
     sub create ( $class, $db, $data ) {
-        $data->{slug} //= $data->{name} =~ s/\s+/_/gr;
-        $data->{slug} = $class->normalize_slug( $data->{slug} );
+        $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
         $class->SUPER::create( $db, $data );
     }
 

@@ -48,6 +48,22 @@ subtest 'hyphens still become underscores' => sub {
 # lowercases the Host header, and the tenant helper's own regex is
 # /\A[a-z][a-z0-9_]{0,62}\z/. A mixed-case tenant could never have been reached
 # even if clone_schema had managed to build it.
+# The regression the e2e suite caught. create must NOT rewrite a supplied slug:
+# t/playwright/setup_registration_test_data.pl searches for a hyphenated slug and
+# creates with the same string, so normalising inside create meant find could
+# never match its own row and the second run inserted a duplicate.
+subtest 'create leaves a supplied slug alone, so find-then-create stays idempotent' => sub {
+    my $slug = 'seed-style-slug';
+
+    my $first = Registry::DAO::Tenant->find( $db, { slug => $slug } )
+      || Registry::DAO::Tenant->create( $db, { name => 'Seed Style', slug => $slug } );
+    is $first->slug, $slug, 'the slug is stored exactly as supplied';
+
+    my $second = Registry::DAO::Tenant->find( $db, { slug => $slug } )
+      || Registry::DAO::Tenant->create( $db, { name => 'Seed Style', slug => $slug } );
+    is $second->id, $first->id, 'the second pass finds the row rather than duplicating it';
+};
+
 subtest 'the database refuses a mixed-case slug outright' => sub {
     my $err;
     eval {
