@@ -18,6 +18,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
     use Registry::PriceOps::RevenueShare ();
+    use Registry::DAO::PricingPlan;
 
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -111,13 +112,48 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # The run is passed in, never looked up: latest_run is scoped to the
     # workflow alone, so re-resolving it here would price this visitor's signup
     # from whichever run on the platform happens to be newest.
-    method get_subscription_config($db, $run) {
-        my $selected_plan;
+    # The selected plan, re-read and re-checked at the moment it matters.
+    #
+    # validate_plan_selection already refuses a plan that is not a tenant-scoped
+    # plan on active offer from the platform, and refuses a coming_soon tier
+    # outright -- but it lived only at the moment of selection, guarding the
+    # step and nothing after it. This puts the same refusal on the path where
+    # the money actually moves.
+    #
+    # Returns undef when no plan was selected, and also when a selected one no
+    # longer resolves. Both then take the Solo/Free default below: a stale or
+    # shelved selection charges nothing rather than charging the wrong thing.
+    # Refusing the run outright would be stronger still, but get_subscription_config
+    # is also called to RENDER the payment page, where an error has nowhere to
+    # go -- see #347 for the restructuring that would allow it.
+    method resolve_selected_plan ($db, $run) {
+        return undef unless $run && $run->data;
+        my $selected = $run->data->{selected_pricing_plan} or return undef;
+        return undef unless ref $selected eq 'HASH';
 
-        # Check if we have a run and it has pricing plan data
-        if ($run && $run->data && $run->data->{selected_pricing_plan}) {
-            $selected_plan = $run->data->{selected_pricing_plan};
-        }
+        my $id = $selected->{id};
+        return undef unless $id && !ref $id;
+
+        return Registry::DAO::PricingPlan->offered_platform_plan( $db, $id );
+    }
+
+    method get_subscription_config($db, $run) {
+        # Run data carries a plan ID and nothing else worth trusting. The
+        # snapshot stored at selection -- plan_name, amount_cents, currency --
+        # was handed straight to Stripe as items[0][price_data][unit_amount],
+        # so a signup started before a price change and resumed after it charged
+        # the remembered amount while linking the plan whose rate had moved.
+        # Displayed, charged and linked could disagree with nobody doing
+        # anything wrong.
+        my $plan = $self->resolve_selected_plan($db, $run);
+        my $selected_plan = $plan && {
+            id                    => $plan->id,
+            plan_name             => $plan->plan_name,
+            amount_cents          => $plan->amount_cents,
+            currency              => $plan->currency,
+            pricing_configuration => $plan->pricing_configuration,
+            metadata              => $plan->metadata,
+        };
 
         # If no plan selected, fall back to Solo tier defaults. The no-plan case
         # IS the platform Free plan, so the revenue-share rate is read from that
@@ -433,8 +469,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
         # Persist the tenant -> platform plan link when a plan was selected, so
         # the charge-time revenue-share resolver reads the chosen rate.
-        $provision_data{platform_pricing_plan_id} = $data->{selected_pricing_plan}{id}
-            if $data->{selected_pricing_plan} && $data->{selected_pricing_plan}{id};
+        # The plan the charge resolved to, not the one run data remembers -- the
+        # tenants row is the charge-time rate authority, so linking a different
+        # plan than was billed is the divergence this guards against.
+        my $resolved_plan = $self->resolve_selected_plan( $db, $run );
+        $provision_data{platform_pricing_plan_id} = $resolved_plan->id if $resolved_plan;
 
         if ($subscription_data->{stripe_subscription_id}) {
             $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};

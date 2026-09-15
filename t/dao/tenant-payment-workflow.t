@@ -8,6 +8,7 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::WorkflowSteps::TenantPayment;
 use Registry::DAO::Workflow;
+use Registry::DAO::PricingPlan;
 use Registry::DAO::WorkflowRun;
 use JSON;
 
@@ -170,8 +171,37 @@ subtest 'Validation error handling' => sub {
     is($result->{billing_summary}->{organization_name}, 'Your Organization', 'Default organization name used');
 };
 
+# A plan a signup may actually buy: tenant-scoped, on active offer from the
+# platform, and not coming_soon -- the three things offered_platform_plan checks.
+sub buyable_plan ( $name, $cents ) {
+    my $plan = Registry::DAO::PricingPlan->create( $db, {
+        plan_scope => 'tenant', plan_name => $name, plan_type => 'standard',
+        pricing_model_type => 'hybrid', amount_cents => $cents, currency => 'USD',
+        pricing_configuration => { trial_days => 14, description => "$name plan" },
+        metadata => {},
+    } );
+    my $admin = $db->query(
+        q{SELECT user_id FROM registry.tenant_users
+           WHERE tenant_id = '00000000-0000-0000-0000-000000000000' LIMIT 1} )->array->[0];
+    $db->query(
+        q{INSERT INTO registry.pricing_relationships
+              (provider_id, consumer_id, pricing_plan_id, status, metadata)
+          VALUES ('00000000-0000-0000-0000-000000000000', ?, ?, 'active', '{}'::jsonb)},
+        $admin, $plan->id );
+    return $plan;
+}
+
 subtest 'Subscription config follows the run in hand, not the newest run' => sub {
     plan tests => 4;
+
+    # Two genuinely buyable plans. The blob in run data used to carry
+    # plan_name and amount_cents and was used verbatim; since #347 it carries
+    # an id and the row is re-read, so these have to be real offers -- a
+    # tenant-scoped plan with an active platform relationship, not coming_soon.
+    # The seeded Studio and Empire tiers are coming_soon and would rightly be
+    # refused, so they cannot stand in here.
+    my $mine_plan  = buyable_plan( 'Studio Test Tier', 4900 );
+    my $their_plan = buyable_plan( 'Empire Test Tier', 19900 );
 
     my $mine = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
@@ -180,15 +210,7 @@ subtest 'Subscription config follows the run in hand, not the newest run' => sub
                 organization_name => 'My Organization',
                 billing_email     => 'me@example.org',
             },
-            selected_pricing_plan => {
-                plan_name    => 'Studio',
-                amount_cents => 4900,
-                currency     => 'USD',
-                pricing_configuration => {
-                    trial_days  => 14,
-                    description => 'Studio plan',
-                },
-            },
+            selected_pricing_plan => { id => $mine_plan->id },
         })
     });
 
@@ -196,12 +218,7 @@ subtest 'Subscription config follows the run in hand, not the newest run' => sub
     my $theirs = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
         data => encode_json({
-            selected_pricing_plan => {
-                plan_name    => 'Empire',
-                amount_cents => 19900,
-                currency     => 'USD',
-                pricing_configuration => {},
-            },
+            selected_pricing_plan => { id => $their_plan->id },
         })
     });
 
@@ -213,15 +230,15 @@ subtest 'Subscription config follows the run in hand, not the newest run' => sub
     );
 
     my $data = $payment_step->prepare_payment_data($db, $mine);
-    is($data->{subscription_config}{plan_name}, 'Studio',
+    is($data->{subscription_config}{plan_name}, 'Studio Test Tier',
         'payment page prices my run with my plan');
     is($data->{subscription_config}{monthly_amount}, 4900,
         'and with my amount');
-    is($data->{billing_summary}{plan_details}{plan_name}, 'Studio',
+    is($data->{billing_summary}{plan_details}{plan_name}, 'Studio Test Tier',
         'billing summary agrees');
 
     my $config = eval { $payment_step->get_subscription_config($db, $mine) };
-    is(($config ? $config->{plan_name} : undef), 'Studio',
+    is(($config ? $config->{plan_name} : undef), 'Studio Test Tier',
         'get_subscription_config prices the run it is handed');
 };
 

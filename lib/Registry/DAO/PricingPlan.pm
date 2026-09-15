@@ -123,6 +123,49 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     }
     
     # Get all pricing plans for a session using the connection's search_path.
+    # The plan a tenant signup is allowed to buy, or nothing.
+    #
+    # This lives on the DAO rather than on a workflow step because two steps
+    # need it: PricingPlanSelection refuses a bad choice at selection, and
+    # TenantPayment re-reads it where the money actually moves (#347). Having
+    # the payment step reach for a sibling step to borrow the rule coupled it
+    # to workflow shape, and broke the moment a test drove the payment step in
+    # a workflow that had no pricing step.
+    sub offered_platform_plan ($class, $db, $plan_id) {
+        return unless $plan_id && !ref $plan_id;
+
+        # Shape first, so a malformed value never reaches the query.
+        return unless $plan_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+        my $plan;
+        eval { $plan = $class->find_by_id( $db, $plan_id ) };
+        return unless $plan;
+
+        require Registry::DAO::PricingRelationship;
+        my @relationships;
+        eval {
+            @relationships = Registry::DAO::PricingRelationship->find( $db, {
+                provider_id     => '00000000-0000-0000-0000-000000000000',
+                pricing_plan_id => $plan_id,
+                status          => 'active',
+            } );
+        };
+        return unless @relationships;
+        return unless $plan->plan_scope eq 'tenant';
+
+        # A coming-soon plan is on offer to look at, not to buy. It needs an
+        # ACTIVE relationship or prepare_pricing_data would not return it to be
+        # rendered at all -- which means the only thing between a client and an
+        # unlaunched tier was the disabled attribute on a radio button, and a
+        # POST does not send radio buttons. These tiers carry a monthly base, so
+        # a signup on one creates a subscription for a product that does not
+        # exist yet.
+        my $metadata = $plan->metadata || {};
+        return if $metadata->{coming_soon};
+
+        return $plan;
+    }
+
     sub get_pricing_plans ($class, $db, $session_id) {
         my $table = 'pricing_plans';
 

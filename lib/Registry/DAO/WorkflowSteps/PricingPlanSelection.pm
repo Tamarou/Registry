@@ -118,45 +118,10 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
         };
     }
 
+    # Delegates: the rule belongs to the DAO so the payment step can apply the
+    # same one without reaching across workflow steps to borrow it (#347).
     method validate_plan_selection($db, $plan_id) {
-        return unless $plan_id;
-
-        # Check if plan_id looks like a valid UUID
-        return unless $plan_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-        # Find the plan - wrap in eval to handle database errors gracefully
-        my $plan;
-        eval {
-            $plan = Registry::DAO::PricingPlan->find_by_id($db, $plan_id);
-        };
-        return unless $plan;
-
-        # Verify plan is available for platform tenant signups
-        my $platform_uuid = PLATFORM_UUID;
-
-        my @relationships;
-        eval {
-            @relationships = Registry::DAO::PricingRelationship->find($db, {
-                provider_id => $platform_uuid,
-                pricing_plan_id => $plan_id,
-                status => 'active'
-            });
-        };
-
-        return unless @relationships;
-        return unless $plan->plan_scope eq 'tenant';
-
-        # A coming-soon plan is on offer to look at, not to buy. It needs an
-        # ACTIVE relationship or prepare_pricing_data would not return it to be
-        # rendered at all -- which means the only thing between a client and an
-        # unlaunched tier was the disabled attribute on a radio button, and a
-        # POST does not send radio buttons. These tiers carry a monthly base, so
-        # a signup on one creates a subscription for a product that does not
-        # exist yet.
-        my $metadata = $plan->metadata || {};
-        return if $metadata->{coming_soon};
-
-        return $plan;
+        return Registry::DAO::PricingPlan->offered_platform_plan( $db, $plan_id );
     }
 
     method get_organization_preview($db, $run = undef) {
