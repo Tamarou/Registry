@@ -5,11 +5,14 @@ use 5.42.0;
 package Test::Registry::Helpers {
     use experimental qw(declared_refs);
     use builtin      qw(export_lexically);
+    use Time::Local  qw(timelocal_posix);
 
     sub import(@) {
         no warnings;
         export_lexically(
-            authenticate_as                  => __PACKAGE__->can('authenticate_as'),
+            authenticate_as      => __PACKAGE__->can('authenticate_as'),
+            birth_date_for_age   => __PACKAGE__->can('birth_date_for_age'),
+            days_from_now        => __PACKAGE__->can('days_from_now'),
             import_all_workflows             => __PACKAGE__->can('import_all_workflows'),
             process_workflow                 => __PACKAGE__->can('process_workflow'),
             platform_revenue_share_plan_id =>
@@ -177,6 +180,36 @@ package Test::Registry::Helpers {
             }
             $url = submit_form( $t, $action, $headers, %submit );
         }
+    }
+
+    # Fixture dates must be derived from the day the suite runs. A hardcoded
+    # date tests a real path when it is written and an impossible one once it
+    # expires, because listing, selection and eligibility all filter on
+    # CURRENT_DATE. Nothing fails when it crosses over.
+    #
+    # The offset is applied to noon rather than to the current moment, so a
+    # daylight-saving shift cannot move the result onto the adjacent day.
+    sub days_from_now ( $days, $now = time() ) {
+        my ( $year, $month, $day ) = ( localtime $now )[ 5, 4, 3 ];
+        my $noon = timelocal_posix( 0, 0, 12, $day, $month, $year );
+        my @then = localtime( $noon + $days * 86_400 );
+
+        return sprintf '%04d-%02d-%02d', $then[5] + 1900, $then[4] + 1, $then[3];
+    }
+
+    # A birth date for a child who is exactly $years old on $now. Six months
+    # back from the current month puts the birthday half a year away, so the
+    # child's age cannot change while the suite runs; day 15 exists in every
+    # month.
+    sub birth_date_for_age ( $years, $now = time() ) {
+        my ( $year, $month ) = ( localtime $now )[ 5, 4 ];
+        $year  += 1900;
+        $month += 1;
+
+        $month -= 6;
+        if ( $month < 1 ) { $month += 12; $year-- }
+
+        return sprintf '%04d-%02d-15', $year - $years, $month;
     }
 
     sub workflow_url ($workflow) {
