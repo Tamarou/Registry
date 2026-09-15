@@ -18,6 +18,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
     use Registry::PriceOps::RevenueShare ();
+    use Registry::DAO::PricingPlan;
 
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -133,11 +134,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         my $id = $selected->{id};
         return undef unless $id && !ref $id;
 
-        my $pricing = $self->workflow($db)->get_step( $db, { slug => 'pricing' } )
-          or return undef;
-        return undef unless $pricing->can('validate_plan_selection');
-
-        return $pricing->validate_plan_selection( $db, $id );
+        return Registry::DAO::PricingPlan->offered_platform_plan( $db, $id );
     }
 
     method get_subscription_config($db, $run) {
