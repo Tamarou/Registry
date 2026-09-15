@@ -62,9 +62,15 @@ my $project = Registry::DAO::Project->create($db, {
     metadata => {}
 });
 
+# The events belong to the sessions created below, so they sit in the same
+# week rather than at a fixed date of their own. Events are unique per
+# project, location and time, so they fall on consecutive days.
+my $first_event_day  = days_from_now(30);
+my $second_event_day = days_from_now(31);
+
 # Create events with different age ranges
 my $event1 = Registry::DAO::Event->create($db, {
-    time => '2024-07-01 10:00:00',
+    time => "$first_event_day 10:00:00",
     duration => 120,
     location_id => $location->id,
     project_id => $project->id,
@@ -76,7 +82,7 @@ my $event1 = Registry::DAO::Event->create($db, {
 });
 
 my $event2 = Registry::DAO::Event->create($db, {
-    time => '2024-07-02 10:00:00',
+    time => "$second_event_day 10:00:00",
     duration => 120,
     location_id => $location->id,
     project_id => $project->id,

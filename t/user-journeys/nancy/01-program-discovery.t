@@ -11,6 +11,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::User;
@@ -69,19 +70,24 @@ my $teacher = Test::Registry::Fixtures::create_user( $db, {
     user_type => 'staff',
 } );
 
-# Create sessions for both programs (future dates for storefront visibility)
+# The storefront lists a session only while end_date >= CURRENT_DATE, so the
+# term has to be derived from the run date rather than written down.
+my $term_start = days_from_now(-14);
+my $term_end   = days_from_now(90);
+
+# Create sessions for both programs (still running, so the storefront lists them)
 my $art_session = Test::Registry::Fixtures::create_session( $db, {
     name       => 'Fall 2026 Arts',
-    start_date => '2026-09-01',
-    end_date   => '2026-11-30',
+    start_date => $term_start,
+    end_date   => $term_end,
     status     => 'published',
     capacity   => 20,
 } );
 
 my $stem_session = Test::Registry::Fixtures::create_session( $db, {
     name       => 'Fall 2026 STEM',
-    start_date => '2026-09-01',
-    end_date   => '2026-11-30',
+    start_date => $term_start,
+    end_date   => $term_end,
     status     => 'published',
     capacity   => 15,
 } );
@@ -92,7 +98,7 @@ my $art_event = Test::Registry::Fixtures::create_event( $db, {
     project_id  => $art_program->id,
     teacher_id  => $teacher->id,
     capacity    => 20,
-    time        => '2026-09-05 15:00:00',
+    time        => "$term_start 15:00:00",
     duration    => 90,
 } );
 
@@ -101,7 +107,7 @@ my $stem_event = Test::Registry::Fixtures::create_event( $db, {
     project_id  => $stem_program->id,
     teacher_id  => $teacher->id,
     capacity    => 15,
-    time        => '2026-09-05 16:00:00',
+    time        => "$term_start 16:00:00",
     duration    => 90,
 } );
 

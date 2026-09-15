@@ -13,6 +13,7 @@ use Registry::PriceOps::RevenueShare;
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Template;
@@ -53,11 +54,11 @@ my $project = $dao->create(Project => { status => 'published',
 });
 my $session = $dao->create(Session => {
     name => 'Get Started', slug => 'get-started-reg-test',
-    start_date => '2026-01-01', end_date => '2036-01-01',
+    start_date => days_from_now(-30), end_date => days_from_now(3650),
     status => 'published', capacity => 999999, metadata => {},
 });
 my $event = $dao->create(Event => {
-    time => '2026-01-01 00:00:00', duration => 0,
+    time => days_from_now(-30) . ' 00:00:00', duration => 0,
     location_id => $location->id, project_id => $project->id,
     teacher_id => $teacher->id, capacity => 999999, metadata => {},
 });
