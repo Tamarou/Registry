@@ -391,4 +391,120 @@ subtest 'a stale intent still routes a paid parent to completion' => sub {
         'the capturing intent is still the one on record';
 };
 
+# --- #318: a refused cancellation must not be swallowed ----------------------
+#
+# When a cart's total changes between submits the step rotates the idempotency
+# token and cancels the superseded intent, so that at most one confirmable
+# PaymentIntent exists for the row. The cancel's ->catch discarded the error
+# unconditionally -- but Stripe REFUSES to cancel an intent that has already
+# succeeded, and that refusal is the only authoritative signal that money is in
+# flight; payments.status lags it by however long the webhook takes to arrive.
+#
+# Minting a replacement alongside a live one is a double charge. Worse, the
+# reuse branch has already rewritten amount_cents by then, so when the first
+# leg's payment_intent.succeeded lands the webhook's captured-amount guard
+# refuses it: the original charge is never recorded and never refunded.
+
+sub deferred_reject ($err) {
+    my $p = Mojo::Promise->new;
+    Mojo::IOLoop->next_tick( sub { $p->reject($err) } );
+    return $p;
+}
+
+# A payment row mid-flight for this run, carrying an intent and an amount that
+# the next submit will disagree with.
+sub in_flight_payment ($run, $cents) {
+    my $payment = Registry::DAO::Payment->create( $tdb, {
+        user_id      => $parent->id,
+        amount_cents => $cents,
+        status       => 'processing',
+        metadata     => { workflow_run_id => $run->id },
+    } );
+    $payment->update( $tdb, { stripe_payment_intent_id => 'pi_superseded' } );
+    $run->update_data( $tdb, { payment_id => $payment->id } );
+    return $payment;
+}
+
+subtest 'a superseded intent that is still live blocks the replacement' => sub {
+    my $run = make_run();
+    in_flight_payment( $run, 999_99 );   # deliberately not the cart total
+
+    my $minted = 0;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub {
+        deferred_reject( "Stripe invalid_request_error: You cannot cancel this "
+              . "PaymentIntent because it has a status of succeeded.\n" );
+    };
+    # Asked rather than inferred: the refusal is English prose, the status is not.
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub {
+        deferred( { id => 'pi_superseded', status => 'succeeded' } );
+    };
+    local *Registry::Service::Stripe::create_payment_intent_async = sub {
+        $minted++;
+        deferred( { id => 'pi_replacement', client_secret => 'cs_replacement' } );
+    };
+
+    my ( $result, $error ) = in_running_loop(
+        sub { payment_step()->process( $tdb, { agreeTerms => 1 }, $run ) } );
+
+    is $error, undef, 'the step settles rather than dying';
+    is $minted, 0, 'no replacement intent is minted alongside the live one';
+    ok $result->{errors} && @{ $result->{errors} }, 'the parent is told, not charged twice';
+};
+
+subtest 'a superseded intent that is genuinely dead does not block' => sub {
+    my $run = make_run();
+    in_flight_payment( $run, 999_99 );
+
+    my $minted = 0;
+    no warnings 'redefine';
+    # Already cancelled: Stripe refuses the cancel, but the intent is dead, so
+    # replacing it is correct and must not be blocked.
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub {
+        deferred_reject( "Stripe invalid_request_error: You cannot cancel this "
+              . "PaymentIntent because it has a status of canceled.\n" );
+    };
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub {
+        deferred( { id => 'pi_superseded', status => 'canceled' } );
+    };
+    local *Registry::Service::Stripe::create_payment_intent_async = sub {
+        $minted++;
+        deferred( { id => 'pi_replacement', client_secret => 'cs_replacement' } );
+    };
+
+    my ( $result, $error ) = in_running_loop(
+        sub { payment_step()->process( $tdb, { agreeTerms => 1 }, $run ) } );
+
+    is $error, undef, 'the step settles';
+    is $minted, 1, 'the replacement is minted';
+    is $result->{data}{step_data}{client_secret}, 'cs_replacement',
+        'and the parent gets its client_secret';
+};
+
+# Cannot cancel AND cannot confirm it is dead. Assume live: a double charge is
+# worse than a re-submit.
+subtest 'an unreadable superseded intent is treated as live' => sub {
+    my $run = make_run();
+    in_flight_payment( $run, 999_99 );
+
+    my $minted = 0;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub {
+        deferred_reject("Stripe api_error: service unavailable\n");
+    };
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub {
+        deferred_reject("Stripe api_error: service unavailable\n");
+    };
+    local *Registry::Service::Stripe::create_payment_intent_async = sub {
+        $minted++;
+        deferred( { id => 'pi_replacement', client_secret => 'cs_replacement' } );
+    };
+
+    my ( $result, $error ) = in_running_loop(
+        sub { payment_step()->process( $tdb, { agreeTerms => 1 }, $run ) } );
+
+    is $error, undef, 'the step settles';
+    is $minted, 0, 'no replacement is minted on an unknown state';
+};
+
 done_testing();

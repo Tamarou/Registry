@@ -213,11 +213,45 @@ method create_payment ($db, $run, $form_data) {
             if ($existing->amount_cents != $payment_info->{total}) {
                 $payment->rotate_idempotency_token($db);
                 if (my $old_intent = $payment->stripe_payment_intent_id) {
-                    # Best-effort: an already-settled or already-canceled
-                    # intent makes this a no-op error we can ignore.
-                    $supersede = $payment->stripe_client
-                        ->cancel_payment_intent_async($old_intent)
-                        ->catch(sub ($cancel_err) { });
+                    my $client = $payment->stripe_client;
+                    $supersede = $client->cancel_payment_intent_async($old_intent)
+                      ->catch(sub ($cancel_err) {
+                        # Stripe REFUSES to cancel an intent that has already
+                        # succeeded, and that refusal is the only authoritative
+                        # signal that money is in flight -- payments.status lags
+                        # it by however long the webhook takes to arrive.
+                        #
+                        # Discarding it minted a replacement alongside a live
+                        # charge. Worse, the reuse branch has already rewritten
+                        # amount_cents by then, so when the first leg's
+                        # payment_intent.succeeded lands, the webhook's
+                        # captured-amount guard refuses it: the original charge
+                        # is never recorded against the payment and never
+                        # refunded. Money taken, nothing in the ledger.
+                        #
+                        # Ask rather than parse. The refusal is English prose
+                        # ("...because it has a status of succeeded"); the
+                        # intent's own status is not.
+                        return $client->retrieve_payment_intent_async($old_intent)->then(
+                            sub ($intent) {
+                                my $status = $intent->{status} // '';
+                                # requires_capture holds funds, processing may
+                                # be settling, succeeded has captured. Every
+                                # other status is harmless to replace.
+                                die "SUPERSEDED_INTENT_LIVE\n"
+                                  if $status eq 'succeeded'
+                                  || $status eq 'processing'
+                                  || $status eq 'requires_capture';
+                                return;
+                            },
+                            sub ($retrieve_err) {
+                                # Cannot cancel, and cannot confirm it is dead.
+                                # A double charge is worse than asking the
+                                # parent to submit again.
+                                die "SUPERSEDED_INTENT_LIVE\n";
+                            },
+                        );
+                      });
                 }
             }
         }
@@ -268,9 +302,17 @@ method create_payment ($db, $run, $form_data) {
             ),
         };
     }, sub ($error) {
+        # A superseded intent that is still live is not a processing failure --
+        # it means the earlier charge may already have gone through. Say so,
+        # rather than inviting another attempt.
+        my $message = $error =~ /SUPERSEDED_INTENT_LIVE/
+          ? 'Your previous payment is still being confirmed. Please wait a '
+              . 'moment and refresh this page before changing your cart.'
+          : "Payment processing error: $error";
+
         return {
             next_step => $self->id,
-            errors => ["Payment processing error: $error"],
+            errors => [$message],
             data => $self->_render_data($db, $run),
         };
     });
