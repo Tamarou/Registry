@@ -5,6 +5,7 @@ use Test::More import => [qw( done_testing is ok like is_deeply )];
 defer { done_testing };
 
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Test::Registry::Fixtures;
 use Registry::DAO::Family;
 
@@ -67,10 +68,12 @@ my $program = Test::Registry::Fixtures::create_project($db, {
     name => 'Test Program'
 });
 
+# The block below queries the events falling inside today, so the session has
+# to span today and its event has to land in it.
 my $session = Test::Registry::Fixtures::create_session($db, {
     name => 'Test Session',
-    start_date => '2024-03-01',
-    end_date => '2024-03-08'
+    start_date => days_from_now(-3),
+    end_date => days_from_now(4)
 });
 
 {    # Test admin dashboard overview stats
@@ -89,7 +92,7 @@ my $session = Test::Registry::Fixtures::create_session($db, {
         project_id => $program->id,  # Events belong to projects, not sessions
         location_id => $location->id,
         teacher_id => $staff->id,
-        time => '2024-03-15 14:00:00',
+        time => days_from_now(0) . ' 14:00:00',
         duration => 60
     });
     

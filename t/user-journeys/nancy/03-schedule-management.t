@@ -12,6 +12,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Test::Registry::Fixtures;
 
 use Registry::DAO::User;
@@ -54,8 +55,8 @@ my $teacher = Test::Registry::Fixtures::create_user( $db, {
 
 my $session = Test::Registry::Fixtures::create_session( $db, {
     name       => 'Fall 2025 Drama',
-    start_date => '2025-09-01',
-    end_date   => '2025-11-30',
+    start_date => days_from_now(-30),
+    end_date   => days_from_now(60),
     status     => 'published',
     capacity   => 18,
 } );
@@ -65,7 +66,7 @@ my $event = Test::Registry::Fixtures::create_event( $db, {
     project_id  => $program->id,
     teacher_id  => $teacher->id,
     capacity    => 18,
-    time        => '2025-09-05 15:30:00',
+    time        => days_from_now(3) . ' 15:30:00',
     duration    => 60,
 } );
 

@@ -9,6 +9,7 @@ use Test::Deep;
 
 use lib qw(lib t/lib);
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Test::Registry::Fixtures;
 
 use Registry::DAO::Family;
@@ -74,10 +75,15 @@ my $project = Test::Registry::Fixtures::create_project($db, {
     slug => 'test-program'
 });
 
+# A term that has finished, with its event inside it and attendance taken;
+# the waitlist session below is one a parent could still be waiting for.
+my $term_start = days_from_now(-30);
+my $term_end   = days_from_now(-23);
+
 my $session = Test::Registry::Fixtures::create_session($db, {
     name => 'Test Session',
-    start_date => '2024-03-01',
-    end_date => '2024-03-08',
+    start_date => $term_start,
+    end_date => $term_end,
     capacity => 10
 });
 
@@ -97,7 +103,7 @@ subtest 'Test dashboard data aggregation' => sub {
         location_id => $location->id,
         project_id => $project->id,
         teacher_id => $staff->id,
-        time => '2024-03-15 14:00:00',
+        time => days_from_now(-25) . ' 14:00:00',
         duration => 60
     });
     
@@ -123,8 +129,8 @@ subtest 'Test waitlist integration' => sub {
     # Create another session for waitlist testing
     my $session2 = Test::Registry::Fixtures::create_session($db, {
         name => 'Waitlist Test Session',
-        start_date => '2024-03-15',
-        end_date => '2024-03-22',
+        start_date => days_from_now(14),
+        end_date => days_from_now(21),
         capacity => 2
     });
     
@@ -177,7 +183,7 @@ subtest 'Test dashboard stats calculation' => sub {
 subtest 'Test upcoming events query' => sub {
     # Simple test to verify events exist for dashboard display
     my $events = $db->db->select('events', 'COUNT(*)', {
-        'time' => {'>=' => '2024-03-01'}
+        'time' => {'>=' => $term_start}
     })->array->[0] || 0;
     
     ok $events >= 1, 'Dashboard shows upcoming events';
