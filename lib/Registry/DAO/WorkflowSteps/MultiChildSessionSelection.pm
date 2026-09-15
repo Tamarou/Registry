@@ -86,6 +86,8 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             # capture -- rolling back the paying child's enrollment and the
             # webhook dedup claim with it, so every redelivery reproduces it.
             my %is_selected = map { $_->id => 1 } @children;
+            my %offered = map { $_->id => 1 }
+              @{ $self->offered_sessions( $db, $location_id, $program_id ) };
             for my $key (keys %$form_data) {
                 if ($key =~ /^session_for_(.+)$/) {
                     my $child_id = $1;
@@ -96,6 +98,17 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                             push @errors, "Session selected for a child that is not part of this registration";
                             next;
                         }
+
+                        # A duplicated key gives an ARRAYREF here --
+                        # req->params->to_hash collapses session_for_<child>=A&...=B
+                        # into a reference, which then reached the settlement
+                        # query and came back as a Postgres uuid syntax error.
+                        if ( ref $session_id || !$offered{$session_id} ) {
+                            push @errors,
+                              "That session is not available for this program";
+                            next;
+                        }
+
                         $selections{$child_id} = $session_id;
                     }
                 }
@@ -228,54 +241,23 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             };
         }
 
-        # Query published sessions that belong to this program+location.
+        # Full sessions are dropped from what is RENDERED. They are still
+        # offered_sessions members, so process can answer "X is full" rather
+        # than "not available" -- see the note on offered_sessions.
+        # Unchanged from before offered_sessions existed: with no programme in
+        # run data the template offers nothing. Validation is deliberately
+        # broader -- see offered_sessions -- because a run can legitimately
+        # reach this step without a programme.
         my @available_sessions;
-        if ($program_id && $location_id) {
-            my $sql = q{
-                SELECT DISTINCT s.*
-                FROM sessions s
-                JOIN session_events se ON se.session_id = s.id
-                JOIN events e ON e.id = se.event_id
-                WHERE e.location_id = ?
-                  AND e.project_id  = ?
-                  AND s.status      = 'published'
-                  AND s.end_date    >= CURRENT_DATE
-                ORDER BY s.start_date
-            };
-            my $rows = $db->query($sql, $location_id, $program_id)->hashes;
-            for my $row (@$rows) {
-                my $sess = Registry::DAO::Session->new(%$row);
-                my $enrolled = $db->query(
-                    q{SELECT COUNT(*) FROM enrollments
-                      WHERE session_id = ? AND status IN ('active','pending')},
-                    $sess->id
-                )->array->[0] || 0;
-                push @available_sessions, $sess
-                    unless ($sess->capacity && $enrolled >= $sess->capacity);
-            }
-        } elsif ($program_id) {
-            # No location filter — find any published session for this program.
-            my $sql = q{
-                SELECT DISTINCT s.*
-                FROM sessions s
-                JOIN session_events se ON se.session_id = s.id
-                JOIN events e ON e.id = se.event_id
-                WHERE e.project_id = ?
-                  AND s.status     = 'published'
-                  AND s.end_date   >= CURRENT_DATE
-                ORDER BY s.start_date
-            };
-            my $rows = $db->query($sql, $program_id)->hashes;
-            for my $row (@$rows) {
-                my $sess = Registry::DAO::Session->new(%$row);
-                my $enrolled = $db->query(
-                    q{SELECT COUNT(*) FROM enrollments
-                      WHERE session_id = ? AND status IN ('active','pending')},
-                    $sess->id
-                )->array->[0] || 0;
-                push @available_sessions, $sess
-                    unless ($sess->capacity && $enrolled >= $sess->capacity);
-            }
+        for my $sess ( $program_id
+            ? @{ $self->offered_sessions( $db, $location_id, $program_id ) } : () ) {
+            my $enrolled = $db->query(
+                q{SELECT COUNT(*) FROM enrollments
+                  WHERE session_id = ? AND status IN ('active','pending')},
+                $sess->id
+            )->array->[0] || 0;
+            push @available_sessions, $sess
+                unless ( $sess->capacity && $enrolled >= $sess->capacity );
         }
 
         return {
@@ -308,6 +290,56 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         return;
     }
     
+    # The sessions this step offers, and the single definition of that.
+    #
+    # prepare_template_data renders these; process must validate against the
+    # same set. Previously the published / project / location / end_date filters
+    # lived ONLY in the list-building query, so validation's entire test was
+    # that the submitted id resolved to SOME row -- and `next unless $sess`
+    # meant an id resolving to nothing skipped the capacity and age checks in
+    # silence while still reaching enrollment_items. Settlement then ran
+    # SELECT capacity FROM sessions WHERE id = ? , found no row and died inside
+    # the transaction, after Stripe had captured.
+    #
+    # Capacity is deliberately NOT filtered here. prepare_template_data drops
+    # full sessions from what it renders, but process checks capacity itself so
+    # it can say "X is full"; validating against a capacity-filtered set would
+    # replace that with a vaguer message.
+    # Published and still running are ALWAYS required. The programme and
+    # location narrow it further, but only when the run knows them: a run
+    # started from the storefront carries program_id and location_id through
+    # the callcc, while one started directly at /summer-camp-registration
+    # carries neither. Requiring them here refused every selection in that
+    # second flow -- t/e2e/tenant-onboarding.t caught exactly that.
+    method offered_sessions ($db, $location_id, $program_id) {
+        require Registry::DAO::Session;
+
+        my @predicates;
+        my @bind;
+        if ( $program_id && !ref $program_id ) {
+            push @predicates, 'AND e.project_id = ?';
+            push @bind, $program_id;
+        }
+        if ( $location_id && !ref $location_id ) {
+            push @predicates, 'AND e.location_id = ?';
+            push @bind, $location_id;
+        }
+        my $narrowing = join ' ', @predicates;
+
+        my $rows = $db->query( qq{
+            SELECT DISTINCT s.*
+              FROM sessions s
+              JOIN session_events se ON se.session_id = s.id
+              JOIN events e ON e.id = se.event_id
+             WHERE s.status   = 'published'
+               AND s.end_date >= CURRENT_DATE
+               $narrowing
+             ORDER BY s.start_date
+        }, @bind )->hashes;
+
+        return [ map { Registry::DAO::Session->new(%$_) } @$rows ];
+    }
+
     method get_available_sessions ($db, $location_id, $program_id, $child) {
         # Get sessions that:
         # 1. Are at the specified location
