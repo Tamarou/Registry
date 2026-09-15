@@ -70,11 +70,25 @@ module.exports = async () => {
         // across tests; disable it for the E2E server.
         REGISTRY_RATE_LIMIT_DISABLED: '1',
       };
-      // Unset Stripe keys so payment steps take the test-mode (no-Stripe) mock
-      // path instead of attempting real Stripe API calls, which would fail or
-      // produce side-effects in CI / local development.
-      delete env.STRIPE_SECRET_KEY;
-      delete env.STRIPE_PUBLISHABLE_KEY;
+      // Payment steps branch on STRIPE_SECRET_KEY: without it they take the
+      // demo path and enroll without a gateway. That is what the general e2e
+      // run wants -- it has no keys and must not reach Stripe.
+      //
+      // payment-smoke.spec.js wants the opposite, and stripping the keys made
+      // it unpassable: the server enrolled straight through to the completion
+      // page, so the Stripe Payment Element it waits for was never rendered.
+      //
+      // Test-mode keys are therefore passed through, and anything else is
+      // stripped. A live key must never reach a browser the suite drives, and
+      // the pair must agree -- half a pair mounts Stripe.js against nothing.
+      const test_mode =
+        /^sk_test_/.test(env.STRIPE_SECRET_KEY || '') &&
+        /^pk_test_/.test(env.STRIPE_PUBLISHABLE_KEY || '');
+
+      if (!test_mode) {
+        delete env.STRIPE_SECRET_KEY;
+        delete env.STRIPE_PUBLISHABLE_KEY;
+      }
       return env;
     })(),
     stdio: ['ignore', 'inherit', 'inherit'],
