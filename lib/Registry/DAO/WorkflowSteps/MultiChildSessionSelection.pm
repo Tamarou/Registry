@@ -244,8 +244,13 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         # Full sessions are dropped from what is RENDERED. They are still
         # offered_sessions members, so process can answer "X is full" rather
         # than "not available" -- see the note on offered_sessions.
+        # Unchanged from before offered_sessions existed: with no programme in
+        # run data the template offers nothing. Validation is deliberately
+        # broader -- see offered_sessions -- because a run can legitimately
+        # reach this step without a programme.
         my @available_sessions;
-        for my $sess ( @{ $self->offered_sessions( $db, $location_id, $program_id ) } ) {
+        for my $sess ( $program_id
+            ? @{ $self->offered_sessions( $db, $location_id, $program_id ) } : () ) {
             my $enrolled = $db->query(
                 q{SELECT COUNT(*) FROM enrollments
                   WHERE session_id = ? AND status IN ('active','pending')},
@@ -300,26 +305,35 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
     # full sessions from what it renders, but process checks capacity itself so
     # it can say "X is full"; validating against a capacity-filtered set would
     # replace that with a vaguer message.
+    # Published and still running are ALWAYS required. The programme and
+    # location narrow it further, but only when the run knows them: a run
+    # started from the storefront carries program_id and location_id through
+    # the callcc, while one started directly at /summer-camp-registration
+    # carries neither. Requiring them here refused every selection in that
+    # second flow -- t/e2e/tenant-onboarding.t caught exactly that.
     method offered_sessions ($db, $location_id, $program_id) {
-        return [] unless $program_id && !ref $program_id;
         require Registry::DAO::Session;
 
-        my @bind = ($program_id);
-        my $location_predicate = '';
+        my @predicates;
+        my @bind;
+        if ( $program_id && !ref $program_id ) {
+            push @predicates, 'AND e.project_id = ?';
+            push @bind, $program_id;
+        }
         if ( $location_id && !ref $location_id ) {
-            $location_predicate = 'AND e.location_id = ?';
+            push @predicates, 'AND e.location_id = ?';
             push @bind, $location_id;
         }
+        my $narrowing = join ' ', @predicates;
 
         my $rows = $db->query( qq{
             SELECT DISTINCT s.*
               FROM sessions s
               JOIN session_events se ON se.session_id = s.id
               JOIN events e ON e.id = se.event_id
-             WHERE e.project_id = ?
-               $location_predicate
-               AND s.status     = 'published'
-               AND s.end_date   >= CURRENT_DATE
+             WHERE s.status   = 'published'
+               AND s.end_date >= CURRENT_DATE
+               $narrowing
              ORDER BY s.start_date
         }, @bind )->hashes;
 

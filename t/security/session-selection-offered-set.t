@@ -136,4 +136,30 @@ subtest 'a duplicated session_for_ parameter is refused' => sub {
     ok !$run->data->{enrollment_items}, 'and nothing reaches the cart';
 };
 
+# The narrowing case, which only the project_id predicate catches: a perfectly
+# real, published, current session belonging to a DIFFERENT programme. The
+# issue notes this admits enrolment into programmes outside the age band,
+# because the age gate is checked against program_id from run data rather than
+# the session's own project.
+subtest "a published session from another programme is refused" => sub {
+    my $other_project = Registry::DAO::Project->create( $db,
+        { name => 'Other Project', metadata => {} } );
+    my $other = Registry::DAO::Session->create( $db, {
+        name => 'Elsewhere', start_date => days_from_now(30), end_date => days_from_now(37),
+        status => 'published', capacity => 10, metadata => {},
+    } );
+    my $event = Registry::DAO::Event->create( $db, {
+        time => sprintf( '%s 15:00:00', days_from_now(30) ), duration => 60,
+        location_id => $location->id, project_id => $other_project->id,
+        teacher_id => $teacher->id, capacity => 10, metadata => {},
+    } );
+    $other->add_events( $db, $event->id );
+
+    my $run = run_for_child();
+    my $result = select_session( $run, $other->id );
+
+    ok $result->{errors} && @{ $result->{errors} }, 'an error is returned';
+    ok !$run->data->{enrollment_items}, 'and nothing reaches the cart';
+};
+
 done_testing;
