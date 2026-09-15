@@ -54,14 +54,23 @@ my $program = $dao->create(Project => { status => 'published',
 
 my $teacher = $dao->create(User => { username => 'transfer_teacher', user_type => 'staff' });
 
+# A transfer is only offered out of a session that has not started --
+# _get_transferable_enrollments filters on s.start_date > NOW() -- and only
+# into one that has not started either. Both windows are derived so they stay
+# ahead of the day the suite runs.
+my $source_start = days_from_now(14);
+my $source_end   = days_from_now(18);
+my $target_start = days_from_now(21);
+my $target_end   = days_from_now(25);
+
 # Source session (currently enrolled)
 my $source_session = $dao->create(Session => {
-    name => 'Week 1 - Source', start_date => '2026-06-01', end_date => '2026-06-05',
+    name => 'Week 1 - Source', start_date => $source_start, end_date => $source_end,
     status => 'published', capacity => 16, metadata => {},
 });
 
 my $source_event = $dao->create(Event => {
-    time => '2026-06-01 09:00:00', duration => 420,
+    time => "$source_start 09:00:00", duration => 420,
     location_id => $location->id, project_id => $program->id,
     teacher_id => $teacher->id, capacity => 16, metadata => {},
 });
@@ -69,12 +78,12 @@ $source_session->add_events($dao->db, $source_event->id);
 
 # Target session (transferring to)
 my $target_session = $dao->create(Session => {
-    name => 'Week 2 - Target', start_date => '2026-06-08', end_date => '2026-06-12',
+    name => 'Week 2 - Target', start_date => $target_start, end_date => $target_end,
     status => 'published', capacity => 16, metadata => {},
 });
 
 my $target_event = $dao->create(Event => {
-    time => '2026-06-08 09:00:00', duration => 420,
+    time => "$target_start 09:00:00", duration => 420,
     location_id => $location->id, project_id => $program->id,
     teacher_id => $teacher->id, capacity => 16, metadata => {},
 });

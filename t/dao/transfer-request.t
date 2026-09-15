@@ -7,6 +7,7 @@ defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
@@ -46,17 +47,19 @@ my $target_project = $dao->create(Project => {
     notes => 'Test project for target session'
 });
 
+# Transfers are offered only out of and into sessions that have not started,
+# so both windows are derived rather than written down.
 my $source_session = $dao->create(Session => {
     name => 'Source Session',
-    start_date => '2024-01-01',
-    end_date => '2024-01-15',
+    start_date => days_from_now(14),
+    end_date => days_from_now(21),
     project_id => $source_project->id
 });
 
 my $target_session = $dao->create(Session => {
     name => 'Target Session',
-    start_date => '2024-02-01',
-    end_date => '2024-02-15',
+    start_date => days_from_now(28),
+    end_date => days_from_now(35),
     project_id => $target_project->id
 });
 

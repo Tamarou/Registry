@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Registry::DAO::Payment;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Family;
@@ -43,18 +44,24 @@ sub a_child () {
     });
 }
 
+# Sessions stay open around the day the suite runs; a fixed window would
+# eventually put every one of them behind CURRENT_DATE.
+my $session_start = days_from_now(-30);
+my $session_end   = days_from_now(180);
+my $event_day     = days_from_now(7);
+
 my $session_seq = 0;
 sub a_session ($capacity) {
     # events carries a unique key on (project_id, location_id, time), so each
     # session's event needs its own slot rather than a shared literal.
     $session_seq++;
     my $s = $dao->create(Session => {
-        name => "CAP Week $session_seq", start_date => '2026-01-01',
-        end_date => '2026-12-31', status => 'published',
+        name => "CAP Week $session_seq", start_date => $session_start,
+        end_date => $session_end, status => 'published',
         capacity => $capacity, metadata => {},
     });
     my $e = $dao->create(Event => {
-        time => sprintf('2026-06-15 %02d:00:00', $session_seq % 24),
+        time => sprintf( '%s %02d:00:00', $event_day, $session_seq % 24 ),
         duration => 60, location_id => $loc->id,
         project_id => $prog->id, teacher_id => $teacher->id,
         capacity => $capacity, metadata => {},

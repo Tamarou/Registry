@@ -26,6 +26,7 @@ use Registry::DAO::WorkflowStep;
 use Registry::Controller::Webhooks;
 use Registry::Service::Stripe;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Mojo::Promise;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
@@ -81,8 +82,13 @@ my $project = Registry::DAO::Project->create($tdb, {
     metadata          => {},
 });
 
+# A camp a parent can still enrol in: the storefront offers a session only
+# while end_date >= CURRENT_DATE.
+my $camp_start = days_from_now(30);
+my $camp_end   = days_from_now(37);
+
 my $event = Registry::DAO::Event->create($tdb, {
-    time        => '2026-07-01 10:00:00',
+    time        => "$camp_start 10:00:00",
     duration    => 120,
     location_id => $location->id,
     project_id  => $project->id,
@@ -94,8 +100,8 @@ my $event = Registry::DAO::Event->create($tdb, {
 # $150 paid session
 my $session = Registry::DAO::Session->create($tdb, {
     name       => 'E2E Week',
-    start_date => '2026-07-01',
-    end_date   => '2026-07-07',
+    start_date => $camp_start,
+    end_date   => $camp_end,
     status     => 'published',
     capacity   => 20,
     metadata   => {},

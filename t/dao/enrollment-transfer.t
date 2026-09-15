@@ -7,6 +7,7 @@ defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
@@ -38,24 +39,27 @@ my $family_member = $dao->create(FamilyMember => {
     grade => '8th'
 });
 
+# A transfer moves a child between sessions that have not started yet;
+# Session::get_available_for_transfer offers only those, filtering on
+# s.start_date > NOW(). Derive the windows so they stay ahead of today.
 my $source_session = $dao->create(Session => {
     name => 'Source Enrollment Session',
-    start_date => '2024-01-01',
-    end_date => '2024-01-15',
+    start_date => days_from_now(14),
+    end_date => days_from_now(21),
     capacity => 10
 });
 
 my $target_session = $dao->create(Session => {
     name => 'Target Enrollment Session',
-    start_date => '2024-02-01',
-    end_date => '2024-02-15',
+    start_date => days_from_now(28),
+    end_date => days_from_now(35),
     capacity => 5
 });
 
 my $full_session = $dao->create(Session => {
     name => 'Full Session',
-    start_date => '2024-03-01',
-    end_date => '2024-03-15',
+    start_date => days_from_now(42),
+    end_date => days_from_now(49),
     capacity => 1
 });
 
@@ -249,8 +253,8 @@ subtest 'Get available sessions for transfer' => sub {
     # Create a future session with capacity for transfers
     my $future_session = $dao->create(Session => {
         name       => 'Future Transfer Session',
-        start_date => '2099-01-01',
-        end_date   => '2099-06-01',
+        start_date => days_from_now(180),
+        end_date   => days_from_now(210),
         capacity   => 20
     });
 
