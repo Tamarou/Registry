@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::User;
@@ -22,25 +23,6 @@ use Mojo::JSON qw(encode_json);
 # This suite asserts eligibility, which is a function of age and of a
 # session still being in the future -- both measured against the day the
 # test runs. Hardcoded dates silently expire, so derive them.
-
-# A birth date for a child who is exactly $years old today. Six months
-# back from the current month puts the birthday mid-year, so there is no
-# boundary for FamilyMember::age to land on; day 15 exists in every month.
-sub birth_date_for_age ($years) {
-    my ( $year, $month ) = (localtime)[ 5, 4 ];
-    $year += 1900;
-    $month += 1;
-
-    $month -= 6;
-    if ( $month < 1 ) { $month += 12; $year-- }
-
-    return sprintf '%04d-%02d-15', $year - $years, $month;
-}
-
-sub days_from_now ($days) {
-    my ( $year, $month, $day ) = ( localtime( time + $days * 86_400 ) )[ 5, 4, 3 ];
-    return sprintf '%04d-%02d-%02d', $year + 1900, $month + 1, $day;
-}
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -80,9 +62,15 @@ my $project = Registry::DAO::Project->create($db, {
     metadata => {}
 });
 
+# The events belong to the sessions created below, so they sit in the same
+# week rather than at a fixed date of their own. Events are unique per
+# project, location and time, so they fall on consecutive days.
+my $first_event_day  = days_from_now(30);
+my $second_event_day = days_from_now(31);
+
 # Create events with different age ranges
 my $event1 = Registry::DAO::Event->create($db, {
-    time => '2024-07-01 10:00:00',
+    time => "$first_event_day 10:00:00",
     duration => 120,
     location_id => $location->id,
     project_id => $project->id,
@@ -94,7 +82,7 @@ my $event1 = Registry::DAO::Event->create($db, {
 });
 
 my $event2 = Registry::DAO::Event->create($db, {
-    time => '2024-07-02 10:00:00',
+    time => "$second_event_day 10:00:00",
     duration => 120,
     location_id => $location->id,
     project_id => $project->id,
@@ -494,7 +482,6 @@ subtest 'a session selection for a child that does not exist is refused' => sub 
         'no cart item names a child that does not exist';
 };
 
-
 # A cart item for another family's child must not reach the payment.
 #
 # Validating selections against @children only means "these ids resolved to a
@@ -564,6 +551,5 @@ subtest "a session selection for another family's child is refused" => sub {
     ok !( grep { ( $_->{first_name} // '' ) eq 'Mallory Other' } @$children ),
         "and their name is not snapshotted into the run";
 };
-
 
 done_testing;

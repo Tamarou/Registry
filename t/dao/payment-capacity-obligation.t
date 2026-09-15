@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Registry::DAO::Payment;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Family;
@@ -37,13 +38,19 @@ sub a_child () {
         child_name => "OB Kid $seq", birth_date => '2018-01-01', grade => '3',
         medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
 }
+# Sessions stay open around the day the suite runs, so the capacity rules
+# under test are never measured against a window that has already closed.
+my $session_start = days_from_now(-30);
+my $session_end   = days_from_now(180);
+my $event_day     = days_from_now(7);
+
 sub a_session ($capacity) {
     $seq++;
     my $s = $dao->create(Session => {
-        name => "OB Week $seq", start_date => '2026-01-01', end_date => '2026-12-31',
+        name => "OB Week $seq", start_date => $session_start, end_date => $session_end,
         status => 'published', capacity => $capacity, metadata => {} });
     my $e = $dao->create(Event => {
-        time => sprintf('2026-06-15 %02d:%02d:00', $seq % 24, $seq % 60),
+        time => sprintf( '%s %02d:%02d:00', $event_day, $seq % 24, $seq % 60 ),
         duration => 60, location_id => $loc->id, project_id => $prog->id,
         teacher_id => $teacher->id, capacity => $capacity, metadata => {} });
     $s->add_events($db, $e->id);

@@ -8,6 +8,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers;
 use Registry::DAO::Workflow;
 use Registry::DAO::User;
 use Registry::DAO::Family;
@@ -16,17 +17,6 @@ use Registry::DAO::Project;
 use Registry::DAO::Event;
 use Registry::DAO::Location;
 use Mojo::Home;
-
-sub days_from_now ($days) {
-    my ( $y, $m, $d ) = ( localtime( time + $days * 86_400 ) )[ 5, 4, 3 ];
-    return sprintf '%04d-%02d-%02d', $y + 1900, $m + 1, $d;
-}
-sub birth_date_for_age ($years) {
-    my ( $y, $m ) = (localtime)[ 5, 4 ];
-    $y += 1900; $m += 1; $m -= 6;
-    if ( $m < 1 ) { $m += 12; $y-- }
-    return sprintf '%04d-%02d-15', $y - $years, $m;
-}
 
 my $test_db = Test::Registry::DB->new;
 Test::Registry::Fixtures::create_tenant( $test_db->db->db,

@@ -9,13 +9,13 @@ use utf8;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::ProgramType;
 use Registry::DAO::WorkflowSteps::ProgramListing;
 use Mojo::Home;
 use YAML::XS qw(Load);
-use DateTime;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -56,6 +56,11 @@ my $loc_sunset = $dao->create(Location => {
 
 my $teacher = $dao->create(User => { username => 'filter-teacher', user_type => 'staff' });
 
+# ProgramListing offers a session only while end_date >= CURRENT_DATE, so an
+# after-school term under way today has to be derived rather than written down.
+my $term_start = days_from_now(-14);
+my $term_end   = days_from_now(90);
+
 # After-school program at Lincoln
 my $prog_lincoln = $dao->create(Project => { status => 'published',
     name              => 'Art at Lincoln',
@@ -68,15 +73,15 @@ my $prog_lincoln = $dao->create(Project => { status => 'published',
 my $sess_lincoln = $dao->create(Session => {
     name       => 'Fall 2026',
     slug       => 'fall-2026-lincoln-filter',
-    start_date => '2026-09-01',
-    end_date   => '2026-12-15',
+    start_date => $term_start,
+    end_date   => $term_end,
     status     => 'published',
     capacity   => 20,
     metadata   => {},
 });
 
 my $evt_lincoln = $dao->create(Event => {
-    time        => '2026-09-01 15:00:00',
+    time        => "$term_start 15:00:00",
     duration    => 120,
     location_id => $loc_lincoln->id,
     project_id  => $prog_lincoln->id,
@@ -98,15 +103,15 @@ my $prog_sunset = $dao->create(Project => { status => 'published',
 my $sess_sunset = $dao->create(Session => {
     name       => 'Fall 2026 Sunset',
     slug       => 'fall-2026-sunset-filter',
-    start_date => '2026-09-01',
-    end_date   => '2026-12-15',
+    start_date => $term_start,
+    end_date   => $term_end,
     status     => 'published',
     capacity   => 15,
     metadata   => {},
 });
 
 my $evt_sunset = $dao->create(Event => {
-    time        => '2026-09-01 15:00:00',
+    time        => "$term_start 15:00:00",
     duration    => 120,
     location_id => $loc_sunset->id,
     project_id  => $prog_sunset->id,
@@ -117,9 +122,8 @@ my $evt_sunset = $dao->create(Event => {
 $sess_sunset->add_events($dao->db, $evt_sunset->id);
 
 # Compute future dates relative to today so this test remains valid over time
-my $today      = DateTime->now;
-my $camp_start = $today->clone->add(days => 30)->ymd;
-my $camp_end   = $today->clone->add(days => 37)->ymd;
+my $camp_start = days_from_now(30);
+my $camp_end   = days_from_now(37);
 
 # Summer camp (different program type, at Lincoln)
 my $prog_camp = $dao->create(Project => { status => 'published',

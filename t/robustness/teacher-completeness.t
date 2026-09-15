@@ -9,6 +9,7 @@ use utf8;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 
 use Registry::DAO;
 use Registry::DAO::User;
@@ -45,20 +46,25 @@ my $teacher2 = $dao->create(User => {
     user_type => 'staff', email => 'teacher2@test.com',
 });
 
+# Attendance is recorded for a class that has happened, and the day is named
+# once so the fixture and the get_teacher_events_for_date query cannot drift
+# apart.
+my $class_day = days_from_now(-7);
+
 my $session = $dao->create(Session => {
-    name => 'TC Week 1', start_date => '2026-06-01', end_date => '2026-06-05',
+    name => 'TC Week 1', start_date => $class_day, end_date => days_from_now(-3),
     status => 'published', capacity => 16, metadata => {},
 });
 
 # Two events on the same day
 my $morning_event = $dao->create(Event => {
-    time => '2026-06-01 09:00:00', duration => 180,
+    time => "$class_day 09:00:00", duration => 180,
     location_id => $location->id, project_id => $program->id,
     teacher_id => $teacher1->id, capacity => 16, metadata => {},
 });
 
 my $afternoon_event = $dao->create(Event => {
-    time => '2026-06-01 13:00:00', duration => 180,
+    time => "$class_day 13:00:00", duration => 180,
     location_id => $location->id, project_id => $program->id,
     teacher_id => $teacher1->id, capacity => 16, metadata => {},
 });
@@ -143,10 +149,10 @@ subtest 'multiple events same day tracked independently' => sub {
 # ============================================================
 subtest 'teacher sees multiple events on same day' => sub {
     my $events = Registry::DAO::Event->get_teacher_events_for_date(
-        $dao->db, $teacher1->id, '2026-06-01',
+        $dao->db, $teacher1->id, $class_day,
     );
 
-    ok scalar @$events >= 2, 'Teacher has 2+ events on 2026-06-01';
+    ok scalar @$events >= 2, "Teacher has 2+ events on $class_day";
 };
 
 # ============================================================

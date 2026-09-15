@@ -9,6 +9,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Test::Registry::Helpers qw(authenticate_as);
 use Registry::DAO::Family;
 use Registry::DAO::Enrollment;
@@ -36,13 +37,21 @@ my $program = $dao->create(Project => {
 });
 my $teacher = $dao->create(User => { username => 'dash_teacher', user_type => 'staff' });
 
+# Project::get_program_overview calls a program current when
+# start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE, so the window is
+# derived to span the day the suite runs rather than a year that will end.
+my $dash_start = days_from_now(-180);
+my $dash_end   = days_from_now(180);
+my $event_day  = days_from_now(-7);
+my $event2_day = days_from_now(-1);
+
 # Session spanning today so the "current" program-overview filter includes it.
 my $session = $dao->create(Session => {
-    name => 'Dashboard Week 1', start_date => '2026-01-01', end_date => '2026-12-31',
+    name => 'Dashboard Week 1', start_date => $dash_start, end_date => $dash_end,
     status => 'published', capacity => 16, metadata => {},
 });
 my $event = $dao->create(Event => {
-    time => '2026-06-15 09:00:00', duration => 420,
+    time => "$event_day 09:00:00", duration => 420,
     location_id => $location->id, project_id => $program->id,
     teacher_id => $teacher->id, capacity => 16, metadata => {},
 });
@@ -54,11 +63,11 @@ my $program2 = $dao->create(Project => {
     program_type_slug => 'summer-camp', metadata => {},
 });
 my $session2 = $dao->create(Session => {
-    name => 'Dashboard Week 2', start_date => '2026-01-01', end_date => '2026-12-31',
+    name => 'Dashboard Week 2', start_date => $dash_start, end_date => $dash_end,
     status => 'published', capacity => 16, metadata => {},
 });
 my $event2 = $dao->create(Event => {
-    time => '2026-06-22 09:00:00', duration => 420,
+    time => "$event2_day 09:00:00", duration => 420,
     location_id => $location->id, project_id => $program2->id,
     teacher_id => $teacher->id, capacity => 16, metadata => {},
 });
@@ -97,7 +106,7 @@ Registry::DAO::Notification->create($dao->db, {
     channel => 'email',
     subject => 'Dashboard Notice',
     message => 'Hello from the dashboard test',
-    sent_at => '2026-05-30 12:00:00',
+    sent_at => days_from_now(-2) . ' 12:00:00',
 });
 
 my $admin = $dao->create(User => {
@@ -118,7 +127,7 @@ subtest 'program_overview renders date range from session start/end' => sub {
 };
 
 subtest 'todays_events renders events for a given date' => sub {
-    $t->get_ok('/admin/dashboard/todays_events?date=2026-06-15')
+    $t->get_ok("/admin/dashboard/todays_events?date=$event_day")
       ->status_is(200)
       ->content_like(qr/Dashboard Week 1/, 'shows the event on that date');
 };

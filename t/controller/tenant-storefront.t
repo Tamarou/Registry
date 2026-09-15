@@ -12,6 +12,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Test::Registry::Fixtures;
 
 use Registry::DAO qw(Workflow);
@@ -20,7 +21,6 @@ use Registry::DAO::Enrollment;
 use Mojo::Home;
 use Mojo::JSON qw(encode_json);
 use YAML::XS qw(Load);
-use DateTime;
 
 # Ensure demo payment mode
 delete $ENV{STRIPE_SECRET_KEY};
@@ -66,11 +66,12 @@ my $program = $dao->create(Project => { status => 'published',
 my $teacher = $dao->create(User => { username => 'sf_teacher', user_type => 'staff' });
 
 # Compute future dates relative to today so this test remains valid over time
-my $today        = DateTime->now;
-my $future_start = $today->clone->add(days => 30)->ymd;
-my $future_end   = $today->clone->add(days => 37)->ymd;
-my $full_start   = $today->clone->add(days => 45)->ymd;
-my $full_end     = $today->clone->add(days => 52)->ymd;
+my $future_start = days_from_now(30);
+my $future_end   = days_from_now(37);
+my $full_start   = days_from_now(45);
+my $full_end     = days_from_now(52);
+my $draft_start  = days_from_now(60);
+my $draft_end    = days_from_now(67);
 
 # Open session with capacity
 my $session1 = $dao->create(Session => {
@@ -144,11 +145,12 @@ for my $i (1..2) {
     });
 }
 
-# Draft session (should NOT appear)
+# Draft session (should NOT appear). Its window is in the future so that
+# status is the only thing keeping it out of the listing.
 my $session_draft = $dao->create(Session => {
     name       => 'Draft Session',
-    start_date => '2026-07-01',
-    end_date   => '2026-07-05',
+    start_date => $draft_start,
+    end_date   => $draft_end,
     status     => 'draft',
     capacity   => 16,
     metadata   => {},

@@ -63,18 +63,25 @@ my $program = $dao->create(Project => { status => 'published',
 
 my $teacher = $dao->create(User => { username => 'camp_teacher_err', user_type => 'staff' });
 
+# Both sessions have to be in the offered set, or the rejections asserted
+# below would come from the date filter rather than from capacity and age.
+my $open_start = days_from_now(30);
+my $open_end   = days_from_now(34);
+my $full_start = days_from_now(44);
+my $full_end   = days_from_now(48);
+
 # Session with plenty of capacity
 my $open_session = $dao->create(Session => {
     name       => 'Open Session',
-    start_date => '2026-06-01',
-    end_date   => '2026-06-05',
+    start_date => $open_start,
+    end_date   => $open_end,
     status     => 'published',
     capacity   => 16,
     metadata   => {},
 });
 
 my $open_event = $dao->create(Event => {
-    time        => '2026-06-01 09:00:00',
+    time        => "$open_start 09:00:00",
     duration    => 420,
     location_id => $location->id,
     project_id  => $program->id,
@@ -94,15 +101,15 @@ $dao->create(PricingPlan => {
 # Full session (capacity 2, with 2 enrollments)
 my $full_session = $dao->create(Session => {
     name       => 'Full Session',
-    start_date => '2026-06-15',
-    end_date   => '2026-06-19',
+    start_date => $full_start,
+    end_date   => $full_end,
     status     => 'published',
     capacity   => 2,
     metadata   => {},
 });
 
 my $full_event = $dao->create(Event => {
-    time        => '2026-06-15 09:00:00',
+    time        => "$full_start 09:00:00",
     duration    => 420,
     location_id => $location->id,
     project_id  => $program->id,
@@ -125,7 +132,7 @@ my $filler_parent1 = $dao->create(User => {
     user_type => 'parent', email => 'filler1@example.com',
 });
 my $filler_child1 = Registry::DAO::Family->add_child($dao->db, $filler_parent1->id, {
-    child_name => 'Filler Child 1', birth_date => '2017-01-01', grade => '3',
+    child_name => 'Filler Child 1', birth_date => birth_date_for_age(9), grade => '3',
     medical_info => {}, emergency_contact => { name => 'Parent', phone => '555-0001' },
 });
 $dao->db->insert('enrollments', {
@@ -138,7 +145,7 @@ my $filler_parent2 = $dao->create(User => {
     user_type => 'parent', email => 'filler2@example.com',
 });
 my $filler_child2 = Registry::DAO::Family->add_child($dao->db, $filler_parent2->id, {
-    child_name => 'Filler Child 2', birth_date => '2017-06-01', grade => '3',
+    child_name => 'Filler Child 2', birth_date => birth_date_for_age(9), grade => '3',
     medical_info => {}, emergency_contact => { name => 'Parent', phone => '555-0002' },
 });
 $dao->db->insert('enrollments', {
@@ -259,7 +266,7 @@ sub advance_to_session_selection ($username, $email, $child_name, $birth_date, $
 subtest 'full session - selecting full session returns error' => sub {
     my ($run, $child) = advance_to_session_selection(
         'fullsess_parent', 'fullsess@example.com',
-        'Full Session Kid', '2017-05-01', '3',
+        'Full Session Kid', birth_date_for_age(9), '3',
     );
 
     my $step = $run->next_step($dao->db);
@@ -298,10 +305,10 @@ subtest 'full session - selecting full session returns error' => sub {
 # 1.5 Age Mismatch
 # ============================================================
 subtest 'age mismatch - underage child rejected at session selection' => sub {
-    # Child born 2023 = age ~3, below K range (5-11)
+    # A three-year-old, below the program's 5-11 range
     my ($run, $child) = advance_to_session_selection(
         'young_parent', 'young@example.com',
-        'Tiny Tot', '2023-01-15', 'Pre-K',
+        'Tiny Tot', birth_date_for_age(3), 'Pre-K',
     );
 
     my $step = $run->next_step($dao->db);

@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Mojo::File qw(path);
 use Registry::DAO;
 use Registry::DAO::Workflow;
@@ -48,17 +49,21 @@ my $admin_user = Registry::DAO::User->create($db, {
     name      => 'Admin Decision Admin',
 });
 
+# The drop subtest below needs a session that has already started, because
+# Enrollment::request_drop only raises a DropRequest for a started session and
+# otherwise drops the enrollment outright. The window is derived so it stays
+# under way whenever the suite runs.
 my $source_session = Registry::DAO::Session->create($db, {
     name       => 'Admin Decision Source Session',
-    start_date => '2024-01-01',
-    end_date   => '2024-01-15',
+    start_date => days_from_now(-7),
+    end_date   => days_from_now(7),
     capacity   => 10,
 });
 
 my $target_session = Registry::DAO::Session->create($db, {
     name       => 'Admin Decision Target Session',
-    start_date => '2024-02-01',
-    end_date   => '2024-02-15',
+    start_date => days_from_now(28),
+    end_date   => days_from_now(35),
     capacity   => 10,
 });
 
@@ -142,7 +147,10 @@ subtest 'ProcessAdminDropDecision starts drop-request-processing workflow run' =
     my $drop_request = $enrollment->request_drop($db, $parent_user,
         'Family moving away', 1);
 
-    ok $drop_request, 'drop_request created for test setup';
+    # request_drop returns the enrollment itself when the session has not
+    # started, which is truthy and would carry an unrelated id into the step.
+    isa_ok $drop_request, 'Registry::DAO::DropRequest',
+        'drop_request created for test setup';
 
     my $step = Registry::DAO::WorkflowSteps::ProcessAdminDropDecision->new(
         id          => 0,
