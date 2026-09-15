@@ -33,12 +33,7 @@ delete $ENV{STRIPE_SECRET_KEY};
 # list query and (since #341) validation filter on end_date >= CURRENT_DATE.
 # Hardcoded dates silently expire and take the fixture out of the offered set,
 # which is how these tests came to submit a session the UI would never have
-# shown. Derive them, as t/dao/multi-child-session-selection-workflow-step.t
-# already does.
-sub days_from_now ($days) {
-    my ( $y, $m, $d ) = ( localtime( time + $days * 86_400 ) )[ 5, 4, 3 ];
-    return sprintf '%04d-%02d-%02d', $y + 1900, $m + 1, $d;
-}
+# shown. Derive them with days_from_now from Test::Registry::Helpers.
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
