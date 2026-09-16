@@ -1422,6 +1422,24 @@ SQL
         ];
     }
     
+    # The child a cart line is charging for, named from whichever keys the
+    # snapshot happens to carry.
+    #
+    # family_members has one child_name column; first_name and last_name appear
+    # in no migration. MultiChildSessionSelection synthesises them anyway --
+    # first_name gets the whole child_name and last_name the empty string -- so
+    # interpolating both put two spaces before the dash, and any caller passing
+    # a row straight off the family tables interpolated two undefs instead:
+    # a description reading " - Pottery Week", and two uninitialized-value
+    # warnings for every item on every receipt.
+    my sub _child_label ($child) {
+        my $name = $child->{child_name};
+        return $name if defined $name && length $name;
+
+        return join ' ', grep { defined && length }
+          $child->{first_name}, $child->{last_name};
+    }
+
     sub calculate_enrollment_total ($class, $db, $enrollment_data) {
         my $total = 0;
         my $items = [];
@@ -1454,8 +1472,14 @@ SQL
             if (defined $price_cents) {
                 $total += $price_cents;
 
+                # A nameless child still gets a line naming the session, rather
+                # than one that opens with a dangling separator.
+                my $label = _child_label($child);
+
                 push @$items, {
-                    description => "$child->{first_name} $child->{last_name} - " . $session->name,
+                    description => $label
+                      ? "$label - " . $session->name
+                      : $session->name,
                     amount_cents => $price_cents,
                     metadata => {
                         child_id => $child->{id},
