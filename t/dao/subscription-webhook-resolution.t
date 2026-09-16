@@ -110,24 +110,15 @@ subtest 'a subscription with no tenant_id warns rather than passing quietly' => 
         'the missing-tenant case is logged';
 };
 
-# The blocking Stripe call in these handlers can run inside the webhook's
-# settlement transaction via the //= fallback, holding the dedup claim for its
-# duration. Registry::Service::Stripe sets both timeouts; this client had
-# neither.
-subtest 'the Stripe user agent is bounded' => sub {
-    my $ua = $subs->ua;
-
-    # request_timeout is the one that matters and the only one this can grade.
-    # Mojo::UserAgent defaults it to 0 -- unbounded -- so a bare UA fails here.
-    is $ua->request_timeout, 30, 'request_timeout is bounded';
-
-    # connect_timeout is asserted for the record, not as a gate: Mojo already
-    # defaults it to 10, so the explicit call in Subscription.pm restates the
-    # default and no assertion here can tell whether the line is present. Two
-    # earlier forms of this check (`> 0`, then `is ..., 10`) both looked like
-    # gates and were tautologies. Kept because a future Mojo changing the
-    # default should be loud, but it grades Mojo, not us.
-    is $ua->connect_timeout, 10, 'connect_timeout is 10 (Mojo default, restated)';
+# The handlers used to be able to reach Stripe themselves, through a second
+# user agent this class carried, via a `//=` fallback that ran inside the
+# webhook's settlement transaction. Both are gone: the lookup belongs to the
+# caller, before the transaction, and the transport belongs to
+# Registry::Service::Stripe, which t/service/stripe.t grades for boundedness.
+subtest 'the DAO owns no transport of its own' => sub {
+    ok !$subs->can('ua'), 'no user agent field';
+    ok !$subs->can('_stripe_request'), 'no request method';
+    isa_ok $subs->stripe, 'Registry::Service::Stripe', 'it delegates to';
 };
 
 done_testing;

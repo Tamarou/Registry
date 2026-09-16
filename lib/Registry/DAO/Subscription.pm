@@ -3,32 +3,26 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
-    use Mojo::UserAgent;
     use JSON;
     use DateTime;
-    use MIME::Base64;
+    use Registry::Service::Stripe;
 
     field $db :param :reader;
-    field $ua :reader;
-    field $api_key :reader;
-    field $api_base :reader;
+
+    # Stripe I/O belongs to one class. This DAO used to carry its own
+    # Mojo::UserAgent and keep the API pin, the timeouts and the auth header in
+    # step with Registry::Service::Stripe's by hand -- the comments said as
+    # much, and the pin was a literal here against a configurable field there,
+    # so passing api_version to the service would have parted them silently.
+    field $stripe :reader;
 
     ADJUST {
-        $ua = Mojo::UserAgent->new;
-        # Matching Registry::Service::Stripe. request_timeout is the load-bearing
-        # one: Mojo defaults it to 0, meaning unbounded, and the //= fallback in
-        # the invoice handlers can reach Stripe from inside the webhook's
-        # transaction -- holding the dedup claim open for the whole wait, with a
-        # concurrent redelivery blocked behind it on the uncommitted claim.
-        # connect_timeout(10) only restates Mojo's own default; it is here so
-        # the pair reads as a deliberate choice rather than a half-set one.
-        $ua->connect_timeout(10);
-        $ua->request_timeout(30);
-        $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
-        $api_base = 'https://api.stripe.com/v1';
+        $stripe = Registry::Service::Stripe->new(
+            api_key => $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set"
+        );
     }
 
-    method create_customer($tenant_data, $profile_data) {
+    method create_customer_async($tenant_data, $profile_data) {
         my %form_data = (
             name => $tenant_data->{name},
             email => $profile_data->{billing_email},
@@ -65,59 +59,20 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
             $form_data{'address[country]'} = $address->{country} // 'US';
         }
 
-        my $response = $self->_stripe_request('POST', '/customers', \%form_data);
-        return unless $response;
-        
-        # Update tenant with Stripe customer ID
-        $db->query(
-            'UPDATE registry.tenants SET stripe_customer_id = ? WHERE id = ?',
-            $response->{id}, $tenant_data->{id}
+        return $stripe->create_customer_async( \%form_data )->then(
+            sub ($response) {
+                # Update tenant with Stripe customer ID
+                $db->query(
+                    'UPDATE registry.tenants SET stripe_customer_id = ? WHERE id = ?',
+                    $response->{id}, $tenant_data->{id}
+                );
+
+                return $response;
+            }
         );
-
-        return $response;
     }
 
-    method _stripe_request($method, $endpoint, $data = {}) {
-        my $url = $api_base . $endpoint;
-        my $auth = encode_base64($api_key . ':', '');
-        
-        my $headers = {
-            'Authorization' => "Basic $auth",
-            # Pinned, as Registry::Service::Stripe does. Unpinned, the response
-            # shape is whatever the account's default API version says, and a
-            # bump there silently moves fields -- which is how the invoice
-            # handlers below came to read a subscription id from a location
-            # newer versions no longer use.
-            'Stripe-Version' => '2024-12-18.acacia',
-            'Content-Type' => 'application/x-www-form-urlencoded'
-        };
-        
-        my $tx;
-        if ($method eq 'POST') {
-            $tx = $ua->post($url, $headers, form => $data);
-        } elsif ($method eq 'GET') {
-            $tx = $ua->get($url, $headers);
-        } elsif ($method eq 'DELETE') {
-            $tx = $ua->delete($url, $headers, form => $data);
-        }
-        
-        unless ($tx->res->is_success) {
-            # $tx->error carries Mojolicious' view of the failure -- the bare
-            # status reason, or a transport error -- so it says "Payment
-            # Required" where Stripe says which card control declined.  Read
-            # the body first and keep $tx->error as the transport fallback.
-            my $message = $tx->res->json('/error/message')
-                || ( $tx->error // {} )->{message}
-                || $tx->res->message
-                || 'unknown error';
-            warn "Stripe API error: $message";
-            return;
-        }
-        
-        return $tx->result->json;
-    }
-
-    method create_subscription($tenant_id, $customer_id, $payment_method_id = undef) {
+    method create_subscription_async($tenant_id, $customer_id, $payment_method_id = undef) {
         # Use default configuration for backward compatibility
         my $config = {
             plan_name => 'Registry - After School Program Management',
@@ -127,10 +82,10 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
             description => 'Complete program management solution for after-school organizations'
         };
         
-        return $self->create_subscription_with_config($customer_id, $payment_method_id, $config, $tenant_id);
+        return $self->create_subscription_with_config_async($customer_id, $payment_method_id, $config, $tenant_id);
     }
 
-    method create_subscription_with_config($customer_id, $payment_method_id, $config, $tenant_id = undef) {
+    method create_subscription_with_config_async($customer_id, $payment_method_id, $config, $tenant_id = undef) {
         my %form_data = (
             customer => $customer_id,
             'items[0][price_data][currency]' => $config->{currency},
@@ -152,35 +107,37 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
             $form_data{default_payment_method} = $payment_method_id;
         }
 
-        my $subscription = $self->_stripe_request('POST', '/subscriptions', \%form_data);
-        return unless $subscription;
-        
-        # Update tenant with subscription information if tenant_id provided
-        if ($tenant_id) {
-            my $trial_ends_at = DateTime->from_epoch(epoch => $subscription->{trial_end});
-            
-            $db->query(
-                'UPDATE registry.tenants SET stripe_subscription_id = ?, billing_status = ?, trial_ends_at = ?, subscription_started_at = ? WHERE id = ?',
-                $subscription->{id},
-                'trial', 
-                $trial_ends_at->iso8601(),
-                DateTime->now->iso8601(),
-                $tenant_id
-            );
-        }
+        return $stripe->create_subscription_async( \%form_data )->then(
+            sub ($subscription) {
+                # Update tenant with subscription information if tenant_id provided
+                if ($tenant_id) {
+                    my $trial_ends_at =
+                      DateTime->from_epoch( epoch => $subscription->{trial_end} );
 
-        return $subscription;
+                    $db->query(
+                        'UPDATE registry.tenants SET stripe_subscription_id = ?, billing_status = ?, trial_ends_at = ?, subscription_started_at = ? WHERE id = ?',
+                        $subscription->{id},
+                        'trial',
+                        $trial_ends_at->iso8601(),
+                        DateTime->now->iso8601(),
+                        $tenant_id
+                    );
+                }
+
+                return $subscription;
+            }
+        );
     }
 
-    method get_customer($customer_id) {
-        return $self->_stripe_request('GET', "/customers/$customer_id");
+    method get_customer_async($customer_id) {
+        return $stripe->retrieve_customer_async($customer_id);
     }
 
-    method get_subscription($subscription_id) {
-        return $self->_stripe_request('GET', "/subscriptions/$subscription_id");
+    method get_subscription_async($subscription_id) {
+        return $stripe->retrieve_subscription_async($subscription_id);
     }
 
-    method create_setup_intent($customer_id, $options = {}) {
+    method create_setup_intent_async($customer_id, $options = {}) {
         my %form_data = (
             customer => $customer_id,
             usage => $options->{usage} || 'off_session'
@@ -193,11 +150,11 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
             }
         }
 
-        return $self->_stripe_request('POST', '/setup_intents', \%form_data);
+        return $stripe->create_setup_intent_async( \%form_data );
     }
 
-    method get_setup_intent($setup_intent_id) {
-        return $self->_stripe_request('GET', "/setup_intents/$setup_intent_id");
+    method get_setup_intent_async($setup_intent_id) {
+        return $stripe->retrieve_setup_intent_async($setup_intent_id);
     }
 
     method update_billing_status($db, $tenant_id, $status, $subscription_data = undef) {
@@ -218,11 +175,11 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         return $db->query($sql, @params);
     }
 
-    method cancel_subscription($subscription_id, $at_period_end = 1) {
+    method cancel_subscription_async($subscription_id, $at_period_end = 1) {
         my %form_data = (
             at_period_end => $at_period_end ? 'true' : 'false'
         );
-        return $self->_stripe_request('DELETE', "/subscriptions/$subscription_id", \%form_data);
+        return $stripe->cancel_subscription_async( $subscription_id, \%form_data );
     }
 
     # $subscription is the invoice's subscription, already fetched from Stripe by
@@ -348,25 +305,23 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         my $invoice = $event_data->{object};
         my $subscription_id = $self->_invoice_subscription_id($invoice);
 
-        # Get subscription to find tenant, unless the caller already fetched it
-        # outside its transaction. `length`, not `defined`: '' and '0' would
-        # otherwise reach GET /v1/subscriptions/ -- a blocking call inside the
-        # webhook's transaction, which is exactly what the prefetch in
-        # Webhooks.pm exists to avoid, and which that code declines by
-        # truthiness.
-        $subscription //= $self->get_subscription($subscription_id)
-            if defined $subscription_id && length $subscription_id;
+        # The subscription arrives already fetched. There is deliberately no
+        # fallback lookup here: this runs inside the webhook's settlement
+        # transaction, where a blocking Stripe call holds the dedup claim open
+        # for the length of the round trip and a concurrent redelivery blocks
+        # behind it on the uncommitted claim. The fetch belongs to the caller,
+        # before it opens the transaction, and the guard below turns a missing
+        # one into a retry rather than a silent commit.
 
         # Transient and permanent failures need opposite answers, and an earlier
         # version of this guard died on both.
         #
-        # Transient -- the invoice names a subscription and the lookup failed.
-        # _stripe_request warns and returns undef on any API error, and Perl's
-        # rvalue deref of undef does not die, so without this the handler read
-        # an undef tenant_id, fell out of the `return unless`, and let the
-        # caller stamp the event processed and COMMIT. The tenant was never
-        # moved, permanently, because every retry then hit the dedup claim.
-        # Dying releases the claim so Stripe's retry can succeed.
+        # Transient -- the invoice names a subscription and the caller could
+        # not fetch it. Without this the handler would read an undef tenant_id,
+        # fall out of the `return unless`, and let the caller stamp the event
+        # processed and COMMIT. The tenant was never moved, permanently,
+        # because every retry then hit the dedup claim. Dying releases the
+        # claim so Stripe's retry can succeed.
         die "Cannot resolve subscription $subscription_id for invoice event\n"
             if defined $subscription_id
             && length $subscription_id
@@ -410,25 +365,23 @@ class Registry::DAO::Subscription :isa(Registry::DAO::Object) {
         my $invoice = $event_data->{object};
         my $subscription_id = $self->_invoice_subscription_id($invoice);
 
-        # Get subscription to find tenant, unless the caller already fetched it
-        # outside its transaction. `length`, not `defined`: '' and '0' would
-        # otherwise reach GET /v1/subscriptions/ -- a blocking call inside the
-        # webhook's transaction, which is exactly what the prefetch in
-        # Webhooks.pm exists to avoid, and which that code declines by
-        # truthiness.
-        $subscription //= $self->get_subscription($subscription_id)
-            if defined $subscription_id && length $subscription_id;
+        # The subscription arrives already fetched. There is deliberately no
+        # fallback lookup here: this runs inside the webhook's settlement
+        # transaction, where a blocking Stripe call holds the dedup claim open
+        # for the length of the round trip and a concurrent redelivery blocks
+        # behind it on the uncommitted claim. The fetch belongs to the caller,
+        # before it opens the transaction, and the guard below turns a missing
+        # one into a retry rather than a silent commit.
 
         # Transient and permanent failures need opposite answers, and an earlier
         # version of this guard died on both.
         #
-        # Transient -- the invoice names a subscription and the lookup failed.
-        # _stripe_request warns and returns undef on any API error, and Perl's
-        # rvalue deref of undef does not die, so without this the handler read
-        # an undef tenant_id, fell out of the `return unless`, and let the
-        # caller stamp the event processed and COMMIT. The tenant was never
-        # moved, permanently, because every retry then hit the dedup claim.
-        # Dying releases the claim so Stripe's retry can succeed.
+        # Transient -- the invoice names a subscription and the caller could
+        # not fetch it. Without this the handler would read an undef tenant_id,
+        # fall out of the `return unless`, and let the caller stamp the event
+        # processed and COMMIT. The tenant was never moved, permanently,
+        # because every retry then hit the dedup claim. Dying releases the
+        # claim so Stripe's retry can succeed.
         die "Cannot resolve subscription $subscription_id for invoice event\n"
             if defined $subscription_id
             && length $subscription_id

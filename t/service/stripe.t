@@ -157,4 +157,19 @@ subtest 'Error handling' => sub {
     ok($service->is_api_error('api_error: Internal error'), 'API error detected');
 };
 
+# Every Stripe call in the application goes through this user agent, including
+# the subscription lookup the webhook makes before opening its transaction.
+# Mojo defaults request_timeout to 0 -- unbounded -- and an unbounded call there
+# would hold the dedup claim for as long as Stripe took to answer.
+subtest 'the Stripe user agent is bounded' => sub {
+    my $ua = Registry::Service::Stripe->new( api_key => 'sk_test_bounded' )->ua;
+
+    is $ua->request_timeout, 30, 'request_timeout is bounded';
+
+    # Asserted for the record, not as a gate: Mojo already defaults this to 10,
+    # so no assertion here can tell whether our explicit call is present. Kept
+    # because a future Mojo changing the default should be loud.
+    is $ua->connect_timeout, 10, 'connect_timeout is 10 (Mojo default, restated)';
+};
+
 done_testing;

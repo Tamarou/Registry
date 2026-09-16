@@ -73,10 +73,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Prefetch before the transaction, and skip it for an event we have
         # already handled.
         #
-        # get_subscription is a blocking Stripe call on a user agent with no
-        # request timeout. Inside the transaction it would hold the dedup claim
-        # open for a network round trip, so it cannot go there -- and the claim
-        # is the transaction, so there is no "after the claim but outside it".
+        # The lookup is a Stripe round trip. Inside the transaction it would
+        # hold the dedup claim open for its duration, so it cannot go there --
+        # and the claim is the transaction, so there is no "after the claim but
+        # outside it". Resolving it first is what lets the settlement stay
+        # entirely on the database.
         #
         # Unconditionally above it, every duplicate redelivery paid for a live
         # Stripe call before discovering it had nothing to do, blocking the
@@ -84,13 +85,35 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # to be authoritative: the real ON CONFLICT claim below still decides.
         # It only spares the common case -- a redelivery of an event already
         # processed -- from the network.
-        my $subscription;
-        unless (
-            $db->select( 'registry.webhook_events', ['id'],
-                { stripe_event_id => $event_id } )->hash
-        ) {
-            $subscription = $self->_prefetch_subscription($dao, $event);
-        }
+        my $seen = $db->select( 'registry.webhook_events', ['id'],
+            { stripe_event_id => $event_id } )->hash;
+
+        # The prefetch is the only Stripe call on this path, and it resolves
+        # before the transaction opens. Everything inside the chain below is
+        # database work on one connection.
+        $self->render_later;
+
+        return (
+            $seen
+            ? Mojo::Promise->resolve(undef)
+            : $self->_prefetch_subscription_async( $dao, $event )
+          )->then( sub ($subscription) {
+            $self->_settle_event( $dao, $db, $event, $event_id, $slug, $subscription );
+          } )->catch( sub ($err) {
+            # Reached when the prefetch rejects, or when _settle_event throws
+            # outside its own try -- opening the transaction, say. Its internal
+            # failures render there and never arrive here, so this cannot
+            # double-render. Nothing to release either way: a prefetch failure
+            # has not claimed, and a claim that was taken rolls back with its
+            # transaction. A 500 asks Stripe to redeliver.
+            $self->app->log->error("Webhook failed before settlement: $err");
+            $self->render( status => 500, text => 'Webhook processing failed' );
+          } );
+    }
+
+    # The settlement itself: claim, work, commit. Called with the subscription
+    # already in hand, so nothing here reaches the network.
+    method _settle_event ($dao, $db, $event, $event_id, $slug, $subscription) {
 
         # Claim and work are one transaction on one connection. A failure rolls
         # the claim back with the work, so Stripe's retry re-claims and
@@ -109,8 +132,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             $self->render(status => 200, text => 'OK (duplicate)');
             return;
         }
-
-        $self->render_later;
 
         # Set inside the transaction, acted on after it: the id of a payment the
         # capacity gate demoted and now owes a refund.
@@ -263,15 +284,16 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # on this path. Fetch it up front so the settlement transaction never waits
     # on the network; process_webhook_event falls back to fetching it itself
     # when this returns undef, which keeps its other callers working unchanged.
-    method _prefetch_subscription ($dao, $event) {
-        return undef
+    method _prefetch_subscription_async ($dao, $event) {
+        return Mojo::Promise->resolve(undef)
             unless $event->{type} eq 'invoice.payment_failed'
             || $event->{type} eq 'invoice.payment_succeeded';
 
-        my $subscription_id = $event->{data}{object}{subscription} or return undef;
+        my $subscription_id = $event->{data}{object}{subscription}
+            or return Mojo::Promise->resolve(undef);
 
         return Registry::DAO::Subscription->new(db => $dao)
-            ->get_subscription($subscription_id);
+            ->get_subscription_async($subscription_id);
     }
 
     # Finalize a one-time program payment when Stripe confirms the intent. This

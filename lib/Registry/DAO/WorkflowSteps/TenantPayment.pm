@@ -243,28 +243,30 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             };
         }
 
-        # Create Stripe customer with enhanced error handling
+        # Two dependent Stripe calls. Each keeps the error branch it had; the
+        # eval blocks became ->catch, because Registry::Service::Stripe rejects
+        # where the old client warned and returned undef.
         my $customer;
-        eval {
-            $customer = $subscription_dao->create_customer({
-                name => $organization_name,
-                id => $tenant_data->{id} // 'temp_' . time()
-            }, $profile_data);
-        };
-        
-        if ($@ || !$customer) {
+
+        return $subscription_dao->create_customer_async({
+            name => $organization_name,
+            id => $tenant_data->{id} // 'temp_' . time()
+        }, $profile_data)->catch(sub ($err) {
             $self->increment_retry_count($db, $run);
-            my $error_details = $error_handler->handle_system_error('stripe_customer', $@, {
+            my $error_details = $error_handler->handle_system_error('stripe_customer', $err, {
                 organization_name => $organization_name,
                 retry_count => $retry_count + 1
             });
-            
+
             $error_handler->log_error($error_details, {
                 workflow_id => $run->workflow($db)->id,
                 run_id => $run->id,
                 step => 'create_customer'
             });
-            
+
+            # A step result, not a rethrow: the chain below checks for it and
+            # stops, so the customer failure is answered with its own message
+            # rather than the setup-intent one.
             return {
                 next_step => $self->id,
                 errors => [$error_details->{user_message}],
@@ -272,21 +274,40 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 retry_count => $retry_count + 1,
                 retry_delay => $error_details->{retry_delay}
             };
-        }
+        })->then(sub ($result) {
+            return $result if ref $result eq 'HASH' && $result->{errors};
+            $customer = $result;
 
-        # Create setup intent for payment method collection with enhanced error handling
-        my $setup_intent;
-        eval {
-            $setup_intent = $subscription_dao->create_setup_intent($customer->{id}, {
+            return $subscription_dao->create_setup_intent_async($customer->{id}, {
                 usage => 'off_session',
                 metadata => {
                     tenant_workflow => $run->id,
                     organization_name => $organization_name
                 }
             });
-        };
+        })->then(sub ($setup_intent) {
+            return $setup_intent if ref $setup_intent eq 'HASH' && $setup_intent->{errors};
 
-        if ($@ || !$setup_intent) {
+            # Store setup intent data in workflow
+            $run->update_data($db, {
+                payment_setup => {
+                    stripe_customer_id => $customer->{id},
+                    setup_intent_id => $setup_intent->{id},
+                    client_secret => $setup_intent->{client_secret},
+                    created_at => time()
+                }
+            });
+
+            return {
+                next_step => $self->id,
+                data => {
+                    %{$self->prepare_payment_data($db, $run)},
+                    show_payment_form => 1,
+                    client_secret => $setup_intent->{client_secret},
+                    setup_intent_id => $setup_intent->{id}
+                }
+            };
+        })->catch(sub ($err) {
             $self->increment_retry_count($db, $run);
             my $error_details = $error_handler->handle_payment_error($@, {
                 step => 'create_setup_intent',
@@ -299,7 +320,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 run_id => $run->id,
                 step => 'create_setup_intent'
             });
-            
+
             return {
                 next_step => $self->id,
                 errors => [$error_details->{user_message}],
@@ -307,27 +328,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 retry_count => $retry_count + 1,
                 should_retry => $error_details->{should_retry}
             };
-        }
-
-        # Store setup intent data in workflow
-        $run->update_data($db, {
-            payment_setup => {
-                stripe_customer_id => $customer->{id},
-                setup_intent_id => $setup_intent->{id},
-                client_secret => $setup_intent->{client_secret},
-                created_at => time()
-            }
         });
-
-        return {
-            next_step => $self->id,
-            data => {
-                %{$self->prepare_payment_data($db, $run)},
-                show_payment_form => 1,
-                client_secret => $setup_intent->{client_secret},
-                setup_intent_id => $setup_intent->{id}
-            }
-        };
     }
 
     method handle_setup_completion($db, $run, $form_data) {
@@ -357,56 +358,72 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             };
         }
 
-        # Retrieve and verify setup intent
-        my $setup_intent;
-        eval {
-            $setup_intent = $subscription_dao->get_setup_intent($form_data->{setup_intent_id});
-        };
-
-        if ($@ || !$setup_intent || $setup_intent->{status} ne 'succeeded') {
+        # Retrieve and verify the setup intent, then create the subscription.
+        # Two dependent Stripe calls; the eval blocks became ->catch, because
+        # Registry::Service::Stripe rejects where the old client returned undef.
+        my $setup_failed = sub ($setup_intent = undef) {
             my $error_msg = 'Payment method setup failed.';
             if ($setup_intent && $setup_intent->{last_setup_error}) {
                 $error_msg .= ' ' . $setup_intent->{last_setup_error}->{message};
             }
-            
+
             return {
                 next_step => $self->id,
                 errors => [$error_msg],
                 data => $self->prepare_payment_data($db, $run)
             };
-        }
-
-        # Create subscription with trial
-        my $subscription;
-        eval {
-            my $config = $self->get_subscription_config($db, $run);
-            $subscription = $subscription_dao->create_subscription_with_config(
-                $setup_data->{stripe_customer_id},
-                $setup_intent->{payment_method},
-                $config
-            );
         };
 
-        if ($@ || !$subscription) {
-            return {
-                next_step => $self->id,
-                errors => ['Failed to create subscription. Please contact support.'],
-                data => $self->prepare_payment_data($db, $run)
-            };
-        }
+        # Each ->catch sits directly on the call it answers, not at the end of
+        # the chain. A trailing catch would also swallow a _provision_tenant
+        # failure and report it as a payment problem, which is the one thing
+        # this step must not do: the schema is what the money bought.
+        return $subscription_dao->get_setup_intent_async($form_data->{setup_intent_id})
+            ->catch(sub ($err) { $setup_failed->() })
+            ->then(sub ($setup_intent) {
+                return $setup_intent
+                    if ref $setup_intent eq 'HASH' && $setup_intent->{errors};
 
-        # Store subscription info in workflow data
-        $run->update_data($db, {
-            subscription => {
-                stripe_subscription_id => $subscription->{id},
-                trial_ends_at => $subscription->{trial_end},
-                status => $subscription->{status}
-            }
-        });
+                # A setup intent that exists but did not succeed is a failure
+                # with a message of its own, so it is graded here rather than
+                # left to the ->catch below.
+                return $setup_failed->($setup_intent)
+                    unless $setup_intent && ($setup_intent->{status} // '') eq 'succeeded';
 
-        # Payment successful — provision the tenant and move to completion.
-        my $result = $self->_provision_tenant($db, $run);
-        return { next_step => 'complete', tenant_created => 1, %$result };
+                my $config = $self->get_subscription_config($db, $run);
+
+                return $subscription_dao->create_subscription_with_config_async(
+                    $setup_data->{stripe_customer_id},
+                    $setup_intent->{payment_method},
+                    $config
+                )->catch(sub ($err) {
+                    return {
+                        next_step => $self->id,
+                        errors => ['Failed to create subscription. Please contact support.'],
+                        data => $self->prepare_payment_data($db, $run)
+                    };
+                })->then(sub ($subscription) {
+                    return $subscription
+                        if ref $subscription eq 'HASH' && $subscription->{errors};
+
+                    # Store subscription info in workflow data
+                    $run->update_data($db, {
+                        subscription => {
+                            stripe_subscription_id => $subscription->{id},
+                            trial_ends_at => $subscription->{trial_end},
+                            status => $subscription->{status}
+                        }
+                    });
+
+                    # Payment successful -- provision the tenant and move to
+                    # completion.
+                    # Outside every catch above, deliberately: a provisioning
+                    # failure is not a payment failure and must not be reported
+                    # as one.
+                    my $result = $self->_provision_tenant($db, $run);
+                    return { next_step => 'complete', tenant_created => 1, %$result };
+                });
+            });
     }
 
     # _provision_tenant: builds the user list from run data, calls Tenant->provision,
