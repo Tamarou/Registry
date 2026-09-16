@@ -10,6 +10,7 @@ use Test::Deep;
 use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers;
 
 use Registry::DAO::PricingPlan;
 use Registry::DAO::Event;
@@ -163,6 +164,34 @@ subtest 'Calculate price with requirements' => sub {
     $price = $early_bird->calculate_price({ date => '2024-05-15' });
     is($price, undef, 'Early bird price not available after cutoff');
     
+    # The default path: no date in the context, so requirements_met falls back
+    # to time(). Every existing assertion above passes an explicit date string,
+    # which is why this branch has never been graded -- and it compared a
+    # ten-digit epoch against an eight-digit YYYYMMDD, so the cutoff was always
+    # "past" and early-bird pricing was refused unconditionally.
+    #
+    # Cutoffs derived from the run date: a literal one stops testing what it
+    # says the day it expires.
+    my $open_cutoff = Registry::DAO::PricingPlan->create($db, {
+        session_id => $session->id,
+        plan_name => 'Early Bird Still Open',
+        plan_type => 'early_bird',
+        amount_cents => 35000,
+        requirements => { early_bird_cutoff_date => days_from_now(30) }
+    });
+    is($open_cutoff->calculate_price({}), 35000,
+        'a cutoff still ahead offers the early-bird price with no date supplied');
+
+    my $passed_cutoff = Registry::DAO::PricingPlan->create($db, {
+        session_id => $session->id,
+        plan_name => 'Early Bird Closed',
+        plan_type => 'early_bird',
+        amount_cents => 35000,
+        requirements => { early_bird_cutoff_date => days_from_now(-30) }
+    });
+    is($passed_cutoff->calculate_price({}), undef,
+        'a cutoff already past refuses it with no date supplied');
+
     # Test family plan
     my $family = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
