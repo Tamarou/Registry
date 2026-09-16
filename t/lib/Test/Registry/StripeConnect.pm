@@ -171,6 +171,18 @@ package Test::Registry::StripeConnect {
         local $?;
         return unless @_created_ids;
 
+        # A seeding process creates accounts that have to outlive it -- the
+        # Playwright payment smoke test drives a browser against the tenant this
+        # account belongs to, long after the seed script has exited. Deleting
+        # them here made that test unpassable: Stripe answered the payment
+        # intent with "the account has been deleted". The caller that sets this
+        # takes responsibility for cleanup.
+        if ( $ENV{REGISTRY_STRIPE_KEEP_ACCOUNTS} ) {
+            warn "# StripeConnect: leaving (" . join( ', ', @_created_ids )
+              . ") for the caller to clean up\n";
+            return;
+        }
+
         # If the key is gone by END time, skip cleanup silently.
         return unless eval { _key(); 1 };
 

@@ -13,7 +13,15 @@ function seedPaymentData(testDB) {
     'carton exec perl t/playwright/setup_payment_test_data.pl',
     {
       cwd: process.cwd(),
-      env: { ...process.env, DB_URL: testDB.dbUrl },
+      // The Connect account this creates has to outlive the seed process --
+      // the browser drives a payment against the tenant it belongs to. Without
+      // this the helper's END block deletes it on exit and Stripe answers the
+      // payment intent with "the account has been deleted".
+      env: {
+        ...process.env,
+        DB_URL: testDB.dbUrl,
+        REGISTRY_STRIPE_KEEP_ACCOUNTS: '1',
+      },
       encoding: 'utf8',
       timeout: 150000,   // ready_account() polls Stripe for up to 90 s
     }
@@ -41,7 +49,21 @@ async function loginWithMagicLink(page, token) {
 // ---------------------------------------------------------------------------
 // Payment happy-path smoke test
 // ---------------------------------------------------------------------------
+// The account the seed disowned, deleted once the run is done with it.
+let seededConnectAccount = null;
+
 test.describe('Payment happy path', () => {
+  test.afterAll(async () => {
+    if (!seededConnectAccount || !process.env.STRIPE_SECRET_KEY) return;
+
+    const res = await fetch(
+      `https://api.stripe.com/v1/accounts/${seededConnectAccount}`,
+      { method: 'DELETE',
+        headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` } }
+    );
+    console.log(`# Connect account ${seededConnectAccount} delete: ${res.status}`);
+  });
+
   // Run serially -- the single test is inherently sequential.
   test.describe.configure({ mode: 'serial', timeout: 180000 });
 
@@ -61,6 +83,7 @@ test.describe('Payment happy path', () => {
       // -----------------------------------------------------------------------
       const data = seedPaymentData(testDB);
       const { tenant_slug, run_id, session_id, child_id, parent } = data;
+      seededConnectAccount = data.connect_account;
 
       // -----------------------------------------------------------------------
       // 2. Log in via magic link (auth endpoint uses registry schema; token lives
@@ -117,22 +140,27 @@ test.describe('Payment happy path', () => {
 
       // -----------------------------------------------------------------------
       // 7. Fill the Stripe test card (4242... instant approval, no 3DS) inside
-      //    the Stripe-hosted iframe.  Selectors target the standard placeholder
-      //    text in the Stripe Payment Element card fields.
+      //    the Stripe-hosted iframe.  Selectors target the input names the
+      //    Payment Element gives its card fields.
       // -----------------------------------------------------------------------
+      // Target the fields by name. The placeholders are display copy: the
+      // postal code's is "12345", not "ZIP", so the old selector matched
+      // nothing, the field was left empty, and Stripe refused the confirm with
+      // "Your ZIP code is invalid." Names are part of the Element's API.
       const stripeFrame = registryPage.frameLocator('#payment-element iframe').first();
 
-      await stripeFrame.locator('input[placeholder="1234 1234 1234 1234"]')
+      await stripeFrame.locator('input[name="number"]')
         .fill('4242424242424242', { timeout: 15000 });
+      await stripeFrame.locator('input[name="expiry"]').fill('12 / 34');
+      await stripeFrame.locator('input[name="cvc"]').fill('123');
 
-      await stripeFrame.locator('input[placeholder="MM / YY"]').fill('12 / 34');
-      await stripeFrame.locator('input[placeholder="CVC"]').fill('123');
-
-      // ZIP is present on US cards in the Payment Element
-      const zipInput = stripeFrame.locator('input[placeholder="ZIP"]');
-      if (await zipInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await zipInput.fill('10001');
-      }
+      // The postal code renders once the card number is recognised, so it needs
+      // a wait rather than a visibility probe. Required, not optional: treating
+      // it as optional is what let an unfilled field reach Stripe unnoticed.
+      const postalCode = stripeFrame.locator('input[name="postalCode"]');
+      await expect(postalCode).toBeVisible({ timeout: 15000 });
+      await postalCode.fill('10001');
+      await expect(postalCode).toHaveValue('10001');
 
       // -----------------------------------------------------------------------
       // 8. Submit the Stripe form.  stripe.confirmPayment() processes the card and
@@ -143,16 +171,31 @@ test.describe('Payment happy path', () => {
       // -----------------------------------------------------------------------
       await registryPage.locator('#submit').click();
 
-      // Wait for Stripe to process and redirect (or for the success/error UI).
-      // Stripe redirects for card payments; allow up to 30 s for the round-trip.
-      await registryPage.waitForLoadState('networkidle', { timeout: 30000 });
+      // The confirm ends in one of two places: the completion page, or the
+      // payment page with #payment-error shown. Wait for whichever arrives.
+      // networkidle cannot tell them apart and timed out on its own when the
+      // card was refused, since a refusal never navigates.
+      await expect(
+        registryPage.locator('#payment-error:visible, body:has-text("Registration Complete")')
+      ).toBeVisible({ timeout: 30000 });
 
       // -----------------------------------------------------------------------
       // 9. Assert the workflow reached the completion page.
       // -----------------------------------------------------------------------
       await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
+
+      // Stripe reports a refused card on the payment page itself. Say so here
+      // rather than letting it surface as a missing enrollment twenty lines on.
+      // Asserted on the element's visibility: the error box is always in the
+      // DOM, so body text contains "Payment Error" whether or not it is shown.
+      await expect(registryPage.locator('#payment-error')).toBeHidden();
+
+      // Name the completion page. The old pattern allowed a bare "complete",
+      // which the payment page's own copy contains -- "redirected to a secure
+      // payment form to complete your registration" -- so the assertion passed
+      // on the page it was meant to prove the parent had left.
       await expect(registryPage.locator('body')).toContainText(
-        /complete|confirmed|thank you|registration complete/i,
+        /Registration Complete/i,
         { timeout: 15000 }
       );
 
