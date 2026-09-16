@@ -192,20 +192,28 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     }
     
     # Check if plan requirements are met
+    # YYYY-MM-DD, YYYYMMDD or an epoch, all reduced to YYYYMMDD so they can be
+    # compared as numbers.
+    my sub _as_compact_date ($value) {
+        return $value unless defined $value;
+        return "$1$2$3" if $value =~ /^(\d{4})-(\d{2})-(\d{2})$/;
+        return $value   if $value =~ /^\d{8}$/;
+
+        my ( $year, $month, $day ) = ( localtime $value )[ 5, 4, 3 ];
+        return sprintf '%04d%02d%02d', $year + 1900, $month + 1, $day;
+    }
+
     method requirements_met ($context = {}) {
         # Early bird check
         if ($plan_type eq 'early_bird' && $requirements->{early_bird_cutoff_date}) {
-            my $cutoff = $requirements->{early_bird_cutoff_date};
-            my $today = $context->{date} // time();
-            
-            # Convert dates to comparable format if they're strings
-            if ($cutoff && $cutoff =~ /^\d{4}-\d{2}-\d{2}$/) {
-                $cutoff =~ s/-//g;  # Convert 2024-05-01 to 20240501
-            }
-            if ($today && $today =~ /^\d{4}-\d{2}-\d{2}$/) {
-                $today =~ s/-//g;   # Convert 2024-04-15 to 20240415
-            }
-            
+            # Both sides have to be the same shape before they are compared.
+            # $today is an epoch unless the caller supplied a date, and an
+            # epoch is ten digits where a compacted date is eight -- so
+            # $today > $cutoff held for every default call, and the early-bird
+            # price was refused unconditionally whenever no date was passed.
+            my $cutoff = _as_compact_date( $requirements->{early_bird_cutoff_date} );
+            my $today  = _as_compact_date( $context->{date} // time() );
+
             return 0 if $today > $cutoff;
         }
         

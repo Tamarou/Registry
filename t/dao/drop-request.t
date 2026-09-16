@@ -2,7 +2,7 @@ use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
 
-use Test::More import => [qw( done_testing is ok fail subtest cmp_ok )];
+use Test::More import => [qw( done_testing diag is ok fail subtest cmp_ok )];
 defer { done_testing };
 
 use Registry::DAO;
@@ -79,6 +79,74 @@ subtest 'Admin drop request workflow' => sub {
     is $updated_enrollment->dropped_by, $admin_user->id, 'Admin who processed drop recorded';
     is $updated_enrollment->refund_status, 'pending', 'Refund status set to pending';
     cmp_ok $updated_enrollment->refund_amount_cents, '==', 5000, 'Refund amount recorded';
+};
+
+# The default call -- no refund. t/dao/drop-request.t has only ever passed an
+# explicit amount, so this branch was never graded, and it wrote a
+# refund_status the CHECK constraint rejects. The violation aborted the
+# transaction, the carp-and-continue update helper swallowed it, and the
+# commit that followed discarded the cancellation and reported success: the
+# admin was told the drop went through and the child kept the seat.
+subtest 'approving a drop with no refund actually cancels the enrollment' => sub {
+    my $parent_user = $dao->create(User => {
+        username => 'norefund_parent',
+        user_type => 'parent',
+        email => 'parent@norefund-test.com',
+        name => 'No Refund Parent'
+    });
+
+    my $admin_user = $dao->create(User => {
+        username => 'norefund_admin',
+        user_type => 'admin',
+        email => 'admin@norefund-test.com',
+        name => 'No Refund Admin'
+    });
+
+    my $family_member = $dao->create(FamilyMember => {
+        family_id => $parent_user->id,
+        child_name => 'No Refund Child',
+        birth_date => '2010-01-01',
+        grade => '8th'
+    });
+
+    # Past on purpose: request_drop only raises a DropRequest for a session
+    # that has started, and otherwise drops the enrollment outright.
+    my $started_session = $dao->create(Session => {
+        name => 'No Refund Started Session',
+        start_date => '2020-01-01',
+        end_date => '2020-01-15'
+    });
+
+    my $enrollment = $dao->create(Enrollment => {
+        session_id => $started_session->id,
+        student_id => $family_member->id,
+        family_member_id => $family_member->id,
+        parent_id => $parent_user->id,
+        status => 'active'
+    });
+
+    my $drop_request = $enrollment->request_drop($dao->db, $parent_user,
+        'Moving away', 0);
+
+    # No fourth argument: the default path.
+    my @warnings;
+    {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        $drop_request->approve($dao->db, $admin_user, 'Approved, no refund due');
+    }
+
+    is scalar(grep { /constraint/i } @warnings), 0,
+        'the write does not violate a constraint'
+        or diag join '', @warnings;
+
+    my $updated_request = Registry::DAO::DropRequest->find($dao->db, { id => $drop_request->id });
+    is $updated_request->status, 'approved', 'the drop request is approved';
+
+    my $updated_enrollment = Registry::DAO::Enrollment->find($dao->db, { id => $enrollment->id });
+    is $updated_enrollment->status, 'cancelled',
+        'the enrollment is cancelled, so the seat is released';
+    is $updated_enrollment->refund_status, 'none', 'refund_status is none, not an illegal value';
+    ok !defined $updated_enrollment->refund_amount_cents, 'no refund amount recorded';
 };
 
 subtest 'Admin drop request denial workflow' => sub {

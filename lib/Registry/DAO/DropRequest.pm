@@ -65,7 +65,15 @@ class Registry::DAO::DropRequest :isa(Registry::DAO::Object) {
             drop_reason => $reason,
             dropped_at => \'now()',
             dropped_by => $admin_id,
-            refund_status => $refund_cents ? 'pending' : 'not_applicable',
+            # 'none', not 'not_applicable': enrollments_refund_status_check
+            # permits none|pending|approved|processed|denied, and $refund_cents
+            # defaults to undef, so the value this writes on the default call
+            # was rejected by the constraint. The rejection aborted the
+            # transaction, Object::update carped and carried on, and the commit
+            # below then discarded the cancellation and returned success -- an
+            # admin told the drop went through, and a child still holding the
+            # seat.
+            refund_status => $refund_cents ? 'pending' : 'none',
             refund_amount_cents => $refund_cents
         });
 
