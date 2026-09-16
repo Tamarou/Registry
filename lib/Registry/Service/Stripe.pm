@@ -10,7 +10,7 @@ class Registry::Service::Stripe {
     use Digest::SHA qw(hmac_sha256_hex);
     use Carp qw(croak);
 
-    field $ua = Mojo::UserAgent->new;
+    field $ua :reader = Mojo::UserAgent->new;
     field $api_key :param;
     field $api_version :param = '2024-12-18.acacia'; # Stripe release name for this API date; the bare date is rejected as invalid
     field $webhook_secret :param = undef;
