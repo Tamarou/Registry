@@ -496,6 +496,88 @@ subtest 'a session selection for a child that does not exist is refused' => sub 
 # victim family's own paid cart read 'foreign' -- so their settlement refunds
 # their share and never seats them. family_members.family_id is the run's
 # user_id (Family::add_child sets it), so the scope is exact, not a heuristic.
+# Nothing prevented paying for a seat the child already holds. The settlement
+# handles it correctly -- the original seat stands, the new cart's share is
+# refunded -- but the refund does not recover Stripe's processing fee on the
+# charge, which the platform pays as merchant of record. Repeatable at will,
+# and what an honest parent triggers by re-registering a child they forgot was
+# already enrolled. Refusing before the charge is strictly better.
+subtest 'a child who already holds a live seat cannot be paid for again' => sub {
+    my $seated_child = Registry::DAO::FamilyMember->create($db, {
+        family_id  => $parent->id,
+        child_name => 'Already Seated',
+        birth_date => birth_date_for_age(8),
+        grade      => '3',
+    });
+
+    # A seat from somewhere else entirely: no payment_id, as a free enrolment
+    # or an admin add leaves it.
+    $db->insert('enrollments', {
+        session_id   => $session1->id,
+        student_id   => $seated_child->id,
+        parent_id    => $parent->id,
+        student_type => 'family_member',
+        status       => 'active',
+    });
+
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        user_id            => $parent->id,
+        selected_child_ids => [ $seated_child->id ],
+        location_id        => $location->id,
+        program_id         => $project->id,
+    });
+
+    my $step   = $workflow->get_step($db, { slug => 'session-selection' });
+    my $result = $step->process($db, {
+        action                             => 'select_sessions',
+        "session_for_" . $seated_child->id => $session1->id,
+    });
+
+    ok $result->{errors}, 'the selection is rejected';
+    like join( ' ', @{ $result->{errors} // [] } ), qr/already enrolled/i,
+        'and it says why';
+
+    my $items = $run->data->{enrollment_items} // [];
+    is scalar(@$items), 0, 'nothing reaches the cart';
+};
+
+# The other half of the rule: a cancelled seat is released, so re-registering
+# after a drop has to keep working.
+subtest 'a cancelled seat does not block registering again' => sub {
+    my $returning = Registry::DAO::FamilyMember->create($db, {
+        family_id  => $parent->id,
+        child_name => 'Dropped And Back',
+        birth_date => birth_date_for_age(8),
+        grade      => '3',
+    });
+
+    $db->insert('enrollments', {
+        session_id   => $session1->id,
+        student_id   => $returning->id,
+        parent_id    => $parent->id,
+        student_type => 'family_member',
+        status       => 'cancelled',
+    });
+
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        user_id            => $parent->id,
+        selected_child_ids => [ $returning->id ],
+        location_id        => $location->id,
+        program_id         => $project->id,
+    });
+
+    my $step   = $workflow->get_step($db, { slug => 'session-selection' });
+    my $result = $step->process($db, {
+        action                          => 'select_sessions',
+        "session_for_" . $returning->id => $session1->id,
+    });
+
+    ok !$result->{errors}, 'the selection is accepted'
+        or diag join ' ', @{ $result->{errors} // [] };
+};
+
 subtest "a session selection for another family's child is refused" => sub {
     my $other_parent = Registry::DAO::User->create($db, {
         email     => 'other-parent@example.com',
