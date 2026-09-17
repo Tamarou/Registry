@@ -33,10 +33,27 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
 
         # This month's revenue (if payment tracking is available)
         my $month_start = DateTime->now->truncate(to => 'month')->strftime('%Y-%m-%d %H:%M:%S%z');
-        my $monthly_revenue = $db->select('payments', 'SUM(amount_cents)', {
-            status => 'completed',
-            created_at => { '>=' => $month_start }
-        })->array->[0] || 0;
+        # What the tenant kept, over every status where money was actually
+        # captured.
+        #
+        # Filtering to 'completed' removed a whole cart the moment any child in
+        # it was owed a partial refund: a capacity demotion or a duplicate seat
+        # sets the row to refund_pending for a partial debt, so a $100 debt
+        # against a $300 cart cost the tile the full $300. 'refunded' and
+        # 'partially_refunded' were excluded the same way, so a settled partial
+        # refund erased the cart rather than the refunded share.
+        #
+        # Not clamped at zero. refund_owed_cents and refunded_cents are
+        # constrained to sum no higher than amount_cents, so a negative row
+        # means that invariant has been violated and should be visible rather
+        # than floored away.
+        my $monthly_revenue = $db->query(
+            q{SELECT COALESCE(SUM(amount_cents - refund_owed_cents - refunded_cents), 0)
+                FROM payments
+               WHERE status IN ('completed', 'refund_pending', 'refunded',
+                                'partially_refunded')
+                 AND created_at >= ?}, $month_start
+        )->array->[0] || 0;
 
         # Pending drop requests
         my $pending_drop_requests = $db->select('drop_requests', 'COUNT(*)', {
