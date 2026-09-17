@@ -274,8 +274,21 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         })->then(sub {
             $self->render(status => 200, text => 'OK');
         })->catch(sub ($err) {
+            # Say whether anything was sent. 'not_sent' is certain -- no
+            # request was dispatched, so no money moved -- and it spares the
+            # operator the runbook's list-refunds-from-Stripe step, which
+            # exists only because the row could not answer that question.
+            my $class = Registry::DAO::Payment->classify_refund_failure($err);
+            $payment->record_refund_failure( $tdb, $err );
+
             $self->app->log->error(
-                "capacity refund failed for payment $payment_id: $err");
+                "capacity refund failed for payment $payment_id "
+              . "($class, nothing was sent to Stripe): $err")
+                if $class eq 'not_sent';
+            $self->app->log->error(
+                "capacity refund failed for payment $payment_id "
+              . "($class, the refund may or may not have been taken): $err")
+                if $class ne 'not_sent';
             $self->render(status => 200, text => 'OK');
         });
     }
