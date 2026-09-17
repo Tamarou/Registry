@@ -270,6 +270,30 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     #                 Stripe has already captured, so this cart owes its share
     #                 back instead.
     #   none       -- nothing here; adjudicate normally.
+    # Does this child already hold a seat this session's uniqueness rule would
+    # refuse a second row for?
+    #
+    # The same predicate as enrollments_session_student_type_live, and as the
+    # foreign lookup inside cart_seat_state. That lookup answers it under FOR
+    # UPDATE inside the settlement transaction, where the row must not change
+    # between the read and the marker write. This one is a pre-flight read at
+    # selection time: there is no payment yet to key on, no transaction to hold,
+    # and nothing to lock against -- a seat taken between this check and the
+    # charge is exactly the case the settlement's own adjudication exists for.
+    #
+    # student_type is in the predicate because the index keys on it, matching
+    # the note on that lookup: a row of a different type is not a collision.
+    sub holds_live_seat ($class, $db, $session_id, $child_id) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        return $db->query( <<'SQL', $session_id, $child_id, 'family_member' )->rows > 0;
+            SELECT 1 FROM enrollments
+             WHERE session_id = ? AND student_id = ? AND student_type = ?
+               AND status IS DISTINCT FROM 'cancelled'
+             LIMIT 1
+SQL
+    }
+
     sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
         $db = $db->db if $db isa Registry::DAO;
 

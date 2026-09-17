@@ -148,6 +148,22 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                     }
                 }
 
+                # A seat the child already holds elsewhere. The settlement
+                # handles this correctly if it gets that far -- the original
+                # seat stands and this cart's share is refunded -- but the
+                # refund does not recover Stripe's processing fee on the
+                # charge, which the platform pays as merchant of record on a
+                # destination charge. Refusing before the charge costs nothing;
+                # discovering it after costs the fee every time, and an honest
+                # parent re-registering a child they forgot was enrolled
+                # triggers it as readily as anyone else.
+                if ( Registry::DAO::Enrollment->holds_live_seat(
+                        $db, $session_id, $child->id ) )
+                {
+                    push @errors, $child->child_name
+                      . " is already enrolled in " . $sess->name;
+                }
+
                 # Check age eligibility using existing FamilyMember method
                 if ($program && $program->metadata) {
                     my $meta = ref $program->metadata eq 'HASH' ? $program->metadata : {};
