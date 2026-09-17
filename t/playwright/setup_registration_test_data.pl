@@ -24,6 +24,14 @@ use Registry::DAO::MagicLinkToken;
 use JSON::PP qw(encode_json);
 use DateTime;
 
+# Session dates are derived from the day the suite runs, never written down.
+# The storefront lists a session only while end_date >= CURRENT_DATE, so a
+# pinned date silently empties every screen built on this seed once it passes.
+sub days_from_now ($days) {
+    my @t = localtime( time + $days * 86_400 );
+    return sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3];
+}
+
 my $db_url = $ENV{DB_URL}
     or die "DB_URL environment variable must be set\n";
 
@@ -100,9 +108,9 @@ my $teacher = $dao->create( User => {
 # Sessions and Events
 # ---------------------------------------------------------------------------
 my @session_configs = (
-    { key => 'week1', name => 'Week 1 - Jun 1-5',   start => '2026-06-01', end => '2026-06-05', capacity => 16 },
-    { key => 'week2', name => 'Week 2 - Jun 8-12',  start => '2026-06-08', end => '2026-06-12', capacity => 16 },
-    { key => 'week3_full', name => 'Week 3 - Jun 15-19', start => '2026-06-15', end => '2026-06-19', capacity => 2 },
+    { key => 'week1', name => 'Week 1', start => days_from_now(14), end => days_from_now(18), capacity => 16 },
+    { key => 'week2', name => 'Week 2', start => days_from_now(21), end => days_from_now(25), capacity => 16 },
+    { key => 'week3_full', name => 'Week 3', start => days_from_now(28), end => days_from_now(32), capacity => 2 },
 );
 
 my %sessions;
