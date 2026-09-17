@@ -1548,6 +1548,49 @@ SQL
             );
     }
     
+    # Every failure before the request is dispatched carries this. Nothing
+    # downstream of create_refund_async may use it.
+    use constant REFUND_NOT_SENT => 'REFUND_NOT_SENT';
+
+    # Did this failure happen before anything was sent to Stripe?
+    #
+    #   not_sent -- certain. No request was dispatched, so no money moved, and
+    #               the runbook's list-refunds-before-issuing step is wasted.
+    #   unknown  -- everything else. A Stripe error response and a response
+    #               that was lost look the same from here, and both are
+    #               reported as unknown rather than guessed at: claiming a
+    #               refund failed when it succeeded invites a second one.
+    sub classify_refund_failure ($class, $err) {
+        my $marker = REFUND_NOT_SENT;
+        return 'not_sent' if defined $err && $err =~ /\Q$marker\E/;
+        return 'unknown';
+    }
+
+    # The log is where an operator looks second; the row is where the runbook
+    # looks first. Best-effort: a stamp that cannot be written must not turn a
+    # refund failure into a second failure on top of it.
+    method record_refund_failure ($db, $err) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $record = {
+            classification => __CLASS__->classify_refund_failure($err),
+            message        => "$err",
+            at             => time(),
+        };
+
+        eval {
+            $db->query(
+                q{UPDATE payments
+                     SET metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb
+                   WHERE id = ?},
+                encode_json( { refund_last_failure => $record } ), $id
+            );
+            1;
+        } or warn "could not record refund failure on payment $id: $@";
+
+        return $record;
+    }
+
     method refund_async ($db, $args = {}) {
         # Every sibling opens with this. refund_async did not, and round 3 added
         # a raw $db->query here -- Registry::DAO::query returns a plain hashref,
@@ -1556,9 +1599,15 @@ SQL
         # silent warn and no refund.
         $db = $db->db if $db isa Registry::DAO;
 
-        die "Cannot refund a payment with status '$status'"
+        # Marked, because what an operator needs to know first is whether any
+        # money can have moved, and for these it certainly cannot: the request
+        # is never dispatched. Classifying on a marker rather than on wording --
+        # Stripe's or ours -- keeps that answer from turning on a message
+        # somebody reworded.
+        die REFUND_NOT_SENT . ": Cannot refund a payment with status '$status'"
             unless __CLASS__->_refundable_status($status);
-        die "No Stripe payment intent ID" unless $stripe_payment_intent_id;
+        die REFUND_NOT_SENT . ": No Stripe payment intent ID"
+            unless $stripe_payment_intent_id;
 
         my $refund_cents = $args->{amount_cents} // $amount_cents;
         my $reason = $args->{reason} // 'requested_by_customer';
@@ -1577,8 +1626,8 @@ SQL
             my $owed = $db->query(
                 'SELECT refund_owed_cents FROM payments WHERE id = ?', $id
             )->hash->{refund_owed_cents} // 0;
-            die "Cannot issue a direct refund while $owed cents of capacity "
-              . "debt is outstanding on payment $id\n" if $owed;
+            die REFUND_NOT_SENT . ": Cannot issue a direct refund while $owed "
+              . "cents of capacity debt is outstanding on payment $id\n" if $owed;
         }
 
         return $self->stripe_client->create_refund_async({

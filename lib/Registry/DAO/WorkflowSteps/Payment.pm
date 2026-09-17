@@ -385,7 +385,17 @@ method handle_payment_callback ($db, $run, $form_data) {
               # runbook. Rejecting here would strand the run on the payment step
               # with the money already taken.
               ->catch(sub ($err) {
-                  warn "capacity refund failed for payment @{[ $payment->id ]}: $err";
+                  # Same classification as the webhook's refund path: 'not_sent'
+                  # is a certainty an operator can act on, and anything else is
+                  # reported as unknown rather than guessed at.
+                  my $class = Registry::DAO::Payment->classify_refund_failure($err);
+                  $payment->record_refund_failure($db, $err);
+
+                  my $certainty = $class eq 'not_sent'
+                    ? 'nothing was sent to Stripe'
+                    : 'the refund may or may not have been taken';
+                  warn "capacity refund failed for payment @{[ $payment->id ]} "
+                     . "($class, $certainty): $err";
                   return $out;
               });
         });
