@@ -162,12 +162,31 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
         require Registry::DAO::Event;
         
-        my $count = $db->select('enrollments', 'COUNT(*)', {
-            session_id => $session_id,
-            student_id => $student_id,
-            status => ['active', 'pending']
-        })->array->[0];
-        
+        # The same predicate as enrollments_session_student_type_live, the
+        # partial unique index accept_offer's insert collides with:
+        # UNIQUE (session_id, student_id, student_type)
+        #  WHERE status IS DISTINCT FROM 'cancelled'.
+        #
+        # Filtering to ('active','pending') saw neither a 'waitlisted' row --
+        # routine on seat rows since demote_to_waitlisted -- nor a NULL-status
+        # one, because IN never matches NULL. Both are covered by the index, so
+        # join_waitlist admitted an entry whose acceptance would later raise a
+        # unique violation: a free waitlist acceptance that dies.
+        #
+        # IS DISTINCT FROM, matching the index: a cancelled row releases its
+        # seat, so a child who dropped can re-join.
+        #
+        # student_type is part of the index key and deliberately not filtered
+        # here. This method is asked about a (session, student) pair, and being
+        # broader than the index refuses a join rather than raising on one.
+        my $count = $db->query(
+            q{SELECT COUNT(*) FROM enrollments
+               WHERE session_id = ?
+                 AND student_id = ?
+                 AND status IS DISTINCT FROM 'cancelled'},
+            $session_id, $student_id
+        )->array->[0];
+
         return $count > 0;
     }
     
