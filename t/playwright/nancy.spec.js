@@ -52,9 +52,13 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     // end_date >= CURRENT_DATE empties the page entirely.
     await expect(registryPage.locator('body')).toContainText(daysFromNow(14));
 
-    // The ability, not just the information.
-    const registerControl = registryPage.getByRole('button', { name: /register/i }).first();
-    await expect(registerControl).toBeVisible({ timeout: 10000 });
+    // The ability, not just the information -- and the control belonging to
+    // THIS program. A bare .first() matched whatever button the page happened
+    // to render first, which once other specs had seeded their own data was a
+    // different journey entirely.
+    const card = registryPage.locator('article').filter({ hasText: "Potter's Wheel Art Camp" });
+    await expect(card, 'the program has a card of its own').toBeVisible({ timeout: 10000 });
+    await expect(card.getByRole('button', { name: /register/i })).toBeVisible();
   });
 
   // The registration screens themselves, as a signed-in returning parent --
@@ -68,7 +72,10 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     // and that screen then offers nothing with its Continue button disabled.
     await registryPage.goto('/tenant-storefront');
     await registryPage.waitForLoadState('networkidle');
-    await registryPage.getByRole('button', { name: /register/i }).first().click();
+    await registryPage.locator('article')
+      .filter({ hasText: "Potter's Wheel Art Camp" })
+      .getByRole('button', { name: /register/i })
+      .click();
     await registryPage.waitForLoadState('networkidle');
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
 

@@ -34,11 +34,14 @@ for my $file (@tmpl_files) {
     Registry::DAO::Template->import_from_file($dao, $file);
 }
 
-my $content = Mojo::File->new('templates/registry-storefront/landing.html.ep')->slurp;
-$dao->db->update('templates',
-    { content => $content },
-    { name => 'tenant-storefront/program-listing' },
-);
+# The landing page has its own workflow and its own template now --
+# Registry.pm's storefront_workflow sends the registry host to
+# registry-storefront/landing, and import_from_file above has already loaded
+# it. Overwriting tenant-storefront/program-listing with this content predates
+# that split, and it does not stay local to this spec: the template row is
+# shared, so every spec that ran afterwards saw the marketing page where the
+# program listing should be. Nancy's storefront test was the first to assert
+# that listing, and the first to notice.
 
 # All four singletons use find-or-create so re-running is safe.
 
