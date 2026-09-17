@@ -60,6 +60,8 @@ my $loc = Registry::DAO::Location->create($db, {
 });
 
 my $prog = Registry::DAO::Project->create($db, {
+    # Published, or the program never reaches a storefront or an overview.
+    status            => 'published',
     name              => "Admin Camp $ts",
     program_type_slug => 'summer-camp',
     metadata          => {},
@@ -67,15 +69,17 @@ my $prog = Registry::DAO::Project->create($db, {
 
 my $sess = Registry::DAO::Session->create($db, {
     name       => "Admin Week 1 $ts",
-    start_date => days_from_now(14),
-    end_date   => days_from_now(18),
+    start_date => days_from_now(-2),
+    end_date   => days_from_now(4),
     status     => 'published',
     capacity   => 16,
     metadata   => {},
 });
 
 my $evt = Registry::DAO::Event->create($db, {
-    time        => '2026-06-01 09:00:00',
+    # Today. The dashboard's whole question is what is happening now, and a
+    # literal date here answered "nothing" however right the rest was.
+    time        => days_from_now(0) . ' 09:00:00',
     duration    => 420,
     location_id => $loc->id,
     project_id  => $prog->id,
@@ -117,7 +121,13 @@ $db->insert('enrollments', {
 });
 
 print encode_json({
-    token    => $token,
-    admin_id => $admin->id,
+    token        => $token,
+    admin_id     => $admin->id,
+    program_name => $prog->name,
+    session_id   => $sess->id,
+    session_name => $sess->name,
+    child_name   => 'Dashboard Kid',
+    parent_id    => $parent->id,
+    child_id     => $child->id,
 });
 print "\n";
