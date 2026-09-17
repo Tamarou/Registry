@@ -36,28 +36,30 @@ my $program_type =
   Registry::DAO::ProgramType->find_by_slug( $dao->db, 'afterschool' );
 ok $program_type, 'afterschool program type found';
 
-# Helper: advance a run past program-type-selection by directly writing run data.
-# ProgramTypeSelection->process() calls ProgramType->new(id=>..)->load() which
-# requires all Object::Pad constructor params and is not testable in isolation.
-# The direct DB update replicates exactly what that step would persist.
-# Returns the refreshed run after advancing past program-type-selection.
+# Advance a run past program-type-selection by running the step, as Morgan
+# does.
+#
+# This used to write the run data by hand, because ProgramTypeSelection::process
+# called ProgramType->new(id => ..)->load() and could not be driven. That is
+# fixed -- it looks the type up by slug now -- and standing in for it had grown
+# its own problem: the hand-written data carried program_type_id, while the step
+# writes program_type_slug. The journey then asserted the id, so it was grading
+# its own fixture against run data production never produces, and would have
+# passed with ProgramTypeSelection deleted.
 my $advance_past_type_selection = sub ($run) {
     my $type_step = $workflow->first_step( $dao->db );
-    $dao->db->update(
-        'workflow_runs',
-        {
-            data => {
-                -json => {
-                    program_type_id     => $program_type->id,
-                    program_type_name   => $program_type->name,
-                    program_type_config => $program_type->config,
-                }
-            },
-            latest_step_id => $type_step->id,
-        },
-        { id => $run->id }
-    );
-    # Re-fetch the run so its in-memory latest_step_id reflects the update
+
+    my $result = $type_step->process( $dao->db,
+        { program_type_slug => $program_type->slug }, $run );
+
+    die "program-type-selection refused the seeded type: "
+      . join( ' ', @{ $result->{errors} // [] } ) . "\n"
+        if $result->{errors};
+
+    $run->update_data( $dao->db, $result );
+    $dao->db->update( 'workflow_runs',
+        { latest_step_id => $type_step->id }, { id => $run->id } );
+
     my ($refreshed_run) = $dao->find( WorkflowRun => { id => $run->id } );
     return ( $refreshed_run, $type_step );
 };
@@ -135,11 +137,15 @@ my $advance_past_type_selection = sub ($run) {
     my ($refreshed_run3) = $advance_past_type_selection->($run);
 
     my ($updated_run) = $dao->find( WorkflowRun => { id => $refreshed_run3->id } );
-    ok $updated_run->data->{program_type_id}, 'program type linked to run';
-    is $updated_run->data->{program_type_id}, $program_type->id,
+
+    # What the step actually writes, not what standing in for it used to.
+    ok $updated_run->data->{program_type_slug}, 'program type linked to run';
+    is $updated_run->data->{program_type_slug}, $program_type->slug,
       'run is linked to the correct program type';
     ok $updated_run->data->{program_type_name},
       'program type name stored for display';
+    ok $updated_run->data->{program_type_config},
+      'and its config, which the curriculum step reads';
 }
 
 {    # Journey: Share curriculum materials with staff - verify skills and materials accessible
