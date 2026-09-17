@@ -82,7 +82,10 @@ die "summer-camp program type not found; run sqitch deploy first\n" unless $prog
 # Program (Project)
 # ---------------------------------------------------------------------------
 my $program = $dao->create( Project => {
-    name  => "Potter's Wheel Art Camp - Summer 2026 $ts",
+    # Published, because ProgramListing requires p.status = 'published'. Without
+    # it this seed cannot produce a storefront a parent could ever find.
+    status => 'published',
+    name  => "Potter's Wheel Art Camp $ts",
     notes => 'FULL Day Camp | M-F | 9am-4pm | Grades K to 5',
     program_type_slug => 'summer-camp',
     metadata => {
@@ -128,11 +131,14 @@ for my $cfg (@session_configs) {
     });
 
     # Create 5 events (Mon-Fri) for each session
+    # Year taken from the session's own start date. It used to be a literal
+    # 2026, which drifts from a derived start the moment one crosses a year.
     my $start_dt = DateTime->new(
-        year => 2026,
-        month => substr($cfg->{start}, 5, 2),
-        day   => substr($cfg->{start}, 8, 2),
+        year  => substr( $cfg->{start}, 0, 4 ),
+        month => substr( $cfg->{start}, 5, 2 ),
+        day   => substr( $cfg->{start}, 8, 2 ),
     );
+
 
     for my $day_offset (0..4) {
         my $event_date = $start_dt->clone->add(days => $day_offset);
