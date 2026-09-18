@@ -126,6 +126,19 @@ subtest 'program_overview renders date range from session start/end' => sub {
       ->content_like(qr/Dashboard Camp/, 'shows the seeded program');
 };
 
+# There were two admin dashboard template trees, and this endpoint served the
+# copy without the publish controls. Nothing noticed, because asserting the
+# program name is true of both copies. Grade the controls themselves so a
+# second tree cannot quietly reappear underneath this route.
+subtest 'program_overview carries the publish controls, not just the names' => sub {
+    $t->get_ok('/admin/dashboard/program_overview')
+      ->status_is(200)
+      ->content_like(qr/publish-toggle/, 'the program publish form is on the page')
+      ->content_like(qr{/admin/programs/[^"']+/status}, 'posting to the program status route')
+      ->content_like(qr/publish-toggle-session/, 'and the per-session one')
+      ->content_like(qr{/admin/sessions/[^"']+/status}, 'posting to the session status route');
+};
+
 subtest 'todays_events renders events for a given date' => sub {
     $t->get_ok("/admin/dashboard/todays_events?date=$event_day")
       ->status_is(200)

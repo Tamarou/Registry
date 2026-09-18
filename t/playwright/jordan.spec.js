@@ -102,9 +102,7 @@ test.describe('Jordan: running the business day', () => {
 
     // The dashboard he actually opens. /admin/dashboard is the admin-dashboard
     // WORKFLOW, whose overview HTMX-loads the program section and renders
-    // admin-dashboard/program_overview -- the copy carrying the controls. The
-    // controller route of the same name serves admin_dashboard/program_overview,
-    // which has none; see #384.
+    // admin-dashboard/program_overview -- the one template tree there is.
     await registryPage.goto('/admin/dashboard');
     await registryPage.waitForLoadState('networkidle');
     await expect(sessionRow, 'his session is listed').toBeVisible({ timeout: 15000 });

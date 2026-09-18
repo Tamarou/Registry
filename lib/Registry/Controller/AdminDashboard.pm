@@ -10,20 +10,6 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     use List::Util qw(sum max);
     use JSON qw(encode_json);
 
-    # Main admin dashboard
-    method index () {
-        my $user = $self->stash('current_user');
-        my $dao = $self->dao($self->stash('tenant'));
-
-        # Get all dashboard data
-        require Registry::DAO::AdminDashboard;
-        my $dashboard_data = Registry::DAO::AdminDashboard->get_admin_dashboard_data($dao->db, $user);
-
-        # Pass data to template
-        $self->stash(%$dashboard_data);
-        $self->render(template => 'admin_dashboard/index');
-    }
-
     # Program overview data (HTMX endpoint)
     method program_overview () {
         my $dao = $self->dao($self->stash('tenant'));
@@ -33,7 +19,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $programs = Registry::DAO::Project->get_program_overview($dao->db, $time_range);
 
         $self->stash(programs => $programs, time_range => $time_range);
-        $self->render(template => 'admin_dashboard/program_overview', layout => undef);
+        $self->render(template => 'admin-dashboard/program_overview', layout => undef);
     }
 
     # Today's events with attendance (HTMX endpoint)
@@ -45,7 +31,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $events = Registry::DAO::Event->get_events_for_date($dao->db, $date);
 
         $self->stash(events => $events, selected_date => $date);
-        $self->render(template => 'admin_dashboard/todays_events', layout => undef);
+        $self->render(template => 'admin-dashboard/todays_events', layout => undef);
     }
 
     # Waitlist management data (HTMX endpoint)
@@ -57,7 +43,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $waitlist_data = Registry::DAO::Waitlist->get_waitlist_management_data($dao->db, $status_filter);
 
         $self->stash(waitlist_data => $waitlist_data, status_filter => $status_filter);
-        $self->render(template => 'admin_dashboard/waitlist_management', layout => undef);
+        $self->render(template => 'admin-dashboard/waitlist_management', layout => undef);
     }
 
     # Recent notifications (HTMX endpoint)
@@ -70,7 +56,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $notifications = Registry::DAO::Notification->get_recent_for_admin($dao->db, $limit, $type_filter);
 
         $self->stash(notifications => $notifications, type_filter => $type_filter);
-        $self->render(template => 'admin_dashboard/recent_notifications', layout => undef);
+        $self->render(template => 'admin-dashboard/recent_notifications', layout => undef);
     }
 
     # Enrollment trends data for charts (JSON endpoint)
@@ -137,7 +123,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $drop_requests = Registry::DAO::DropRequest->get_detailed_requests($dao->db, $status_filter);
 
         $self->stash(drop_requests => $drop_requests, status_filter => $status_filter);
-        $self->render(template => 'admin_dashboard/pending_drop_requests', layout => undef);
+        $self->render(template => 'admin-dashboard/pending_drop_requests', layout => undef);
     }
 
     # Get pending transfer requests (HTMX endpoint)
@@ -149,7 +135,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $transfer_requests = Registry::DAO::TransferRequest->get_detailed_requests($dao->db, $status_filter);
 
         $self->stash(transfer_requests => $transfer_requests, status_filter => $status_filter);
-        $self->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
+        $self->render(template => 'admin-dashboard/pending_transfer_requests', layout => undef);
     }
 
     # Quick action: Send bulk message

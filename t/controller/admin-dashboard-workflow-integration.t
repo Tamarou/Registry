@@ -22,12 +22,16 @@ subtest "AdminDashboard controller has only data retrieval methods" => sub {
     plan tests => 4;
 
     # Verify data retrieval methods exist
-    ok(Registry::Controller::AdminDashboard->can('index'), 'AdminDashboard has index method');
     ok(Registry::Controller::AdminDashboard->can('pending_drop_requests'), 'AdminDashboard has pending_drop_requests method');
     ok(Registry::Controller::AdminDashboard->can('pending_transfer_requests'), 'AdminDashboard has pending_transfer_requests method');
 
     # Verify action methods were removed (delegated to workflows)
     ok(!Registry::Controller::AdminDashboard->can('process_drop_request'), 'AdminDashboard process_drop_request method removed (delegated to workflow)');
+
+    # index rendered admin_dashboard/index and had no route at all. Asserting it
+    # existed is what kept it, and the whole template tree it pointed at, alive:
+    # the dashboard is the admin-dashboard workflow, tested in the next subtest.
+    ok(!Registry::Controller::AdminDashboard->can('index'), 'AdminDashboard index method removed (the dashboard is a workflow)');
 };
 
 subtest "Admin dashboard routes redirect to workflows" => sub {

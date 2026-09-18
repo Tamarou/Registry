@@ -157,20 +157,6 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
         };
     }
 
-    # Get complete admin dashboard data
-    sub get_admin_dashboard_data($class, $db, $user = undef) {
-        return {
-            overview_stats => $class->get_overview_stats($db),
-            program_summary => Registry::DAO::Project->get_program_overview($db, 'current'),
-            todays_events => Registry::DAO::Event->get_events_for_date($db, DateTime->now->ymd),
-            recent_notifications => Registry::DAO::Notification->get_recent_for_admin($db, 5, 'all'),
-            waitlist_summary => $class->get_waitlist_summary($db),
-            enrollment_alerts => $class->get_enrollment_alerts($db),
-            pending_drop_requests => Registry::DAO::DropRequest->get_detailed_requests($db, 'pending', 10),
-            pending_transfer_requests => Registry::DAO::TransferRequest->get_detailed_requests($db, 'pending')
-        };
-    }
-
     # Get export data for admin dashboard
     sub get_export_data($class, $db, $export_type) {
         if ($export_type eq 'enrollments') {
