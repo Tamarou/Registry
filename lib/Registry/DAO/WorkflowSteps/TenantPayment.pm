@@ -10,6 +10,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Registry::DAO::User;
     use Registry::DAO::Tenant;
     use Registry::DAO::MagicLinkToken;
+    use Registry::DAO::Notification;
     use Registry::DAO::Workflow;
     use Registry::DAO;
     use Registry::Utility::ErrorHandler;
@@ -513,7 +514,8 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             next unless $ud->{invite_pending} && $ud->{email};
             my $tenant_user = $tenant->dao($db)->find(User => { username => $ud->{username} });
             if ($tenant_user) {
-                $self->_send_invitation_email($db, $tenant, $tenant_user, $ud);
+                $self->_send_invitation_email( $db, $tenant, $tenant_user, $ud,
+                    $user_data[0]->{name} || $user_data[0]->{email} );
             }
         }
 
@@ -533,18 +535,62 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
     # _send_invitation_email: generates a magic link token for a team member invite
     # and logs the would-be email (actual delivery is a TODO).
-    method _send_invitation_email($db, $tenant, $user, $user_data) {
-        my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($db, {
-            user_id    => $user->id,
-            purpose    => 'invite',
-            expires_in => 168,
-        });
+    method _send_invitation_email($db, $tenant, $user, $user_data, $inviter_name = '') {
+        # On the tenant's own handle, not the provisioning one. $user is a row
+        # in <tenant>.users -- the caller resolved it through $tenant->dao --
+        # so a token minted against registry would carry a user_id that exists
+        # in neither schema's terms: unresolvable from the apex, because the
+        # user is not there, and unresolvable from the subdomain, because the
+        # token is not. The pairing has to hold on both sides.
+        my $tenant_db = $tenant->dao($db)->db;
 
-        # TODO: Send email with invite link containing $plaintext token
-        # The invite link would be: /auth/invite?token=$plaintext
-        warn "Would send invitation email to: " . $user_data->{email} .
-             " for tenant: " . $tenant->slug .
-             " with invite token (token ID: " . $token->id . ")";
+        # Best effort, start to finish: an invitation that cannot be delivered
+        # must not roll back a tenant that has otherwise been provisioned. The
+        # owner can re-invite; an aborted provisioning leaves nothing to
+        # re-invite into. Minting and recording are inside the guard too, not
+        # just the send -- a throw from either one aborts provisioning just as
+        # dead. Tenant->provision has already committed and this runs on the
+        # tenant's own handle, so there is no open transaction here to poison.
+        eval {
+            my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($tenant_db, {
+                user_id    => $user->id,
+                purpose    => 'invite',
+                expires_in => 168,
+            });
+
+            # And the link goes to the tenant's own host, where $c->dao resolves to
+            # the schema the token and the user both live in.
+            my ($base_domain) = grep { length }
+                map  { s/^\s+|\s+$//gr }
+                map  { lc }
+                split /,/, ( $ENV{REGISTRY_BASE_DOMAINS} // 'tinyartempire.com' );
+            my $base_url = sprintf 'https://%s.%s', $tenant->slug, $base_domain;
+
+            # Sent the way AccountCheck sends a login link: a notification carrying
+            # the URL, rendered by the magic_link_invite template that has been
+            # waiting for a caller. Auth.pm already routes an invite token to
+            # passkey registration rather than the homepage, which is what someone
+            # arriving without an account needs.
+            my $notification = Registry::DAO::Notification->create($tenant_db, {
+                user_id  => $user->id,
+                type     => 'magic_link_invite',
+                channel  => 'email',
+                subject  => sprintf( 'You have been invited to %s', $tenant->name ),
+                message  => sprintf( 'Invitation to %s for %s',
+                    $tenant->name, $user_data->{email} ),
+                metadata => {
+                    tenant_name      => $tenant->name,
+                    inviter_name     => $inviter_name,
+                    role             => $user_data->{user_type} || 'staff',
+                    magic_link_url   => "$base_url/auth/magic/$plaintext",
+                    expires_in_hours => 168,
+                },
+            });
+
+            $notification->send($tenant_db);
+            1;
+        } or warn "invitation email to " . $user_data->{email}
+                . " for tenant " . $tenant->slug . " failed: $@";
     }
 
     method template { 'tenant-signup/payment' }

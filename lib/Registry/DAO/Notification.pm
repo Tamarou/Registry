@@ -94,6 +94,13 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
                 tenant_name      => $meta->{tenant_name}      // 'Registry',
                 magic_link_url   => $meta->{magic_link_url}   // '',
                 expires_in_hours => $meta->{expires_in_hours}  // 24,
+
+                # The invite template names who invited you and to what role.
+                # Both were dropped here, so it rendered "  has invited you to
+                # join X as a  " -- ignored while nothing sent invitations, and
+                # wrong the moment something did.
+                inviter_name     => $meta->{inviter_name}     // '',
+                role             => $meta->{role}             // '',
             );
         }
         if ($type eq 'email_verification') {
