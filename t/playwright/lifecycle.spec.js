@@ -1,5 +1,18 @@
 // ABOUTME: Serial lifecycle E2E — Morgan signs up, builds a free program; Nancy
 // ABOUTME: enrolls her child; Amara takes attendance — all in Morgan's tenant schema.
+//
+// KEEP THIS, even though morgan.spec.js and nancy.spec.js now cover their own
+// legs independently. What is only here is the meta journey: the handoff.
+//
+// Leg 2 enrols into the session Leg 1 published, in the tenant Leg 0
+// provisioned, and Leg 3 marks attendance for the enrolment Leg 2 created. The
+// per-persona specs each seed the world they need, which is what makes them
+// readable alone -- and means none of them proves that one persona's output is
+// the next one's input. Three features working separately is not the same
+// claim as a product working.
+//
+// The relay is the point, not an accident of how it was written. Splitting it
+// would leave the seams untested and look like a tidy-up while doing it.
 const { test, expect } = require('./fixtures/base');
 const { execFileSync } = require('child_process');
 
