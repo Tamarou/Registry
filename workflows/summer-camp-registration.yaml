@@ -31,4 +31,4 @@ steps:
   - slug: complete
     description: Registration Complete
     template: summer-camp-registration/complete
-    class: Registry::DAO::WorkflowStep
+    class: Registry::DAO::WorkflowSteps::RegistrationComplete
