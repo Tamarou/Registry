@@ -710,11 +710,24 @@ SQL
                 s.name as session_name,
                 s.start_date,
                 s.end_date,
+                p.name as program_name,
+                l.name as location_name,
                 fm.child_name,
                 COUNT(se.event_id) as total_events,
                 COUNT(ar.id) as attended_events
             FROM enrollments e
             JOIN sessions s ON e.session_id = s.id
+            -- sessions carry no project_id/location_id columns; resolve them
+            -- from metadata, falling back to the linked event (see
+            -- Registry::DAO::Session->project_id).  LIMIT 1 keeps this to one
+            -- row per session so the counts below stay accurate.
+            LEFT JOIN LATERAL (
+                SELECT ev.project_id, ev.location_id
+                FROM session_events se2 JOIN events ev ON ev.id = se2.event_id
+                WHERE se2.session_id = s.id LIMIT 1
+            ) sev ON true
+            LEFT JOIN projects p ON p.id = COALESCE((s.metadata->>'project_id')::uuid, sev.project_id)
+            LEFT JOIN locations l ON l.id = COALESCE((s.metadata->>'location_id')::uuid, sev.location_id)
             JOIN family_members fm ON e.family_member_id = fm.id
             LEFT JOIN session_events se ON se.session_id = s.id
             LEFT JOIN attendance_records ar ON ar.event_id = se.event_id
@@ -722,7 +735,7 @@ SQL
                 AND ar.status = 'present'
             WHERE fm.family_id = ?
             AND e.status IN ('active', 'pending')
-            GROUP BY e.id, s.id, fm.id
+            GROUP BY e.id, s.id, p.id, l.id, fm.id
             ORDER BY s.start_date ASC
         };
 
