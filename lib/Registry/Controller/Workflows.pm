@@ -49,7 +49,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         }
         
         my $run = $workflow->new_run( $dao->db, $config );
-        my $data = $self->_apply_server_owned_data( $self->req->params->to_hash );
+        my $data =
+          $self->_apply_server_owned_data( $self->req->params->to_hash, $run );
 
         $run->process( $dao->db, $first_step, $data );
         return $run;
@@ -59,9 +60,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     # any key the server owns has to be re-derived from the request rather than
     # trusted. __tenant_slug alone selects the Stripe destination account,
     # on_behalf_of, and the revenue-share rate; user_id decides whose enrollment
-    # and whose charge this is. Both are dropped when there is nothing to derive
-    # -- an absent session is not a licence to invent a user.
-    method _apply_server_owned_data ($data) {
+    # and whose charge this is, and user names the same person for the steps
+    # that read the acting user off the run. All are dropped when there is
+    # nothing to derive -- an absent session is not a licence to invent a user.
+    method _apply_server_owned_data ( $data, $run = undef ) {
         # Deleting the exact key is not enough. This runs on the FLAT param
         # hash; expand_form_params runs afterwards, inside WorkflowStep, and
         # rebuilds bracketed keys into nested structure -- its bracket branch
@@ -80,9 +82,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # consumers trust the blob verbatim -- one bills its amount_cents, the
         # other links its id as the charge-time rate authority -- so a client
         # -authored one is a rate and a price of the client's choosing.
+        # user is on that list for the same reason: the five parent steps take
+        # $user->{id} as the family_id their ownership checks match on, so a
+        # user[id]= of a client's choosing picks the family this request acts
+        # for. The alternation matches the bare key and the bracketed form.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user_id|__tenant_slug|selected_pricing_plan)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan)(?:\[|\z)/;
         }
 
         my $tenant_slug = $self->tenant;
@@ -97,10 +103,22 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $user_id = ref $current_user ? $current_user->{id} : undef;
         if ($user_id) {
             $data->{user_id} = $user_id;
+            $data->{user}    = $current_user;
         }
         else {
             delete $data->{user_id};
+            delete $data->{user};
         }
+
+        # Steps read the acting user off the run rather than off the request --
+        # the parent drop and transfer steps take $run->data->{user} -- and a
+        # run's data is written only from step RESULTS, which never carry it.
+        # Seeding it here, on every request, is what puts it there, and puts
+        # the value this method just derived rather than one a step echoed
+        # back from a form. Nothing is written when there is no session user:
+        # an absent session neither invents a user nor rewrites the run's.
+        $run->update_data( $self->dao->db, { user => $data->{user} } )
+          if $run && $data->{user};
 
         return $data;
     }
@@ -430,7 +448,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     # Run a step and render whatever it hands back. Shared by the POST path and
     # by the Stripe return leg, which arrives as a GET.
     method _process_step ( $run, $step, $data ) {
-        $self->_apply_server_owned_data($data);
+        $self->_apply_server_owned_data( $data, $run );
 
         my $result = $run->process( $self->dao->db, $step, $data );
 

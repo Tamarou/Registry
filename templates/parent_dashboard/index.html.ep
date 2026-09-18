@@ -116,11 +116,11 @@
                                         </div>
 
                                         <div class="ml-4 flex flex-col gap-2">
-                                            <a href="/workflow/parent-transfer-request/start?enrollment_id=<%= $enrollment->{enrollment_id} %>"
+                                            <a href="/parent-transfer-request?enrollment_id=<%= $enrollment->{enrollment_id} %>"
                                                class="text-blue-600 hover:text-blue-800 text-sm font-medium">
                                                 Transfer
                                             </a>
-                                            <a href="/workflow/parent-drop-request/start?enrollment_id=<%= $enrollment->{enrollment_id} %>"
+                                            <a href="/parent-drop-request?enrollment_id=<%= $enrollment->{enrollment_id} %>"
                                                class="text-red-600 hover:text-red-800 text-sm font-medium">
                                                 Drop
                                             </a>
@@ -136,7 +136,7 @@
                             </svg>
                             <h3 class="mt-2 text-sm font-medium text-gray-900">No Active Enrollments</h3>
                             <p class="mt-1 text-sm text-gray-500">Your children aren't enrolled in any programs yet.</p>
-                            <a href="/school" class="mt-3 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                            <a href="/" class="mt-3 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
                                 Browse Programs
                             </a>
                         </div>

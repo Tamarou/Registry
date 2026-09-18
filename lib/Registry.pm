@@ -777,10 +777,12 @@ class Registry :isa(Mojolicious) {
         $r->post('/messages/:id/mark_read')->to('messages#mark_read')->name('messages_mark_read');
 
         # Waitlist routes -- must be declared before the /:workflow catch-all
+        # /waitlist/status must be declared before /waitlist/:id, or the literal
+        # is captured as an :id and cast to a uuid.
+        $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
         $r->get('/waitlist/:id')->to('waitlist#show')->name('waitlist_show');
         $r->post('/waitlist/:id/accept')->to('waitlist#accept')->name('waitlist_accept');
         $r->post('/waitlist/:id/decline')->to('waitlist#decline')->name('waitlist_decline');
-        $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
 
         # Workflow routes -- catch-all, must be declared last among /:path routes
         my $w = $r->any("/:workflow")->to('workflows#');
