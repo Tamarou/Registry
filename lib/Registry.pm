@@ -749,6 +749,7 @@ class Registry :isa(Mojolicious) {
         $auth->post('/magic/:token/complete')->to('Auth#complete_magic_link');
         $auth->post('/logout')->to('Auth#logout');
         $auth->get('/verify-email/:token')->to('Auth#verify_email');
+        $auth->get('/register-passkey')->to('Auth#register_passkey');
         $auth->post('/webauthn/register/begin')->to('Auth#webauthn_register_begin');
         $auth->post('/webauthn/register/complete')->to('Auth#webauthn_register_complete');
         $auth->post('/webauthn/auth/begin')->to('Auth#webauthn_auth_begin');
