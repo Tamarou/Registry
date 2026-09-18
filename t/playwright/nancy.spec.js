@@ -158,6 +158,19 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
 
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
     await expect(registryPage.locator('body')).toContainText(/Registration Complete/i, { timeout: 15000 });
+
+    // Completing is not the same as being told what you completed. This page
+    // used to read run-data keys no step writes, so it greeted every parent
+    // with "Camper: N/A" and an empty session list after they had paid.
+    const details = registryPage.locator('.registration-details');
+    await expect(details, 'the confirmation names the child she enrolled')
+      .toContainText(data.returning_parent.child_name);
+    await expect(details, 'and the session she bought')
+      .toContainText(data.sessions.week1.name);
+    await expect(details, 'with the dates she saw when she chose it')
+      .toContainText(data.sessions.week1.start);
+    await expect(details, 'and not a placeholder where the answer should be')
+      .not.toContainText('N/A');
   });
 
   // The job is not done when the form is submitted. It is done when Nancy can

@@ -164,8 +164,10 @@ for my $cfg (@session_configs) {
     });
 
     $sessions{$cfg->{key}} = {
-        id   => $session->id,
-        name => $cfg->{name},
+        id    => $session->id,
+        name  => $cfg->{name},
+        start => $cfg->{start},
+        end   => $cfg->{end},
     };
 }
 
