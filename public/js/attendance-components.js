@@ -368,8 +368,10 @@ class AttendanceForm extends HTMLElement {
     }
 
     setupEventListeners() {
-        // Listen for attendance changes from student rows
-        this.addEventListener('attendance-changed', (e) => {
+        // Listen for attendance changes from student rows. The rows are rendered
+        // as siblings of this element rather than children, so the bubbling
+        // event only ever reaches us at the document.
+        document.addEventListener('attendance-changed', (e) => {
             const { studentId, status } = e.detail;
             this.attendanceData[studentId] = status;
             this.updateCounts();
@@ -422,36 +424,52 @@ class AttendanceForm extends HTMLElement {
         messageArea.innerHTML = '';
         
         try {
+            // State-changing requests are rejected without a CSRF token. Forms and
+            // htmx pick it up from the layout; a raw fetch has to read the meta
+            // tag itself.
+            const csrf = document.querySelector('meta[name="csrf-token"]');
             const response = await fetch(`/teacher/attendance/${this.eventId}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...(csrf ? { 'X-CSRF-Token': csrf.getAttribute('content') } : {})
                 },
                 body: JSON.stringify(this.attendanceData)
             });
             
-            const data = await response.json();
-            
-            if (data.success) {
-                messageArea.innerHTML = `
-                    <div class="alert alert-success">
-                        <strong>Success!</strong> Attendance saved for ${data.total_marked} students.
-                    </div>
-                `;
-                submitBtn.textContent = 'Attendance Saved ✓';
-                submitBtn.className = 'btn btn-secondary';
-                
-                // Dispatch success event
-                this.dispatchEvent(new CustomEvent('attendance-saved', {
-                    detail: { 
-                        totalMarked: data.total_marked,
-                        attendanceData: this.attendanceData
-                    },
-                    bubbles: true
-                }));
-            } else {
-                throw new Error(data.error || 'Failed to save attendance');
+            // A rejection can arrive as plain text, so read the body once and
+            // only then try it as JSON -- otherwise the real reason is lost
+            // behind a parser error.
+            const body = await response.text();
+            let data = null;
+            try {
+                data = JSON.parse(body);
+            } catch (e) {
+                data = null;
             }
+            
+            if (!response.ok || !data || !data.success) {
+                throw new Error(
+                    (data && data.error) || body.trim() || `Save failed (${response.status})`
+                );
+            }
+            
+            messageArea.innerHTML = `
+                <div class="alert alert-success">
+                    <strong>Success!</strong> Attendance saved for ${data.total_marked} students.
+                </div>
+            `;
+            submitBtn.textContent = 'Attendance Saved ✓';
+            submitBtn.className = 'btn btn-secondary';
+            
+            // Dispatch success event
+            this.dispatchEvent(new CustomEvent('attendance-saved', {
+                detail: { 
+                    totalMarked: data.total_marked,
+                    attendanceData: this.attendanceData
+                },
+                bubbles: true
+            }));
         } catch (error) {
             messageArea.innerHTML = `
                 <div class="alert alert-error">
