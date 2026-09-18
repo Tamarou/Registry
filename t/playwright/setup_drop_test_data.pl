@@ -23,6 +23,14 @@ use Registry::DAO::Enrollment;
 use Registry::DAO::DropRequest;
 use JSON::PP qw(encode_json);
 
+# Session dates are derived from the day the suite runs, never written down.
+# The storefront lists a session only while end_date >= CURRENT_DATE, so a
+# pinned date silently empties every screen built on this seed once it passes.
+sub days_from_now ($days) {
+    my @t = localtime( time + $days * 86_400 );
+    return sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3];
+}
+
 my $db_url = $ENV{DB_URL}
     or die "DB_URL environment variable must be set\n";
 
@@ -54,8 +62,8 @@ my $teacher = Registry::DAO::User->create($db, {
 
 my $sess = Registry::DAO::Session->create($db, {
     name       => "Drop Test Week 1 $ts",
-    start_date => '2026-06-01',
-    end_date   => '2026-06-05',
+    start_date => days_from_now(14),
+    end_date   => days_from_now(18),
     status     => 'published',
     capacity   => 16,
     metadata   => {},
@@ -76,8 +84,8 @@ $sess->add_events($db, $evt->id);
 # Target session for transfer tests
 my $target_sess = Registry::DAO::Session->create($db, {
     name       => "Drop Test Week 2 $ts",
-    start_date => '2026-06-08',
-    end_date   => '2026-06-12',
+    start_date => days_from_now(21),
+    end_date   => days_from_now(25),
     status     => 'published',
     capacity   => 16,
     metadata   => {},

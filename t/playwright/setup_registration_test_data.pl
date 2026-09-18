@@ -24,6 +24,14 @@ use Registry::DAO::MagicLinkToken;
 use JSON::PP qw(encode_json);
 use DateTime;
 
+# Session dates are derived from the day the suite runs, never written down.
+# The storefront lists a session only while end_date >= CURRENT_DATE, so a
+# pinned date silently empties every screen built on this seed once it passes.
+sub days_from_now ($days) {
+    my @t = localtime( time + $days * 86_400 );
+    return sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3];
+}
+
 my $db_url = $ENV{DB_URL}
     or die "DB_URL environment variable must be set\n";
 
@@ -74,7 +82,10 @@ die "summer-camp program type not found; run sqitch deploy first\n" unless $prog
 # Program (Project)
 # ---------------------------------------------------------------------------
 my $program = $dao->create( Project => {
-    name  => "Potter's Wheel Art Camp - Summer 2026 $ts",
+    # Published, because ProgramListing requires p.status = 'published'. Without
+    # it this seed cannot produce a storefront a parent could ever find.
+    status => 'published',
+    name  => "Potter's Wheel Art Camp $ts",
     notes => 'FULL Day Camp | M-F | 9am-4pm | Grades K to 5',
     program_type_slug => 'summer-camp',
     metadata => {
@@ -100,9 +111,9 @@ my $teacher = $dao->create( User => {
 # Sessions and Events
 # ---------------------------------------------------------------------------
 my @session_configs = (
-    { key => 'week1', name => 'Week 1 - Jun 1-5',   start => '2026-06-01', end => '2026-06-05', capacity => 16 },
-    { key => 'week2', name => 'Week 2 - Jun 8-12',  start => '2026-06-08', end => '2026-06-12', capacity => 16 },
-    { key => 'week3_full', name => 'Week 3 - Jun 15-19', start => '2026-06-15', end => '2026-06-19', capacity => 2 },
+    { key => 'week1', name => 'Week 1', start => days_from_now(14), end => days_from_now(18), capacity => 16 },
+    { key => 'week2', name => 'Week 2', start => days_from_now(21), end => days_from_now(25), capacity => 16 },
+    { key => 'week3_full', name => 'Week 3', start => days_from_now(28), end => days_from_now(32), capacity => 2 },
 );
 
 my %sessions;
@@ -120,11 +131,14 @@ for my $cfg (@session_configs) {
     });
 
     # Create 5 events (Mon-Fri) for each session
+    # Year taken from the session's own start date. It used to be a literal
+    # 2026, which drifts from a derived start the moment one crosses a year.
     my $start_dt = DateTime->new(
-        year => 2026,
-        month => substr($cfg->{start}, 5, 2),
-        day   => substr($cfg->{start}, 8, 2),
+        year  => substr( $cfg->{start}, 0, 4 ),
+        month => substr( $cfg->{start}, 5, 2 ),
+        day   => substr( $cfg->{start}, 8, 2 ),
     );
+
 
     for my $day_offset (0..4) {
         my $event_date = $start_dt->clone->add(days => $day_offset);
@@ -252,7 +266,8 @@ for my $i (1..2) {
 # Output JSON
 # ---------------------------------------------------------------------------
 print encode_json({
-    tenant_slug => $tenant_slug,
+    tenant_slug  => $tenant_slug,
+    program_name => $program->name,
     tenant_id   => $tenant->id,
     location_id => $location->id,
     program_id  => $program->id,
