@@ -16,7 +16,7 @@ use Test::Registry::Helpers qw(authenticate_as import_all_workflows);
 use Registry::DAO;
 use Registry::DAO::User;
 use Registry::DAO::Family;
-use Mojo::JSON qw(decode_json);
+use Mojo::JSON qw(decode_json encode_json);
 
 my $test_db = Test::Registry::DB->new;
 my $dao = $test_db->db;
@@ -135,36 +135,77 @@ subtest 'Amara can view attendance page for an event' => sub {
       ->element_exists('attendance-form', 'Attendance form web component present');
 };
 
-subtest 'Amara can mark student attendance' => sub {
-    # The controller expects a flat hash: { student_id => 'present'|'absent' }
-    my %attendance_data = (
-        $child1->id => 'present',
-        $child2->id => 'absent',
-    );
-
-    # GET a known-good page to extract a valid CSRF token
+# Marking attendance is the thing a teacher does every session. The previous
+# version of this subtest accepted a 200, a 400 or a 500 and passed on all
+# three, so a teacher's attendance could have been entirely broken and this
+# journey stayed green. It also never looked at whether anything was recorded.
+sub mark_attendance_over_http ( $data ) {
     $t->get_ok('/teacher/')->status_is(200);
-    my $csrf_meta = $t->tx->res->dom->at('meta[name="csrf-token"]');
-    ok $csrf_meta, 'Got CSRF token from teacher dashboard';
+    my $csrf = $t->tx->res->dom->at('meta[name="csrf-token"]');
 
-    # Use the UA directly to send JSON (avoid CSRF injection for JSON API)
-    my $tx = $t->ua->post("/teacher/attendance/${\$event->id}" => {
+    # The UA directly, because this endpoint takes JSON rather than a form.
+    my $tx = $t->ua->post( "/teacher/attendance/${\$event->id}" => {
         'Content-Type' => 'application/json',
-        'X-CSRF-Token' => $csrf_meta->attr('content'),
-    } => Mojo::JSON::encode_json(\%attendance_data));
+        'X-CSRF-Token' => $csrf ? $csrf->attr('content') : '',
+    } => Mojo::JSON::encode_json($data) );
     $t->tx($tx);
 
-    my $status = $t->tx->res->code;
-    my $body = $t->tx->res->json // {};
+    return ( $t->tx->res->code, $t->tx->res->json // {} );
+}
 
-    if ($status == 200 && $body->{success}) {
-        ok 1, "Attendance marked successfully (total_marked=${\$body->{total_marked} // 0})";
-    } else {
-        # The POST endpoint works but may fail on data constraints
-        # (e.g., student_id format). Document the actual response.
-        ok $status =~ /^(200|400|500)$/, "Attendance POST responded (status=$status)";
-        diag "Response: " . ($body->{error} // 'no error field') if $status != 200;
-    }
+sub recorded_status ( $student_id ) {
+    my $row = $dao->db->select( 'attendance_records', ['status'],
+        { event_id => $event->id, student_id => $student_id } )->hash;
+    return $row ? $row->{status} : undef;
+}
+
+subtest 'Amara can mark student attendance' => sub {
+    my ( $status, $body ) = mark_attendance_over_http( {
+        $child1->id => 'present',
+        $child2->id => 'absent',
+    } );
+
+    is $status, 200, 'the request succeeds'
+        or diag 'response: ' . ( $body->{error} // $body->{details} // 'none' );
+    ok $body->{success}, 'and reports success';
+
+    # The point of the request. A 200 that recorded nothing is the failure
+    # this journey exists to catch.
+    is recorded_status( $child1->id ), 'present', 'the present child is recorded';
+    is recorded_status( $child2->id ), 'absent',  'the absent child is recorded';
+};
+
+# A teacher correcting a mistake mid-session, which is the common case: the
+# same student marked twice must end with one row, not two.
+subtest 'marking a student again corrects the record rather than duplicating it' => sub {
+    my ( $status, $body ) = mark_attendance_over_http( { $child2->id => 'present' } );
+
+    is $status, 200, 'the correction succeeds';
+    is recorded_status( $child2->id ), 'present', 'and the status is updated';
+
+    my $rows = $dao->db->select( 'attendance_records', 'COUNT(*)',
+        { event_id => $event->id, student_id => $child2->id } )->array->[0];
+    is $rows, 1, 'leaving one row for this student on this event';
+};
+
+# The controller skips any status it does not recognise. Saying it marked them
+# anyway tells a teacher the register is complete when it is not.
+subtest 'a status the controller refuses is not counted as marked' => sub {
+    my ( $status, $body ) = mark_attendance_over_http( {
+        $child1->id => 'present',
+        $child2->id => 'maybe',
+    } );
+
+    is $status, 200, 'the recognised part still succeeds';
+    is recorded_status( $child1->id ), 'present', 'the valid status is recorded';
+    is $body->{total_marked}, 1, 'and only what was marked is reported';
+};
+
+subtest 'a payload that is not attendance data is refused' => sub {
+    my ( $status, $body ) = mark_attendance_over_http( [ 'not', 'a', 'hash' ] );
+
+    is $status, 400, 'refused';
+    ok $body->{error}, 'with a reason';
 };
 
 subtest 'staff user cannot access admin-only routes' => sub {

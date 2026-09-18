@@ -74,6 +74,11 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
             my $db = $dao->db;
             my $tx = $db->begin;
 
+            # Counted as they are marked, not taken from the submission. The
+            # loop skips any status it does not recognise, so reporting the
+            # size of the payload told a teacher the register was complete
+            # when some of it had been dropped.
+            my $marked = 0;
             for my $student_id (keys %$attendance_data) {
                 my $status = $attendance_data->{$student_id};
                 next unless $status =~ /^(present|absent)$/;
@@ -85,6 +90,7 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
                     $status,
                     $user_id
                 );
+                $marked++;
             }
 
             $tx->commit;
@@ -92,7 +98,7 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
             $self->render(json => {
                 success => 1,
                 message => 'Attendance recorded successfully',
-                total_marked => scalar(keys %$attendance_data)
+                total_marked => $marked
             });
         } catch ($error) {
             $self->render(json => {
