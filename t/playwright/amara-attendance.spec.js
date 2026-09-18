@@ -2,6 +2,7 @@
 // ABOUTME: Tests dashboard access, event viewing, and attendance marking via Web Components.
 
 const { test, expect } = require('./fixtures/base');
+const { queryJson } = require('./journey_helpers');
 const { execSync } = require('child_process');
 
 test.describe.configure({ mode: 'serial', timeout: 120000 });
@@ -116,6 +117,68 @@ test.describe('Amara teacher attendance journey', () => {
     } else {
       // No events today is valid -- the dashboard just shows empty
       test.info().annotations.push({ type: 'skip', description: 'No events shown for today' });
+    }
+  });
+
+  // The bug this test exists for: the component POSTed with no CSRF token, the
+  // before_dispatch hook answered 403, and nothing was recorded. Every other
+  // attendance test added the header by hand and never pressed the button, so
+  // the register looked taken and was not. This one presses the real button,
+  // reads the rows back out of the database, and then reopens the register the
+  // way Amara does after lunch -- no header of its own, ever.
+  test('Amara marks attendance on the real screen and it is recorded', async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
+    await registryPage.goto(`/teacher/attendance/${testData.event_id}`);
+
+    // Both components use an open shadow root, so Playwright's locators reach in.
+    const rows = registryPage.locator('student-attendance-row');
+    await expect(rows).toHaveCount(testData.student_ids.length);
+
+    // Tap a status per child, taking the ids from the screen rather than the
+    // fixture, and mixing present with absent so a server that recorded one
+    // blanket status would fail here.
+    const ids = await rows.evaluateAll((els) => els.map((el) => el.getAttribute('student-id')));
+    const expected = {};
+    for (let i = 0; i < ids.length; i++) {
+      const status = i === ids.length - 1 ? 'absent' : 'present';
+      await rows.nth(i).locator(`button[data-status="${status}"]`).click();
+      expected[ids[i]] = status;
+    }
+
+    const save = registryPage.locator('attendance-form button#submit-btn');
+    await expect(save).toBeEnabled();
+    await save.click();
+
+    // The success banner only exists on success; a failure renders .alert-error.
+    await expect(registryPage.locator('attendance-form .alert-success')).toBeVisible();
+
+    const recorded = queryJson(
+      testDB,
+      'registry',
+      'SELECT student_id, status, marked_by FROM attendance_records WHERE event_id = ?',
+      testData.event_id
+    );
+    const byStudent = new Map(recorded.map((r) => [r.student_id, r]));
+
+    for (const id of ids) {
+      expect(byStudent.get(id)).toMatchObject({
+        status: expected[id],
+        marked_by: testData.teacher_id,
+      });
+    }
+
+    // Reopening the register is the other half of taking it: Amara comes back
+    // after lunch to correct a child. The page must still render, and each row
+    // must come back carrying the mark she made -- an empty register renders no
+    // active button at all and fails here.
+    await registryPage.reload();
+    await expect(rows).toHaveCount(ids.length);
+
+    for (const id of ids) {
+      const row = registryPage.locator(`student-attendance-row[student-id="${id}"]`);
+      const active = row.locator('button.attendance-btn.active');
+      await expect(active).toHaveCount(1);
+      await expect(active).toHaveAttribute('data-status', expected[id]);
     }
   });
 

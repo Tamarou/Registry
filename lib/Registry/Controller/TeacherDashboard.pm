@@ -47,8 +47,10 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
         # Get existing attendance records
         my $attendance = Registry::DAO::Attendance->get_event_attendance($db, $event_id, tenant => $self->stash('tenant'));
 
-        # Create attendance lookup for template
-        my %attendance_lookup = map { $_->{student_id} => $_->{status} } @$attendance;
+        # Create attendance lookup for template. get_event_attendance returns
+        # Registry::DAO::Attendance objects, so read them through their readers
+        # -- dereferencing one as a hash dies and takes the whole register with it.
+        my %attendance_lookup = map { $_->student_id => $_->status } @$attendance;
 
         $self->render(
             template   => 'teacher/attendance',

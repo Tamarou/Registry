@@ -290,6 +290,16 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         );
     };
 
+    # GET /auth/register-passkey -- the landing page an invite magic link
+    # sends the invitee to once its token has established their session.
+    # Requires that session: the page is where a new team member sets up a
+    # passkey, not a public sign-up form.
+    method register_passkey {
+        return unless $self->require_auth;
+
+        $self->render(template => 'auth/register-passkey');
+    }
+
     # Begin WebAuthn passkey registration for the authenticated user.
     # Generates registration options and stores the challenge in the session.
     method webauthn_register_begin {
