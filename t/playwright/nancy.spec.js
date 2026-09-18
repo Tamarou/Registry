@@ -44,7 +44,7 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     await registryPage.waitForLoadState('networkidle');
 
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-    await expect(registryPage.locator('body')).toContainText("Potter's Wheel Art Camp");
+    await expect(registryPage.locator('body')).toContainText(data.program_name);
 
     // The storefront presents a session by its dates, not its internal name,
     // and the dates are what a parent decides on. Asserting the derived value
@@ -56,7 +56,10 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     // THIS program. A bare .first() matched whatever button the page happened
     // to render first, which once other specs had seeded their own data was a
     // different journey entirely.
-    const card = registryPage.locator('article').filter({ hasText: "Potter's Wheel Art Camp" });
+    // This run's program, not any program sharing the name. Several specs use
+    // this seed, so by the time Nancy runs there are several of them -- the
+    // name carries a timestamp precisely so they can be told apart.
+    const card = registryPage.locator('article').filter({ hasText: data.program_name });
     await expect(card, 'the program has a card of its own').toBeVisible({ timeout: 10000 });
     await expect(card.getByRole('button', { name: /register/i })).toBeVisible();
   });
@@ -73,7 +76,7 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     await registryPage.goto('/tenant-storefront');
     await registryPage.waitForLoadState('networkidle');
     await registryPage.locator('article')
-      .filter({ hasText: "Potter's Wheel Art Camp" })
+      .filter({ hasText: data.program_name })
       .getByRole('button', { name: /register/i })
       .click();
     await registryPage.waitForLoadState('networkidle');

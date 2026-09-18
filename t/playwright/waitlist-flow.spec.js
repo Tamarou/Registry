@@ -2,7 +2,7 @@
 // ABOUTME: Covers offer page display, accept action, and decline action with auth.
 
 const { test, expect } = require('./fixtures/base');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 
 // Run tests serially to share a single test database instance.
 test.describe.configure({ mode: 'serial', timeout: 120000 });
@@ -29,8 +29,13 @@ function seedWaitlistData(testDB) {
   const data = JSON.parse(baseOutput);
 
   // Create a waitlist entry with status='offered' via helper script
-  const waitlistOutput = execSync(
-    `carton exec perl t/playwright/setup_waitlist_test_data.pl '${JSON.stringify(data)}'`,
+  // execFileSync, so the JSON is one argv element rather than something the
+  // shell reparses. Single-quoting it worked only while no value contained an
+  // apostrophe -- the program name now does ("Potter's Wheel Art Camp"), and
+  // that closed the quote mid-argument.
+  const waitlistOutput = execFileSync(
+    'carton',
+    ['exec', 'perl', 't/playwright/setup_waitlist_test_data.pl', JSON.stringify(data)],
     {
       cwd: process.cwd(),
       env: { ...process.env, DB_URL: testDB.dbUrl },

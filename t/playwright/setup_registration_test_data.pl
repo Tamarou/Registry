@@ -266,7 +266,8 @@ for my $i (1..2) {
 # Output JSON
 # ---------------------------------------------------------------------------
 print encode_json({
-    tenant_slug => $tenant_slug,
+    tenant_slug  => $tenant_slug,
+    program_name => $program->name,
     tenant_id   => $tenant->id,
     location_id => $location->id,
     program_id  => $program->id,
