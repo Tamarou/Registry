@@ -5,11 +5,29 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const net = require('net');
 
 const DIR = __dirname; // t/playwright
 const URL_FILE = path.join(DIR, '.shared-db-url');
 const PID_FILE = path.join(DIR, '.shared-db-pid');
 const PORT = 3001;
+
+// A leftover daemon from an earlier run answers /health exactly like ours would,
+// so waitForHealth cannot tell the two apart: setup prints "ready", our own server
+// dies with EADDRINUSE, and every spec then drives a server on a FOREIGN database --
+// pages succeed while the row queries that check them come back empty. This setup is
+// the sole owner of the port, so refuse to start when anything already holds it.
+function assertPortFree() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', (e) =>
+      reject(e.code === 'EADDRINUSE'
+        ? new Error(`port ${PORT} is already in use -- kill the leftover server before running`)
+        : e));
+    probe.once('listening', () => probe.close(resolve));
+    probe.listen(PORT, '127.0.0.1');
+  });
+}
 
 function waitForHealth(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -32,6 +50,8 @@ function waitForHealth(timeoutMs) {
 }
 
 module.exports = async () => {
+  await assertPortFree();
+
   // 1) Start the shared DB and capture its URL from the JSON ready-line.
   const db = spawn('carton', ['exec', 'perl', 't/playwright/shared_db.pl'], {
     cwd: process.cwd(),
@@ -101,6 +121,10 @@ module.exports = async () => {
   try {
     await new Promise((resolve, reject) => {
       server.on('error', reject); // spawn failure (e.g. binary missing) -> fail fast
+      // A server that exits during boot must fail now rather than burn the full
+      // health timeout waiting for a process that is already gone.
+      server.on('exit', (code, signal) =>
+        reject(new Error(`server exited during startup (code ${code}, signal ${signal})`)));
       waitForHealth(120000).then(resolve, reject);
     });
   } catch (e) {
