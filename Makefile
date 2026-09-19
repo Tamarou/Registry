@@ -22,13 +22,18 @@ sql/test-schema.sql: sql/deploy/*.sql sql/sqitch.plan
 	@echo "Schema changed -- regenerating test dump..."
 	@$(MAKE) test-schema
 
+# A missing Playwright used to print "skipping" and exit 0, so `make test-all`
+# reported success having run no browser test at all -- a green run that proves
+# only that the tests did not happen.  If the browser tests cannot run, that is
+# a failure to fix, not a condition to announce.
 test-playwright:
 	@if command -v npm >/dev/null 2>&1 && [ -f package.json ] && npm list @playwright/test >/dev/null 2>&1; then \
 		echo "Running Playwright tests..."; \
 		npm run test:playwright; \
 	else \
-		echo "Playwright not installed - skipping visual tests"; \
-		echo "To install: npm install && npx playwright install"; \
+		echo "Playwright is not installed, so the browser tests did NOT run." >&2; \
+		echo "To install: npm install && npx playwright install" >&2; \
+		exit 1; \
 	fi
 
 test-all: test
