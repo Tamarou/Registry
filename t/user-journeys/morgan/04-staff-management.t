@@ -12,6 +12,7 @@ defer { done_testing };
 use Registry::DAO           qw(Workflow);
 use Test::Registry::DB      ();
 use Test::Registry::Helpers qw(
+  authenticate_as
   workflow_url
   workflow_run_step_url
   workflow_process_step_url
@@ -41,8 +42,20 @@ my $session  = $dao->create(
     }
 );
 
+# Morgan manages staff, so she is staff herself. This journey ran with no
+# signed-in user at all.
+my $acting_user = $dao->create(
+    User => {
+        username  => 'morgan_staffing',
+        name      => 'Acting User',
+        email     => 'morgan_staffing\@test.local',
+        user_type => 'staff',
+    }
+);
+
 {    # Journey: Create a teacher account via the user-creation workflow
     my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $acting_user );
 
     my ($workflow) = $dao->find( Workflow => { slug => 'user-creation' } );
     ok $workflow, 'user-creation workflow found';
@@ -132,6 +145,7 @@ my $session  = $dao->create(
 
 {    # Journey: Create a second teacher and verify both are assigned to sessions
     my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $acting_user );
 
     my ($workflow) = $dao->find( Workflow => { slug => 'user-creation' } );
 

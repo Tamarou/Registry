@@ -69,10 +69,21 @@ test.describe('Payment happy path', () => {
 
   test('card payment charges Stripe and creates an enrollment in the tenant schema',
     async ({ registryPage, testDB }) => {
-      // Self-skip when no test key is present.  A live pk_live_ key must never
-      // reach the browser (see task safety note); the spec only runs with sk_test_.
+      // Self-skip unless BOTH keys are test keys -- the same predicate
+      // global-setup.js uses to decide what the server may see.
+      //
+      // This used to skip only on an ABSENT key, which is not what the line
+      // above it claimed. A developer shell exporting sk_live_ therefore did
+      // not skip: it ran on into the seed, which refused ("live keys are
+      // forbidden in tests") and failed the suite for a reason that had
+      // nothing to do with the change under test. Half a pair is also wrong --
+      // global-setup strips it, so the server would have no key while the
+      // browser mounts Stripe.js against nothing.
+      const testMode =
+        /^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '') &&
+        /^pk_test_/.test(process.env.STRIPE_PUBLISHABLE_KEY || '');
       test.skip(
-        !process.env.STRIPE_SECRET_KEY,
+        !testMode,
         'requires STRIPE_SECRET_KEY=sk_test_... and STRIPE_PUBLISHABLE_KEY=pk_test_...'
       );
 

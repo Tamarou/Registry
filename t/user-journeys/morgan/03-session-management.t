@@ -12,6 +12,7 @@ defer { done_testing };
 use Registry::DAO           qw(Workflow);
 use Test::Registry::DB      ();
 use Test::Registry::Helpers qw(
+  authenticate_as
   workflow_url
   workflow_run_step_url
   workflow_process_step_url
@@ -60,8 +61,20 @@ my $event = $dao->create(
     }
 );
 
+# Morgan schedules sessions, so she is staff. This journey ran anonymously
+# and passed only because the route was open.
+my $acting_user = $dao->create(
+    User => {
+        username  => 'morgan_scheduler',
+        name      => 'Acting User',
+        email     => 'morgan_scheduler\@test.local',
+        user_type => 'staff',
+    }
+);
+
 {    # Journey: Schedule a session with a recurring event via the session-creation workflow
     my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $acting_user );
 
     my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
     ok $workflow, 'session-creation workflow found';
@@ -130,6 +143,7 @@ my $event = $dao->create(
     );
 
     my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $acting_user );
 
     my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
 

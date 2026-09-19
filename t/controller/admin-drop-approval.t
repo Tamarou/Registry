@@ -14,6 +14,7 @@ use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(
+    authenticate_as
     workflow_url
     workflow_process_step_url
 );
@@ -88,6 +89,11 @@ my $admin = $dao->create(User => {
     username => 'adrop_admin', name => 'Admin User',
     user_type => 'admin', email => 'adrop_admin@example.com',
 });
+
+# admin-drop-approval settles somebody else's drop request, so the route asks
+# for the role. The admin exists here already; nothing had ever signed in as
+# them, and the suite passed anyway.
+authenticate_as( $t, $admin );
 
 # Create a pending drop request
 my $drop_request = Registry::DAO::DropRequest->create($dao->db, {
