@@ -143,7 +143,7 @@ subtest 'collect-reason step accepts reason and advances' => sub {
 # One `use Registry::DAO::DropRequest;` in SubmitDropRequest.pm is the fix, and
 # these two assertions become "a pending request exists, the run completed" the
 # day it lands.
-subtest 'review leads to submit-request, which cannot write a drop request' => sub {
+subtest 'review leads to submit-request, and the drop request is written' => sub {
     my $run = create_drop_run();
 
     # Advance through collect-reason
@@ -171,13 +171,19 @@ subtest 'review leads to submit-request, which cannot write a drop request' => s
     my $submit_redirect = $t->post_ok(workflow_process_step_url($workflow, $run, $step) => form => {})
       ->status_is(302)->tx->res->headers->location;
 
-    like $submit_redirect, qr{/submit-request$},
-      'submit sends the parent back to submit-request instead of completing';
+    # Submitting has to leave submit-request. The step catches its own
+    # exceptions and returns the parent here with a generic apology, so
+    # "still on submit-request" is exactly what a failure looks like.
+    unlike $submit_redirect, qr{/submit-request$},
+      'submit does not bounce the parent back to submit-request';
+    like $submit_redirect, qr{/complete$}, 'it completes';
 
-    is $dao->db->query(
-        'SELECT count(*) AS n FROM drop_requests WHERE enrollment_id = ?',
-        $enrollment->id )->hash->{n},
-      0, 'no drop request reached the database';
+    my $row = $dao->db->query(
+        'SELECT status, reason FROM drop_requests WHERE enrollment_id = ?',
+        $enrollment->id )->hash;
+    ok $row, 'the drop request reached the database';
+    is $row->{reason}, 'Family moving to a different city before camp starts',
+      'carrying the reason the parent gave, not a default';
 };
 
 # ============================================================
