@@ -107,7 +107,13 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
         my @events = $self->generate_events_for_session(
             $db, $session, $location, $params, $teacher_id
         );
-        
+
+        # The dates went onto the events; the session needs its own range or
+        # the storefront cannot list it, because ProgramListing filters on
+        # s.end_date. Derived from the events just created rather than from
+        # the parameters, so the range cannot disagree with them (#400).
+        $session->refresh_date_range($db);
+
         return {
             session_id => $session->id,
             session_name => $session->name,
