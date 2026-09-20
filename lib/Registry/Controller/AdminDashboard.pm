@@ -250,15 +250,27 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         # Publishing a session requires its parent program to be published
         # first (spec rule: program publishes before any sessions).
         if ($status eq 'published') {
-            require Registry::DAO::Project;
-            my $project_id = $session->project_id($dao->db);
-            my $program    = $project_id
-                ? Registry::DAO::Project->find($dao->db, { id => $project_id })
-                : undef;
+            # Every programme, not an arbitrary one. A session gathers events
+            # and each event carries its own project, so a session can span
+            # several; publishing it lists meetings from all of them, and a
+            # draft programme must not reach a parent through a sibling that
+            # happens to be published (#404).
+            my $programs = $session->projects($dao->db);
+            my @unpublished =
+                grep { $_->status ne 'published' } $programs->@*;
 
-            unless ($program && $program->status eq 'published') {
+            if ( !$programs->@* || @unpublished ) {
+                # Name the blocker: "parent program must be published first"
+                # told an operator nothing about WHICH one when there is more
+                # than one.
+                my $detail = @unpublished
+                    ? join( ', ', map { $_->name } @unpublished )
+                    : 'the session has no programme';
                 return $self->render(
-                    json   => { error => 'parent program must be published first' },
+                    json   => {
+                        error => 'parent program must be published first',
+                        unpublished_programs => $detail,
+                    },
                     status => 409,
                 );
             }
