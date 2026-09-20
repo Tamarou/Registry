@@ -36,10 +36,34 @@ method process ($db, $form_data, $run = undef) {
         my $schedule = Registry::DAO::Schedule->new();
         my @assignment_errors;
         
+        # A tenant of one has nobody to pick: the teacher select only renders
+        # when other users exist, and events.teacher_id is NOT NULL, so a solo
+        # operator could not schedule anything at all -- every location failed
+        # with a generic "Failed to create session" (#401).
+        #
+        # The person driving the workflow is the honest default. For a solo
+        # business they are the teacher, and the /:workflow guard means there
+        # is always an authenticated user here. Anyone who wants somebody else
+        # teaching assigns them on this same screen; this only fills the gap.
+        my $acting_user_id = $data->{user_id};
+
         # Generate events for each configured location
         my @created_sessions;
         for my $location (@{$data->{configured_locations}}) {
-            my $location_teacher_id = $teacher_assignments->{$location->{id}};
+            my $location_teacher_id =
+                 $teacher_assignments->{$location->{id}}
+              || $acting_user_id;
+
+            unless ($location_teacher_id) {
+                return {
+                    next_step => $self->id,
+                    errors    => [
+                        'No teacher for ' . $location->{name}
+                          . ', and no signed-in user to fall back to.'
+                    ],
+                    data => $self->prepare_data($db),
+                };
+            }
             my $session_data = $self->create_session_for_location(
                 $db, $data, $location, $generation_params, $location_teacher_id
             );
