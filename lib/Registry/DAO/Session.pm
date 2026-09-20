@@ -238,6 +238,42 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         return $start_date le $today;
     }
 
+    # Set the session's own date range from the events linked to it.
+    #
+    # A session carries start_date/end_date of its own, and the storefront
+    # filters on them (ProgramListing: s.end_date >= CURRENT_DATE). A session
+    # generated from a location assignment had its dates written onto the
+    # events and never onto itself, so it was invisible to every parent no
+    # matter how many events it had -- see #400.
+    #
+    # Derived from the rows rather than from whatever parameters produced
+    # them, because those are the only dates that cannot disagree with when
+    # the session actually runs. A session with no events keeps a NULL range,
+    # which is the honest answer for one that has not been scheduled yet.
+    #
+    # This writes the row; it does not refresh this object's fields. Re-find
+    # the session if you need the new values in memory.
+    method refresh_date_range ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        $db->query( <<~'SQL', $id );
+            UPDATE sessions SET
+                start_date = (
+                    SELECT MIN(e.time)::date FROM events e
+                      JOIN session_events se ON se.event_id = e.id
+                     WHERE se.session_id = sessions.id
+                ),
+                end_date = (
+                    SELECT MAX(e.time)::date FROM events e
+                      JOIN session_events se ON se.event_id = e.id
+                     WHERE se.session_id = sessions.id
+                )
+            WHERE id = ?
+            SQL
+
+        return $self;
+    }
+
     # Get sessions available for enrollment transfers
     sub get_available_for_transfer($class, $db, $exclude_session_id) {
         $db = $db->db if $db isa Registry::DAO;

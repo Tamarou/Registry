@@ -2,7 +2,7 @@
 // ABOUTME: Self-sufficient -- starts from nothing and ends where a parent can find her work.
 const { test, expect } = require('./fixtures/base');
 const {
-  loginToken, queryJson, execSql, loginWithToken, daysFromNow,
+  loginToken, queryJson, loginWithToken, daysFromNow,
 } = require('./journey_helpers');
 
 // Serial and ordered: Morgan cannot build a program before she has a tenant to
@@ -339,18 +339,16 @@ test.describe('Morgan: from signup to a program a parent can find', () => {
     const progBody = await progResp.json();
     expect(progBody.status).toBe('published');
 
-    // Set future start_date and end_date on the session so the storefront
-    // query (end_date >= CURRENT_DATE) passes. Use near-future dates so Amara's
-    // teacher dashboard also surfaces the event in Leg 3.
-    const endDate = daysFromNow(7);
-    // Use execSql (not queryJson) because data-modifying CTEs cannot appear
-    // inside the json_agg subquery wrapper that queryJson uses.
-    const updateResult = execSql(
+    // Generation sets the session's own date range from the events it created
+    // (#400), and the storefront filters on it. Read it back rather than
+    // writing it: this spec used to UPDATE these dates in and then assert the
+    // storefront listed the session, which proved only that the patch worked.
+    const sessionDates = queryJson(
       testDB, state.slug,
-      `UPDATE sessions SET start_date = ?, end_date = ? WHERE id = ?`,
-      startDate, endDate, state.sessionId
-    );
-    expect(updateResult, 'session dates updated').toBe('ok');
+      'SELECT start_date, end_date FROM sessions WHERE id = ?', state.sessionId
+    )[0];
+    expect(sessionDates.start_date, 'generation gave the session a start date').toBeTruthy();
+    expect(sessionDates.end_date, 'and an end date, which the storefront filters on').toBeTruthy();
 
     // Publish session (program must be published first)
     const sessResp = await page.request.post(`${SUB}/admin/sessions/${state.sessionId}/status`, {
