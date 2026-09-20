@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(
+    authenticate_as
     workflow_url
     workflow_process_step_url
 );
@@ -36,6 +37,17 @@ for my $file (@files) {
 
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
+
+# The workflows driven below are admin tooling, and the /:workflow guard now
+# asks for the role. This file drove them with no logged-in user at all and
+# passed -- that was the hole, not a property to preserve.
+my $acting_admin = $dao->create( User => {
+    username  => 'validation_admin',
+    name      => 'Workflow Admin',
+    email     => 'validation_admin@test.local',
+    user_type => 'admin',
+} );
+authenticate_as( $t, $acting_admin );
 
 my ($workflow) = $dao->find(Workflow => { slug => 'session-creation' });
 ok $workflow, 'session-creation workflow exists';

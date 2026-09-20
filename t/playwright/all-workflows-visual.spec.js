@@ -2,16 +2,58 @@
 // ABOUTME: Ensures layout consistency across different workflow implementations
 
 const { test, expect } = require('./fixtures/base');
+const { execSync } = require('child_process');
+const { loginToken, loginWithToken } = require('./journey_helpers');
 
 // Workflows that render a full HTML page with proper structure (lang, charset, htmx).
-// session-creation and event-creation require authentication and serve a minimal gate
-// page without a lang attribute, so they are excluded from layout-structure assertions.
+//
+// These are guarded by the /:workflow catch-all, so this spec signs in as an
+// admin before each test. It used to browse anonymously, and user-creation
+// dropped out of this list the moment the guard landed -- it was only ever
+// passing because the route was open.
+//
+// Three workflows stay out, and the reasons are all about the templates rather
+// than the guard:
+//   session-creation and event-creation have hand-written standalone
+//     index.html.ep documents that use no layout at all -- hence no lang
+//     attribute and no htmx. (An older comment here blamed an authentication
+//     gate page; signing in does not change them, because the layout is not
+//     what they are missing. session-creation's is titled "Login" and offers a
+//     bare "Start Here" button -- an unfinished scaffold, see #399.)
+//   summer-camp-registration is public but its landing step uses
+//     layout 'default', which loads no htmx.
 const WORKFLOWS_TO_TEST = [
   'tenant-signup',
   'user-creation'
 ];
 
+
+// tenant-signup is public; the rest are not. One admin, and a fresh magic-link
+// token per test because each test gets its own browser context and a token is
+// single use.
+let adminId;
+test.beforeAll(async ({ testDB }) => {
+  let out;
+  try {
+    out = execSync('carton exec perl t/playwright/setup_admin_test_data.pl', {
+      cwd: process.cwd(),
+      env: { ...process.env, DB_URL: testDB.dbUrl },
+      encoding: 'utf8',
+      timeout: 120000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch (e) {
+    throw new Error(`seed failed: ${e.stderr || e.stdout || e.message}`);
+  }
+  if (!out) throw new Error('setup_admin_test_data.pl produced no output');
+  adminId = JSON.parse(out.split('\n').pop()).admin_id;
+});
+
 test.describe('All Workflows Visual Consistency', () => {
+  test.beforeEach(async ({ registryPage, testDB }) => {
+    await loginWithToken(registryPage, loginToken(testDB, 'registry', adminId));
+  });
+
   for (const workflowSlug of WORKFLOWS_TO_TEST) {
     test(`${workflowSlug} workflow has proper layout structure`, async ({ registryPage }) => {
       // Navigate to workflow

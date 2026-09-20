@@ -11,6 +11,7 @@ use Mojo::Home              ();
 use Registry::DAO           qw(Workflow);
 use Test::Registry::DB      ();
 use Test::Registry::Helpers qw(
+  authenticate_as
   workflow_url
   workflow_run_step_url
   workflow_process_step_url
@@ -39,8 +40,19 @@ my $event = $dao->create(
     }
 );
 
+# session-creation is admin tooling and the route now asks for the role.
+my $acting_user = $dao->create(
+    User => {
+        username  => 'session_admin',
+        name      => 'Acting User',
+        email     => 'session_admin\@test.local',
+        user_type => 'admin',
+    }
+);
+
 {
     my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $acting_user );
 
     my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
     my $first_step = $workflow->first_step( $dao->db );
@@ -124,6 +136,7 @@ my $event = $dao->create(
 
 {
     my $t          = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $acting_user );
     my ($workflow) = $dao->find( Workflow => { slug => 'session-creation' } );
     my $first_step = $workflow->first_step( $dao->db );
     my $next_url =

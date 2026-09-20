@@ -12,6 +12,7 @@ defer { done_testing };
 use Registry::DAO           qw(Workflow);
 use Test::Registry::DB      ();
 use Test::Registry::Helpers qw(
+  authenticate_as
   workflow_url
   workflow_run_step_url
   workflow_process_step_url
@@ -31,8 +32,21 @@ for my $file (@files) {
     Workflow->from_yaml( $dao, $file->slurp );
 }
 
+# Morgan manages programmes, so she is staff. These journeys drove the
+# builders with nobody signed in and passed -- they passed BECAUSE the routes
+# were open, which is what the /:workflow guard closes.
+my $acting_user = $dao->create(
+    User => {
+        username  => 'morgan_manager',
+        name      => 'Acting User',
+        email     => 'morgan_manager\@test.local',
+        user_type => 'staff',
+    }
+);
+
 {    # Journey: Create a new educational program via the project-creation workflow
     my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $acting_user );
 
     my ($workflow) =
       $dao->find( Workflow => { slug => 'project-creation' } );

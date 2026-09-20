@@ -493,6 +493,17 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Helper: enforce whatever role a workflow slug demands, if it demands
+        # one. Shared by the /:workflow guard and by the callcc leg, which
+        # starts a run of a workflow the URL names in a different placeholder.
+        # Returns true when the request may proceed.
+        $self->helper(
+            require_workflow_role => sub ( $c, $slug ) {
+                my $roles = $self->workflow_roles($slug) or return 1;
+                return $c->require_role(@$roles);
+            }
+        );
+
         $self->hook(
             before_server_start => sub ( $server, @ ) {
                 $self->import_schemas;
@@ -784,8 +795,14 @@ class Registry :isa(Mojolicious) {
         $r->post('/waitlist/:id/accept')->to('waitlist#accept')->name('waitlist_accept');
         $r->post('/waitlist/:id/decline')->to('waitlist#decline')->name('waitlist_decline');
 
-        # Workflow routes -- catch-all, must be declared last among /:path routes
-        my $w = $r->any("/:workflow")->to('workflows#');
+        # Workflow routes -- catch-all, must be declared last among /:path routes.
+        # Nothing stood between a workflow slug and an anonymous visitor here:
+        # the controller checks no role of its own, so every admin surface was
+        # reachable by anyone who knew its slug. The guard is per-slug rather
+        # than blanket because the acquisition funnels live under this same
+        # catch-all -- see workflow_roles.
+        my $w = $r->under("/:workflow")->to( 'workflows#',
+            cb => sub ($c) { $c->require_workflow_role( $c->stash('workflow') ) } );
         $w->get('')->to('#index')->name("workflow_index");
         $w->post('')->to('#start_workflow')->name("workflow_start");
         $w->get("/:run/:step")->to('#get_workflow_run_step')
@@ -843,6 +860,63 @@ class Registry :isa(Mojolicious) {
 
     method storefront_workflow ($tenant) {
         return $tenant eq 'registry' ? 'registry-storefront' : 'tenant-storefront';
+    }
+
+    # The roles a workflow slug demands of whoever reaches it directly, or
+    # undef for the ones anybody may walk into.
+    #
+    # This names what must be GUARDED rather than what may be public, because
+    # the public set is open-ended: a project's registration_workflow metadata
+    # aims the storefront's call-to-action at whichever workflow the tenant
+    # chose (templates/tenant-storefront/program-listing.html.ep), so an
+    # allow-list of public slugs would quietly close a tenant's own funnel.
+    # tenant-signup and summer-camp-registration are the two acquisition
+    # funnels and must stay anonymous -- registration creates the visitor's
+    # account partway through, at its account-check step, so even requiring a
+    # login would be wrong.
+    #
+    # A slug earns a role here when its steps write tenant-owned configuration
+    # or act on records the visitor does not own.
+    method workflow_roles ($slug) {
+        state %ROLES = (
+            # Admin tooling: the dashboard and the approval flows that settle
+            # other people's drop and transfer requests, plus every builder
+            # that writes programs, locations, sessions, pricing, users,
+            # templates and workflows. attendance-check is a background job
+            # workflow and is not a visitor-facing surface at all.
+            ( map { $_ => [ 'admin', 'staff' ] } qw(
+                admin-dashboard
+                admin-drop-approval
+                admin-transfer-approval
+                attendance-check
+                drop-request-processing
+                event-creation
+                location-creation
+                location-management
+                outcome-definition-creation
+                pricing-plan-creation
+                program-creation
+                program-creation-enhanced
+                program-location-assignment
+                program-setup
+                program-type-management
+                project-creation
+                session-creation
+                template-editor
+                transfer-request-processing
+                user-creation
+                workflow-creation
+                workflow-step-creation
+            ) ),
+
+            # A parent acts on their own enrollment; staff and admins reach the
+            # same flows on a family's behalf.
+            ( map { $_ => [ 'parent', 'admin', 'staff' ] } qw(
+                parent-drop-request
+                parent-transfer-request
+            ) ),
+        );
+        return $ROLES{ $slug // '' };
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {

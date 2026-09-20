@@ -768,6 +768,12 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     
 
     method start_continuation {
+        # The target is a workflow slug in its own right, so it needs the same
+        # role check the /:workflow guard applies -- otherwise a callcc out of
+        # any public storefront starts an admin run that the guard only
+        # notices on the redirect back, after the first step has already run.
+        return unless $self->require_workflow_role( $self->param('target') );
+
         my $dao = $self->dao;
         my $workflow = $dao->find(
             Workflow => {
