@@ -27,6 +27,13 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     # When metadata is empty (e.g. a Session created directly and linked
     # to a program via a separate Event row), fall back to the
     # session_events -> events join.
+    # ONE project, for display. A session can have several -- an event has
+    # exactly one project and a session gathers events that need not share it
+    # -- so anything making a DECISION about the session's programmes wants
+    # projects() below, not this. Ordered so that a multi-project session at
+    # least answers the same way twice; it used to be LIMIT 1 with no ORDER BY,
+    # which meant the publish gate could reach opposite conclusions about the
+    # same session on consecutive calls (#404).
     method project_id ($db = undef) {
         return $metadata->{project_id} if $metadata->{project_id};
         return undef unless $db && $id;
@@ -34,10 +41,34 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         my $row = $db->query(
             q{SELECT e.project_id FROM session_events se
               JOIN events e ON e.id = se.event_id
-              WHERE se.session_id = ? LIMIT 1},
+              WHERE se.session_id = ?
+              ORDER BY e.time, e.project_id LIMIT 1},
             $id,
         )->hash;
         return $row ? $row->{project_id} : undef;
+    }
+
+    # EVERY project this session's events belong to, earliest first. The
+    # publish rule ("a session may not go on sale before its programme") only
+    # means anything for a multi-project session if it covers all of them.
+    method projects ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return [] unless $id;
+
+        require Registry::DAO::Project;
+        my $rows = $db->query(
+            q{SELECT e.project_id, MIN(e.time) AS first_meeting
+                FROM session_events se
+                JOIN events e ON e.id = se.event_id
+               WHERE se.session_id = ?
+               GROUP BY e.project_id
+               ORDER BY first_meeting, e.project_id},
+            $id,
+        )->hashes;
+
+        return [ grep { defined }
+            map { Registry::DAO::Project->find( $db, { id => $_->{project_id} } ) }
+            $rows->@* ];
     }
 
     method location_id ($db = undef) {

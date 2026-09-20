@@ -133,4 +133,40 @@ subtest 'unpublishing a priced session is never blocked' => sub {
         'a tenant whose Connect lapsed can still withdraw what is already listed';
 };
 
+# A session can have several projects; an event has exactly one, and projects
+# are reused across events. The publish rule is "the programme goes first", so
+# with more than one programme under a session it has to mean ALL of them --
+# Session->project_id answered whichever row LIMIT 1 produced, so the gate
+# checked an arbitrary one and the answer was not even stable between calls.
+subtest 'a session is not publishable while any of its programmes is draft' => sub {
+    set_connect(1);    # Connect ready, so only the programme rule is in play
+
+    my $draft_program = $dao->create( Project => {
+        status => 'draft', name => 'Draft Companion Programme',
+        program_type_slug => 'summer-camp', metadata => {},
+    } );
+
+    my $session = new_session('Spans Two Programmes');
+    # Second event on the SAME session, belonging to a DIFFERENT project.
+    my $second = $dao->create( Event => {
+        time => '2026-06-16 07:00:00', duration => 60,
+        location_id => $location->id, project_id => $draft_program->id,
+        teacher_id => $teacher->id, capacity => 10, metadata => {},
+    } );
+    $session->add_events( $dao->db, $second->id );
+
+    my $projects = $session->projects( $dao->db );
+    is scalar( $projects->@* ), 2, 'the session reports both of its programmes';
+
+    is publish($session), 409, 'publishing is refused while one of them is draft';
+
+    my $after = Registry::DAO::Session->find( $dao->db, { id => $session->id } );
+    is $after->status, 'draft', 'and the session really did not publish';
+
+    # Publishing the laggard clears the gate -- proving the refusal was about
+    # that programme and not something incidental to a two-event session.
+    $draft_program->update( $dao->db, { status => 'published' } );
+    is publish($session), 200, 'and it publishes once every programme is published';
+};
+
 done_testing;
