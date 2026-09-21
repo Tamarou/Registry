@@ -193,6 +193,12 @@
                         </button>
                     </div>
                 </div>
+                %# Publishing says nothing on its own: both publish forms are
+                %# hx-swap="none", so a refusal is discarded and a success
+                %# leaves a stale badge (#409, #181). One region, written to by
+                %# the one handler in the script at the foot of this page,
+                %# because every publish control should behave the same way.
+                <div id="publish-feedback" class="alert alert-error" role="alert" hidden></div>
                 <div id="program-overview-content" class="dashboard-card-content">
                     %= include 'admin-dashboard/program_overview'
                 </div>
@@ -470,4 +476,43 @@ setInterval(function() {
     htmx.trigger('#todays-events-content', 'refresh');
     htmx.trigger('#waitlist-content', 'refresh');
 }, 300000); // 5 minutes
+
+// Every publish control, one behaviour. The forms POST with hx-swap="none"
+// and the endpoint answers JSON, so without this the page never moves: a 409
+// explaining exactly what to do is discarded (#409), and a success leaves the
+// badge and the button label describing the state the row was in before the
+// click (#181).
+//
+// Bound to document rather than to the forms: the partial holding them is
+// replaced whenever the section reloads, and a handler bound to the old
+// markup would go with it.
+document.addEventListener('htmx:afterRequest', function (evt) {
+    var el = evt.detail && evt.detail.elt;
+    if (!el || !el.closest) return;
+    if (!el.closest('form.publish-toggle, form.publish-toggle-session')) return;
+
+    var box = document.getElementById('publish-feedback');
+    var xhr = evt.detail.xhr;
+
+    if (evt.detail.successful) {
+        if (box) { box.hidden = true; box.textContent = ''; }
+        // Re-read the section so the badge and the button agree with the row.
+        htmx.ajax('GET', '<%= $step_url %>?section=program_overview',
+                  '#program-overview-content');
+        return;
+    }
+
+    var message = 'That could not be changed. Please try again.';
+    try {
+        var body = JSON.parse(xhr.responseText);
+        if (body.error) { message = body.error; }
+        if (body.unpublished_programs) {
+            message += ' Still in draft: ' + body.unpublished_programs + '.';
+        }
+    } catch (e) {
+        // A non-JSON body (a proxy error page, say) leaves the generic message
+        // rather than showing the operator raw HTML.
+    }
+    if (box) { box.textContent = message; box.hidden = false; }
+});
 </script>
