@@ -56,9 +56,13 @@ my $location = Registry::DAO::Location->create( $t_db, {
     address_info => { street => '1 Test St' },
 });
 
+# Capacity matters: process_session_waitlist computes capacity minus enrolled
+# and returns early when that is not positive, so a session without one can
+# never promote anybody.
 my $session = Registry::DAO::Session->create( $t_db, {
-    name => 'WL Test Session',
-    slug => 'wl-test-session-' . $$,
+    name     => 'WL Test Session',
+    slug     => 'wl-test-session-' . $$,
+    capacity => 10,
 });
 
 # Create a cancelled enrollment with updated_at = NOW() (within the last hour).
@@ -179,6 +183,30 @@ subtest 'perform: global sweep calls process_recent_cancellations per tenant' =>
     my @registry_calls = grep { $_ eq 'registry' } @called_schemas;
     is scalar(@registry_calls), 0,
         'registry schema is not included in the sweep (tenant data is not there)';
+};
+
+# The two halves of the chain were each proven and the join between them was
+# not: the subtest above stubs process_recent_cancellations to count dispatch,
+# and t/dao/waitlist-stress-test.t proves the DAO promotes. Nothing ran the
+# scheduled job and looked at whether anybody was actually offered a seat.
+#
+# This must stay AFTER the dispatch subtest: that one replaces the method, so
+# running it first would leave nothing for this to observe.
+subtest 'perform: the sweep really does offer the freed seat' => sub {
+    my $before = $t_db->query(
+        'SELECT status FROM waitlist WHERE id = ?', $wl_entry->id )->hash;
+    is $before->{status}, 'waiting', 'the family is waiting before the sweep runs';
+
+    Registry::Job::ProcessWaitlist->perform($job);
+
+    my $after = $t_db->query(
+        'SELECT status, offered_at, expires_at FROM waitlist WHERE id = ?',
+        $wl_entry->id )->hash;
+
+    is $after->{status}, 'offered',
+        'the scheduled sweep promoted them without anyone pressing anything';
+    ok $after->{offered_at}, 'and recorded when the offer went out';
+    ok $after->{expires_at}, 'and when it lapses, so the seat is not held forever';
 };
 
 $t->cleanup_test_database;
