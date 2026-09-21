@@ -486,6 +486,16 @@ setInterval(function() {
 // Bound to document rather than to the forms: the partial holding them is
 // replaced whenever the section reloads, and a handler bound to the old
 // markup would go with it.
+// Which slice of the list the operator is looking at. Refreshing after a
+// publish has to re-ask for THAT one: reloading the default silently threw
+// them back to Current, so a programme published while filtered to Upcoming
+// disappeared from the screen the moment it succeeded.
+var programOverviewUrl = '<%= $step_url %>?section=program_overview';
+document.addEventListener('click', function (evt) {
+    var btn = evt.target.closest && evt.target.closest('[hx-get*="section=program_overview"]');
+    if (btn) { programOverviewUrl = btn.getAttribute('hx-get'); }
+});
+
 document.addEventListener('htmx:afterRequest', function (evt) {
     var el = evt.detail && evt.detail.elt;
     if (!el || !el.closest) return;
@@ -497,8 +507,7 @@ document.addEventListener('htmx:afterRequest', function (evt) {
     if (evt.detail.successful) {
         if (box) { box.hidden = true; box.textContent = ''; }
         // Re-read the section so the badge and the button agree with the row.
-        htmx.ajax('GET', '<%= $step_url %>?section=program_overview',
-                  '#program-overview-content');
+        htmx.ajax('GET', programOverviewUrl, '#program-overview-content');
         return;
     }
 
