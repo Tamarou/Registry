@@ -18,6 +18,25 @@
             <input type="password" name="password" id="password" placeholder="Enter password" required />
         </div>
 
+        %# Without this the form could only ever make parents, whatever the
+        %# step behind it accepted -- users.user_type defaults to 'parent'.
+        %# Administrator is offered only to an administrator: user-creation is
+        %# reachable by staff too, and a staff member who could grant admin
+        %# could promote themselves.
+        % my $caller = stash('current_user') || {};
+        % my $caller_type = $caller->{user_type} || $caller->{role} || '';
+        <div class="form-group">
+            <label for="user_type">Account type</label>
+            <select name="user_type" id="user_type" required>
+                <option value="parent">Parent</option>
+                <option value="student">Student</option>
+                <option value="staff">Staff</option>
+                % if ($caller_type eq 'admin') {
+                    <option value="admin">Administrator</option>
+                % }
+            </select>
+        </div>
+
         <div class="form-actions">
             <button type="submit" class="btn btn-primary">Create User</button>
         </div>
