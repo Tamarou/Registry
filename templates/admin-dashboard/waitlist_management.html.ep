@@ -1,4 +1,13 @@
+%# This queue moves by itself: a scheduled job offers the next waiting family
+%# when a seat frees, and another expires offers nobody answered. Saying so
+%# matters -- a screen that lists people and offers no way to act on them
+%# reads as broken, which is how it came to have an "Offer Spot" button
+%# posting to a route that was never written (#407).
 % if (@$waitlist_data) {
+    <p class="text-xs text-gray-500 mb-2">
+        Spots are offered automatically as they free up, in queue order.
+        Offers that go unanswered expire and pass to the next family.
+    </p>
     <div class="space-y-3">
         % for my $entry (@$waitlist_data) {
             <div class="border border-gray-200 rounded-lg p-3">
@@ -35,6 +44,11 @@
                                 <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
                                     🎉 Offered
                                 </div>
+                                % if ($entry->{offered_at}) {
+                                    <div class="text-xs text-gray-500 mt-1">
+                                        Offered <%= DateTime->from_epoch(epoch => $entry->{offered_at})->strftime('%m/%d %I:%M %p') %>
+                                    </div>
+                                % }
                                 % if ($entry->{expires_at}) {
                                     <div class="text-xs text-gray-500 mt-1">
                                         Expires <%= DateTime->from_epoch(epoch => $entry->{expires_at})->strftime('%m/%d %I:%M %p') %>
@@ -52,12 +66,6 @@
                         
                         <!-- Quick actions -->
                         <div class="mt-2 space-y-1">
-                            % if ($entry->{status} eq 'waiting') {
-                                <button onclick="processWaitlistEntry('<%= $entry->{id} %>')" 
-                                        class="text-xs text-blue-600 hover:text-blue-800 block">
-                                    Offer Spot
-                                </button>
-                            % }
                             <a href="mailto:<%= $entry->{parent_email} %>" 
                                class="text-xs text-gray-600 hover:text-gray-800 block">
                                 Contact Parent
@@ -76,29 +84,3 @@
         <p class="mt-2 text-sm text-gray-500">No waitlist entries</p>
     </div>
 % }
-
-<script>
-async function processWaitlistEntry(entryId) {
-    if (!confirm('Are you sure you want to offer a spot to this waitlist entry?')) return;
-    
-    try {
-        const response = await fetch(`/admin/dashboard/process_waitlist_entry`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ entry_id: entryId })
-        });
-        
-        if (response.ok) {
-            // Refresh the waitlist section
-            htmx.trigger('#waitlist-content', 'refresh');
-            alert('Waitlist entry processed successfully. Parent will be notified.');
-        } else {
-            alert('Failed to process waitlist entry. Please try again.');
-        }
-    } catch (error) {
-        alert('Error processing waitlist entry.');
-    }
-}
-</script>

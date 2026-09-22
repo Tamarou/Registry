@@ -234,16 +234,34 @@ This offer will expire automatically if not accepted by the deadline.
     }
     
     # Helper to get session capacity
+    # Capacity lives on the SESSION. This read only events.capacity, which
+    # nothing writes -- GenerateEvents puts the operator's number on the
+    # session and the per-event payload has no capacity key at all (#408).
+    # So it returned nothing, available_spots came out <= 0, and the sweep
+    # returned early for every session built through the screens: automatic
+    # promotion never happened for anybody, silently, because a waitlist that
+    # does not move looks exactly like a waitlist with nobody due a place.
+    #
+    # The event is kept as a fallback rather than dropped, for any row that
+    # does carry a per-meeting number -- reached through session_events,
+    # because events have no session_id column. The original query joined on
+    # e.session_id, so it did not merely return the wrong number: it threw,
+    # and process_session_waitlist died on every session it looked at.
     sub get_session_capacity ($class, $dao, $session_id) {
         my $sql = q{
-            SELECT e.capacity
-            FROM events e
-            WHERE e.session_id = ?
-            LIMIT 1
+            SELECT COALESCE(
+                s.capacity,
+                (SELECT e.capacity FROM events e
+                   JOIN session_events se ON se.event_id = e.id
+                  WHERE se.session_id = s.id AND e.capacity IS NOT NULL
+                  LIMIT 1)
+            )
+            FROM sessions s
+            WHERE s.id = ?
         };
-        
+
         my $result = $dao->db->query($sql, $session_id)->array;
-        return $result ? $result->[0] : 0;
+        return $result && defined $result->[0] ? $result->[0] : 0;
     }
     
     # Helper to get enrolled count
