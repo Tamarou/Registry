@@ -129,5 +129,13 @@ test.describe('Jordan: running the business day', () => {
     // than reading once, so a slow write cannot pass for a refusal.
     await expect.poll(statusOf, { timeout: 5000 }).toBe('draft');
     expect(statusOf(), 'a paid session stays off sale until it can be paid for').toBe('draft');
+
+    // And he is TOLD why. The server has always answered 409 with the reason;
+    // hx-swap="none" threw it away, so the screen sat there and the only
+    // available conclusion was that publishing is broken (#409).
+    const feedback = registryPage.locator('#publish-feedback');
+    await expect(feedback, 'the refusal reaches the screen').toBeVisible({ timeout: 10000 });
+    await expect(feedback, 'and says what is actually wrong')
+      .toContainText(/stripe connect/i);
   });
 });
