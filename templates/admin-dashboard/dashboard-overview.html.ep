@@ -486,15 +486,35 @@ setInterval(function() {
 // Bound to document rather than to the forms: the partial holding them is
 // replaced whenever the section reloads, and a handler bound to the old
 // markup would go with it.
-// Which slice of the list the operator is looking at. Refreshing after a
-// publish has to re-ask for THAT one: reloading the default silently threw
-// them back to Current, so a programme published while filtered to Upcoming
-// disappeared from the screen the moment it succeeded.
-var programOverviewUrl = '<%= $step_url %>?section=program_overview';
-document.addEventListener('click', function (evt) {
-    var btn = evt.target.closest && evt.target.closest('[hx-get*="section=program_overview"]');
-    if (btn) { programOverviewUrl = btn.getAttribute('hx-get'); }
-});
+// Put a row in the state the server just reported: the badge it shows and the
+// action its button now offers. This is the whole of #181 -- the forms are
+// hx-swap="none", so without it a successful publish leaves the badge reading
+// Draft and the button still offering Publish.
+function reflectStatus(form, status) {
+    var row = form && form.closest('li[data-session-id], [data-program-id]');
+    if (!row) { return; }
+
+    var badge = row.querySelector('.badge');
+    if (badge) {
+        badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        var tone = status === 'published' ? 'badge-green'
+                 : status === 'closed'    ? 'badge-gray'
+                                          : 'badge-yellow';
+        var spacing = badge.classList.contains('ml-2') ? ' ml-2' : '';
+        badge.className = 'badge ' + tone + spacing;
+    }
+
+    var input  = form.querySelector('input[name="status"]');
+    var button = form.querySelector('button[type="submit"]');
+    if (input && button) {
+        var published = status === 'published';
+        // The hidden value is what the NEXT press will ask for, so it is the
+        // opposite of where the row now stands.
+        input.value = published ? 'draft' : 'published';
+        button.textContent = published ? 'Unpublish' : 'Publish';
+        button.className = 'btn btn-sm ' + (published ? 'btn-outline' : 'btn-primary');
+    }
+}
 
 document.addEventListener('htmx:afterRequest', function (evt) {
     var el = evt.detail && evt.detail.elt;
@@ -506,8 +526,18 @@ document.addEventListener('htmx:afterRequest', function (evt) {
 
     if (evt.detail.successful) {
         if (box) { box.hidden = true; box.textContent = ''; }
-        // Re-read the section so the badge and the button agree with the row.
-        htmx.ajax('GET', programOverviewUrl, '#program-overview-content');
+        // Update THIS row from what the server said, rather than reloading the
+        // whole section. Reloading replaced the list under the operator's
+        // cursor: publish a programme, and the next thing you click is inside
+        // markup that has just been swapped out. It also threw away scroll
+        // position and whichever slice was being viewed.
+        var form = el.closest('form.publish-toggle, form.publish-toggle-session');
+        try {
+            var body = JSON.parse(xhr.responseText);
+            if (body && body.status) { reflectStatus(form, body.status); }
+        } catch (e) {
+            // No usable body: leave the row alone rather than guess at it.
+        }
         return;
     }
 
