@@ -62,6 +62,14 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     const card = registryPage.locator('article').filter({ hasText: data.program_name });
     await expect(card, 'the program has a card of its own').toBeVisible({ timeout: 10000 });
     await expect(card.getByRole('button', { name: /register/i })).toBeVisible();
+
+    // She is deciding here, so the card has to say what it costs and whether
+    // there is room. ProgramListing computed both and the template dropped
+    // them, so she chose on a name and a pair of dates alone.
+    await expect(card, 'the card says what it costs')
+      .toContainText('$300');
+    await expect(card, 'and whether there is still room')
+      .toContainText(/\b\d+ (?:spot|place)s? left\b/i);
   });
 
   // The registration screens themselves, as a signed-in returning parent --

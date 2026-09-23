@@ -87,6 +87,28 @@
                     <p class="landing-feature-description"><%= $project->notes %></p>
                   % }
 
+                  %# What a parent decides on, and what the card used to leave
+                  %# out: ProgramListing computed both of these and nothing
+                  %# rendered them, so the choice was made on a name and a pair
+                  %# of dates. Availability is only shown when the session has
+                  %# a capacity to count against -- an unlimited one has no
+                  %# number to give, and "0 spots left" would be a lie.
+                  % if ($first_session) {
+                    <p class="landing-feature-meta">
+                      % if (defined $first_session->{best_price}) {
+                        <span class="landing-feature-price"><%= $first_session->{best_price} %></span>
+                      % }
+                      % if ($first_session->{is_full}) {
+                        <span class="landing-feature-availability is-full">Full</span>
+                      % } elsif (defined $first_session->{available_spots}) {
+                        %# One text node, not three: a number on its own line
+                        %# reads the same to a person and differently to
+                        %# anything matching the phrase.
+                        <span class="landing-feature-availability"><%= $first_session->{available_spots} %> <%= $first_session->{available_spots} == 1 ? 'spot' : 'spots' %> left</span>
+                      % }
+                    </p>
+                  % }
+
                   <div class="landing-cta-container" style="margin-top: var(--space-4);">
                     % if ($first_session) {
                       <form method="POST"
