@@ -77,22 +77,30 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
     }
 
     # Get enrollment alerts (high capacity utilization)
+    # Enrolment counts against the SESSION, so the session's capacity is what
+    # "nearly full" is measured against. This divided by events.capacity, which
+    # nothing writes: COUNT / NULL is NULL, NULL > 0.9 is not true, and the
+    # panel has therefore never reported a single session. A meeting's own
+    # capacity answers a different question -- who fits in the room that week
+    # -- and a session with no capacity at all has no ratio to take, so it is
+    # excluded rather than divided by nothing (#408).
     sub get_enrollment_alerts($class, $db) {
         my $sql = q{
             SELECT
                 p.name as program_name,
                 s.name as session_name,
                 COUNT(DISTINCT e.id) as enrolled_count,
-                ev.capacity,
-                (COUNT(DISTINCT e.id)::float / ev.capacity * 100) as utilization_rate
+                s.capacity,
+                (COUNT(DISTINCT e.id)::float / s.capacity * 100) as utilization_rate
             FROM sessions s
             JOIN session_events se ON se.session_id = s.id
             JOIN events ev ON ev.id = se.event_id
             JOIN projects p ON ev.project_id = p.id
             JOIN enrollments e ON s.id = e.session_id AND e.status = 'active'
             WHERE s.start_date > ?
-            GROUP BY p.id, s.id, ev.capacity
-            HAVING COUNT(DISTINCT e.id)::float / ev.capacity > 0.9
+              AND s.capacity IS NOT NULL
+            GROUP BY p.id, s.id, s.capacity
+            HAVING COUNT(DISTINCT e.id)::float / s.capacity > 0.9
             ORDER BY utilization_rate DESC
             LIMIT 5
         };
