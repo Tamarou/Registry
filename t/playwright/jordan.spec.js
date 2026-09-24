@@ -112,7 +112,19 @@ test.describe('Jordan: running the business day', () => {
     await unpublish.click();
     await expect.poll(statusOf, { timeout: 10000 }).toBe('draft');
 
-    // Reloaded, because hx-swap="none" leaves the old button in place (#181).
+    // The screen keeps up, without a reload. The forms are hx-swap="none", so
+    // the row used to keep claiming Published and offering Unpublish until
+    // something else redrew it (#181) -- a successful press looked exactly
+    // like a refused one.
+    await expect(sessionRow.locator('.badge'), 'the badge follows the row')
+      .toHaveText(/draft/i, { timeout: 10000 });
+    await expect(
+      sessionRow.getByRole('button', { name: /^publish$/i }),
+      'and the button now offers the opposite action'
+    ).toBeVisible();
+
+    // Reloaded anyway, to prove the row and the database agree rather than
+    // only the row having been rewritten.
     await registryPage.goto('/admin/dashboard');
     await registryPage.waitForLoadState('networkidle');
 

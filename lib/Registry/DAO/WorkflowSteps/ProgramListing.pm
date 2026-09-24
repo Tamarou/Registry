@@ -7,6 +7,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowStep) {
     use Registry::DAO::Enrollment;
+    use Registry::Utility::PriceFormat qw(format_price);
     use Registry::DAO::ProgramType;
     use Registry::DAO::Session;
 
@@ -173,6 +174,14 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 has_waitlist    => $is_full,
                 pricing_plans   => $plans,
                 best_price_cents => $best_price_cents,
+                # Formatted here rather than in the template: format_price
+                # knows that $200 should not read as $200.00 and that $19.99
+                # must not be rounded, and the storefront should not have to.
+                # "From" only when there is a choice to be cheapest among.
+                best_price      => defined $best_price_cents
+                    ? ( @$plans > 1 ? 'From ' : '' )
+                      . format_price( $best_price_cents, $plans->[0]{currency} )
+                    : undef,
                 location_id     => $row->{location_id},
                 location_name   => $row->{location_name},
                 location_slug   => $row->{location_slug},
