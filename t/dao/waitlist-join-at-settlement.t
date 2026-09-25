@@ -151,4 +151,32 @@ subtest 'a child who already holds a seat there is not queued' => sub {
     is scalar(@$rows), 0, 'the enrolled child is left alone';
 };
 
+# A run entered from somewhere other than the storefront has no location_id, so
+# the snapshot has none either -- and waitlist.location_id is NOT NULL. Dropping
+# the child there would be a promise made on screen and kept nowhere.
+subtest 'a waiting child with no location falls back to where the session meets' => sub {
+    my $fourth = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'Fourth Kid', birth_date => '2018-01-01', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+
+    my $no_location = Registry::DAO::Payment->create($db, {
+        user_id      => $parent->id,
+        amount_cents => 0,
+        metadata     => {
+            enrollment_items => [],
+            waitlist_items   => [
+                { session_id => $full->id, child_id => $fourth->id },
+            ],
+            tenant_slug => undef,
+        },
+    });
+
+    $no_location->finalize_enrollment($db);
+
+    my $rows = waitlist_rows( $full, $fourth );
+    is scalar(@$rows), 1, 'the child is still queued';
+    is $rows->[0]{location_id}, $loc->id, 'at the location the session meets at';
+};
+
 done_testing;

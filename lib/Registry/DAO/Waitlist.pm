@@ -88,7 +88,22 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             next unless ref $item eq 'HASH';
             my ( $session_id, $child_id, $location_id ) =
               @$item{qw( session_id child_id location_id )};
-            next unless $session_id && $child_id && $location_id;
+            next unless $session_id && $child_id;
+
+            # waitlist.location_id is NOT NULL, and a run does not always carry
+            # one -- only an entry made from the storefront does. Falling back to
+            # where the session actually meets beats dropping the child in
+            # silence, which is a promise made on screen and kept nowhere.
+            # Ordered, so the same session always resolves to the same location.
+            $location_id ||= $db->query( q{
+                SELECT e.location_id
+                  FROM session_events se
+                  JOIN events e ON e.id = se.event_id
+                 WHERE se.session_id = ? AND e.location_id IS NOT NULL
+                 ORDER BY e.time, e.id
+                 LIMIT 1
+            }, $session_id )->array->[0];
+            next unless $location_id;
 
             # Already seated or already waiting is the state we want, so these
             # are not failures. Tested rather than caught: settlement calls this
