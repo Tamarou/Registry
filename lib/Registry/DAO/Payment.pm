@@ -517,6 +517,20 @@ field $_stripe_client = undef;
         # money gone back to the payer.
         return if __CLASS__->_money_returned($status);
 
+        # Children this registration chose to wait for rather than be turned
+        # away. No money attaches to them -- they have no seat -- so this sits
+        # above the enrollment_items guard: a cart can be all waiting and
+        # nothing else, and the queue is still what the parent asked for.
+        #
+        # Here rather than in the workflow step because the parent who pays and
+        # closes the tab never comes back to the step; the
+        # payment_intent.succeeded webhook settles them, and it lands here.
+        require Registry::DAO::Waitlist;
+        Registry::DAO::Waitlist->join_items( $db, $user_id,
+            ( ref $metadata eq 'HASH' && ref $metadata->{waitlist_items} eq 'ARRAY' )
+            ? $metadata->{waitlist_items}
+            : [] );
+
         my $items =
             ( ref $metadata eq 'HASH' && ref $metadata->{enrollment_items} eq 'ARRAY' )
             ? $metadata->{enrollment_items}

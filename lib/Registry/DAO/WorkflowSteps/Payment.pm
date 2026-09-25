@@ -193,6 +193,7 @@ method create_payment ($db, $run, $form_data) {
                 %{$existing->metadata},
                 enrollment_data  => $enrollment_data,
                 enrollment_items => $run->data->{enrollment_items} || [],
+                waitlist_items   => $run->data->{waitlist_items} || [],
             };
             $raw_db->update('payments', {
                 amount_cents => $payment_info->{total},
@@ -271,6 +272,11 @@ method create_payment ($db, $run, $form_data) {
                 # the resolved (session, child) pairs and the tenant schema they
                 # belong to.
                 enrollment_items => $run->data->{enrollment_items} || [],
+                # Waiting children are snapshotted for the same reason: nothing
+                # is charged for them, but the settlement is where the queue is
+                # joined, and the webhook that settles an abandoned tab has no
+                # run to read them out of.
+                waitlist_items => $run->data->{waitlist_items} || [],
                 tenant_slug => $run->data->{__tenant_slug},
             }
         });
@@ -521,6 +527,14 @@ method create_demo_enrollments ($db, $run, $form_data) {
     Registry::DAO::Enrollment->enroll_children(
         $db, $user_id, $run->data->{enrollment_items} || []
     );
+
+    # Children the parent chose to wait for. Nothing is charged for them --
+    # they have no seat yet -- so this is not part of the money path, but it
+    # is part of completing what the parent asked for. The paid path does the
+    # same from payment metadata, in finalize_enrollment.
+    require Registry::DAO::Waitlist;
+    Registry::DAO::Waitlist->join_items(
+        $db, $user_id, $run->data->{waitlist_items} || [] );
 
     return { next_step => 'complete' };
 }
