@@ -74,3 +74,4 @@ set-launch-revenue-share-rate [retire-registry-plus-plan] 2026-09-04T14:50:00Z C
 seed-tier-pricing-options [set-launch-revenue-share-rate] 2026-09-04T16:05:00Z Chris Prather <chris.prather@tamarou.com> # Put the Solo/Studio/Empire tier model into the plans the signup page renders
 clear-template-import-stamps [seed-tier-pricing-options] 2026-09-13T21:15:00Z Chris Prather <chris.prather@tamarou.com> # Drop stamps computed from bytes so the fixed character-based import re-stamps every row
 tenant-slug-lowercase [clear-template-import-stamps] 2026-09-14T04:05:00Z Chris Prather <chris.prather@tamarou.com> # Tenant slugs must be lowercase: clone_schema case-folds an unquoted dest_schema
+session-waitlist-toggle [tenant-slug-lowercase] 2026-09-24T12:10:00Z Chris Prather <chris.prather@tamarou.com> # A session can turn its waitlist off, so a full one is simply full

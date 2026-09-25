@@ -36,6 +36,31 @@
                                 <p class="text-sm text-gray-500 mt-1">Maximum number of participants</p>
                             </div>
 
+                            <!-- Waitlist -->
+                            <%# Next to capacity because it is the same decision
+                                seen from the other side: what happens once the
+                                places run out. Default on, which is how every
+                                session behaved before the choice existed. %>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">
+                                    Waitlist
+                                </label>
+                                <label class="inline-flex items-center">
+                                    <input type="hidden"
+                                           name="location_configs[<%= $location->{id} %>][waitlist_enabled]"
+                                           value="0">
+                                    <input type="checkbox"
+                                           name="location_configs[<%= $location->{id} %>][waitlist_enabled]"
+                                           value="1"
+                                           class="mr-2"
+                                           <%= ( !exists $location->{waitlist_enabled} || $location->{waitlist_enabled} ) ? 'checked' : '' %>>
+                                    <span class="text-sm text-gray-700">Collect a waitlist when this session is full</span>
+                                </label>
+                                <p class="text-sm text-gray-500 mt-1">
+                                    Turn this off and a full session simply shows as full.
+                                </p>
+                            </div>
+
                             <!-- Pricing Override -->
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">

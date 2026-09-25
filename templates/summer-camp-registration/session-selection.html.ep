@@ -77,13 +77,22 @@
                 </div>
                 
                 <div class="mt-4 space-y-3">
-                    <% for my $session (@{ stash('available_sessions') || [] }) { %>
+                    <% for my $option (@{ stash('available_sessions') || [] }) { %>
+                        <% my $session = $option->{session}; %>
                         <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
                             <input type="radio"
                                    name="session_all"
                                    value="<%= $session->id %>"
                                    class="mr-2">
                             <span class="font-medium"><%= $session->name %></span>
+                            <%# A full session can still be chosen: choosing it
+                                joins the waitlist. Say so on the control, so
+                                the choice is made knowingly. %>
+                            <% if ($option->{is_full}) { %>
+                                <span class="session-availability is-full">Full &mdash; join the waitlist</span>
+                            <% } elsif (defined $option->{available_spots}) { %>
+                                <span class="session-availability"><%= $option->{available_spots} %> left</span>
+                            <% } %>
                             <div class="text-sm text-gray-600 mt-1">
                                 <%= $session->start_date %> &ndash; <%= $session->end_date %>
                             </div>
@@ -100,13 +109,19 @@
                     </h2>
 
                     <div class="space-y-3">
-                        <% for my $session (@{ stash('available_sessions') || [] }) { %>
+                        <% for my $option (@{ stash('available_sessions') || [] }) { %>
+                            <% my $session = $option->{session}; %>
                             <label class="block border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
                                 <input type="radio"
                                        name="session_for_<%= $child->{id} %>"
                                        value="<%= $session->id %>"
                                        class="mr-2">
                                 <span class="font-medium"><%= $session->name %></span>
+                                <% if ($option->{is_full}) { %>
+                                    <span class="session-availability is-full">Full &mdash; join the waitlist</span>
+                                <% } elsif (defined $option->{available_spots}) { %>
+                                    <span class="session-availability"><%= $option->{available_spots} %> left</span>
+                                <% } %>
                                 <div class="text-sm text-gray-600 mt-1">
                                     <%= $session->start_date %> &ndash; <%= $session->end_date %>
                                 </div>

@@ -19,6 +19,11 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     field $end_date :param :reader = undef;
     field $status :param :reader = 'draft';
     field $capacity :param :reader = undef;
+    # Whether a full session collects a queue. Morgan turns this off for a
+    # session that will not run again, or one where waiting would mislead
+    # rather than help. Defaults on, which is what every session did before
+    # the toggle existed.
+    field $waitlist_enabled :param :reader = 1;
 
     sub table { 'sessions' }
 

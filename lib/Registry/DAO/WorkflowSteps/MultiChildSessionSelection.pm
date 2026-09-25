@@ -66,7 +66,10 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         
         if ($action eq 'select_sessions') {
             # Process session selections
-            my %selections;  # child_id => session_id
+            my %selections;
+            # Children who chose a session with no room: they wait for it rather
+            # than being turned away.
+            my %waitlisting;  # child_id => session_id
             my @errors;
 
             # Collect selections from form; template emits session_for_<child_id>.
@@ -138,13 +141,35 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                 my $sess = Registry::DAO::Session->find($db, { id => $session_id });
                 next unless $sess;
 
-                # Check capacity using existing DAO method
+                # A full session is a choice to wait, not a mistake. The
+                # screen offers it marked "Full -- join the waitlist", so
+                # picking it means the parent would rather wait for this
+                # session than take one with room. Refusing it told them to
+                # choose differently, which is the one thing they had already
+                # decided against.
+                #
+                # The waiting child is kept OUT of %selections deliberately:
+                # calculate_enrollment_total walks that key, so leaving them
+                # there would charge for a seat that does not exist.
                 if ($sess->capacity) {
                     my $enrolled = Registry::DAO::Enrollment->count_for_session(
                         $db, $session_id, ['active', 'pending']
                     );
                     if ($enrolled >= $sess->capacity) {
-                        push @errors, $sess->name . " is full. Please select a different session for " . $child->child_name;
+                        # With the waitlist off there is nothing to join, so
+                        # this is the refusal it always was. A stale page or a
+                        # typed id must not queue a child against Morgan's
+                        # decision.
+                        unless ( $sess->waitlist_enabled ) {
+                            push @errors, $sess->name
+                              . " is full. Please select a different session for "
+                              . $child->child_name;
+                            next;
+                        }
+
+                        $waitlisting{ $child->id } = $session_id;
+                        delete $selections{ $child->id };
+                        next;
                     }
                 }
 
@@ -200,6 +225,19 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                 };
             }
 
+            # Same snapshot shape as enrollment_items, and for the same
+            # reason: the settlement that acts on it may be the webhook, which
+            # has no run to read location_id back out of. Sorted for the same
+            # reason too -- positions on the waitlist are awarded in list order.
+            my @waitlist_items;
+            for my $child_id (sort keys %waitlisting) {
+                push @waitlist_items, {
+                    child_id    => $child_id,
+                    session_id  => $waitlisting{$child_id},
+                    location_id => $location_id,
+                };
+            }
+
             my @children_data = map {
                 {
                     id         => $_->id,
@@ -213,6 +251,10 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             $run->update_data($db, {
                 enrollment_items   => \@enrollment_items,
                 session_selections => \%selections,
+                # Separate from session_selections on purpose: everything
+                # downstream that charges money walks that key, and these
+                # children have no seat to pay for yet.
+                waitlist_items     => \@waitlist_items,
                 children           => \@children_data,
             });
             
@@ -272,8 +314,25 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                   WHERE session_id = ? AND status IN ('active','pending')},
                 $sess->id
             )->array->[0] || 0;
-            push @available_sessions, $sess
-                unless ( $sess->capacity && $enrolled >= $sess->capacity );
+            # Full sessions are OFFERED, marked full, not hidden. The
+            # storefront invites a parent to "Join Waitlist" when a session is
+            # full, and this screen used to drop it -- so the invitation led to
+            # a page with nothing on it to choose. Whether to wait for the
+            # session they wanted or take one with room is the parent's
+            # decision, and a screen that hides one of the options is making it
+            # for them.
+            my $is_full = ( $sess->capacity && $enrolled >= $sess->capacity ) ? 1 : 0;
+
+            # A full session whose waitlist Morgan turned off has nothing to
+            # offer: there is no seat and no queue to join, so showing it
+            # would be inviting a choice that cannot be honoured.
+            next if $is_full && !$sess->waitlist_enabled;
+
+            push @available_sessions, {
+                session         => $sess,
+                is_full         => $is_full,
+                available_spots => $sess->capacity ? $sess->capacity - $enrolled : undef,
+            };
         }
 
         return {
@@ -395,13 +454,22 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                 status => ['active', 'pending']
             })->array->[0];
             
-            if (!$capacity || $enrolled < $capacity) {
-                push @available_sessions, {
-                    session => $session,
-                    available_spots => $capacity ? $capacity - $enrolled : undef,
-                    is_full => 0,
-                };
-            }
+            # A full session is offered, marked full, rather than hidden. The
+            # storefront invites a parent to "Join Waitlist" when a session has
+            # no room, and this screen then had nothing for them to choose --
+            # the invitation led nowhere. Whether to wait for a full session or
+            # take a different one is the parent's decision to make, so the
+            # screen has to show both.
+            my $full = ( $capacity && $enrolled >= $capacity ) ? 1 : 0;
+
+            # Nothing to offer when it is full and the queue is switched off.
+            next if $full && !$session->waitlist_enabled;
+
+            push @available_sessions, {
+                session         => $session,
+                available_spots => $capacity ? $capacity - $enrolled : undef,
+                is_full         => $full,
+            };
         }
         
         return \@available_sessions;
