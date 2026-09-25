@@ -98,6 +98,36 @@ subtest 'the confirmation names each camper and the session they are in' => sub 
     is $by_child{Rob}{session}->name, 'Printmaking Week', 'the sibling gets his own session';
 };
 
+# A parent can finish a registration with one child seated and one waiting.
+# Telling them both children are "joining us this summer" is the page saying a
+# seat exists where none does -- and the waiting child, having no entry in
+# session_selections, used to render with no session name at all.
+subtest 'a child who is waiting is shown as waiting, not as enrolled' => sub {
+    my $mixed = $workflow->new_run($db);
+    $mixed->update_data( $db, {
+        children => [
+            { id => $kylie->id, first_name => 'Kylie', last_name => '', grade => '3' },
+            { id => $rob->id,   first_name => 'Rob',   last_name => '', grade => '5' },
+        ],
+        session_selections => { $kylie->id => $pottery->id },
+        waitlist_items     => [
+            { child_id => $rob->id, session_id => $printmaking->id,
+              location_id => undef },
+        ],
+    } );
+
+    my $data = $step->prepare_template_data( $db, $mixed );
+    my %by_child = map { $_->{child_name} => $_ } $data->{registrations}->@*;
+
+    ok !$by_child{Kylie}{waiting}, 'the seated child is not marked waiting';
+    ok $by_child{Rob}{waiting}, 'the waiting child is';
+
+    # The session is still named. Which session they are waiting for is the
+    # thing the parent needs to know -- a bare "on the waitlist" says nothing.
+    is $by_child{Rob}{session}->name, 'Printmaking Week',
+        'and the page can still say what they are waiting for';
+};
+
 subtest 'a run with nothing selected renders no campers rather than dying' => sub {
     my $empty = $workflow->new_run($db);
     $empty->update_data( $db, { children => [], session_selections => {} } );
