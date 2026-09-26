@@ -147,9 +147,18 @@ subtest 'Drop link enters the drop workflow on the enrollment it names' => sub {
     is Mojo::URL->new($href)->query->param('enrollment_id'), $enrollment->id,
       'Drop link carries this enrollment id';
 
+    # The screen the parent lands on is the one the run is WAITING on, not the
+    # step it has already completed. The link carries the enrollment, the
+    # selection step completes on arrival, and the reason screen is what is left
+    # to do -- which is what this subtest's own name says should happen.
+    #
+    # This asserted 'Select Enrollment to Drop': the finished step, re-rendered,
+    # with its form aimed at itself. Posting that form died on "Wrong step
+    # expected collect-reason", so every parent who pressed Drop and then
+    # Continue got an error page.
     $t->get_ok($href)->status_is(200)
-      ->text_is( 'h1' => 'Select Enrollment to Drop',
-        'Drop destination renders the first step of the drop workflow' );
+      ->text_is( 'h1' => 'Reason for Drop Request',
+        'Drop destination renders the step the run is waiting on' );
 
     # child_name is the step's own work: it comes from the family_members row
     # the ownership check matched, and no part of the request carried it.
@@ -174,9 +183,12 @@ subtest 'Transfer link enters the transfer workflow on the enrollment it names' 
     is Mojo::URL->new($href)->query->param('enrollment_id'), $enrollment->id,
       'Transfer link carries this enrollment id';
 
+    # Same as the drop link above: the enrollment travels with the link, the
+    # selection step completes on arrival, and what remains is choosing where to
+    # move to.
     $t->get_ok($href)->status_is(200)
-      ->text_is( 'h1' => 'Select Enrollment to Transfer',
-        'Transfer destination renders the first step of the transfer workflow' );
+      ->text_is( 'h1' => 'Select Target Session',
+        'Transfer destination renders the step the run is waiting on' );
 
     my $run = latest_run_for('parent-transfer-request');
     is $run->data->{enrollment_id}, $enrollment->id,
