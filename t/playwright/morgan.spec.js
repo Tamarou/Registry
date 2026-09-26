@@ -16,6 +16,10 @@ const {
 // This is a wall-clock allowance and nothing else: no assertion changed. The
 // failure could not be reproduced in isolation, so the cause is stated as
 // measured duration against too small a budget rather than as a diagnosed race.
+//
+// The diagnosis is #428. A budget set to whatever the test currently takes has
+// stopped being a signal, so do not raise this again -- find out where the three
+// minutes go. Provisioning is the first suspect: clone_schema copies ~60 tables.
 test.describe.configure({ mode: 'serial', timeout: 300000 });
 
 const RUN = String(Date.now());
