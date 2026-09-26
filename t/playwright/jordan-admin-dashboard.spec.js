@@ -70,8 +70,13 @@ test.describe('Jordan admin dashboard journey', () => {
 
   test('Jordan logs in via magic link', async ({ registryPage, testDB }) => {
     await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
-    // Should redirect to home or dashboard after login
-    await expect(registryPage).toHaveURL(/\//);
+
+    // Every URL contains a slash, so the assertion this replaces held on the
+    // login page and on a 500 as readily as on a signed-in one. Being signed in
+    // means the dashboard renders as his, so that is what gets asserted.
+    await registryPage.goto('/admin/dashboard');
+    await expect(registryPage).not.toHaveURL(/\/auth\//);
+    await expect(registryPage).toHaveTitle(/Admin Dashboard/);
   });
 
   test('Jordan navigates to admin dashboard', async ({ registryPage, testDB }) => {
@@ -119,9 +124,28 @@ test.describe('Jordan admin dashboard journey', () => {
 
   test('Jordan can export enrollment data', async ({ registryPage, testDB }) => {
     await loginWithToken(registryPage, freshToken(testDB, testData.admin_id));
+    await registryPage.goto('/admin/dashboard');
+    await registryPage.waitForLoadState('networkidle');
 
-    // Request CSV export directly
-    const response = await registryPage.request.get('/admin/dashboard/export?type=enrollments&format=csv');
+    // The export lives behind a dropdown button, and the screen is what has to
+    // offer it. Requesting the URL directly -- which is what this test used to
+    // do -- passes just as well when the button, the dropdown or the link has
+    // gone, and Jordan then has no way to reach a working endpoint.
+    await registryPage.getByRole('button', { name: /export data/i }).click();
+
+    const link = registryPage.locator('#export-dropdown a', { hasText: 'Enrollments (CSV)' });
+    await expect(link, 'the dropdown offers a CSV of enrolments').toBeVisible();
+
+    // Followed rather than guessed: the href the screen carries is the one that
+    // must work, so a link pointing at the wrong type or format fails here.
+    const href = await link.getAttribute('href');
+    const response = await registryPage.request.get(href);
     expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toMatch(/csv/);
+
+    // A 200 of nothing is not an export. The header row names the columns, so
+    // its absence means the endpoint answered without the data behind it.
+    const csv = await response.text();
+    expect(csv.split('\n')[0], 'the CSV has a header row').toMatch(/,/);
   });
 });

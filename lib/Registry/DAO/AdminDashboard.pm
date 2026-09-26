@@ -166,6 +166,11 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
     }
 
     # Get export data for admin dashboard
+    # LEFT JOIN to user_profiles throughout, not JOIN. A profile row is written
+    # only when User->create is given profile data, so an inner join drops the
+    # whole enrolment, attendance record or waitlist entry whenever the parent
+    # has none -- an export that silently omits rows, which is worse than one
+    # with a blank name in it.
     sub get_export_data($class, $db, $export_type) {
         if ($export_type eq 'enrollments') {
             return $db->query(q{
@@ -181,7 +186,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                     l.name as location_name
                 FROM enrollments e
                 JOIN family_members fm ON e.family_member_id = fm.id
-                JOIN user_profiles up ON fm.family_id = up.user_id
+                LEFT JOIN user_profiles up ON fm.family_id = up.user_id
                 JOIN sessions s ON e.session_id = s.id
                 JOIN session_events se ON se.session_id = s.id
                 JOIN events ev2 ON ev2.id = se.event_id
@@ -195,8 +200,14 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                     ar.id,
                     ar.status,
                     ar.marked_at,
-                    ev.name as event_name,
-                    ev.start_time,
+                    -- events has no `name` and no `start_time`; the column is
+                    -- "time", and a meeting's label lives in metadata the way
+                    -- the attendance screen reads it. Naming columns that do not
+                    -- exist made this query raise on every call, and the
+                    -- controller's catch turned that into a flash and a redirect
+                    -- -- so the attendance export has never produced a file.
+                    ev.metadata->>'title' as event_name,
+                    ev."time" as event_time,
                     s.name as session_name,
                     fm.child_name,
                     up.name as parent_name
@@ -205,7 +216,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 JOIN session_events se ON se.event_id = ev.id
                 JOIN sessions s ON s.id = se.session_id
                 JOIN family_members fm ON ar.student_id = fm.id
-                JOIN user_profiles up ON fm.family_id = up.user_id
+                LEFT JOIN user_profiles up ON fm.family_id = up.user_id
                 ORDER BY ar.marked_at DESC
             })->hashes->to_array;
         } elsif ($export_type eq 'waitlist') {
@@ -224,7 +235,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                     p.name as program_name
                 FROM waitlist w
                 JOIN family_members fm ON w.student_id = fm.id
-                JOIN user_profiles up ON w.parent_id = up.user_id
+                LEFT JOIN user_profiles up ON w.parent_id = up.user_id
                 JOIN sessions s ON w.session_id = s.id
                 JOIN session_events se ON se.session_id = s.id
                 JOIN events ev2 ON ev2.id = se.event_id
