@@ -60,13 +60,34 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     }
     
     # Get user's notification preferences
+    # What a user is taken to want when they have said nothing.
+    #
+    # Only the two attendance types were listed here, so every message type fell
+    # through wants_notification's `// 0` -- and nothing in the product writes a
+    # message preference, so no announcement, no schedule update and no EMERGENCY
+    # notice had ever been delivered to anybody. MVP §7 is "email and in-app
+    # notifications"; silence was not a configuration, it was the only behaviour.
+    my sub _defaults () {
+        return (
+            attendance_missing   => { email => 1, in_app => 1 },
+            attendance_reminder  => { email => 1, in_app => 1 },
+            message_announcement => { email => 1, in_app => 1 },
+            message_update       => { email => 1, in_app => 1 },
+            message_emergency    => { email => 1, in_app => 1 },
+        );
+    }
+
     sub get_notification_preferences ($class, $db, $user_id) {
-        my $pref = $class->get_or_create($db, $user_id, 'notifications', {
-            attendance_missing => { email => 1, in_app => 1 },
-            attendance_reminder => { email => 1, in_app => 1 }
-        });
-        
-        return $pref->preference_value;
+        my %defaults = _defaults();
+        my $pref = $class->get_or_create($db, $user_id, 'notifications', {%defaults});
+
+        # Merged on READ, not only seeded on create. A row written before a type
+        # existed has no key for it, and every user who had ever triggered an
+        # attendance notification already had such a row -- so seeding alone would
+        # have left exactly the established users silent. A stored value wins,
+        # including a deliberate 0.
+        my $stored = $pref->preference_value // {};
+        return { %defaults, %$stored };
     }
     
     # Update notification preferences
@@ -84,8 +105,15 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     
     # Check if user wants notifications for a specific type and channel
     sub wants_notification ($class, $db, $user_id, $notification_type, $channel = 'email') {
+        # An emergency is not a preference. A parent may well decline bake-sale
+        # announcements; declining an evacuation notice is not a choice this
+        # product should offer them. The MVP spec marks only attendance
+        # notifications configurable, and lists emergency notifications as a
+        # feature of the communication system rather than an option within it.
+        return 1 if $notification_type eq 'message_emergency';
+
         my $prefs = $class->get_notification_preferences($db, $user_id);
-        
+
         return $prefs->{$notification_type}{$channel} // 0;
     }
     

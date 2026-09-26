@@ -1,6 +1,12 @@
 #!/usr/bin/env perl
 # ABOUTME: Alex (platform owner) journey: the signup funnel produces a working,
 # ABOUTME: billable tenant.  Stage 1 walks the full funnel over HTTP with realistic data.
+#
+# Asserts at the DAO and job layer on purpose. Alex has no screens -- no
+# platform-owner route, template or nav exists -- so unlike the other personas
+# there is no control here to press. That is a decision (perigrin, #395) rather
+# than the gap the other journey suites had: the screens Alex would need are
+# enumerated in #426, and this suite should be reshaped only when they exist.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 # The payment step provisions directly when no Stripe keys are configured.

@@ -33,6 +33,7 @@ function seedDashboardData(testDB) {
     use lib qw(lib t/lib);
     use Registry::DAO;
     use Registry::DAO::Enrollment;
+    use Registry::DAO::Message;
     my \\$dao = Registry::DAO->new(url => '${testDB.dbUrl}');
     my \\$db = \\$dao->db;
     Registry::DAO::Enrollment->create(\\$db, {
@@ -42,6 +43,13 @@ function seedDashboardData(testDB) {
       student_id       => '${data.returning_parent.user_id}',
       status           => 'active',
     });
+    Registry::DAO::Message->send_message(\\$db, {
+      sender_id    => '${data.admin.user_id}',
+      subject      => 'Welcome to the studio',
+      body         => 'Term starts next week.',
+      message_type => 'announcement',
+      scope        => 'tenant-wide',
+    }, ['${data.returning_parent.user_id}'], send_now => 1);
     print "ok";
   `;
 
@@ -122,17 +130,17 @@ test.describe('Parent dashboard', () => {
     await registryPage.goto('/parent/dashboard');
     await registryPage.waitForLoadState('networkidle');
 
-    // The unread messages section loads (may be via HTMX)
-    const messagesSection = registryPage.locator('[hx-get*="unread_messages"], #unread-messages, .unread-messages, .message-count');
-    const hasMessages = await messagesSection.count() > 0;
-
-    if (hasMessages) {
-      await registryPage.waitForTimeout(2000);
-      await expect(messagesSection.first()).toBeAttached();
-    } else {
-      // Messages may be inline - check for a "0" count or "no messages"
-      // Just verify the page is functional
-      await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-    }
+    // None of the selectors this test used to look for -- [hx-get*="unread_messages"],
+    // #unread-messages, .unread-messages, .message-count -- exist in the dashboard
+    // template. So the count was always zero, the else branch always ran, and a test
+    // named for the unread count never looked at one; it asserted the page was not a
+    // 500.
+    //
+    // The dashboard's actual affordance is a link to /messages carrying a badge when
+    // there is something unread, so that is what gets asserted -- with a message
+    // seeded above so the badge has a number to show.
+    const messagesLink = registryPage.locator('a[href="/messages"]').first();
+    await expect(messagesLink, 'the dashboard links to messages').toBeVisible();
+    await expect(messagesLink, 'and shows the unread count on it').toContainText('1');
   });
 });

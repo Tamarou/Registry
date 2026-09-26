@@ -80,10 +80,15 @@ my $acting_user = $dao->create(
       ->element_exists('input[name="username"]')
       ->tx->res->dom->at('form[action]')->{action};
 
+    # user_type is chosen on this form, and choosing it is the whole point of the
+    # journey: without it the account takes the column default and Morgan's
+    # "teacher account" is a parent. The walk posted only username and password,
+    # and the assertion below only checked that a row existed.
     $next_url = $t->post_ok(
         $next_url => form => {
-            username => 'alex.instructor',
-            password => 'securepassword123',
+            username  => 'alex.instructor',
+            password  => 'securepassword123',
+            user_type => 'staff',
         }
     )->status_is(302)->header_like( Location => qr/complete$/ )
       ->tx->res->headers->location;
@@ -102,6 +107,8 @@ my $acting_user = $dao->create(
     my ($user) = $dao->find( User => { username => 'alex.instructor' } );
     ok $user, 'teacher account created in database';
     is $user->username, 'alex.instructor', 'teacher username is correct';
+    is $user->user_type, 'staff',
+      'and it is a staff account -- which is what makes it a teacher';
 
     # Verify the run stored the user id
     ok $run->data->{id}, 'run data contains user id';
@@ -133,14 +140,21 @@ my $acting_user = $dao->create(
       'session teacher username is correct';
 }
 
-{    # Journey: Set role-based permissions by updating user_type to staff
+{    # Journey: the role Morgan chose is the role the account has.
+     #
+     # This block used to call $user->update($dao->db, { user_type => 'staff' })
+     # and then assert the row said 'staff' -- the test patching the column and
+     # grading its own patch, under the heading "Set role-based permissions".
+     # It passed whatever the product did, and it hid the defect above: the
+     # workflow walk never sent user_type, so the account it had just created
+     # through the screens was a parent, and this patch quietly corrected it.
+     #
+     # The role is chosen on the form now, so there is nothing left to set. What
+     # remains untested is changing a role AFTER creation, which no screen or
+     # route offers at all -- see #424.
     my ($user) = $dao->find( User => { username => 'alex.instructor' } );
-    ok $user, 'user found for role update';
-
-    $user->update( $dao->db, { user_type => 'staff' } );
-
-    my ($updated_user) = $dao->find( User => { id => $user->id } );
-    is $updated_user->user_type, 'staff', 'user_type set to staff';
+    is $user->user_type, 'staff',
+      'the account is still staff, with nothing having patched it';
 }
 
 {    # Journey: Create a second teacher and verify both are assigned to sessions
@@ -164,8 +178,9 @@ my $acting_user = $dao->create(
 
     $next_url = $t->post_ok(
         $next_url => form => {
-            username => 'sarah.instructor',
-            password => 'securepassword456',
+            username  => 'sarah.instructor',
+            password  => 'securepassword456',
+            user_type => 'staff',
         }
     )->status_is(302)->tx->res->headers->location;
 
@@ -178,6 +193,7 @@ my $acting_user = $dao->create(
 
     my ($sarah) = $dao->find( User => { username => 'sarah.instructor' } );
     ok $sarah, 'second teacher account created';
+    is $sarah->user_type, 'staff', 'and she is staff too';
 
     # Assign the second teacher to the same session
     require Registry::DAO::SessionTeacher;

@@ -78,9 +78,17 @@ class Registry :isa(Mojolicious) {
         $self->renderer->add_handler(csv => sub ($renderer, $c, $output, $options) {
             use Text::CSV_XS;
 
-            my $data = $options->{csv} // [];
-            my $chunk_size = $options->{chunk_size} // 1000; # Process in chunks for memory efficiency
-            my $stream = $options->{stream} // 0; # Enable true streaming mode
+            # The stash, not $options. Mojolicious hands a renderer its render
+            # OPTIONS -- template, format, handler, encoding -- and the values a
+            # controller passes to render() land in the stash. Reading them from
+            # $options meant this handler never once saw its data in a real
+            # request and always wrote the empty-export placeholder. The
+            # renderer's own unit test passed because it called the handler
+            # directly with a hand-built $options, which is the one arrangement
+            # production never produces.
+            my $data = $c->stash('csv') // $options->{csv} // [];
+            my $chunk_size = $c->stash('chunk_size') // $options->{chunk_size} // 1000;
+            my $stream = $c->stash('stream') // $options->{stream} // 0;
 
             # Handle empty data gracefully
             unless (@$data && ref $data->[0] eq 'HASH') {

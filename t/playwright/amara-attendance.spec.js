@@ -71,7 +71,15 @@ test.describe('Amara teacher attendance journey', () => {
 
   test('Amara logs in via magic link', async ({ registryPage, testDB }) => {
     await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
-    await expect(registryPage).toHaveURL(/\//);
+
+    // Every URL contains a slash, so the assertion this replaces was true of the
+    // login page, the error page and a 500 alike. Being signed in means a page
+    // that requires it renders her own, so that is what gets asserted.
+    await registryPage.goto('/teacher/');
+    await expect(registryPage).not.toHaveURL(/\/auth\//);
+    await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
+    await expect(registryPage.locator(`a[href*="/teacher/attendance/"]`).first())
+      .toBeVisible({ timeout: 10000 });
   });
 
   test('Amara sees the teacher dashboard', async ({ registryPage, testDB }) => {
@@ -106,18 +114,17 @@ test.describe('Amara teacher attendance journey', () => {
     await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
     await registryPage.goto('/teacher/');
 
-    // Find an attendance link (if today's events are shown)
+    // Required, not conditional. The seed puts a class on today at the current
+    // time, so a dashboard with no link to it is the bug -- and the branch this
+    // replaces passed in exactly that case.
     const attendanceLink = registryPage.locator(`a[href*="/teacher/attendance/"]`);
-    const count = await attendanceLink.count();
+    await expect(attendanceLink.first(), "today's class is linked from the dashboard")
+      .toBeVisible({ timeout: 10000 });
 
-    if (count > 0) {
-      await attendanceLink.first().click();
-      await registryPage.waitForLoadState('networkidle');
-      await expect(registryPage).toHaveURL(/teacher\/attendance/);
-    } else {
-      // No events today is valid -- the dashboard just shows empty
-      test.info().annotations.push({ type: 'skip', description: 'No events shown for today' });
-    }
+    await attendanceLink.first().click();
+    await registryPage.waitForLoadState('networkidle');
+    await expect(registryPage).toHaveURL(/teacher\/attendance/);
+    await expect(registryPage).toHaveTitle(/Take Attendance/);
   });
 
   // The bug this test exists for: the component POSTed with no CSRF token, the
@@ -182,34 +189,4 @@ test.describe('Amara teacher attendance journey', () => {
     }
   });
 
-  test('Amara can mark attendance via the API', async ({ registryPage, testDB }) => {
-    await loginWithToken(registryPage, freshToken(testDB, testData.teacher_id));
-
-    // Get CSRF token from a page load
-    await registryPage.goto('/teacher/');
-    const csrfToken = await registryPage.locator('meta[name="csrf-token"]').getAttribute('content');
-
-    // POST attendance data -- controller expects flat { student_id: status } hash.
-    // attendance_records.student_id has a FK to users, so we use parent_user_id
-    // (a real users.id) rather than family_member IDs from student_ids.
-    const attendanceData = {
-      [testData.parent_user_id]: 'present',
-    };
-
-    const response = await registryPage.request.post(
-      `/teacher/attendance/${testData.event_id}`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': csrfToken,
-        },
-        data: attendanceData,
-      }
-    );
-
-    // Attendance marking should genuinely succeed -- 200/201, NOT a 3xx redirect
-    // (a redirect would mean an auth/session failure that we must catch, not pass).
-    expect(response.ok()).toBeTruthy();
-    expect([200, 201]).toContain(response.status());
-  });
 });

@@ -8,13 +8,12 @@ test.describe('Playwright Smoke Tests', () => {
     // Test uses the registryPage fixture which sets up database and server
     await registryPage.goto('/');
 
-    // Just check that we get a response
-    const title = await registryPage.title();
-    console.log('Page title:', title);
-
-    // Basic assertions
-    expect(title).toBeTruthy();
+    // A non-empty title is true of the error page too, so the assertion names the
+    // product. If the landing page is replaced this fails and should -- a smoke
+    // test that cannot tell the homepage from a stack trace is not a smoke test.
+    await expect(registryPage).toHaveTitle(/Tiny Art Empire/);
     await expect(registryPage.locator('body')).toBeAttached();
+    await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
 
     // Take a screenshot to verify
     await registryPage.screenshot({ path: 'smoke-test.png' });

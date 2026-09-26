@@ -1460,9 +1460,19 @@ SQL
         
         # Import Session class
         require Registry::DAO::Session;
-        
+        require Registry::DAO::PricingPlan;
+
+        my $children = $enrollment_data->{children} // [];
+
+        # How many children are in THIS cart, which is the question a family or
+        # sibling plan's min_children asks. It was hardcoded to 1, so no family
+        # plan could ever be satisfied and the MVP's sibling discount was
+        # unreachable through the cart -- the plan type exists, the schema allows
+        # it, and nothing could ever qualify for it.
+        my $child_count = scalar @$children;
+
         # Calculate cost for each child-session pair
-        for my $child (@{$enrollment_data->{children} // []}) {
+        for my $child (@$children) {
             my $child_key = $child->{id} || 0;
             my $session_id = $enrollment_data->{session_selections}->{$child_key} 
                           || $enrollment_data->{session_selections}->{all};
@@ -1471,17 +1481,21 @@ SQL
             
             my $session = Registry::DAO::Session->find($db, { id => $session_id });
             next unless $session;
-            
-            my $pricing_plans = $session->pricing_plans($db);
-            next unless $pricing_plans && @$pricing_plans;
-            
-            # Use the first pricing plan or find the best price
-            my $pricing = $pricing_plans->[0];
-            my $price_cents = $pricing->calculate_price({
-                child_count => 1,
-                date => time(),
-                %$child
-            });
+
+            # The cheapest plan whose requirements this cart MEETS. get_best_price
+            # was written for exactly this and was not being called.
+            #
+            # Taking $pricing_plans->[0] charged whichever row Postgres happened
+            # to hand back first -- get_pricing_plans has no ORDER BY, so one cart
+            # could be priced differently between two runs. Worse, when that row
+            # was an early bird past its cutoff, calculate_price correctly
+            # returned undef and the child was then skipped altogether: no line
+            # item, nothing added to the total, and still sitting in
+            # enrollment_items. Enrolled, and charged nothing.
+            my $price_cents = Registry::DAO::PricingPlan->get_best_price(
+                $db, $session_id,
+                { child_count => $child_count, date => time(), %$child }
+            );
 
             if (defined $price_cents) {
                 $total += $price_cents;

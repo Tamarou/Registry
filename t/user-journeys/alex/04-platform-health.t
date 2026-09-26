@@ -1,6 +1,12 @@
 #!/usr/bin/env perl
 # ABOUTME: Alex (platform owner) journey: the automation runs without him.
 # ABOUTME: Tenant-aware sweeps process every tenant, isolate bad rows, and /health probes the DB.
+#
+# Asserts at the DAO and job layer on purpose. Alex has no screens -- no
+# platform-owner route, template or nav exists -- so unlike the other personas
+# there is no control here to press. That is a decision (perigrin, #395) rather
+# than the gap the other journey suites had: the screens Alex would need are
+# enumerated in #426, and this suite should be reshaped only when they exist.
 use 5.42.0;
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }

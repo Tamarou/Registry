@@ -1,4 +1,6 @@
 #!/usr/bin/env perl
+# ABOUTME: WCAG-oriented checks on the pages an anonymous visitor reaches first.
+# ABOUTME: Asserts no counterexample exists; never reports success for an absent element.
 use 5.42.0;
 use Test::More;
 use Test::Mojo;
@@ -6,8 +8,19 @@ use Test::Mojo;
 use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Registry::DAO;
+use Mojo::File;
 use Mojo::Home;
 use YAML::XS qw(Load);
+
+# Every subtest here used to be shaped
+#
+#     if (@things) { ok ... for @things } else { pass('No things found') }
+#
+# so a page that lost its buttons, its links or its labels reported success
+# rather than failure -- and two subtests were a bare pass() under a comment
+# saying the check needed tooling we have. The rewrite states each rule as "no
+# counterexample exists" and separately requires the elements that must be there:
+# a landing page with no way in is broken, and saying so is the point.
 
 # Setup test database
 my $test_db = Test::Registry::DB->new();
@@ -24,125 +37,103 @@ for my $file (@files) {
 # Set environment for Test::Mojo
 $ENV{DB_URL} = $dao->url;
 
-# Test WCAG 2.1 AA accessibility compliance
-subtest 'Default workflow landing page accessibility compliance' => sub {
+# The accessible name of a control, by the same precedence a screen reader uses.
+sub accessible_name ($el) {
+    for my $candidate ( $el->attr('aria-label'), $el->attr('title'),
+                        $el->attr('value'), $el->all_text )
+    {
+        return $candidate if defined $candidate && $candidate =~ /\S/;
+    }
+    return undef;
+}
+
+# Named rather than counted, so a failure says WHICH control is unreachable.
+sub unnamed ($dom, $selector) {
+    return [ map { $_->tag . ( $_->attr('id') ? '#' . $_->attr('id') : '' ) }
+             grep { !defined accessible_name($_) }
+             $dom->find($selector)->each ];
+}
+
+subtest 'the landing page an anonymous visitor reaches' => sub {
     my $t = Test::Mojo->new('Registry');
-    
-    # Test the default workflow landing page (now at root /)
     $t->get_ok('/')->status_is(200);
     my $dom = $t->tx->res->dom;
-    
-    subtest 'Basic page structure' => sub {
-        # Check for basic HTML structure - be flexible since this is a workflow page
-        ok $dom->at('html'), 'Page has HTML element';
-        ok $dom->at('body'), 'Page has body element';
-        ok $dom->at('title'), 'Page has title element';
-    };
-    
-    subtest 'Form accessibility' => sub {
-        # Check that any buttons have accessible names
-        my @buttons = $dom->find('button, [role="button"], input[type="submit"]')->each;
-        if (@buttons) {
-            for my $button (@buttons) {
-                my $text = $button->text || $button->attr('aria-label') || $button->attr('title') || $button->attr('value');
-                ok $text && length($text) > 0, 'Button has accessible name';
-            }
-        } else {
-            pass('No buttons found on workflow landing page');
-        }
-    };
-    
-    subtest 'Link accessibility' => sub {
-        # Check that links have descriptive text
-        my @links = $dom->find('a[href]')->each;
-        if (@links) {
-            for my $link (@links) {
-                my $text = $link->text || $link->attr('aria-label') || $link->attr('title');
-                ok defined($text) && length($text) > 0, 'Link has accessible name';
-            }
-        } else {
-            pass('No links found on workflow landing page');
-        }
-    };
-    
-    subtest 'Image accessibility' => sub {
-        # Check that images have alt text
-        my @images = $dom->find('img')->each;
-        if (@images) {
-            for my $img (@images) {
-                my $alt = $img->attr('alt');
-                ok defined($alt), 'Image has alt attribute (may be empty for decorative images)';
-            }
-        } else {
-            pass('No images found on page');
-        }
-    };
-    
-    subtest 'Color and contrast' => sub {
-        # These would typically be tested with automated tools like axe-core
-        pass('Color contrast should be verified with automated accessibility tools');
-    };
-    
-    subtest 'Keyboard navigation' => sub {
-        # Verify that interactive elements can receive focus
-        my @focusable = $dom->find('a, button, input, select, textarea, [tabindex]')->each;
-        if (@focusable) {
-            pass('Page has focusable elements for keyboard navigation');
-        } else {
-            pass('Workflow landing page may not have interactive elements');
-        }
-        
-        # Check for visible focus indicators in CSS
-        my $css_content = $dom->find('style')->map('text')->join(' ');
-        if ($css_content && $css_content =~ /:focus/) {
-            pass('CSS includes focus styles');
-        } else {
-            pass('Focus styles should be defined in CSS');
-        }
-    };
+
+    ok $dom->at('html'), 'Page has HTML element';
+    ok $dom->at('body'), 'Page has body element';
+    ok $dom->at('title'), 'Page has title element';
+
+    # A landing page with no link is a dead end, so this is a requirement and
+    # not a condition. The old version passed when there were none.
+    my $links = $dom->find('a[href]');
+    ok $links->size > 0, 'the landing page offers at least one link'
+        or diag 'a landing page with nothing to follow cannot be entered';
+    is_deeply unnamed($dom, 'a[href]'), [], 'every link has an accessible name';
+
+    is_deeply unnamed($dom, 'button, [role="button"], input[type="submit"]'), [],
+        'every button has an accessible name';
+
+    # A page may legitimately carry no images. The rule is about the ones it has,
+    # so it is stated as an absence of counterexamples rather than a pass for an
+    # empty list.
+    my @imgs_without_alt =
+      grep { !defined $_->attr('alt') } $dom->find('img')->each;
+    is scalar @imgs_without_alt, 0,
+        'no image is missing its alt attribute (empty alt is fine, absent is not)';
+
+    # Keyboard reach: something must be focusable, and the focus ring has to be
+    # defined somewhere real. The old check looked for :focus in inline <style>
+    # blocks, which the layout does not use, so it always took the branch that
+    # passed with the message "Focus styles should be defined in CSS".
+    ok $dom->find('a, button, input, select, textarea, [tabindex]')->size > 0,
+        'the page has something a keyboard can reach';
+    like Mojo::File->new('public/css/app.css')->slurp, qr/:focus/,
+        'the stylesheet defines a focus appearance';
 };
 
-subtest 'Workflow accessibility' => sub {
+subtest 'the first workflow screen' => sub {
     my $t = Test::Mojo->new('Registry');
-    
-    # Test accessibility of workflow pages
-    my $res2 = $t->get_ok('/tenant-signup')->tx->res;
-    if ($res2->code == 302) {
-        my $location = $res2->headers->location;
-        $t->get_ok($location)->status_is(200);
-    } else {
-        is($res2->code, 200, '200 OK');
+
+    my $res = $t->get_ok('/tenant-signup')->tx->res;
+    if ($res->code == 302) {
+        $t->get_ok($res->headers->location)->status_is(200);
     }
-    
+    else {
+        is $res->code, 200, '200 OK';
+    }
+
     my $dom = $t->tx->res->dom;
-    
-    subtest 'Form accessibility' => sub {
-        # Check for proper form labels
-        my @form_inputs = $dom->find('input[type="text"], input[type="email"], textarea, select')->each;
-        
-        if (@form_inputs) {
-            for my $input (@form_inputs) {
-                my $id = $input->attr('id');
-                my $label = $dom->at("label[for=\"$id\"]") if $id;
-                my $aria_label = $input->attr('aria-label');
-                my $aria_labelledby = $input->attr('aria-labelledby');
-                
-                ok $label || $aria_label || $aria_labelledby, 
-                   'Form input has associated label or aria-label';
-            }
-        } else {
-            pass('No form inputs found on this workflow step');
-        }
-    };
-    
-    subtest 'Error message accessibility' => sub {
-        # Error messages should be associated with form fields
-        my @error_elements = $dom->find('.error, .alert-error, [role="alert"]')->each;
-        
-        # This would typically be tested by triggering validation errors
-        # and checking that they're properly announced to screen readers
-        pass('Error message accessibility requires form submission testing');
-    };
+
+    # This step is an introduction: it has buttons and no inputs, which is why
+    # the input rule below is an absence-of-counterexamples rule. The button
+    # rule is a requirement -- a workflow step with no control cannot be left.
+    ok $dom->find('button, [role="button"], input[type="submit"]')->size > 0,
+        'the step offers a control to continue with';
+    is_deeply unnamed($dom, 'button, [role="button"], input[type="submit"]'), [],
+        'every button has an accessible name';
+
+    my @unlabelled;
+    for my $input ( $dom->find(
+        'input[type="text"], input[type="email"], textarea, select')->each )
+    {
+        my $id = $input->attr('id');
+        next if $id && $dom->at(qq{label[for="$id"]});
+        next if $input->attr('aria-label') || $input->attr('aria-labelledby');
+        push @unlabelled, $input->attr('name') // $input->tag;
+    }
+    is_deeply \@unlabelled, [],
+        'no form control is without a label or aria-label';
 };
+
+# Two subtests are deliberately absent rather than faked. They were:
+#
+#   pass('Color contrast should be verified with automated accessibility tools');
+#   pass('Error message accessibility requires form submission testing');
+#
+# Neither asserted anything, and both described work rather than doing it.
+# Contrast needs a rendering engine -- it belongs in a Playwright spec with
+# axe-core, against the real stylesheet and both themes. Error-message
+# announcement needs a form driven to failure and the resulting markup checked
+# for role="alert". Tracked rather than simulated.
 
 done_testing;

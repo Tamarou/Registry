@@ -236,8 +236,13 @@ my $session = Test::Registry::Fixtures::create_session($db, {
             COUNT(DISTINCT position) as unique_positions,
             COUNT(CASE WHEN status = 'waiting' THEN 1 END) as waiting_count,
             COUNT(CASE WHEN status = 'offered' THEN 1 END) as offered_count,
+            COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted_count,
             COUNT(CASE WHEN status = 'expired' THEN 1 END) as expired_count,
-            COUNT(CASE WHEN status = 'declined' THEN 1 END) as declined_count
+            COUNT(CASE WHEN status = 'declined' THEN 1 END) as declined_count,
+            COUNT(*) FILTER (
+                WHERE status NOT IN
+                  ('waiting','offered','accepted','expired','declined')
+            ) as unknown_status_count
         FROM waitlist
         WHERE session_id = ?
     };
@@ -245,8 +250,27 @@ my $session = Test::Registry::Fixtures::create_session($db, {
     my $stats = $db->db->query($final_check_sql, $session->id)->hash;
 
     ok $stats->{total_entries} > 0, "Have waitlist entries";
-    ok $stats->{waiting_count} >= 0, "Have valid waiting count";
-    ok $stats->{offered_count} >= 0, "Have valid offered count";
+
+    # A count of rows cannot be negative, so `>= 0` was true of every possible
+    # database state including a completely wrong one. The real invariant is that
+    # the statuses partition the queue: every entry is in exactly one of them, so
+    # they have to add up to the total. A status that stopped being written, or one
+    # written twice, shows up here.
+    #
+    # This query enumerated four statuses while the schema allows five --
+    # `accepted` was added by waitlist-accepted-status and never reached this
+    # list, so the sum came up three short of the total the first time it was
+    # actually checked. The unknown-status count is the guard against the next
+    # one: a status added to the constraint and not to this list fails here rather
+    # than quietly going missing from the arithmetic.
+    is $stats->{unknown_status_count}, 0,
+        "no entry carries a status this check does not know about";
+
+    my $by_status = $stats->{waiting_count} + $stats->{offered_count}
+        + $stats->{accepted_count} + $stats->{expired_count}
+        + $stats->{declined_count};
+    is $by_status, $stats->{total_entries},
+        "every entry is in exactly one status";
 
     # For waiting entries, positions should be unique
     my $waiting_position_check = q{
