@@ -8,6 +8,7 @@ use utf8;
 
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::RunRecorderStep;
 use Test::Registry::DB;
 
 use Registry::DAO;
@@ -104,20 +105,57 @@ subtest 'step process receives the correct run object' => sub {
     is $run_a->data->{marker}, 'run_a_marker', 'Run A marker preserved';
     is $run_b->data->{marker}, 'run_b_marker', 'Run B marker preserved';
 
-    # The key test: if a step class tries to get run data,
-    # it should get the correct run (not latest_run)
-    # We verify this by checking WorkflowRun::process passes 3 args
-    # to step->process (this is a structural test)
+};
 
-    # For a real isolation test with the drop workflow steps,
-    # we need to use the actual step classes. But those require
-    # enrollment data. So we test the mechanism: does process()
-    # pass the run as the 3rd argument?
+# ============================================================
+# Test: a step is handed ITS run, not the workflow's latest
+# ============================================================
+# This was `ok 1, 'Process mechanism verified (structural)'` under a comment
+# explaining that a real test would need the drop workflow's steps and their
+# enrollment data. It needs neither: a step class that records which run it was
+# given is enough, and it is the whole mechanism under test.
+#
+# The failure it guards against is specific. Every step's process() signature is
+# ($db, $form_data, $run = undef), and the fallback when $run is absent is
+# `$self->workflow($db)->latest_run($db)`. Two runs of one workflow in flight
+# means the latest belongs to whoever started most recently -- so a step that
+# falls back writes one visitor's answers into another's registration.
+subtest 'a step receives the run being processed, not the latest one' => sub {
+    Registry::DAO::WorkflowStep->create($dao->db, {
+        workflow_id => $workflow->id,
+        slug        => 'recorder',
+        description => 'Records the run it was handed',
+        class       => 'Test::Registry::RunRecorderStep',
+    });
 
-    # The base WorkflowStep::process has signature ($db, $data, $run)
-    # where $run is optional. We can verify by checking that run_data
-    # is accessible inside a step via the passed run.
-    ok 1, 'Process mechanism verified (structural)';
+    # Re-found, not used as created: create() blesses into the base class, and
+    # find() is what loads the subclass named in the `class` column and blesses
+    # into it. Using the created object silently ran the base step's process.
+    my $recorder = Registry::DAO::WorkflowStep->find($dao->db, {
+        workflow_id => $workflow->id, slug => 'recorder',
+    });
+    isa_ok $recorder, 'Test::Registry::RunRecorderStep';
+
+    my $first = Registry::DAO::WorkflowRun->create($dao->db, {
+        workflow_id => $workflow->id,
+    });
+    # Started second, so it is the one latest_run would return for both.
+    my $latest = Registry::DAO::WorkflowRun->create($dao->db, {
+        workflow_id => $workflow->id,
+    });
+
+    $first->process($dao->db, $recorder, {});
+    $latest->process($dao->db, $recorder, {});
+
+    ($first)  = $dao->find(WorkflowRun => { id => $first->id });
+    ($latest) = $dao->find(WorkflowRun => { id => $latest->id });
+
+    is $first->data->{seen_run_id}, $first->id,
+        'the earlier run was processed as itself';
+    is $latest->data->{seen_run_id}, $latest->id,
+        'and so was the later one';
+    isnt $first->data->{seen_run_id}, $latest->id,
+        'the earlier run did not get the later one -- which is the bug';
 };
 
 done_testing;

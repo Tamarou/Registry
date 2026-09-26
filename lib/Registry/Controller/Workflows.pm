@@ -168,7 +168,16 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
         my $data_json = Mojo::JSON::encode_json($run->data || {});
         my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
-        my $template_data = $step->prepare_template_data($dao->db, $run);
+
+        # The request's params, the way get_workflow_run_step passes them. Without
+        # them the storefront's filter bar did nothing: it submits GET to "/",
+        # which lands here, and ProgramListing reads `location` and
+        # `program_type` out of exactly this argument. The selects still marked
+        # the chosen option, because the template reads param() directly -- so the
+        # screen showed a location selected above a list that had not been
+        # narrowed at all.
+        my $params = $self->req->params->to_hash;
+        my $template_data = $step->prepare_template_data($dao->db, $run, $params);
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
 
         $self->render(

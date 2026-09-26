@@ -279,15 +279,65 @@ subtest 'storefront uses design system classes not Tailwind' => sub {
 # ============================================================
 # Test 7: No programs shows empty state
 # ============================================================
-subtest 'no programs shows empty state message' => sub {
-    # Create a fresh Test::Mojo with an empty DAO (different schema)
-    # For simplicity, create a tenant with no sessions and test against it
-    # Actually, we can test this by creating a workflow in a schema with no data
+# This subtest was `ok 1, 'Storefront renders without crashing (programs exist)'`
+# under a comment conceding that the empty state was "tested implicitly by the
+# template rendering". It was not tested at all: the branch never ran, because
+# the fixture always has a published programme.
+#
+# The template has two empty states and they say different things -- a visitor
+# who filtered everything out needs a way back, a visitor arriving at a storefront
+# with nothing on it needs to know to return later. Both are asserted.
+# The filter bar submits GET to "/", and nothing ever pressed it: `index` did not
+# pass the request's params to the step, so ProgramListing never saw `location` or
+# `program_type`. The selects still marked the chosen option -- the template reads
+# param() directly -- so the screen showed a location selected above a list that
+# had not been narrowed at all.
+subtest 'the filter bar actually filters' => sub {
+    # The real location keeps the programme. Asserted first, because a filter that
+    # empties the page for every value is broken in the other direction.
+    $t->get_ok('/tenant-storefront?location=' . $location->id)
+      ->status_is(200)
+      ->content_like(qr/Wheel Art Camp/,
+          'filtering to the location the programme runs at keeps it');
 
-    # For now, just verify the page doesn't crash when there are programs
-    # The empty state is tested implicitly by the template rendering
-    $t->get_ok('/tenant-storefront')->status_is(200);
-    ok 1, 'Storefront renders without crashing (programs exist)';
+    # And the programme type it belongs to.
+    $t->get_ok('/tenant-storefront?program_type=summer-camp')
+      ->status_is(200)
+      ->content_like(qr/Wheel Art Camp/,
+          'filtering to its programme type keeps it');
+
+    # A type it does not belong to drops it.
+    $t->get_ok('/tenant-storefront?program_type=after-school')
+      ->status_is(200)
+      ->content_unlike(qr/Wheel Art Camp/,
+          'filtering to another programme type drops it');
+};
+
+subtest 'no programs shows empty state message' => sub {
+    # Filtered to a location that matches nothing. The programme still exists, so
+    # this is the "your filters are too narrow" state and it has to offer the way
+    # back rather than an empty page.
+    $t->get_ok('/tenant-storefront?location=' . '0' x 8 . '-0000-0000-0000-' . '0' x 12)
+      ->status_is(200)
+      ->content_like(qr/No programs match your filters/,
+          'a filter that matches nothing says so')
+      ->content_like(qr/view all programs/,
+          'and offers the way back');
+
+    # Nothing published at all. Unpublishing rather than building a second tenant
+    # schema, because what the template branches on is the grouped-programs list
+    # being empty and that is the state under test.
+    $dao->db->query(q{UPDATE projects SET status = 'draft'});
+
+    $t->get_ok('/tenant-storefront')
+      ->status_is(200)
+      ->content_like(qr/Coming Soon/, 'an empty storefront says Coming Soon')
+      ->content_like(qr/No programs currently available/,
+          'and explains what that means')
+      ->content_unlike(qr/Wheel Art Camp/,
+          'and does not list the unpublished programme');
+
+    $dao->db->query(q{UPDATE projects SET status = 'published'});
 };
 
 done_testing;
