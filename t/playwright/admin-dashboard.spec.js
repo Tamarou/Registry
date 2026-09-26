@@ -76,13 +76,24 @@ test.describe('Admin dashboard', () => {
     await registryPage.goto('/admin/dashboard');
     await registryPage.waitForLoadState('networkidle');
 
-    // The dashboard page should contain HTMX endpoint references
-    const body = await registryPage.locator('body').innerHTML();
-    const hasHTMXEndpoints = body.includes('hx-get') || body.includes('hx-post');
-
-    // Dashboard should have HTMX-loaded sections or static content
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-    ok: true; // Dashboard renders, HTMX sections present or inline
+
+    // `ok: true;` is a JavaScript label, not an assertion -- it is what stood
+    // here, and it computed hasHTMXEndpoints without ever looking at it. The
+    // dashboard loads its panels over HTMX, so the attributes that fetch them
+    // are the thing to require: without them the page renders empty shells.
+    const htmxTargets = registryPage.locator('[hx-get], [hx-post]');
+    await expect(htmxTargets.first(), 'the dashboard wires up its HTMX panels')
+      .toBeAttached({ timeout: 10000 });
+
+    // Pointed at the section endpoints the page actually uses -- `?section=`
+    // through the workflow, not the `/admin/dashboard/<section>` fragment routes
+    // the old Jordan tests asserted and no screen ever called.
+    const targets = await htmxTargets.evaluateAll((els) =>
+      els.map((el) => el.getAttribute('hx-get') || el.getAttribute('hx-post'))
+    );
+    expect(targets.some((t) => t && t.includes('section=')),
+      'at least one panel fetches a section').toBeTruthy();
   });
 
   test('unauthenticated access redirects to login', async ({ registryPage, testDB }) => {
@@ -92,13 +103,11 @@ test.describe('Admin dashboard', () => {
     await registryPage.goto('/admin/dashboard');
     await registryPage.waitForLoadState('networkidle');
 
-    // Should redirect to login or show unauthorized
-    const url = registryPage.url();
-    const bodyText = await registryPage.locator('body').textContent();
-    const isRedirectedOrBlocked =
-      url.includes('/auth/login') ||
-      bodyText.match(/sign in|login|unauthorized/i);
-
-    expect(isRedirectedOrBlocked).toBeTruthy();
+    // The old test also accepted body text matching /sign in|login|unauthorized/,
+    // which the dashboard's own navigation satisfies -- so it passed whether or
+    // not the guard held. What matters is that the dashboard's content is NOT
+    // served, so that is the assertion.
+    await expect(registryPage.locator('nav.dashboard-nav')).toHaveCount(0);
+    await expect(registryPage).not.toHaveTitle(/Admin Dashboard/);
   });
 });

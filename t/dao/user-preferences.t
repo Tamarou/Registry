@@ -79,9 +79,16 @@ subtest 'Notification preferences' => sub {
     # Test getting default notification preferences
     my $prefs = Registry::DAO::UserPreference->get_notification_preferences($db, $user->id);
 
+    # The message types are here deliberately. They were absent, so
+    # wants_notification fell through to `// 0` for every one of them and nothing
+    # in the product writes a message preference -- meaning no announcement, no
+    # schedule update and no emergency notice had ever been delivered to anybody.
     is_deeply($prefs, {
-        attendance_missing => { email => 1, in_app => 1 },
-        attendance_reminder => { email => 1, in_app => 1 }
+        attendance_missing   => { email => 1, in_app => 1 },
+        attendance_reminder  => { email => 1, in_app => 1 },
+        message_announcement => { email => 1, in_app => 1 },
+        message_update       => { email => 1, in_app => 1 },
+        message_emergency    => { email => 1, in_app => 1 },
     }, 'Default notification preferences set correctly');
 
     # Test wants_notification method

@@ -54,20 +54,42 @@ test.describe('Drop and transfer from parent dashboard', () => {
     await expect(registryPage.locator('body')).toContainText('Drop Test Kid');
   });
 
-  test('parent can view drop request collect-reason page', async ({ registryPage, testDB }) => {
+  // Pressed from the dashboard, which is the only way in that exists: the Drop
+  // link carries the enrollment_id, and the step skips its selection screen when
+  // it has one. The test this replaces navigated to /parent-drop-request bare and
+  // then asserted `bodyText.length > 100` -- through a JavaScript label, so not
+  // even that was checked. The 500 page is longer than 100 characters.
+  test('parent presses Drop and reaches the reason screen', async ({ registryPage, testDB }) => {
     const data = seedDropData(testDB);
     await loginWithToken(registryPage, data.parent_token);
 
-    // Navigate directly to collect-reason step with enrollment pre-selected
-    // (simulating what happens after selecting an enrollment)
-    await registryPage.goto('/parent-drop-request');
+    await registryPage.goto('/parent/dashboard');
     await registryPage.waitForLoadState('networkidle');
 
-    // Even if it errors on the first step (user not in run data),
-    // the page should not crash the browser
-    const bodyText = await registryPage.locator('body').textContent();
-    const hasContent = bodyText.length > 100;
-    ok: hasContent; // Page rendered something
+    const drop = registryPage.locator(
+      `a[href="/parent-drop-request?enrollment_id=${data.enrollment_id}"]`
+    );
+    await expect(drop, 'the dashboard offers Drop for the enrolment').toBeVisible({ timeout: 10000 });
+    await drop.click();
+    await registryPage.waitForLoadState('networkidle');
+
+    await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
+
+    // The link carries the enrolment, so the selection step completes on arrival
+    // and the parent lands on the reason screen. The control has to be there --
+    // a screen of prose with nothing to fill in is the dead end worth catching.
+    const reason = registryPage.locator('textarea[name="reason"]');
+    await expect(reason, 'the reason control is on the screen').toBeVisible({ timeout: 10000 });
+
+    await reason.fill('Moving out of the area');
+    await registryPage.locator('form button[type="submit"]').first().click();
+    await registryPage.waitForLoadState('networkidle');
+
+    // And the reason has to reach the next screen. A review step that shows none
+    // of what was just typed is not a review.
+    await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
+    await expect(registryPage.locator('body'), 'the review screen carries the reason back')
+      .toContainText('Moving out of the area');
   });
 });
 

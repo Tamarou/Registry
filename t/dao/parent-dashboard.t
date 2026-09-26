@@ -1,4 +1,10 @@
 #!/usr/bin/env perl
+
+# Email::Sender defaults to a real SMTP transport. Nothing here delivered mail
+# before message notifications were given a default of ON, so this file quietly
+# had no need of the guard; now it does, and a test suite must never attempt to
+# send actual email.
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use 5.42.0;
 use warnings;
 use utf8;

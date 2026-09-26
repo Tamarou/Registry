@@ -74,7 +74,21 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     method export_data () {
         my $dao = $self->dao($self->stash('tenant'));
         my $export_type = $self->param('type') || 'enrollments'; # enrollments, attendance, waitlist
-        my $format = $self->param('format') || 'csv'; # csv, json
+
+        # `?format=` is what the dashboard's export links carry, and Mojolicious
+        # no longer lets it take part in content negotiation -- it wants
+        # `?_format=`. So respond_to fell through to its `any` branch, rendered
+        # with the default handler, and answered text/html: a link promising a
+        # spreadsheet returned a web page. With a 200, which is all any test
+        # asked about.
+        #
+        # Both spellings are honoured, and the handler is named outright rather
+        # than inferred from a negotiation that no longer sees the parameter.
+        my $format = $self->param('format')
+          || $self->param('_format')
+          || $self->stash('format')
+          || 'csv';
+        $format = 'csv' unless $format eq 'json';
 
         try {
             require Registry::DAO::AdminDashboard;
@@ -93,19 +107,18 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
                 $self->res->headers->transfer_encoding('chunked');
             }
 
-            # Use format-based rendering with streaming support
-            $self->respond_to(
-                json => { json => $data },
-                csv  => {
-                    csv => $data,
-                    stream => $use_streaming,
-                    chunk_size => 500  # Process 500 records per chunk
-                },
-                any  => {
-                    csv => $data,
-                    stream => $use_streaming,
-                    chunk_size => 500
-                }
+            if ( $format eq 'json' ) {
+                return $self->render( json => $data );
+            }
+
+            $self->res->headers->content_type('text/csv; charset=utf-8')
+                unless $use_streaming;
+
+            return $self->render(
+                handler    => 'csv',
+                csv        => $data,
+                stream     => $use_streaming,
+                chunk_size => 500,    # Process 500 records per chunk
             );
         }
         catch ($e) {

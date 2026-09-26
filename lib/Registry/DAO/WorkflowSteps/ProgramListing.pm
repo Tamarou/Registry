@@ -10,6 +10,7 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
     use Registry::Utility::PriceFormat qw(format_price);
     use Registry::DAO::ProgramType;
     use Registry::DAO::Session;
+    use Registry::DAO::PricingPlan;
 
     method process ($db, $form_data, $run = undef) {
         # The program-listing step stays on the page. Registration
@@ -158,12 +159,29 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
             my $available = $capacity > 0 ? $capacity - $enrolled : undef;
             my $is_full = defined $available && $available <= 0;
 
-            # Get best price from pre-loaded pricing
+            # Get best price from pre-loaded pricing.
+            #
+            # Applicable plans only. Taking MIN over every plan on the session
+            # advertised a closed early bird's price -- a number nobody can be
+            # charged -- so a card read "From $200" while the cart quoted $300.
+            # Built from the rows already loaded rather than through
+            # PricingPlan->get_best_price, which would re-query per session and
+            # undo the batch load above.
+            #
+            # child_count is 1 because a browsing parent has not chosen children
+            # yet; a family rate that needs two is not a price this visitor can
+            # have on the strength of what they have told us. "From" then covers
+            # the rest, and is shown only when more than one plan actually applies.
             my $plans = $pricing_by_session{$row->{session_id}} || [];
             my $best_price_cents;
+            my $applicable = 0;
             for my $plan (@$plans) {
-                my $amount = $plan->{amount_cents};
-                $best_price_cents = $amount if defined $amount && (!defined $best_price_cents || $amount < $best_price_cents);
+                my $price = Registry::DAO::PricingPlan->new(%$plan)
+                    ->calculate_price( { child_count => 1, date => time() } );
+                next unless defined $price;
+                $applicable++;
+                $best_price_cents = $price
+                    if !defined $best_price_cents || $price < $best_price_cents;
             }
 
             push @{$programs{$project_id}{sessions}}, {
@@ -191,7 +209,7 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 # must not be rounded, and the storefront should not have to.
                 # "From" only when there is a choice to be cheapest among.
                 best_price      => defined $best_price_cents
-                    ? ( @$plans > 1 ? 'From ' : '' )
+                    ? ( $applicable > 1 ? 'From ' : '' )
                       . format_price( $best_price_cents, $plans->[0]{currency} )
                     : undef,
                 location_id     => $row->{location_id},

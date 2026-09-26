@@ -1,6 +1,12 @@
 #!/usr/bin/env perl
 # ABOUTME: Alex (platform owner) journey: activating a tenant's Connect account
 # ABOUTME: unlocks paid enrollment and the platform fee is collected at charge time.
+#
+# Asserts at the DAO and job layer on purpose. Alex has no screens -- no
+# platform-owner route, template or nav exists -- so unlike the other personas
+# there is no control here to press. That is a decision (perigrin, #395) rather
+# than the gap the other journey suites had: the screens Alex would need are
+# enumerated in #426, and this suite should be reshaped only when they exist.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
