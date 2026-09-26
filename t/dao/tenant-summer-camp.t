@@ -161,6 +161,17 @@ is scalar(@event_sessions), 1, 'Event belongs to 1 session in tenant schema';
 is $event_sessions[0]->id, $camp_session->id,
   'Event belongs to correct session in tenant schema';
 
+# Derived, never pinned. This fixture used to say '2025-05-15', which had quietly
+# passed -- harmless only for as long as a cutoff on a plan whose type was not
+# 'early_bird' was ignored. Requirements are honoured by declaration now, so the
+# stale date became a live failure: the plan stopped being applicable and
+# calculate_price returned undef. The date bomb was always there; the change
+# merely armed it (#368 is the same lesson).
+my $cutoff_ahead = do {
+    my @t = localtime( time + 30 * 86_400 );
+    sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3];
+};
+
 # Create pricing for the camp session in tenant schema
 my $pricing = Test::Registry::Fixtures::create_pricing($tenant_dao, {
     session_id             => $camp_session->id,
@@ -169,7 +180,7 @@ my $pricing = Test::Registry::Fixtures::create_pricing($tenant_dao, {
     amount_cents           => 34999,
     currency               => 'USD',
     requirements           => {
-        early_bird_cutoff_date => '2025-05-15',
+        early_bird_cutoff_date => $cutoff_ahead,
         sibling_discount       => 15.00
     }
 });
@@ -187,6 +198,20 @@ is $pricing->requirements->{sibling_discount}, 15.00,
 my $calculated_price = $pricing->calculate_price();
 is $calculated_price, 34999,
   'calculate_price returns correct amount in tenant schema';
+
+# The declared cutoff is honoured regardless of what the plan is called -- this
+# plan's type is 'standard'. Asserted here because this file is where the stale
+# date surfaced, so it is where the rule is most useful to read.
+my $closed = Test::Registry::Fixtures::create_pricing($tenant_dao, {
+    session_id   => $camp_session->id,
+    plan_name    => 'Closed Cutoff Pricing',
+    plan_type    => 'standard',
+    amount_cents => 9999,
+    currency     => 'USD',
+    requirements => { early_bird_cutoff_date => '2020-01-01' },
+});
+is $closed->calculate_price(), undef,
+  'a plan whose declared cutoff has passed is not applicable, whatever its type';
 
 # Test session pricing relationship - need to check if this method exists
 # Skip this test for now as it depends on Session having a pricing method
