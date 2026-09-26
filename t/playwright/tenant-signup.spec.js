@@ -49,11 +49,14 @@ test.describe('Tenant signup workflow', () => {
     // Wait for subdomain preview to update (HTMX or JS)
     await registryPage.waitForTimeout(1500);
 
-    // Subdomain preview should show
+    // Required, not conditional. The preview is the only thing telling the tenant
+    // what address they are about to be given, and the branch this replaces passed
+    // when it was missing -- so a broken preview looked like a working one.
     const subdomainPreview = registryPage.locator('.subdomain-slug, #subdomain-slug, [class*="subdomain"]');
-    if (await subdomainPreview.count() > 0) {
-      await expect(subdomainPreview.first()).toContainText(/super-awesome/i);
-    }
+    await expect(subdomainPreview.first(), 'the subdomain preview is on screen')
+      .toBeVisible({ timeout: 10000 });
+    await expect(subdomainPreview.first(), 'and shows the address derived from the name')
+      .toContainText(/super-awesome/i);
 
     // Billing email field
     const emailInput = registryPage.locator('input[name="billing_email"]');

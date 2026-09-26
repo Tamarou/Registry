@@ -37,8 +37,13 @@ my $dao     = $test_db->db;
     }
     catch ($e) {
 
-        # If creation fails due to validation, that's also acceptable
-        ok 1, "SQL injection attempt properly rejected: $e";
+        # Rejection is an acceptable outcome, but `ok 1` accepted ANY exception --
+        # a lost connection, an unrelated constraint -- as proof of safety. What
+        # has to hold either way is that the injected statement did not execute,
+        # so that is what gets asserted on this branch too.
+        my $survived = $dao->db->query(
+            q{SELECT to_regclass('users') IS NOT NULL})->array->[0];
+        ok $survived, "users table survived the injection attempt (rejected: $e)";
     }
 }
 
@@ -178,8 +183,13 @@ my $dao     = $test_db->db;
     }
     catch ($e) {
 
-        # If null bytes are rejected, that's also safe
-        ok 1, "Null byte injection properly rejected: $e";
+        # Same reasoning as the injection branch above: rejection is fine, but the
+        # invariant worth asserting is that nothing was written carrying a null
+        # byte, rather than that something somewhere threw.
+        my $with_nulls = $dao->db->query(
+            q{SELECT COUNT(*) FROM users WHERE email LIKE '%' || chr(0) || '%'}
+        )->array->[0];
+        is $with_nulls, 0, "no user was stored with a null byte (rejected: $e)";
     }
 }
 
