@@ -93,6 +93,46 @@ subtest 'a plan version cannot be edited in place' => sub {
     is $reread->amount_cents, 30000, 'the price is unchanged';
 };
 
+subtest 'a plan cannot be edited by raw SQL either' => sub {
+    # The DAO croak above is only a better error message. This is the enforcement:
+    # a BEFORE UPDATE trigger, because psql is the platform owner's only pricing
+    # tooling today (#426) and RevenueShare reads the rate off the row on every
+    # charge -- so a hand-edit would silently re-price without passing through any
+    # Perl at all.
+    my $session = make_session('Immutable In The Database');
+    my $plan = Registry::DAO::PricingPlan->create($db, {
+        session_id => $session->id, plan_name => 'Standard',
+        plan_type => 'standard', amount_cents => 30000,
+    });
+
+    my $ok = eval {
+        $db->query('UPDATE pricing_plans SET amount_cents = 1 WHERE id = ?', $plan->id);
+        1;
+    };
+    ok !$ok, 'the database refuses the update';
+    like $@, qr/immutable/, 'and says so';
+
+    is Registry::DAO::PricingPlan->find($db, { id => $plan->id })->amount_cents,
+        30000, 'the price is unchanged';
+
+    # A column added to this table later is protected automatically, because the
+    # trigger subtracts what is allowed rather than listing what is guarded.
+    my $meta_ok = eval {
+        $db->query(q{UPDATE pricing_plans SET metadata = '{"x":1}'::jsonb WHERE id = ?},
+            $plan->id);
+        1;
+    };
+    ok !$meta_ok, 'and refuses a change to any other column too';
+
+    # Retiring is not changing the terms, so it is permitted -- this is the
+    # exemption revise relies on.
+    my $retire_ok = eval {
+        $db->query('UPDATE pricing_plans SET superseded_at = now() WHERE id = ?', $plan->id);
+        1;
+    };
+    ok $retire_ok, 'but retiring a version is allowed' or diag "refused: $@";
+};
+
 subtest 'revising appends a version and retires the old one' => sub {
     my $session = make_session('Revised');
     my $v1 = Registry::DAO::PricingPlan->create($db, {

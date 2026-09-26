@@ -120,12 +120,18 @@ subtest 'the advertised price is one the cart will actually charge' => sub {
 };
 
 subtest '"From" comes back when more than one price is really available' => sub {
-    # Re-open the early bird. Two plans now apply, so the cheaper one is the
-    # advertised floor and "From" is true.
-    $db->query(
-        q{UPDATE pricing_plans SET requirements = ?::jsonb
-           WHERE session_id = ? AND plan_type = 'early_bird'},
-        '{"early_bird_cutoff_date":"2030-01-01"}', $session->id );
+    # Re-open the early bird by appending a version whose cutoff is in the future.
+    # Two plans then apply, so the cheaper one is the advertised floor and "From"
+    # is true.
+    #
+    # This was a raw UPDATE of the plan's requirements, which the immutability
+    # trigger now refuses -- correctly: a test reaching past the API to mutate a
+    # row is exactly the writer the trigger exists to stop.
+    my ($eb_v1) = grep { $_->plan_name eq 'Early Bird' }
+        @{ Registry::DAO::PricingPlan->get_pricing_plans($db, $session->id) };
+    $eb_v1->revise($db, {
+        requirements => { early_bird_cutoff_date => '2030-01-01' },
+    });
 
     my $data = $step->prepare_template_data($db, $run, {});
     my ($listed) =

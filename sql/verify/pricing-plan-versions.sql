@@ -48,6 +48,28 @@ BEGIN
             ) THEN
                 RAISE EXCEPTION 'pricing_plans_one_current_per_family missing in schema %', s;
             END IF;
+
+            -- The immutability trigger is the enforcement, not the DAO. Its
+            -- absence in a schema means plans there can be edited by hand.
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                  JOIN pg_class c ON c.oid = t.tgrelid
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = s AND c.relname = 'pricing_plans'
+                   AND t.tgname = 'pricing_plans_terms_immutable'
+            ) THEN
+                RAISE EXCEPTION 'pricing_plans_terms_immutable trigger missing in schema %', s;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                  JOIN pg_class c ON c.oid = t.tgrelid
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = s AND c.relname = 'pricing_plans'
+                   AND t.tgname = 'pricing_plans_family_default'
+            ) THEN
+                RAISE EXCEPTION 'pricing_plans_family_default trigger missing in schema %', s;
+            END IF;
         END IF;
 
         IF to_regclass(format('%I.payment_items', s)) IS NOT NULL THEN

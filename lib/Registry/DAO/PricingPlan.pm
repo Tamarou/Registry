@@ -208,27 +208,27 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return $class->find($db, { id => $id });
     }
 
-    # Refused, deliberately. A plan's terms are immutable once written: rows are
-    # append-only versions, and `revise` is how a change is made.
+    # A better message than the database's, and nothing more.
     #
-    # Editing in place re-prices every customer already on the plan, retroactively,
-    # and leaves nothing saying what the old price was -- and payment_items now
-    # records the version a charge used, so an in-place edit rewrites history other
-    # rows point at. Nothing in lib/ has ever called this, which is why refusing
-    # costs nothing today; it is refused now so the plan-editing screen (#427)
-    # cannot be built on it by accident.
+    # The enforcement is a BEFORE UPDATE trigger on pricing_plans: a croak here
+    # would stop only callers that come through the DAO, and `UPDATE
+    # pricing_plans SET amount_cents = ...` in psql is both possible and likely --
+    # psql is the platform owner's only pricing tooling today (#426), so the
+    # person most apt to edit a plan row is the one with no other way to.
     #
-    # `superseded_at` is the one field a caller may still set, because retiring a
-    # version is not changing its terms.
-    method update ($db, $data) {
-        my @terms = grep { $_ ne 'superseded_at' } keys %$data;
+    # This override exists because the parent class provides `update`: deleting it
+    # would not remove the capability, it would restore it, and the caller would
+    # then get a Postgres exception instead of a sentence naming `revise`.
+    #
+    # No exemption for superseded_at. Retiring a version happens inside `revise`,
+    # which writes that column directly, and a second route to it would be
+    # flexibility nothing asked for. The trigger permits it; this method does not
+    # need to.
+    method update ( $db, $data ) {
         croak 'Pricing plan versions are immutable; use revise() to append a new '
-            . 'version (fields: ' . join( ', ', sort @terms ) . ')'
-            if @terms;
-
-        $self->SUPER::update($db, $data);
+            . 'version (fields: ' . join( ', ', sort keys %$data ) . ')';
     }
-    
+
     # Get the session this pricing belongs to
     method session($db) {
         require Registry::DAO::Event;

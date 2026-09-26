@@ -65,6 +65,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS pricing_plans_family_version_key
 CREATE UNIQUE INDEX IF NOT EXISTS pricing_plans_one_current_per_family
     ON pricing_plans (plan_family_id) WHERE superseded_at IS NULL;
 
+-- Immutability enforced HERE, not in the DAO.
+--
+-- A Perl croak is not immutability: `UPDATE pricing_plans SET amount_cents = ...`
+-- in psql works regardless, and psql is the only pricing tooling the platform
+-- owner currently has (#426) -- so the one person most likely to edit a plan row
+-- is the one with no other way to. RevenueShare reads the rate off the row on
+-- every charge, so a hand-edit silently re-prices.
+--
+-- The allowed set is expressed as a subtraction rather than a list of protected
+-- columns, so a column added to this table later is protected automatically.
+-- Listing what is guarded would fail open on the next migration.
+--
+-- superseded_at is exempt because retiring a version is not changing its terms;
+-- updated_at because the existing update_updated_at_column trigger sets it.
+CREATE OR REPLACE FUNCTION registry.pricing_plan_terms_immutable() RETURNS trigger AS $t$
+BEGIN
+    IF ( to_jsonb(NEW) - 'superseded_at' - 'updated_at' )
+       IS DISTINCT FROM
+       ( to_jsonb(OLD) - 'superseded_at' - 'updated_at' )
+    THEN
+        RAISE EXCEPTION
+            'pricing_plans rows are immutable (plan % version %): append a new '
+            'version instead of editing this one. Only superseded_at may change.',
+            OLD.plan_family_id, OLD.version;
+    END IF;
+    RETURN NEW;
+END;
+$t$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS pricing_plans_terms_immutable ON pricing_plans;
+CREATE TRIGGER pricing_plans_terms_immutable
+    BEFORE UPDATE ON pricing_plans
+    FOR EACH ROW EXECUTE FUNCTION registry.pricing_plan_terms_immutable();
+
 -- The pricing basis of a charge. Without this the plan a customer was charged
 -- under is recorded nowhere: payment_items carries an amount and a description,
 -- and with plans previously mutable the amount did not even imply the plan.
@@ -111,6 +145,14 @@ BEGIN
                 CREATE TRIGGER pricing_plans_family_default
                     BEFORE INSERT ON %I.pricing_plans
                     FOR EACH ROW EXECUTE FUNCTION registry.pricing_plan_family_default()
+            $f$, s);
+
+            EXECUTE format(
+                'DROP TRIGGER IF EXISTS pricing_plans_terms_immutable ON %I.pricing_plans', s);
+            EXECUTE format($f$
+                CREATE TRIGGER pricing_plans_terms_immutable
+                    BEFORE UPDATE ON %I.pricing_plans
+                    FOR EACH ROW EXECUTE FUNCTION registry.pricing_plan_terms_immutable()
             $f$, s);
             EXECUTE format($f$
                 CREATE UNIQUE INDEX IF NOT EXISTS pricing_plans_family_version_key

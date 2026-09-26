@@ -8,6 +8,7 @@ BEGIN;
 SET client_min_messages = 'warning';
 SET search_path TO registry, public;
 
+DROP TRIGGER IF EXISTS pricing_plans_terms_immutable ON pricing_plans;
 DROP TRIGGER IF EXISTS pricing_plans_family_default ON pricing_plans;
 
 DROP INDEX IF EXISTS pricing_plans_one_current_per_family;
@@ -32,6 +33,8 @@ BEGIN
 
         IF to_regclass(format('%I.pricing_plans', s)) IS NOT NULL THEN
             EXECUTE format(
+                'DROP TRIGGER IF EXISTS pricing_plans_terms_immutable ON %I.pricing_plans', s);
+            EXECUTE format(
                 'DROP TRIGGER IF EXISTS pricing_plans_family_default ON %I.pricing_plans', s);
             EXECUTE format('DROP INDEX IF EXISTS %I.pricing_plans_one_current_per_family', s);
             EXECUTE format('DROP INDEX IF EXISTS %I.pricing_plans_family_version_key', s);
@@ -55,5 +58,6 @@ END $$;
 -- has been dropped. Dropping the function first fails on any deployment that
 -- actually has tenant schemas, which is every real one.
 DROP FUNCTION IF EXISTS registry.pricing_plan_family_default();
+DROP FUNCTION IF EXISTS registry.pricing_plan_terms_immutable();
 
 COMMIT;
