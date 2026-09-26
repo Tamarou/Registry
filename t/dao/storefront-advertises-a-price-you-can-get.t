@@ -146,4 +146,42 @@ subtest '"From" comes back when more than one price is really available' => sub 
         'and the cart charges exactly what was advertised';
 };
 
+subtest 'a retired version is not advertised' => sub {
+    # Plans are append-only versions. A price that has been revised upward must
+    # stop being on the card -- otherwise retiring a price would not stop the
+    # storefront quoting it, which is the same falsehood as the closed early bird
+    # above wearing a different hat.
+    my ($standard) = grep { $_->plan_name eq 'Standard' }
+        @{ Registry::DAO::PricingPlan->get_pricing_plans($db, $session->id) };
+    ok $standard, 'the standard plan is current';
+
+    $standard->revise($db, { amount_cents => 42000 });
+
+    my $data = $step->prepare_template_data($db, $run, {});
+    my ($listed) =
+      grep { $_->{session}->id eq $session->id }
+      map  { @{ $_->{sessions} } }
+      map  { @$_ }
+      values %{ $data->{grouped_programs} || {} };
+
+    is $listed->{best_price_cents}, 20000,
+        'the open early bird is still the floor';
+
+    # Raise the early bird above the revised standard, so the standard becomes
+    # the cheapest -- and it has to be the NEW price, not the retired one.
+    my ($eb) = grep { $_->plan_name eq 'Early Bird' }
+        @{ Registry::DAO::PricingPlan->get_pricing_plans($db, $session->id) };
+    $eb->revise($db, { amount_cents => 50000 });
+
+    $data = $step->prepare_template_data($db, $run, {});
+    ($listed) =
+      grep { $_->{session}->id eq $session->id }
+      map  { @{ $_->{sessions} } }
+      map  { @$_ }
+      values %{ $data->{grouped_programs} || {} };
+
+    is $listed->{best_price_cents}, 42000,
+        'the revised standard price is advertised, not the retired 30000';
+};
+
 done_testing;

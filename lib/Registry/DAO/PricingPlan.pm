@@ -7,6 +7,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Mojo::JSON qw( decode_json encode_json );
     use List::Util qw( min );
+    use Scalar::Util qw( blessed );
     
     field $id :param :reader;
     field $session_id :param :reader = undef;
@@ -21,6 +22,13 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     field $requirements :param :reader = {};
     field $pricing_configuration :param :reader = {};
     field $metadata :param :reader = {};
+    # Versioning. `id` is this VERSION's identity and therefore what a charge, a
+    # tenant link or a schedule points at. `plan_family_id` is the plan itself,
+    # stable across its versions. `superseded_at` NULL means current, and the
+    # database permits exactly one current version per family.
+    field $plan_family_id :param :reader = undef;
+    field $version :param :reader = 1;
+    field $superseded_at :param :reader = undef;
     field $created_at :param :reader;
     field $updated_at :param :reader;
     
@@ -76,11 +84,112 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         # Add proper error handling and connection management
         try {
             my %result = $db->insert($table, $data, { returning => '*' })->expand->hash->%*;
+
+            # A first version is its own family. Stamped after the insert because
+            # the value is the row's own generated id, which no DEFAULT can
+            # reference. This is the one write that touches an existing plan row
+            # and it completes the row's identity rather than changing its terms
+            # -- every later change appends a version instead (see revise).
+            unless ( defined $result{plan_family_id} ) {
+                $db->query(
+                    'UPDATE pricing_plans SET plan_family_id = id
+                      WHERE id = ? AND plan_family_id IS NULL', $result{id} );
+                $result{plan_family_id} = $result{id};
+            }
+
             return $class->new(%result);
         }
         catch ($e) {
             croak "Failed to create pricing plan: $e";
         }
+    }
+
+    # Append a new version of this plan, carrying %$changes over the current
+    # terms, and retire the version being replaced.
+    #
+    # This is the only way to change a plan. Editing in place re-prices everybody
+    # already on it, retroactively, and destroys the only record of what the old
+    # price was -- and because payment_items records the version a charge used,
+    # an in-place edit would also rewrite history that other rows point at.
+    #
+    # Returns the new version. Both writes happen in one transaction: a family
+    # with no current version is as broken as one with two, and the database
+    # refuses the second.
+    method revise ($db, $changes = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my %next = (
+            session_id            => $session_id,
+            plan_scope            => $plan_scope,
+            plan_name             => $plan_name,
+            plan_type             => $plan_type,
+            pricing_model_type    => $pricing_model_type,
+            amount_cents          => $amount_cents,
+            currency              => $currency,
+            installments_allowed  => $installments_allowed,
+            installment_count     => $installment_count,
+            requirements          => $requirements,
+            pricing_configuration => $pricing_configuration,
+            metadata              => $metadata,
+            %$changes,
+            plan_family_id => $plan_family_id // $id,
+            version        => $version + 1,
+        );
+
+        for my $field (qw(requirements pricing_configuration metadata)) {
+            $next{$field} = { -json => $next{$field} }
+                if ref $next{$field} eq 'HASH';
+        }
+
+        my $tx = $db->begin;
+
+        # Retired first. The partial unique index allows one current version per
+        # family, so inserting before retiring would be refused -- which is the
+        # index doing its job rather than an ordering quirk to work around.
+        #
+        # The row count IS the guard, and it is checked here rather than against
+        # this object's own `superseded_at` field: an in-memory plan read before
+        # somebody else revised it still says it is current, so a field test
+        # passes and the collision then surfaces as a unique-violation naming an
+        # index. Asking the UPDATE how many rows it actually retired is both
+        # atomic and able to say what happened.
+        my $retired = $db->query(
+            'UPDATE pricing_plans SET superseded_at = now()
+              WHERE id = ? AND superseded_at IS NULL', $id )->rows;
+
+        unless ($retired) {
+            # No explicit rollback: Mojo::Pg::Transaction has no such method and
+            # rolls back on destruction unless it was committed, so croaking here
+            # is what undoes the UPDATE.
+            croak 'Cannot revise a superseded plan version: '
+                . "version $version of this plan has already been replaced. "
+                . 'Revise the current version instead.';
+        }
+
+        my %row = $db->insert( 'pricing_plans', \%next, { returning => '*' } )
+            ->expand->hash->%*;
+
+        $tx->commit;
+
+        return blessed($self)->new(%row);
+    }
+
+    # The version of this plan that is in effect now.
+    sub current_for_family ($class, $db, $family_id) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->select( 'pricing_plans', '*',
+            { plan_family_id => $family_id, superseded_at => undef } )
+            ->expand->hash;
+        return $row ? $class->new(%$row) : undef;
+    }
+
+    # Every version of this plan, oldest first.
+    method versions ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $rows = $db->select( 'pricing_plans', '*',
+            { plan_family_id => $plan_family_id // $id },
+            { -asc => 'version' } )->expand->hashes;
+        return [ map { blessed($self)->new(%$_) } @$rows ];
     }
     
     # Override find to use the unqualified table name so the connection's
@@ -99,13 +208,23 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return $class->find($db, { id => $id });
     }
 
+    # Refused, deliberately. A plan's terms are immutable once written: rows are
+    # append-only versions, and `revise` is how a change is made.
+    #
+    # Editing in place re-prices every customer already on the plan, retroactively,
+    # and leaves nothing saying what the old price was -- and payment_items now
+    # records the version a charge used, so an in-place edit rewrites history other
+    # rows point at. Nothing in lib/ has ever called this, which is why refusing
+    # costs nothing today; it is refused now so the plan-editing screen (#427)
+    # cannot be built on it by accident.
+    #
+    # `superseded_at` is the one field a caller may still set, because retiring a
+    # version is not changing its terms.
     method update ($db, $data) {
-        # Encode JSON fields
-        for my $field (qw(requirements pricing_configuration metadata)) {
-            if (exists $data->{$field} && ref $data->{$field} eq 'HASH') {
-                $data->{$field} = { -json => $data->{$field} };
-            }
-        }
+        my @terms = grep { $_ ne 'superseded_at' } keys %$data;
+        croak 'Pricing plan versions are immutable; use revise() to append a new '
+            . 'version (fields: ' . join( ', ', sort @terms ) . ')'
+            if @terms;
 
         $self->SUPER::update($db, $data);
     }
@@ -166,11 +285,20 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return $plan;
     }
 
+    # The plans on offer for a session: current versions only, in a defined order.
+    #
+    # Both halves were defects. Superseded versions would otherwise compete for
+    # the best price, so retiring an expensive plan would not stop it being sold.
+    # And there was no ORDER BY at all -- which is how the enrolment cart, taking
+    # `->[0]`, charged whichever row Postgres happened to return first and priced
+    # the same cart differently between runs.
     sub get_pricing_plans ($class, $db, $session_id) {
-        my $table = 'pricing_plans';
-
         $db = $db->db if $db isa Registry::DAO;
-        my $results = $db->select($table, undef, { session_id => $session_id })->hashes;
+        my $results = $db->select(
+            'pricing_plans', undef,
+            { session_id => $session_id, superseded_at => undef },
+            { -asc => [ 'amount_cents', 'created_at', 'id' ] },
+        )->expand->hashes;
 
         return [ map { $class->new(%$_) } @$results ];
     }
@@ -203,9 +331,26 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return sprintf '%04d%02d%02d', $year + 1900, $month + 1, $day;
     }
 
+    # Whether this plan may be used for the cart described by $context.
+    #
+    # Driven by what the plan DECLARES, not by what it is called. Both checks
+    # used to be gated on `$plan_type eq 'early_bird'` / `eq 'family'`, which is
+    # the anti-pattern PriceOps' entitlement pillar exists to forbid -- the
+    # application knowing plan names. Two concrete consequences of that gating:
+    #
+    #   * The plan-creation screen offers subscription, per_use, hybrid and
+    #     one_time. None of those names appeared here, so any plan built through
+    #     the screen fell through every check and behaved as a flat fee no matter
+    #     what was configured on it.
+    #   * A cutoff date or a minimum-children rule on a plan of any other type
+    #     was stored, displayed, and silently not enforced.
+    #
+    # A requirement present is a requirement honoured. `plan_type` is now a label
+    # for people, and adding a plan shape means declaring keys rather than
+    # editing this method.
     method requirements_met ($context = {}) {
         # Early bird check
-        if ($plan_type eq 'early_bird' && $requirements->{early_bird_cutoff_date}) {
+        if ($requirements->{early_bird_cutoff_date}) {
             # Both sides have to be the same shape before they are compared.
             # $today is an epoch unless the caller supplied a date, and an
             # epoch is ten digits where a compacted date is eight -- so
@@ -217,8 +362,8 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
             return 0 if $today > $cutoff;
         }
         
-        # Family plan check
-        if ($plan_type eq 'family' && $requirements->{min_children}) {
+        # Family / sibling minimum
+        if ($requirements->{min_children}) {
             my $child_count = $context->{child_count} // 1;
             return 0 if $child_count < $requirements->{min_children};
         }
@@ -230,7 +375,9 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     
     # Helper to check if early bird pricing is available
     method is_early_bird_available ($date = time()) {
-        return 0 unless $plan_type eq 'early_bird';
+        # Keyed on the declared cutoff rather than the type name, for the same
+        # reason requirements_met is: a plan with a cutoff has one whatever it is
+        # called, and a plan called early_bird without one has nothing to offer.
         return 0 unless $requirements->{early_bird_cutoff_date};
         
         # Convert date string to timestamp if needed
@@ -262,15 +409,32 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     }
     
     # Get best available price for a session given context
-    sub get_best_price ($class, $db, $session_id, $context = {}) {
+    # The cheapest plan this cart qualifies for, and its price.
+    #
+    # Returns the PLAN as well as the number, because a charge has to record which
+    # version produced it -- `payment_items.pricing_plan_id`. Without that the
+    # pricing basis of a charge is unrecoverable: the amount alone does not say
+    # which plan it came from, and before versioning the plan could change
+    # afterwards anyway.
+    #
+    # Ties go to the plan get_pricing_plans returns first, which is now ordered
+    # rather than arbitrary.
+    sub best_plan ($class, $db, $session_id, $context = {}) {
         my $plans = $class->get_pricing_plans($db, $session_id);
-        
-        my @applicable_prices;
+
+        my ( $best_plan, $best_price );
         for my $plan (@$plans) {
             my $price = $plan->calculate_price($context);
-            push @applicable_prices, $price if defined $price;
+            next unless defined $price;
+            next if defined $best_price && $price >= $best_price;
+            ( $best_plan, $best_price ) = ( $plan, $price );
         }
-        
-        return @applicable_prices ? min(@applicable_prices) : undef;
+
+        return ( $best_plan, $best_price );
+    }
+
+    sub get_best_price ($class, $db, $session_id, $context = {}) {
+        my ( undef, $price ) = $class->best_plan( $db, $session_id, $context );
+        return $price;
     }
 }
