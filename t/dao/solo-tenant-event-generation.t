@@ -126,3 +126,44 @@ subtest 'an explicit choice still wins over the fallback' => sub {
     is scalar(@$teachers), 1, 'one teacher on the new session';
     is $teachers->[0]{teacher_id}, $other->id, 'the one who was chosen, not the owner';
 };
+
+# Morgan decides, per location, whether a full session collects a queue. The
+# choice is made where capacity is set -- the same decision seen from the
+# other side -- and has to reach the session that generation creates, or it
+# is a control that does nothing.
+subtest 'the waitlist choice reaches the session' => sub {
+    my $off = Registry::DAO::Location->create( $db, {
+        name => 'No Queue Room', slug => 'no-queue-room',
+        address_info => { street_address => '9 Quiet Way', city => 'Orlando', state => 'FL', postal_code => '32801' },
+        metadata => {},
+    } );
+
+    my $result = $step->process( $db, {
+        confirm_generation => 1,
+        generation_params  => { start_date => days_from_now(5), duration_weeks => 1 },
+    }, do {
+        my $r = $workflow->new_run($db);
+        $r->update_data( $db, {
+            project_id => $project->id, project_name => $project->name,
+            project_description => 'thrown pots', user_id => $owner->id,
+            configured_locations => [ {
+                id => $off->id, name => $off->name, capacity => 8,
+                schedule => { friday => '16:00' }, pricing_override => 40,
+                waitlist_enabled => 0,
+            } ],
+        } );
+        $r;
+    } );
+
+    ok !$result->{errors}, 'generation succeeded'
+        or diag 'errors: ' . join( '; ', ( $result->{errors} // [] )->@* );
+
+    my $row = $db->query(
+        'SELECT waitlist_enabled FROM sessions WHERE id = ?',
+        $result->{created_sessions}
+            ? $result->{created_sessions}[0]{session_id}
+            : $db->query( 'SELECT id FROM sessions ORDER BY created_at DESC LIMIT 1' )->hash->{id}
+    )->hash;
+
+    is $row->{waitlist_enabled}, 0, 'the session was created with its waitlist off';
+};

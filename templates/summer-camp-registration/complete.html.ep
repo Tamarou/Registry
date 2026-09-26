@@ -2,18 +2,47 @@
 % title 'Registration Complete';
 
 % my @registrations = @{ stash('registrations') || [] };
-% my @campers = grep { length } map { $_->{child_name} // '' } @registrations;
+% # A child who picked a full session joined its queue; they have no seat, and
+% # the page must not greet them as though they did.
+% my @enrolled = grep { !$_->{waiting} } @registrations;
+% my @waiting  = grep {  $_->{waiting} } @registrations;
+% my @campers  = grep { length } map { $_->{child_name} // '' } @enrolled;
+% my @waiters  = grep { length } map { $_->{child_name} // '' } @waiting;
 
 <div class="success-message">
-    <h2>Registration Complete!</h2>
+    %# Only when everyone is waiting does the page lead with the waitlist. An
+    %# empty registrations list is the "we lost the details" case handled below,
+    %# not a queue, and must not be greeted as one.
+    % if (@waiting && !@enrolled) {
+        <h2>You're on the Waitlist</h2>
+        <p>Thank you. <%= join(', ', @waiters) %> could not be given a place yet, so we have added them to the waitlist.</p>
+    % } else {
+        <h2>Registration Complete!</h2>
+        <p>Thank you for registering for our summer camp program. We're excited to have <%= @campers ? join(', ', @campers) : 'your child' %> join us this summer!</p>
+    % }
 
-    <p>Thank you for registering for our summer camp program. We're excited to have <%= @campers ? join(', ', @campers) : 'your child' %> join us this summer!</p>
+    % if (@enrolled && @waiting == 1) {
+        <p><%= $waiters[0] %> joined the waitlist instead &mdash; the session they chose is full.</p>
+    % } elsif (@enrolled && @waiting) {
+        <p><%= join(', ', @waiters) %> joined the waitlist instead &mdash; the sessions they chose are full.</p>
+    % }
 
     <div class="next-steps">
         <h3>Next Steps</h3>
         <ol>
-            <li>You will receive a confirmation email with details about your registration.</li>
-            <li>A camp information packet will be sent to you two weeks before your registered session begins.</li>
+            %# Only the seated children generate a confirmation email. Promising
+            %# one to a parent whose children are all waiting is a message they
+            %# would then sit and wait for.
+            % if (@enrolled) {
+                <li>You will receive a confirmation email with details about your registration.</li>
+                <li>A camp information packet will be sent to you two weeks before your registered session begins.</li>
+            % }
+            % if (@waiting) {
+                <%# The offer is time-limited, so say so here rather than letting
+                    the email be the first the parent hears of it. %>
+                <li>We will email you as soon as a place opens up. You will have a limited time to accept it before it goes to the next family waiting.</li>
+                <li>Nothing has been charged for a child on the waitlist.</li>
+            % }
             <li>If you have any questions or need to make changes to your registration, please contact us at camp@example.com or (555) 123-4567.</li>
         </ol>
     </div>
@@ -36,6 +65,14 @@
                             % if ($session->start_date && $session->end_date) {
                                 <span class="session-dates"><%= $session->start_date %> &ndash; <%= $session->end_date %></span>
                             % }
+                        % }
+                        % # Which state this child is in, next to the session it
+                        % # applies to -- a parent registering two children needs
+                        % # to see which one has a place.
+                        % if ($registration->{waiting}) {
+                            <span class="registration-status is-waiting">Waitlisted</span>
+                        % } else {
+                            <span class="registration-status is-enrolled">Enrolled</span>
                         % }
                     </li>
                 % }

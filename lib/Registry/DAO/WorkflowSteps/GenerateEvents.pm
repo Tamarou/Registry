@@ -102,6 +102,14 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
             name => "$project_data->{project_name} at $location->{name}",
             notes => $project_data->{project_description},
             capacity => $location->{capacity},
+            # Morgan's choice, made beside capacity on configure-location:
+            # whether a full session collects a queue. Absent means on, which
+            # is how every session behaved before the control existed.
+            waitlist_enabled => (
+                exists $location->{waitlist_enabled}
+                ? ( $location->{waitlist_enabled} ? 1 : 0 )
+                : 1
+            ),
             status => 'draft',
             metadata => {
                 program_assignment => 'generated',

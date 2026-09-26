@@ -263,7 +263,7 @@ sub advance_to_session_selection ($username, $email, $child_name, $birth_date, $
 # ============================================================
 # 1.4 Full Session
 # ============================================================
-subtest 'full session - selecting full session returns error' => sub {
+subtest 'full session - choosing it joins the waitlist instead of refusing' => sub {
     my ($run, $child) = advance_to_session_selection(
         'fullsess_parent', 'fullsess@example.com',
         'Full Session Kid', birth_date_for_age(9), '3',
@@ -281,17 +281,20 @@ subtest 'full session - selecting full session returns error' => sub {
 
     my $step_url = workflow_process_step_url($workflow, $run, $step);
 
-    # Try to select the full session
     my $response = $t->post_ok($step_url => form => {
         action                        => 'select_sessions',
         "session_for_${\$child->id}"  => $full_session->id,
     });
 
-    # Should redirect back to session-selection with an error, not proceed
     $response->status_is(302, 'Full session selection returns 302');
 
+    # This subtest used to assert the opposite -- back to session-selection with
+    # "is full. Please select a different session". The storefront invites a
+    # parent to join the waitlist when a session has no room, so refusing the
+    # choice told them to decide differently about the one thing they had
+    # already decided. Choosing a full session now means waiting for it.
     my $redirect_url = $response->tx->res->headers->location;
-    like $redirect_url, qr/session-selection/, 'Redirected back to session-selection (not payment)';
+    like $redirect_url, qr/payment/, 'Carried on to payment rather than being sent back';
 
     # Verify no enrollment was created for the full session
     my $enrollment = $dao->db->select('enrollments', '*', {
@@ -299,6 +302,54 @@ subtest 'full session - selecting full session returns error' => sub {
         session_id       => $full_session->id,
     })->hash;
     ok !$enrollment, 'No enrollment created for full session';
+
+    # And the choice is recorded as a wait, not a seat. session_selections is
+    # what every downstream money calculation walks, so a waiting child being in
+    # it would be a charge for a place that does not exist.
+    #
+    # Re-fetched: run data is read off the object, and this one was loaded
+    # before the POST that wrote it.
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
+    my $data = $run->data;
+    is_deeply $data->{waitlist_items},
+        [ { child_id => $child->id, session_id => $full_session->id,
+            location_id => $data->{location_id} } ],
+        'the child is recorded as waiting for the session they chose';
+    ok !exists $data->{session_selections}{ $child->id },
+        'and is not among the children being charged for a seat';
+};
+
+# Morgan can switch a session's waitlist off, and then full means full: there is
+# no queue to join, so the refusal this subtest used to assert is still the
+# right answer.
+subtest 'full session with its waitlist off is still refused' => sub {
+    my ($run, $child) = advance_to_session_selection(
+        'nowait_parent', 'nowait@example.com',
+        'No Wait Kid', birth_date_for_age(9), '3',
+    );
+
+    $dao->db->query('UPDATE sessions SET waitlist_enabled = FALSE WHERE id = ?',
+        $full_session->id);
+
+    my $step     = $run->next_step($dao->db);
+    my $step_url = workflow_process_step_url($workflow, $run, $step);
+
+    my $response = $t->post_ok($step_url => form => {
+        action                        => 'select_sessions',
+        "session_for_${\$child->id}"  => $full_session->id,
+    });
+    $response->status_is(302, 'returns 302');
+
+    my $redirect_url = $response->tx->res->headers->location;
+    like $redirect_url, qr/session-selection/,
+        'Sent back to session-selection, because there is nothing to join';
+
+    ($run) = $dao->find(WorkflowRun => { id => $run->id });
+    is_deeply $run->data->{waitlist_items} // [], [],
+        'and nobody is queued against a waitlist that is switched off';
+
+    $dao->db->query('UPDATE sessions SET waitlist_enabled = TRUE WHERE id = ?',
+        $full_session->id);
 };
 
 # ============================================================

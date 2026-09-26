@@ -69,6 +69,57 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         });
     }
     
+    # Put every child a registration chose to wait for onto the waitlist.
+    #
+    # Called when the registration completes rather than when the session is
+    # picked: joining is free and commits nothing, but a parent who abandons
+    # the form halfway has not asked for anything yet, and would otherwise sit
+    # in a queue they never confirmed.
+    #
+    # Each item is { session_id, child_id, location_id }, the same snapshot
+    # shape as enrollment_items -- self-contained, so the webhook can do this
+    # without the workflow run the parent walked away from.
+    sub join_items ($class, $db, $parent_id, $items) {
+        $db = $db->db if $db isa Registry::DAO;
+        return [] unless $parent_id && ref $items eq 'ARRAY';
+
+        my @joined;
+        for my $item (@$items) {
+            next unless ref $item eq 'HASH';
+            my ( $session_id, $child_id, $location_id ) =
+              @$item{qw( session_id child_id location_id )};
+            next unless $session_id && $child_id;
+
+            # waitlist.location_id is NOT NULL, and a run does not always carry
+            # one -- only an entry made from the storefront does. Falling back to
+            # where the session actually meets beats dropping the child in
+            # silence, which is a promise made on screen and kept nowhere.
+            # Ordered, so the same session always resolves to the same location.
+            $location_id ||= $db->query( q{
+                SELECT e.location_id
+                  FROM session_events se
+                  JOIN events e ON e.id = se.event_id
+                 WHERE se.session_id = ? AND e.location_id IS NOT NULL
+                 ORDER BY e.time, e.id
+                 LIMIT 1
+            }, $session_id )->array->[0];
+            next unless $location_id;
+
+            # Already seated or already waiting is the state we want, so these
+            # are not failures. Tested rather than caught: settlement calls this
+            # inside the transaction Stripe has already captured against, and a
+            # croak from join_waitlist caught there would be indistinguishable
+            # from a database error that has aborted the transaction under us.
+            next if $class->is_student_enrolled( $db, $session_id, $child_id );
+            next if $class->is_student_waitlisted( $db, $session_id, $child_id );
+
+            push @joined, $class->join_waitlist(
+                $db, $session_id, $location_id, $child_id, $parent_id );
+        }
+
+        return \@joined;
+    }
+
     # Process waitlist when a spot opens up
     sub process_waitlist ($class, $db, $session_id, $hours_to_respond = 48) {
         $db = $db->db if $db isa Registry::DAO;

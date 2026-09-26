@@ -2048,3 +2048,32 @@ footer {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+
+/* Enrolment state, shown wherever a parent needs to tell a place from a queue:
+   the session list during registration and the confirmation that follows it. */
+.registration-status,
+.session-availability {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.registration-status.is-enrolled {
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
+}
+
+.registration-status.is-waiting,
+.session-availability.is-full {
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
+}
+
+.session-availability {
+  background: var(--color-gray-100);
+  color: var(--color-gray-700);
+}

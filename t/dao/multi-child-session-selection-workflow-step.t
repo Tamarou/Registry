@@ -405,9 +405,105 @@ subtest 'Session capacity constraints' => sub {
     # Get available sessions for child1 - session2 should be filtered out due to capacity
     my $available1 = $step->get_available_sessions($db, $location->id, $project->id, $child1);
 
-    # Should only show session1 now since session2 is at capacity
-    is scalar(@$available1), 1, 'Only 1 session available due to capacity';
-    is $available1->[0]->{session}->id, $session1->id, 'Available session is session1';
+    # A full session is still OFFERED, marked full, so the parent can choose to
+    # wait for it. Hiding it was a dead end: the storefront invites them to
+    # "Join Waitlist" and this screen then had nothing for them to pick.
+    is scalar(@$available1), 2, 'both sessions are offered';
+
+    my ($open) = grep { $_->{session}->id eq $session1->id } @$available1;
+    my ($full) = grep { $_->{session}->id eq $session2->id } @$available1;
+
+    ok $open, 'the session with room is offered';
+    is $open->{is_full}, 0, 'and is not marked full';
+
+    ok $full, 'the full session is offered too';
+    is $full->{is_full}, 1, 'marked full, so the screen can say so';
+    is $full->{available_spots}, 0, 'with no places left';
+};
+
+# session2 was filled to capacity by the subtest above, so this exercises the
+# real thing: one child takes the session with room, the other chooses to wait
+# for the full one. Which of those a parent prefers is theirs to decide -- the
+# screen offers both and this records what they picked.
+# session2 was filled to capacity by the subtest above, so this exercises the
+# real thing: a parent chooses the session they wanted even though it is full,
+# and waits for it. Whether to wait or take one with room is their decision --
+# the screen offers both, and this records what they picked.
+#
+# One child, because this project sets same_session_for_siblings: a mixed
+# cart across two sessions is refused by that rule before capacity is even
+# looked at, which is a different question from this one.
+subtest 'choosing a full session puts that child on the waitlist' => sub {
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        user_id            => $parent->id,
+        selected_child_ids => [ $child1->id ],
+        location_id        => $location->id,
+        program_id         => $project->id,
+    });
+
+    my $step = $workflow->get_step($db, { slug => 'session-selection' });
+
+    my $result = $step->process($db, {
+        action => 'select_sessions',
+        "session_for_" . $child1->id => $session2->id,   # full
+    });
+
+    ok !$result->{errors}, 'the full choice is not refused'
+        or diag 'errors: ' . join( '; ', ( $result->{errors} // [] )->@* );
+
+    my $data = $workflow->latest_run($db)->data;
+
+    # Keeping a waiting child out of session_selections is what stops them
+    # being charged for a seat that does not exist: calculate_enrollment_total
+    # walks exactly that key.
+    is_deeply [ keys %{ $data->{session_selections} // {} } ], [],
+        'nobody is enrolling, so nothing reaches the paid side';
+    is scalar @{ $data->{enrollment_items} // [] }, 0, 'and there are no enrollment items';
+
+    is_deeply $data->{waitlist_items},
+        [ { child_id => $child1->id, session_id => $session2->id,
+            location_id => $location->id } ],
+        'the waiting child is recorded against the session they chose';
+};
+
+# Morgan can turn a session's waitlist off -- a session that will not run
+# again, or one where waiting would mislead rather than help. Then a full
+# session is simply full: it is not offered, and choosing it is refused the
+# way it always was.
+subtest 'a full session with its waitlist off is not offered' => sub {
+    $db->query( 'UPDATE sessions SET waitlist_enabled = FALSE WHERE id = ?', $session2->id );
+
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        user_id            => $parent->id,
+        selected_child_ids => [ $child1->id ],
+        location_id        => $location->id,
+        program_id         => $project->id,
+    });
+    my $step = $workflow->get_step($db, { slug => 'session-selection' });
+
+    # prepare_template_data, not get_available_sessions: the latter is called
+    # by nothing outside this file, so asserting on it would grade a method
+    # the screen never reaches.
+    my $rendered = $step->prepare_template_data($db, $run, {});
+    ok !( grep { $_->{session}->id eq $session2->id }
+              @{ $rendered->{available_sessions} || [] } ),
+        'the full session is gone from what the screen renders';
+
+    # And posting its id anyway -- a stale page, or someone typing -- is
+    # refused rather than quietly waitlisting a child against Morgan's wishes.
+    my $result = $step->process($db, {
+        action => 'select_sessions',
+        "session_for_" . $child1->id => $session2->id,
+    });
+    ok $result->{errors}, 'choosing it is refused';
+
+    my $data = $workflow->latest_run($db)->data;
+    is_deeply $data->{waitlist_items} // [], [],
+        'and nobody was put on a waitlist that is switched off';
+
+    $db->query( 'UPDATE sessions SET waitlist_enabled = TRUE WHERE id = ?', $session2->id );
 };
 
 subtest 'session_for_<id> for a child that was never selected' => sub {

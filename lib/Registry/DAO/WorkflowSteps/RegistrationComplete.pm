@@ -17,12 +17,30 @@ class Registry::DAO::WorkflowSteps::RegistrationComplete :isa(Registry::DAO::Wor
         my $data       = $run->data || {};
         my $selections = $data->{session_selections} || {};
 
+        # A child who chose a full session is not enrolled in it -- they are in
+        # the queue for it. Telling their parent they are "joining us this
+        # summer" claims a seat that does not exist, and reading them out of
+        # session_selections (where they deliberately are not) left them on the
+        # page with no session named at all.
+        my %waiting_for;
+        for my $item ( ( $data->{waitlist_items} || [] )->@* ) {
+            next unless ref $item eq 'HASH';
+            my $child_id = $item->{child_id} // next;
+            $waiting_for{$child_id} = $item->{session_id};
+        }
+
         # 'all' is the same fallback calculate_enrollment_total honours, for
-        # program types that put every sibling in one session.
+        # program types that put every sibling in one session. It applies to
+        # seats only: a waiting child's session is the one they queued for.
         my %session_for;
         my @registrations;
         for my $child ( ( $data->{children} || [] )->@* ) {
-            my $session_id = $selections->{ $child->{id} // '' } // $selections->{all};
+            my $child_id = $child->{id} // '';
+            my $waiting  = exists $waiting_for{$child_id} ? 1 : 0;
+            my $session_id =
+              $waiting
+              ? $waiting_for{$child_id}
+              : ( $selections->{$child_id} // $selections->{all} );
             my $session =
               $session_id
               ? ( $session_for{$session_id} //=
@@ -35,6 +53,7 @@ class Registry::DAO::WorkflowSteps::RegistrationComplete :isa(Registry::DAO::Wor
                       $child->{first_name}, $child->{last_name} ),
                 grade   => $child->{grade},
                 session => $session,
+                waiting => $waiting,
             };
         }
 

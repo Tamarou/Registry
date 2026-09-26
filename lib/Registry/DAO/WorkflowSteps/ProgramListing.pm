@@ -141,7 +141,19 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 sessions     => [],
             };
 
-            my $capacity = $row->{event_capacity} || $row->{session_capacity} || 0;
+            # Capacity belongs to whatever the enrolment is FOR. These cards
+            # sell a SESSION -- a course of meetings -- and enrollments count
+            # against sessions, so the session's number is the one that says
+            # how many children may still join.
+            #
+            # A meeting carries its own capacity when the room it is in holds
+            # fewer people. That bounds who can be in the room that week; it
+            # does not bound who may enrol in the course, and reading it here
+            # answered the enrolment question with a room number: a session for
+            # twenty meeting once in a room for eight advertised eight places.
+            # (If single-event registration is ever added, that path reads the
+            # event's capacity, for the same reason -- see #408.)
+            my $capacity = $row->{session_capacity} || 0;
             my $enrolled = $row->{enrolled_count} || 0;
             my $available = $capacity > 0 ? $capacity - $enrolled : undef;
             my $is_full = defined $available && $available <= 0;

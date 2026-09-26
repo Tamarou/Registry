@@ -386,4 +386,65 @@ subtest 'Demo mode: agreeTerms without Stripe creates enrollments' => sub {
     is $enrollment->{status}, 'active', 'Enrollment status is active';
 };
 
+# A free registration where one sibling takes a seat and the other waits for a
+# session that had none. The waiting child is joined at completion, not when the
+# session was picked -- an abandoned form must not leave anyone in a queue.
+subtest 'Demo mode: a child who chose to wait is put on the waitlist' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = undef;
+
+    my $full_event = Registry::DAO::Event->create($db, {
+        time => '2024-07-01 14:00:00',
+        duration => 120,
+        location_id => $location->id,
+        project_id => $project->id,
+        teacher_id => $teacher->id,
+        metadata => {},
+        capacity => 1,
+    });
+    my $full_session = Registry::DAO::Session->create($db, {
+        name => 'Full Session',
+        start_date => '2024-07-02',
+        end_date => '2024-07-09',
+        status => 'published',
+        capacity => 1,
+        metadata => {},
+    });
+    $full_session->add_events($db, $full_event->id);
+
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        user_id => $parent->id,
+        selected_child_ids => [ $child1->id, $child2->id ],
+        enrollment_items => [
+            { child_id => $child2->id, session_id => $session->id },
+        ],
+        session_selections => { $child2->id => $session->id },
+        waitlist_items => [
+            { child_id => $child1->id, session_id => $full_session->id,
+              location_id => $location->id },
+        ],
+    });
+
+    my $payment_step = $workflow->get_step($db, { slug => 'payment' });
+    my $result = $payment_step->process($db, { agreeTerms => 1 });
+
+    is $result->{next_step}, 'complete', 'the registration completes';
+    ok !$result->{errors}, 'with no errors' or diag explain $result->{errors};
+
+    my $entry = $db->select('waitlist', '*', {
+        session_id => $full_session->id,
+        student_id => $child1->id,
+    })->hash;
+
+    ok $entry, 'the waiting child is on the waitlist';
+    is $entry->{status}, 'waiting', 'as waiting';
+    is $entry->{parent_id}, $parent->id, 'attributed to the registering parent';
+
+    my $seated = $db->select('enrollments', '*', {
+        family_member_id => $child1->id,
+        session_id       => $full_session->id,
+    })->hash;
+    ok !$seated, 'and holds no enrollment -- there was no seat to give';
+};
+
 done_testing;
