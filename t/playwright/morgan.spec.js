@@ -7,7 +7,16 @@ const {
 
 // Serial and ordered: Morgan cannot build a program before she has a tenant to
 // build it in. The relay is within one persona now, not across three.
-test.describe.configure({ mode: 'serial', timeout: 180000 });
+// 300s, not 180s. Morgan's second test is the longest journey in the suite --
+// signup, provisioning, programme, staff, publish, storefront -- and it measures
+// ~192s on an idle machine, which is already past a 180s budget. Under the full
+// run it timed out mid-chain and the failure surfaced as a storefront assertion
+// that had never been evaluated against a loaded page.
+//
+// This is a wall-clock allowance and nothing else: no assertion changed. The
+// failure could not be reproduced in isolation, so the cause is stated as
+// measured duration against too small a budget rather than as a diagnosed race.
+test.describe.configure({ mode: 'serial', timeout: 300000 });
 
 const RUN = String(Date.now());
 const state = {
