@@ -75,12 +75,21 @@ test.describe('Drop and transfer from parent dashboard', () => {
 
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
 
-    // The screen has to ask for a reason and offer a way to send it. A dead end
-    // that renders prose and no control is the failure worth catching.
-    await expect(registryPage.locator('textarea[name="reason"], select[name="reason"], input[name="reason"]').first(),
-      'the reason control is on the screen').toBeVisible({ timeout: 10000 });
-    await expect(registryPage.locator('form button[type="submit"]').first(),
-      'and a way to submit it').toBeVisible();
+    // The link carries the enrolment, so the selection step completes on arrival
+    // and the parent lands on the reason screen. The control has to be there --
+    // a screen of prose with nothing to fill in is the dead end worth catching.
+    const reason = registryPage.locator('textarea[name="reason"]');
+    await expect(reason, 'the reason control is on the screen').toBeVisible({ timeout: 10000 });
+
+    await reason.fill('Moving out of the area');
+    await registryPage.locator('form button[type="submit"]').first().click();
+    await registryPage.waitForLoadState('networkidle');
+
+    // And the reason has to reach the next screen. A review step that shows none
+    // of what was just typed is not a review.
+    await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
+    await expect(registryPage.locator('body'), 'the review screen carries the reason back')
+      .toContainText('Moving out of the area');
   });
 });
 

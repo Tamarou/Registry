@@ -145,7 +145,24 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # directly with a live run ID, enabling callcc buttons and filter
         # forms without a separate POST step.
         my $run = $self->_find_or_create_run($workflow);
-        my $step = $run->latest_step($dao->db) || $workflow->first_step($dao->db);
+
+        # The step the run is WAITING ON, not the one it has just left.
+        # new_run processes the first step with the request's params, so a link
+        # carrying enough to complete it advances the run there and then -- the
+        # parent dashboard's Drop and Transfer links pass enrollment_id, and
+        # SelectEnrollmentForDrop completes on exactly that. Rendering
+        # latest_step put the finished step back on screen with its form aimed at
+        # itself, and posting that form hit process_workflow_run_step's "Wrong
+        # step expected" die: a 500 on the only route a parent has to drop an
+        # enrolment.
+        #
+        # next_step falls back to first_step when the pointer has not moved (a
+        # step that returned `stay` does not advance it), so the ordinary
+        # first-visit case is unchanged. latest_step is kept behind it for a run
+        # that has finished, where there is no next step to show.
+        my $step = $run->next_step($dao->db)
+            || $run->latest_step($dao->db)
+            || $workflow->first_step($dao->db);
 
         return unless $step;
 
