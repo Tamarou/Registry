@@ -120,12 +120,18 @@ subtest 'the advertised price is one the cart will actually charge' => sub {
 };
 
 subtest '"From" comes back when more than one price is really available' => sub {
-    # Re-open the early bird. Two plans now apply, so the cheaper one is the
-    # advertised floor and "From" is true.
-    $db->query(
-        q{UPDATE pricing_plans SET requirements = ?::jsonb
-           WHERE session_id = ? AND plan_type = 'early_bird'},
-        '{"early_bird_cutoff_date":"2030-01-01"}', $session->id );
+    # Re-open the early bird by appending a version whose cutoff is in the future.
+    # Two plans then apply, so the cheaper one is the advertised floor and "From"
+    # is true.
+    #
+    # This was a raw UPDATE of the plan's requirements, which the immutability
+    # trigger now refuses -- correctly: a test reaching past the API to mutate a
+    # row is exactly the writer the trigger exists to stop.
+    my ($eb_v1) = grep { $_->plan_name eq 'Early Bird' }
+        @{ Registry::DAO::PricingPlan->get_pricing_plans($db, $session->id) };
+    $eb_v1->revise($db, {
+        requirements => { early_bird_cutoff_date => '2030-01-01' },
+    });
 
     my $data = $step->prepare_template_data($db, $run, {});
     my ($listed) =
@@ -144,6 +150,44 @@ subtest '"From" comes back when more than one price is really available' => sub 
     });
     is $listed->{best_price_cents}, $quote->{total},
         'and the cart charges exactly what was advertised';
+};
+
+subtest 'a retired version is not advertised' => sub {
+    # Plans are append-only versions. A price that has been revised upward must
+    # stop being on the card -- otherwise retiring a price would not stop the
+    # storefront quoting it, which is the same falsehood as the closed early bird
+    # above wearing a different hat.
+    my ($standard) = grep { $_->plan_name eq 'Standard' }
+        @{ Registry::DAO::PricingPlan->get_pricing_plans($db, $session->id) };
+    ok $standard, 'the standard plan is current';
+
+    $standard->revise($db, { amount_cents => 42000 });
+
+    my $data = $step->prepare_template_data($db, $run, {});
+    my ($listed) =
+      grep { $_->{session}->id eq $session->id }
+      map  { @{ $_->{sessions} } }
+      map  { @$_ }
+      values %{ $data->{grouped_programs} || {} };
+
+    is $listed->{best_price_cents}, 20000,
+        'the open early bird is still the floor';
+
+    # Raise the early bird above the revised standard, so the standard becomes
+    # the cheapest -- and it has to be the NEW price, not the retired one.
+    my ($eb) = grep { $_->plan_name eq 'Early Bird' }
+        @{ Registry::DAO::PricingPlan->get_pricing_plans($db, $session->id) };
+    $eb->revise($db, { amount_cents => 50000 });
+
+    $data = $step->prepare_template_data($db, $run, {});
+    ($listed) =
+      grep { $_->{session}->id eq $session->id }
+      map  { @{ $_->{sessions} } }
+      map  { @$_ }
+      values %{ $data->{grouped_programs} || {} };
+
+    is $listed->{best_price_cents}, 42000,
+        'the revised standard price is advertised, not the retired 30000';
 };
 
 done_testing;

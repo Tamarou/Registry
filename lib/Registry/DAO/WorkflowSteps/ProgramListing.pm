@@ -100,8 +100,15 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
         my %pricing_by_session;
         if (@session_ids) {
             my $placeholders = join(',', ('?') x @session_ids);
+            # Current versions only. Plans are append-only versions now, so
+            # without this the storefront would keep advertising the price of a
+            # version that has been retired -- which is the same class of
+            # falsehood as advertising a closed early bird, and the reason the
+            # applicability filter below exists.
             my $pricing_rows = $db->query(
-                "SELECT * FROM pricing_plans WHERE session_id IN ($placeholders)",
+                "SELECT * FROM pricing_plans
+                  WHERE session_id IN ($placeholders)
+                    AND superseded_at IS NULL",
                 @session_ids
             )->expand->hashes;
 

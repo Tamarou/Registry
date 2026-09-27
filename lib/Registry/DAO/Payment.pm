@@ -1023,6 +1023,10 @@ SQL
             description => $args->{description},
             amount_cents => $args->{amount_cents},
             quantity => $args->{quantity} // 1,
+            # Which plan version set this price. Nullable: line items are also
+            # written for things no plan priced, and a historical row must not
+            # start failing because a plan family was pruned.
+            pricing_plan_id => $args->{pricing_plan_id},
             metadata => encode_json($args->{metadata} // {}),
         };
         
@@ -1492,7 +1496,7 @@ SQL
             # returned undef and the child was then skipped altogether: no line
             # item, nothing added to the total, and still sitting in
             # enrollment_items. Enrolled, and charged nothing.
-            my $price_cents = Registry::DAO::PricingPlan->get_best_price(
+            my ( $plan, $price_cents ) = Registry::DAO::PricingPlan->best_plan(
                 $db, $session_id,
                 { child_count => $child_count, date => time(), %$child }
             );
@@ -1509,6 +1513,11 @@ SQL
                       ? "$label - " . $session->name
                       : $session->name,
                     amount_cents => $price_cents,
+                    # The plan VERSION this price came from. The pricing basis of
+                    # a charge was recorded nowhere: an amount does not say which
+                    # plan produced it, so neither a dispute nor a pricing
+                    # experiment could be settled after the fact.
+                    pricing_plan_id => $plan ? $plan->id : undef,
                     metadata => {
                         child_id => $child->{id},
                         session_id => $session_id,

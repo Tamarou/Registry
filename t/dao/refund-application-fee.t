@@ -6,9 +6,10 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Mojo::JSON qw(decode_json);
+use Mojo::JSON qw(decode_json encode_json);
 use Test::Registry::Async qw( settle );
 use Registry::PriceOps::RevenueShare qw(refund_application_fee_for_tenant);
+use Test::Registry::PricingProbe qw(with_tenant_plan);
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;     # Registry::DAO
@@ -27,52 +28,22 @@ my $seeded_slug = $db->query(q{
 ok $seeded_slug, "found a seeded tenant linked to a plan (slug=$seeded_slug)";
 
 subtest 'linked plan without refund_application_fee key defaults to true (1)' => sub {
-    # Strip the key from pricing_configuration (no-op when absent) to guarantee
-    # the absent-key path is exercised, then restore the original config.
-    my $plan_id = $db->query(q{
-        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
-    }, $seeded_slug)->hash->{platform_pricing_plan_id};
-
-    my $saved = $db->query(q{
-        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
-    }, $plan_id)->hash;
-
-    $db->query(q{
-        UPDATE registry.pricing_plans
-           SET pricing_configuration = pricing_configuration - 'refund_application_fee'
-         WHERE id = ?
-    }, $plan_id);
-
-    my $flag = refund_application_fee_for_tenant($db, $seeded_slug);
-    is $flag, 1, 'absent key -> default true (1)';
-
-    $db->query(q{
-        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
-    }, $saved->{pricing_configuration}, $plan_id);
+    # A plan carrying no refund_application_fee at all, which is the absent-key
+    # path the resolver defaults to true for.
+    with_tenant_plan( $db, $seeded_slug, { pricing_configuration => { percentage => '0.02' } }, sub {
+        is refund_application_fee_for_tenant( $db, $seeded_slug ), 1,
+            'absent key -> default true (1)';
+    } );
 };
 
 subtest 'linked plan with refund_application_fee=false returns 0' => sub {
-    my $plan_id = $db->query(q{
-        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
-    }, $seeded_slug)->hash->{platform_pricing_plan_id};
-
-    my $saved = $db->query(q{
-        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
-    }, $plan_id)->hash;
-
-    $db->query(q{
-        UPDATE registry.pricing_plans
-           SET pricing_configuration = pricing_configuration
-                   || '{"refund_application_fee": false}'::jsonb
-         WHERE id = ?
-    }, $plan_id);
-
-    my $flag = refund_application_fee_for_tenant($db, $seeded_slug);
-    is $flag, 0, 'refund_application_fee=false -> returns 0';
-
-    $db->query(q{
-        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
-    }, $saved->{pricing_configuration}, $plan_id);
+    with_tenant_plan( $db, $seeded_slug,
+        { pricing_configuration => { percentage => '0.02', refund_application_fee => \0 } },
+        sub {
+            is refund_application_fee_for_tenant( $db, $seeded_slug ), 0,
+                'refund_application_fee=false -> returns 0';
+        }
+    );
 };
 
 subtest 'Registry::DAO coercion - accepts DAO object as well as raw db handle' => sub {
@@ -115,20 +86,34 @@ subtest 'platform default plan with refund_application_fee=false and NULL FK -> 
         UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = ?
     }, $seeded_slug);
 
-    $db->query(q{
-        UPDATE registry.pricing_plans
-           SET pricing_configuration = pricing_configuration
-                   || '{"refund_application_fee": false}'::jsonb
-         WHERE id = ?
-    }, $platform_plan->{id});
+    # Appended as a new version rather than edited in place. The default is found
+    # by its metadata mark, which the new version carries too -- and the resolver
+    # now filters to current versions, so it reads this one and not the retired
+    # original.
+    require Registry::DAO::PricingPlan;
+    my $current = Registry::DAO::PricingPlan->find($db, { id => $platform_plan->{id} });
+    my $revised = $current->revise( $db, {
+        pricing_configuration => {
+            %{ $current->pricing_configuration },
+            refund_application_fee => \0,
+        },
+    } );
 
     my $flag = refund_application_fee_for_tenant($db, $seeded_slug);
     is $flag, 0, 'NULL FK + platform default plan sets false -> 0';
 
-    # Restore: platform plan first, then tenant FK
-    $db->query(q{
-        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
-    }, $platform_plan->{pricing_configuration}, $platform_plan->{id});
+    # Deleted, not retired. A retired probe still carries metadata->>'default',
+    # and a later subtest looks the default up without filtering on
+    # superseded_at -- so leaving it behind made that subtest delete the probe
+    # and leave the real default in place. Removing the row entirely restores the
+    # seed exactly.
+    # Probe removed FIRST. Un-retiring the original while the probe is still
+    # current puts two live versions in one family, which the partial unique index
+    # refuses -- the index doing its job, and the reason this order is not
+    # arbitrary.
+    $db->query(q{DELETE FROM registry.pricing_plans WHERE id = ?}, $revised->id);
+    $db->query(q{UPDATE registry.pricing_plans SET superseded_at = NULL WHERE id = ?},
+        $platform_plan->{id});
 
     $db->query(q{
         UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?
@@ -136,28 +121,14 @@ subtest 'platform default plan with refund_application_fee=false and NULL FK -> 
 };
 
 subtest 'malformed refund_application_fee value dies with informative message' => sub {
-    my $plan_id = $db->query(q{
-        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
-    }, $seeded_slug)->hash->{platform_pricing_plan_id};
-
-    my $saved = $db->query(q{
-        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
-    }, $plan_id)->hash;
-
-    $db->query(q{
-        UPDATE registry.pricing_plans
-           SET pricing_configuration = pricing_configuration
-                   || '{"refund_application_fee": "sometimes"}'::jsonb
-         WHERE id = ?
-    }, $plan_id);
-
-    my $result = eval { refund_application_fee_for_tenant($db, $seeded_slug) };
-    like $@, qr/refund_application_fee/,
-        'malformed value dies with message mentioning refund_application_fee';
-
-    $db->query(q{
-        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
-    }, $saved->{pricing_configuration}, $plan_id);
+    with_tenant_plan( $db, $seeded_slug,
+        { pricing_configuration => { percentage => '0.02', refund_application_fee => 'sometimes' } },
+        sub {
+            my $result = eval { refund_application_fee_for_tenant( $db, $seeded_slug ) };
+            like $@, qr/refund_application_fee/,
+                'malformed value dies with message mentioning refund_application_fee';
+        }
+    );
 };
 
 subtest 'missing platform default plan with NULL FK causes die (A1)' => sub {
@@ -239,17 +210,7 @@ my $test_user_id = $db->query(q{
 ok $test_user_id, "created test user for A2 Payment->refund subtests";
 
 subtest 'tenant refund honors plan opt-out (refund_application_fee=false)' => sub {
-    my $saved = $db->query(q{
-        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
-    }, $a2_plan_id)->hash;
-
-    $db->query(q{
-        UPDATE registry.pricing_plans
-           SET pricing_configuration = pricing_configuration
-                   || '{"refund_application_fee": false}'::jsonb
-         WHERE id = ?
-    }, $a2_plan_id);
-
+  with_tenant_plan( $db, $a2_slug, { pricing_configuration => { percentage => '0.02', refund_application_fee => \0 } }, sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
         amount_cents             => 10000,
@@ -279,24 +240,13 @@ subtest 'tenant refund honors plan opt-out (refund_application_fee=false)' => su
     my $saved_meta = ref $row->{metadata} ? $row->{metadata} : decode_json($row->{metadata} // '{}');
     is  $saved_meta->{refund_id},          're_optout_fake', 'save() persisted refund_id in metadata';
     cmp_ok $saved_meta->{refund_amount_cents}, q{==}, 10000, q{save() persisted refund_amount_cents in metadata};
-
-    $db->query(q{
-        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
-    }, $saved->{pricing_configuration}, $a2_plan_id);
+  } );
 };
 
 subtest 'tenant refund with absent refund_application_fee key defaults to 1' => sub {
-    my $saved = $db->query(q{
-        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
-    }, $a2_plan_id)->hash;
-
-    # Remove the key so the absent-key default path is exercised
-    $db->query(q{
-        UPDATE registry.pricing_plans
-           SET pricing_configuration = pricing_configuration - 'refund_application_fee'
-         WHERE id = ?
-    }, $a2_plan_id);
-
+  # A plan carrying no refund_application_fee at all, so the absent-key default
+  # path is exercised.
+  with_tenant_plan( $db, $a2_slug, { pricing_configuration => { percentage => '0.02' } }, sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
         amount_cents             => 10000,
@@ -318,10 +268,7 @@ subtest 'tenant refund with absent refund_application_fee key defaults to 1' => 
 
     is $captured{reverse_transfer},       'true', 'tenant refund sets reverse_transfer=true (string)';
     is $captured{refund_application_fee}, 'true', 'absent key -> default refund_application_fee=true (string)';
-
-    $db->query(q{
-        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
-    }, $saved->{pricing_configuration}, $a2_plan_id);
+  } );
 };
 
 subtest 'registry (non-tenant) payment refund sends no Connect params' => sub {
@@ -379,16 +326,8 @@ subtest 'tenant_slug=registry is treated as platform payment (no Connect params)
 };
 
 subtest 'refund_async sends the same Connect params as refund (sync)' => sub {
-    my $saved = $db->query(q{
-        SELECT pricing_configuration FROM registry.pricing_plans WHERE id = ?
-    }, $a2_plan_id)->hash;
-
-    $db->query(q{
-        UPDATE registry.pricing_plans
-           SET pricing_configuration = pricing_configuration - 'refund_application_fee'
-         WHERE id = ?
-    }, $a2_plan_id);
-
+  # No refund_application_fee on the plan, so the absent-key default applies.
+  with_tenant_plan( $db, $a2_slug, { pricing_configuration => { percentage => '0.02' } }, sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
         amount_cents             => 10000,
@@ -417,10 +356,7 @@ subtest 'refund_async sends the same Connect params as refund (sync)' => sub {
     is $captured{reverse_transfer},       'true', 'refund_async: tenant sets reverse_transfer=true (string)';
     is $captured{refund_application_fee}, 'true', 'refund_async: absent key -> refund_application_fee=true (string)';
     ok  exists $captured{payment_intent},         'refund_async: payment_intent present';
-
-    $db->query(q{
-        UPDATE registry.pricing_plans SET pricing_configuration = ? WHERE id = ?
-    }, $saved->{pricing_configuration}, $a2_plan_id);
+  } );
 };
 
 done_testing;

@@ -28,6 +28,12 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     # pricing_configuration->>'percentage' is the only source. The money column
     # holds money, never a rate -- a plan with no rate declared resolves to NULL
     # and dies in _coerce_pct rather than having one inferred from its price.
+    # Deliberately NOT filtered on superseded_at. This is a lookup BY ID: the
+    # tenant's link points at a specific plan VERSION, and it keeps pointing there
+    # after that version is retired. That is the promise of versioning -- revising
+    # a plan must not silently re-price the tenants already on it -- so reading the
+    # retired version here is correct, not stale. Moving a tenant to a newer
+    # version is a deliberate act (#277).
     my $row = $db->query(q{
         SELECT p.pricing_configuration->>'percentage' AS pct
           FROM registry.tenants t
@@ -55,11 +61,16 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
 sub platform_default_fraction ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
+    # Current versions only. This is a SEARCH by mark, not a lookup by id: once
+    # plans are versioned, a retired version still carries the mark, so without
+    # this the fallback rate could come from a version that has been replaced --
+    # chosen arbitrarily by LIMIT 1 between the two.
     my $free_row = $db->query(q{
         SELECT pricing_configuration->>'percentage' AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
+           AND superseded_at IS NULL
          LIMIT 1
     })->hash;
 
@@ -93,10 +104,16 @@ sub platform_default_fraction ($db) {
 sub platform_launch_fraction ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
+    # Current versions only, and for a sharper reason than the default above: this
+    # sub dies when more than one plan claims the mark. A revised launch plan
+    # leaves the retired version still carrying launch_rate, so without the filter
+    # the FIRST revise of the launch plan would take down the signup page that
+    # quotes the rate.
     my $rows = $db->query(q{
         SELECT pricing_configuration->>'percentage' AS pct, plan_name
           FROM registry.pricing_plans
          WHERE metadata->>'launch_rate' = 'true'
+           AND superseded_at IS NULL
     })->hashes;
 
     die "No launch plan found in registry.pricing_plans "
@@ -152,11 +169,13 @@ sub refund_application_fee_for_tenant ($db, $tenant_slug) {
 # means default true (1). Missing plan entirely is a deployment bug -- die loudly
 # to mirror the behavior of platform_default_fraction.
 sub _platform_default_refund_flag ($db) {
+    # Current versions only, as platform_default_fraction above.
     my $r = $db->query(q{
         SELECT pricing_configuration->>'refund_application_fee' AS raw
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
+           AND superseded_at IS NULL
          LIMIT 1
     })->hash;
 
