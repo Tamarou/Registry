@@ -25,6 +25,23 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         $self->render(template => 'auth/magic-link-sent');
     }
 
+    # Is this account still allowed to sign in?
+    #
+    # Every login path calls this before establishing a session. There are three
+    # of them -- a magic link by plaintext, the same by hash, and a passkey -- and
+    # a guard on fewer than all three is not a guard. The passkey path is the easy
+    # one to miss: it is a complete authentication mechanism that never touches a
+    # magic link.
+    #
+    # Not a substitute for the check in the before_dispatch hook, which covers
+    # cookies and API keys already issued. This one exists so a deactivated person
+    # is TOLD, rather than appearing to sign in and then finding every page
+    # anonymous.
+    method _login_allowed ($db, $user_id) {
+        my $user = Registry::DAO::User->find( $db, { id => $user_id } );
+        return $user && $user->is_active;
+    }
+
     method request_magic_link {
         my $email = $self->param('email') // '';
 
@@ -35,6 +52,12 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
                 my $dao  = $self->dao;
                 my $db   = $dao->db;
                 my $user = Registry::DAO::User->find($db, { email => $email });
+
+                # A deactivated account gets no link. Silently, and the same
+                # confirmation page renders either way -- saying "that account is
+                # closed" here would tell an unauthenticated caller which addresses
+                # exist, which is the enumeration this method already avoids.
+                undef $user if $user && !$user->is_active;
 
                 if ($user) {
                     my $tenant = Registry::DAO::Tenant->find($db, { slug => $self->tenant });
@@ -102,6 +125,16 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
             return $self->render(template => 'auth/magic-link-error');
         }
 
+        # Told here, at the click, rather than after it. This method only renders
+        # the confirmation page -- the session is established by the POST that
+        # follows -- so without this guard a deactivated person gets a cheerful
+        # "confirm your sign-in" button and the refusal only on pressing it.
+        unless ( $self->_login_allowed( $db, $token->user_id ) ) {
+            $self->stash( error =>
+                'This account is no longer active. Please contact your administrator.' );
+            return $self->render( template => 'auth/magic-link-error' );
+        }
+
         try {
             $token = $token->verify($db);
         }
@@ -129,6 +162,17 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         if ($token->is_expired) {
             $self->stash(error => 'This link has expired. Please request a new one.');
             return $self->render(template => 'auth/magic-link-error');
+        }
+
+        # A link already sitting in an inbox must stop working the moment the
+        # account is deactivated: the token is valid, the account is not. Told
+        # plainly, unlike the request step -- whoever holds this token has already
+        # proved they control the address, so there is no enumeration left to
+        # protect and silence would just look broken.
+        unless ( $self->_login_allowed( $db, $token->user_id ) ) {
+            $self->stash( error =>
+                'This account is no longer active. Please contact your administrator.' );
+            return $self->render( template => 'auth/magic-link-error' );
         }
 
         try {
@@ -199,6 +243,17 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         if ($token->is_expired) {
             $self->stash(error => 'This link has expired. Please request a new one.');
             return $self->render(template => 'auth/magic-link-error');
+        }
+
+        # A link already sitting in an inbox must stop working the moment the
+        # account is deactivated: the token is valid, the account is not. Told
+        # plainly, unlike the request step -- whoever holds this token has already
+        # proved they control the address, so there is no enumeration left to
+        # protect and silence would just look broken.
+        unless ( $self->_login_allowed( $db, $token->user_id ) ) {
+            $self->stash( error =>
+                'This account is no longer active. Please contact your administrator.' );
+            return $self->render( template => 'auth/magic-link-error' );
         }
 
         try {
@@ -469,6 +524,17 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
         }
 
         $passkey->update_sign_count($db, $result->{sign_count});
+
+        # A registered passkey outlives the account it belongs to, so a departed
+        # staff member would otherwise sign in with a device they still hold. This
+        # path never touches a magic link, which is what makes it the easy one to
+        # forget.
+        unless ( $self->_login_allowed( $db, $passkey->user_id ) ) {
+            return $self->render(
+                json   => { error => 'This account is no longer active.' },
+                status => 403,
+            );
+        }
 
         # Establish the session -- this is the login
         $self->session(

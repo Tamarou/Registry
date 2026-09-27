@@ -19,6 +19,10 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
     field $created_at :param;
     field $email_verified_at :param :reader = undef;
     field $invite_pending :param :reader = 0;
+    # NULL means active. A timestamp rather than a boolean because an offboarding
+    # wants to record when, and because "active" as a flag invites being read as
+    # "logged in".
+    field $deactivated_at :param :reader = undef;
 
     sub table { 'users' }
 
@@ -29,7 +33,7 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         # Join users and user_profiles tables to get complete user data
         my $query = q{
             SELECT u.id, u.username, u.passhash, u.birth_date, u.user_type, u.grade, u.created_at,
-                   u.email_verified_at, u.invite_pending,
+                   u.email_verified_at, u.invite_pending, u.deactivated_at,
                    up.email, up.name
             FROM users u
             LEFT JOIN user_profiles up ON u.id = up.user_id
@@ -74,7 +78,7 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
         my $query = q{
             SELECT u.id, u.username, u.passhash, u.birth_date, u.user_type, u.grade, u.created_at,
-                   u.email_verified_at, u.invite_pending,
+                   u.email_verified_at, u.invite_pending, u.deactivated_at,
                    up.email, up.name
             FROM users u
             LEFT JOIN user_profiles up ON u.id = up.user_id
@@ -178,6 +182,61 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         };
     }
     
+    # Whether this account may be used at all.
+    #
+    # Checked on every authenticated request, at the single point both auth paths
+    # pass through, so a deactivation takes effect on the offboarded person's very
+    # next request rather than whenever their cookie happens to expire.
+    method is_active { !defined $deactivated_at }
+
+    # Revoke every way in. Deactivation rather than deletion, and not by choice:
+    # events.teacher_id and attendance_records.marked_by are NOT NULL references
+    # to this row, so the register that says who marked it is what holds a departed
+    # teacher's account in place. Deleting would either be refused or destroy the
+    # audit trail, and the trail is the more important of the two.
+    #
+    # Refuses two cases that would lock a tenant out of itself, because both are
+    # unrecoverable without database access:
+    #
+    #   * deactivating yourself -- a solo operator is the whole tenant
+    #   * deactivating the last active admin
+    #
+    # Returns the reactivated/deactivated object. Idempotent: deactivating an
+    # already-deactivated account keeps the original timestamp, because when they
+    # left is a fact and this call is not new information.
+    method deactivate ( $db, $acting_user_id = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        croak 'You cannot deactivate your own account'
+            if defined $acting_user_id && $acting_user_id eq $id;
+
+        if ( $user_type eq 'admin' && $self->is_active ) {
+            my $other_admins = $db->query(
+                q{SELECT COUNT(*) FROM users
+                   WHERE user_type = 'admin' AND deactivated_at IS NULL AND id <> ?},
+                $id )->array->[0];
+            croak 'Cannot deactivate the last active administrator'
+                unless $other_admins;
+        }
+
+        return $self unless $self->is_active;
+
+        my $row = $db->query(
+            'UPDATE users SET deactivated_at = now() WHERE id = ? AND deactivated_at IS NULL
+              RETURNING *', $id )->hash;
+
+        # Lost the race to another deactivation; the account is off either way.
+        return $self unless $row;
+        return __CLASS__->new(%$row);
+    }
+
+    method reactivate ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->query(
+            'UPDATE users SET deactivated_at = NULL WHERE id = ? RETURNING *', $id )->hash;
+        return $row ? __CLASS__->new(%$row) : $self;
+    }
+
     method check_password ($password) {
         return 0 unless $password && $passhash;
         

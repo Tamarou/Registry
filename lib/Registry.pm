@@ -328,7 +328,20 @@ class Registry :isa(Mojolicious) {
         );
 
         # Populate current_user stash from session or bearer token on every request
+        #
+        # Returns undef for a deactivated account, which is what revokes access.
+        # Placed here rather than at each auth path because both of them -- API key
+        # and session cookie -- funnel through this one sub, so this is the single
+        # point that covers a cookie already in a browser, a bearer token already
+        # issued, and anything added later that stashes a user the same way.
+        #
+        # The effect is that a deactivation lands on the offboarded person's very
+        # next request, rather than whenever their session happens to expire. For
+        # someone who has been walked out, "next request" is the only acceptable
+        # answer.
         my $user_to_stash = sub ($user, %extra) {
+            return undef unless $user->is_active;
+
             return {
                 id        => $user->id,
                 username  => $user->username,
@@ -368,7 +381,8 @@ class Registry :isa(Mojolicious) {
                             my $user = Registry::DAO::User->find($dao->db, { id => $api_key->user_id });
                             if ($user) {
                                 $api_key->touch($dao->db);
-                                $c->stash( current_user => $user_to_stash->($user, api_key => $api_key) );
+                                my $stashed = $user_to_stash->($user, api_key => $api_key);
+                                $c->stash( current_user => $stashed ) if $stashed;
                                 return;  # Skip session check
                             }
                         }
@@ -407,7 +421,19 @@ class Registry :isa(Mojolicious) {
                 try {
                     my $dao  = $c->dao;
                     my $user = Registry::DAO::User->find( $dao->db, { id => $user_id } );
-                    $c->stash( current_user => $user_to_stash->($user) ) if $user;
+                    if ($user) {
+                        my $stashed = $user_to_stash->($user);
+                        if ($stashed) {
+                            $c->stash( current_user => $stashed );
+                        }
+                        else {
+                            # Deactivated while signed in. Clear the session too, so
+                            # the next request does not repeat this lookup and so
+                            # anything reading session('user_id') directly agrees
+                            # with current_user.
+                            delete $c->session->{user_id};
+                        }
+                    }
                 }
                 catch ($e) {
                     $c->app->log->warn("Failed to load current_user from session: $e");
@@ -733,6 +759,13 @@ class Registry :isa(Mojolicious) {
         $admin->post('/dashboard/process_drop_request')->to('workflows#start_workflow' => { workflow => 'admin-drop-approval' })->name('admin_dashboard_process_drop_request');
         $admin->get('/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $admin->post('/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
+
+        # Offboarding. A departed staff member has to lose access without losing
+        # the history that points at them -- events.teacher_id and
+        # attendance_records.marked_by are NOT NULL references to their row.
+        $admin->get('/people')->to('people#index')->name('admin_people');
+        $admin->post('/people/:id/deactivate')->to('people#deactivate')->name('admin_people_deactivate');
+        $admin->post('/people/:id/reactivate')->to('people#reactivate')->name('admin_people_reactivate');
 
         $admin->get('/templates')->to('workflows#index', workflow => 'template-editor')->name('admin_templates');
         $admin->post('/templates')->to('workflows#start_workflow', workflow => 'template-editor');
