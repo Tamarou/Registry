@@ -8,6 +8,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::PricingPlan;
+use Test::Registry::PricingProbe qw(with_tenant_plan);
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
 my $test_db = Test::Registry::DB->new;
@@ -113,16 +114,17 @@ subtest 'the revenue-share rate no longer comes from the money column' => sub {
     cmp_ok $before, '>', 0,
         'the rate resolves from pricing_configuration';
 
-    # The whole point of the split. Put a plausible dollar amount on the plan;
-    # if anything still reads this column as a rate, the fraction moves and
-    # every charge for this tenant carries the wrong application fee.
-    $db->query(q{
-        UPDATE registry.pricing_plans SET amount_cents = 5000
-         WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant'
-    });
-
-    cmp_ok abs( revenue_share_fraction_for_tenant( $db, $slug ) - $before ), '<', 1e-9,
-        'a $50.00 amount_cents on the plan does not move the rate';
+    # The whole point of the split. A plan carrying a plausible dollar amount in
+    # the money column alongside the same rate: if anything still reads that
+    # column as a rate, the fraction moves and every charge for this tenant
+    # carries the wrong application fee.
+    #
+    # A purpose-built plan rather than an UPDATE, because plan rows are immutable
+    # -- and the same property is tested either way.
+    with_tenant_plan( $db, $slug, { amount_cents => 5000 }, sub {
+        cmp_ok abs( revenue_share_fraction_for_tenant( $db, $slug ) - $before ), '<', 1e-9,
+            'a $50.00 amount_cents on the plan does not move the rate';
+    } );
 };
 
 subtest 'a percentage plan with no rate in config fails loud' => sub {
