@@ -93,7 +93,7 @@ class Registry::DAO::WorkflowSteps::ResourceAllocation :isa(Registry::DAO::Workf
 
         # Quota policies
         $quotas->{reset_period} = $form_data->{reset_period} || 'monthly';
-        $quotas->{rollover_allowed} = $form_data->{rollover_allowed} eq 'yes' ? 1 : 0;
+        $quotas->{rollover_allowed} = ( $form_data->{rollover_allowed} // '' ) eq 'yes' ? 1 : 0;
         $quotas->{overage_policy} = $form_data->{overage_policy} || 'block';
 
         if ($quotas->{overage_policy} eq 'charge') {

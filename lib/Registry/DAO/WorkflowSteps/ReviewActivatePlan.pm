@@ -68,7 +68,7 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
                 is_active => $activation_date ? 0 : 1, # Active immediately if no date specified
                 activation_date => $activation_date,
                 draft => 0,
-                requires_approval => $form_data->{requires_approval} eq 'yes' ? 1 : 0,
+                requires_approval => ( $form_data->{requires_approval} // '' ) eq 'yes' ? 1 : 0,
             });
         }
         else {

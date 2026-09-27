@@ -49,6 +49,10 @@
                    class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'locations' ? ' active' : '' %>">
                     Locations
                 </a>
+                <a href="/admin/people"
+                   class="<%= (stash('active_nav') // '') eq 'people' ? 'active' : '' %>">
+                    People
+                </a>
                 <a href="/user-creation"
                    class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'users' ? ' active' : '' %>">
                     New User

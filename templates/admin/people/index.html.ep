@@ -1,0 +1,94 @@
+%# ABOUTME: Admin screen listing the tenant's staff and admins, with offboarding.
+%# ABOUTME: Deactivation revokes access; the account stays because its history does.
+% layout 'dashboard';
+% title 'People';
+% stash active_nav => 'people';
+
+% my @people = @{ stash('people') || [] };
+% my @active   = grep {  $_->is_active } @people;
+% my @inactive = grep { !$_->is_active } @people;
+% my $me = stash('current_user') || {};
+
+<div class="container">
+    <div class="admin-header">
+        <div class="admin-header-content">
+            <div class="admin-title-section">
+                <h1>People</h1>
+                <p class="text-secondary mt-1">Staff and administrators for this organization</p>
+            </div>
+            <div>
+                <a href="/user-creation" class="btn btn-primary">Add a person</a>
+            </div>
+        </div>
+    </div>
+
+    % if (my $error = stash('error') // flash('error')) {
+        <div class="alert alert-error mb-4"><p><%= $error %></p></div>
+    % }
+    % if (my $success = stash('success') // flash('success')) {
+        <div class="alert alert-success mb-4"><p><%= $success %></p></div>
+    % }
+
+    % if (!@people) {
+        <p class="text-secondary">Nobody here yet. Add a person to get started.</p>
+    % } else {
+        <table class="admin-table">
+            <thead>
+                <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+                % for my $person (@active) {
+                    <tr>
+                        <td><strong><%= $person->name || $person->username %></strong></td>
+                        <td><%= $person->email %></td>
+                        <td><%= ucfirst $person->user_type %></td>
+                        <td><span class="registration-status is-enrolled">Active</span></td>
+                        <td>
+                            %# No control for your own account. Deactivating yourself
+                            %# locks the tenant out of itself when you are the only
+                            %# operator, and the DAO refuses it -- so the screen does
+                            %# not offer it rather than offering a button that fails.
+                            % if (($me->{id} // '') eq $person->id) {
+                                <span class="text-secondary">That's you</span>
+                            % } else {
+                                <form method="POST"
+                                      action="<%= url_for('admin_people_deactivate', id => $person->id) %>"
+                                      onsubmit="return confirm('<%= $person->name || $person->username %> will no longer be able to sign in. Their attendance records and the classes they taught are kept. Continue?')">
+                                    <button type="submit" class="btn btn-secondary">Deactivate</button>
+                                </form>
+                            % }
+                        </td>
+                    </tr>
+                % }
+
+                % for my $person (@inactive) {
+                    <tr class="is-inactive">
+                        <td><%= $person->name || $person->username %></td>
+                        <td><%= $person->email %></td>
+                        <td><%= ucfirst $person->user_type %></td>
+                        <td>
+                            <span class="registration-status is-waiting">Deactivated</span>
+                            % if (my $when = $person->deactivated_at) {
+                                <div class="text-secondary text-sm"><%= substr($when, 0, 10) %></div>
+                            % }
+                        </td>
+                        <td>
+                            <form method="POST"
+                                  action="<%= url_for('admin_people_reactivate', id => $person->id) %>">
+                                <button type="submit" class="btn btn-secondary">Reactivate</button>
+                            </form>
+                        </td>
+                    </tr>
+                % }
+            </tbody>
+        </table>
+
+        % if (@inactive) {
+            <p class="text-secondary text-sm mt-4">
+                A deactivated account cannot sign in by any route &mdash; link, passkey,
+                or a session already open. It is kept rather than deleted because the
+                register says who marked it, and that stays true.
+            </p>
+        % }
+    % }
+</div>
