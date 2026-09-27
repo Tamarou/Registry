@@ -218,4 +218,79 @@ subtest 'the screen refuses what the DAO refuses, and explains' => sub {
           'and the operator is told why, rather than the action silently doing nothing' );
 };
 
+# ---------------------------------------------------------------------------
+# Why deactivation rather than deletion, asserted rather than assumed.
+# ---------------------------------------------------------------------------
+
+subtest 'deleting an assigned teacher is refused: unassign them first' => sub {
+    # The policy (perigrin, 2026-09-27): to delete a teacher you have to unassign
+    # them first. No past/future distinction -- an assignment blocks, whether the
+    # class has run or not, and the database already implements exactly that.
+    #
+    # Pinned because it is a rule a future migration could quietly undo by writing
+    # ON DELETE CASCADE, which would turn "refused" into "the register silently
+    # forgets who marked it".
+    #
+    # Note what the policy costs, which is tracked separately: events.teacher_id is
+    # NOT NULL, so a teacher cannot be unassigned from an event at all -- only
+    # reassigned to somebody else, and a solo operator has nobody to name (#435).
+    my $teacher = make_user( 'delete_teacher', 'staff' );
+    my $parent  = make_user( 'delete_parent',  'parent' );
+
+    my $loc = $dao->create( Location => {
+        name => 'Delete Studio', slug => 'delete-studio',
+        address_info => {}, metadata => {},
+    } );
+    my $prog = $dao->create( Project => {
+        status => 'published', name => 'Delete Camp',
+        program_type_slug => 'summer-camp', metadata => {},
+    } );
+    my $event = $dao->create( Event => {
+        time => '2020-06-15 09:00:00', duration => 60,   # already run
+        location_id => $loc->id, project_id => $prog->id,
+        teacher_id => $teacher->id, capacity => 10, metadata => {},
+    } );
+
+    require Registry::DAO::Family;
+    my $child = Registry::DAO::Family->add_child( $db, $parent->id, {
+        child_name => 'Delete Kid', birth_date => '2018-01-01', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    } );
+    $db->insert( 'attendance_records', {
+        event_id => $event->id, student_id => $child->id,
+        status => 'present', marked_by => $teacher->id,
+    } );
+
+    my $deleted = eval { $db->query('DELETE FROM users WHERE id = ?', $teacher->id); 1 };
+    ok !$deleted, 'the database refuses to delete a teacher who has taught';
+    like $@, qr/foreign key|violates/i, 'because history references them';
+
+    ok Registry::DAO::User->find( $db, { id => $teacher->id } ),
+        'and the account is still there to be deactivated instead';
+
+    # The register still says who marked it, which is the thing being protected.
+    is $db->query('SELECT marked_by FROM attendance_records WHERE event_id = ?',
+        $event->id)->hash->{marked_by}, $teacher->id,
+        'and the attendance record still names them';
+};
+
+subtest 'deleting a user would take only their credentials' => sub {
+    # The three cascading references to users are exactly the credentials --
+    # passkeys, magic_link_tokens, api_keys. Asserted so that a fourth cascade
+    # added to something history-bearing shows up here as a surprise.
+    my $cascades = $db->query(q{
+        SELECT c.conrelid::regclass::text AS tbl
+          FROM pg_constraint c
+          JOIN pg_namespace n ON n.oid = c.connamespace
+         WHERE c.contype = 'f' AND n.nspname = 'registry'
+           AND c.confrelid = 'registry.users'::regclass
+           AND c.confdeltype = 'c'
+         ORDER BY 1
+    })->arrays->flatten->to_array;
+
+    is_deeply $cascades,
+        [ 'api_keys', 'magic_link_tokens', 'passkeys' ],
+        'only credentials cascade from a user deletion, never history';
+};
+
 done_testing;
