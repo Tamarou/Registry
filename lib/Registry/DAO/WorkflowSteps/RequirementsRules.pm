@@ -49,7 +49,7 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
         }
 
         # Renewal policies
-        $rules->{auto_renew} = $form_data->{auto_renew} eq 'yes' ? 1 : 0;
+        $rules->{auto_renew} = ( $form_data->{auto_renew} // '' ) eq 'yes' ? 1 : 0;
         $rules->{renewal_notice_days} = int($form_data->{renewal_notice_days} || 30);
         $rules->{cancellation_notice_days} = int($form_data->{cancellation_notice_days} || 7);
         $rules->{refund_policy} = $form_data->{refund_policy} || 'no_refund';
@@ -62,8 +62,8 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
         }
 
         # Proration rules
-        $rules->{prorate_on_upgrade} = $form_data->{prorate_on_upgrade} eq 'yes' ? 1 : 0;
-        $rules->{prorate_on_downgrade} = $form_data->{prorate_on_downgrade} eq 'yes' ? 1 : 0;
+        $rules->{prorate_on_upgrade} = ( $form_data->{prorate_on_upgrade} // '' ) eq 'yes' ? 1 : 0;
+        $rules->{prorate_on_downgrade} = ( $form_data->{prorate_on_downgrade} // '' ) eq 'yes' ? 1 : 0;
 
         # Store requirements and rules in run data
         my $existing_data = $run->data || {};
