@@ -40,6 +40,23 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             };
         }
         
+        # Absent Stripe keys in production is a misconfiguration -- a
+        # half-finished key rotation, say -- not a green light. It used to be
+        # checked only on the card-collection branch, which a free plan no
+        # longer reaches; checked here it still holds for every signup. A
+        # tenant provisioned while the platform cannot reach Stripe is one that
+        # can never take a payment, and therefore one we can never earn a
+        # revenue share from. Fail closed.
+        if (   ( $ENV{MOJO_MODE} // '' ) eq 'production'
+            && !$ENV{STRIPE_PUBLISHABLE_KEY}
+            && !$ENV{STRIPE_SECRET_KEY} )
+        {
+            return {
+                next_step => $self->id,
+                errors    => ['Signup is temporarily unavailable. Please try again shortly.'],
+            };
+        }
+
         # Nothing to collect and nothing to charge. Solo has no monthly base
         # -- the platform is paid out of the revenue share on each customer
         # payment -- so the button on this page is the commit, not a step
@@ -64,20 +81,12 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             # This handles the test/dev path where no Stripe keys are set.
             if (!$ENV{STRIPE_PUBLISHABLE_KEY} && !$ENV{STRIPE_SECRET_KEY}) {
 
-                # Never in production. Absent keys there is a misconfiguration
-                # -- a half-finished key rotation, say -- and reading that as
-                # "payment is not required" turns anonymous signup into a tenant
-                # factory: a cloned schema and a live wildcard subdomain on our
-                # own TLS per request, plus invitation email to any address the
-                # caller names. Fail closed; a signup that cannot charge should
-                # not proceed.
-                if ( ( $ENV{MOJO_MODE} // '' ) eq 'production' ) {
-                    return {
-                        next_step => $self->id,
-                        errors    => ['Payment is temporarily unavailable. Please try again shortly.'],
-                        data      => $self->prepare_payment_data($db, $run),
-                    };
-                }
+                # Production already returned above -- absent keys there is a
+                # misconfiguration, and reading it as "payment is not required"
+                # would turn anonymous signup into a tenant factory: a cloned
+                # schema and a live wildcard subdomain on our own TLS per
+                # request, plus invitation email to any address the caller
+                # names.
 
                 # Build a mock subscription record so the run data is consistent
                 my $mock_subscription = {
@@ -656,7 +665,14 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
             profile => {
                 name          => $raw->{name} || $raw->{organization_name},
-                subdomain     => $raw->{subdomain},
+                # The slug provisioning will actually derive, not the literal
+                # 'organization' the template used to fall back to. The review
+                # page names the URL the studio is about to live at; it has to
+                # be the one it gets.
+                subdomain     => $raw->{subdomain}
+                    || $raw->{slug}
+                    || Registry::DAO::Tenant->available_slug_for_name(
+                           $db, $raw->{name} || $raw->{organization_name} || '' ),
                 description   => $raw->{description},
                 billing_email => $raw->{billing_email},
             },
@@ -671,7 +687,8 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             # The plan nobody was asked to choose, resolved by the same code
             # that provisions -- so the page states the terms the tenant is
             # actually about to be put on.
-            plan => $self->get_subscription_config($db, $run),
+            plan        => $self->get_subscription_config($db, $run),
+            base_domain => Registry::Utility::BaseDomain::primary_base_domain(),
         };
     }
 

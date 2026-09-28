@@ -6,6 +6,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     use Carp qw(confess);
     use DateTime;
     use Mojo::Promise ();
+    use Registry::Utility::BaseDomain ();
 
     method workflow ( $slug = $self->param('workflow') ) {
         my $dao = $self->dao;
@@ -662,8 +663,9 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         
         unless ($name) {
             return $self->render(
-                inline => '<span class="subdomain-slug">organization</span>.tinyartempire.com',
-                format => 'html'
+                inline => '<span class="subdomain-slug">organization</span>.<%= $base_domain %>',
+                format => 'html',
+                base_domain => Registry::Utility::BaseDomain::primary_base_domain()
             );
         }
         
@@ -676,12 +678,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         
         my $icon = $is_available ? 'OK' : 'X';
         return $self->render(
-            inline => '<span class="subdomain-slug <%= $status_class %>"><%= $slug %></span>.tinyartempire.com'
+            inline => '<span class="subdomain-slug <%= $status_class %>"><%= $slug %></span>.<%= $base_domain %>'
                      . '<div class="subdomain-status <%= $status_class %>">'
                      . '<span class="status-icon"><%= $icon %></span>'
                      . '<%= $status_text %>'
                      . '</div>',
             format => 'html',
+            base_domain => Registry::Utility::BaseDomain::primary_base_domain(),
             slug => $slug,
             status_class => $status_class,
             status_text => $status_text,
@@ -762,28 +765,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $name;
     }
     
+    # The preview an applicant is shown must be the slug they will actually get,
+    # so the derivation is Tenant's and this only adds the availability suffix.
+    # It used to have its own copy that joined with hyphens and stripped
+    # punctuation, while provisioning replaced whitespace and nothing else.
     method _generate_subdomain_slug($db, $name) {
-        # Generate slug: lowercase, replace spaces/special chars with hyphens, remove multiple hyphens
-        my $slug = lc($name);
-        # For validation, use a simple approach without Text::Unidecode dependency
-        $slug =~ s/[^a-z0-9\s-]//g;  # Remove special characters
-        $slug =~ s/\s+/-/g;  # Replace spaces with hyphens
-        $slug =~ s/-+/-/g;   # Remove multiple consecutive hyphens
-        $slug =~ s/^-|-$//g; # Remove leading/trailing hyphens
-        $slug = substr($slug, 0, 50);  # Limit length
-        $slug = 'organization' if !$slug;  # Fallback if empty
-        
-        # Ensure uniqueness by checking existing tenants
-        my $original_slug = $slug;
-        my $counter = 1;
-        
-        while (Registry::DAO::Tenant->slug_exists($db, $slug)) {
-            $slug = "${original_slug}-${counter}";
-            $counter++;
-            last if $counter > 999;  # Prevent infinite loop
-        }
-        
-        return $slug;
+        require Registry::DAO::Tenant;
+        return Registry::DAO::Tenant->available_slug_for_name($db, $name);
     }
     
     method _slug_exists($db, $slug) {

@@ -3,13 +3,14 @@
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer signatures);
-use Test::More import => [qw( done_testing is isnt ok cmp_ok subtest diag )];
+use Test::More import => [qw( done_testing is isnt like ok cmp_ok subtest diag )];
 defer { done_testing };
 
 use Test::Registry::DB;
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
+use Registry::DAO::Tenant;
 use Registry::PriceOps::RevenueShare qw( platform_launch_fraction revenue_share_fraction_for_tenant );
 
 my $t_db = Test::Registry::DB->new;
@@ -89,6 +90,39 @@ subtest 'a signup with no plan selection is provisioned onto the launch plan' =>
     # The assertion that actually costs money if it fails.
     is revenue_share_fraction_for_tenant( $db, $slug ), $launch_fraction,
         'the charge path resolves the advertised rate for this tenant';
+};
+
+subtest 'the subdomain the applicant is shown is the one they get' => sub {
+    # Three derivations used to disagree: the profile page previewed
+    # clay-kiln-studio, told the applicant it was available, and provisioning
+    # produced clay_&_kiln_studio -- a schema name and a hostname with an
+    # ampersand in it, which the tenant router's /\A[a-z][a-z0-9_]{0,62}\z/
+    # could never have matched.
+    my $name = 'Clay & Kiln Studio';
+
+    my $previewed = Registry::DAO::Tenant->available_slug_for_name( $db, $name );
+    like $previewed, qr/\A[a-z][a-z0-9_]{0,62}\z/,
+        'the previewed slug is one the tenant router can route';
+
+    my $run = Registry::DAO::WorkflowRun->create( $db, {
+        workflow_id => $workflow->id,
+        data        => {
+            name            => $name,
+            admin_name      => 'Sam Potter',
+            admin_email     => "sam_$$\@test.example",
+            admin_username  => "sam_$$",
+            admin_user_type => 'admin',
+        },
+    } );
+
+    my ($review) = $workflow->get_step( $db, { slug => 'review' } );
+
+    my $shown = $review->prepare_template_data( $db, $run )->{profile}{subdomain};
+    is $shown, $previewed, 'the review page shows that same slug';
+
+    $run->process( $db, $review, {} );
+    is $run->data->{subdomain}, $previewed,
+        'and provisioning uses it rather than deriving a different one';
 };
 
 $t_db->cleanup_test_database;

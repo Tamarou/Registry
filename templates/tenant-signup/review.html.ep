@@ -7,6 +7,7 @@
 % my $admin = $team->{admin} || {};
 % my $team_members = $team->{team_members} || [];
 % my $plan = stash('plan') || {};
+% my $base_domain = stash('base_domain') || 'tinyartempire.com';
 % my $errors = stash('errors') || [];
 
 <div class="review-step">
@@ -37,9 +38,9 @@
                 </div>
                 
                 <div class="info-row">
-                    <label>Registry URL:</label>
+                    <label>Your URL:</label>
                     <span class="value subdomain-display">
-                        <strong><%= $profile->{subdomain} // 'organization' %>.tinyartempire.com</strong>
+                        <strong><%= $profile->{subdomain} // 'organization' %>.<%= $base_domain %></strong>
                     </span>
                 </div>
                 
@@ -173,7 +174,7 @@
                         <div class="timeline-icon">1</div>
                         <div class="timeline-content">
                             <h4>Instant Access</h4>
-                            <p>Your studio goes live immediately at <strong><%= $profile->{subdomain} // 'organization' %>.tinyartempire.com</strong></p>
+                            <p>Your studio goes live immediately at <strong><%= $profile->{subdomain} // 'organization' %>.<%= $base_domain %></strong></p>
                         </div>
                     </div>
                     
