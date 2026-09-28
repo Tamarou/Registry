@@ -20,7 +20,7 @@
              value="<%= stash('name') // '' %>"
              placeholder="Sunrise After-School Programs"
              required
-             hx-trigger="keyup changed delay:500ms"
+             hx-trigger="input changed delay:500ms"
              hx-post="/tenant-signup/validate-subdomain"
              hx-target="#subdomain-preview"
              hx-include="[name='name']" />

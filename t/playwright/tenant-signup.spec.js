@@ -46,7 +46,7 @@ test.describe('Tenant signup workflow', () => {
     // Fill in organization name
     await registryPage.fill('input[name="name"]', 'Super Awesome Cool Pottery');
 
-    // Wait for subdomain preview to update (HTMX or JS)
+    // Wait for the HTMX availability check to answer.
     await registryPage.waitForTimeout(1500);
 
     // Required, not conditional. The preview is the only thing telling the tenant
@@ -55,8 +55,11 @@ test.describe('Tenant signup workflow', () => {
     const subdomainPreview = registryPage.locator('.subdomain-slug, #subdomain-slug, [class*="subdomain"]');
     await expect(subdomainPreview.first(), 'the subdomain preview is on screen')
       .toBeVisible({ timeout: 10000 });
+    // Underscores: the preview has to be the slug provisioning will use, and
+    // that one is an unquoted PostgreSQL schema name in clone_schema where a
+    // hyphen is a syntax error.
     await expect(subdomainPreview.first(), 'and shows the address derived from the name')
-      .toContainText(/super-awesome/i);
+      .toContainText(/super_awesome/i);
 
     // Billing email field
     const emailInput = registryPage.locator('input[name="billing_email"]');
