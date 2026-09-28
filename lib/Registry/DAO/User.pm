@@ -128,9 +128,13 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
             );
 
             # Separate data for users and user_profiles tables
+            # invite_pending is on this list because signup sets it. The column
+            # and its reader existed since passwordless-auth; nothing wrote it,
+            # so it read false for everyone and "has this person been invited
+            # yet" had no answer.
             my %user_data = map { $_ => $data->{$_} } 
                            grep { exists $data->{$_} } 
-                           qw(username password birth_date user_type grade);
+                           qw(username password birth_date user_type grade invite_pending);
             
             my %profile_data = map { $_ => $data->{$_} } 
                               grep { exists $data->{$_} } 
@@ -227,6 +231,18 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
         # Lost the race to another deactivation; the account is off either way.
         return $self unless $row;
+        return __CLASS__->new(%$row);
+    }
+
+    # Clears the invite_pending flag, once an invitation has actually been sent.
+    method mark_invited ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $self unless $invite_pending;
+
+        my $row = $db->query(
+            'UPDATE users SET invite_pending = false WHERE id = ? RETURNING *', $id
+        )->hash or return $self;
+
         return __CLASS__->new(%$row);
     }
 

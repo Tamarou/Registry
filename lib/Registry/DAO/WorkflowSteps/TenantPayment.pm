@@ -57,6 +57,24 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             };
         }
 
+        # How many studios one address may create in an hour.
+        #
+        # The card used to bound this: #362 made provisioning require a verified
+        # SetupIntent, and signup is anonymous by necessity -- you cannot require
+        # a login to create an account. With the card gone (#365) the cost is
+        # unbounded, and the cost is real: every provisioning clones every table
+        # in the schema and claims a subdomain.
+        #
+        # Identity is deliberately NOT what is being checked. There is no
+        # password login, so a tenant whose admin address is not controlled by
+        # the person who typed it is inert -- nobody can sign in, nothing can be
+        # published, nothing is served. perigrin settled that in #289: an email
+        # round-trip is satisfied by a throwaway address anyway, and the
+        # verification that matters is Stripe's before any money moves.
+        if ( my $error = $self->_provisioning_rate_limited( $db, $run ) ) {
+            return { next_step => $self->id, errors => [$error] };
+        }
+
         # Nothing to collect and nothing to charge. Solo has no monthly base
         # -- the platform is paid out of the revenue share on each customer
         # payment -- so the button on this page is the commit, not a step
@@ -240,6 +258,34 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # rate reads the SAME source -- and fails loud the same way -- as the
     # charge-time path; a missing Free plan can never make display and charge
     # disagree.
+    use constant PROVISIONINGS_PER_HOUR => 5;
+
+    # Returns a message when the caller has provisioned too many studios lately,
+    # or undef.
+    #
+    # Counted from registry.tenants itself rather than from a separate attempts
+    # table, so the thing being bounded is exactly the thing recorded and the two
+    # cannot drift. Registry::Middleware::RateLimit cannot serve here: its
+    # counters live in one process's memory, reset on restart, are not shared
+    # between instances, and are keyed per-address across all paths at 100/min --
+    # which is 100 schema clones a minute.
+    method _provisioning_rate_limited ( $db, $run ) {
+        my $ip = ( $run->data || {} )->{__remote_address} or return undef;
+
+        my $recent = $db->query( q{
+            SELECT count(*) AS n
+              FROM registry.tenants
+             WHERE created_from_ip = ?
+               AND created_at > now() - interval '1 hour'
+        }, $ip )->hash->{n};
+
+        return undef if $recent < PROVISIONINGS_PER_HOUR;
+
+        return 'Too many organizations have been created from this connection '
+             . 'in the last hour. Please try again later, or contact support if '
+             . 'you need several set up at once.';
+    }
+
     # What every tier includes. Lives here rather than in the plan row because
     # it is the same list for all of them -- a plan that genuinely offers more
     # says so in its own pricing_configuration->>'features' and overrides this.
@@ -481,10 +527,10 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     }
 
     # _provision_tenant: builds the user list from run data, calls Tenant->provision,
-    # sends invitation emails for invite_pending team members, stores tenant info in
-    # run data, and returns a result hash with tenant/organization_name/subdomain/
-    # admin_email keys.  This is the single provisioning path for all completion
-    # scenarios (no-Stripe mock, real-Stripe).
+    # marks team members invite_pending for the admin to invite later, stores
+    # tenant info in run data, and returns a result hash with
+    # tenant/organization_name/subdomain/admin_email keys.  This is the single
+    # provisioning path for all completion scenarios (no-Stripe mock, real-Stripe).
     method _provision_tenant($db, $run) {
         my $data = $run->data;
         my $profile = $data->{profile} || {};
@@ -536,6 +582,12 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             name  => $org_name,
             users => \@user_objects,
         );
+
+        # Server-derived, from _apply_server_owned_data -- see the rate limit
+        # above, and the note there about why a client-supplied address would be
+        # a limit the client sets for itself.
+        $provision_data{created_from_ip} = $data->{__remote_address}
+            if $data->{__remote_address};
         $provision_data{slug} = $slug if $slug;
 
         # Persist the tenant -> platform plan link when a plan was selected, so
@@ -570,15 +622,19 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
         my $tenant = Registry::DAO::Tenant->provision($db, \%provision_data);
 
-        # Send invitation emails for team members marked invite_pending
-        for my $ud (@user_data) {
-            next unless $ud->{invite_pending} && $ud->{email};
-            my $tenant_user = $tenant->dao($db)->find(User => { username => $ud->{username} });
-            if ($tenant_user) {
-                $self->_send_invitation_email( $db, $tenant, $tenant_user, $ud,
-                    $user_data[0]->{name} || $user_data[0]->{email} );
-            }
-        }
+        # Deliberately NOT sending the invitations here.
+        #
+        # Signup is anonymous, the team-member addresses are whatever the caller
+        # typed on the form, and delivery is real now -- Postmark in production.
+        # Mailing them made an unauthenticated form into an outbound mailer for
+        # attacker-chosen recipients, carrying our sending domain and a working
+        # magic link into a tenant the recipient never asked to join (#438).
+        # #289 said this became real "the day that TODO is implemented". It did.
+        #
+        # The people are still created, marked invite_pending, and the admin
+        # sends their invitations from /admin/people once signed in -- which is
+        # itself proof they hold the address the tenant was created with. Nothing
+        # leaves the building on an anonymous request.
 
         my $admin_email = $user_data[0]->{email} || $user_data[0]->{username};
         my $result = {
@@ -592,62 +648,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         $run->update_data($db, $result);
 
         return $result;
-    }
-
-    # _send_invitation_email: generates a magic link token for a team member invite
-    # and logs the would-be email (actual delivery is a TODO).
-    method _send_invitation_email($db, $tenant, $user, $user_data, $inviter_name = '') {
-        # On the tenant's own handle, not the provisioning one. $user is a row
-        # in <tenant>.users -- the caller resolved it through $tenant->dao --
-        # so a token minted against registry would carry a user_id that exists
-        # in neither schema's terms: unresolvable from the apex, because the
-        # user is not there, and unresolvable from the subdomain, because the
-        # token is not. The pairing has to hold on both sides.
-        my $tenant_db = $tenant->dao($db)->db;
-
-        # Best effort, start to finish: an invitation that cannot be delivered
-        # must not roll back a tenant that has otherwise been provisioned. The
-        # owner can re-invite; an aborted provisioning leaves nothing to
-        # re-invite into. Minting and recording are inside the guard too, not
-        # just the send -- a throw from either one aborts provisioning just as
-        # dead. Tenant->provision has already committed and this runs on the
-        # tenant's own handle, so there is no open transaction here to poison.
-        eval {
-            my ($token, $plaintext) = Registry::DAO::MagicLinkToken->generate($tenant_db, {
-                user_id    => $user->id,
-                purpose    => 'invite',
-                expires_in => 168,
-            });
-
-            # And the link goes to the tenant's own host, where $c->dao resolves to
-            # the schema the token and the user both live in.
-            my $base_url = Registry::Utility::BaseDomain::tenant_url( $tenant->slug );
-
-            # Sent the way AccountCheck sends a login link: a notification carrying
-            # the URL, rendered by the magic_link_invite template that has been
-            # waiting for a caller. Auth.pm already routes an invite token to
-            # passkey registration rather than the homepage, which is what someone
-            # arriving without an account needs.
-            my $notification = Registry::DAO::Notification->create($tenant_db, {
-                user_id  => $user->id,
-                type     => 'magic_link_invite',
-                channel  => 'email',
-                subject  => sprintf( 'You have been invited to %s', $tenant->name ),
-                message  => sprintf( 'Invitation to %s for %s',
-                    $tenant->name, $user_data->{email} ),
-                metadata => {
-                    tenant_name      => $tenant->name,
-                    inviter_name     => $inviter_name,
-                    role             => $user_data->{user_type} || 'staff',
-                    magic_link_url   => "$base_url/auth/magic/$plaintext",
-                    expires_in_hours => 168,
-                },
-            });
-
-            $notification->send($tenant_db);
-            1;
-        } or warn "invitation email to " . $user_data->{email}
-                . " for tenant " . $tenant->slug . " failed: $@";
     }
 
     method template { 'tenant-signup/payment' }

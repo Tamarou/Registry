@@ -130,6 +130,78 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
           ->to_array->@*;
     }
 
+    # Send a person their invitation: a magic link into this tenant.
+    #
+    # Lives here rather than on the signup step because signup must NOT send it.
+    # Signup is anonymous, the team-member addresses on the form are whatever the
+    # caller typed, and delivery is real now -- Postmark in production -- so
+    # mailing them made an unauthenticated form into an outbound mailer for
+    # attacker-chosen recipients, carrying our sending domain and a working
+    # magic link (#438). #289 predicted this would become real "the day that
+    # TODO is implemented"; it has. The admin sends invitations after signing
+    # in, which is itself proof they hold the address the tenant was created
+    # with.
+    #
+    # Returns 1 on success, 0 on failure. Best effort by contract: a caller
+    # provisioning a tenant must not have it rolled back by an undeliverable
+    # invitation, and a caller clicking a button wants to be told, not 500'd.
+    method invite_user ( $db, $user, $inviter_name = '' ) {
+        require Registry::DAO::MagicLinkToken;
+        require Registry::DAO::Notification;
+        require Registry::Utility::BaseDomain;
+
+        # On this tenant's own handle, not the caller's. $user is a row in
+        # <slug>.users, so a token minted against registry would carry a user_id
+        # that exists in neither schema's terms: unresolvable from the apex,
+        # because the user is not there, and unresolvable from the subdomain,
+        # because the token is not. The pairing has to hold on both sides.
+        my $tenant_db = $self->dao($db)->db;
+
+        my $ok = eval {
+            my ( $token, $plaintext ) = Registry::DAO::MagicLinkToken->generate(
+                $tenant_db,
+                { user_id => $user->id, purpose => 'invite', expires_in => 168 },
+            );
+
+            # And the link goes to this tenant's own host, where $c->dao resolves
+            # to the schema the token and the user both live in.
+            my $base_url = Registry::Utility::BaseDomain::tenant_url($slug);
+
+            # Sent the way AccountCheck sends a login link: a notification
+            # carrying the URL, rendered by the magic_link_invite template.
+            # Auth.pm already routes an invite token to passkey registration
+            # rather than the homepage, which is what someone arriving without
+            # an account needs.
+            my $notification = Registry::DAO::Notification->create( $tenant_db, {
+                user_id  => $user->id,
+                type     => 'magic_link_invite',
+                channel  => 'email',
+                subject  => sprintf( 'You have been invited to %s', $name ),
+                message  => sprintf( 'Invitation to %s for %s',
+                    $name, $user->email // $user->username ),
+                metadata => {
+                    tenant_name      => $name,
+                    inviter_name     => $inviter_name,
+                    role             => $user->user_type // 'staff',
+                    magic_link_url   => "$base_url/auth/magic/$plaintext",
+                    expires_in_hours => 168,
+                },
+            } );
+
+            $notification->send($tenant_db);
+            1;
+        };
+
+        unless ($ok) {
+            warn "invitation email to " . ( $user->email // $user->username )
+               . " for tenant $slug failed: $@";
+            return 0;
+        }
+
+        $user->mark_invited($tenant_db);
+        return 1;
+    }
+
     method set_primary_user ( $db, $user ) {
         $db->insert(
             'tenant_users',
@@ -211,7 +283,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             billing_status trial_ends_at subscription_started_at
             magic_link_expiry_hours
             stripe_connect_account_id stripe_charges_enabled stripe_details_submitted
-            platform_pricing_plan_id
+            platform_pricing_plan_id created_from_ip
         );
         my %tenant_data = map { $_ => $data->{$_} }
                           grep { exists $TENANT_COLUMNS{$_} } keys %$data;

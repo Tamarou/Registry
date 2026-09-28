@@ -767,6 +767,7 @@ class Registry :isa(Mojolicious) {
         $admin->get('/people')->to('people#index')->name('admin_people');
         $admin->post('/people/:id/deactivate')->to('people#deactivate')->name('admin_people_deactivate');
         $admin->post('/people/:id/reactivate')->to('people#reactivate')->name('admin_people_reactivate');
+        $admin->post('/people/:id/invite')->to('people#invite')->name('admin_people_invite');
 
         $admin->get('/templates')->to('workflows#index', workflow => 'template-editor')->name('admin_templates');
         $admin->post('/templates')->to('workflows#start_workflow', workflow => 'template-editor');

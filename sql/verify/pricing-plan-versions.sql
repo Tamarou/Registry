@@ -41,12 +41,25 @@ BEGIN
 
             -- The constraint is the point, not just the column: without it
             -- "the current version" has no single answer.
+            --
+            -- Matched by SHAPE, not by name. clone_schema builds a tenant with
+            -- CREATE TABLE ... (LIKE ... INCLUDING ALL), which copies the index
+            -- definition and lets Postgres auto-name it -- registry's
+            -- pricing_plans_one_current_per_family arrives in a clone as
+            -- pricing_plans_plan_family_id_idx. Checking the name therefore
+            -- passed only for schemas this migration's own ALTER loop touched,
+            -- and failed for every tenant provisioned afterwards. Since
+            -- docker-entrypoint.sh treats a failed deploy as fatal, that would
+            -- have refused to start production on the first boot after anybody
+            -- signed up.
             IF NOT EXISTS (
                 SELECT 1 FROM pg_indexes
                  WHERE schemaname = s AND tablename = 'pricing_plans'
-                   AND indexname = 'pricing_plans_one_current_per_family'
+                   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+                   AND indexdef LIKE '%(plan_family_id)%'
+                   AND indexdef LIKE '%WHERE (superseded_at IS NULL)'
             ) THEN
-                RAISE EXCEPTION 'pricing_plans_one_current_per_family missing in schema %', s;
+                RAISE EXCEPTION 'no unique index on pricing_plans(plan_family_id) WHERE superseded_at IS NULL in schema %', s;
             END IF;
 
             -- The immutability trigger is the enforcement, not the DAO. Its
