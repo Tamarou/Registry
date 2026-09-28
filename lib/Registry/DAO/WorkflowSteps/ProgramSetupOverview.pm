@@ -35,6 +35,23 @@ method prepare_template_data ($db, $run, $params = {}) {
         'SELECT COUNT(*) FROM pricing_plans'
     )->array->[0];
 
+    # Whether this tenant can actually take money. The row lives in the registry
+    # schema, and the connection's search_path is already the tenant's own
+    # schema -- which is the slug -- so current_schema() identifies it without
+    # threading a slug through prepare_template_data.
+    #
+    # This belongs on the checklist because without it ready_to_publish lies:
+    # it reported ready while AdminDashboard::set_session_status refused every
+    # priced session, and the tenant had no way to see why.
+    my $connect_ready = $raw->query( q{
+        SELECT stripe_connect_account_id IS NOT NULL
+               AND stripe_charges_enabled
+               AND stripe_details_submitted AS ready
+          FROM registry.tenants
+         WHERE slug = current_schema()
+    } )->hash;
+    $connect_ready = $connect_ready ? $connect_ready->{ready} : 0;
+
     my @checklist = (
         {
             key            => 'program_types',
@@ -75,6 +92,15 @@ method prepare_template_data ($db, $run, $params = {}) {
             callcc_target  => 'pricing-plan-creation',
             count          => $pricing_count,
             status         => $pricing_count > 0 ? 'done' : 'todo',
+        },
+        {
+            key            => 'payments',
+            label          => 'Payments',
+            description    => 'Connect your Stripe account so families can pay online. '
+                            . 'A program with a price cannot be published without it.',
+            href           => '/admin/billing',
+            count          => $connect_ready ? 1 : 0,
+            status         => $connect_ready ? 'done' : 'todo',
         },
     );
 

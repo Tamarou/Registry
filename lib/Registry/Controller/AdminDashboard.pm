@@ -309,9 +309,17 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
                 my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
 
                 unless ( $tenant && $tenant->stripe_connect_ready ) {
+                    # Name the door. This refusal used to describe a step with
+                    # nowhere to take it -- there was no onboarding screen and
+                    # no code that could create a Connect account at all (#439),
+                    # so the line was a dead end for every tenant, forever.
                     return $self->render(
-                        json => { error => 'this organization must finish Stripe Connect '
-                                         . 'onboarding before publishing a paid session' },
+                        json => {
+                            error => 'this organization must finish Stripe Connect '
+                                   . 'onboarding before publishing a paid session',
+                            action_url   => $self->url_for('admin_billing')->to_string,
+                            action_label => 'Set up payments',
+                        },
                         status => 409,
                     );
                 }

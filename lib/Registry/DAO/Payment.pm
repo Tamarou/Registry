@@ -143,29 +143,14 @@ field $_stripe_client = undef;
         return $class->SUPER::create($db, $data);
     }
     
+    # The env-reading and the live-key guard live on the service now, so the
+    # Connect-onboarding controller enforces the same rule rather than growing a
+    # second copy of it. This keeps the per-payment cache.
     method stripe_client {
         return $_stripe_client if $_stripe_client;
 
-        my $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
-        my $webhook_secret = $ENV{STRIPE_WEBHOOK_SECRET};
-
-        # Safety guard: a live key (sk_live_) must never be used outside
-        # production. Development and test environments routinely inherit a live
-        # key from the shell, and using it would hit the real Stripe API and can
-        # create real charges. Require MOJO_MODE=production to opt in.
-        if ($api_key =~ /^sk_live_/ && ($ENV{MOJO_MODE} // '') ne 'production') {
-            die "Refusing to use a live Stripe key (sk_live_) outside production "
-              . "(MOJO_MODE=" . ($ENV{MOJO_MODE} // 'unset') . "); "
-              . "set a Stripe test key (sk_test_) for development and tests.\n";
-        }
-
         # Handle SSL requirement gracefully in test environments
-        eval {
-            $_stripe_client = Registry::Service::Stripe->new(
-                api_key => $api_key,
-                webhook_secret => $webhook_secret,
-            );
-        };
+        eval { $_stripe_client = Registry::Service::Stripe->from_env };
 
         if ($@) {
             # If SSL or other requirements fail, re-throw with a clear message

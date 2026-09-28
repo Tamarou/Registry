@@ -22,6 +22,26 @@ class Registry::Service::Stripe {
         $ua->request_timeout(30);
     }
     
+    # The guarded constructor. Every caller that builds a client from the
+    # environment goes through here so the live-key rule is stated once:
+    # development and test shells routinely carry an sk_live_ key, and using it
+    # reaches the real Stripe API and can create real charges and real
+    # connected accounts.
+    sub from_env ($class) {
+        my $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
+
+        if ($api_key =~ /^sk_live_/ && ($ENV{MOJO_MODE} // '') ne 'production') {
+            die "Refusing to use a live Stripe key (sk_live_) outside production "
+              . "(MOJO_MODE=" . ($ENV{MOJO_MODE} // 'unset') . "); "
+              . "set a Stripe test key (sk_test_) for development and tests.\n";
+        }
+
+        return $class->new(
+            api_key        => $api_key,
+            webhook_secret => $ENV{STRIPE_WEBHOOK_SECRET},
+        );
+    }
+
     method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef) {
         my $url = "https://api.stripe.com/v1/$endpoint";
         my $headers = {
@@ -68,6 +88,28 @@ class Registry::Service::Stripe {
         });
     }
     
+    # Connect Accounts API
+    #
+    # The platform creates the connected account and then hands the tenant a
+    # single-use hosted link to finish onboarding on Stripe. Nothing else in
+    # Registry could do either, which is why tenants.stripe_connect_account_id
+    # was only ever written by test fixtures (#439) -- and why the readiness
+    # gate on publishing a priced session could never pass for anybody.
+    method create_account_async($params) {
+        return $self->_request_async('POST', 'accounts', $params);
+    }
+
+    method retrieve_account_async($account_id) {
+        return $self->_request_async('GET', "accounts/$account_id");
+    }
+
+    # Account links expire in minutes and are single-use, so one is minted per
+    # visit rather than stored. refresh_url is where Stripe sends a caller
+    # holding an expired link; it has to mint another.
+    method create_account_link_async($params) {
+        return $self->_request_async('POST', 'account_links', $params);
+    }
+
     # Payment Intents API
     method create_payment_intent_async($params) {
         my %p  = %$params;  # ponytail: shallow copy avoids mutating caller's hashref
@@ -254,6 +296,18 @@ class Registry::Service::Stripe {
     }
 
     # Synchronous wrapper methods for backward compatibility
+    method create_account($params) {
+        return $self->_await($self->create_account_async($params));
+    }
+
+    method retrieve_account($account_id) {
+        return $self->_await($self->retrieve_account_async($account_id));
+    }
+
+    method create_account_link($params) {
+        return $self->_await($self->create_account_link_async($params));
+    }
+
     method create_payment_intent($params) {
         return $self->_await($self->create_payment_intent_async($params));
     }
