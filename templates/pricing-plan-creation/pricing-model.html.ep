@@ -83,36 +83,24 @@
                     </div>
                 </div>
 
-                <!-- Installment Options -->
+                %# Instalments are not offered, because they are not delivered:
+                %# installments_allowed and installment_count are stored and read by
+                %# nothing in the payment path, so a plan configured for three
+                %# instalments charges the parent in full (#425). The controls are
+                %# gone rather than disabled -- a greyed-out checkbox invites a
+                %# support question, and the step refuses the value anyway.
+                %#
+                %# Said out loud rather than silently absent, because instalments are
+                %# in the MVP spec and an operator looking for them deserves to know
+                %# they are coming rather than assume they missed a setting.
                 <div class="p-4 border rounded-lg">
-                    <div class="flex items-center mb-4">
-                        <input type="checkbox"
-                               id="installments_allowed"
-                               name="installments_allowed"
-                               value="1"
-                               class="mr-2"
-                               hx-post="/htmx/installments-toggle"
-                               hx-target="#installments-config"
-                               hx-trigger="change">
-                        <label for="installments_allowed" class="font-medium">
-                            Allow Installment Payments
-                        </label>
-                    </div>
-                    <div id="installments-config" class="hidden">
-                        <div>
-                            <label for="installment_count" class="block text-sm font-medium text-gray-700 mb-2">
-                                Number of Installments
-                            </label>
-                            <input type="number"
-                                   id="installment_count"
-                                   name="installment_count"
-                                   min="2"
-                                   max="12"
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                   placeholder="e.g., 3">
-                            <p class="mt-1 text-sm text-gray-500">Split payment into this many equal parts</p>
-                        </div>
-                    </div>
+                    <p class="font-medium">Installment payments</p>
+                    <p class="mt-1 text-sm text-gray-500">
+                        Not available yet &mdash; every plan is charged in full at
+                        registration. Installments are being built; until then this
+                        option is hidden rather than offered, so nobody sets up a
+                        payment plan that would not be honoured.
+                    </p>
                 </div>
 
                 <!-- Advanced Pricing Options (for percentage, tiered, etc.) -->
@@ -163,15 +151,7 @@
 </div>
 
 <script>
-// Toggle installments configuration
-document.getElementById('installments_allowed').addEventListener('change', function() {
-    const config = document.getElementById('installments-config');
-    if (this.checked) {
-        config.classList.remove('hidden');
-    } else {
-        config.classList.add('hidden');
-    }
-});
+// The installments toggle is gone with its controls (#425).
 
 // Dynamic pricing type configuration
 document.getElementById('pricing_model_type').addEventListener('change', function() {
