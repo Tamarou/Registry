@@ -1,13 +1,14 @@
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is ok like is_deeply subtest use_ok isa_ok can_ok )];
+use Test::More import => [qw( done_testing is ok like unlike is_deeply subtest use_ok isa_ok can_ok )];
 defer { done_testing };
 
 use Registry::DAO;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use DateTime;
+use Registry::Utility::BaseDomain ();
 
 # Set up test data
 my $test_db = Test::Registry::DB->new();
@@ -23,12 +24,21 @@ subtest 'Enhanced completion step template exists' => sub {
     my $content = do { local $/; <$fh> };
     close $fh;
     
-    like($content, qr/Welcome to Registry!/, 'Template contains welcome message');
+    like($content, qr/Your studio is live/, 'Template contains welcome message');
     like($content, qr/organization_name/, 'Template uses organization_name variable');
     like($content, qr/subdomain/, 'Template uses subdomain variable');
     like($content, qr/admin_email/, 'Template uses admin_email variable');
-    like($content, qr/trial_end_date/, 'Template uses trial_end_date variable');
+    like($content, qr/tenant_url/, 'Template builds links from the configured base domain');
     like($content, qr/success-container/, 'Template has success container CSS class');
+
+    # The page handed a new tenant four links, all to <slug>.registry.localhost,
+    # a hostname that resolves on a developer's machine and nowhere else.
+    unlike($content, qr/registry\.localhost/,
+        'Template does not hardcode a development hostname');
+    # And it promised a 30-day trial ending on a date, plus a \$200/month
+    # subscription starting after it, to a tenant on a plan that is free forever.
+    unlike($content, qr/trial/i, 'Template does not promise a trial');
+    unlike($content, qr/\\\$200/, 'Template does not quote a retired monthly price');
     # Check that mobile responsive CSS exists in CSS files
     my $css_content = do {
         local $/;
@@ -43,21 +53,13 @@ subtest 'RegisterTenant class structure' => sub {
     use_ok('Registry::DAO::WorkflowSteps::RegisterTenant');
     
     # Test that it has the expected methods
-    can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', '_format_trial_end_date');
+    can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', 'prepare_completion_data');
     can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', 'process');
 };
 
-subtest 'Success data formatting' => sub {
-    # Test trial end date formatting functionality
-    my $unix_timestamp = time() + (30 * 24 * 60 * 60); # 30 days from now
-    ok($unix_timestamp > 0, 'Unix timestamp generated');
-    
-    # Test that DateTime can format dates properly
-    my $dt = DateTime->from_epoch(epoch => $unix_timestamp);
-    my $formatted = $dt->strftime('%B %d, %Y');
-    ok($formatted =~ /\w+ \d{1,2}, \d{4}/, 'Date formatting works');
-    
-    # Test ISO date parsing
-    my $iso_date = DateTime->now->add(days => 30)->iso8601();
-    ok($iso_date =~ /\d{4}-\d{2}-\d{2}T/, 'ISO date format correct');
+subtest 'completion links point at the configured base domain' => sub {
+    local $ENV{REGISTRY_BASE_DOMAINS} = 'example.test';
+    is Registry::Utility::BaseDomain::tenant_url('acme', '/login'),
+        'https://acme.example.test/login',
+        'a tenant link is built from REGISTRY_BASE_DOMAINS, not a literal';
 };

@@ -1,5 +1,5 @@
-// ABOUTME: End-to-end browser tests for the 7-step tenant signup workflow.
-// ABOUTME: Covers landing, profile with subdomain validation, pricing, team, review, payment, and completion.
+// ABOUTME: End-to-end browser tests for the 5-step tenant signup workflow.
+// ABOUTME: Covers landing, profile with subdomain validation, team, review-and-create, and completion.
 
 const { test, expect } = require('./fixtures/base');
 
@@ -67,15 +67,15 @@ test.describe('Tenant signup workflow', () => {
     await registryPage.click('button[type="submit"]');
     await registryPage.waitForLoadState('networkidle');
 
-    // Should advance to next step (pricing or users)
+    // Should advance to the users step
     const nextUrl = registryPage.url();
     expect(nextUrl).not.toContain('profile');
   });
 
   // ===========================================================================
-  // 3. Pricing step
+  // 3. The plan reaches the applicant without being chosen
   // ===========================================================================
-  test('pricing step shows available plans', async ({ registryPage, testDB }) => {
+  test('review step quotes the plan nobody was asked to pick', async ({ registryPage, testDB }) => {
     // Start workflow and advance through profile
     await registryPage.goto('/tenant-signup');
     await registryPage.click('button[type="submit"]');
@@ -86,8 +86,7 @@ test.describe('Tenant signup workflow', () => {
     await registryPage.click('button[type="submit"]');
     await registryPage.waitForLoadState('networkidle');
 
-    // Should be on users step (profile -> users -> pricing in the YAML order)
-    // Fill users step
+    // Users step
     const adminName = registryPage.locator('input[name="admin_name"]');
     if (await adminName.isVisible({ timeout: 2000 }).catch(() => false)) {
       await registryPage.fill('input[name="admin_name"]', 'Jordan Owner');
@@ -97,15 +96,16 @@ test.describe('Tenant signup workflow', () => {
       await registryPage.waitForLoadState('networkidle');
     }
 
-    // Should be on pricing step
+    // Straight to review. Nothing asks which plan, and nothing asks for a card,
+    // so the terms the applicant is agreeing to have to be on this page.
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
+    expect(registryPage.url()).toContain('/review');
 
-    // Pricing plans should be visible
-    const pricingContent = registryPage.locator('body');
-    const hasPricing = await pricingContent.textContent();
-
-    // Should show plan options or pricing info
-    expect(hasPricing).toMatch(/plan|pricing|price|free|solo|\$/i);
+    const bodyText = await registryPage.locator('body').textContent();
+    expect(bodyText).toMatch(/solo/i);
+    expect(bodyText).toMatch(/% of the payments/i);
+    // The page must not promise a trial: Solo is free and stays free.
+    expect(bodyText).not.toMatch(/free trial/i);
   });
 
   // ===========================================================================
@@ -133,17 +133,6 @@ test.describe('Tenant signup workflow', () => {
       await registryPage.waitForLoadState('networkidle');
     }
 
-    // Pricing - select first available plan
-    const planRadio = registryPage.locator('input[name="selected_plan_id"]').first();
-    if (await planRadio.isVisible({ timeout: 2000 }).catch(() => false)) {
-      // The design-system plan radio is visually hidden behind a styled label,
-      // so force the check past Playwright's actionability wait (a real user
-      // clicks the styled button; the raw input is not directly clickable).
-      await planRadio.check({ force: true });
-      await registryPage.click('button[type="submit"]');
-      await registryPage.waitForLoadState('networkidle');
-    }
-
     // Should be on review step
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
 
@@ -152,10 +141,9 @@ test.describe('Tenant signup workflow', () => {
   });
 
   // ===========================================================================
-  // 5. Payment step (test mode)
+  // 5. Review is the last page before completion
   // ===========================================================================
-  test('payment step renders without error', async ({ registryPage, testDB }) => {
-    // Navigate through to payment
+  test('accepting terms on review goes straight to completion', async ({ registryPage, testDB }) => {
     await registryPage.goto('/tenant-signup');
     await registryPage.click('button[type="submit"]');
     await registryPage.waitForLoadState('networkidle');
@@ -176,37 +164,27 @@ test.describe('Tenant signup workflow', () => {
       await registryPage.waitForLoadState('networkidle');
     }
 
-    // Pricing
-    const planRadio = registryPage.locator('input[name="selected_plan_id"]').first();
-    if (await planRadio.isVisible({ timeout: 2000 }).catch(() => false)) {
-      // The design-system plan radio is visually hidden behind a styled label,
-      // so force the check past Playwright's actionability wait (a real user
-      // clicks the styled button; the raw input is not directly clickable).
-      await planRadio.check({ force: true });
-      await registryPage.click('button[type="submit"]');
-      await registryPage.waitForLoadState('networkidle');
-    }
-
-    // Review - accept terms and submit
+    // Review - accept terms and create
     const termsCheckbox = registryPage.locator('input[name="terms_accepted"]');
-    if (await termsCheckbox.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await termsCheckbox.check();
-    }
-    await registryPage.click('button[type="submit"]');
-    await registryPage.waitForLoadState('networkidle');
+    await expect(termsCheckbox).toBeVisible({ timeout: 5000 });
+    await termsCheckbox.check();
+    const createBtn = registryPage.locator('#create-studio');
+    await expect(createBtn).toBeEnabled({ timeout: 5000 });
+    await createBtn.click();
+    await registryPage.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Should be on payment step (or complete if payment is auto-handled in test mode)
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-
-    // Payment page should show payment-related content
+    // No card was collected on the way here, and none is asked for now.
+    expect(registryPage.url()).toContain('/complete');
     const bodyText = await registryPage.locator('body').textContent();
-    expect(bodyText).toMatch(/payment|subscribe|complete|congratulations|success/i);
+    expect(bodyText).toMatch(/your studio is live/i);
+    expect(bodyText).not.toMatch(/free trial/i);
   });
 
   // ===========================================================================
   // 6. Complete signup: tenant is actually created (real browser, real DB check)
   // ===========================================================================
-  test('completing payment creates a tenant with a provisioned schema', async ({ registryPage, testDB }) => {
+  test('creating the studio provisions a tenant with a schema', async ({ registryPage, testDB }) => {
     const { spawnSync } = require('child_process');
     // Unique per run: CI runs chromium AND firefox against the SAME shared DB,
     // so a fixed slug collides on tenants_slug_key. The suffix keeps each run's
@@ -243,57 +221,28 @@ test.describe('Tenant signup workflow', () => {
       await registryPage.waitForLoadState('networkidle');
     }
 
-    // Pricing step — select a plan if radio buttons are present, then always
-    // click the submit button to advance.  If no plans exist in the DB (empty
-    // test fixture), the step still has a "Continue to Review" submit button.
-    const pricingStep = await registryPage.locator('h1, h2').filter({ hasText: /plan|pricing/i }).isVisible({ timeout: 2000 }).catch(() => false);
-    if (pricingStep) {
-      const planInput = registryPage.locator('input[name="selected_plan_id"]').first();
-      if (await planInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-        // Hidden styled radio -- force past actionability checks.
-        await planInput.check({ force: true });
-      }
-      await registryPage.click('button[type="submit"]');
-      await registryPage.waitForLoadState('networkidle');
-    }
-
-    // Review (if present) — the terms checkbox must be checked before the
-    // #proceed-to-payment button is enabled (via JavaScript).
+    // Review — the terms checkbox must be checked before #create-studio is
+    // enabled (via JavaScript), and that button is what provisions the tenant.
     const termsInput = registryPage.locator('input[name="terms_accepted"]');
-    if (await termsInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await termsInput.check();
-      // Wait for the proceed button to become enabled, then click it.
-      const proceedBtn = registryPage.locator('#proceed-to-payment');
-      await expect(proceedBtn).toBeEnabled({ timeout: 5000 });
-      await proceedBtn.click();
-      await registryPage.waitForLoadState('networkidle');
-    }
-
-    // Should now be on the payment step — verify we advanced past review.
-    await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-    // Verify we're actually on the payment step by checking for the payment form
-    await expect(registryPage.locator('body')).toContainText(/payment|add payment method|trial/i, { timeout: 5000 });
-
-    // Payment — click the "Add Payment Method & Start Trial" button.
-    // In test mode (no Stripe keys), this POST triggers the no-Stripe mock branch
-    // in TenantPayment::_provision_tenant, which creates the tenant immediately.
-    const paymentSubmit = registryPage.locator('button[type="submit"]').first();
-    await expect(paymentSubmit).toBeVisible({ timeout: 10000 });
+    await expect(termsInput).toBeVisible({ timeout: 5000 });
+    await termsInput.check();
+    const createBtn = registryPage.locator('#create-studio');
+    await expect(createBtn).toBeEnabled({ timeout: 5000 });
 
     // Capture the POST response to debug any errors
-    let paymentResponse = null;
+    let createResponse = null;
     registryPage.on('response', resp => {
       if (resp.request().method() === 'POST') {
-        paymentResponse = resp;
+        createResponse = resp;
       }
     });
 
-    await paymentSubmit.click();
+    await createBtn.click();
     await registryPage.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Should now be on the complete page — "Welcome to Registry!" is in complete.html.ep
+    // Should now be on the complete page.
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-    await expect(registryPage.locator('body')).toContainText(/welcome to registry/i, { timeout: 10000 });
+    await expect(registryPage.locator('body')).toContainText(/your studio is live/i, { timeout: 10000 });
 
     // --- Verify tenant was actually created in the DB ---
     // Use psql to query the shared test DB (no node pg driver needed).

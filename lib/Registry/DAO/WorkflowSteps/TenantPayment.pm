@@ -19,6 +19,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
     use Registry::PriceOps::RevenueShare ();
+    use Registry::Utility::BaseDomain ();
     use Registry::DAO::PricingPlan;
 
     method process($db, $form_data, $run = undef) {
@@ -39,6 +40,18 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             };
         }
         
+        # Nothing to collect and nothing to charge. Solo has no monthly base
+        # -- the platform is paid out of the revenue share on each customer
+        # payment -- so the button on this page is the commit, not a step
+        # towards a card form that would only ever total $0.00. This is the
+        # ordinary path; everything below it is the paid-tier machinery,
+        # waiting for a tier with a monthly base to go on sale.
+        my $config = $self->get_subscription_config( $db, $run );
+        unless ( $config->{monthly_amount} ) {
+            my $result = $self->_provision_tenant( $db, $run );
+            return { next_step => 'complete', tenant_created => 1, %$result };
+        }
+
         # Handle setup intent completion
         if ($form_data->{setup_intent_id}) {
             return $self->handle_setup_completion($db, $run, $form_data);
@@ -128,13 +141,26 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # is also called to RENDER the payment page, where an error has nowhere to
     # go -- see #347 for the restructuring that would allow it.
     method resolve_selected_plan ($db, $run) {
-        return undef unless $run && $run->data;
-        my $selected = $run->data->{selected_pricing_plan} or return undef;
-        return undef unless ref $selected eq 'HASH';
+        my $selected = $run && $run->data && $run->data->{selected_pricing_plan};
 
-        my $id = $selected->{id};
-        return undef unless $id && !ref $id;
+        if ( ref $selected eq 'HASH' && $selected->{id} && !ref $selected->{id} ) {
+            my $plan = Registry::DAO::PricingPlan->offered_platform_plan(
+                $db, $selected->{id} );
+            return $plan if $plan;
+        }
 
+        # Nothing chosen, or what was chosen is no longer on offer. Signup no
+        # longer asks which plan -- everyone starts on the one the platform
+        # sells -- so this is the ordinary path, not the exceptional one.
+        # Returning undef here instead would leave platform_pricing_plan_id
+        # NULL, and revenue_share_fraction_for_tenant reads a NULL link as the
+        # Free plan's 0%: every tenant onboarded free of revenue share, with
+        # nothing in the flow to notice.
+        return $self->_launch_plan($db);
+    }
+
+    method _launch_plan ($db) {
+        my $id = Registry::PriceOps::RevenueShare::platform_launch_plan_id($db);
         return Registry::DAO::PricingPlan->offered_platform_plan( $db, $id );
     }
 
@@ -156,9 +182,10 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             metadata              => $plan->metadata,
         };
 
-        # If no plan selected, fall back to Solo tier defaults. The no-plan case
-        # IS the platform Free plan, so the revenue-share rate is read from that
-        # seeded plan rather than hardcoded.
+        # Reached only when no plan resolves at all -- the launch plan is
+        # missing its active platform relationship, or is marked coming_soon.
+        # That is a misconfiguration, and the signup page says as little as it
+        # can truthfully say rather than inventing a rate.
         unless ($selected_plan) {
             my $revenue_share_percent = $self->_platform_default_revenue_share_percent($db);
             return {
@@ -168,31 +195,33 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 trial_days => 0,
                 revenue_share_percent => $revenue_share_percent,
                 description => $revenue_share_percent . '% of processed revenue. No monthly fee.',
-                features => [
-                    'Unlimited student enrollments',
-                    'Attendance tracking and reporting',
-                    'Parent communication tools',
-                    'Payment processing',
-                    'Waitlist management',
-                    'Staff scheduling',
-                    'Custom reporting'
-                ],
+                features => $self->_baseline_features,
                 billing_cycle => 'monthly',
                 formatted_price => 'Free'
             };
         }
 
-        # Use selected plan configuration
+        # Use selected plan configuration.
+        #
+        # A plan declares its own trial length; silence means no trial. The old
+        # default of 30 handed a free plan a free trial -- Solo costs $0 and
+        # always will, so "your trial ends March 4th" was both meaningless and
+        # alarming, and the copy that quoted it ran all the way to the
+        # confirmation page.
         my $config = $selected_plan->{pricing_configuration} || {};
+        my $amount = $selected_plan->{amount_cents};
         return {
             plan_name => $selected_plan->{plan_name},
-            monthly_amount => $selected_plan->{amount_cents},
+            monthly_amount => $amount,
             currency => lc($selected_plan->{currency} || 'usd'),
-            trial_days => $config->{trial_days} // 30,
+            trial_days => $config->{trial_days} // 0,
+            revenue_share_percent => ( $config->{percentage} // 0 ) * 100,
             description => $config->{description} || $selected_plan->{plan_name},
-            features => $config->{features} || [],
+            features => $config->{features} || $self->_baseline_features,
             billing_cycle => $config->{billing_cycle} || 'monthly',
-            formatted_price => format_price($selected_plan->{amount_cents}, $selected_plan->{currency}, suffix => '/month')
+            formatted_price => $amount
+                ? format_price($amount, $selected_plan->{currency}, suffix => '/month')
+                : 'Free'
         };
     }
 
@@ -202,6 +231,21 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # rate reads the SAME source -- and fails loud the same way -- as the
     # charge-time path; a missing Free plan can never make display and charge
     # disagree.
+    # What every tier includes. Lives here rather than in the plan row because
+    # it is the same list for all of them -- a plan that genuinely offers more
+    # says so in its own pricing_configuration->>'features' and overrides this.
+    method _baseline_features {
+        return [
+            'Unlimited student enrollments',
+            'Attendance tracking and reporting',
+            'Parent communication tools',
+            'Payment processing',
+            'Waitlist management',
+            'Staff scheduling',
+            'Custom reporting'
+        ];
+    }
+
     method _platform_default_revenue_share_percent($db) {
         return Registry::PriceOps::RevenueShare::platform_default_fraction($db) * 100;
     }
@@ -503,7 +547,15 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             $provision_data{trial_ends_at}           = $trial_ends_at;
             $provision_data{subscription_started_at} = DateTime->now->iso8601();
         } else {
-            $provision_data{billing_status}          = 'test';
+            # No Stripe subscription because there is nothing to subscribe to:
+            # the plan has no monthly base and the platform is paid out of the
+            # revenue share on each customer payment. The tenant is live, so
+            # 'active' -- not 'trial', which would promise an end date that
+            # never arrives. ('test' used to go here and is not one of the five
+            # values tenants_billing_status_check allows; the insert died. It
+            # never fired before because signup always minted a subscription,
+            # real or mock.)
+            $provision_data{billing_status}          = 'active';
             $provision_data{subscription_started_at} = DateTime->now->iso8601();
         }
 
@@ -560,11 +612,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
             # And the link goes to the tenant's own host, where $c->dao resolves to
             # the schema the token and the user both live in.
-            my ($base_domain) = grep { length }
-                map  { s/^\s+|\s+$//gr }
-                map  { lc }
-                split /,/, ( $ENV{REGISTRY_BASE_DOMAINS} // 'tinyartempire.com' );
-            my $base_url = sprintf 'https://%s.%s', $tenant->slug, $base_domain;
+            my $base_url = Registry::Utility::BaseDomain::tenant_url( $tenant->slug );
 
             # Sent the way AccountCheck sends a login link: a notification carrying
             # the URL, rendered by the magic_link_invite template that has been
@@ -595,9 +643,36 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
     method template { 'tenant-signup/payment' }
 
-    # Provide data for template rendering on GET requests
+    # Provide data for template rendering on GET requests.
+    #
+    # One step class now backs two pages -- the review page a free signup ends
+    # on, and the payment page a paid tier would need -- so this returns what
+    # both templates read and lets each take its half.
     method prepare_template_data($db, $run, $params = {}) {
-        return $self->prepare_payment_data($db, $run);
+        my $raw = $run->data || {};
+
+        return {
+            %{ $self->prepare_payment_data($db, $run) },
+
+            profile => {
+                name          => $raw->{name} || $raw->{organization_name},
+                subdomain     => $raw->{subdomain},
+                description   => $raw->{description},
+                billing_email => $raw->{billing_email},
+            },
+            team => {
+                admin => {
+                    name     => $raw->{admin_name},
+                    email    => $raw->{admin_email},
+                    username => $raw->{admin_username},
+                },
+                team_members => $raw->{team_members} || [],
+            },
+            # The plan nobody was asked to choose, resolved by the same code
+            # that provisions -- so the page states the terms the tenant is
+            # actually about to be put on.
+            plan => $self->get_subscription_config($db, $run),
+        };
     }
 
     # Retry logic for failed attempts

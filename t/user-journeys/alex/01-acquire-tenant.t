@@ -9,8 +9,8 @@
 # enumerated in #426, and this suite should be reshaped only when they exist.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
-# The payment step provisions directly when no Stripe keys are configured.
-# Ambient keys would send it to create_setup_intent and a live API call.
+# Signup provisions without touching Stripe on a free plan. Unsetting the keys
+# also keeps any paid-plan path from reaching a live API call.
 BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 use 5.42.0;
@@ -51,9 +51,11 @@ my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema'
     or BAIL_OUT('tenant-signup workflow missing -- cannot walk funnel');
 
-# The migration seeds the platform pricing relationship; fetch the plan id to select. See #268.
+# The migration seeds the platform pricing relationship. Nobody chooses a plan
+# any more, so this is no longer an input to the walk -- it is what the tenant
+# must come out linked to. See #268.
 my $plan_id = platform_revenue_share_plan_id($dao)
-    or BAIL_OUT('platform_revenue_share_plan_id failed -- cannot walk pricing step');
+    or BAIL_OUT('platform_revenue_share_plan_id failed -- no plan for signup to link');
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow
@@ -66,7 +68,7 @@ $t->app->helper(dao => sub { $dao });
 # ---------------------------------------------------------------------------
 # Walk the tenant-signup funnel with REALISTIC data (Portland-Art-Collective-
 # style from t/controller/tenant-signup-data-flow.t), through the full path:
-#   landing -> profile -> users -> pricing -> review -> payment -> complete
+#   landing -> profile -> users -> review -> complete
 #
 # Stage 1 asserts HTTP-level health only: each POST 302s to the expected next
 # step, each GET 200s, and the complete page renders.
@@ -82,15 +84,11 @@ $t->app->helper(dao => sub { $dao });
 #                 'admin' to avoid the invite-pending warn() path in
 #                 _provision_tenant (pristine-output hazard noted in spec).
 #                 Team kept admin-only here to preserve pristine output.
-#   pricing     — 'selected_plan_id' required (must be a valid UUID for an
-#                 active platform relationship; absent silently skips).  The
-#                 seeded plan renders and is selected explicitly.
 #   review      — 'terms_accepted' required by the controller (Workflows.pm)
 #                 BEFORE calling step->process; the step itself accepts empty
-#                 body but the controller gate refuses without it.
-#   payment     — 'collect_payment_method' with no Stripe keys in the
-#                 environment triggers the direct-provision path in
-#                 TenantPayment.pm.  The BEGIN block above unsets the keys.
+#                 body but the controller gate refuses without it.  This POST
+#                 is also what provisions: there is no plan to choose and
+#                 nothing to charge, so review is the commit point.
 # ---------------------------------------------------------------------------
 
 # Realistic identity: Portland-Art-Collective-style, $$-suffixed for uniqueness.
@@ -136,38 +134,15 @@ $t->get_ok($users_url)->status_is(200);
 # Realistic admin-only team.  'admin_user_type => admin' avoids the
 # invite-pending warn() path in _provision_tenant (pristine output).
 # Full fields (admin_name/email/username) are rendered on the review page.
-# Expected: 302 -> /tenant-signup/<run-id>/pricing
+# Expected: 302 -> /tenant-signup/<run-id>/review
 $t->post_ok($users_url => form => {
     admin_name      => $admin_name,
     admin_email     => $admin_email,
     admin_username  => $admin_user,
     admin_user_type => 'admin',
 })->status_is(302)
-  ->header_like(Location => qr{/tenant-signup/[^/]+/pricing$},
-                'users POST redirects to pricing step');
-
-my $pricing_url = $t->tx->res->headers->location;
-
-# -- Step: pricing (GET) -- assert seeded plan renders ---------------------
-# This GET doubles as the #268 guard: if the seeded relationship is absent,
-# prepare_pricing_data returns an empty list, the template renders no radio
-# buttons, and the assertion below catches that silently-broken path.
-my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
-
-like $pricing_page, qr/<input[^>]*name="selected_plan_id"/,
-    'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
-like $pricing_page, qr/data-plan="Solo"/,
-    'the buyable tier renders as a card, not merely as page copy';
-
-# -- Step: pricing (POST) -- select the seeded plan -----------------------
-# 'selected_plan_id' is consumed via exists $form_data->{selected_plan_id}
-# in PricingPlanSelection::process.
-# Expected: 302 -> /tenant-signup/<run-id>/review
-$t->post_ok($pricing_url => form => {
-    selected_plan_id => $plan_id,
-})->status_is(302)
   ->header_like(Location => qr{/tenant-signup/[^/]+/review$},
-                'pricing POST redirects to review step');
+                'users POST redirects straight to review -- nobody is asked to pick a plan');
 
 my $review_url = $t->tx->res->headers->location;
 
@@ -187,33 +162,19 @@ $t->get_ok($review_url)
   ->content_like(qr/\Q$admin_email\E/,
       'review page shows admin email from users step')
   ->content_like(qr/\Q$admin_user\E/,
-      'review page shows admin username from users step');
+      'review page shows admin username from users step')
+  ->content_like(qr/Solo/,
+      'review page names the plan the tenant is about to be put on');
 
 # -- Step: review (POST) -- accept terms ----------------------------------
 # The controller validates terms_accepted before calling step->process.
 # No other field is required at this step; all accumulation happened earlier.
-# Expected: 302 -> /tenant-signup/<run-id>/payment
+# Expected: 302 -> /tenant-signup/<run-id>/complete
 $t->post_ok($review_url => form => {
     terms_accepted => 1,
 })->status_is(302)
-  ->header_like(Location => qr{/tenant-signup/[^/]+/payment$},
-                'review POST redirects to payment step');
-
-my $payment_url = $t->tx->res->headers->location;
-
-# -- Step: payment (GET) --------------------------------------------------
-$t->get_ok($payment_url)->status_is(200);
-
-# -- Step: payment (POST, no Stripe keys configured) ----------------------
-# collect_payment_method=1 with no Stripe keys in the environment provisions
-# directly (TenantPayment.pm, the !STRIPE_PUBLISHABLE_KEY && !STRIPE_SECRET_KEY
-# branch).  The BEGIN block at the top of this file guarantees the condition.
-# Expected: 302 -> /tenant-signup/<run-id>/complete
-$t->post_ok($payment_url => form => {
-    collect_payment_method => 1,
-})->status_is(302)
   ->header_like(Location => qr{/tenant-signup/[^/]+/complete$},
-                'payment POST redirects to complete step');
+                'review POST provisions and redirects to complete -- no payment page in between');
 
 my $complete_url = $t->tx->res->headers->location;
 
@@ -334,24 +295,29 @@ subtest 'tenant storefront serves at <slug>.localhost' => sub {
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 4: billing fields are set correctly on the direct-provision path.
-# _provision_tenant writes billing_status='trial' and stripe_subscription_id
-# = 'sub_test_...' when subscription data carries a stripe_subscription_id
-# (set by process on the no-Stripe-keys branch).
+# Assertion 4: the tenant comes out on the plan the platform sells.
+#
+# This is the assertion that costs money if it fails. Nobody chose a plan, and
+# a tenant with platform_pricing_plan_id NULL resolves to the platform Free
+# plan's 0% at charge time -- the funnel would run green while onboarding
+# every studio at no revenue share at all.
 # ---------------------------------------------------------------------------
-subtest 'tenant row carries billing fields from direct-provision path' => sub {
+subtest 'tenant row is billable' => sub {
     my $tenant_row = $db->query(
-        q{SELECT billing_status, stripe_subscription_id
+        q{SELECT billing_status, stripe_subscription_id, platform_pricing_plan_id
           FROM registry.tenants WHERE slug = ?},
         $slug
     )->hash;
     ok $tenant_row, 'tenant row accessible for billing assertions';
 
-    is $tenant_row->{billing_status}, 'trial',
-        'billing_status is "trial" on the direct-provision path';
+    is $tenant_row->{platform_pricing_plan_id}, $plan_id,
+        'tenant is linked to the platform plan that is on sale';
 
-    like $tenant_row->{stripe_subscription_id}, qr/^sub_test_/,
-        'stripe_subscription_id starts with sub_test_ (direct-provision path)';
+    is $tenant_row->{billing_status}, 'active',
+        'billing_status is "active" -- there is no trial to end';
+
+    is $tenant_row->{stripe_subscription_id}, undef,
+        'no Stripe subscription: a $0 plan has nothing to subscribe to';
 };
 
 $test_db->cleanup_test_database;

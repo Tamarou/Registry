@@ -1,13 +1,12 @@
 % extends 'layouts/workflow';
 % title 'Review Your Setup';
-% stash description => 'Please review all your information before proceeding to payment. You can edit any section by clicking the "Edit" button.';
+% stash description => 'Last look before we create your studio. Edit any section that needs it -- nothing is created until you press the button.';
 
 % my $profile = stash('profile') || {};
 % my $team = stash('team') || {};
 % my $admin = $team->{admin} || {};
 % my $team_members = $team->{team_members} || [];
-% my $selected_plan = stash('selected_plan') || {};
-% my $plan_config = $selected_plan->{pricing_configuration} || {};
+% my $plan = stash('plan') || {};
 % my $errors = stash('errors') || [];
 
 <div class="review-step">
@@ -109,37 +108,41 @@
             </div>
         </div>
 
-        <!-- Subscription Information -->
+        <!-- Plan -->
         <div class="review-section">
             <div class="section-header">
                 <h3>Your Plan</h3>
-                % if ($selected_plan->{plan_name}) {
-                    <div class="pricing-badge"><%= $selected_plan->{plan_name} %></div>
+                % if ($plan->{plan_name}) {
+                    <div class="pricing-badge"><%= $plan->{plan_name} %></div>
                 % }
             </div>
 
             <div class="section-content">
                 <div class="subscription-details">
-                    % if ($plan_config->{description}) {
+                    % if ($plan->{description}) {
                         <div class="plan-summary">
-                            <p><%= $plan_config->{description} %></p>
+                            <p><%= $plan->{description} %></p>
                         </div>
                     % }
 
-                    <div class="trial-info">
-                        % my $trial_days = $plan_config->{trial_days} // 30;
-                        <h4><%= $trial_days %>-Day Free Trial</h4>
+                    <div class="plan-terms">
+                        <h4><%= $plan->{formatted_price} // 'Free' %> to start</h4>
                         <p>
-                            Your trial begins immediately after setup.
-                            You won't be charged until <%= DateTime->now->add(days => $trial_days)->strftime('%B %d, %Y') %>.
+                            % if ($plan->{revenue_share_percent}) {
+                                No card, no monthly fee. We take
+                                <%= $plan->{revenue_share_percent} %>% of the payments you
+                                collect through the platform, and nothing when you collect nothing.
+                            % } else {
+                                No card and no monthly fee.
+                            % }
                         </p>
                     </div>
 
-                    % if ($plan_config->{features} && @{$plan_config->{features}}) {
+                    % if ($plan->{features} && @{$plan->{features}}) {
                         <div class="features-included">
                             <h4>What's Included:</h4>
                             <ul>
-                                % for my $feature (@{$plan_config->{features}}) {
+                                % for my $feature (@{$plan->{features}}) {
                                     <li><%= $feature %></li>
                                 % }
                             </ul>
@@ -147,11 +150,11 @@
                     % }
 
                     <div class="billing-terms">
-                        <h4>Billing Terms:</h4>
+                        <h4>Terms:</h4>
                         <ul>
-                            <li>Cancel anytime with 30 days notice</li>
+                            <li>No contract -- close your account whenever you like</li>
                             <li>No setup fees or hidden charges</li>
-                            <li>Full data export available upon cancellation</li>
+                            <li>Full data export available on request</li>
                         </ul>
                     </div>
                 </div>
@@ -161,7 +164,7 @@
         <!-- What Happens Next -->
         <div class="review-section next-steps">
             <div class="section-header">
-                <h3>What Happens After Payment</h3>
+                <h3>What Happens Next</h3>
             </div>
             
             <div class="section-content">
@@ -170,7 +173,7 @@
                         <div class="timeline-icon">1</div>
                         <div class="timeline-content">
                             <h4>Instant Access</h4>
-                            <p>Your account will be created immediately at <strong><%= $profile->{subdomain} // 'organization' %>.tinyartempire.com</strong></p>
+                            <p>Your studio goes live immediately at <strong><%= $profile->{subdomain} // 'organization' %>.tinyartempire.com</strong></p>
                         </div>
                     </div>
                     
@@ -216,17 +219,6 @@
                 </label>
             </div>
 
-            <div class="data-validation" id="validation-status">
-                <div class="validation-check">
-                    <span class="check-icon">✓</span> Organization information complete
-                </div>
-                <div class="validation-check">
-                    <span class="check-icon">✓</span> Administrator account configured
-                </div>
-                <div class="validation-check">
-                    <span class="check-icon">✓</span> Subdomain available
-                </div>
-            </div>
         </div>
 
         <div class="form-actions">
@@ -236,13 +228,13 @@
             
             <button type="submit"
                     class="btn btn-primary btn-large"
-                    id="proceed-to-payment"
+                    id="create-studio"
                     disabled>
-                <span class="btn-text">Complete Setup & Start Trial</span>
+                <span class="btn-text">Create My Studio</span>
                 <span class="btn-arrow">&rarr;</span>
             </button>
-            
-            <div id="payment-spinner" class="htmx-indicator">
+
+            <div id="create-spinner" class="htmx-indicator">
                 <span class="spinner"></span> Processing...
             </div>
         </div>
@@ -457,19 +449,19 @@
     gap: 2rem;
 }
 
-.trial-info {
+.plan-terms {
     background: #f0fff4;
     border: 1px solid #9ae6b4;
     border-radius: 8px;
     padding: 1.5rem;
 }
 
-.trial-info h4 {
+.plan-terms h4 {
     margin: 0 0 0.5rem 0;
     color: #22543d;
 }
 
-.trial-info p {
+.plan-terms p {
     margin: 0;
     color: #276749;
 }
@@ -595,24 +587,7 @@
     text-decoration: underline;
 }
 
-.data-validation {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
 
-.validation-check {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: #22543d;
-    font-size: 0.9rem;
-}
-
-.check-icon {
-    color: #48bb78;
-    font-weight: bold;
-}
 
 .form-actions {
     display: flex;
@@ -792,7 +767,7 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const termsCheckbox = document.getElementById('terms-accepted');
-    const proceedButton = document.getElementById('proceed-to-payment');
+    const proceedButton = document.getElementById('create-studio');
     
     // Enable/disable button based on terms acceptance
     function updateButtonState() {
@@ -803,28 +778,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initial state
     updateButtonState();
-    
-    // Pre-validation (this would normally be HTMX calls)
-    function validateSetup() {
-        // In a real implementation, these would be HTMX calls to validate
-        // - Organization info completeness
-        // - Subdomain availability
-        // - Admin user setup
-        // For now, we'll assume everything is valid since they got this far
-        
-        const validationItems = document.querySelectorAll('.validation-check');
-        validationItems.forEach(item => {
-            item.style.color = '#22543d';
-            const icon = item.querySelector('.check-icon');
-            if (icon) {
-                icon.textContent = '✓';
-                icon.style.color = '#48bb78';
-            }
-        });
-    }
-    
-    // Run validation on load
-    validateSetup();
     
     // Handle form submission
     proceedButton.addEventListener('click', function(e) {

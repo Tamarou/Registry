@@ -29,6 +29,9 @@ $t->app->helper(dao => sub { $db });
 # Set tenant context
 $db->current_tenant('registry');
 
+# The plan-choice page is no longer in the funnel, but the template survives for
+# the day a paid tier launches, and this is the regression that put a page
+# inside a page.
 subtest 'pricing template does not use hx-post on main form' => sub {
     my $root = curfile->dirname->dirname->dirname;
     my $content = $root->child('templates/tenant-signup/pricing.html.ep')->slurp;
@@ -47,7 +50,7 @@ subtest 'review template reads data from stash correctly' => sub {
     my $root = curfile->dirname->dirname->dirname;
     my $content = $root->child('templates/tenant-signup/review.html.ep')->slurp;
 
-    # TenantSignupReview::prepare_template_data returns { profile => ..., team => ... }
+    # TenantPayment::prepare_template_data returns { profile => ..., team => ... }
     # which gets spread into the stash via %$template_data in the controller.
     # The template must read stash('profile'), NOT stash('data')->{profile}.
     # Using stash('data') yields {} because no 'data' key is set (GitHub #123).
@@ -89,18 +92,9 @@ subtest 'profile data persists through workflow and appears on review step' => s
         admin_user_type => 'admin',
     })->status_is(302);
 
-    my $pricing_url = $t->tx->res->headers->location;
-    like($pricing_url, qr{/tenant-signup/[^/]+/pricing}, 'redirects to pricing step');
-
-    # GET the pricing page
-    $t->get_ok($pricing_url)->status_is(200);
-
-    # Submit pricing step -- auto-select the first plan to advance
-    $t->post_ok($pricing_url => form => { __auto_select_plan => 1 })
-      ->status_is(302);
-
     my $review_url = $t->tx->res->headers->location;
-    like($review_url, qr{/tenant-signup/[^/]+/review}, 'redirects to review step');
+    like($review_url, qr{/tenant-signup/[^/]+/review},
+        'redirects straight to review -- there is no plan to choose');
 
     # GET the review page and verify accumulated data is displayed
     $t->get_ok($review_url)
