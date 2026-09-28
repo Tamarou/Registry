@@ -9,6 +9,7 @@ use Test::Registry::DB;
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
+use Registry::DAO::WorkflowSteps::PricingPlanSelection;
 use Registry::PriceOps::RevenueShare;
 use Mojo::File qw( path );
 
@@ -24,15 +25,24 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 
-# The workflow lives in a YAML file, not in the schema dump.
-$dao->import_workflows(['workflows/tenant-signup.yml']);
+# The plan-choice page left the signup funnel when Solo became the only tier on
+# sale, so the step is built here rather than looked up in tenant-signup. What
+# this file asserts is unchanged: the ladder the seed ships, the rate it
+# carries, and the refusal that keeps an anchor from being bought. The ladder
+# still has to be right -- it is what Studio and Empire launch onto.
+my $workflow = Registry::DAO::Workflow->create( $db, {
+    name        => 'Tier Ladder Probe',
+    slug        => "tier-ladder-$$",
+    description => 'Holds a PricingPlanSelection step outside the signup funnel',
+} );
 
-my $workflow = $dao->find( Workflow => { slug => 'tenant-signup' } );
-ok $workflow, 'the tenant-signup workflow is imported';
-
-my $step = Registry::DAO::WorkflowStep->find( $db,
-    { workflow_id => $workflow->id, slug => 'pricing' } );
-ok $step, 'it has a pricing step';
+my $step = Registry::DAO::WorkflowSteps::PricingPlanSelection->create( $db, {
+    workflow_id => $workflow->id,
+    slug        => 'pricing',
+    class       => 'Registry::DAO::WorkflowSteps::PricingPlanSelection',
+    description => 'Select pricing plan',
+} );
+ok $step, 'the plan-choice step is available to render the ladder';
 
 my $run   = $workflow->new_run($db);
 my $plans = $step->prepare_pricing_data($db, $run)->{pricing_plans};
