@@ -52,7 +52,7 @@ subtest 'RegisterTenant still has required methods' => sub {
     use_ok('Registry::DAO::WorkflowSteps::TenantPayment');
 
     can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', 'process');
-    can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', '_format_trial_end_date');
+    can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', 'prepare_completion_data');
     # _send_invitation_email is now on TenantPayment (provisioning happens at
     # payment-time; invites are sent as part of _provision_tenant).
     can_ok('Registry::DAO::WorkflowSteps::TenantPayment', '_send_invitation_email');
