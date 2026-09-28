@@ -29,6 +29,11 @@ subtest 'Enhanced completion step template exists' => sub {
     like($content, qr/subdomain/, 'Template uses subdomain variable');
     like($content, qr/admin_email/, 'Template uses admin_email variable');
     like($content, qr/tenant_url/, 'Template builds links from the configured base domain');
+
+    # A tenant who never finds the payments screen cannot be paid, and the
+    # refusal they eventually hit is on a different page entirely (#439).
+    like($content, qr{/admin/billing},
+        'Template points the new tenant at Stripe Connect onboarding');
     like($content, qr/success-container/, 'Template has success container CSS class');
 
     # The page handed a new tenant four links, all to <slug>.registry.localhost,
