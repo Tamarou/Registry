@@ -1,5 +1,5 @@
-# ABOUTME: Tests that instalments cannot be configured while they are not yet charged.
-# ABOUTME: The resolver exists (t/dao/instalment-schedule.t); the collecting waits for the charging.
+# ABOUTME: Tests that the pricing screen offers instalments and the step stores what it collects.
+# ABOUTME: The inverse of what this file asserted under #437, when they were configurable and ignored.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -52,25 +52,44 @@ subtest 'an ordinary submit stores no instalment plan' => sub {
     my $model = pricing_model_after( {} );
     ok $model, 'the step stored a pricing model';
     is $model->{pricing_configuration}{schedule}, undef,
-        'and declares no payment schedule';
+        'a plan nobody asked to split declares no schedule';
 };
 
-subtest 'a posted instalment plan is refused, not stored' => sub {
-    # Exactly what a stale page would send, or a typed request. The controls
-    # being gone is not a defence: the value would otherwise be stored, shown
-    # back on the review step, and then ignored at the charge.
-    #
-    # Both spellings: the old boolean-and-count a page from before #425 would
-    # post, and the declared shape that replaced it.
+subtest 'a requested instalment plan is stored as a declared schedule' => sub {
     my $model = pricing_model_after( {
-        installments_allowed        => 1,
-        installment_count           => 3,
-        'schedule[count]'           => 3,
-        'schedule[cadence]'         => 'monthly',
+        instalments_enabled => 1,
+        instalment_count    => 3,
+    } );
+
+    my $schedule = $model->{pricing_configuration}{schedule};
+    ok $schedule, 'the schedule is declared' or return;
+    is $schedule->{count},         3,         'three payments';
+    is $schedule->{cadence},       'monthly', 'a month apart';
+    is $schedule->{surcharge_pct}, 0,         'and no surcharge -- the same total either way';
+};
+
+# The count decides how many times a family's card is charged, so a value
+# Registry cannot schedule must not become a plan that offers instalments and
+# then cannot honour them. That is #425 arriving by a different road.
+subtest 'a count Registry cannot schedule is refused' => sub {
+    for my $bad ( 0, 1, 13, 'three', -2 ) {
+        my $model = pricing_model_after(
+            { instalments_enabled => 1, instalment_count => $bad } );
+        is $model->{pricing_configuration}{schedule}, undef,
+            "a count of '$bad' declares no schedule";
+    }
+};
+
+subtest 'the old boolean-and-count buys nothing' => sub {
+    # What a page from before #425 would post. The columns are gone; this
+    # asserts the form data cannot resurrect them by another route.
+    my $model = pricing_model_after( {
+        installments_allowed => 1,
+        installment_count    => 3,
     } );
 
     is $model->{pricing_configuration}{schedule}, undef,
-        'no schedule is declared, however it was asked for';
+        'the retired spelling declares nothing';
 };
 
 subtest 'the plan that reaches the database has no instalment terms' => sub {
@@ -84,7 +103,8 @@ subtest 'the plan that reaches the database has no instalment terms' => sub {
         name => 'Instalment Week', start_date => '2026-01-01', end_date => '2026-12-31',
         status => 'published', capacity => 10, metadata => {},
     });
-    my $model = pricing_model_after( { installments_allowed => 1, installment_count => 4 } );
+    my $model = pricing_model_after(
+        { instalments_enabled => 1, instalment_count => 4 } );
 
     my $plan = Registry::DAO::PricingPlan->create($db, {
         session_id            => $session->id,
@@ -94,24 +114,30 @@ subtest 'the plan that reaches the database has no instalment terms' => sub {
         pricing_configuration => $model->{pricing_configuration},
     });
 
-    is $plan->payment_schedule, undef, 'the created plan offers no instalments';
-    is $plan->instalment_schedule( $model->{amount} ), undef,
-        'so nothing resolves a schedule for it';
+    my $parts = $plan->instalment_schedule( $model->{amount}, first_due => '2026-06-01' );
+    is scalar( @{ $parts // [] } ), 4,
+        'the plan that reaches the database resolves four charges';
+
+    my $sum = 0;
+    $sum += $_->{amount_cents} for @$parts;
+    is $sum, $model->{amount}, 'summing to exactly the plan price';
 };
 
-subtest 'the screen no longer offers the controls' => sub {
-    # The other half. A form that still collects this would show an operator an
-    # option the step then silently drops, which is its own kind of lie.
+subtest 'the screen offers the controls, now that they are honoured' => sub {
+    # The other half, inverted. Under #437 this asserted the controls were
+    # ABSENT, because a form collecting a payment plan the charge path ignored
+    # was a lie. They are honoured now, so their absence would be the lie.
     my $template = Mojo::File->new('templates/pricing-plan-creation/pricing-model.html.ep')->slurp;
 
+    like $template, qr/name="instalments_enabled"/, 'an instalments checkbox';
+    like $template, qr/name="instalment_count"/,    'and a count';
+    unlike $template, qr/Not available yet/,
+        'and no notice saying they are coming, because they are here';
+
+    # The retired spelling must not come back: the columns behind it are
+    # dropped, so a form posting it would collect a value nothing stores.
     unlike $template, qr/name="installments_allowed"/,
-        'no instalments checkbox';
-    unlike $template, qr/name="installment_count"/,
-        'no instalment count field';
-    unlike $template, qr/name="schedule\[/,
-        'and none in the declared shape that replaced them either';
-    like $template, qr/Not available yet/,
-        'and it says so, rather than the option simply vanishing';
+        'not under the old name';
 };
 
 done_testing;

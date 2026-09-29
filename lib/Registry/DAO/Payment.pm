@@ -273,6 +273,31 @@ field $_stripe_client = undef;
           ->map( sub { $class->new( %$_ ) } )->to_array;
     }
 
+    # What families still owe on instalment plans, for Morgan's dashboard.
+    #
+    # A query over her own schema rather than a call to Stripe per family, which
+    # is why every instalment is a row from the moment of enrolment rather than
+    # something derived when asked.
+    #
+    # Failures first, then by due date: a card that was declined needs her
+    # attention now, where an instalment due in August does not.
+    sub outstanding_instalments ( $class, $db, %opt ) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+        my $limit = $opt{limit} // 50;
+
+        return $raw->query( q{
+            SELECT p.id, p.amount_cents, p.currency, p.status, p.due_date,
+                   p.instalment_seq, p.instalment_count, p.error_message,
+                   p.user_id, up.name AS payer_name, up.email AS payer_email
+              FROM payments p
+              LEFT JOIN user_profiles up ON up.user_id = p.user_id
+             WHERE p.instalment_seq IS NOT NULL
+               AND p.status IN ('pending', 'failed')
+             ORDER BY (p.status = 'failed') DESC, p.due_date, p.instalment_seq
+             LIMIT ?
+        }, $limit )->hashes->to_array;
+    }
+
     # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
     # Stripe metadata values must be plain strings, so refs are dropped; the DB
     # metadata column keeps the full structure. Sorted for deterministic param

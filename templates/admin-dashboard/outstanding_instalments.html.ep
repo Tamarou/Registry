@@ -1,0 +1,58 @@
+%# ABOUTME: What families still owe on instalment plans, failures first.
+%# ABOUTME: A failed instalment does not cost a child their place, so it has to be visible here.
+% my @owed = @{ stash('instalments') || [] };
+% my $failed = stash('failed_count') || 0;
+% my $owed_cents = stash('owed_cents') || 0;
+
+<div class="dashboard-section">
+    <div class="section-header">
+        <h3>Payment plans</h3>
+        % if (@owed) {
+            <span class="text-secondary">
+                $<%= sprintf '%.2f', $owed_cents / 100 %> outstanding
+                % if ($failed) {
+                    &middot; <strong><%= $failed %> need attention</strong>
+                % }
+            </span>
+        % }
+    </div>
+
+    % if (!@owed) {
+        <p class="text-secondary">Nothing outstanding. Every instalment is paid or not yet due.</p>
+    % } else {
+        <table class="admin-table">
+            <thead>
+                <tr><th>Family</th><th>Payment</th><th>Due</th><th>Amount</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                % for my $row (@owed) {
+                    <tr class="<%= $row->{status} eq 'failed' ? 'is-inactive' : '' %>">
+                        <td>
+                            <strong><%= $row->{payer_name} || 'Unknown' %></strong>
+                            % if ($row->{payer_email}) {
+                                <div class="text-secondary text-sm"><%= $row->{payer_email} %></div>
+                            % }
+                        </td>
+                        <td><%= $row->{instalment_seq} %> of <%= $row->{instalment_count} %></td>
+                        <td><%= $row->{due_date} %></td>
+                        <td>$<%= sprintf '%.2f', $row->{amount_cents} / 100 %></td>
+                        <td>
+                            % if ($row->{status} eq 'failed') {
+                                <span class="registration-status is-waiting">Payment failed</span>
+                                %# The child is still enrolled. Said out loud, because an
+                                %# operator seeing "failed" will otherwise assume the place
+                                %# is gone and either double-book it or call the family in
+                                %# a panic.
+                                <div class="text-secondary text-sm">
+                                    Still enrolled &mdash; <%= $row->{error_message} || 'the card was declined' %>
+                                </div>
+                            % } else {
+                                <span class="registration-status is-enrolled">Scheduled</span>
+                            % }
+                        </td>
+                    </tr>
+                % }
+            </tbody>
+        </table>
+    % }
+</div>

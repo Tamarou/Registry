@@ -113,6 +113,47 @@
         <% } %>
     </div>
 
+    %# How to pay, when the programme offers a choice. Shown only when there is
+    %# more than one option: a single radio button is not a choice, it is an
+    %# explanation nobody asked for.
+    %#
+    %# Every instalment is listed with its date and amount, because "3 monthly
+    %# payments" leaves a parent to work out what leaves their account and when.
+    %# The totals are identical by construction -- paying in parts costs no more
+    %# -- and the page says so rather than making them add it up.
+    % my $options = $step_data->{schedule_options} || [];
+    % if (@$options > 1) {
+        <div class="bg-white shadow rounded-lg p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">How would you like to pay?</h2>
+            % for my $option (@$options) {
+                % my $parts = $option->{instalments} || [];
+                <label class="block p-4 border rounded-lg mb-3 cursor-pointer">
+                    <span class="flex items-center gap-2">
+                        <input type="radio"
+                               name="payment_plan"
+                               value="<%= $option->{key} %>"
+                               form="payment-form"
+                               <%= $option->{key} eq 'full' ? 'checked' : '' %> />
+                        <span class="font-medium"><%= $option->{label} %></span>
+                    </span>
+                    % if (@$parts > 1) {
+                        <span class="mt-2 block text-sm text-gray-600">
+                            % for my $part (@$parts) {
+                                <span class="flex justify-between">
+                                    <span><%= $part->{due_date} %></span>
+                                    <span>$<%= sprintf('%.2f', $part->{amount_cents} / 100) %></span>
+                                </span>
+                            % }
+                            <span class="mt-1 block">
+                                The same total &mdash; no extra charge for paying over time.
+                            </span>
+                        </span>
+                    % }
+                </label>
+            % }
+        </div>
+    % }
+
     <% if ($show_stripe) { %>
         <!-- Stripe Payment Form -->
         <form id="payment-form" class="bg-white shadow rounded-lg p-6">

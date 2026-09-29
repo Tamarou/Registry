@@ -755,6 +755,7 @@ class Registry :isa(Mojolicious) {
         $admin->get('/dashboard/todays_events')->to('admin_dashboard#todays_events')->name('admin_dashboard_todays_events');
         $admin->get('/dashboard/waitlist_management')->to('admin_dashboard#waitlist_management')->name('admin_dashboard_waitlist_management');
         $admin->get('/dashboard/recent_notifications')->to('admin_dashboard#recent_notifications')->name('admin_dashboard_recent_notifications');
+        $admin->get('/dashboard/outstanding_instalments')->to('admin_dashboard#outstanding_instalments')->name('admin_dashboard_outstanding_instalments');
         $admin->get('/dashboard/enrollment_trends')->to('admin_dashboard#enrollment_trends')->name('admin_dashboard_enrollment_trends');
         $admin->get('/dashboard/export')->to('admin_dashboard#export_data')->name('admin_dashboard_export');
         $admin->post('/dashboard/send_bulk_message')->to('admin_dashboard#send_bulk_message')->name('admin_dashboard_send_bulk_message');
