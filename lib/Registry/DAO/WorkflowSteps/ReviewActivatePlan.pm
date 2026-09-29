@@ -106,8 +106,6 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
                 # The form collects dollars; the column stores cents.
                 amount_cents => int( ( $pricing_model->{amount} || 0 ) * 100 + 0.5 ),
                 currency => $pricing_model->{currency},
-                installments_allowed => $pricing_model->{installments_allowed} ? 1 : 0,
-                installment_count => $pricing_model->{installment_count},
                 requirements => $requirements,
                 pricing_configuration => $pricing_configuration,
                 metadata => {
@@ -175,8 +173,6 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
             amount => $pricing_model->{amount},
             currency => $pricing_model->{currency},
             billing_frequency => $pricing_model->{billing_frequency},
-            installments_allowed => $pricing_model->{installments_allowed},
-            installment_count => $pricing_model->{installment_count},
             pricing_configuration => $pricing_model->{pricing_configuration},
 
             # Resource Allocation

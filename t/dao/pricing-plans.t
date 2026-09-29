@@ -57,7 +57,7 @@ subtest 'Create pricing plan' => sub {
     is($plan->plan_type, 'standard', 'Plan type set');
     is($plan->amount_cents, 50000, 'Amount stored as cents');
     is($plan->currency, 'USD', 'Currency set');
-    ok(!$plan->installments_allowed, 'Installments not allowed by default');
+    is($plan->payment_schedule, undef, 'Installments not offered by default');
 };
 
 subtest 'Create early bird plan' => sub {
@@ -94,30 +94,37 @@ subtest 'Create family plan' => sub {
     is($plan->requirements->{percentage_discount}, 15, 'Discount percentage set');
 };
 
+# The offer is declared in pricing_configuration now, not carried by a boolean
+# and a count -- see t/dao/instalment-schedule.t for the resolver and the
+# arithmetic. What matters here is that it survives a round trip through the
+# database, because the shape is only useful if it is stored.
 subtest 'Installment plans' => sub {
     my $plan = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Payment Plan',
         plan_type => 'standard',
         amount_cents => 60000,
-        installments_allowed => 1,
-        installment_count => 3
+        pricing_configuration => { schedule => { count => 3, cadence => 'monthly' } },
     });
-    
-    ok($plan->installments_allowed, 'Installments allowed');
-    is($plan->installment_count, 3, 'Three installments');
-    cmp_ok($plan->installment_amount_cents, '==', 20000, 'Installment amount calculated correctly');
-    
-    # Test invalid installment configuration
-    dies_ok {
-        Registry::DAO::PricingPlan->create($db, {
-            session_id => $session->id,
-            plan_name => 'Bad Plan',
-            amount_cents => 10000,
-            installments_allowed => 1,
-            installment_count => 1  # Should be > 1
-        });
-    } 'Dies when installment count is 1';
+
+    my $reloaded = Registry::DAO::PricingPlan->find_by_id($db, $plan->id);
+    my $schedule = $reloaded->payment_schedule;
+    ok($schedule, 'the declared schedule survives the round trip');
+    is($schedule->{count}, 3, 'three instalments');
+
+    my $parts = $reloaded->instalment_schedule(60000, first_due => '2026-06-01');
+    cmp_ok($parts->[0]{amount_cents}, '==', 20000, 'Installment amount calculated correctly');
+
+    # A count of one is not an instalment plan. It is refused by the resolver
+    # rather than by a constructor croak, so a plan carrying nonsense is inert
+    # instead of unloadable -- the row is immutable and could not be repaired.
+    my $silly = Registry::DAO::PricingPlan->create($db, {
+        session_id => $session->id,
+        plan_name => 'Bad Plan',
+        amount_cents => 10000,
+        pricing_configuration => { schedule => { count => 1, cadence => 'monthly' } },
+    });
+    is($silly->payment_schedule, undef, 'a count of 1 offers no instalments');
 };
 
 subtest 'Get pricing plans for session' => sub {

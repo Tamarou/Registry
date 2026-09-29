@@ -202,6 +202,29 @@ class Registry::Service::Stripe {
         return $self->_request_async('DELETE', "subscriptions/$subscription_id", $params);
     }
 
+    # Subscription Schedules API
+    #
+    # An instalment plan is a fixed number of charges, not an open-ended
+    # subscription: "$300 in three" ends after the third. A schedule says that
+    # directly -- phases with an iteration count and end_behavior=cancel --
+    # where a plain subscription would need a cancel_at computed from the
+    # cadence and would still charge an equal amount every time.
+    #
+    # Equal amounts are the thing instalments cannot promise. $100 in three is
+    # 33.33 / 33.33 / 33.34, and the odd cent has to land somewhere, so the last
+    # charge differs from the others. Phases are what let it.
+    method create_subscription_schedule_async($params) {
+        return $self->_request_async('POST', 'subscription_schedules', $params);
+    }
+
+    method retrieve_subscription_schedule_async($schedule_id) {
+        return $self->_request_async('GET', "subscription_schedules/$schedule_id");
+    }
+
+    method cancel_subscription_schedule_async($schedule_id, $params = {}) {
+        return $self->_request_async('POST', "subscription_schedules/$schedule_id/cancel", $params);
+    }
+
     # Invoices API (for subscription payment tracking)
     method list_invoices_async($params = {}) {
         return $self->_request_async('GET', 'invoices', $params);
@@ -306,6 +329,18 @@ class Registry::Service::Stripe {
 
     method create_account_link($params) {
         return $self->_await($self->create_account_link_async($params));
+    }
+
+    method create_subscription_schedule($params) {
+        return $self->_await($self->create_subscription_schedule_async($params));
+    }
+
+    method retrieve_subscription_schedule($schedule_id) {
+        return $self->_await($self->retrieve_subscription_schedule_async($schedule_id));
+    }
+
+    method cancel_subscription_schedule($schedule_id, $params = {}) {
+        return $self->_await($self->cancel_subscription_schedule_async($schedule_id, $params));
     }
 
     method create_payment_intent($params) {

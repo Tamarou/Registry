@@ -1,5 +1,5 @@
 # ABOUTME: Workflow step for configuring the pricing model and payment structure
-# ABOUTME: Handles pricing type, amounts, billing frequency, and installment options
+# ABOUTME: Handles pricing type, amounts and billing frequency for a plan.
 
 use 5.42.0;
 use utf8;
@@ -70,16 +70,8 @@ class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowSte
                 amount => $form_data->{base_amount} || 0,
                 currency => $form_data->{currency},
                 billing_frequency => $form_data->{billing_frequency} || 'monthly',
-                # Forced off, whatever was posted. The pricing screen no longer
-                # offers instalments, but a stale page, a back button or a typed
-                # request still can -- and the value would be stored, displayed on
-                # the review step, and then ignored by the payment path, which
-                # charges the full amount (#425). A plan that says "three payments"
-                # and takes one is worse than no option at all.
-                #
-                # The columns stay: #425 will need them. Only the collecting stops.
-                installments_allowed => 0,
-                installment_count => undef,
+                # Instalments live inside pricing_configuration, put there by
+                # build_pricing_configuration.
                 pricing_configuration => $pricing_config,
             }
         });
@@ -136,6 +128,26 @@ class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowSte
                 minimum_fee => $form_data->{minimum_fee} || 0,
                 maximum_fee => $form_data->{maximum_fee} || undef,
             };
+        }
+
+        # Instalments, if Morgan asked for them. Declared alongside whatever
+        # pricing model she chose rather than being a model of its own: paying
+        # in parts is orthogonal to how the price is arrived at, and making it a
+        # seventh pricing_model_type would mean a fixed price and instalments
+        # could not coexist.
+        #
+        # Validated here rather than trusted: a count Registry cannot schedule
+        # produces a plan that offers instalments and then cannot honour them,
+        # which is the defect this whole change is about.
+        if ( $form_data->{instalments_enabled} ) {
+            my $count = $form_data->{instalment_count} // 0;
+            if ( $count =~ /^[0-9]+$/ && $count > 1 && $count <= 12 ) {
+                $config->{schedule} = {
+                    count         => 0 + $count,
+                    cadence       => 'monthly',
+                    surcharge_pct => 0,
+                };
+            }
         }
 
         return $config;

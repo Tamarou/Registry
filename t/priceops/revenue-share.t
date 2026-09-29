@@ -148,10 +148,10 @@ subtest 'missing Free fallback plan causes die' => sub {
     $db->query(q{
         INSERT INTO registry.pricing_plans
             (id, plan_scope, plan_name, plan_type, pricing_model_type,
-             amount_cents, currency, installments_allowed, requirements,
+             amount_cents, currency, requirements,
              pricing_configuration, metadata)
         VALUES (?, 'platform', 'Registry Free', 'standard', 'percentage',
-                0, 'USD', false, '{}',
+                0, 'USD', '{}',
                 '{"applies_to":"customer_payments","percentage":0.00,"minimum_monthly":0}',
                 '{"default":true,"description":"Platform fallback: no revenue share"}')
     }, $free_plan_id);

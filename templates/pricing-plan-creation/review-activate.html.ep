@@ -57,16 +57,6 @@
                         <dt class="text-sm font-medium text-gray-500">Billing Frequency</dt>
                         <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{billing_frequency} || 'monthly') %></dd>
                     </div>
-                    <div>
-                        <dt class="text-sm font-medium text-gray-500">Installments</dt>
-                        <dd class="mt-1 text-sm text-gray-900">
-                            <% if ($summary->{installments_allowed}) { %>
-                                <%= $summary->{installment_count} %> payments allowed
-                            <% } else { %>
-                                Not allowed
-                            <% } %>
-                        </dd>
-                    </div>
                 </dl>
             </div>
 

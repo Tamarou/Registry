@@ -83,24 +83,33 @@
                     </div>
                 </div>
 
-                %# Instalments are not offered, because they are not delivered:
-                %# installments_allowed and installment_count are stored and read by
-                %# nothing in the payment path, so a plan configured for three
-                %# instalments charges the parent in full (#425). The controls are
-                %# gone rather than disabled -- a greyed-out checkbox invites a
-                %# support question, and the step refuses the value anyway.
-                %#
-                %# Said out loud rather than silently absent, because instalments are
-                %# in the MVP spec and an operator looking for them deserves to know
-                %# they are coming rather than assume they missed a setting.
+                %# Instalments are a shape the plan declares, stored as
+                %# pricing_configuration.schedule. Offered here because they are
+                %# honoured now: the cart prices them, checkout charges the
+                %# first, and a Stripe subscription schedule bills the rest
+                %# (#425).
                 <div class="p-4 border rounded-lg">
-                    <p class="font-medium">Installment payments</p>
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox"
+                               id="instalments_enabled"
+                               name="instalments_enabled"
+                               value="1"
+                               <%= stash('instalments_enabled') ? 'checked' : '' %> />
+                        <span class="font-medium">Let families pay in instalments</span>
+                    </label>
                     <p class="mt-1 text-sm text-gray-500">
-                        Not available yet &mdash; every plan is charged in full at
-                        registration. Installments are being built; until then this
-                        option is hidden rather than offered, so nobody sets up a
-                        payment plan that would not be honoured.
+                        The first payment is taken at registration and the rest
+                        monthly. The total is the same either way &mdash; families
+                        pay no more for spreading it out.
                     </p>
+                    <label class="mt-3 block text-sm">
+                        Number of payments
+                        <input type="number"
+                               name="instalment_count"
+                               min="2" max="12"
+                               value="<%= stash('instalment_count') || 3 %>"
+                               class="mt-1 block w-24 border rounded px-2 py-1" />
+                    </label>
                 </div>
 
                 <!-- Advanced Pricing Options (for percentage, tiered, etc.) -->

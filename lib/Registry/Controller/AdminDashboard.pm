@@ -46,6 +46,29 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         $self->render(template => 'admin-dashboard/waitlist_management', layout => undef);
     }
 
+    # What families still owe on instalment plans (HTMX endpoint).
+    #
+    # Morgan's half of keep_and_flag: a failed instalment does not cost a child
+    # their place, so the debt has to be somewhere she will see it. Without this
+    # the policy is just "do nothing", and the money quietly goes uncollected.
+    method outstanding_instalments () {
+        my $dao = $self->dao($self->stash('tenant'));
+
+        require Registry::DAO::Payment;
+        my $owed = Registry::DAO::Payment->outstanding_instalments( $dao->db );
+
+        my $failed = scalar grep { $_->{status} eq 'failed' } @$owed;
+        my $total  = 0;
+        $total += $_->{amount_cents} for @$owed;
+
+        $self->stash(
+            instalments   => $owed,
+            failed_count  => $failed,
+            owed_cents    => $total,
+        );
+        $self->render( template => 'admin-dashboard/outstanding_instalments', layout => undef );
+    }
+
     # Recent notifications (HTMX endpoint)
     method recent_notifications () {
         my $dao = $self->dao($self->stash('tenant'));

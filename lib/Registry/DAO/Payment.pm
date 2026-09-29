@@ -31,6 +31,19 @@ field $refund_increments :param :reader = undef;
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 
+# An instalment of a set, or NULL throughout for an ordinary single charge --
+# which is what every row was before #425. The obligation is a row from the
+# moment of enrolment, so what a family still owes is a query here rather than a
+# call to Stripe per family.
+field $instalment_seq     :param :reader = undef;
+field $instalment_count   :param :reader = undef;
+field $due_date           :param :reader = undef;
+field $stripe_schedule_id :param :reader = undef;
+
+# True when this row is one of several. Asked rather than derived at each call
+# site, so nothing has to remember that the pair is all-or-nothing.
+method is_instalment { return defined $instalment_seq ? 1 : 0 }
+
 field $_stripe_client = undef;
     
     ADJUST {
@@ -51,6 +64,238 @@ field $_stripe_client = undef;
     # plan by the caller. Integer cents, rounded half-up.
     sub application_fee_cents ($amount_cents, $fraction) {
         return int($amount_cents * $fraction + 0.5);
+    }
+
+    # --- Instalments -------------------------------------------------------
+    #
+    # A plan declares its instalment offer (PricingPlan::payment_schedule) and
+    # resolves it to amounts and due dates (instalment_schedule). These two turn
+    # that list into what Stripe needs. Deliberately pure functions: the shape
+    # that decides where a family's money lands should be assertable without a
+    # database or a network.
+
+    # Group consecutive equal instalments into subscription-schedule phases.
+    #
+    # Stripe bills a phase for `iterations` periods at one `unit_amount`, so
+    # three equal charges are one phase of three -- not three phases of one,
+    # which would create three price objects for the same money.
+    #
+    # Unequal amounts are the normal case rather than the exception: $100 in
+    # three is 33.33 / 33.33 / 33.34, and the odd cent has to be on one of them.
+    # That is why this groups instead of assuming a single phase.
+    sub instalment_phases ( $instalments, $currency, $description ) {
+        my @phases;
+        for my $part (@$instalments) {
+            if ( @phases && $phases[-1]{unit_amount} == $part->{amount_cents} ) {
+                $phases[-1]{iterations}++;
+                next;
+            }
+            push @phases, {
+                unit_amount => $part->{amount_cents},
+                iterations  => 1,
+                currency    => $currency,
+                description => $description,
+            };
+        }
+        return \@phases;
+    }
+
+    # The subscription-schedule request for the instalments still to come.
+    #
+    # Instalment one is taken on-session at checkout, where the parent is
+    # present to satisfy a card challenge and the card is saved; this covers
+    # what is left, charged automatically against that card. So `start_date` is
+    # the second instalment's due date, not now.
+    sub instalment_schedule_params ( $args ) {
+        my $instalments = $args->{instalments} // [];
+        my $currency    = lc( $args->{currency} // 'usd' );
+        my $product     = $args->{product};
+
+        my $phases = instalment_phases(
+            $instalments, $currency, $args->{description} // 'Enrollment' );
+
+        my %params = (
+            customer   => $args->{customer},
+            start_date => _epoch_for_date( $instalments->[0]{due_date} ),
+
+            # It ends. An instalment plan is a fixed number of charges, and a
+            # schedule that renewed would bill a family for a camp that finished
+            # in August, every August.
+            end_behavior => 'cancel',
+
+            'default_settings[collection_method]'     => 'charge_automatically',
+            'default_settings[default_payment_method]' => $args->{payment_method},
+
+            # Destination charges, as the one-off path does in _connect_params:
+            # the tenant is the merchant of record and our share is the
+            # application fee. Without these every instalment would settle into
+            # the PLATFORM's balance and the tenant would be paid nothing.
+            'default_settings[transfer_data][destination]' => $args->{connect_account},
+        );
+
+        # Omitted rather than sent as zero. A tenant on the Free plan owes no
+        # revenue share, and an explicit 0 is a value Stripe has no reason to
+        # accept on a schedule that takes no fee.
+        $params{'default_settings[application_fee_percent]'} = $args->{revenue_share_pct}
+            if $args->{revenue_share_pct};
+
+        for my $i ( 0 .. $#$phases ) {
+            my $p = $phases->[$i];
+            $params{"phases[$i][iterations]"} = $p->{iterations};
+            $params{"phases[$i][items][0][price_data][currency]"}    = $p->{currency};
+            $params{"phases[$i][items][0][price_data][unit_amount]"} = $p->{unit_amount};
+            # A product id, not product_data. Stripe refuses inline product
+            # data inside a schedule phase's price_data -- "Received unknown
+            # parameter: product_data. Did you mean product?" -- so the caller
+            # creates the product and passes its id.
+            $params{"phases[$i][items][0][price_data][product]"} = $product;
+            $params{"phases[$i][items][0][price_data][recurring][interval]"} = 'month';
+        }
+
+        return \%params;
+    }
+
+    # YYYY-MM-DD to an epoch second, which is what Stripe takes. Noon UTC rather
+    # than midnight, so a timezone offset cannot move a due date onto the
+    # previous day and charge a family a month early.
+    sub _epoch_for_date ( $date ) {
+        return time() unless defined $date && $date =~ /^(\d{4})-(\d{2})-(\d{2})$/;
+        require Time::Local;
+        return Time::Local::timegm_posix( 0, 0, 12, $3, $2 - 1, $1 - 1900 );
+    }
+
+    # Create the Stripe schedule for the instalments after the first, and record
+    # each of them as a payments row.
+    #
+    # Called from a job rather than from the webhook that completes instalment
+    # one, for two reasons. The card only exists once that charge has succeeded,
+    # so this cannot happen at checkout; and a blocking Stripe call inside a
+    # webhook's transaction is the shape of #284 -- the work belongs after the
+    # COMMIT, where a failure can be retried without holding a lock.
+    #
+    # Idempotent by the schedule id: a retried job finds one already recorded and
+    # returns it rather than creating a second schedule that would double-bill
+    # the family.
+    method schedule_remaining_instalments ($db) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+
+        return $stripe_schedule_id if $stripe_schedule_id;
+        return undef unless $self->is_instalment && $instalment_seq == 1;
+
+        my $meta        = $metadata // {};
+        my $instalments = $meta->{instalment_plan} or return undef;
+        my @remaining   = @{$instalments}[ 1 .. $#$instalments ];
+        return undef unless @remaining;
+
+        my $slug = $meta->{tenant_slug}
+            or die "cannot schedule instalments without a tenant slug\n";
+
+        # Where the money goes, and what our share of it is -- read at scheduling
+        # time from the tenant's linked plan, the same authority the one-off
+        # charge path reads in _connect_params.
+        my $acct = $raw->query(
+            'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
+            $slug )->hash->{stripe_connect_account_id}
+            or die "tenant '$slug' has no Connect account to pay instalments into\n";
+
+        my $pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+            $raw, $slug ) * 100;
+
+        my $client = $self->stripe_client;
+
+        # The customer the first charge was made against, and the card it saved.
+        my $intent = $client->retrieve_payment_intent($stripe_payment_intent_id);
+        my $customer = $intent->{customer}
+            or die "instalment 1 of payment $id has no customer to bill\n";
+        my $card = $intent->{payment_method}
+            or die "instalment 1 of payment $id saved no card\n";
+
+        my $description = $meta->{instalment_description} // 'Program Enrollment';
+        my $product = $client->create_product({
+            name                  => $description,
+            'metadata[payment_id]' => $id,
+        });
+
+        my $schedule = $client->create_subscription_schedule(
+            instalment_schedule_params( {
+                customer          => $customer,
+                payment_method    => $card,
+                connect_account   => $acct,
+                revenue_share_pct => $pct,
+                currency          => lc $currency,
+                description       => $description,
+                product           => $product->{id},
+                instalments       => \@remaining,
+            } ) );
+
+        # Recorded in one transaction with the rows it bills, so a crash between
+        # them cannot leave a schedule at Stripe that Registry has no record of.
+        my $txn = $raw->begin;
+
+        $raw->update( 'payments', { stripe_schedule_id => $schedule->{id} },
+            { id => $id } );
+
+        my $seq = 1;
+        for my $part (@remaining) {
+            $seq++;
+            $raw->insert( 'payments', {
+                user_id            => $user_id,
+                amount_cents       => $part->{amount_cents},
+                currency           => $currency,
+                status             => 'pending',
+                instalment_seq     => $seq,
+                instalment_count   => $instalment_count,
+                due_date           => $part->{due_date},
+                stripe_schedule_id => $schedule->{id},
+                metadata           => { -json => {
+                    instalment_of => $id,
+                    tenant_slug   => $slug,
+                    description   => $description,
+                } },
+            } );
+        }
+
+        $txn->commit;
+        $stripe_schedule_id = $schedule->{id};
+        return $schedule->{id};
+    }
+
+    # The instalments of this set that are still owed, earliest first. Morgan's
+    # outstanding balance, and the row an arriving invoice belongs to.
+    sub owed_instalments ( $class, $db, $schedule_id ) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+        return $raw->query( q{
+            SELECT * FROM payments
+             WHERE stripe_schedule_id = ?
+               AND status IN ('pending', 'failed')
+             ORDER BY instalment_seq
+        }, $schedule_id )->expand->hashes
+          ->map( sub { $class->new( %$_ ) } )->to_array;
+    }
+
+    # What families still owe on instalment plans, for Morgan's dashboard.
+    #
+    # A query over her own schema rather than a call to Stripe per family, which
+    # is why every instalment is a row from the moment of enrolment rather than
+    # something derived when asked.
+    #
+    # Failures first, then by due date: a card that was declined needs her
+    # attention now, where an instalment due in August does not.
+    sub outstanding_instalments ( $class, $db, %opt ) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+        my $limit = $opt{limit} // 50;
+
+        return $raw->query( q{
+            SELECT p.id, p.amount_cents, p.currency, p.status, p.due_date,
+                   p.instalment_seq, p.instalment_count, p.error_message,
+                   p.user_id, up.name AS payer_name, up.email AS payer_email
+              FROM payments p
+              LEFT JOIN user_profiles up ON up.user_id = p.user_id
+             WHERE p.instalment_seq IS NOT NULL
+               AND p.status IN ('pending', 'failed')
+             ORDER BY (p.status = 'failed') DESC, p.due_date, p.instalment_seq
+             LIMIT ?
+        }, $limit )->hashes->to_array;
     }
 
     # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
@@ -190,9 +435,51 @@ field $_stripe_client = undef;
             description       => $args->{description} // 'Registry Program Enrollment',
             receipt_email     => $args->{receipt_email},
             _idempotency_key  => $self->_charge_idempotency_key,
+
+            # Instalment one is the only charge a parent is present for. The
+            # card has to be kept, or instalments two and three have nothing to
+            # bill -- and asked for HERE, on-session, because that is where the
+            # cardholder can satisfy a challenge. A schedule created later
+            # against a card that was never saved off-session fails on its first
+            # invoice, weeks after anyone is watching.
+            ( $self->is_instalment
+                ? ( setup_future_usage => 'off_session',
+                    customer           => $self->_stripe_customer_for($db) )
+                : () ),
+
             _stripe_metadata_params($user_id, $self->id, $metadata),
             _connect_params($db, $metadata, $amount_cents),
         };
+    }
+
+    # A Stripe customer for this payer, created on first need and remembered on
+    # the payment's metadata. An instalment plan needs one: a saved card belongs
+    # to a customer, and a bare PaymentIntent has nowhere to keep it.
+    method _stripe_customer_for ($db) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+
+        return $metadata->{stripe_customer_id} if $metadata->{stripe_customer_id};
+
+        require Registry::DAO::User;
+        my $user = Registry::DAO::User->find( $raw, { id => $user_id } );
+
+        my $customer = $self->stripe_client->create_customer( {
+            ( $user && $user->email ? ( email => $user->email ) : () ),
+            ( $user && $user->name  ? ( name  => $user->name )  : () ),
+            'metadata[registry_user_id]' => $user_id // '',
+        } );
+
+        # Recorded before the intent is created, so a retry reuses this customer
+        # rather than leaving a trail of them with one saved card each.
+        $raw->query( q{
+            UPDATE payments
+               SET metadata = COALESCE(metadata, '{}'::jsonb)
+                              || jsonb_build_object('stripe_customer_id', ?::text)
+             WHERE id = ?
+        }, $customer->{id}, $id );
+        $metadata->{stripe_customer_id} = $customer->{id};
+
+        return $customer->{id};
     }
 
 
@@ -1460,6 +1747,10 @@ SQL
         # it, and nothing could ever qualify for it.
         my $child_count = scalar @$children;
 
+        # The plans this cart is actually priced by, collected so the instalment
+        # offer can be decided from all of them together rather than per line.
+        my @plans;
+
         # Calculate cost for each child-session pair
         for my $child (@$children) {
             my $child_key = $child->{id} || 0;
@@ -1488,6 +1779,7 @@ SQL
 
             if (defined $price_cents) {
                 $total += $price_cents;
+                push @plans, $plan if $plan;
 
                 # A nameless child still gets a line naming the session, rather
                 # than one that opens with a dangling separator.
@@ -1514,7 +1806,53 @@ SQL
         return {
             total => $total,
             items => $items,
+            schedule_options =>
+                _schedule_options( $db, $total, \@plans ),
         };
+    }
+
+    # The ways this cart may be paid: always in full, and in instalments when
+    # every priced line agrees on the same schedule.
+    #
+    # Agreement is the rule because a cart is ONE charge. Offering instalments
+    # for the part of a cart that allows them would mean two Stripe objects, two
+    # failure modes and a statement no parent could read -- so a cart whose lines
+    # disagree is paid in full, which every plan permits.
+    sub _schedule_options ( $db, $total_cents, $plans ) {
+        my @options = ( { key => 'full', label => 'Pay in full',
+                          instalments => [ { amount_cents => $total_cents,
+                                             due_date     => undef } ] } );
+
+        # Nothing to split, and no plan to split it by.
+        return \@options unless $total_cents > 0 && @$plans;
+
+        my @declared = map { $_->payment_schedule } @$plans;
+        return \@options if grep { !defined } @declared;
+
+        # Identical terms, not merely "all present". Three instalments and four
+        # do not reconcile into a single schedule, and picking one of them would
+        # charge somebody terms they were not shown.
+        my $first = $declared[0];
+        for my $d (@declared) {
+            return \@options
+                unless $d->{count} == $first->{count}
+                    && $d->{cadence} eq $first->{cadence}
+                    && $d->{surcharge_pct} == $first->{surcharge_pct};
+        }
+
+        # Resolved through the plan, so the arithmetic that keeps every cent has
+        # exactly one home.
+        my $instalments = $plans->[0]->instalment_schedule($total_cents)
+            or return \@options;
+
+        push @options, {
+            key         => 'instalments',
+            label       => sprintf( 'Pay in %d %s instalments',
+                             $first->{count}, $first->{cadence} ),
+            instalments => $instalments,
+        };
+
+        return \@options;
     }
     
     # Async payment methods. These are what the web request path uses: a
