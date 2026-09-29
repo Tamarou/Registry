@@ -1,5 +1,5 @@
-# ABOUTME: Tests that instalments cannot be configured while they are not honoured.
-# ABOUTME: The screen no longer offers them; this is the half a stale page cannot bypass.
+# ABOUTME: Tests that instalments cannot be configured while they are not yet charged.
+# ABOUTME: The resolver exists (t/dao/instalment-schedule.t); the collecting waits for the charging.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -51,23 +51,26 @@ sub pricing_model_after ($form) {
 subtest 'an ordinary submit stores no instalment plan' => sub {
     my $model = pricing_model_after( {} );
     ok $model, 'the step stored a pricing model';
-    is $model->{installments_allowed}, 0, 'instalments are off';
-    is $model->{installment_count}, undef, 'and no count is carried';
+    is $model->{pricing_configuration}{schedule}, undef,
+        'and declares no payment schedule';
 };
 
 subtest 'a posted instalment plan is refused, not stored' => sub {
-    # Exactly what a stale page from before this change would send, or a typed
-    # request. The controls being gone is not a defence: the value would otherwise
-    # be stored, shown back on the review step, and then ignored at the charge.
+    # Exactly what a stale page would send, or a typed request. The controls
+    # being gone is not a defence: the value would otherwise be stored, shown
+    # back on the review step, and then ignored at the charge.
+    #
+    # Both spellings: the old boolean-and-count a page from before #425 would
+    # post, and the declared shape that replaced it.
     my $model = pricing_model_after( {
-        installments_allowed => 1,
-        installment_count    => 3,
+        installments_allowed        => 1,
+        installment_count           => 3,
+        'schedule[count]'           => 3,
+        'schedule[cadence]'         => 'monthly',
     } );
 
-    is $model->{installments_allowed}, 0,
-        'the posted instalment flag does not survive';
-    is $model->{installment_count}, undef,
-        'and neither does the count';
+    is $model->{pricing_configuration}{schedule}, undef,
+        'no schedule is declared, however it was asked for';
 };
 
 subtest 'the plan that reaches the database has no instalment terms' => sub {
@@ -84,16 +87,16 @@ subtest 'the plan that reaches the database has no instalment terms' => sub {
     my $model = pricing_model_after( { installments_allowed => 1, installment_count => 4 } );
 
     my $plan = Registry::DAO::PricingPlan->create($db, {
-        session_id           => $session->id,
-        plan_name            => 'From The Probe',
-        plan_type            => 'standard',
-        amount_cents         => $model->{amount},
-        installments_allowed => $model->{installments_allowed},
-        installment_count    => $model->{installment_count},
+        session_id            => $session->id,
+        plan_name             => 'From The Probe',
+        plan_type             => 'standard',
+        amount_cents          => $model->{amount},
+        pricing_configuration => $model->{pricing_configuration},
     });
 
-    ok !$plan->installments_allowed, 'the created plan allows no instalments';
-    is $plan->installment_count, undef, 'and carries no count';
+    is $plan->payment_schedule, undef, 'the created plan offers no instalments';
+    is $plan->instalment_schedule( $model->{amount} ), undef,
+        'so nothing resolves a schedule for it';
 };
 
 subtest 'the screen no longer offers the controls' => sub {
@@ -105,6 +108,8 @@ subtest 'the screen no longer offers the controls' => sub {
         'no instalments checkbox';
     unlike $template, qr/name="installment_count"/,
         'no instalment count field';
+    unlike $template, qr/name="schedule\[/,
+        'and none in the declared shape that replaced them either';
     like $template, qr/Not available yet/,
         'and it says so, rather than the option simply vanishing';
 };

@@ -79,3 +79,4 @@ pricing-plan-versions [session-waitlist-toggle] 2026-09-26T19:20:00Z Chris Prath
 user-deactivation [pricing-plan-versions] 2026-09-27T15:30:00Z Chris Prather <chris.prather@tamarou.com> # A departed staff member can be deactivated, which revokes every way in
 tenant-signup-drop-plan-page [user-deactivation] 2026-09-28T17:45:00Z Chris Prather <chris.prather@tamarou.com> # Signup stops asking which plan: everyone starts on the one tier that is on sale
 tenant-created-from-ip [tenant-signup-drop-plan-page] 2026-09-28T23:20:00Z Chris Prather <chris.prather@tamarou.com> # Record which address provisioned a tenant, so the clone cost can be bounded
+instalments-declared-in-configuration [tenant-created-from-ip] 2026-09-29T17:55:00Z Chris Prather <chris.prather@tamarou.com> # An instalment offer becomes a declared shape rather than a boolean and a count

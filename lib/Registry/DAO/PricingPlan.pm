@@ -17,8 +17,6 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     field $pricing_model_type :param :reader = 'fixed';
     field $amount_cents :param :reader = 0;
     field $currency :param :reader = 'USD';
-    field $installments_allowed :param :reader = 0;
-    field $installment_count :param :reader = undef;
     field $requirements :param :reader = {};
     field $pricing_configuration :param :reader = {};
     field $metadata :param :reader = {};
@@ -47,13 +45,6 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
             }
         }
         
-        # Validate installment configuration
-        if ($installments_allowed && (!defined $installment_count || $installment_count <= 1)) {
-            croak "Installment count must be greater than 1 when installments are allowed";
-        }
-        if (!$installments_allowed && defined $installment_count) {
-            croak "Installment count should not be set when installments are not allowed";
-        }
     }
     
     sub create ($class, $db, $data) {
@@ -69,7 +60,6 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         $data->{pricing_model_type} //= 'fixed';
         $data->{plan_scope} //= 'customer';
         $data->{currency} //= 'USD';
-        $data->{installments_allowed} //= 0;
         $data->{requirements} //= { -json => {} };
         $data->{pricing_configuration} //= { -json => {} };
         $data->{metadata} //= { -json => {} };
@@ -126,8 +116,6 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
             pricing_model_type    => $pricing_model_type,
             amount_cents          => $amount_cents,
             currency              => $currency,
-            installments_allowed  => $installments_allowed,
-            installment_count     => $installment_count,
             requirements          => $requirements,
             pricing_configuration => $pricing_configuration,
             metadata              => $metadata,
@@ -391,12 +379,93 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         return $date <= $cutoff;
     }
     
-    # Get installment amount, in cents. Integer division drops the remainder,
-    # so the installments can sum to less than the plan price. Nothing collects
-    # installments today; no leg drops these registry.pricing_plans columns.
-    method installment_amount_cents {
-        return $amount_cents unless $installments_allowed && $installment_count;
-        return int($amount_cents / $installment_count);
+    # How many months apart each cadence puts its charges. A cadence absent
+    # from here is a cadence nothing can schedule, and payment_schedule refuses
+    # the plan rather than letting it reach Stripe as a subscription nobody
+    # meant to create.
+    my %CADENCE_MONTHS = ( monthly => 1, quarterly => 3 );
+
+    # The instalment offer this plan makes, or undef.
+    #
+    # Declared in pricing_configuration rather than carried by a column and a
+    # branch. It replaces installments_allowed/installment_count, which could
+    # express "in parts" and nothing else -- no cadence, no surcharge -- so
+    # every further payment shape would have cost another boolean and another
+    # `if`. That is the plan_type anti-pattern Pillar 4 forbids, and the one
+    # calculate_price was just freed from (#427).
+    method payment_schedule {
+        my $declared = ( $pricing_configuration // {} )->{schedule} or return undef;
+        return undef unless ref $declared eq 'HASH';
+
+        my $count = $declared->{count};
+        return undef unless defined $count && $count =~ /^[0-9]+$/ && $count > 1;
+
+        my $cadence = $declared->{cadence} // '';
+        return undef unless $CADENCE_MONTHS{$cadence};
+
+        return {
+            count         => 0 + $count,
+            cadence       => $cadence,
+            surcharge_pct => 0 + ( $declared->{surcharge_pct} // 0 ),
+        };
+    }
+
+    # The actual charges: amount and due date for each instalment, or undef when
+    # the plan makes no such offer.
+    #
+    # $total_cents is the cart's, not the plan's: a family enrolling two children
+    # pays for two, and the split is of what they owe.
+    method instalment_schedule ( $total_cents, %opt ) {
+        my $schedule = $self->payment_schedule or return undef;
+
+        my $count = $schedule->{count};
+        my $due   = $opt{first_due} // _today();
+
+        # Surcharge first, then split, so the parts sum to what the parent was
+        # quoted rather than to the quote plus rounding.
+        my $total = $total_cents;
+        $total = int( $total * ( 1 + $schedule->{surcharge_pct} / 100 ) + 0.5 )
+            if $schedule->{surcharge_pct};
+
+        # Every cent lands somewhere. The even share goes first so the charge a
+        # parent sees at checkout is the round number they were quoted, and the
+        # remainder rides on the last one. int($total/$count) for all of them --
+        # which is what this replaces -- loses up to $count-1 cents per family.
+        my $each      = int( $total / $count );
+        my $remainder = $total - $each * $count;
+
+        my @parts;
+        for my $i ( 1 .. $count ) {
+            push @parts, {
+                amount_cents => $i == $count ? $each + $remainder : $each,
+                due_date     => $due,
+            };
+            $due = _add_months( $due, $CADENCE_MONTHS{ $schedule->{cadence} } );
+        }
+
+        return \@parts;
+    }
+
+    sub _today {
+        my @t = localtime;
+        return sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3];
+    }
+
+    # Month arithmetic on a YYYY-MM-DD string. Clamped to the end of the target
+    # month, because a schedule starting on the 31st must still name a real date
+    # in February -- Stripe would otherwise be handed one that does not exist.
+    sub _add_months ( $date, $months ) {
+        my ( $y, $m, $d ) = $date =~ /^(\d{4})-(\d{2})-(\d{2})$/ or return $date;
+
+        $m += $months;
+        while ( $m > 12 ) { $m -= 12; $y++ }
+
+        my @last = ( 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 );
+        my $last = $last[ $m - 1 ];
+        $last = 29 if $m == 2 && ( $y % 4 == 0 && ( $y % 100 != 0 || $y % 400 == 0 ) );
+        $d = $last if $d > $last;
+
+        return sprintf '%04d-%02d-%02d', $y, $m, $d;
     }
 
     # Format price with currency

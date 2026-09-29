@@ -1,5 +1,5 @@
 # ABOUTME: Workflow step for configuring the pricing model and payment structure
-# ABOUTME: Handles pricing type, amounts, billing frequency, and installment options
+# ABOUTME: Handles pricing type, amounts and billing frequency for a plan.
 
 use 5.42.0;
 use utf8;
@@ -70,16 +70,10 @@ class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowSte
                 amount => $form_data->{base_amount} || 0,
                 currency => $form_data->{currency},
                 billing_frequency => $form_data->{billing_frequency} || 'monthly',
-                # Forced off, whatever was posted. The pricing screen no longer
-                # offers instalments, but a stale page, a back button or a typed
-                # request still can -- and the value would be stored, displayed on
-                # the review step, and then ignored by the payment path, which
-                # charges the full amount (#425). A plan that says "three payments"
-                # and takes one is worse than no option at all.
-                #
-                # The columns stay: #425 will need them. Only the collecting stops.
-                installments_allowed => 0,
-                installment_count => undef,
+                # Instalments are declared inside pricing_configuration now,
+                # by build_pricing_configuration, rather than carried by a
+                # boolean and a count. The screen still does not offer them --
+                # nothing charges them yet -- so nothing sets the key.
                 pricing_configuration => $pricing_config,
             }
         });

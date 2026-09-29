@@ -83,16 +83,15 @@
                     </div>
                 </div>
 
-                %# Instalments are not offered, because they are not delivered:
-                %# installments_allowed and installment_count are stored and read by
-                %# nothing in the payment path, so a plan configured for three
-                %# instalments charges the parent in full (#425). The controls are
-                %# gone rather than disabled -- a greyed-out checkbox invites a
-                %# support question, and the step refuses the value anyway.
+                %# Instalments are declared inside pricing_configuration now, as
+                %# {"schedule": {"count": N, "cadence": "monthly"}} -- a shape that
+                %# can carry a cadence and a surcharge, where the boolean and count
+                %# this replaces could say only "in parts" (#425, #427).
                 %#
-                %# Said out loud rather than silently absent, because instalments are
-                %# in the MVP spec and an operator looking for them deserves to know
-                %# they are coming rather than assume they missed a setting.
+                %# The control is still absent: the resolver exists, the charging
+                %# does not yet. It comes back in the commit that can honour it,
+                %# because a plan that says "three payments" and takes one is worse
+                %# than no option at all.
                 <div class="p-4 border rounded-lg">
                     <p class="font-medium">Installment payments</p>
                     <p class="mt-1 text-sm text-gray-500">
