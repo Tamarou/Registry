@@ -9,6 +9,7 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
+use Registry;
 use Registry::DAO::ProgramType;
 use Registry::DAO::Project;
 use Registry::DAO::Location;
@@ -49,11 +50,14 @@ subtest 'overview reports empty state when nothing is set up' => sub {
 
     my $data = $step->prepare_template_data($db, $run);
     ok(defined $data->{checklist}, 'checklist returned');
-    is(scalar @{$data->{checklist}}, 5, 'five checklist items');
+    is(scalar @{$data->{checklist}}, 6, 'six checklist items');
 
     my %by_key = map { $_->{key} => $_ } @{$data->{checklist}};
 
-    for my $key (qw(program_types locations programs sessions pricing)) {
+    # 'payments' is Stripe Connect onboarding. Without it ready_to_publish lied:
+    # it reported ready while set_session_status refused every priced session,
+    # and the tenant had no way to see why.
+    for my $key (qw(program_types locations programs sessions pricing payments)) {
         ok($by_key{$key}, "has $key item");
         is($by_key{$key}{status}, 'todo', "$key starts todo");
     }
@@ -115,8 +119,14 @@ subtest 'each checklist item exposes a callcc target' => sub {
 
     my $data = $step->prepare_template_data($db, $run);
     for my $item (@{$data->{checklist}}) {
-        ok($item->{callcc_target},
-           "item '$item->{key}' has a callcc_target workflow slug");
+        # Two shapes, one destination each: most items continue this workflow
+        # via callcc, while payments is a plain screen outside it -- the tenant
+        # leaves for Stripe and comes back, which a continuation cannot model.
+        # Exactly one, because an item with neither is a dead button and an item
+        # with both is ambiguous about where it goes.
+        my $targets = ( $item->{callcc_target} ? 1 : 0 ) + ( $item->{href} ? 1 : 0 );
+        is($targets, 1,
+           "item '$item->{key}' has exactly one destination");
         ok($item->{label}, "item '$item->{key}' has a label");
     }
 };
@@ -143,12 +153,23 @@ subtest 'every callcc target resolves to a real workflow' => sub {
     my $data = $step->prepare_template_data($db, $run);
 
     for my $item (@{$data->{checklist}}) {
+        next unless $item->{callcc_target};
         my $wf = Registry::DAO::Workflow->find($db, {
             slug => $item->{callcc_target},
         });
         ok($wf, "callcc target '$item->{callcc_target}' exists")
             or diag("orchestrator item '$item->{key}' references a "
                   . "non-existent workflow '$item->{callcc_target}'");
+    }
+
+    # And the plain-screen items point at a route that resolves, which is the
+    # same guarantee for the other shape: a href nothing serves is the dead
+    # button this subtest exists to catch.
+    my $app = Registry->new;
+    for my $item (@{$data->{checklist}}) {
+        next unless $item->{href};
+        ok($app->routes->lookup('admin_billing'),
+           "href '$item->{href}' names a route that exists");
     }
 };
 

@@ -28,16 +28,25 @@
         </h3>
         <p><%= $item->{description} %></p>
 
-        <form method="POST"
-              action="<%= url_for('workflow_callcc', workflow => 'program-setup', run => $run->id, target => $item->{callcc_target}) %>">
-          <button type="submit">
-            % if ($item->{status} eq 'done') {
-              Manage <%= $item->{label} %>
-            % } else {
-              Set up <%= $item->{label} %>
-            % }
-          </button>
-        </form>
+        %# Most items continue the workflow via callcc. Payments is a plain
+        %# screen outside it -- the tenant leaves for Stripe and comes back --
+        %# so it links rather than submitting a continuation.
+        % if ($item->{href}) {
+          <a href="<%= $item->{href} %>" class="btn btn-primary">
+            <%= $item->{status} eq 'done' ? "Manage $item->{label}" : "Set up $item->{label}" %>
+          </a>
+        % } else {
+          <form method="POST"
+                action="<%= url_for('workflow_callcc', workflow => 'program-setup', run => $run->id, target => $item->{callcc_target}) %>">
+            <button type="submit">
+              % if ($item->{status} eq 'done') {
+                Manage <%= $item->{label} %>
+              % } else {
+                Set up <%= $item->{label} %>
+              % }
+            </button>
+          </form>
+        % }
       </li>
     % }
   </ul>

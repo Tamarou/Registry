@@ -111,22 +111,23 @@ test.describe('Alex to Jordan to Morgan: an acquired tenant is a workable one', 
     state.jordanId = jordan.id;
     state.morganId = morgan.id;
 
-    // The invitation itself, in the schema it has to be in. The token, the
-    // user and the notification are all tenant-scoped: a token minted against
-    // registry would carry a user_id that resolves in neither place. And the
-    // link has to name the tenant's own host, because that is where $c->dao
-    // finds the schema holding both.
+    // No invitation was SENT, deliberately. Signup is anonymous and the
+    // team-member address is whatever the person filling in the form typed, so
+    // mailing it made the form an outbound mailer for recipients the caller
+    // chose -- our sending domain, a working magic link, a tenant the recipient
+    // never asked to join (#438). Jordan sends it from /admin/people once he
+    // has signed in, which is proof he holds the address he signed up with.
     const invites = queryJson(testDB, state.slug,
       "SELECT metadata FROM notifications WHERE user_id = ? AND type = ?",
       morgan.id, 'magic_link_invite');
-    expect(invites.length, 'the invited member was sent an invitation').toBe(1);
+    expect(invites.length, 'the anonymous signup mailed her nothing').toBe(0);
 
-    const meta = typeof invites[0].metadata === 'string'
-      ? JSON.parse(invites[0].metadata) : invites[0].metadata;
-    expect(meta.magic_link_url, 'the link points at the tenant')
-      .toContain(`${state.slug}.`);
-    expect(meta.role, 'and names the role he chose for her').toBe('admin');
-    expect(meta.inviter_name, 'and who invited her').toBeTruthy();
+    // She is on the team and marked as still needing one, which is what lets
+    // the People screen tell "not invited yet" from "invited".
+    const pending = queryJson(testDB, state.slug,
+      'SELECT invite_pending FROM users WHERE id = ?', morgan.id);
+    expect(pending[0].invite_pending, 'and is marked as not yet invited')
+      .toBeTruthy();
 
     // ----------------------------------------------------------------
     // Workflows gate: tenant schema must include the workflows later legs need

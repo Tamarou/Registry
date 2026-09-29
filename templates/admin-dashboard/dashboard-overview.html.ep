@@ -542,16 +542,33 @@ document.addEventListener('htmx:afterRequest', function (evt) {
     }
 
     var message = 'That could not be changed. Please try again.';
+    var action = null;
     try {
         var body = JSON.parse(xhr.responseText);
         if (body.error) { message = body.error; }
         if (body.unpublished_programs) {
             message += ' Still in draft: ' + body.unpublished_programs + '.';
         }
+        // A refusal the operator can act on says where to go. Rendered as a
+        // link rather than appended to the text, because a URL the operator
+        // has to retype is barely better than no URL.
+        if (body.action_url) {
+            action = { url: body.action_url, label: body.action_label || 'Fix this' };
+        }
     } catch (e) {
         // A non-JSON body (a proxy error page, say) leaves the generic message
         // rather than showing the operator raw HTML.
     }
-    if (box) { box.textContent = message; box.hidden = false; }
+    if (box) {
+        box.textContent = message;
+        if (action) {
+            box.appendChild(document.createTextNode(' '));
+            var link = document.createElement('a');
+            link.href = action.url;
+            link.textContent = action.label;
+            box.appendChild(link);
+        }
+        box.hidden = false;
+    }
 });
 </script>

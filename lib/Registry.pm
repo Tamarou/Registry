@@ -767,6 +767,7 @@ class Registry :isa(Mojolicious) {
         $admin->get('/people')->to('people#index')->name('admin_people');
         $admin->post('/people/:id/deactivate')->to('people#deactivate')->name('admin_people_deactivate');
         $admin->post('/people/:id/reactivate')->to('people#reactivate')->name('admin_people_reactivate');
+        $admin->post('/people/:id/invite')->to('people#invite')->name('admin_people_invite');
 
         $admin->get('/templates')->to('workflows#index', workflow => 'template-editor')->name('admin_templates');
         $admin->post('/templates')->to('workflows#start_workflow', workflow => 'template-editor');
@@ -785,6 +786,14 @@ class Registry :isa(Mojolicious) {
         my $admin_only = $r->under('/admin')->to(
             cb => sub ($c) { $c->require_role('admin') }
         );
+        # Stripe Connect onboarding: admin-only, like domains. It decides where
+        # the money lands and it is the tenant's own Stripe identity, so staff
+        # who can otherwise reach /admin/* do not get to start or change it.
+        $admin_only->get('/billing')->to('StripeConnect#index')->name('admin_billing');
+        $admin_only->post('/billing/connect')->to('StripeConnect#start')->name('admin_billing_connect');
+        $admin_only->get('/billing/refresh')->to('StripeConnect#refresh')->name('admin_billing_refresh');
+        $admin_only->get('/billing/return')->to('StripeConnect#finish')->name('admin_billing_return');
+
         $admin_only->get('/domains')->to('TenantDomains#index')->name('admin_domains');
         $admin_only->post('/domains')->to('TenantDomains#add')->name('admin_domains_add');
         $admin_only->post('/domains/:id/verify')->to('TenantDomains#verify')->name('admin_domains_verify');

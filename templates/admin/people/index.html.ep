@@ -42,7 +42,19 @@
                         <td><strong><%= $person->name || $person->username %></strong></td>
                         <td><%= $person->email %></td>
                         <td><%= ucfirst $person->user_type %></td>
-                        <td><span class="registration-status is-enrolled">Active</span></td>
+                        <td>
+                            %# Signup creates team members without mailing them --
+                            %# an anonymous form must not send mail to addresses
+                            %# typed into it (#438) -- so someone can be here and
+                            %# have no way in yet. Saying so is the point: the
+                            %# flag existed for a year and nothing wrote or read
+                            %# it, so "not invited" looked exactly like "invited".
+                            % if ($person->invite_pending) {
+                                <span class="registration-status is-waiting">Not invited yet</span>
+                            % } else {
+                                <span class="registration-status is-enrolled">Active</span>
+                            % }
+                        </td>
                         <td>
                             %# No control for your own account. Deactivating yourself
                             %# locks the tenant out of itself when you are the only
@@ -51,6 +63,14 @@
                             % if (($me->{id} // '') eq $person->id) {
                                 <span class="text-secondary">That's you</span>
                             % } else {
+                                % if ($person->email) {
+                                    <form method="POST"
+                                          action="<%= url_for('admin_people_invite', id => $person->id) %>">
+                                        <button type="submit" class="btn btn-primary">
+                                            <%= $person->invite_pending ? 'Send invitation' : 'Resend invitation' %>
+                                        </button>
+                                    </form>
+                                % }
                                 <form method="POST"
                                       action="<%= url_for('admin_people_deactivate', id => $person->id) %>"
                                       onsubmit="return confirm('<%= $person->name || $person->username %> will no longer be able to sign in. Their attendance records and the classes they taught are kept. Continue?')">

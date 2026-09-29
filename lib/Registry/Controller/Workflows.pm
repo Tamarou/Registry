@@ -87,9 +87,21 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # $user->{id} as the family_id their ownership checks match on, so a
         # user[id]= of a client's choosing picks the family this request acts
         # for. The alternation matches the bare key and the bracketed form.
+        # __remote_address joins the list for the same reason: the tenant-signup
+        # commit counts recent provisionings from the caller's address to bound
+        # the clone cost, and a client-supplied address is a rate limit the
+        # client sets for itself.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address)(?:\[|\z)/;
+        }
+
+        # Mojolicious fills remote_address from X-Forwarded-For only in
+        # reverse-proxy mode, where the connection peer is a trusted proxy;
+        # reading the header directly here would let any client rotate it.
+        # render.yaml sets MOJO_REVERSE_PROXY=1 for exactly this.
+        if ( my $ip = $self->tx->remote_address ) {
+            $data->{__remote_address} = $ip;
         }
 
         my $tenant_slug = $self->tenant;
@@ -377,9 +389,17 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             }
         }
 
-        # Get data for rendering
+        # Get data for rendering.
+        #
+        # Both shapes, because they had different readers and only one was
+        # served. A step that refuses gets its errors flashed and the caller
+        # redirected here; every workflow template reads stash('errors'), and
+        # only errors_json was passed -- so the refusal never reached the page
+        # and the button looked like it had done nothing. The tenant-signup
+        # rate limit is the refusal that made this visible.
+        my $errors = $self->flash('validation_errors') || [];
         my $data_json = Mojo::JSON::encode_json($run->data || {});
-        my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
+        my $errors_json = Mojo::JSON::encode_json($errors);
 
         # Get workflow progress data
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
@@ -407,6 +427,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             template => $template,
             workflow => $workflow_slug,
             step     => $step_slug,
+            errors   => $errors,
             status   => 200,
             action   => $self->url_for('workflow_process_step',
                 workflow => $workflow_slug,

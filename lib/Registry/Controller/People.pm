@@ -6,6 +6,7 @@ use Object::Pad;
 
 class Registry::Controller::People :isa(Registry::Controller) {
     use Registry::DAO::User;
+    use Registry::DAO::Tenant;
 
     method index {
         my $dao = $self->dao;
@@ -29,6 +30,59 @@ class Registry::Controller::People :isa(Registry::Controller) {
             template => 'admin/people/index',
             people   => \@people,
         );
+    }
+
+    # POST /admin/people/:id/invite
+    #
+    # Signup creates team members but does not mail them: it is an anonymous
+    # form, and mailing addresses typed into one makes it an outbound mailer for
+    # whoever the caller names (#438). Sending from here requires a signed-in
+    # admin, which is itself proof they hold the address the tenant was created
+    # with.
+    method invite {
+        my $dao  = $self->dao;
+        my $user = Registry::DAO::User->find( $dao->db, { id => $self->param('id') } );
+
+        unless ($user) {
+            $self->flash( error => 'That account no longer exists.' );
+            return $self->redirect_to('admin_people');
+        }
+
+        unless ( $user->email ) {
+            $self->flash( error => sprintf(
+                '%s has no email address on file, so there is nowhere to send an invitation.',
+                $user->name || $user->username ) );
+            return $self->redirect_to('admin_people');
+        }
+
+        # Reached through the registry schema, because that is where the tenants
+        # row lives; invite_user then works on the tenant's own handle.
+        my $tenant = Registry::DAO::Tenant->find(
+            $self->dao('registry')->db, { slug => $self->tenant } );
+
+        unless ($tenant) {
+            $self->flash( error => 'This organization could not be resolved.' );
+            return $self->redirect_to('admin_people');
+        }
+
+        my $acting = $self->stash('current_user') // {};
+
+        if ( $tenant->invite_user( $self->dao('registry')->db, $user,
+                $acting->{name} || $acting->{username} || '' ) )
+        {
+            $self->flash( success => sprintf(
+                'Invitation sent to %s. The link is good for seven days.',
+                $user->email ) );
+        }
+        else {
+            # invite_user warns with the reason and returns false rather than
+            # dying, so a failed send is reportable instead of a 500.
+            $self->flash( error => sprintf(
+                'The invitation to %s could not be sent. Please try again.',
+                $user->email ) );
+        }
+
+        return $self->redirect_to('admin_people');
     }
 
     method deactivate {
