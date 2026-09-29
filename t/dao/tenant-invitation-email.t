@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: A team member named on the signup form is actually sent their invitation.
-# ABOUTME: The token, the route and the template all existed; only the sending did not.
+# ABOUTME: A person invited into a tenant is actually sent their invitation, with who and what.
+# ABOUTME: Sent by an admin from /admin/people -- never by the anonymous signup form (#438).
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -12,7 +12,6 @@ use Test::Registry::DB;
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use Registry::DAO::Notification;
 use Registry::DAO::Tenant;
-use Registry::DAO::WorkflowSteps::TenantPayment;
 use Registry::Email::Template;
 
 my $test_db = Test::Registry::DB->new;
@@ -83,17 +82,16 @@ subtest 'a tenant that cannot be invited into is still a provisioned tenant' => 
         users => [$admin],
     } );
 
-    my $step = Registry::DAO::WorkflowSteps::TenantPayment->new(
-        id => 1, slug => 'payment', workflow_id => 1,
-        description => 'test', class => 'Registry::DAO::WorkflowSteps::TenantPayment',
-    );
-
     my $tenant_dao   = $tenant->dao($db);
     my $tenant_admin = $tenant_dao->find( User => { username => "owner_$suffix" } );
 
     # Happy path first, so the failure case below cannot pass by doing nothing.
-    $step->_send_invitation_email( $db, $tenant, $tenant_admin,
-        { email => "owner_$suffix\@test.local", user_type => 'admin' }, 'Jordan Owner' );
+    # Tenant->invite_user, not a signup step: signup must not send invitations at
+    # all -- it is an anonymous form and the addresses on it are whatever the
+    # caller typed (#438) -- so the sender moved to where an authenticated admin
+    # can reach it.
+    ok $tenant->invite_user( $db, $tenant_admin, 'Jordan Owner' ),
+        'the invitation reports success';
 
     my $sent = $tenant_dao->db->query(
         'SELECT metadata FROM notifications WHERE user_id = ? AND type = ?',
@@ -114,13 +112,9 @@ subtest 'a tenant that cannot be invited into is still a provisioned tenant' => 
     my @warnings;
     my $ok = do {
         local $SIG{__WARN__} = sub { push @warnings, @_ };
-        eval {
-            $step->_send_invitation_email( $db, $tenant, $stranger,
-                { email => "stranger_$suffix\@test.local", user_type => 'staff' }, 'Jordan Owner' );
-            1;
-        };
+        eval { !$tenant->invite_user( $db, $stranger, 'Jordan Owner' ) };
     };
-    ok $ok, 'an invitation that cannot be delivered does not take the step down with it';
+    ok $ok, 'an undeliverable invitation returns false rather than throwing';
     like "@warnings", qr/\Qstranger_$suffix\E\@test\.local/,
         'and it says out loud who was not reached';
 
