@@ -137,6 +137,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # capacity gate demoted and now owes a refund.
         my $refund_for;
 
+        # Set when instalment one has just been paid: the id whose remaining
+        # instalments need a Stripe schedule, built after the COMMIT below.
+        my $schedule_for;
+
         try {
             # Transaction-local, so it reverts at COMMIT and cannot ride back
             # into the connection pool the way a session-level setting would.
@@ -149,11 +153,21 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # cards confirmed off-site). Idempotent with the parent-return path.
             if ($event->{type} eq 'payment_intent.succeeded') {
                 $refund_for = $self->_process_payment_intent_succeeded($db, $event);
+                $schedule_for = $self->_instalment_to_schedule($db, $event);
             }
             # Mirror connected account capability changes to the tenant row so
             # the paid-enrollment readiness gate reflects Stripe's current view.
             elsif ($event->{type} eq 'account.updated') {
                 $self->_process_account_updated($db, $event);
+            }
+            # An instalment of a plan a parent chose at checkout. Routed here
+            # before the tenant-billing branch below, which reads invoice events
+            # as OUR subscription being paid -- a family's instalment is not that,
+            # and letting it fall through would move a tenant's billing status on
+            # a parent's card.
+            elsif ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/
+                    && $self->_invoice_is_instalment($db, $event) ) {
+                $self->_process_instalment_invoice($db, $event);
             }
             else {
                 # Handle tenant billing events (existing logic)
@@ -186,9 +200,125 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # Post-COMMIT. Reached only on success, so a refund failure below cannot
         # be confused with a settlement failure above.
+
+        # The Stripe schedule for instalments two onwards. After the COMMIT and
+        # in a job, not here: it is a network call, and one made inside the
+        # transaction above would hold a row lock across Stripe's latency and
+        # lose its work on any failure -- which is #284's shape. The job retries
+        # on Minion's backoff, and without it the family pays instalment one and
+        # nothing more.
+        if ($schedule_for) {
+            $self->app->minion->enqueue(
+                instalment_schedule => [ $schedule_for, $slug // 'registry' ] );
+        }
+
         return $self->_settle_owed_refund($dao, $slug, $refund_for) if $refund_for;
 
         $self->render(status => 200, text => 'OK');
+    }
+
+    # --- Instalments -------------------------------------------------------
+
+    # The payment id whose remaining instalments still need scheduling, or undef.
+    #
+    # Read after _process_payment_intent_succeeded has completed the row, because
+    # a charge that did not complete has no card to schedule against.
+    method _instalment_to_schedule ($db, $event) {
+        my $payment_id = $event->{data}{object}{metadata}{payment_id} or return undef;
+
+        require Registry::DAO::Payment;
+        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id })
+            or return undef;
+
+        return undef unless $payment->is_instalment;
+        return undef unless $payment->instalment_seq == 1;
+        return undef if $payment->stripe_schedule_id;    # already scheduled
+        return $payment_id;
+    }
+
+    # Is this invoice one of a family's instalments, rather than a tenant paying
+    # us? Both arrive as invoice.paid, and the tenant-billing handler would read
+    # a parent's instalment as our own subscription being settled.
+    method _invoice_is_instalment ($db, $event) {
+        my $schedule = $self->_invoice_schedule_id($event) or return 0;
+
+        my $row = $db->query(
+            'SELECT 1 FROM payments WHERE stripe_schedule_id = ? LIMIT 1',
+            $schedule )->hash;
+        return $row ? 1 : 0;
+    }
+
+    method _invoice_schedule_id ($event) {
+        my $invoice = $event->{data}{object} // {};
+
+        # Stripe has moved this field across API versions: a schedule id appears
+        # on the invoice itself on some, and under subscription_details on
+        # others. Both are read rather than one being assumed, because guessing
+        # wrong means an instalment is never recorded as paid and the family
+        # appears to owe money they have already sent.
+        return $invoice->{subscription_details}{metadata}{schedule}
+            // $invoice->{schedule}
+            // $invoice->{subscription_schedule};
+    }
+
+    # Mark the earliest still-owed instalment of this set paid, or failed.
+    #
+    # Matched by position rather than by amount: only the last instalment differs
+    # from the others, so amounts are not distinguishing, while "the earliest one
+    # still owed" is exactly what a schedule bills next. The Stripe payment
+    # intent is recorded on the row, which is what makes a redelivery idempotent.
+    method _process_instalment_invoice ($db, $event) {
+        my $invoice  = $event->{data}{object} // {};
+        my $schedule = $self->_invoice_schedule_id($event) or return;
+        my $paid     = $event->{type} eq 'invoice.paid';
+
+        my $intent = $invoice->{payment_intent};
+
+        # Already recorded. A redelivery of the same invoice must not advance the
+        # set by another instalment.
+        if ($intent) {
+            my $seen = $db->query(
+                'SELECT 1 FROM payments WHERE stripe_payment_intent_id = ? LIMIT 1',
+                $intent )->hash;
+            return if $seen;
+        }
+
+        my $row = $db->query( q{
+            SELECT id FROM payments
+             WHERE stripe_schedule_id = ?
+               AND status IN ('pending', 'failed')
+             ORDER BY instalment_seq
+             LIMIT 1
+             FOR UPDATE
+        }, $schedule )->hash or do {
+            $self->app->log->info(
+                "instalment invoice for schedule $schedule matched no owed row");
+            return;
+        };
+
+        if ($paid) {
+            $db->query( q{
+                UPDATE payments
+                   SET status = 'completed', completed_at = now(),
+                       stripe_payment_intent_id = ?, error_message = NULL
+                 WHERE id = ?
+            }, $intent, $row->{id} );
+            return;
+        }
+
+        # Failed. The enrolment is NOT touched: a child who has been attending
+        # for six weeks does not lose their place over an expired card. The debt
+        # stands on the row and surfaces on Morgan's dashboard, and she decides --
+        # she knows her families. That is the keep_and_flag policy, and it is the
+        # default rather than the only option (#425).
+        my $why = $invoice->{last_finalization_error}{message}
+            // 'The card was declined.';
+        $db->query( q{
+            UPDATE payments
+               SET status = 'failed', error_message = ?,
+                   stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id)
+             WHERE id = ?
+        }, $why, $intent, $row->{id} );
     }
 
     # Refund what the capacity gate demoted, after its transaction committed.

@@ -40,6 +40,15 @@ method process ($db, $form_data, $run = undef) {
             session_selections => $run->data->{session_selections} || {},
         });
 
+        # Which way the parent chose to pay, honoured only if the cart actually
+        # offers it. A posted 'instalments' for a cart whose lines disagree is
+        # ignored rather than trusted: the form is the client's, and the offer is
+        # the server's.
+        my $chosen = $form_data->{payment_plan} // 'full';
+        my $offered = grep { $_->{key} eq $chosen } @{ $info->{schedule_options} // [] };
+        $run->update_data( $db,
+            { payment_plan => $offered ? $chosen : 'full' } );
+
         # Whether payment is taken is a function of the program's pricing, not
         # the environment. A $0 total enrolls without the gateway regardless of
         # whether Stripe is configured. Demo/dev (no Stripe key) also skips it.
@@ -133,6 +142,20 @@ method _run_payment_id ($run) {
     return $payment_id;
 }
 
+# The instalments the parent chose, or undef for paying in full.
+#
+# Read back from the cart's own options rather than from the form, so a plan the
+# cart does not offer cannot be had by posting its name.
+method _chosen_instalments ($run, $payment_info) {
+    return undef unless ( $run->data->{payment_plan} // 'full' ) eq 'instalments';
+
+    my ($option) = grep { $_->{key} eq 'instalments' }
+        @{ $payment_info->{schedule_options} // [] };
+    return undef unless $option && @{ $option->{instalments} // [] } > 1;
+
+    return $option->{instalments};
+}
+
 method create_payment ($db, $run, $form_data) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
     
@@ -146,6 +169,13 @@ method create_payment ($db, $run, $form_data) {
     };
     
     my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
+
+    # An instalment plan charges the FIRST instalment now and schedules the rest.
+    # The payment row's amount is therefore the first instalment, not the cart --
+    # which the webhook's amount guard depends on, since it refuses an intent
+    # whose captured amount does not match the row.
+    my $plan = $self->_chosen_instalments( $run, $payment_info );
+    my $charge_now = $plan ? $plan->[0]{amount_cents} : $payment_info->{total};
 
     # Paid enrollment requires a ready Stripe Connect account: tuition must
     # settle into the tenant's own account (Registry is not the merchant of
@@ -196,7 +226,7 @@ method create_payment ($db, $run, $form_data) {
                 waitlist_items   => $run->data->{waitlist_items} || [],
             };
             $raw_db->update('payments', {
-                amount_cents => $payment_info->{total},
+                amount_cents => $charge_now,
                 metadata     => { -json => $updated_meta },
             }, { id => $existing_payment_id });
             # Remove stale line items; fresh ones added below
@@ -211,7 +241,7 @@ method create_payment ($db, $run, $form_data) {
             # superseded intent so at most one confirmable PaymentIntent
             # exists for this payment row. An identical resubmit keeps the
             # token, so Stripe replays the same intent (at most one charge).
-            if ($existing->amount_cents != $payment_info->{total}) {
+            if ($existing->amount_cents != $charge_now) {
                 $payment->rotate_idempotency_token($db);
                 if (my $old_intent = $payment->stripe_payment_intent_id) {
                     my $client = $payment->stripe_client;
@@ -262,8 +292,24 @@ method create_payment ($db, $run, $form_data) {
         # First submit for this run: create the payment record
         $payment = Registry::DAO::Payment->create($db, {
             user_id => $user_id,
-            amount_cents => $payment_info->{total},
+            amount_cents => $charge_now,
+
+            # The instalment columns, when this is one. instalment_seq = 1 is
+            # what the webhook looks for to know the rest still need scheduling,
+            # and instalment_plan is the resolved list the schedule is built
+            # from -- snapshotted here because it is the offer the parent
+            # accepted, and re-resolving it later could produce different dates.
+            ( $plan
+                ? ( instalment_seq   => 1,
+                    instalment_count => scalar @$plan,
+                    due_date         => $plan->[0]{due_date} )
+                : () ),
+
             metadata => {
+                ( $plan
+                    ? ( instalment_plan        => $plan,
+                        instalment_description => 'Program Enrollment' )
+                    : () ),
                 workflow_id => $run->workflow_id,
                 workflow_run_id => $run->id,
                 enrollment_data => $enrollment_data,

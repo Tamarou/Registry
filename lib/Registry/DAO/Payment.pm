@@ -164,6 +164,115 @@ field $_stripe_client = undef;
         return Time::Local::timegm_posix( 0, 0, 12, $3, $2 - 1, $1 - 1900 );
     }
 
+    # Create the Stripe schedule for the instalments after the first, and record
+    # each of them as a payments row.
+    #
+    # Called from a job rather than from the webhook that completes instalment
+    # one, for two reasons. The card only exists once that charge has succeeded,
+    # so this cannot happen at checkout; and a blocking Stripe call inside a
+    # webhook's transaction is the shape of #284 -- the work belongs after the
+    # COMMIT, where a failure can be retried without holding a lock.
+    #
+    # Idempotent by the schedule id: a retried job finds one already recorded and
+    # returns it rather than creating a second schedule that would double-bill
+    # the family.
+    method schedule_remaining_instalments ($db) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+
+        return $stripe_schedule_id if $stripe_schedule_id;
+        return undef unless $self->is_instalment && $instalment_seq == 1;
+
+        my $meta        = $metadata // {};
+        my $instalments = $meta->{instalment_plan} or return undef;
+        my @remaining   = @{$instalments}[ 1 .. $#$instalments ];
+        return undef unless @remaining;
+
+        my $slug = $meta->{tenant_slug}
+            or die "cannot schedule instalments without a tenant slug\n";
+
+        # Where the money goes, and what our share of it is -- read at scheduling
+        # time from the tenant's linked plan, the same authority the one-off
+        # charge path reads in _connect_params.
+        my $acct = $raw->query(
+            'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
+            $slug )->hash->{stripe_connect_account_id}
+            or die "tenant '$slug' has no Connect account to pay instalments into\n";
+
+        my $pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+            $raw, $slug ) * 100;
+
+        my $client = $self->stripe_client;
+
+        # The customer the first charge was made against, and the card it saved.
+        my $intent = $client->retrieve_payment_intent($stripe_payment_intent_id);
+        my $customer = $intent->{customer}
+            or die "instalment 1 of payment $id has no customer to bill\n";
+        my $card = $intent->{payment_method}
+            or die "instalment 1 of payment $id saved no card\n";
+
+        my $description = $meta->{instalment_description} // 'Program Enrollment';
+        my $product = $client->create_product({
+            name                  => $description,
+            'metadata[payment_id]' => $id,
+        });
+
+        my $schedule = $client->create_subscription_schedule(
+            instalment_schedule_params( {
+                customer          => $customer,
+                payment_method    => $card,
+                connect_account   => $acct,
+                revenue_share_pct => $pct,
+                currency          => lc $currency,
+                description       => $description,
+                product           => $product->{id},
+                instalments       => \@remaining,
+            } ) );
+
+        # Recorded in one transaction with the rows it bills, so a crash between
+        # them cannot leave a schedule at Stripe that Registry has no record of.
+        my $txn = $raw->begin;
+
+        $raw->update( 'payments', { stripe_schedule_id => $schedule->{id} },
+            { id => $id } );
+
+        my $seq = 1;
+        for my $part (@remaining) {
+            $seq++;
+            $raw->insert( 'payments', {
+                user_id            => $user_id,
+                amount_cents       => $part->{amount_cents},
+                currency           => $currency,
+                status             => 'pending',
+                instalment_seq     => $seq,
+                instalment_count   => $instalment_count,
+                due_date           => $part->{due_date},
+                stripe_schedule_id => $schedule->{id},
+                metadata           => { -json => {
+                    instalment_of => $id,
+                    tenant_slug   => $slug,
+                    description   => $description,
+                } },
+            } );
+        }
+
+        $txn->commit;
+        $stripe_schedule_id = $schedule->{id};
+        return $schedule->{id};
+    }
+
+    # The instalments of this set that are still owed, earliest first. Morgan's
+    # outstanding balance, and the row an arriving invoice belongs to.
+    sub owed_instalments ( $class, $db, $schedule_id ) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+        return $raw->query( q{
+            SELECT * FROM payments
+             WHERE stripe_schedule_id = ?
+               AND status IN ('pending', 'failed')
+             ORDER BY instalment_seq
+        }, $schedule_id )->expand->hashes
+          ->map( sub { $class->new( %$_ ) } )->to_array;
+    }
+
     # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
     # Stripe metadata values must be plain strings, so refs are dropped; the DB
     # metadata column keeps the full structure. Sorted for deterministic param
@@ -301,9 +410,51 @@ field $_stripe_client = undef;
             description       => $args->{description} // 'Registry Program Enrollment',
             receipt_email     => $args->{receipt_email},
             _idempotency_key  => $self->_charge_idempotency_key,
+
+            # Instalment one is the only charge a parent is present for. The
+            # card has to be kept, or instalments two and three have nothing to
+            # bill -- and asked for HERE, on-session, because that is where the
+            # cardholder can satisfy a challenge. A schedule created later
+            # against a card that was never saved off-session fails on its first
+            # invoice, weeks after anyone is watching.
+            ( $self->is_instalment
+                ? ( setup_future_usage => 'off_session',
+                    customer           => $self->_stripe_customer_for($db) )
+                : () ),
+
             _stripe_metadata_params($user_id, $self->id, $metadata),
             _connect_params($db, $metadata, $amount_cents),
         };
+    }
+
+    # A Stripe customer for this payer, created on first need and remembered on
+    # the payment's metadata. An instalment plan needs one: a saved card belongs
+    # to a customer, and a bare PaymentIntent has nowhere to keep it.
+    method _stripe_customer_for ($db) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+
+        return $metadata->{stripe_customer_id} if $metadata->{stripe_customer_id};
+
+        require Registry::DAO::User;
+        my $user = Registry::DAO::User->find( $raw, { id => $user_id } );
+
+        my $customer = $self->stripe_client->create_customer( {
+            ( $user && $user->email ? ( email => $user->email ) : () ),
+            ( $user && $user->name  ? ( name  => $user->name )  : () ),
+            'metadata[registry_user_id]' => $user_id // '',
+        } );
+
+        # Recorded before the intent is created, so a retry reuses this customer
+        # rather than leaving a trail of them with one saved card each.
+        $raw->query( q{
+            UPDATE payments
+               SET metadata = COALESCE(metadata, '{}'::jsonb)
+                              || jsonb_build_object('stripe_customer_id', ?::text)
+             WHERE id = ?
+        }, $customer->{id}, $id );
+        $metadata->{stripe_customer_id} = $customer->{id};
+
+        return $customer->{id};
     }
 
 
