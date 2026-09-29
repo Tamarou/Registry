@@ -53,6 +53,104 @@ field $_stripe_client = undef;
         return int($amount_cents * $fraction + 0.5);
     }
 
+    # --- Instalments -------------------------------------------------------
+    #
+    # A plan declares its instalment offer (PricingPlan::payment_schedule) and
+    # resolves it to amounts and due dates (instalment_schedule). These two turn
+    # that list into what Stripe needs. Deliberately pure functions: the shape
+    # that decides where a family's money lands should be assertable without a
+    # database or a network.
+
+    # Group consecutive equal instalments into subscription-schedule phases.
+    #
+    # Stripe bills a phase for `iterations` periods at one `unit_amount`, so
+    # three equal charges are one phase of three -- not three phases of one,
+    # which would create three price objects for the same money.
+    #
+    # Unequal amounts are the normal case rather than the exception: $100 in
+    # three is 33.33 / 33.33 / 33.34, and the odd cent has to be on one of them.
+    # That is why this groups instead of assuming a single phase.
+    sub instalment_phases ( $instalments, $currency, $description ) {
+        my @phases;
+        for my $part (@$instalments) {
+            if ( @phases && $phases[-1]{unit_amount} == $part->{amount_cents} ) {
+                $phases[-1]{iterations}++;
+                next;
+            }
+            push @phases, {
+                unit_amount => $part->{amount_cents},
+                iterations  => 1,
+                currency    => $currency,
+                description => $description,
+            };
+        }
+        return \@phases;
+    }
+
+    # The subscription-schedule request for the instalments still to come.
+    #
+    # Instalment one is taken on-session at checkout, where the parent is
+    # present to satisfy a card challenge and the card is saved; this covers
+    # what is left, charged automatically against that card. So `start_date` is
+    # the second instalment's due date, not now.
+    sub instalment_schedule_params ( $args ) {
+        my $instalments = $args->{instalments} // [];
+        my $currency    = lc( $args->{currency} // 'usd' );
+        my $product     = $args->{product};
+
+        my $phases = instalment_phases(
+            $instalments, $currency, $args->{description} // 'Enrollment' );
+
+        my %params = (
+            customer   => $args->{customer},
+            start_date => _epoch_for_date( $instalments->[0]{due_date} ),
+
+            # It ends. An instalment plan is a fixed number of charges, and a
+            # schedule that renewed would bill a family for a camp that finished
+            # in August, every August.
+            end_behavior => 'cancel',
+
+            'default_settings[collection_method]'     => 'charge_automatically',
+            'default_settings[default_payment_method]' => $args->{payment_method},
+
+            # Destination charges, as the one-off path does in _connect_params:
+            # the tenant is the merchant of record and our share is the
+            # application fee. Without these every instalment would settle into
+            # the PLATFORM's balance and the tenant would be paid nothing.
+            'default_settings[transfer_data][destination]' => $args->{connect_account},
+        );
+
+        # Omitted rather than sent as zero. A tenant on the Free plan owes no
+        # revenue share, and an explicit 0 is a value Stripe has no reason to
+        # accept on a schedule that takes no fee.
+        $params{'default_settings[application_fee_percent]'} = $args->{revenue_share_pct}
+            if $args->{revenue_share_pct};
+
+        for my $i ( 0 .. $#$phases ) {
+            my $p = $phases->[$i];
+            $params{"phases[$i][iterations]"} = $p->{iterations};
+            $params{"phases[$i][items][0][price_data][currency]"}    = $p->{currency};
+            $params{"phases[$i][items][0][price_data][unit_amount]"} = $p->{unit_amount};
+            # A product id, not product_data. Stripe refuses inline product
+            # data inside a schedule phase's price_data -- "Received unknown
+            # parameter: product_data. Did you mean product?" -- so the caller
+            # creates the product and passes its id.
+            $params{"phases[$i][items][0][price_data][product]"} = $product;
+            $params{"phases[$i][items][0][price_data][recurring][interval]"} = 'month';
+        }
+
+        return \%params;
+    }
+
+    # YYYY-MM-DD to an epoch second, which is what Stripe takes. Noon UTC rather
+    # than midnight, so a timezone offset cannot move a due date onto the
+    # previous day and charge a family a month early.
+    sub _epoch_for_date ( $date ) {
+        return time() unless defined $date && $date =~ /^(\d{4})-(\d{2})-(\d{2})$/;
+        require Time::Local;
+        return Time::Local::timegm_posix( 0, 0, 12, $3, $2 - 1, $1 - 1900 );
+    }
+
     # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
     # Stripe metadata values must be plain strings, so refs are dropped; the DB
     # metadata column keeps the full structure. Sorted for deterministic param
