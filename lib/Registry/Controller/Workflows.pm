@@ -678,38 +678,72 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $self->render(json => $validation);
     }
     
+    # The subdomain preview and its availability.
+    #
+    # Answers about whichever the applicant gave: an explicit `subdomain` if they
+    # typed one, otherwise the slug derived from the organisation name. That
+    # distinction is the point of #443's UX half -- a derived slug silently
+    # became name_1 when the name was taken, so a squatted name looked like a
+    # name nobody wanted, and the applicant never learned they could pick
+    # another.
     method validate_subdomain {
-        my $dao = $self->dao;
-        my $name = $self->param('name');
-        
-        unless ($name) {
+        my $dao  = $self->dao;
+        my $db   = $dao->db;
+        my $base = Registry::Utility::BaseDomain::primary_base_domain();
+
+        my $typed = $self->param('subdomain');
+        my $name  = $self->param('name');
+
+        unless ( ( defined $typed && length $typed ) || ( defined $name && length $name ) ) {
             return $self->render(
-                inline => '<span class="subdomain-slug">organization</span>.<%= $base_domain %>',
-                format => 'html',
-                base_domain => Registry::Utility::BaseDomain::primary_base_domain()
+                inline      => '<span class="subdomain-slug">organization</span>.<%= $base_domain %>',
+                format      => 'html',
+                base_domain => $base,
             );
         }
-        
-        # Generate slug using same logic as RegisterTenant
-        my $slug = $self->_generate_subdomain_slug($dao->db, $name);
-        my $is_available = !$self->_slug_exists($dao->db, $slug);
-        
-        my $status_class = $is_available ? 'available' : 'unavailable';
-        my $status_text = $is_available ? 'Available' : 'Already taken';
-        
-        my $icon = $is_available ? 'OK' : 'X';
+
+        require Registry::DAO::Tenant;
+
+        my ( $slug, $status, $text );
+
+        if ( defined $typed && length $typed ) {
+            # Their own choosing, normalised rather than rejected: somebody
+            # typing "Clay Studio" into a subdomain box means clay_studio, and
+            # refusing it would be pedantry.
+            $slug = Registry::DAO::Tenant->slug_for_name($typed);
+
+            if ( Registry::DAO::Tenant->slug_is_reserved($slug) ) {
+                ( $status, $text ) = ( 'unavailable', 'Reserved -- please choose another' );
+            }
+            elsif ( Registry::DAO::Tenant->slug_exists( $db, $slug ) ) {
+                # Named, not suffixed. An applicant who asked for `clay` is told
+                # `clay` is gone, so they can pick `clay_pots` themselves rather
+                # than discovering `clay_1` on the confirmation page.
+                ( $status, $text ) = ( 'unavailable', 'Already taken -- please choose another' );
+            }
+            else {
+                ( $status, $text ) = ( 'available', 'Available' );
+            }
+        }
+        else {
+            # Derived from the name, suffixed to something free, as before. The
+            # applicant did not choose it, so there is nothing to refuse.
+            $slug = $self->_generate_subdomain_slug( $db, $name );
+            ( $status, $text ) = ( 'available', 'Available' );
+        }
+
         return $self->render(
             inline => '<span class="subdomain-slug <%= $status_class %>"><%= $slug %></span>.<%= $base_domain %>'
                      . '<div class="subdomain-status <%= $status_class %>">'
                      . '<span class="status-icon"><%= $icon %></span>'
                      . '<%= $status_text %>'
                      . '</div>',
-            format => 'html',
-            base_domain => Registry::Utility::BaseDomain::primary_base_domain(),
-            slug => $slug,
-            status_class => $status_class,
-            status_text => $status_text,
-            icon => $icon,
+            format       => 'html',
+            base_domain  => $base,
+            slug         => $slug,
+            status_class => $status,
+            status_text  => $text,
+            icon         => $status eq 'available' ? 'OK' : 'X',
         );
     }
 
