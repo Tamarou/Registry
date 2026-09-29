@@ -31,6 +31,19 @@ field $refund_increments :param :reader = undef;
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 
+# An instalment of a set, or NULL throughout for an ordinary single charge --
+# which is what every row was before #425. The obligation is a row from the
+# moment of enrolment, so what a family still owes is a query here rather than a
+# call to Stripe per family.
+field $instalment_seq     :param :reader = undef;
+field $instalment_count   :param :reader = undef;
+field $due_date           :param :reader = undef;
+field $stripe_schedule_id :param :reader = undef;
+
+# True when this row is one of several. Asked rather than derived at each call
+# site, so nothing has to remember that the pair is all-or-nothing.
+method is_instalment { return defined $instalment_seq ? 1 : 0 }
+
 field $_stripe_client = undef;
     
     ADJUST {
@@ -1558,6 +1571,10 @@ SQL
         # it, and nothing could ever qualify for it.
         my $child_count = scalar @$children;
 
+        # The plans this cart is actually priced by, collected so the instalment
+        # offer can be decided from all of them together rather than per line.
+        my @plans;
+
         # Calculate cost for each child-session pair
         for my $child (@$children) {
             my $child_key = $child->{id} || 0;
@@ -1586,6 +1603,7 @@ SQL
 
             if (defined $price_cents) {
                 $total += $price_cents;
+                push @plans, $plan if $plan;
 
                 # A nameless child still gets a line naming the session, rather
                 # than one that opens with a dangling separator.
@@ -1612,7 +1630,53 @@ SQL
         return {
             total => $total,
             items => $items,
+            schedule_options =>
+                _schedule_options( $db, $total, \@plans ),
         };
+    }
+
+    # The ways this cart may be paid: always in full, and in instalments when
+    # every priced line agrees on the same schedule.
+    #
+    # Agreement is the rule because a cart is ONE charge. Offering instalments
+    # for the part of a cart that allows them would mean two Stripe objects, two
+    # failure modes and a statement no parent could read -- so a cart whose lines
+    # disagree is paid in full, which every plan permits.
+    sub _schedule_options ( $db, $total_cents, $plans ) {
+        my @options = ( { key => 'full', label => 'Pay in full',
+                          instalments => [ { amount_cents => $total_cents,
+                                             due_date     => undef } ] } );
+
+        # Nothing to split, and no plan to split it by.
+        return \@options unless $total_cents > 0 && @$plans;
+
+        my @declared = map { $_->payment_schedule } @$plans;
+        return \@options if grep { !defined } @declared;
+
+        # Identical terms, not merely "all present". Three instalments and four
+        # do not reconcile into a single schedule, and picking one of them would
+        # charge somebody terms they were not shown.
+        my $first = $declared[0];
+        for my $d (@declared) {
+            return \@options
+                unless $d->{count} == $first->{count}
+                    && $d->{cadence} eq $first->{cadence}
+                    && $d->{surcharge_pct} == $first->{surcharge_pct};
+        }
+
+        # Resolved through the plan, so the arithmetic that keeps every cent has
+        # exactly one home.
+        my $instalments = $plans->[0]->instalment_schedule($total_cents)
+            or return \@options;
+
+        push @options, {
+            key         => 'instalments',
+            label       => sprintf( 'Pay in %d %s instalments',
+                             $first->{count}, $first->{cadence} ),
+            instalments => $instalments,
+        };
+
+        return \@options;
     }
     
     # Async payment methods. These are what the web request path uses: a
