@@ -138,7 +138,7 @@ subtest 'missing platform default plan with NULL FK causes die (A1)' => sub {
 
     my $free_plan = $db->query(q{
         SELECT id, plan_scope, plan_name, plan_type, pricing_model_type,
-               amount_cents, currency, installments_allowed, requirements,
+               amount_cents, currency, requirements,
                pricing_configuration, metadata
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
@@ -163,13 +163,13 @@ subtest 'missing platform default plan with NULL FK causes die (A1)' => sub {
     $db->query(q{
         INSERT INTO registry.pricing_plans
             (id, plan_scope, plan_name, plan_type, pricing_model_type,
-             amount_cents, currency, installments_allowed, requirements,
+             amount_cents, currency, requirements,
              pricing_configuration, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb)
     }, $free_plan->{id}, $free_plan->{plan_scope}, $free_plan->{plan_name},
        $free_plan->{plan_type}, $free_plan->{pricing_model_type},
        $free_plan->{amount_cents}, $free_plan->{currency},
-       $free_plan->{installments_allowed}, $free_plan->{requirements},
+       $free_plan->{requirements},
        $free_plan->{pricing_configuration}, $free_plan->{metadata});
 
     $db->query(q{
