@@ -1,5 +1,7 @@
 % extends 'layouts/default';
-% title 'Welcome to Registry!';
+% title 'Your studio is live';
+% my $plan = stash('plan') || {};
+% my $url  = stash('tenant_url') || '';
 
 <article class="success-container">
     <header class="success-header">
@@ -9,8 +11,8 @@
                 <path d="m9 12 2 2 4-4" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </section>
-        <h1>🎉 Welcome to Registry!</h1>
-        <p class="success-subtitle">Your organization is now set up and ready to go. Here's what happens next:</p>
+        <h1>🎉 Your studio is live</h1>
+        <p class="success-subtitle">Everything is set up and ready to go. Here's what happens next:</p>
     </header>
 
     <section class="tenant-info-card">
@@ -21,16 +23,21 @@
                 <span><%= $organization_name || 'Your Organization' %></span>
             </div>
             <div class="info-item">
-                <label>Your Registry URL:</label>
-                <span><a href="https://<%= $subdomain %>.registry.localhost" target="_blank"><%= $subdomain %>.registry.localhost</a></span>
+                <label>Your URL:</label>
+                <span><a href="<%= $url %>" target="_blank"><%= $subdomain %></a></span>
             </div>
             <div class="info-item">
                 <label>Admin Login:</label>
                 <span><%= $admin_email %></span>
             </div>
             <div class="info-item">
-                <label>Trial Period:</label>
-                <span>30 days (ends <%= $trial_end_date %>)</span>
+                <label>Plan:</label>
+                <span>
+                    <%= $plan->{plan_name} // 'Solo' %>
+                    % if (!$plan->{monthly_amount} && $plan->{revenue_share_percent}) {
+                        &mdash; $0/month plus <%= $plan->{revenue_share_percent} %>% of what you collect
+                    % }
+                </span>
             </div>
         </div>
     </section>
@@ -43,7 +50,7 @@
                 <div class="step-content">
                     <h3>Access Your Dashboard</h3>
                     <p>Log in to your new Registry account and explore the admin dashboard</p>
-                    <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary" target="_blank">Go to Dashboard &rarr;</a>
+                    <a href="<%= $url %>/login" class="btn btn-primary" target="_blank">Go to Dashboard &rarr;</a>
                 </div>
             </article>
 
@@ -76,20 +83,26 @@
         </div>
     </section>
 
-    <section class="trial-info">
-        <h2>📅 Your 30-Day Free Trial</h2>
-        <div class="trial-details">
-            <article class="trial-feature">
+    <section class="cost-info">
+        <h2>💰 What This Costs</h2>
+        <div class="cost-details">
+            <article class="cost-feature">
                 <h4>Full Access</h4>
-                <p>Complete access to all Registry features during your trial period</p>
+                <p>Every feature, no limits, no per-location fees</p>
             </article>
-            <article class="trial-feature">
-                <h4>No Commitment</h4>
-                <p>Cancel anytime before <%= $trial_end_date %> with no charges</p>
+            <article class="cost-feature">
+                <h4>No Monthly Fee</h4>
+                <p>Nothing to cancel and no renewal date to watch for</p>
             </article>
-            <article class="trial-feature">
-                <h4>Automatic Billing</h4>
-                <p>$200/month subscription begins after trial (you'll receive email reminders)</p>
+            <article class="cost-feature">
+                <h4>We Earn When You Do</h4>
+                % if ($plan->{revenue_share_percent}) {
+                    <p><%= $plan->{revenue_share_percent} %>% of the payments families make through your
+                       enrollment page. Nothing when you collect nothing.</p>
+                % } else {
+                    <p>A share of the payments families make through your enrollment page.
+                       Nothing when you collect nothing.</p>
+                % }
             </article>
         </div>
     </section>
@@ -119,8 +132,8 @@
         <h2>Secure Your Account with a Passkey</h2>
         <p>Passkeys are the safest way to sign in — no passwords to remember or lose.</p>
         <div class="passkey-setup-card">
-            <p>Set up a passkey now to get instant, secure access to your Registry dashboard using your device's biometrics or PIN.</p>
-            <a href="https://<%= $subdomain %>.registry.localhost/auth/passkey/register"
+            <p>Set up a passkey now to get instant, secure access to your dashboard using your device's biometrics or PIN.</p>
+            <a href="<%= $url %>/auth/passkey/register"
                class="btn btn-primary passkey-setup-btn" target="_blank">
                 Set Up Passkey Now
             </a>
@@ -131,8 +144,8 @@
     </section>
 
     <footer class="success-actions">
-        <a href="https://<%= $subdomain %>.registry.localhost/login" class="btn btn-primary btn-large">
-            Access Your Registry Dashboard &rarr;
+        <a href="<%= $url %>/login" class="btn btn-primary btn-large">
+            Go to Your Dashboard &rarr;
         </a>
         <p class="login-note">
             Sign in with a passkey or magic link sent to <%= $admin_email %>

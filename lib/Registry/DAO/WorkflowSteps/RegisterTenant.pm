@@ -8,6 +8,7 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowStep) {
 
 use Registry::DAO::Workflow;
+use Registry::Utility::BaseDomain ();
 use Carp qw(croak);
 use DateTime;
 
@@ -30,33 +31,14 @@ method process ( $db, $, $run = undef ) {
         $continuation->update_data( $db, { tenants => $tenants } );
     }
 
-    my $subscription_data = $data->{subscription} || {};
     return {
         tenant            => $data->{tenant},
         organization_name => $data->{organization_name},
         subdomain         => $data->{subdomain},
         admin_email       => $data->{admin_email},
-        trial_end_date    => $self->_format_trial_end_date($subscription_data->{trial_ends_at}),
+        tenant_url        => Registry::Utility::BaseDomain::tenant_url( $data->{subdomain} // '' ),
         success_timestamp => $data->{success_timestamp} || DateTime->now->iso8601(),
     };
-}
-
-method _format_trial_end_date($trial_ends_at) {
-    return 'N/A' unless $trial_ends_at;
-    
-    # Parse the timestamp (could be Unix timestamp)
-    my $dt;
-    if ($trial_ends_at =~ /^\d+$/) {
-        # Unix timestamp
-        $dt = DateTime->from_epoch(epoch => $trial_ends_at);
-    } else {
-        # For now, just return the raw value if not a unix timestamp
-        # In a production system, we'd add proper ISO date parsing
-        return $trial_ends_at;
-    }
-    
-    # Format as human-readable date
-    return $dt->strftime('%B %d, %Y');
 }
 
 # Override template data preparation for RegisterTenant steps
@@ -71,23 +53,44 @@ method prepare_template_data ($db, $run, $params = {}) {
     return $self->SUPER::prepare_template_data($db, $run);
 }
 
+# The completion page used to be told a trial_end_date, invented as "30 days
+# from now" whenever none was stored. Solo has no trial and no end date, so the
+# page now states the plan instead -- read from the same resolver that decided
+# which plan the tenant was provisioned onto, rather than from a literal.
 method prepare_completion_data($db, $run) {
     my $raw_data = $run->data || {};
-
-    # Prefer the stored trial end date from subscription data; fall back to 30 days.
-    my $subscription_data = $raw_data->{subscription} || {};
-    my $trial_end_date = $self->_format_trial_end_date($subscription_data->{trial_ends_at});
-    unless ($trial_end_date && $trial_end_date ne 'N/A') {
-        $trial_end_date = DateTime->now->add(days => 30)->strftime('%B %d, %Y');
-    }
+    my $subdomain = $raw_data->{subdomain};
 
     return {
         organization_name => $raw_data->{organization_name} || $raw_data->{name} || 'organization',
-        subdomain         => $raw_data->{subdomain},
+        subdomain         => $subdomain,
+        tenant_url        => Registry::Utility::BaseDomain::tenant_url( $subdomain // '' ),
         admin_email       => $raw_data->{admin_email},
         admin_name        => $raw_data->{admin_name},
-        trial_end_date    => $trial_end_date,
         billing_email     => $raw_data->{billing_email},
+        plan              => $self->_plan_summary($db, $run),
+    };
+}
+
+# Read from the row that governs the charge -- tenants.platform_pricing_plan_id
+# -- rather than from a resolver the page would have to trust separately. What
+# the confirmation states is then what the tenant will actually be billed.
+method _plan_summary ($db, $run) {
+    my $tenant_id = ( $run->data || {} )->{tenant} or return {};
+
+    my $row = $db->query(q{
+        SELECT p.plan_name,
+               p.amount_cents,
+               p.pricing_configuration->>'percentage' AS pct
+          FROM registry.tenants t
+          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
+         WHERE t.id = ?
+    }, $tenant_id)->hash or return {};
+
+    return {
+        plan_name             => $row->{plan_name},
+        monthly_amount        => $row->{amount_cents},
+        revenue_share_percent => ( $row->{pct} // 0 ) * 100,
     };
 }
 

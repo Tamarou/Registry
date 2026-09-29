@@ -11,6 +11,7 @@ use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::PricingPlan;
+use Registry::DAO::WorkflowSteps::PricingPlanSelection;
 use Mojo::JSON qw( encode_json );
 
 my $test_db = Test::Registry::DB->new;
@@ -19,16 +20,28 @@ my $db      = $dao->db;
 
 $dao->import_workflows(['workflows/tenant-signup.yml']);
 my $workflow = $dao->find( Workflow => { slug => 'tenant-signup' } );
+# The commit point: no payment page any more, so the review button is what
+# resolves the plan and provisions. Same class, same resolver.
 my $payment  = Registry::DAO::WorkflowStep->find( $db,
-    { workflow_id => $workflow->id, slug => 'payment' } );
-my $pricing  = Registry::DAO::WorkflowStep->find( $db,
-    { workflow_id => $workflow->id, slug => 'pricing' } );
-ok $payment && $pricing, 'the signup payment and pricing steps exist'
-    or BAIL_OUT 'workflow shape changed';
+    { workflow_id => $workflow->id, slug => 'review' } );
+ok $payment, 'the signup commit step exists' or BAIL_OUT 'workflow shape changed';
+
+# The plan-choice step is out of the funnel but its class is not, so it is built
+# here rather than looked up. It is used only to enumerate what the platform
+# offers, which is still how this file finds the buyable tier.
+my $choice_workflow = Registry::DAO::Workflow->create( $db, {
+    name => 'Replan Probe', slug => "replan-probe-$$",
+    description => 'Holds a PricingPlanSelection step outside the signup funnel',
+} );
+my $pricing = Registry::DAO::WorkflowSteps::PricingPlanSelection->create( $db, {
+    workflow_id => $choice_workflow->id, slug => 'pricing',
+    class => 'Registry::DAO::WorkflowSteps::PricingPlanSelection',
+    description => 'Select pricing plan',
+} );
 
 # The buyable tier from the shipped seed, reached the way the signup page does.
 my ($solo) = grep { !$_->{metadata}{coming_soon} }
-    @{ $pricing->prepare_pricing_data( $db, $workflow->new_run($db) )->{pricing_plans} };
+    @{ $pricing->prepare_pricing_data( $db, $choice_workflow->new_run($db) )->{pricing_plans} };
 ok $solo, 'the seed offers a buyable tier' or BAIL_OUT 'no buyable plan';
 
 # A run that selected the plan and stored the blob, exactly as PricingPlanSelection does.
@@ -68,6 +81,9 @@ subtest 'a price changed after selection is re-read, not remembered' => sub {
 # validate_plan_selection refuses a coming_soon plan, but that guard lived only
 # at the moment of selection. A run holding a plan that has since been marked
 # coming_soon must not be able to charge it.
+# With no plan page, an unresolvable selection falls through to the launch plan
+# rather than to undef -- so this asserts the shelved tier is not charged, which
+# is the guarantee, rather than asserting a particular substitute.
 subtest 'a plan that became unavailable is not charged' => sub {
     my $shelved = Registry::DAO::PricingPlan->create( $db, {
         plan_scope => 'tenant', plan_name => 'Shelved Tier',

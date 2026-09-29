@@ -1,5 +1,5 @@
 # ABOUTME: Verifies TenantPayment persists the tenant -> platform plan link at signup
-# ABOUTME: and that the no-plan get_subscription_config rate is plan-driven (Free 0%), not hardcoded.
+# ABOUTME: including when nobody chose a plan, which is now every signup.
 use 5.42.0;
 use lib qw(lib t/lib);
 use Test::More;
@@ -9,6 +9,7 @@ use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::WorkflowSteps::TenantPayment;
+use Registry::PriceOps::RevenueShare ();
 use Registry::DAO::User;
 
 my $test_db = Test::Registry::DB->new;
@@ -41,20 +42,23 @@ my $selected_plan = $db->query(q{
 })->hash;
 ok $selected_plan, 'seeded 2% revenue-share plan found';
 
-subtest 'no-plan get_subscription_config is plan-driven (Free 0%)' => sub {
-    plan tests => 2;
+subtest 'a run with no plan selection resolves the launch plan' => sub {
+    plan tests => 3;
 
-    # Fresh run with no selected_pricing_plan -> Free fallback.
     my $run = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
         data        => { profile => { organization_name => 'NoPlan Org' } },
     });
 
+    my $plan = $step->resolve_selected_plan($db, $run);
+    ok $plan, 'a plan resolves even though nothing was selected';
+    is $plan->id, Registry::PriceOps::RevenueShare::platform_launch_plan_id($db),
+        'and it is the plan the platform sells';
+
     my $config = $step->get_subscription_config($db, $run);
-    is $config->{revenue_share_percent}, 0,
-        'revenue_share_percent is 0 (from the platform Free plan)';
-    like $config->{description}, qr/\b0%/,
-        'description reflects the plan-driven 0% rate';
+    is $config->{revenue_share_percent},
+        Registry::PriceOps::RevenueShare::platform_launch_fraction($db) * 100,
+        'the quoted rate is that plan rate, not the Free plan 0%';
 };
 
 subtest 'provisioning persists the selected plan link' => sub {

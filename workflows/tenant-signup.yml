@@ -15,18 +15,10 @@ steps:
   description: Tenant users page
   slug: users
   template: tenant-signup/users
-- class: Registry::DAO::WorkflowSteps::PricingPlanSelection
-  description: Select pricing plan
-  slug: pricing
-  template: tenant-signup/pricing
-- class: Registry::DAO::WorkflowSteps::TenantSignupReview
-  description: Review and confirm setup details
+- class: Registry::DAO::WorkflowSteps::TenantPayment
+  description: Review and create your studio
   slug: review
   template: tenant-signup/review
-- class: Registry::DAO::WorkflowSteps::TenantPayment
-  description: Payment and subscription setup
-  slug: payment
-  template: tenant-signup/payment
 - class: Registry::DAO::WorkflowSteps::RegisterTenant
   description: Tenant onboarding complete
   slug: complete

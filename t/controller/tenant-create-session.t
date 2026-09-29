@@ -11,6 +11,12 @@ use Test::More import => [qw( done_testing is note ok )];
 defer { done_testing };
 
 use Registry::DAO;
+# Explicitly, rather than relying on the incidental load it used to get: the
+# tenant-signup workflow no longer has a PricingPlanSelection step, and that
+# step class is what pulled PricingRelationship in.
+use Registry::DAO::PricingRelationship;
+use Registry::DAO::PricingPlan;
+use Registry::DAO::User;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows process_workflow);
 use Data::Dumper;
@@ -62,9 +68,6 @@ END {
             admin_email      => 'alice@example.com',
             admin_username   => 'Alice',
             terms_accepted   => '1',
-            collect_payment_method => '1',
-            # Pricing plan selection - using Registry Standard plan (ID will be looked up)
-            selected_plan_id => $standard_plan ? $standard_plan->id : 'cb4e92cf-193a-4832-b785-608c4b02dac8',
         }
     );
     

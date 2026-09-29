@@ -6,7 +6,7 @@ use experimental 'signatures';
 package Registry::PriceOps::RevenueShare;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction platform_launch_fraction refund_application_fee_for_tenant);
+our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id refund_application_fee_for_tenant);
 
 use Registry::DAO;
 
@@ -102,15 +102,31 @@ sub platform_default_fraction ($db) {
 # moment a second one is seeded, and a resolver that picks between candidates
 # is the ambiguity this exists to remove. Dies rather than guess.
 sub platform_launch_fraction ($db) {
+    return _coerce_pct( _launch_plan_row($db)->{pct}, 'platform launch plan' );
+}
+
+# platform_launch_plan_id($db) -> uuid
+#
+# The id of that same plan. Signup links every new tenant to it, because the
+# alternative -- leaving tenants.platform_pricing_plan_id NULL -- resolves to
+# the Free plan's 0% in revenue_share_fraction_for_tenant above. A signup flow
+# that stopped asking which plan and did not link one would quietly onboard
+# every tenant at no revenue share at all.
+sub platform_launch_plan_id ($db) {
+    return _launch_plan_row($db)->{id};
+}
+
+# _launch_plan_row($db) -> hashref { id, pct, plan_name }
+#
+# Current versions only, and for a sharper reason than the default above: this
+# dies when more than one plan claims the mark. A revised launch plan leaves the
+# retired version still carrying launch_rate, so without the filter the FIRST
+# revise of the launch plan would take down the signup page that quotes the rate.
+sub _launch_plan_row ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
-    # Current versions only, and for a sharper reason than the default above: this
-    # sub dies when more than one plan claims the mark. A revised launch plan
-    # leaves the retired version still carrying launch_rate, so without the filter
-    # the FIRST revise of the launch plan would take down the signup page that
-    # quotes the rate.
     my $rows = $db->query(q{
-        SELECT pricing_configuration->>'percentage' AS pct, plan_name
+        SELECT id, pricing_configuration->>'percentage' AS pct, plan_name
           FROM registry.pricing_plans
          WHERE metadata->>'launch_rate' = 'true'
            AND superseded_at IS NULL
@@ -126,7 +142,7 @@ sub platform_launch_fraction ($db) {
       . "). Exactly one plan carries the rate the platform advertises."
         if $rows->size > 1;
 
-    return _coerce_pct( $rows->first->{pct}, 'platform launch plan' );
+    return $rows->first;
 }
 
 # refund_application_fee_for_tenant($db, $tenant_slug) -> 1 or 0

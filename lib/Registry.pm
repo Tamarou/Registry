@@ -3,6 +3,7 @@
 use 5.42.0;
 use Object::Pad;
 use Registry::DAO;
+use Registry::Utility::BaseDomain ();
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::DomainVerification;
@@ -1096,8 +1097,7 @@ class Registry :isa(Mojolicious) {
     # wrongly taken as a tenant slug. 'localhost' is included so the test
     # convention <slug>.localhost keeps working.
     method _base_domains {
-        my $raw = $ENV{REGISTRY_BASE_DOMAINS} // 'tinyartempire.com,localhost';
-        return grep { length } map { s/^\s+|\s+$//gr } map { lc } split /,/, $raw;
+        return Registry::Utility::BaseDomain::base_domains();
     }
 
     method _extract_tenant_from_subdomain ($c) {

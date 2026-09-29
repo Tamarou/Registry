@@ -9,7 +9,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Registry::DAO;
     field $id :param :reader = undef;
     field $name :param :reader;
-    field $slug :param :reader //= lc( $name =~ s/\s+/_/gr );
+    field $slug :param :reader //= __PACKAGE__->slug_for_name($name);
     field $created_at :param :reader;
     field $canonical_domain :param :reader = undef;
     field $magic_link_expiry_hours :param :reader = 24;
@@ -37,6 +37,48 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return lc($slug) =~ s/-/_/gr;
     }
 
+    # Derive a slug from an organisation name. The single place that does this.
+    #
+    # There used to be three, and they disagreed: the profile page's live
+    # preview and Workflows::_generate_subdomain_slug both stripped punctuation
+    # and joined with hyphens, while provision only replaced whitespace. So
+    # "Clay & Kiln Studio" was previewed as clay-kiln-studio, told the applicant
+    # it was Available, and then provisioned as clay_&_kiln_studio -- a schema
+    # name and a hostname containing an ampersand. The tenant helper's routing
+    # regex is /\A[a-z][a-z0-9_]{0,62}\z/, so that studio could never have been
+    # reached at the URL its own confirmation page handed it.
+    #
+    # Underscores rather than hyphens because this is also an unquoted schema
+    # name in clone_schema; see normalize_slug above.
+    sub slug_for_name ( $class, $name ) {
+        my $slug = lc( $name // '' );
+        $slug =~ s/[^a-z0-9]+/_/g;
+        $slug =~ s/^_+|_+$//g;
+        $slug = substr( $slug, 0, 63 );
+        $slug =~ s/_+$//;
+        return length($slug) ? $slug : 'organization';
+    }
+
+    # The same slug, plus whatever suffix it takes to be free. The signup page
+    # tells an applicant their subdomain is "Available" before they commit, so
+    # the check and the INSERT have to agree about which name that is --
+    # otherwise the preview offers name_1 and provisioning still tries name and
+    # dies on tenants_slug_key.
+    #
+    # Only for a DERIVED slug. A caller who names a slug gets the one they
+    # named, or the unique-index error; quietly provisioning someone into
+    # acme_1 when they asked for acme would be worse than failing.
+    sub available_slug_for_name ( $class, $db, $name ) {
+        my $base = $class->slug_for_name($name);
+        my $slug = $base;
+        my $n    = 1;
+        while ( $class->slug_exists( $db, $slug ) ) {
+            $slug = "${base}_${n}";
+            last if ++$n > 999;
+        }
+        return $slug;
+    }
+
     # create does NOT normalise a supplied slug, deliberately. Rewriting a value
     # the caller chose breaks find-then-create: t/playwright/setup_registration_test_data.pl
     # searches for 'super-awesome-cool-pottery' and creates with the same
@@ -48,7 +90,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # -- and the tenants_slug_is_lowercase constraint refuses the unsafe case
     # outright rather than quietly changing it.
     sub create ( $class, $db, $data ) {
-        $data->{slug} //= lc( $data->{name} =~ s/\s+/_/gr );
+        $data->{slug} //= $class->slug_for_name( $data->{name} );
         $class->SUPER::create( $db, $data );
     }
 
@@ -158,7 +200,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # lowercasing applied only when the slug was DERIVED from the name, so
         # a slug supplied through signup kept its capitals all the way into
         # clone_schema.
-        $data->{slug} //= $data->{name} =~ s/\s+/_/gr;
+        $data->{slug} //= $class->available_slug_for_name( $db, $data->{name} );
         $data->{slug} = $class->normalize_slug( $data->{slug} );
 
         # Filter to only the columns that exist in the tenants table.

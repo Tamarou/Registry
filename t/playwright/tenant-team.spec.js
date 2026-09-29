@@ -67,48 +67,22 @@ test.describe('Alex to Jordan to Morgan: an acquired tenant is a workable one', 
     await registryPage.waitForLoadState('networkidle');
 
     // ----------------------------------------------------------------
-    // Pricing step (optional — skipped when no plans are configured)
-    // ----------------------------------------------------------------
-    const pricingVisible = await registryPage.locator('h1, h2').filter({ hasText: /plan|pricing/i })
-      .isVisible({ timeout: 2000 }).catch(() => false);
-    if (pricingVisible) {
-      const planInput = registryPage.locator('input[name="selected_plan_id"]').first();
-      if (await planInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-        // Hidden styled radio -- force past actionability checks.
-        await planInput.check({ force: true });
-      }
-      await registryPage.click('button[type="submit"]');
-      await registryPage.waitForLoadState('networkidle');
-    }
-
-    // ----------------------------------------------------------------
-    // Review step — check terms and click the JS-gated proceed button
+    // Review step — the last page. Checking terms enables the button, and the
+    // button provisions: nobody picks a plan and nobody is asked for a card.
     // ----------------------------------------------------------------
     const termsInput = registryPage.locator('input[name="terms_accepted"]');
-    if (await termsInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await termsInput.check();
-      const proceedBtn = registryPage.locator('#proceed-to-payment');
-      await expect(proceedBtn).toBeEnabled({ timeout: 5000 });
-      await proceedBtn.click();
-      await registryPage.waitForLoadState('networkidle');
-    }
-
-    // ----------------------------------------------------------------
-    // Payment step — no Stripe keys in test mode, provisions directly
-    // ----------------------------------------------------------------
-    await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-    await expect(registryPage.locator('body')).toContainText(/payment|add payment method|trial/i, { timeout: 5000 });
-
-    const paymentSubmit = registryPage.locator('button[type="submit"]').first();
-    await expect(paymentSubmit).toBeVisible({ timeout: 10000 });
-    await paymentSubmit.click();
+    await expect(termsInput).toBeVisible({ timeout: 5000 });
+    await termsInput.check();
+    const proceedBtn = registryPage.locator('#create-studio');
+    await expect(proceedBtn).toBeEnabled({ timeout: 5000 });
+    await proceedBtn.click();
     await registryPage.waitForLoadState('networkidle', { timeout: 15000 });
 
     // ----------------------------------------------------------------
     // Completion — assert welcome page rendered
     // ----------------------------------------------------------------
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
-    await expect(registryPage.locator('body')).toContainText(/welcome to registry/i, { timeout: 10000 });
+    await expect(registryPage.locator('body')).toContainText(/your studio is live/i, { timeout: 10000 });
 
     // ----------------------------------------------------------------
     // Capture state.slug from the DB (do not derive in JS)

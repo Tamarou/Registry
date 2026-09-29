@@ -45,8 +45,13 @@ subtest 'Subdomain validation endpoint works' => sub {
         name => 'Test Organization'
     })->status_is(200);
 
-    # Should return HTML with slug and tinyartempire.com domain
-    $tx->content_like(qr/test-organization/)
+    # Underscores, not hyphens. The preview has to be the slug provisioning
+    # will actually use, and that one is a PostgreSQL schema name as well as a
+    # DNS label -- clone_schema does not quote it everywhere, so a hyphen is a
+    # syntax error. This endpoint used to answer 'test-organization' while
+    # Tenant::provision produced 'test_organization'.
+    $tx->content_like(qr/test_organization/)
+      ->content_unlike(qr/test-organization/)
       ->content_like(qr/\.tinyartempire\.com/);
 };
 

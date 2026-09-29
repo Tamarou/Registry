@@ -18,7 +18,7 @@
                 <div class="step-number">2</div>
                 <div class="step-content">
                     <h4>Your Program</h4>
-                    <p>Name, description, and billing details</p>
+                    <p>Name, description, and where to reach you</p>
                 </div>
             </div>
             <div class="step">
@@ -31,8 +31,8 @@
             <div class="step">
                 <div class="step-number">4</div>
                 <div class="step-content">
-                    <h4>You're Live</h4>
-                    <p>Start your free trial and begin enrolling students</p>
+                    <h4>Review &amp; Launch</h4>
+                    <p>Check the details, press the button, start enrolling students</p>
                 </div>
             </div>
         </div>

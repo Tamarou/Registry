@@ -7,6 +7,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::WorkflowSteps::TenantPayment;
+use Registry::PriceOps::RevenueShare ();
 use Registry::DAO::Workflow;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::WorkflowRun;
@@ -37,8 +38,9 @@ my $payment_step = Registry::DAO::WorkflowSteps::TenantPayment->create($db, {
     description => 'Payment step'
 });
 
-# A run with no selected_pricing_plan: the Solo/Free fallback the two
-# configuration subtests below exercise.
+# A run with no selected_pricing_plan -- which is now every signup, since the
+# flow stopped asking. The two configuration subtests below exercise what the
+# resolver hands the page in that case.
 my $no_plan_run = Registry::DAO::WorkflowRun->create($db, {
     workflow_id => $workflow->id,
     data => encode_json({})
@@ -65,30 +67,32 @@ subtest 'Subscription configuration' => sub {
     ok($config->{features} && @{$config->{features}} > 0, 'Features list provided');
 };
 
-subtest 'Solo tier revenue share percent is plan-driven (Free 0%)' => sub {
-    plan tests => 4;
+subtest 'revenue share percent is the rate the platform sells' => sub {
+    plan tests => 3;
 
-    # The constant must be gone; the rate is now derived from the seeded
-    # platform Free plan (the no-plan fallback IS the Free plan, 0%).
+    # The constant must be gone; the rate is derived from the plan a signup
+    # actually lands on.
     ok( !Registry::DAO::WorkflowSteps::TenantPayment->can('REVENUE_SHARE_PERCENT'),
         'REVENUE_SHARE_PERCENT constant removed from TenantPayment'
     );
 
     my $config = $payment_step->get_subscription_config($db, $no_plan_run);
 
-    # The no-plan fallback rate comes from the platform Free plan (0%), not 2.5.
-    is( $config->{revenue_share_percent}, 0,
-        'revenue_share_percent is 0 (from the platform Free plan)'
-    );
-    isnt( $config->{revenue_share_percent}, 2.5,
-        'revenue_share_percent is no longer the hardcoded 2.5'
+    # Read from the database rather than written here as a literal: a test that
+    # hardcodes 2.5 passes on the day someone changes the plan and the page
+    # starts quoting something else.
+    my $launch_percent =
+        Registry::PriceOps::RevenueShare::platform_launch_fraction($db) * 100;
+
+    is( $config->{revenue_share_percent}, $launch_percent,
+        'the page quotes the launch plan rate'
     );
 
-    # The description must contain the same percentage value so they cannot drift.
-    my $pct = $config->{revenue_share_percent};
-    like( $config->{description},
-        qr/\Q$pct\E%/,
-        'description string contains the revenue share percent'
+    # The old failure mode this guards: with no plan resolved the config fell
+    # back to the platform Free plan, so signup quoted 0% while the charge path
+    # -- had anything linked a plan -- charged something else.
+    isnt( $config->{revenue_share_percent}, 0,
+        'and not the Free plan 0% that a NULL plan link resolves to'
     );
 };
 
