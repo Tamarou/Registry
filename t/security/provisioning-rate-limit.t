@@ -4,6 +4,22 @@
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
+# The limit is production-only: there is no adversary in a test or on a
+# developer's machine, and both legitimately provision in bursts -- the
+# Playwright suite shares one database across its whole run and would trip any
+# honest number. Which means this file is the only place the guard is exercised,
+# so it runs in production mode on purpose.
+#
+# Stripe keys have to be present for the same reason: process() fails closed in
+# production when they are absent, and that refusal would mask this one.
+BEGIN {
+    $ENV{MOJO_MODE}                = 'production';
+    # Registry refuses to start in production without one, correctly.
+    $ENV{MOJO_SECRET}            //= 'rate-limit-test-secret-not-a-real-one';
+    $ENV{STRIPE_SECRET_KEY}      //= 'sk_test_rate_limit_not_a_real_key';
+    $ENV{STRIPE_PUBLISHABLE_KEY} //= 'pk_test_rate_limit_not_a_real_key';
+}
+
 use 5.42.0;
 use warnings;
 use utf8;
@@ -14,6 +30,7 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowSteps::TenantPayment;
 
 my $t_db = Test::Registry::DB->new;
@@ -29,6 +46,39 @@ $dao->current_tenant('registry');
 
 my $LIMIT = Registry::DAO::WorkflowSteps::TenantPayment->PROVISIONINGS_PER_HOUR;
 cmp_ok $LIMIT, '>', 0, "there is an hourly provisioning limit ($LIMIT)";
+
+# The guard has to be off outside production, or the e2e suite cannot run -- and
+# a guard that is off everywhere it is tested is not tested at all. Both halves
+# are asserted: this file forces production mode above, and the check below
+# proves that is what makes the difference.
+subtest 'the limit applies in production and nowhere else' => sub {
+    my $step = Registry::DAO::WorkflowSteps::TenantPayment->new(
+        id => 1, slug => 'review', workflow_id => 1, description => 'probe',
+        class => 'Registry::DAO::WorkflowSteps::TenantPayment',
+    );
+
+    my $workflow = Registry::DAO::Workflow->create( $db, {
+        name => 'Limit Mode Probe', slug => "limit-mode-$$",
+        description => 'Holds a run with a full window',
+    } );
+    my $run = $workflow->new_run($db);
+    $run->update_data( $db, { __remote_address => '198.51.100.7' } );
+
+    for my $i ( 1 .. $LIMIT ) {
+        $db->query(
+            'INSERT INTO registry.tenants (name, slug, created_from_ip) VALUES (?, ?, ?)',
+            "Mode Filler $i", "mode_filler_$i", '198.51.100.7' );
+    }
+
+    ok $step->_provisioning_rate_limited( $db, $run ),
+        'a full window is refused in production';
+
+    {
+        local $ENV{MOJO_MODE} = 'development';
+        ok !$step->_provisioning_rate_limited( $db, $run ),
+            'and not refused in development, where bursts are legitimate';
+    }
+};
 
 # Walks the whole funnel over HTTP and returns the review URL.
 #

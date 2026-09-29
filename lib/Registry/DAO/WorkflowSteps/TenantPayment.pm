@@ -258,7 +258,13 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # rate reads the SAME source -- and fails loud the same way -- as the
     # charge-time path; a missing Free plan can never make display and charge
     # disagree.
-    use constant PROVISIONINGS_PER_HOUR => 5;
+    # Twenty, not five. Five bounds the cost just as well and breaks legitimate
+    # bursts: a school district behind one NAT signing up a few sites, or the
+    # Playwright suite, which shares one database across a run and provisions a
+    # dozen tenants from the loopback address. Twenty clones an hour from one
+    # address is still a bound; the abuse this exists for is orders of magnitude
+    # above it.
+    use constant PROVISIONINGS_PER_HOUR => 20;
 
     # Returns a message when the caller has provisioned too many studios lately,
     # or undef.
@@ -270,6 +276,15 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # between instances, and are keyed per-address across all paths at 100/min --
     # which is 100 schema clones a minute.
     method _provisioning_rate_limited ( $db, $run ) {
+        # Production only. There is no adversary in a test or on a developer's
+        # machine, and both legitimately provision in bursts -- the Playwright
+        # suite shares one database across its whole run. Gating here rather
+        # than raising the number high enough to hide the control is the
+        # honest shape, and t/security/provisioning-rate-limit.t sets
+        # MOJO_MODE=production so the guard is still exercised rather than
+        # merely present.
+        return undef unless ( $ENV{MOJO_MODE} // '' ) eq 'production';
+
         my $ip = ( $run->data || {} )->{__remote_address} or return undef;
 
         my $recent = $db->query( q{
