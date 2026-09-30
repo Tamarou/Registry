@@ -37,6 +37,42 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return lc($slug) =~ s/-/_/gr;
     }
 
+    # Subdomains the platform keeps for itself, or that Postgres will not lend.
+    #
+    # A slug is three things at once, and each of them can be squatted:
+    #
+    #   www         Registry.pm's _extract_tenant_from_subdomain returns undef
+    #               for it explicitly, so a tenant provisioned as www could
+    #               never be reached at its own URL. Inert by construction, and
+    #               holding the name forever.
+    #   registry    the platform schema. clone_schema would be asked to build a
+    #               tenant on top of the thing it copies FROM.
+    #   public,     Postgres' own. A schema here fails to build, if we are lucky
+    #   pg_*        loudly.
+    #   the rest    hostnames the platform may need to serve from. A tenant on
+    #               `api` or `status` shadows any future use of that name, and
+    #               taking it back means moving somebody's live studio.
+    #
+    # This is a squatting fix (#443) but it is also a routing one: the first two
+    # are hazards today, not merely inconveniences later.
+    my %RESERVED_SLUGS = map { $_ => 1 } qw(
+        www registry public admin api app assets billing blog cdn dashboard dev
+        docs ftp help imap mail mx ns ns1 ns2 pop pop3 smtp staging static
+        status support test webmail
+    );
+
+    sub slug_is_reserved ( $class, $slug ) {
+        return 0 unless defined $slug;
+        my $s = lc $slug;
+        return 1 if $RESERVED_SLUGS{$s};
+
+        # pg_catalog, pg_toast, pg_temp_1 and every other reserved prefix
+        # Postgres refuses to let anybody create.
+        return 1 if $s =~ /^pg_/;
+
+        return 0;
+    }
+
     # Derive a slug from an organisation name. The single place that does this.
     #
     # There used to be three, and they disagreed: the profile page's live
@@ -72,7 +108,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         my $base = $class->slug_for_name($name);
         my $slug = $base;
         my $n    = 1;
-        while ( $class->slug_exists( $db, $slug ) ) {
+        # Reserved counts as taken. An organisation actually called "API"
+        # derives exactly the reserved word, and the derivation is where that
+        # has to be caught -- provision takes whatever it is handed.
+        while ( $class->slug_exists( $db, $slug ) || $class->slug_is_reserved($slug) ) {
             $slug = "${base}_${n}";
             last if ++$n > 999;
         }
@@ -202,6 +241,56 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return 1;
     }
 
+    # Tenants nobody has ever signed into, older than $days.
+    #
+    # An inert tenant holds its subdomain exactly as firmly as a real one, and
+    # nothing releases it (#443). This finds the candidates; it does not act on
+    # them, deliberately. Freeing a slug means dropping a schema, which is
+    # irreversible and is a decision for a person -- an automatic reaper that got
+    # the predicate slightly wrong would delete a studio.
+    #
+    # "Never signed into" is answerable because there is no password login: the
+    # first way into any tenant is a magic link, so a tenant whose
+    # magic_link_tokens table holds no consumed row has never been entered.
+    # Registering a passkey needs an authenticated session, so it cannot be the
+    # first way in and cannot hide a login from this.
+    sub inert ( $class, $db, %opt ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $days = $opt{older_than_days} // 30;
+
+        my @inert;
+        for my $row ( $db->query( q{
+            SELECT id, name, slug, created_at
+              FROM registry.tenants
+             WHERE slug <> 'registry'
+               AND created_at < now() - ($1 || ' days')::interval
+             ORDER BY created_at
+        }, $days )->hashes->each )
+        {
+            # A schema that is not there cannot be entered either, and a
+            # half-provisioned one is its own problem (#330) rather than this
+            # one -- so it is reported rather than skipped.
+            my $tokens = to_regclass_exists( $db, $row->{slug}, 'magic_link_tokens' );
+            unless ($tokens) {
+                push @inert, { %$row, reason => 'no magic_link_tokens table' };
+                next;
+            }
+
+            my $used = $db->query( sprintf(
+                'SELECT count(*) FROM %s.magic_link_tokens WHERE consumed_at IS NOT NULL',
+                $db->dbh->quote_identifier( $row->{slug} ) ) )->array->[0];
+
+            push @inert, { %$row, reason => 'never signed into' } unless $used;
+        }
+
+        return \@inert;
+    }
+
+    sub to_regclass_exists ( $db, $schema, $table ) {
+        return $db->query( 'SELECT to_regclass(?) IS NOT NULL AS ok',
+            "$schema.$table" )->hash->{ok} ? 1 : 0;
+    }
+
     method set_primary_user ( $db, $user ) {
         $db->insert(
             'tenant_users',
@@ -274,6 +363,14 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # clone_schema.
         $data->{slug} //= $class->available_slug_for_name( $db, $data->{name} );
         $data->{slug} = $class->normalize_slug( $data->{slug} );
+
+        # available_slug_for_name only guards the DERIVED path; a caller naming
+        # a slug gets the one they named, deliberately. So the refusal belongs
+        # here, the last point before clone_schema builds a schema that shadows
+        # the platform's own hostname -- or, for 'registry', builds a tenant on
+        # top of the schema it is copying from.
+        Carp::croak "'$data->{slug}' is a reserved subdomain and cannot be a tenant"
+            if $class->slug_is_reserved( $data->{slug} );
 
         # Filter to only the columns that exist in the tenants table.
         # Callers may pass a full profile hash; extra keys (billing_*, admin_*,

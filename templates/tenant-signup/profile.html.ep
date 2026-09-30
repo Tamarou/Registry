@@ -23,7 +23,24 @@
              hx-trigger="input changed delay:500ms"
              hx-post="/tenant-signup/validate-subdomain"
              hx-target="#subdomain-preview"
-             hx-include="[name='name']" />
+             hx-include="[name='name'],[name='subdomain']" />
+    </div>
+
+    <div>
+      <label for="subdomain">Your web address</label>
+      %# Optional, and empty by default: the name usually derives something
+      %# sensible. It exists so a taken name is the applicant's to resolve --
+      %# a derived slug silently became name_1, so a squatted name looked like a
+      %# name nobody wanted and nobody learned they could pick another (#443).
+      <input type="text"
+             id="subdomain"
+             name="subdomain"
+             value="<%= stash('subdomain') // '' %>"
+             placeholder="leave blank to use your organization name"
+             hx-trigger="input changed delay:500ms"
+             hx-post="/tenant-signup/validate-subdomain"
+             hx-target="#subdomain-preview"
+             hx-include="[name='name'],[name='subdomain']" />
     </div>
 
     <div>

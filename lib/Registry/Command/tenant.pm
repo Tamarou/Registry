@@ -14,6 +14,7 @@ class Registry::Command::tenant :isa(Mojolicious::Command) {
           commands:
             * list - list available tenant
             * show - show details about a tenant
+            * inert [days] - tenants nobody has ever signed into (default 30 days)
 
         END
 
@@ -47,6 +48,34 @@ class Registry::Command::tenant :isa(Mojolicious::Command) {
 
             print "\n";
 
+            return;
+        }
+
+        # Tenants holding a subdomain that nobody has ever used (#443).
+        #
+        # Reports; does not reap. Freeing a slug means dropping a schema, which
+        # is irreversible, and a predicate slightly wrong in an automatic job
+        # would delete somebody's studio. A person reads this and decides.
+        if ( $cmd eq 'inert' ) {
+            my ($days) = @args;
+            $days = 30 unless defined $days && $days =~ /^[0-9]+$/;
+
+            require Registry::DAO::Tenant;
+            my $inert = Registry::DAO::Tenant->inert( $dao->db, older_than_days => $days );
+
+            unless (@$inert) {
+                say "No tenants older than $days days have gone unused.";
+                return;
+            }
+
+            say sprintf 'Tenants older than %d days that nobody has signed into (%d):',
+                $days, scalar @$inert;
+            say sprintf '  %-30s %-24s %s', $_->{slug},
+                substr( $_->{created_at}, 0, 19 ), $_->{reason}
+              for @$inert;
+            say '';
+            say 'Each of these holds its subdomain. Releasing one means dropping';
+            say 'its schema, which cannot be undone -- check before you do.';
             return;
         }
 

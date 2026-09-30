@@ -75,6 +75,14 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             return { next_step => $self->id, errors => [$error] };
         }
 
+        # A subdomain the applicant asked for and cannot have. Refused here, at
+        # the commit, so they are told which word is the problem -- rather than
+        # discovering a silent _1 suffix on the confirmation page, or hitting
+        # tenants_slug_key as a 500 (#443).
+        if ( my $why = $self->_subdomain_unavailable( $db, $run ) ) {
+            return { next_step => $self->id, errors => [$why] };
+        }
+
         # Nothing to collect and nothing to charge. Solo has no monthly base
         # -- the platform is paid out of the revenue share on each customer
         # payment -- so the button on this page is the commit, not a step
@@ -264,6 +272,27 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # dozen tenants from the loopback address. Twenty clones an hour from one
     # address is still a bound; the abuse this exists for is orders of magnitude
     # above it.
+    # Why the applicant cannot have the subdomain they typed, or undef.
+    #
+    # Only for a subdomain they CHOSE. A derived one is suffixed to something
+    # free by available_slug_for_name, and refusing a name nobody asked for
+    # would be a dead end rather than a correction.
+    method _subdomain_unavailable ( $db, $run ) {
+        my $data = $run->data || {};
+        my $typed = $data->{subdomain} // '';
+        return undef unless length $typed;
+
+        my $slug = Registry::DAO::Tenant->slug_for_name($typed);
+
+        return "'$slug' is reserved for the platform. Please choose another web address."
+            if Registry::DAO::Tenant->slug_is_reserved($slug);
+
+        return "'$slug' is already taken. Please choose another web address."
+            if Registry::DAO::Tenant->slug_exists( $db, $slug );
+
+        return undef;
+    }
+
     use constant PROVISIONINGS_PER_HOUR => 20;
 
     # Returns a message when the caller has provisioned too many studios lately,
@@ -591,7 +620,15 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
         # Merge subscription billing data into the provision call
         my $org_name = $profile->{name} || $data->{name} || 'Organization';
-        my $slug     = $profile->{slug} || $data->{slug};
+
+        # A subdomain the applicant typed is their choosing, and it wins over
+        # deriving one from the organisation name. Normalised rather than taken
+        # verbatim, because the box accepts "Clay Studio" and a slug is a schema
+        # name (#443).
+        my $slug = $profile->{slug} || $data->{slug};
+        if ( !$slug && ( $data->{subdomain} // '' ) ne '' ) {
+            $slug = Registry::DAO::Tenant->slug_for_name( $data->{subdomain} );
+        }
 
         my %provision_data = (
             name  => $org_name,
