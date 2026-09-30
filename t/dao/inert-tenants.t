@@ -35,12 +35,12 @@ sub tenant_aged ( $slug, $days ) {
     return $tenant;
 }
 
-sub slugs_of ( $inert ) { return [ sort map { $_->{slug} } @$inert ] }
+sub slugs_of ( $result ) { return [ sort map { $_->{slug} } @{ $result->{tenants} } ] }
 
 subtest 'a tenant nobody has signed into is inert' => sub {
     tenant_aged( 'never_used', 60 );
 
-    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 30 );
+    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 30 )->{tenants};
     ok scalar( grep { $_->{slug} eq 'never_used' } @$inert ),
         'it is reported';
 
@@ -64,7 +64,7 @@ subtest 'a tenant somebody has signed into is not' => sub {
     $tenant_db->query(
         'UPDATE magic_link_tokens SET consumed_at = now() WHERE id = ?', $token->id );
 
-    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 30 );
+    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 30 )->{tenants};
     ok !scalar( grep { $_->{slug} eq 'actually_used' } @$inert ),
         'it is not reported';
 };
@@ -72,20 +72,20 @@ subtest 'a tenant somebody has signed into is not' => sub {
 subtest 'a tenant created yesterday is nobody business yet' => sub {
     tenant_aged( 'brand_new', 1 );
 
-    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 30 );
+    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 30 )->{tenants};
     ok !scalar( grep { $_->{slug} eq 'brand_new' } @$inert ),
         'too young to be called abandoned';
 
     # An applicant who signed up this morning and has not opened their email yet
     # is not squatting.
-    my $all = Registry::DAO::Tenant->inert( $db, older_than_days => 0 );
-    ok scalar( grep { $_->{slug} eq 'brand_new' } @$all ),
-        'but the window is the callers: with zero days it is reported';
-    note 'zero-day window: ' . join ', ', @{ slugs_of($all) };
+    my $all = Registry::DAO::Tenant->inert( $db, older_than_days => 1 );
+    ok scalar( grep { $_->{slug} eq 'brand_new' } @{ $all->{tenants} } ),
+        'but the window is the callers: with a one-day window it is reported';
+    note 'one-day window: ' . join ', ', @{ slugs_of($all) };
 };
 
 subtest 'the platform schema is never reported' => sub {
-    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 0 );
+    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 1 )->{tenants};
     ok !scalar( grep { $_->{slug} eq 'registry' } @$inert ),
         'registry is not a tenant anybody signs into';
 };
@@ -94,7 +94,7 @@ subtest 'the platform schema is never reported' => sub {
 # says so: a predicate slightly wrong in an automatic reaper would drop a live
 # studio's schema, which no backup restores in a hurry.
 subtest 'reporting does not reap' => sub {
-    Registry::DAO::Tenant->inert( $db, older_than_days => 0 );
+    Registry::DAO::Tenant->inert( $db, older_than_days => 1 );
 
     for my $slug (qw( never_used actually_used brand_new )) {
         ok $db->query( 'SELECT 1 FROM registry.tenants WHERE slug = ?', $slug )->hash,

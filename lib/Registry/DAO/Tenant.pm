@@ -241,7 +241,58 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return 1;
     }
 
-    # Tenants nobody has ever signed into, older than $days.
+    # How long a tenant may sit unused before anybody calls it abandoned, or undef
+    # when the platform never does.
+    #
+    # Ninety days by default -- perigrin's number, and a decision rather than a
+    # round one: a studio that signs up before a school year and opens in
+    # September would be reclaimed by an impatient window, and reclaiming means
+    # dropping a schema.
+    #
+    # How long a tenant may sit unused before anybody calls it abandoned, or undef
+    # when the platform never does.
+    #
+    # Three states, and they are not two (perigrin):
+    #
+    #   NULL  ->  90       not set: the platform has no opinion, the default stands
+    #   0     ->  undef    never: no tenant is ever considered inert
+    #   N     ->  N        N days
+    #
+    # Keeping "not set" and 0 apart is the whole point. Collapsing them either
+    # way is a bug with teeth: NULL reading as never silently switches off a
+    # report an operator thinks is running, and 0 reading as NULL switches on a
+    # 90-day window somebody explicitly turned off. It is why
+    # platform_settings.value is nullable and says so in a COMMENT.
+    #
+    # A row rather than an env var, because Alex should be able to see and change
+    # it without a deploy -- which is Pillar 5 of PriceOps, and the part #427
+    # measures as absent.
+    #
+    # Junk falls back to the default rather than to 0, for the same reason in the
+    # other direction: a value nobody can parse should not land on either
+    # extreme, and this report is the input to a deletion.
+    sub inert_after_days ( $class, $db ) {
+        require Registry::DAO::PlatformSetting;
+        my $raw = Registry::DAO::PlatformSetting->get( $db, 'inert_tenant_days' );
+
+        # NULL, and whitespace-as-NULL: a row somebody blanked is somebody
+        # having no opinion, not somebody choosing never.
+        return 90 unless defined $raw && $raw =~ /\S/;
+
+        my $v = lc $raw;
+        $v =~ s/^\s+|\s+$//g;
+
+        # 0 is never. The words are accepted too, because "never" is what a
+        # person types when a form asks them, and refusing it would make the
+        # setting a puzzle.
+        return undef if $v =~ /\A(?: 0 | never | off | none | no )\z/x;
+
+        return 0 + $v if $v =~ /\A[1-9][0-9]*\z/;
+
+        return 90;
+    }
+
+    # Tenants nobody has ever signed into, older than the configured window.
     #
     # An inert tenant holds its subdomain exactly as firmly as a real one, and
     # nothing releases it (#443). This finds the candidates; it does not act on
@@ -256,7 +307,16 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # first way in and cannot hide a login from this.
     sub inert ( $class, $db, %opt ) {
         $db = $db->db if $db isa Registry::DAO;
-        my $days = $opt{older_than_days} // 30;
+
+        # A caller naming a window gets it, even when reclaiming is switched off:
+        # the CLI's argument is for looking, and looking is not reclaiming.
+        my $days = $opt{older_than_days} // $class->inert_after_days($db);
+
+        # Switched off is reported as switched off, never as an empty list. The
+        # two look identical to anyone reading output, and an operator who acted
+        # on "found nothing" would be wrong about "not looking".
+        return { enabled => 0, window_days => undef, tenants => [] }
+            unless defined $days;
 
         my @inert;
         for my $row ( $db->query( q{
@@ -283,7 +343,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             push @inert, { %$row, reason => 'never signed into' } unless $used;
         }
 
-        return \@inert;
+        return { enabled => 1, window_days => $days, tenants => \@inert };
     }
 
     sub to_regclass_exists ( $db, $schema, $table ) {
