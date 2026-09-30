@@ -9,6 +9,7 @@ use Object::Pad;
 use Mojo::Pg;
 use Registry::DAO::Object;
 use Registry::DAO::User;
+use Registry::DAO::PlatformSetting;
 use Registry::DAO::Tenant;
 use Registry::DAO::Location;
 use Registry::DAO::Project;
