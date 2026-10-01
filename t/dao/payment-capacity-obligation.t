@@ -296,13 +296,14 @@ subtest 'a seat held from an earlier pass counts against this cart capacity' => 
     $seen{ $_->{status} }++ for @{ $db->select('enrollments', ['status'],
         { payment_id => $payment->id })->hashes };
     is $seen{active}, 2, 'pass 1 seats exactly the two available places';
-    is $seen{waitlisted}, 1, 'and waitlists the third child';
+    is $seen{cancelled}, 1, 'and queues the third child';
 
-    # Remove the waitlisted row, as an admin transfer or a manual cleanup would.
+    # Remove the released row, as an admin transfer or a manual cleanup would.
     # While it sits on (session, student, payment), create_for_payment's
     # DO NOTHING arbiter masks the miscount; without it the insert lands.
     $db->delete('enrollments',
-        { payment_id => $payment->id, session_id => $session->id, status => 'waitlisted' });
+        { payment_id => $payment->id, session_id => $session->id,
+          status => 'cancelled' });
 
     my $second = settle( reload($payment) );
     my $seated = $db->query(
@@ -414,8 +415,8 @@ subtest 'a closed row does not consume a seat its sibling needs' => sub {
                                { session => $session, child => $waiting } );
 
     settle($payment);
-    is status_for_child($payment, $session, $waiting), 'waitlisted',
-        'the third child is waitlisted while the session is full';
+    is status_for_child($payment, $session, $waiting), 'cancelled',
+        'the third child is queued while the session is full';
 
     $db->update('enrollments', { status => 'cancelled' },
         { payment_id => $payment->id, session_id => $session->id,
@@ -455,7 +456,7 @@ subtest 'a held seat counts regardless of where it sits in the cart' => sub {
 
     is status_for_child($payment, $session, $holder), 'active',
         'the held seat is untouched';
-    is status_for_child($payment, $session, $unseated), 'waitlisted',
+    is status_for_child($payment, $session, $unseated), 'cancelled',
         'and the child listed before it is refused, not squeezed into a full session';
 
     my $filled = $db->query(
@@ -465,14 +466,15 @@ subtest 'a held seat counts regardless of where it sits in the cart' => sub {
     is $filled, 2, 'the 2-seat session holds exactly two';
 };
 
-subtest 'a waitlisted child is not re-adjudicated when a seat frees up' => sub {
+subtest 'a demoted child is not re-adjudicated when a seat frees up' => sub {
     # An earlier delivery demoted this child and owed their share back. A
     # redelivery after a seat frees cannot actually promote them --
     # create_for_payment conflicts on (session_id, student_id, payment_id)
     # against the row the demotion wrote and does nothing -- but without the
     # skip it still takes the seating branch, which credits %granted for a seat
     # that was never created and mails a confirmation to a family whose child
-    # is on the waitlist with a refund outstanding.
+    # is on the waitlist with a refund outstanding. The seat they freed is
+    # offered through the waitlist, which is the queue they are actually in.
     my $session = a_session(2);
     my $waiting = a_child();
     my $second  = a_child();
@@ -482,8 +484,8 @@ subtest 'a waitlisted child is not re-adjudicated when a seat frees up' => sub {
     # Both seats taken by outsiders, so the first pass waitlists both children.
     occupy( $session, 2 );
     settle( reload($payment) );
-    is status_for_child( $payment, $session, $waiting ), 'waitlisted',
-        'the first pass waitlisted them';
+    is status_for_child( $payment, $session, $waiting ), 'cancelled',
+        'the first pass queued them';
 
     my $notes_before = $db->query(
         q{SELECT COUNT(*) FROM notifications WHERE user_id = ?},
@@ -498,7 +500,7 @@ subtest 'a waitlisted child is not re-adjudicated when a seat frees up' => sub {
 
     settle( reload($payment) );
 
-    is status_for_child( $payment, $session, $waiting ), 'waitlisted',
+    is status_for_child( $payment, $session, $waiting ), 'cancelled',
         'the redelivery does not claim to seat a child it cannot seat';
 
     # This count is the only assertion here that catches the regression -- the
@@ -506,10 +508,10 @@ subtest 'a waitlisted child is not re-adjudicated when a seat frees up' => sub {
     # ensure_enrollment_confirmation dedupes per ENROLMENT, on (user_id, type,
     # session_id, child_id, enrollment_id), so a child who already holds a
     # confirmed enrolment here would have the spurious call swallowed and the
-    # count would stay flat with the bug present. They are waitlisted on the
-    # first pass and never seated, so no enrolment of theirs is ever confirmed
-    # and the count genuinely rises. Fragile in the missed-detection direction
-    # only; there is no false-failure path.
+    # count would stay flat with the bug present. They are queued on the first
+    # pass and never seated, so no enrolment of theirs is ever confirmed and the
+    # count genuinely rises. Fragile in the missed-detection direction only;
+    # there is no false-failure path.
     is $db->query(q{SELECT COUNT(*) FROM notifications WHERE user_id = ?},
         $parent->id)->array->[0], $notes_before,
         'and sends no enrollment confirmation for a seat that was not created';

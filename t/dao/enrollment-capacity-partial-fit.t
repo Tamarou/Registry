@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Payment;
 use Registry::DAO::Enrollment;
+use Registry::DAO::Waitlist;
 use Registry::DAO::Family;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_partial_fit';
@@ -87,6 +88,10 @@ sub finalize ($payment) {
     return ( $owed, $err );
 }
 
+sub waiting_in ($session) {
+    return scalar @{ Registry::DAO::Waitlist->get_session_waitlist($db, $session->id) };
+}
+
 sub statuses_for ($payment) {
     my %n;
     $n{ $_->{status} }++
@@ -107,9 +112,10 @@ subtest 'two siblings into one free seat fill it, rather than both losing it' =>
     is $err, '', 'the settlement completes';
 
     my $seats = statuses_for($payment);
-    is $seats->{active},     1, 'one sibling takes the remaining seat';
-    is $seats->{waitlisted}, 1, 'the other is waitlisted';
-    is $owed, 10000, 'and only the waitlisted child is refunded';
+    is $seats->{active},    1, 'one sibling takes the remaining seat';
+    is $seats->{cancelled}, 1, 'the other gives theirs up';
+    is waiting_in($session), 1, 'and waits in the queue for the next one';
+    is $owed, 10000, 'and only that child is refunded';
 
     my $filled = $db->query(
         q{SELECT COUNT(*) FROM enrollments
@@ -125,7 +131,8 @@ subtest 'a sibling group that cannot fit at all is refunded whole' => sub {
     my $payment = a_cart($session, \@kids);
 
     my ($owed) = finalize($payment);
-    is statuses_for($payment)->{waitlisted}, 2, 'both are waitlisted';
+    is statuses_for($payment)->{cancelled}, 2, 'both give up their seats';
+    is waiting_in($session), 2, 'and both wait in the queue';
     is $owed, 20000, 'and both shares are owed';
 };
 
@@ -142,7 +149,8 @@ subtest 'an unpriced child does not take the settlement down with them' => sub {
 
     my ($owed, $err) = finalize($payment);
     is $err, '', 'the settlement does not die';
-    is statuses_for($payment)->{waitlisted}, 1, 'the child is still waitlisted';
+    is statuses_for($payment)->{cancelled}, 1, 'the child is still demoted';
+    is waiting_in($session), 1, 'and still reaches the queue';
 
     my $meta = $db->select('payments', ['metadata'], { id => $payment->id })
         ->expand->hash->{metadata};

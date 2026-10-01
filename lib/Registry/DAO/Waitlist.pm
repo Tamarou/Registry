@@ -259,7 +259,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         #  WHERE status IS DISTINCT FROM 'cancelled'.
         #
         # Filtering to ('active','pending') saw neither a 'waitlisted' row --
-        # routine on seat rows since demote_to_waitlisted -- nor a NULL-status
+        # what Enrollment->waitlist leaves behind -- nor a NULL-status
         # one, because IN never matches NULL. Both are covered by the index, so
         # join_waitlist admitted an entry whose acceptance would later raise a
         # unique violation: a free waitlist acceptance that dies.
