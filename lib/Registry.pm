@@ -459,6 +459,37 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # The request path as it is safe to write down.
+        #
+        # The real path, not the matched route pattern: /:workflow/:run/:step
+        # would collapse every page of every funnel into one line, and which
+        # workflow and which step is the entire signal this line exists for. The
+        # run id is what stitches a visitor's requests into a single journey.
+        #
+        # But one of those paths is a credential. GET /auth/magic/:token is
+        # still redeemable when this line is written -- that request only renders
+        # the confirmation page, and the POST after it establishes the session --
+        # so logging it verbatim puts a working login in the log store for as
+        # long as the token lives. Logger's _redact cannot help: it knows
+        # key=value shapes and card-like digit runs, not path segments.
+        #
+        # Masked by capture NAME rather than by matching the path against a list
+        # of routes, so a route added later with a :token placeholder is covered
+        # without anybody remembering that this line exists.
+        my sub loggable_path ($c) {
+            my $path = $c->req->url->path->to_string;
+
+            for my $captures ( @{ $c->match->stack // [] } ) {
+                for my $name ( grep { /token/ } keys %$captures ) {
+                    my $value = $captures->{$name};
+                    next unless defined $value && length $value;
+                    $path =~ s/\Q$value\E/[REDACTED]/g;
+                }
+            }
+
+            return $path;
+        }
+
         $self->hook(
             after_dispatch => sub ($c) {
                 # Emit a structured access log line while context is still set,
@@ -467,7 +498,7 @@ class Registry :isa(Mojolicious) {
                 $c->app->log->debug(
                     sprintf '%s %s %s',
                         $c->req->method,
-                        $c->req->url->path,
+                        loggable_path($c),
                         $c->res->code // 0,
                 ) if $c->app->log->can('set_context');
 
