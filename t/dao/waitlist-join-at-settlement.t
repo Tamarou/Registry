@@ -179,4 +179,79 @@ subtest 'a waiting child with no location falls back to where the session meets'
     is $rows->[0]{location_id}, $loc->id, 'at the location the session meets at';
 };
 
+# The other half of that fallback: a session with no located event at all. The
+# lookup returns no rows, ->array is undef, and the unguarded deref raised
+# "Can't use an undefined value as an ARRAY reference" inside the captured
+# settlement rather than skipping the child.
+subtest 'a session with nowhere to meet skips the child instead of raising' => sub {
+    my $unlocated = $dao->create(Session => {
+        name => 'Queue Unlocated', start_date => '2026-01-01', end_date => '2026-12-31',
+        status => 'published', capacity => 10, metadata => {},
+    });
+    my $fifth = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'Fifth Kid', birth_date => '2018-01-01', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+
+    my $nowhere = Registry::DAO::Payment->create($db, {
+        user_id      => $parent->id,
+        amount_cents => 0,
+        metadata     => {
+            enrollment_items => [],
+            waitlist_items   => [ { session_id => $unlocated->id, child_id => $fifth->id } ],
+            tenant_slug => undef,
+        },
+    });
+
+    my $ok = eval { $nowhere->finalize_enrollment($db); 1 };
+    ok $ok, 'the settlement survives it' or diag "raised: $@";
+    is scalar @{ waitlist_rows( $unlocated, $fifth ) }, 0,
+        'and the child is skipped rather than queued nowhere';
+};
+
+# waitlist carries UNIQUE (session_id, student_id) and is_student_waitlisted
+# only looks at ('waiting','offered'), so a child who declined an offer, let one
+# expire, or accepted one that was later dropped was invisible to the guard and
+# fatal to the insert -- inside a transaction Stripe has already captured, which
+# rolls back the whole settlement and reproduces identically on every retry.
+subtest 'a child who left the queue once can rejoin it' => sub {
+    for my $status (qw( declined expired accepted )) {
+        my $kid = Registry::DAO::Family->add_child($db, $parent->id, {
+            child_name => "Rejoin $status", birth_date => '2018-01-01', grade => '3',
+            medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+        });
+
+        # The state the queue itself leaves behind: decline_offer and
+        # expire_old_offers both park the row at position 0.
+        Registry::DAO::Waitlist->create($db, {
+            session_id => $full->id, location_id => $loc->id,
+            student_id => $kid->id, parent_id => $parent->id,
+            status => $status, position => 0,
+        });
+
+        my $rejoin = Registry::DAO::Payment->create($db, {
+            user_id      => $parent->id,
+            amount_cents => 0,
+            metadata     => {
+                enrollment_items => [],
+                waitlist_items   => [
+                    { session_id => $full->id, child_id => $kid->id,
+                      location_id => $loc->id },
+                ],
+                tenant_slug => undef,
+            },
+        });
+
+        my $ok = eval { $rejoin->finalize_enrollment($db); 1 };
+        ok $ok, "a '$status' entry does not take the settlement down"
+            or diag "raised: $@";
+
+        my $rows = waitlist_rows( $full, $kid );
+        is scalar(@$rows), 1, "'$status': still exactly one entry, not a second";
+        is $rows->[0]{status}, 'waiting',
+            "'$status': and it is back in the queue rather than left out of it";
+        ok $rows->[0]{position}, "'$status': with a position, not parked at 0";
+    }
+};
+
 done_testing;
