@@ -258,11 +258,18 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
     #
     #   seated     -- active or pending. A seat in hand: leave it, and count it
     #                 against this cart's own capacity.
-    #   waitlisted -- already demoted by an earlier pass. Do not re-owe.
+    #   waitlisted -- off its seat but not released, which is what
+    #                 Enrollment->waitlist writes. No settlement path produces
+    #                 one: demotion releases the seat instead, so that a freed
+    #                 place can actually be offered back. Classified rather
+    #                 than folded into `closed` because the row still occupies
+    #                 enrollments_session_student_type_live.
     #   closed     -- cancelled. `enrollments_status_check` bounds this column to
     #                 pending|active|cancelled|waitlisted, so cancelled is the
-    #                 whole category: a terminal drop another system owns, and
-    #                 not ours to re-adjudicate.
+    #                 whole category: a terminal drop another system owns, or a
+    #                 seat this cart released and was owed back for. Either way
+    #                 not ours to re-adjudicate -- which is also what makes
+    #                 demotion idempotent across redeliveries.
     #   foreign    -- no row of ours, but a live row belongs to a DIFFERENT
     #                 payment: a free enrolment, an admin add, an earlier
     #                 purchase. Nothing to seat, and inserting would collide
@@ -364,10 +371,10 @@ SQL
         #
         # Narrowing this to the seat-holding statuses is the tempting mistake,
         # and it hides two rows that collide anyway: a waitlisted row, which
-        # the platform's own capacity gate writes and nothing in lib/ ever
-        # moves back out of, and an admin-created row, which carries no
-        # payment_id at all. The caller then finds out by raising inside a
-        # settlement Stripe has already captured.
+        # Enrollment->waitlist writes and nothing in lib/ ever moves back out
+        # of, and an admin-created row, which carries no payment_id at all. The
+        # caller then finds out by raising inside a settlement Stripe has
+        # already captured.
         #
         # cancelled is excluded because the index excludes it -- that seat
         # really is free. student_type is in the predicate for the same reason:
@@ -406,47 +413,93 @@ SQL
 
     # Move a paid child to the waitlist because the seat went while they paid.
     #
+    # Two tables are called "the waitlist" and only one of them is the queue.
+    # The seat row in `enrollments` is RELEASED -- cancelled, with a
+    # drop_reason, the same shape the duplicate-seat branch writes -- and the
+    # child is put on `waitlist`, which is what process_waitlist, the admin
+    # count and the parent dashboard all read. Writing 'waitlisted' on the
+    # enrollments row and stopping there made a queue nothing read: never
+    # offered a freed seat, in no count, visible to no parent.
+    #
+    # Releasing the seat is not bookkeeping tidiness, it is what makes the
+    # offer keepable. enrollments_session_student_type_live covers every status
+    # but cancelled, so a retained row refuses the INSERT accept_offer makes,
+    # and the queue entry becomes an offer that dies when the family takes it.
+    #
+    # Position is the one the queue hands out, so a demoted child goes behind
+    # whoever was already waiting. Arguable -- they held the seat and lost it
+    # through nobody's fault -- but jumping them ahead is a policy, and it
+    # belongs to whoever sets policy, not to this function.
+    #
     # UPDATE first, INSERT only if it changed nothing. create_for_payment's
     # arbiter is DO NOTHING on (session_id, student_id, payment_id), which is
     # exactly the triple a prior pass would have written -- so on a retry, or
-    # any path where the active row already exists, a plain waitlisted insert is
-    # a silent no-op and the child stays enrolled in a session with no room.
+    # any path where the active row already exists, a plain insert is a silent
+    # no-op and the child stays enrolled in a session with no room.
     sub demote_to_waitlisted ($class, $db, $data) {
         $db = $db->db if $db isa Registry::DAO;
 
         my $student_id = $data->{student_id} // $data->{family_member_id};
 
-        # Returns whether this call actually moved someone off a seat. A
-        # redelivery re-runs the whole cart, and a child already waitlisted by
-        # an earlier pass has already been accounted for -- re-owing a refund
-        # for them charges the tenant twice for one lost seat.
+        # drop_reason because this is not a drop. The unfiltered admin readers
+        # would otherwise show a family dropping a session nobody asked to
+        # leave; this says who released it and why.
+        my %released = (
+            status      => 'cancelled',
+            drop_reason => 'seat_unavailable_refunded',
+        );
+
+        # Whether this call actually moved someone off a seat. A redelivery
+        # re-runs the whole cart, and a child already released by an earlier
+        # pass has already been accounted for -- re-owing a refund for them
+        # charges the tenant twice for one lost seat.
         my $changed = $db->update(
             $class->table,
-            { status => 'waitlisted' },
+            \%released,
             {   session_id => $data->{session_id},
                 student_id => $student_id,
                 payment_id => $data->{payment_id},
                 # Only a seat in hand is demotable. A predicate of
-                # "not already waitlisted" also matches a cancelled row, which
+                # "not already released" also matches a cancelled row, which
                 # un-cancels an admin's drop and re-owes its share.
                 status     => { -in => $class->seat_holding_statuses },
             },
         )->rows;
 
-        return 1 if $changed;
+        unless ($changed) {
+            # Nothing updated: either there is no row yet, or there is one and
+            # it is already off its seat. Only the first is a new demotion.
+            my $existing = $db->select(
+                $class->table, ['status'],
+                {   session_id => $data->{session_id},
+                    student_id => $student_id,
+                    payment_id => $data->{payment_id},
+                },
+            )->hash;
+            return 0 if $existing;
 
-        # Nothing updated: either there is no row yet, or there is one and it is
-        # already waitlisted. Only the first is a new demotion.
-        my $existing = $db->select(
-            $class->table, ['status'],
-            {   session_id => $data->{session_id},
-                student_id => $student_id,
-                payment_id => $data->{payment_id},
-            },
-        )->hash;
-        return 0 if $existing;
+            $class->create_for_payment($db, { %$data, %released });
+        }
 
-        $class->create_for_payment($db, { %$data, status => 'waitlisted' });
+        # After the release, never before. join_items declines a child holding a
+        # live enrollment row -- which is exactly what we have just given up, so
+        # joining first silently queues nobody.
+        require Registry::DAO::Waitlist;
+        Registry::DAO::Waitlist->join_items( $db, $data->{parent_id},
+            [ { session_id => $data->{session_id}, child_id => $student_id } ] );
+
+        # join_items declines silently, and not all of its reasons are benign: a
+        # session with no located event has nowhere to put the child, because
+        # waitlist.location_id is NOT NULL. The runbook tells an operator that a
+        # demoted child is in the queue for that session, so a demotion that
+        # queued nobody says so rather than leaving the discrepancy to be found.
+        # Not fatal: this runs inside a settlement Stripe has already captured,
+        # and the release and the refund are both still right.
+        warn "demote_to_waitlisted: released student $student_id from session "
+           . "$data->{session_id} without queueing them\n"
+          unless Registry::DAO::Waitlist->is_student_waitlisted(
+              $db, $data->{session_id}, $student_id );
+
         return 1;
     }
 

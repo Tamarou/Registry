@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# ABOUTME: When the seat is gone at capture, the child is waitlisted and the payment owes a refund.
+# ABOUTME: When the seat is gone at capture, the child is queued and the payment owes a refund.
 # ABOUTME: The demotion survives an existing active row, which a plain insert would not.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Payment;
 use Registry::DAO::Enrollment;
+use Registry::DAO::Waitlist;
 use Registry::DAO::Family;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_capacity_demotion';
@@ -97,7 +98,7 @@ sub enrollment_status ($payment, $session) {
     return $row ? $row->{status} : undef;
 }
 
-subtest 'a seat lost during payment is waitlisted, not enrolled' => sub {
+subtest 'a seat lost during payment is queued, not enrolled' => sub {
     my $session = a_session(1);
     my $child   = a_child();
     my $payment = a_paid_cart({ session => $session, child => $child });
@@ -108,8 +109,10 @@ subtest 'a seat lost during payment is waitlisted, not enrolled' => sub {
     my $owed  = $payment->finalize_enrollment($db);
     $tx->commit;
 
-    is enrollment_status($payment, $session), 'waitlisted',
-        'the loser is waitlisted rather than enrolled';
+    is enrollment_status($payment, $session), 'cancelled',
+        'the loser gives up the seat rather than holding one with no room';
+    is scalar @{ Registry::DAO::Waitlist->get_session_waitlist($db, $session->id) }, 1,
+        'and waits in the queue the platform reads';
     is $owed, 10000, 'and the payment owes that child\'s share back';
 
     my $after = Registry::DAO::Payment->find($db, { id => $payment->id });
@@ -120,8 +123,8 @@ subtest 'a seat lost during payment is waitlisted, not enrolled' => sub {
 subtest 'a demotion over an existing active row actually changes it' => sub {
     # create_for_payment's arbiter is DO NOTHING on
     # (session_id, student_id, payment_id), which is exactly the triple a prior
-    # pass wrote. A plain waitlisted insert here is a silent no-op and the child
-    # stays enrolled in a session that has no room.
+    # pass wrote. A plain insert here is a silent no-op and the child stays
+    # enrolled in a session that has no room.
     my $session = a_session(1);
     my $child   = a_child();
     my $payment = a_paid_cart({ session => $session, child => $child });
@@ -145,7 +148,7 @@ subtest 'a demotion over an existing active row actually changes it' => sub {
         parent_id => $parent->id, payment_id => $payment->id,
     });
 
-    is enrollment_status($payment, $session), 'waitlisted',
+    is enrollment_status($payment, $session), 'cancelled',
         'the existing row is updated, not skipped by the conflict arbiter';
 };
 
@@ -180,8 +183,10 @@ subtest 'a mixed cart enrolls what fits and refunds only what does not' => sub {
     my $owed = $payment->finalize_enrollment($db);
     $tx->commit;
 
-    is enrollment_status($payment, $roomy), 'active',  'the child with room is enrolled';
-    is enrollment_status($payment, $full),  'waitlisted', 'the child without is waitlisted';
+    is enrollment_status($payment, $roomy), 'active',    'the child with room is enrolled';
+    is enrollment_status($payment, $full),  'cancelled', 'the child without gives up the seat';
+    is scalar @{ Registry::DAO::Waitlist->get_session_waitlist($db, $full->id) }, 1,
+        'and is queued for the session that was full';
     is $owed, 10000, 'only the lost seat is owed back, not the whole cart';
 };
 

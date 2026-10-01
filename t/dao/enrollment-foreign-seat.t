@@ -276,8 +276,8 @@ subtest 'a cancelled foreign row leaves the seat available' => sub {
 };
 
 # The duplicate-seat branch owes money. Every OTHER branch in that loop is
-# idempotent because it WROTE something a later pass reads back: demotion leaves
-# a waitlisted row, a drop leaves a cancelled one. This branch used to write
+# idempotent because it WROTE something a later pass reads back: both demotion
+# and a drop leave a cancelled row. This branch used to write
 # nothing, so cart_seat_state answered 'foreign' forever and every redelivery
 # owed the same child again -- under a fresh refund_seq, which means a fresh
 # Stripe idempotency key, which means Stripe does NOT deduplicate it.
@@ -441,10 +441,11 @@ subtest 'a negative share does not silently net off a sibling real debt' => sub 
 };
 
 # The operator runbook tells whoever is clearing a stranded refund_pending row
-# to look at the enrollment state to work out WHICH failure they are holding:
-# a demoted child leaves a waitlisted row, a duplicate seat leaves a cancelled
-# one. That is a documented diagnostic, so it is a promise the code has to keep
-# -- and it is invisible to every other test here, which look at payments.
+# to look at the enrollment state to work out WHICH failure they are holding.
+# Both routes release the seat, so `status` alone no longer tells them apart and
+# `drop_reason` is the whole diagnostic. That is documented, so it is a promise
+# the code has to keep -- and it is invisible to every other test here, which
+# look at payments.
 subtest 'the two routes to refund_pending leave distinguishable enrollment state' => sub {
     # Route 1: the seat was gone, so the child was demoted.
     my $full   = a_session(1);
@@ -467,13 +468,14 @@ subtest 'the two routes to refund_pending leave distinguishable enrollment state
     my $dup = a_paid_cart( $session, $child, 5000 );
     Registry::DAO::Payment->find($db, { id => $dup->id })->finalize_enrollment($db);
 
-    for my $case ( [ 'a demoted child', $gone, 'waitlisted' ],
-                   [ 'a duplicate seat', $dup, 'cancelled' ] ) {
+    for my $case ( [ 'a demoted child', $gone, 'seat_unavailable_refunded' ],
+                   [ 'a duplicate seat', $dup, 'duplicate_seat_refunded' ] ) {
         my ( $name, $payment, $want ) = @$case;
         is_deeply $db->query(
-            'SELECT status FROM enrollments WHERE payment_id = ?', $payment->id
-        )->arrays->flatten->to_array, [$want],
-            "$name leaves exactly one '$want' row for its payment";
+            'SELECT status, drop_reason FROM enrollments WHERE payment_id = ?',
+            $payment->id
+        )->arrays->flatten->to_array, [ 'cancelled', $want ],
+            "$name leaves exactly one cancelled row reading '$want'";
         is $db->query( 'SELECT status FROM payments WHERE id = ?', $payment->id
         )->array->[0], 'refund_pending', "$name reaches refund_pending";
     }

@@ -857,16 +857,20 @@ field $_stripe_client = undef;
 
             # cancelled, refunded, or anything else terminal belongs to whoever
             # put it there. Re-adjudicating it un-does an admin drop and re-owes
-            # a share another system has already returned.
+            # a share another system has already returned. An earlier delivery's
+            # own demotion lands here too -- it releases the seat it is giving
+            # up -- so this is what stops a redelivery owing that share twice.
             next if $held eq 'closed';
 
-            # An earlier delivery already demoted this child and owed their
-            # share back. Re-adjudicating cannot promote them -- create_for_payment
-            # conflicts on (session_id, student_id, payment_id) against the very
-            # row that demotion wrote and does nothing -- but it would still
-            # credit %granted for a seat that was never created and send a
-            # confirmation email to a family whose child is on the waitlist.
-            # The phantom grant then under-counts capacity for the next item in
+            # A row off its seat but not released -- what Enrollment->waitlist
+            # writes. No settlement path produces one (demotion releases the
+            # seat, and lands on 'closed' above), so this is a row somebody
+            # else put here. Re-adjudicating cannot promote it --
+            # create_for_payment conflicts on (session_id, student_id,
+            # payment_id) against the very row and does nothing -- but it would
+            # still credit %granted for a seat that was never created and send a
+            # confirmation email to a family whose child is not enrolled. The
+            # phantom grant then under-counts capacity for the next item in
             # this session, which is the defect the pre-pass above exists to
             # prevent, reintroduced one item at a time.
             next if $held eq 'waitlisted';

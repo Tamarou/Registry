@@ -95,14 +95,23 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             # where the session actually meets beats dropping the child in
             # silence, which is a promise made on screen and kept nowhere.
             # Ordered, so the same session always resolves to the same location.
-            $location_id ||= $db->query( q{
-                SELECT e.location_id
-                  FROM session_events se
-                  JOIN events e ON e.id = se.event_id
-                 WHERE se.session_id = ? AND e.location_id IS NOT NULL
-                 ORDER BY e.time, e.id
-                 LIMIT 1
-            }, $session_id )->array->[0];
+            #
+            # ->array is undef when nothing matches, so the deref is guarded: a
+            # session with no located event -- a draft, or one whose events were
+            # removed -- made this raise "Can't use an undefined value as an
+            # ARRAY reference" inside a settlement Stripe had already captured,
+            # instead of falling through to the skip two lines down.
+            unless ($location_id) {
+                my $meets = $db->query( q{
+                    SELECT e.location_id
+                      FROM session_events se
+                      JOIN events e ON e.id = se.event_id
+                     WHERE se.session_id = ? AND e.location_id IS NOT NULL
+                     ORDER BY e.time, e.id
+                     LIMIT 1
+                }, $session_id )->array;
+                $location_id = $meets ? $meets->[0] : undef;
+            }
             next unless $location_id;
 
             # Already seated or already waiting is the state we want, so these
@@ -111,7 +120,38 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
             # croak from join_waitlist caught there would be indistinguishable
             # from a database error that has aborted the transaction under us.
             next if $class->is_student_enrolled( $db, $session_id, $child_id );
-            next if $class->is_student_waitlisted( $db, $session_id, $child_id );
+
+            # One row per (session, student), enforced by
+            # waitlist_session_id_student_id_key -- so a child can hold a row
+            # here in a status that is not waiting: they declined an offer, let
+            # one expire, or accepted one that was later dropped.
+            # is_student_waitlisted looks only at ('waiting','offered') and sees
+            # none of those, which left the insert to raise a unique violation
+            # inside that captured transaction. The settlement rolls back whole,
+            # and every redelivery reproduces it identically.
+            #
+            # Moved back to waiting rather than skipped: a family asking to wait
+            # -- or one whose paid seat just vanished -- is asking for the row
+            # they already have, and leaving it 'declined' answers a request
+            # with the record of an older, opposite one. At the end of the
+            # queue, because that is where they are joining it from.
+            my $held = $db->select( $class->table, [ 'id', 'status' ],
+                { session_id => $session_id, student_id => $child_id } )->hash;
+
+            if ($held) {
+                next if $held->{status} eq 'waiting'
+                     || $held->{status} eq 'offered';
+
+                $db->update( $class->table, {
+                    status   => 'waiting',
+                    position => $db->query(
+                        'SELECT get_next_waitlist_position(?)', $session_id
+                    )->array->[0],
+                }, { id => $held->{id} } );
+
+                push @joined, $class->find( $db, { id => $held->{id} } );
+                next;
+            }
 
             push @joined, $class->join_waitlist(
                 $db, $session_id, $location_id, $child_id, $parent_id );
@@ -219,7 +259,7 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         #  WHERE status IS DISTINCT FROM 'cancelled'.
         #
         # Filtering to ('active','pending') saw neither a 'waitlisted' row --
-        # routine on seat rows since demote_to_waitlisted -- nor a NULL-status
+        # what Enrollment->waitlist leaves behind -- nor a NULL-status
         # one, because IN never matches NULL. Both are covered by the index, so
         # join_waitlist admitted an entry whose acceptance would later raise a
         # unique violation: a free waitlist acceptance that dies.

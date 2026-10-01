@@ -211,26 +211,31 @@ committed. Two different things put a row here, and they leave DIFFERENT
 enrollment state behind:
 
 - **The seat was gone.** A capacity re-check at capture found the child's seat
-  taken, waitlisted them, and recorded the debt. The child holds a
-  `waitlisted` enrollment row belonging to this payment.
+  taken, put them on the session's waitlist, and recorded the debt. The seat is
+  released, so this payment holds a `cancelled` enrollment row with
+  `drop_reason = 'seat_unavailable_refunded'`, and the child has a `waiting`
+  row in `waitlist` for that session.
 - **The seat was already theirs.** The child already held a live seat from a
   DIFFERENT payment -- a free enrolment, an admin add, an earlier purchase --
-  so this cart paid for something it did not need. Nothing is waitlisted;
-  instead this payment gets a `cancelled` enrollment row recording that it
-  bought a seat it never received, and the live seat still belongs to whoever
-  paid for it first.
+  so this cart paid for something it did not need. Nothing is queued; this
+  payment gets a `cancelled` enrollment row with
+  `drop_reason = 'duplicate_seat_refunded'` recording that it bought a seat it
+  never received, and the live seat still belongs to whoever paid for it first.
 
-Do not treat a missing waitlisted row as corruption. Check which case you are
-in before deciding anything:
+Both leave a `cancelled` row, so the status alone does not tell them apart --
+`drop_reason` does. Check which case you are in before deciding anything:
 
 ```bash
 psql $DATABASE_URL -c \
-  "SELECT e.status, e.payment_id, e.student_id
+  "SELECT e.status, e.drop_reason, e.payment_id, e.student_id
      FROM \"<sacp-slug>\".enrollments e
     WHERE e.payment_id = '<payment_id>'"
 ```
 
-`waitlisted` is the first case, `cancelled` the second.
+`seat_unavailable_refunded` is the first case, `duplicate_seat_refunded` the
+second. A child in the first case is in the queue for that session and will be
+offered the next seat that frees up; the refund you are about to issue does not
+take them out of it.
 
 **No rows at all is a third case**, and it means the share could not be
 computed: the marker is written only once the debt it stands for resolves, so an
