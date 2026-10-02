@@ -26,6 +26,59 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
 
     sub table { 'users' }
 
+    # WHERE for find() and list(), which hand-build their queries because they
+    # join user_profiles and SQL::Abstract is not in that path.
+    #
+    # Hand-building is why these two diverged from every other find/list in
+    # Registry: a filter value was bound straight into `= ?`, so the shapes the
+    # rest of the DAO layer accepts became wrong answers here rather than errors.
+    # Two of them:
+    #
+    #   { user_type => ['admin','staff'] }   the arrayref stringified to
+    #                                        ARRAY(0x...) and matched no row
+    #   { deactivated_at => undef }          bound `= NULL`, never true, so
+    #                                        "who is active" answered "nobody"
+    #
+    # Neither raised anything. SQL::Abstract's semantics -- IN for a list, IS
+    # NULL for undef -- are what callers already expect from the signature, so
+    # those are what this gives them (#434).
+    #
+    # One builder, not a copy in each method. The copies are how the two came to
+    # share a defect that had to be fixed in both places.
+    sub _where_for ( $class, $filter ) {
+        my ( @clauses, @binds );
+
+        for my $key ( sort keys %$filter ) {
+            # email and name live on user_profiles; everything else on users.
+            my $col = ( $key eq 'email' || $key eq 'name' ) ? "up.$key" : "u.$key";
+            my $value = $filter->{$key};
+
+            if ( ref $value eq 'ARRAY' ) {
+                unless (@$value) {
+                    # IN () is a syntax error, not a result. An empty set of
+                    # acceptable values accepts nothing, which is also what
+                    # SQL::Abstract answers.
+                    push @clauses, '1 = 0';
+                    next;
+                }
+                push @clauses,
+                    "$col IN (" . join( ', ', map { '?' } @$value ) . ')';
+                push @binds, @$value;
+                next;
+            }
+
+            unless ( defined $value ) {
+                push @clauses, "$col IS NULL";
+                next;
+            }
+
+            push @clauses, "$col = ?";
+            push @binds, $value;
+        }
+
+        return ( \@clauses, \@binds );
+    }
+
     sub find ( $class, $db, $filter, $order = { -desc => 'u.created_at' } ) {
         $db = $db->db if $db isa Registry::DAO;
         delete $filter->{password};
@@ -39,19 +92,10 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
             LEFT JOIN user_profiles up ON u.id = up.user_id
         };
         
-        my @where_clauses = ();
-        my @bind_params = ();
-        
-        # Build WHERE clause from filter
-        for my $key (keys %$filter) {
-            if ($key eq 'email' || $key eq 'name') {
-                push @where_clauses, "up.$key = ?";
-            } else {
-                push @where_clauses, "u.$key = ?";
-            }
-            push @bind_params, $filter->{$key};
-        }
-        
+        my ( $where_clauses, $bind_params ) = $class->_where_for($filter);
+        my @where_clauses = @$where_clauses;
+        my @bind_params   = @$bind_params;
+
         if (@where_clauses) {
             $query .= ' WHERE ' . join(' AND ', @where_clauses);
         }
@@ -84,16 +128,9 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
             LEFT JOIN user_profiles up ON u.id = up.user_id
         };
 
-        my @where_clauses = ();
-        my @bind_params   = ();
-        for my $key ( keys %$filter ) {
-            if ( $key eq 'email' || $key eq 'name' ) {
-                push @where_clauses, "up.$key = ?";
-            } else {
-                push @where_clauses, "u.$key = ?";
-            }
-            push @bind_params, $filter->{$key};
-        }
+        my ( $where_clauses, $bind_params ) = $class->_where_for($filter);
+        my @where_clauses = @$where_clauses;
+        my @bind_params   = @$bind_params;
 
         if (@where_clauses) {
             $query .= ' WHERE ' . join( ' AND ', @where_clauses );

@@ -15,16 +15,16 @@ class Registry::Controller::People :isa(Registry::Controller) {
         # through the family they are part of, not through an operator's staff
         # list -- putting them here would make the common case (find a colleague)
         # the needle in the uncommon one.
-        # One call per role, not `user_type => ['admin','staff']`. User::list binds
-        # each filter value straight into `u.$key = ?`, so an arrayref stringifies
-        # to ARRAY(0x...) and matches nothing at all -- silently. See #434.
+        #
+        # One call with a list, now that User::list honours one (#434). It used to
+        # be a call per role: an arrayref was bound straight into `u.$key = ?` and
+        # matched nothing, silently.
         #
         # Sorted by the name a person is actually shown under, so the list reads
         # like a staff list rather than like insertion order.
         my @people =
           sort { lc( $a->name || $a->username ) cmp lc( $b->name || $b->username ) }
-          map  { @{ Registry::DAO::User->list( $dao->db, { user_type => $_ } ) } }
-          qw( admin staff );
+          @{ Registry::DAO::User->list( $dao->db, { user_type => [ 'admin', 'staff' ] } ) };
 
         $self->render(
             template => 'admin/people/index',
