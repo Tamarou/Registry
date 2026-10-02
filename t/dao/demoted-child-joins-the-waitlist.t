@@ -137,6 +137,14 @@ subtest 'the parent can see the queue entry' => sub {
 subtest 'the freed seat is offered to the demoted child, and can be accepted' => sub {
     my ( $session, $child ) = a_demotion();
 
+    # A seat has to actually free up. This subtest used to call process_waitlist
+    # against a session still at capacity -- the demotion released a seat the
+    # child never held -- so the acceptance it asserted was an oversell, which
+    # nothing checked until an offered seat became a held one.
+    $db->query(
+        q{UPDATE enrollments SET status = 'cancelled'
+           WHERE session_id = ? AND payment_id IS NULL}, $session->id );
+
     my $offer = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
     ok $offer, 'a seat opening reaches the demoted child at all';
     is $offer->student_id, $child->id, 'the offer goes to them';

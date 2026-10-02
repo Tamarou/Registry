@@ -300,6 +300,22 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
         my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
         croak "Offer has expired" if $expires_at && $is_expired;
+
+        # Capacity, re-checked at the click.
+        #
+        # The offer was made when a seat existed. Between then and now an
+        # ordinary registration can have taken it -- and until the seat under
+        # offer was counted as held, that was routine rather than a race. Nothing
+        # here looked, so acceptance enrolled the child past the limit and the
+        # oversell surfaced on a roster, with no payment anywhere to make it
+        # visible sooner.
+        #
+        # This offer is excluded from the count: it is the hold being redeemed.
+        require Registry::DAO::Enrollment;
+        croak "Cannot accept: this session is full"
+          unless Registry::DAO::Enrollment->session_has_room(
+              $db, $session_id,
+              except_students => [ $family_member_id || $student_id ] );
         
         # Start transaction
         my $tx = $db->begin;
