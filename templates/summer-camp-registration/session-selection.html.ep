@@ -52,13 +52,38 @@
 
     <div id="form-container">
         <h1 class="text-3xl font-bold mb-6">Select Sessions for Your Children</h1>
+
+        %# The step's refusals, which this page used not to render at all: the
+        %# controller flashed them and redirected back here, the page came back
+        %# looking exactly as it had, and the parent's selection was silently
+        %# gone -- "Full Session is full", "(age 3) is not eligible for this
+        %# program", "All siblings must be enrolled in the same session". #372.
+        %#
+        %# Separate from #error-notification above, which the HTMX handlers fill
+        %# in client-side; these arrive with the page.
+        % my $errors = stash('errors') || [];
+        % if (@$errors) {
+            <div id="validation-errors" class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+                <h2 class="text-red-800 font-semibold mb-2">Please correct the following:</h2>
+                <ul class="list-disc list-inside text-red-700">
+                    % for my $error (@$errors) {
+                        <li><%= $error %></li>
+                    % }
+                </ul>
+            </div>
+        % }
     
     <form action="<%= $action %>"
           method="POST" class="space-y-6">
         <input type="hidden" name="action" value="select_sessions">
 
         <% my $children = stash('children') || $run->data->{children} || []; %>
-        <% my $program_type = undef; %>
+        <%# Resolved by the step, from the programme this registration is for.
+            Hardcoded undef here until #422: the branch below -- the one that
+            states "all siblings must be enrolled in the same session" and
+            offers a single control -- could never run, so the screen invited
+            per-child choices that process then refused. %>
+        <% my $program_type = stash('program_type'); %>
         
         <% if ($program_type && $program_type->same_session_for_siblings && @$children > 1) { %>
             <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6">

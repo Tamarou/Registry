@@ -202,7 +202,22 @@ subtest 'duplicate email - shows error, not 500' => sub {
 # Helper: advance a run through account-check and select-children
 # to reach session-selection step
 # ============================================================
+# A FRESH Test::Mojo per registration, returned to the caller.
+#
+# authenticate_as installs a before_dispatch hook that sets session user_id
+# `unless` one is already there, and the cookie jar on a shared $t keeps the
+# first user signed in -- so every later call authenticated as the FIRST parent
+# while creating children under a new one. The step then refused with "a child
+# that is not part of this registration", and these subtests passed anyway,
+# because a redirect back to session-selection is what EVERY refusal does.
+# Both gates below were green without ever firing.
+#
+# A new instance is a new app as well as a new cookie jar, so the stacked hooks
+# from earlier calls do not follow it either.
 sub advance_to_session_selection ($username, $email, $child_name, $birth_date, $grade) {
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+
     my $start_url = workflow_url($workflow);
     $t->post_ok($start_url => form => {})->status_is(302);
 
@@ -257,14 +272,14 @@ sub advance_to_session_selection ($username, $email, $child_name, $birth_date, $
     })->status_is(302);
 
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
-    return ($run, $child);
+    return ($t, $run, $child);
 }
 
 # ============================================================
 # 1.4 Full Session
 # ============================================================
 subtest 'full session - choosing it joins the waitlist instead of refusing' => sub {
-    my ($run, $child) = advance_to_session_selection(
+    my ( $t, $run, $child ) = advance_to_session_selection(
         'fullsess_parent', 'fullsess@example.com',
         'Full Session Kid', birth_date_for_age(9), '3',
     );
@@ -323,7 +338,7 @@ subtest 'full session - choosing it joins the waitlist instead of refusing' => s
 # no queue to join, so the refusal this subtest used to assert is still the
 # right answer.
 subtest 'full session with its waitlist off is still refused' => sub {
-    my ($run, $child) = advance_to_session_selection(
+    my ( $t, $run, $child ) = advance_to_session_selection(
         'nowait_parent', 'nowait@example.com',
         'No Wait Kid', birth_date_for_age(9), '3',
     );
@@ -344,6 +359,13 @@ subtest 'full session with its waitlist off is still refused' => sub {
     like $redirect_url, qr/session-selection/,
         'Sent back to session-selection, because there is nothing to join';
 
+    # The redirect is what every rejection does, so on its own it cannot tell
+    # this gate from the age gate from a session that was merely not on offer.
+    # Following it is what pins which one fired -- and until #372 there was
+    # nothing on that page to follow it for.
+    $t->get_ok($redirect_url)
+      ->content_like(qr/is full/, 'and the page says the session is full');
+
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     is_deeply $run->data->{waitlist_items} // [], [],
         'and nobody is queued against a waitlist that is switched off';
@@ -357,7 +379,7 @@ subtest 'full session with its waitlist off is still refused' => sub {
 # ============================================================
 subtest 'age mismatch - underage child rejected at session selection' => sub {
     # A three-year-old, below the program's 5-11 range
-    my ($run, $child) = advance_to_session_selection(
+    my ( $t, $run, $child ) = advance_to_session_selection(
         'young_parent', 'young@example.com',
         'Tiny Tot', birth_date_for_age(3), 'Pre-K',
     );
@@ -378,6 +400,13 @@ subtest 'age mismatch - underage child rejected at session selection' => sub {
 
     my $redirect_url = $response->tx->res->headers->location;
     like $redirect_url, qr/session-selection/, 'Redirected back to session-selection (not payment)';
+
+    # Which gate refused them, asserted rather than assumed: the capacity gate
+    # redirects here identically.
+    $t->get_ok($redirect_url)
+      ->content_like(qr/not eligible for this program/,
+          'and the page says why, with the ages it allows')
+      ->content_like(qr/ages 5-11/, 'naming the range');
 
     # Verify no enrollment created
     my $enrollment = $dao->db->select('enrollments', '*', {
