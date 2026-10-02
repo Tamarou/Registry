@@ -27,8 +27,11 @@ subtest 'JSON log lines carry request_id and tenant_id during a request' => sub 
     $logger->handle($log_fh);
     $t->app->log($logger);
 
-    # Make a request -- /health is auth-free and guaranteed to reach dispatch
-    $t->get_ok('/health')->status_is(200);
+    # Make a request. NOT /health: Render probes it every five seconds, so the
+    # access line deliberately skips it, and the whole point of this file is a
+    # log line carrying the context. '/' is auth-free and reaches dispatch just
+    # as surely.
+    $t->get_ok('/')->status_is(200);
 
     close $log_fh;
 
