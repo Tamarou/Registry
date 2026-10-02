@@ -65,6 +65,14 @@ services:
       # per-client limit to apply per user rather than collectively.
       - key: MOJO_REVERSE_PROXY
         value: 1
+      # The per-request access line Registry emits in after_dispatch is logged
+      # at debug, and the logger defaults to info -- so without this, nothing
+      # records that a request happened at all, and the request_id / user_id /
+      # tenant_id context exists for lines nobody can correlate against. This
+      # is what makes "where did this visitor stop" answerable from the logs.
+      # Only the web service: the worker's debug output is Minion polling.
+      - key: LOG_LEVEL
+        value: debug
     healthCheckPath: /health
     autoDeploy: true
     disk:

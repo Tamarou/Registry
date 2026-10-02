@@ -17,6 +17,7 @@ use Registry::Command::workflow;
 class Registry :isa(Mojolicious) {
     our $VERSION = v0.001;
     use Sys::Hostname            qw( hostname );
+    use Mojo::Util               qw( steady_time );
     use YAML::XS                 qw(Load);
     use Registry::Utility::Logger;
 
@@ -451,6 +452,14 @@ class Registry :isa(Mojolicious) {
         # across requests even if after_dispatch is skipped on error.
         $self->hook(
             before_dispatch => sub ($c) {
+                # Stamped here so the access line can report how long the
+                # request took. Nothing else measures a request end to end:
+                # #428 is a journey that takes three minutes with no way to say
+                # which of its requests spent them. steady_time, not time, so a
+                # clock adjustment mid-request cannot produce a negative
+                # duration.
+                $c->stash( request_started => steady_time );
+
                 $c->app->log->set_context({
                     request_id => $c->req->request_id,
                     user_id    => $c->session('user_id'),
@@ -459,16 +468,55 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # The request path as it is safe to write down.
+        #
+        # The real path, not the matched route pattern: /:workflow/:run/:step
+        # would collapse every page of every funnel into one line, and which
+        # workflow and which step is the entire signal this line exists for. The
+        # run id is what stitches a visitor's requests into a single journey.
+        #
+        # But one of those paths is a credential. GET /auth/magic/:token is
+        # still redeemable when this line is written -- that request only renders
+        # the confirmation page, and the POST after it establishes the session --
+        # so logging it verbatim puts a working login in the log store for as
+        # long as the token lives. Logger's _redact cannot help: it knows
+        # key=value shapes and card-like digit runs, not path segments.
+        #
+        # Masked by capture NAME rather than by matching the path against a list
+        # of routes, so a route added later with a :token placeholder is covered
+        # without anybody remembering that this line exists.
+        my sub loggable_path ($c) {
+            my $path = $c->req->url->path->to_string;
+
+            for my $captures ( @{ $c->match->stack // [] } ) {
+                for my $name ( grep { /token/ } keys %$captures ) {
+                    my $value = $captures->{$name};
+                    next unless defined $value && length $value;
+                    $path =~ s/\Q$value\E/[REDACTED]/g;
+                }
+            }
+
+            return $path;
+        }
+
         $self->hook(
             after_dispatch => sub ($c) {
                 # Emit a structured access log line while context is still set,
                 # so every request produces at least one line carrying request_id,
                 # user_id, and tenant_id for correlation in log analysis tools.
+                # '-' rather than 0 when the stamp is missing: a request
+                # that bypassed before_dispatch has an unknown duration, and a
+                # zero would average into the percentiles as a fast one.
+                my $started = $c->stash('request_started');
+
                 $c->app->log->debug(
-                    sprintf '%s %s %s',
+                    sprintf '%s %s %s %s',
                         $c->req->method,
-                        $c->req->url->path,
+                        loggable_path($c),
                         $c->res->code // 0,
+                        defined $started
+                            ? sprintf( '%.0fms', ( steady_time - $started ) * 1000 )
+                            : '-',
                 ) if $c->app->log->can('set_context');
 
                 $c->app->log->clear_context()
