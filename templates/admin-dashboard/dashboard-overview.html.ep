@@ -47,6 +47,32 @@
     </div>
 
     <div class="container">
+        %# A published, priced session the tenant cannot be paid for. The publish
+        %# gate refuses this state, and the checkout refuses the charge -- but a
+        %# Connect account can stop working after publication, and then the first
+        %# person to find out is a parent who has no reason to tell anybody. #410.
+        % if (my $blocked = stash('payments_blocked')) {
+            <div class="alert-grid mt-8" id="payments-blocked">
+                <h3>⚠️ Payments are not set up</h3>
+                <div class="alert-items">
+                    <div class="alert-item">
+                        <div>
+                            <%= $blocked->{sessions} %>
+                            published <%= $blocked->{sessions} == 1 ? 'session' : 'sessions' %>
+                            <%= $blocked->{sessions} == 1 ? 'has' : 'have' %>
+                            a price, and this organization cannot take payment yet.
+                            Families reaching checkout are turned away.
+                        </div>
+                        <div class="alert-metrics">
+                            <a href="<%= $blocked->{action_url} %>" class="btn btn-primary">
+                                <%= $blocked->{action_label} %>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        % }
+
         <!-- Overview Stats -->
         <div class="stats-grid mb-8">
             <div class="stat-card">
