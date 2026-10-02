@@ -31,9 +31,9 @@ sub capture ( $code ) {
     return $buf;
 }
 
-# The access line is the one shaped "METHOD /path STATUS".
+# The access line is the one shaped "METHOD /path STATUS DURATION".
 sub access_lines () {
-    return grep { ( $_->{message} // '' ) =~ m{^[A-Z]+ /\S* \d+$} }
+    return grep { ( $_->{message} // '' ) =~ m{^[A-Z]+ /\S* \d+ \S+$} }
            grep { ref $_ eq 'HASH' }
            map  { my $e = eval { decode_json($_) }; $e }
            grep { /^\{/ } split /\n/, $buf;
@@ -44,7 +44,8 @@ subtest 'every request leaves one correlated line' => sub {
 
     my @lines = access_lines();
     is scalar @lines, 1, 'exactly one access line, not none and not two';
-    like $lines[0]{message}, qr{^GET / \d+$}, 'method, path and status';
+    like $lines[0]{message}, qr{^GET / \d+ \d+ms$},
+        'method, path, status, and how long it took';
     ok exists $lines[0]{request_id}, 'carrying the request_id that ties it to the rest of the request';
     ok exists $lines[0]{tenant_id},  'and the tenant';
 };
@@ -63,7 +64,7 @@ subtest 'a token in the path is not written to the log' => sub {
 
     my @lines = access_lines();
     is scalar @lines, 1, 'the request is still logged';
-    like $lines[0]{message}, qr{^GET /auth/magic/\[REDACTED\] \d+$},
+    like $lines[0]{message}, qr{^GET /auth/magic/\[REDACTED\] \d+ \d+ms$},
         'with the credential masked and the route still identifiable';
 };
 
@@ -75,7 +76,7 @@ subtest 'the journey is still legible' => sub {
 
     my @lines = access_lines();
     is scalar @lines, 1, 'one line';
-    like $lines[0]{message}, qr{^GET /tenant-signup \d+$},
+    like $lines[0]{message}, qr{^GET /tenant-signup \d+ \d+ms$},
         'naming the workflow the visitor is in';
 };
 
@@ -93,7 +94,7 @@ subtest 'requests that never reach a route are logged, not fatal' => sub {
 
         my @lines = access_lines();
         is scalar @lines, 1, "$name is logged once";
-        like $lines[0]{message}, qr{^GET \Q$url\E \d+$},
+        like $lines[0]{message}, qr{^GET \Q$url\E \d+ \S+$},
             "$name names the path it asked for";
     }
 };
