@@ -57,6 +57,51 @@ class Registry::DAO::WorkflowSteps::RegistrationComplete :isa(Registry::DAO::Wor
             };
         }
 
-        return { %$data, registrations => \@registrations };
+        return {
+            %$data,
+            registrations => \@registrations,
+            organization  => $self->_organization( $db, $data->{__tenant_slug} ),
+        };
+    }
+
+    # Whose programme this is, and how to reach them, read from the tenant.
+    #
+    # The page used to print camp@example.com and (555) 123-4567 at a parent who
+    # had just paid and had a question, greet them into "our summer camp
+    # program" whatever the tenant actually runs, and promise an information
+    # packet nobody sends.
+    #
+    # Qualified with registry., not left to the search path: this runs on a
+    # handle connected to the tenant's own schema, where clone_schema has left
+    # an empty copy of `tenants`. An unqualified read finds that copy, returns
+    # nothing, and the contact details go quietly missing again -- which is the
+    # same silence this is fixing.
+    method _organization ( $db, $slug ) {
+        $db = $db->db if $db isa Registry::DAO;
+        return {} unless defined $slug && length $slug;
+
+        my $row = $db->query( <<~'SQL', $slug )->hash or return {};
+            SELECT t.name,
+                   tp.billing_email,
+                   tp.billing_phone,
+                   up.email AS primary_email
+              FROM registry.tenants t
+              LEFT JOIN registry.tenant_profiles tp ON tp.tenant_id = t.id
+              LEFT JOIN registry.tenant_users tu
+                     ON tu.tenant_id = t.id AND tu.is_primary IS TRUE
+              LEFT JOIN registry.user_profiles up ON up.user_id = tu.user_id
+             WHERE t.slug = ?
+            SQL
+
+        # billing_email first: it is the address this organization gave for
+        # itself. The primary user's own address is the fallback for a tenant
+        # that never filled one in -- a real person either way, which is the
+        # whole point. Both can be absent, and the page says so rather than
+        # inventing a third.
+        return {
+            name  => $row->{name},
+            email => $row->{billing_email} || $row->{primary_email},
+            phone => $row->{billing_phone},
+        };
     }
 }

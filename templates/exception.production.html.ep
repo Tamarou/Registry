@@ -1,0 +1,22 @@
+% layout 'default';
+% title 'Something went wrong';
+
+%# Mojolicious renders exception.<mode>.html.ep in preference to
+%# exception.html.ep, and exception.html.ep prints the exception inside a
+%# <details> block. Without this file that development view was what production
+%# served: the message and the source path and line, to whoever triggered it.
+%# Reachable unauthenticated -- any die that escapes the workflow dispatcher
+%# lands here -- so it leaked internal identifiers and the filesystem layout.
+<div class="error-page">
+    <h1>Something went wrong</h1>
+    <p>We hit an unexpected problem handling that request. Nothing you were
+    part-way through has been charged or changed without being recorded.</p>
+
+    %# A page with nothing to quote makes the person describe the problem
+    %# instead of naming it. This is the same id the structured log line for
+    %# this request carries, so it goes straight to what happened.
+    <p class="error-reference">If you need to get in touch about this, quote
+    reference <code><%= $c->req->request_id %></code>.</p>
+
+    <a href="/" class="button">Return to Homepage</a>
+</div>
