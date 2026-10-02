@@ -187,8 +187,12 @@ subtest 'paid + tenant not ready: gate returns error, no payment row' => sub {
     my $result = settle($step->process($tenant_db, { agreeTerms => 1 }, $run));
 
     ok $result->{errors}, 'gate returned errors';
-    like $result->{errors}[0], qr/not yet available/i,
-        'error message mentions unavailability';
+    # Asserted against the method rather than a phrase: the wording changed
+    # with #410 and a regex on part of it drifts quietly from what the gate
+    # actually returns.
+    is $result->{errors}[0],
+        Registry::DAO::WorkflowSteps::Payment->payment_unavailable_message,
+        'error message is the one the step owns';
     is $result->{next_step}, $step->id, 'stays on payment step (not advanced)';
 
     # No payment row should have been created
