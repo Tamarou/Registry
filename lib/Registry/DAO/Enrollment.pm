@@ -301,7 +301,40 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
 SQL
     }
 
+    # Every id that reaches a WHERE clause has to be a plain scalar.
+    #
+    # cart_seat_state and demote_to_waitlisted take their ids from
+    # payments.metadata->enrollment_items -- a verbatim copy of run data -- and
+    # bind them through SQL::Abstract, where a hashref is an OPERATOR and not a
+    # value. A cart item carrying { '!=' => <another child> } made
+    # cart_seat_state answer 'seated' about a row belonging to somebody else,
+    # and made demote_to_waitlisted RELEASE that row: a seat cancelled, a queue
+    # entry made and a refund owed, all in the name of a child nobody asked
+    # about.
+    #
+    # Not reachable from a client today: nested hashrefs need
+    # expand_form_params, which only the passthrough steps run, and
+    # MultiChildSessionSelection overwrites enrollment_items afterwards. So the
+    # defence is step ORDERING, which no test pins and any workflow change can
+    # disturb. This makes it structural instead. #339.
+    #
+    # croak rather than a fail-closed undef. These run inside a settlement
+    # Stripe has already captured, so refusing loudly rolls the whole thing back
+    # and the redelivery reproduces it: repeated 500s on one payment row, with
+    # nothing enrolled and nobody moved. An undef instead reads as 'none' and
+    # goes on to insert a NULL student_id, which the column refuses one
+    # statement later anyway -- the same abort, with the cause thrown away.
+    sub _scalar_id ( $class, $name, $value ) {
+        croak "$name must be a plain scalar id, not a " . ref($value) . " ref"
+          if ref $value;
+        return $value;
+    }
+
     sub cart_seat_state ($class, $db, $payment_id, $session_id, $child_id) {
+        $class->_scalar_id( 'payment_id', $payment_id );
+        $class->_scalar_id( 'session_id', $session_id );
+        $class->_scalar_id( 'child_id',   $child_id );
+
         $db = $db->db if $db isa Registry::DAO;
 
         # Our own row first: its state is what this cart holds.
@@ -440,6 +473,14 @@ SQL
         $db = $db->db if $db isa Registry::DAO;
 
         my $student_id = $data->{student_id} // $data->{family_member_id};
+
+        # See _scalar_id. This one both reads and WRITES through these ids, so
+        # an operator here does not merely answer wrongly -- it releases a seat
+        # that belongs to a child nobody named.
+        $class->_scalar_id( 'session_id', $data->{session_id} );
+        $class->_scalar_id( 'payment_id', $data->{payment_id} );
+        $class->_scalar_id( 'parent_id',  $data->{parent_id} );
+        $class->_scalar_id( 'student_id', $student_id );
 
         # drop_reason because this is not a drop. The unfiltered admin readers
         # would otherwise show a family dropping a session nobody asked to
