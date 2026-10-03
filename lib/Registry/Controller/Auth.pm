@@ -61,7 +61,9 @@ class Registry::Controller::Auth :isa(Registry::Controller) {
 
                 if ($user) {
                     my $tenant = Registry::DAO::Tenant->find($db, { slug => $self->tenant });
-                    my $expiry = $tenant ? $tenant->magic_link_expiry_hours : 24;
+                    # Per tenant, falling back to the same hour the column and
+                    # MagicLinkToken default to (#450).
+                    my $expiry = $tenant ? $tenant->magic_link_expiry_hours : 1;
 
                     my ($token, $plaintext) =
                         Registry::DAO::MagicLinkToken->generate($db, {

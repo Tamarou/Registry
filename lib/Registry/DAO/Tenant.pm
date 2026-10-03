@@ -12,7 +12,9 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     field $slug :param :reader //= __PACKAGE__->slug_for_name($name);
     field $created_at :param :reader;
     field $canonical_domain :param :reader = undef;
-    field $magic_link_expiry_hours :param :reader = 24;
+    # Mirrors tenants.magic_link_expiry_hours, whose default moved to one hour in
+    # #450. Only reached for a Tenant built without the column.
+    field $magic_link_expiry_hours :param :reader = 1;
     field $stripe_connect_account_id :param :reader = undef;
     field $stripe_charges_enabled    :param :reader = 0;
     field $stripe_details_submitted  :param :reader = 0;

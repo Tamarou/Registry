@@ -31,7 +31,12 @@ class Registry::DAO::MagicLinkToken :isa(Registry::DAO::Object) {
         my $raw_bytes  = urandom(32);
         my $plaintext  = encode_base64url($raw_bytes);
         my $hash       = sha256_hex($plaintext);
-        my $expires_in = $args->{expires_in} // 24;  # hours
+        # Hours. One, not twenty-four (#450): a magic link is a live credential
+        # and the place it sits for as long as it is valid is a mailbox. The same
+        # default lives on tenants.magic_link_expiry_hours (which
+        # Controller::Auth passes in, per tenant) and on Tenant's field;
+        # t/dao/magic-link-expiry-default.t asserts the three agree.
+        my $expires_in = $args->{expires_in} // 1;
 
         my $token = $class->create($db, {
             user_id    => $args->{user_id},
