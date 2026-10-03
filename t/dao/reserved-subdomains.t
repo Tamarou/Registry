@@ -36,6 +36,12 @@ subtest 'the names the platform needs for itself are reserved' => sub {
             "$name, which the platform may need to serve from";
     }
 
+    # platform is a path the app now owns: Minion's dashboard is mounted under
+    # /platform behind the platform-owner guard (#426). A tenant holding that
+    # slug would have a storefront whose own /platform/... answered Forbidden.
+    ok Registry::DAO::Tenant->slug_is_reserved('platform'),
+        'platform, which the owner surface is mounted under';
+
     # Postgres system schemas. A tenant here would not merely shadow something,
     # it would fail to build at all -- loudly if we are lucky.
     ok Registry::DAO::Tenant->slug_is_reserved('public'),

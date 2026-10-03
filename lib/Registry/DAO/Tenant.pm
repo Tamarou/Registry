@@ -59,8 +59,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # are hazards today, not merely inconveniences later.
     my %RESERVED_SLUGS = map { $_ => 1 } qw(
         www registry public admin api app assets billing blog cdn dashboard dev
-        docs ftp help imap mail mx ns ns1 ns2 pop pop3 smtp staging static
-        status support test webmail
+        docs ftp help imap mail mx ns ns1 ns2 platform pop pop3 smtp staging
+        static status support test webmail
     );
 
     sub slug_is_reserved ( $class, $slug ) {
