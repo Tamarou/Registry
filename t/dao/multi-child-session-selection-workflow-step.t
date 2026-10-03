@@ -498,12 +498,47 @@ subtest 'a full session with its waitlist off is not offered' => sub {
         "session_for_" . $child1->id => $session2->id,
     });
     ok $result->{errors}, 'choosing it is refused';
+    like $result->{errors}->[0],
+        qr/\QAfternoon Session is full. Please select a different session for\E/,
+        'and says which session was full, so the screen can tell the parent';
 
     my $data = $workflow->latest_run($db)->data;
     is_deeply $data->{waitlist_items} // [], [],
         'and nobody was put on a waitlist that is switched off';
 
     $db->query( 'UPDATE sessions SET waitlist_enabled = TRUE WHERE id = ?', $session2->id );
+};
+
+# The age gate had no unit coverage at all: the shared project carries no
+# age_range, so `process` never reached the eligibility branch, and the only
+# test of it was a controller subtest that could see the redirect and not the
+# reason (#372). Set on the project for this subtest and restored after, the way
+# the waitlist-off subtest above borrows `waitlist_enabled`.
+subtest 'an underage child is refused, and told the range' => sub {
+    $project->update( $db, { metadata => { age_range => { min => 7, max => 12 } } } );
+
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, {
+        user_id            => $parent->id,
+        selected_child_ids => [ $child2->id ],    # Bob, 6
+        location_id        => $location->id,
+        program_id         => $project->id,
+    });
+    my $step = $workflow->get_step($db, { slug => 'session-selection' });
+
+    my $result = $step->process($db, {
+        action => 'select_sessions',
+        "session_for_" . $child2->id => $session1->id,
+    });
+
+    ok $result->{stay}, 'stays on the step';
+    ok $result->{errors}, 'and refuses';
+    like $result->{errors}->[0], qr/Bob Smith \(age 6\) is not eligible/,
+        'naming the child and their age';
+    like $result->{errors}->[0], qr/ages 7-12/,
+        'and the range the programme actually allows';
+
+    $project->update( $db, { metadata => {} } );
 };
 
 subtest 'session_for_<id> for a child that was never selected' => sub {

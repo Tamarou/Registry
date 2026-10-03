@@ -270,6 +270,8 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
     method prepare_template_data ($db, $run, $params = {}) {
         require Registry::DAO::Family;
         require Registry::DAO::Session;
+        require Registry::DAO::ProgramType;
+        require Registry::DAO::Project;
 
         my $selected_child_ids = $run->data->{selected_child_ids} || [];
         my $location_id = $run->data->{location_id};
@@ -335,9 +337,28 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             };
         }
 
+        # The rule the screen has to state. process enforces
+        # same_session_for_siblings, and the template's branch for it was
+        # never reached because the template hardcoded the program type as
+        # undef -- so a parent was shown one picker per child, chose different
+        # sessions because the screen invited them to, and was then refused for
+        # breaking a rule nothing had mentioned.
+        #
+        # Resolved the same way process resolves it, from the same two rows, so
+        # the screen and the gate cannot disagree about which rule applies.
+        my $program_type;
+        if ($program_id) {
+            my $program = Registry::DAO::Project->find( $db, { id => $program_id } );
+            if ( $program && $program->program_type_slug ) {
+                $program_type = Registry::DAO::ProgramType->find_by_slug(
+                    $db, $program->program_type_slug );
+            }
+        }
+
         return {
             children           => \@children,
             available_sessions => \@available_sessions,
+            program_type       => $program_type,
         };
     }
 
