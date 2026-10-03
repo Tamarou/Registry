@@ -1,3 +1,20 @@
+# Render Blueprint. AUTHORITATIVE: the services are connected to this file, so
+# what is committed here is what production gets -- including env vars, which is
+# the thing that was not true before #459. Adding a variable here and merging it
+# used to leave the running service untouched, which is how #452 shipped inert:
+# the code deployed, LOG_LEVEL did not arrive, and the access log stayed dark.
+#
+# Two consequences worth knowing before editing:
+#
+#   - `sync: false` means "this file does not manage the value" -- the variable
+#     is declared so the service has it, and the value is set in the dashboard.
+#     Secrets stay that way. A sync will not overwrite them.
+#   - A variable set ONLY in the dashboard and absent from this file is not
+#     protected. Add it here, with `sync: false` if it is a secret.
+#
+# `tinyartempire-assets` (the static site STATIC_URL points at) is deliberately
+# not declared here. Render does not delete services a Blueprint omits, and it
+# has no build of its own worth describing -- but it must keep existing.
 envVarGroups:
   - name: registry-database
     envVars:
@@ -29,9 +46,13 @@ envVarGroups:
 
 
 databases:
+  # Named as the live instance actually is. This said `registry` / `registry_user`
+  # while production has `registry_db` / `registry_db_user` -- harmless while
+  # nothing read the file, and a description of a database that does not exist
+  # once it is authoritative.
   - name: registry-db
-    databaseName: registry
-    user: registry_user
+    databaseName: registry_db
+    user: registry_db_user
     plan: standard
     region: oregon
 
@@ -101,18 +122,16 @@ services:
         value: worker
     autoDeploy: true
 
-  - type: cron
-    name: registry-scheduler
-    runtime: docker
-    plan: starter
-    branch: main
-    dockerfilePath: ./Dockerfile
-    schedule: "*/5 * * * *"
-    envVars:
-      - fromGroup: registry-database
-      - fromGroup: registry-config
-      - key: MOJO_MODE
-        value: production
-      - key: SERVICE_TYPE
-        value: scheduler
-    autoDeploy: true
+# registry-scheduler is deliberately NOT declared here.
+#
+# It ran `registry job attendance_check` and `registry job waitlist_expiration`
+# every five minutes (docker-entrypoint.sh, SERVICE_TYPE=scheduler) -- and the
+# web service already enqueues those same jobs on a recurring schedule
+# (lib/Registry.pm's startup: attendance_check, domain_verification,
+# waitlist_expiration, process_waitlist). So it is redundant, which is why it is
+# suspended in Render.
+#
+# Declaring it in a file that production follows would resurrect it, and the
+# recurring jobs carry no idempotency keys yet (#250) -- so a second scheduler
+# means duplicate attendance notifications, not merely duplicate work. If it is
+# ever wanted back, #250 comes first.
