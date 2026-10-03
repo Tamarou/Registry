@@ -1015,6 +1015,36 @@ field $_stripe_client = undef;
             }
         }
 
+        # Close the waitlist offers this cart redeemed, now that the seats are
+        # actually written. Done here rather than at acceptance: until the money
+        # lands the seat is only promised, and a row marked 'accepted' early stops
+        # holding the seat it is still reserving (Enrollment::offered_seats_held).
+        #
+        # Only offers whose child this pass actually seated: a cart that lost the
+        # seat to the capacity gate leaves its offer open, so the family can be
+        # offered again rather than holding an accepted row for a seat they never
+        # got.
+        if ( ref $metadata eq 'HASH'
+             && ref $metadata->{accepted_offer_ids} eq 'ARRAY'
+             && @{ $metadata->{accepted_offer_ids} } ) {
+            require Registry::DAO::Waitlist;
+
+            my @seated = $db->query( q{
+                SELECT w.id
+                  FROM waitlist w
+                  JOIN enrollments e
+                    ON e.session_id = w.session_id
+                   AND e.student_id = w.student_id
+                 WHERE w.id = ANY(?::uuid[])
+                   AND e.payment_id = ?
+                   AND e.status = ANY(?)
+            }, $metadata->{accepted_offer_ids}, $id,
+               Registry::DAO::Enrollment->seat_holding_statuses
+            )->arrays->flatten->to_array->@*;
+
+            Registry::DAO::Waitlist->mark_accepted( $db, \@seated ) if @seated;
+        }
+
         # Record the debt inside the same transaction as the demotion that
         # created it, so the two cannot come apart. The refund itself happens
         # after the COMMIT -- a refund inside this transaction is not undone by

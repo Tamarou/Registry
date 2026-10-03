@@ -82,8 +82,19 @@ class Registry::Job::ProcessWaitlist {
         # Check if there's capacity and waitlist entries
         my $capacity = $class->get_session_capacity($dao, $session_id);
         my $enrolled_count = $class->get_enrolled_count($dao, $session_id);
-        my $available_spots = $capacity - $enrolled_count;
-        
+
+        # Seats already promised to somebody. This sweep runs every ten minutes,
+        # and an offer takes up to 48 hours to answer -- so counting only
+        # enrolments offered the same freed seat to the next family on every
+        # pass, and with the seat now actually held, the second family's
+        # acceptance would be refused. An offer nobody can accept is a worse
+        # promise than no offer.
+        require Registry::DAO::Enrollment;
+        my $under_offer = Registry::DAO::Enrollment->offered_seats_held(
+            $dao->db, $session_id );
+
+        my $available_spots = $capacity - $enrolled_count - $under_offer;
+
         if ($available_spots <= 0) {
             $log->debug("No available spots for session $session_id");
             return;

@@ -82,7 +82,24 @@ class Registry::Controller::Waitlist :isa(Registry::Controller) {
             unless $waitlist_entry->parent_id eq $user->{id};
 
         try {
-            # Accept the offer
+            # A seat that costs money is sold, not given. #447: acceptance used to
+            # write the enrolment and collect nothing, so every freed seat was a
+            # gift. The parent goes to the registration workflow's payment step
+            # with this seat as the whole cart; the offer stays open (and so holds
+            # the seat) until the settlement writes the enrolment.
+            if ( $waitlist_entry->requires_payment($db) ) {
+                my $checkout = $waitlist_entry->checkout_run( $db, $self->tenant );
+
+                return $self->redirect_to(
+                    $self->url_for( 'workflow_step',
+                        workflow => $checkout->{workflow},
+                        run      => $checkout->{run}->id,
+                        step     => 'payment',
+                    )
+                );
+            }
+
+            # Nothing to charge: enrol on the spot, as before.
             $waitlist_entry->accept_offer($db);
 
             # Get session info for confirmation

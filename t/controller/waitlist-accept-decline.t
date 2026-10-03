@@ -299,4 +299,70 @@ subtest 'expired offer rejected gracefully' => sub {
     ok !$enrollment_d, 'No enrollment created for expired offer';
 };
 
+# ============================================================
+# 3.4 A priced seat is sold, not given (#447)
+# ============================================================
+subtest 'accepting a priced offer goes to checkout, not straight to a seat' => sub {
+    # The subtests above all use a session with no pricing plan, so they exercise
+    # the free path and say nothing about what happens when the seat costs money
+    # -- which is every real session.
+    require Registry::DAO::PricingPlan;
+    require Registry::DAO::Workflow;
+    require Mojo::Home;
+    require YAML::XS;
+
+    for my $file ( Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each ) {
+        next if YAML::XS::Load( $file->slurp )->{draft};
+        Registry::DAO::Workflow->from_yaml( $dao, $file->slurp );
+    }
+
+    my $priced = $dao->create(Session => {
+        name => 'Week 9 - Priced', start_date => '2026-06-15',
+        end_date => '2026-06-19', status => 'published', capacity => 2,
+        metadata => {},
+    });
+    my $priced_event = $dao->create(Event => {
+        time => '2026-06-16 09:00:00', duration => 420,
+        location_id => $location->id, project_id => $program->id,
+        teacher_id => $teacher->id, capacity => 2, metadata => {},
+    });
+    $priced->add_events($dao->db, $priced_event->id);
+    Registry::DAO::PricingPlan->create($dao->db, {
+        session_id => $priced->id, plan_name => 'Standard',
+        amount_cents => 7500, currency => 'USD',
+    });
+
+    my $parent_p = $dao->create(User => {
+        username => 'wl_parent_p', name => 'Parent P',
+        user_type => 'parent', email => 'wl_p@example.com',
+    });
+    my $child_p = Registry::DAO::Family->add_child($dao->db, $parent_p->id, {
+        child_name => 'Child P', birth_date => '2016-05-05', grade => '4',
+        medical_info => {}, emergency_contact => { name => 'EC', phone => '555' },
+    });
+
+    my $entry_p = Registry::DAO::Waitlist->join_waitlist(
+        $dao->db, $priced->id, $location->id, $child_p->id, $parent_p->id );
+    $dao->db->query(
+        q{UPDATE waitlist SET status = 'offered', offered_at = NOW(),
+                 expires_at = NOW() + INTERVAL '48 hours' WHERE id = ?},
+        $entry_p->id );
+
+    my $t = authed_mojo($parent_p);
+    $t->post_ok("/waitlist/${\$entry_p->id}/accept")->status_is(302,
+        'Accept redirects rather than enrolling on the spot');
+
+    like $t->tx->res->headers->location,
+        qr{/summer-camp-registration/[0-9a-f-]+/payment},
+        'to the registration payment step for this seat';
+
+    # Nothing given away: no seat, and the offer still holds the one it promised.
+    my $enrollment = $dao->db->select('enrollments', ['id'], {
+        family_member_id => $child_p->id, session_id => $priced->id })->hash;
+    ok !$enrollment, 'no enrolment before anybody has paid';
+
+    ($entry_p) = Registry::DAO::Waitlist->find($dao->db, { id => $entry_p->id });
+    is $entry_p->status, 'offered', 'and the offer is still open, holding the seat';
+};
+
 done_testing;

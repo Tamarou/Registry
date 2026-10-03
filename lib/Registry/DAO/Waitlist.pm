@@ -293,6 +293,122 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         return $count > 0;
     }
     
+    # Does the seat this offer promises cost anything?
+    #
+    # The same rule the publish gate draws: any live plan with a price. The exact
+    # total is calculate_enrollment_total's business and depends on discounts and
+    # early-bird windows, so this deliberately errs towards checkout -- a cart
+    # that prices to zero there enrols without the gateway anyway.
+    method requires_payment ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        require Registry::DAO::PricingPlan;
+
+        my $plans =
+          Registry::DAO::PricingPlan->get_pricing_plans( $db, $session_id );
+        return scalar grep { ( $_->amount_cents // 0 ) > 0 } @$plans;
+    }
+
+    # Turn an accepted offer into a cart the ordinary checkout can settle.
+    #
+    # #447: acceptance wrote the enrolment itself and collected nothing, so every
+    # seat that freed up was given away -- to the family who chose to wait, to an
+    # admin's addition, and after #420 to a family who had been refunded.
+    #
+    # The seat is sold through the one settlement path instead. Pricing, Stripe,
+    # instalments, revenue share, the capacity re-check at capture and the refund
+    # if the seat goes between here and there all exist there already; a second
+    # payment path beside them is the shape this codebase keeps removing.
+    #
+    # The run is seeded in exactly the shape MultiChildSessionSelection writes, so
+    # the payment step cannot tell the difference, and the parent is sent to its
+    # payment step -- get_workflow_run_step renders the step the URL names, so the
+    # run needs no pre-positioning.
+    #
+    # The offer stays 'offered' until the money lands. That is what holds the seat
+    # (see Enrollment::offered_seats_held) and what lets an abandoned checkout
+    # expire into the next family's offer with no extra machinery.
+    method checkout_run ( $db, $tenant_slug ) {
+        $db = $db->db if $db isa Registry::DAO;
+        require Registry::DAO::Family;
+        require Registry::DAO::Project;
+        require Registry::DAO::Workflow;
+
+        my $child_id = $family_member_id || $student_id;
+        my $child = Registry::DAO::FamilyMember->find( $db, { id => $child_id } )
+          or croak "Cannot start checkout: child $child_id not found";
+
+        # Where the session meets, and which programme it belongs to. ->array is
+        # undef when a session has no located event, so the deref is guarded --
+        # the same shape that used to raise inside join_items.
+        my $meets = $db->query( q{
+            SELECT e.project_id, e.location_id
+              FROM session_events se
+              JOIN events e ON e.id = se.event_id
+             WHERE se.session_id = ?
+             ORDER BY e.time, e.id
+             LIMIT 1
+        }, $session_id )->hash
+          or croak "Cannot start checkout: session $session_id has no events";
+
+        # Which workflow sells this programme. The storefront reads the same key
+        # with the same default, so a tenant who has pointed a programme at its
+        # own registration flow gets that one here too.
+        my $project = Registry::DAO::Project->find( $db, { id => $meets->{project_id} } );
+        my $slug =
+          ( ( $project && $project->metadata ) || {} )->{registration_workflow}
+          || 'summer-camp-registration';
+
+        my $workflow = Registry::DAO::Workflow->find( $db, { slug => $slug } )
+          or croak "Cannot start checkout: no workflow '$slug'";
+
+        my $run = $workflow->new_run($db);
+        $run->update_data( $db, {
+            user_id            => $parent_id,
+            __tenant_slug      => $tenant_slug,
+            program_id         => $meets->{project_id},
+            location_id        => $meets->{location_id} // $location_id,
+            selected_child_ids => [ $child_id ],
+            session_selections => { $child_id => $session_id },
+            enrollment_items   => [ { child_id => $child_id, session_id => $session_id } ],
+            children           => [ {
+                id         => $child_id,
+                first_name => $child->child_name,
+                last_name  => '',
+                birth_date => $child->birth_date,
+                grade      => $child->grade,
+            } ],
+            # Named so the settlement can close them. Plural because the shape
+            # generalises to a parent accepting several offers at once, which
+            # nothing offers today.
+            accepted_offer_ids => [ $id ],
+        } );
+
+        return { workflow => $slug, run => $run };
+    }
+
+    # Close the offers a settled payment has just seated.
+    #
+    # Called from finalize_enrollment rather than from acceptance: until the money
+    # lands the seat is only promised, and a row marked 'accepted' before then
+    # would stop holding the seat it was still reserving.
+    sub mark_accepted ( $class, $db, $ids ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my @ids = grep { defined && !ref && length } @{ $ids // [] };
+        return 0 unless @ids;
+
+        my $rows = $db->query(
+            q{UPDATE waitlist SET status = 'accepted', position = 0
+               WHERE id = ANY(?::uuid[]) AND status = 'offered'
+           RETURNING session_id},
+            \@ids )->arrays;
+
+        my %sessions;
+        $sessions{ $_->[0] }++ for @$rows;
+        $class->_reorder_waiting_positions( $db, $_ ) for keys %sessions;
+
+        return scalar @$rows;
+    }
+
     # Accept waitlist offer
     method accept_offer ($db) {
         croak "Can only accept offers with status 'offered'" unless $status eq 'offered';
@@ -300,6 +416,22 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
         my $is_expired = $db->query('SELECT ? < NOW()', $expires_at)->array->[0];
         croak "Offer has expired" if $expires_at && $is_expired;
+
+        # Capacity, re-checked at the click.
+        #
+        # The offer was made when a seat existed. Between then and now an
+        # ordinary registration can have taken it -- and until the seat under
+        # offer was counted as held, that was routine rather than a race. Nothing
+        # here looked, so acceptance enrolled the child past the limit and the
+        # oversell surfaced on a roster, with no payment anywhere to make it
+        # visible sooner.
+        #
+        # This offer is excluded from the count: it is the hold being redeemed.
+        require Registry::DAO::Enrollment;
+        croak "Cannot accept: this session is full"
+          unless Registry::DAO::Enrollment->session_has_room(
+              $db, $session_id,
+              except_students => [ $family_member_id || $student_id ] );
         
         # Start transaction
         my $tx = $db->begin;

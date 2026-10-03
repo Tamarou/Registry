@@ -588,7 +588,87 @@ SQL
             $session_id, $class->seat_holding_statuses, $payment->id
         )->array->[0] // 0;
 
-        return $taken + $already_granted + 1 <= $capacity ? 1 : 0;
+        # A live waitlist offer is a reserved seat. process_waitlist promises one
+        # family a named seat for a bounded window -- 48 hours by default -- and
+        # nothing counted it, so an ordinary cart was told there was room and took
+        # the seat out from under the offer it had been made. The family then
+        # accepted into a session that was already full.
+        #
+        # Offers for children in THIS cart are excluded: the hold exists FOR this
+        # payment, so counting it would refuse the very seat it reserves.
+        my $held = $class->offered_seats_held( $db, $session_id,
+            except_students => $class->_cart_children($payment) );
+
+        return $taken + $held + $already_granted + 1 <= $capacity ? 1 : 0;
+    }
+
+    # The child ids this payment is paying for, as plain scalars.
+    #
+    # Operators are refused the same way _scalar_id refuses them elsewhere: this
+    # list goes into a WHERE clause, and a hashref there is an operator rather
+    # than a value.
+    sub _cart_children ( $class, $payment ) {
+        return [
+            grep { defined && !ref && length }
+            map  { ref eq 'HASH' ? $_->{child_id} : undef }
+            @{ ( $payment->metadata // {} )->{enrollment_items} // [] }
+        ];
+    }
+
+    # How many seats in this session are reserved by a live waitlist offer.
+    #
+    # Shared by the settlement-time check above and by Waitlist::accept_offer,
+    # which has no payment row to scope by -- the hold has to mean the same thing
+    # to both or a seat is double-sold at exactly the moment somebody accepts it.
+    #
+    # An offer with no expiry counts as live. process_waitlist always sets one, so
+    # a NULL is hand-made, and holding the seat is the conservative direction.
+    sub offered_seats_held ( $class, $db, $session_id, %opts ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $except = $opts{except_students} // [];
+
+        return $db->query(
+            q{SELECT COUNT(*) FROM waitlist
+               WHERE session_id = ?
+                 AND status = 'offered'
+                 AND (expires_at IS NULL OR expires_at > NOW())
+                 AND NOT (student_id = ANY(?::uuid[]))},
+            $session_id, $except
+        )->array->[0] // 0;
+    }
+
+    # Is there a free seat in this session right now?
+    #
+    # The no-cart form of payment_fits_session, for a caller that is not settling
+    # a payment. Waitlist acceptance is the one that needs it: the offer was made
+    # when a seat existed, and between then and the click an ordinary
+    # registration can have taken it.
+    #
+    # Shares seat_holding_statuses and offered_seats_held with its settlement-time
+    # sibling rather than carrying its own opinion of either.
+    sub session_has_room ( $class, $db, $session_id, %opts ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $row = $db->query(
+            'SELECT capacity FROM sessions WHERE id = ?', $session_id
+        )->hash or die "session_has_room: session $session_id not found\n";
+        my $capacity = $row->{capacity};
+        return 1 unless $capacity;    # NULL or 0 -- unlimited
+
+        my $except = $opts{except_students} // [];
+
+        my $taken = $db->query(
+            q{SELECT COUNT(*) FROM enrollments
+               WHERE session_id = ?
+                 AND status = ANY(?)
+                 AND NOT (student_id = ANY(?::uuid[]))},
+            $session_id, $class->seat_holding_statuses, $except
+        )->array->[0] // 0;
+
+        my $held = $class->offered_seats_held( $db, $session_id,
+            except_students => $except );
+
+        return $taken + $held + 1 <= $capacity ? 1 : 0;
     }
 
     sub count_for_session($class, $db, $session_id, $statuses = ['active', 'pending']) {

@@ -353,6 +353,10 @@ method create_payment ($db, $run, $form_data) {
                 # joined, and the webhook that settles an abandoned tab has no
                 # run to read them out of.
                 waitlist_items => $run->data->{waitlist_items} || [],
+                # The offers this cart is redeeming, for the same reason: the
+                # settlement closes them, and the webhook that settles an
+                # abandoned tab has no run to read them out of.
+                accepted_offer_ids => $run->data->{accepted_offer_ids} || [],
                 tenant_slug => $run->data->{__tenant_slug},
             }
         });
