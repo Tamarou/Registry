@@ -265,8 +265,12 @@ subtest 'I5: unready-tenant gate fires, no payment rows, Stripe never called' =>
     my $result = process_payment_step($step, $run);
 
     ok $result->{errors}, 'I5: gate returned errors';
-    like $result->{errors}[0], qr/not yet available/i,
-        'I5: error message mentions unavailability';
+    # The exact message the step owns, not a phrase inside it: the wording
+    # changed with #410, and this file only runs when sk_test_ keys are present
+    # -- so a regex that drifts here is invisible to every local run.
+    is $result->{errors}[0],
+        Registry::DAO::WorkflowSteps::Payment->payment_unavailable_message,
+        'I5: the refusal is the one the step owns';
     is $result->{next_step}, $step->id, 'I5: stays on payment step (not advanced)';
 
     my $tenant_count = $tdb->select('payments', ['id'], { user_id => $parent->id })->hashes->size;

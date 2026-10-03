@@ -159,6 +159,23 @@ method _chosen_instalments ($run, $payment_info) {
     return $option->{instalments};
 }
 
+# What a parent is told when the organisation cannot take payment.
+#
+# It used to end "Please contact the program organizer to complete enrollment",
+# which describes collecting money at the event -- and Registry has no way to
+# record that, so the enrolment simply never happened and nobody knew the parent
+# had tried. #410 settled that the Stripe gate stays, so this must not imply a
+# way around it.
+#
+# What it does say: nothing was charged, this is the organisation's setup and not
+# the parent's mistake, and somebody has been told. Named rather than inlined so
+# the wording is a thing with a test on it.
+sub payment_unavailable_message ($class) {
+    return 'This organization is not set up to take payments yet, so this '
+         . 'registration cannot be completed. Nothing has been charged. '
+         . 'They have been notified -- please try again later.';
+}
+
 method create_payment ($db, $run, $form_data) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
     
@@ -197,10 +214,20 @@ method create_payment ($db, $run, $form_data) {
             : undef;
         my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
         unless ($tenant && $tenant->stripe_connect_ready) {
+            # Logged at error, not warn: a parent has reached checkout for a
+            # session the platform cannot sell, which means the publish gate was
+            # passed before the Connect account went away (Stripe restricting an
+            # account does that) or the session was published around it. Nothing
+            # else records that this happened, and the parent has no reason to
+            # tell anybody.
+            warn sprintf
+                "checkout refused: tenant '%s' is not Stripe Connect ready, "
+                . "so a priced cart cannot be charged\n",
+                $tenant_slug // '(unknown)';
+
             return Mojo::Promise->resolve({
                 next_step => $self->id,
-                errors    => ['Online payment is not yet available for this organization. '
-                            . 'Please contact the program organizer to complete enrollment.'],
+                errors    => [ __PACKAGE__->payment_unavailable_message ],
                 data      => $self->_render_data($db, $run),
             });
         }

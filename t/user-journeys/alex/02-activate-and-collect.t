@@ -341,9 +341,11 @@ subtest 'gated: unready tenant blocks paid enrollment' => sub {
         like $loc, qr/payment/, 'redirect stays on payment step URL';
 
         $t->get_ok($loc, \%tenant_host)->status_is(200)
-          ->content_like(qr/not yet available/i, 'gate error visible in payment page');
+          ->content_like(qr/not set up to take payments/i,
+              'gate error visible in payment page');
     } else {
-        $t->content_like(qr/not yet available/i, 'gate error visible in inline response');
+        $t->content_like(qr/not set up to take payments/i,
+            'gate error visible in inline response');
     }
 
     # Reload run: must still be on payment step

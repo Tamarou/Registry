@@ -23,7 +23,54 @@ method prepare_template_data ($db, $run, $params = {}) {
     }
 
     # Full page load: get everything
-    return $self->_load_full_dashboard($db);
+    return {
+        %{ $self->_load_full_dashboard($db) },
+        payments_blocked =>
+          $self->_payments_blocked( $db, ( $run->data || {} )->{__tenant_slug} ),
+    };
+}
+
+# Whether this tenant has published something it cannot be paid for.
+#
+# The publish gate refuses a priced session while the tenant is not Connect
+# ready, and the checkout refuses the charge -- but a Connect account can stop
+# working after publication (Stripe restricting an account does exactly that),
+# and then the first person to find out is a parent at checkout who has no reason
+# to tell anybody. #410 settled that the gate stays, so the tenant has to be told
+# here, where they can act on it.
+#
+# Conditional on actually having a priced published session, deliberately. A
+# tenant running free programmes needs no Connect account, and the publish gate
+# lets them publish without one -- warning them would be nagging about a setup
+# step they do not need.
+method _payments_blocked ( $db, $tenant_slug ) {
+    return undef unless defined $tenant_slug && length $tenant_slug;
+
+    require Registry::DAO::Tenant;
+
+    # registry-qualified: this runs on the tenant's own schema, where
+    # clone_schema has left an empty copy of `tenants`.
+    my $row = $db->query(
+        'SELECT * FROM registry.tenants WHERE slug = ?', $tenant_slug )->hash;
+    my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
+    return undef if $tenant && $tenant->stripe_connect_ready;
+
+    my $priced = $db->query( q{
+        SELECT COUNT(DISTINCT s.id)
+          FROM sessions s
+          JOIN pricing_plans p ON p.session_id = s.id
+         WHERE s.status = 'published'
+           AND p.superseded_at IS NULL
+           AND p.amount_cents > 0
+    } )->array->[0] // 0;
+
+    return undef unless $priced;
+
+    return {
+        sessions     => 0 + $priced,
+        action_url   => '/admin/billing',
+        action_label => 'Set up payments',
+    };
 }
 
 method _load_full_dashboard ($db) {
