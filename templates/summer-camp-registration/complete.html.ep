@@ -8,6 +8,12 @@
 % my @waiting  = grep {  $_->{waiting} } @registrations;
 % my @campers  = grep { length } map { $_->{child_name} // '' } @enrolled;
 % my @waiters  = grep { length } map { $_->{child_name} // '' } @waiting;
+%
+% # The tenant, from the tenant row. This page used to name a summer camp, an
+% # email address and a phone number that belonged to nobody, at a parent who
+% # had just paid -- see #389.
+% my $org = stash('organization') || {};
+% my @contact = grep { defined && length } $org->{email}, $org->{phone};
 
 <div class="success-message">
     %# Only when everyone is waiting does the page lead with the waitlist. An
@@ -18,7 +24,7 @@
         <p>Thank you. <%= join(', ', @waiters) %> could not be given a place yet, so we have added them to the waitlist.</p>
     % } else {
         <h2>Registration Complete!</h2>
-        <p>Thank you for registering for our summer camp program. We're excited to have <%= @campers ? join(', ', @campers) : 'your child' %> join us this summer!</p>
+        <p>Thank you for registering<% if ($org->{name}) { %> with <%= $org->{name} %><% } %>. We're excited to have <%= @campers ? join(', ', @campers) : 'your child' %> join us!</p>
     % }
 
     % if (@enrolled && @waiting == 1) {
@@ -35,7 +41,6 @@
             %# would then sit and wait for.
             % if (@enrolled) {
                 <li>You will receive a confirmation email with details about your registration.</li>
-                <li>A camp information packet will be sent to you two weeks before your registered session begins.</li>
             % }
             % if (@waiting) {
                 <%# The offer is time-limited, so say so here rather than letting
@@ -43,7 +48,14 @@
                 <li>We will email you as soon as a place opens up. You will have a limited time to accept it before it goes to the next family waiting.</li>
                 <li>Nothing has been charged for a child on the waitlist.</li>
             % }
-            <li>If you have any questions or need to make changes to your registration, please contact us at camp@example.com or (555) 123-4567.</li>
+            %# Whatever contact the tenant actually has, and nothing when they
+            %# have none: pointing a parent at an address that does not exist is
+            %# worse than pointing them at a person.
+            % if (@contact) {
+                <li>If you have any questions or need to make changes to your registration, please contact us at <%= join(' or ', @contact) %>.</li>
+            % } else {
+                <li>If you have any questions or need to make changes to your registration, please contact your program organizer.</li>
+            % }
         </ol>
     </div>
 
