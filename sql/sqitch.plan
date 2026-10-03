@@ -82,3 +82,4 @@ tenant-created-from-ip [tenant-signup-drop-plan-page] 2026-09-28T23:20:00Z Chris
 instalments-declared-in-configuration [tenant-created-from-ip] 2026-09-29T17:55:00Z Chris Prather <chris.prather@tamarou.com> # An instalment offer becomes a declared shape rather than a boolean and a count
 payments-carry-instalments [instalments-declared-in-configuration] 2026-09-29T19:40:00Z Chris Prather <chris.prather@tamarou.com> # A payment can be one instalment of several, recorded at enrolment rather than derived from Stripe
 platform-settings [payments-carry-instalments] 2026-09-30T15:45:00Z Chris Prather <chris.prather@tamarou.com> # Platform configuration Alex can see and change without a deploy
+magic-link-expiry-one-hour [platform-settings] 2026-10-03T00:30:00Z Chris Prather <chris.prather@tamarou.com> # A magic link lasts an hour rather than a day
