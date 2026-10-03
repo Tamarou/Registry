@@ -80,6 +80,18 @@ subtest 'the journey is still legible' => sub {
         'naming the workflow the visitor is in';
 };
 
+subtest 'the health probe is not logged' => sub {
+    # Render hits /health every five seconds. At debug that is the whole log,
+    # and the requests somebody actually made are buried in it.
+    capture( sub { $t->get_ok('/health')->status_is(200) } );
+    is scalar access_lines(), 0, 'no access line for the probe';
+
+    # And the context is still cleared, which is why this is a skipped log line
+    # rather than an early return from the hook.
+    capture( sub { $t->get_ok('/')->status_is(200) } );
+    is scalar access_lines(), 1, 'the request after it still logs exactly once';
+};
+
 subtest 'requests that never reach a route are logged, not fatal' => sub {
     # loggable_path reads $c->match->stack, and after_dispatch runs for requests
     # that never reached a controller. A static asset is served by the static

@@ -46,6 +46,13 @@ sub check_security_headers {
           '0',
           'X-XSS-Protection is 0 (rely on CSP)';
 
+        # Two routes carry a credential in their path, and every page loads a
+        # cross-origin stylesheet. Browsers default to not sending the path
+        # cross-origin; this is the app saying so rather than hoping. #450.
+        is $headers->header('Referrer-Policy'),
+          'strict-origin-when-cross-origin',
+          'Referrer-Policy keeps the path out of cross-origin Referers';
+
         my $csp = $headers->header('Content-Security-Policy');
         ok $csp, 'Content-Security-Policy header present';
         like $csp, qr/default-src 'self'/,   'CSP has default-src self';

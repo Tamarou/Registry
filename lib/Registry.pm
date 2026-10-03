@@ -509,6 +509,17 @@ class Registry :isa(Mojolicious) {
                 # zero would average into the percentiles as a fast one.
                 my $started = $c->stash('request_started');
 
+                # Render probes /health every five seconds, which at debug is
+                # some seventeen thousand lines a day saying the service is up
+                # -- something Render already reports on its own. Logged, that
+                # becomes the whole log and buries the requests somebody
+                # actually made: measured at eleven health checks to one real
+                # request on the day the level was turned up.
+                #
+                # Skipped by not logging rather than by returning early: the
+                # context still has to be cleared below.
+                my $is_health_probe = $c->req->url->path eq '/health';
+
                 $c->app->log->debug(
                     sprintf '%s %s %s %s',
                         $c->req->method,
@@ -517,7 +528,7 @@ class Registry :isa(Mojolicious) {
                         defined $started
                             ? sprintf( '%.0fms', ( steady_time - $started ) * 1000 )
                             : '-',
-                ) if $c->app->log->can('set_context');
+                ) if !$is_health_probe && $c->app->log->can('set_context');
 
                 $c->app->log->clear_context()
                     if $c->app->log->can('clear_context');
@@ -653,6 +664,18 @@ class Registry :isa(Mojolicious) {
                 $headers->header( 'X-Content-Type-Options' => 'nosniff' );
                 $headers->header( 'X-XSS-Protection'       => '0' );
                 $headers->header( 'Content-Security-Policy' => $csp );
+
+                # The URL of the page is itself a secret on two routes:
+                # /auth/magic/:token and /auth/verify-email/:token carry a
+                # credential in the path, and every page in this layout pulls a
+                # stylesheet from fonts.googleapis.com. Modern browsers default
+                # to strict-origin-when-cross-origin and would send only the
+                # origin, so this asserts the behaviour rather than inheriting
+                # it -- an older browser, or a future one with a looser default,
+                # would otherwise hand a live magic-link URL to a third party in
+                # a Referer header. #450.
+                $headers->header(
+                    'Referrer-Policy' => 'strict-origin-when-cross-origin' );
 
                 # HSTS only over HTTPS (direct TLS or via trusted proxy)
                 my $forwarded_proto = $c->req->headers->header('X-Forwarded-Proto') // '';
