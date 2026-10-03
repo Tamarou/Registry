@@ -927,15 +927,50 @@ class Registry :isa(Mojolicious) {
         # than blanket because the acquisition funnels live under this same
         # catch-all -- see workflow_roles.
         my $w = $r->under("/:workflow")->to( 'workflows#',
-            cb => sub ($c) { $c->require_workflow_role( $c->stash('workflow') ) } );
+            cb => sub ($c) {
+                # An unknown slug is a 404 before anything dereferences the
+                # workflow it did not find. This is the most public surface in
+                # the app and the catch-all for every unmatched path, so what
+                # arrives here is mostly crawlers: answering 500 says "this
+                # broke" where the truth is "that does not exist", and buries
+                # real failures in the one log an operator reads. #431.
+                # Resolved here rather than through Workflows::workflow():
+                # inside an under callback $c is a plain
+                # Mojolicious::Controller, so the controller's own method is
+                # not available -- asking for it is itself a 500.
+                my $slug = $c->stash('workflow');
+                unless ( $slug
+                    && $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } ) )
+                {
+                    # Rendered AND false: an under callback that returns true
+                    # lets dispatch carry on into the action, which is how this
+                    # first attempt still reached
+                    # _find_or_create_run's `$workflow->slug` -- the second
+                    # undefended dereference #431 names.
+                    $c->reply->not_found;
+                    return 0;
+                }
+
+                return $c->require_workflow_role($slug);
+            } );
         $w->get('')->to('#index')->name("workflow_index");
         $w->post('')->to('#start_workflow')->name("workflow_start");
-        $w->get("/:run/:step")->to('#get_workflow_run_step')
+
+        # A run id is a uuid, so a path segment that cannot be one does not name
+        # a run and never reaches a query. Production was taking four of these
+        # an hour from crawler traffic on /<workflow>/session/<step>, where
+        # 'session' hit the uuid cast inside the SELECT and raised
+        # `invalid input syntax for type uuid` -- a database error in the log,
+        # indistinguishable at a glance from a real one. Constrained here rather
+        # than guarded in the controller because a route that does not match is
+        # a 404 with no code at all. #431.
+        my $UUID = qr/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+        $w->get( "/:run/:step" => [ run => $UUID ] )->to('#get_workflow_run_step')
           ->name("workflow_step");
-        $w->post("/:run/:step")->to('#process_workflow_run_step')
+        $w->post( "/:run/:step" => [ run => $UUID ] )->to('#process_workflow_run_step')
           ->name("workflow_process_step");
-        $w->post('/:run/callcc/:target')->to('#start_continuation')
-          ->name("workflow_callcc");
+        $w->post( '/:run/callcc/:target' => [ run => $UUID ] )
+          ->to('#start_continuation')->name("workflow_callcc");
 
     }
 

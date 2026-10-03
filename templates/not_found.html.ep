@@ -1,0 +1,14 @@
+% layout 'default';
+% title 'Not found';
+
+%# Mojolicious renders this for reply->not_found. Without it the built-in
+%# fallback runs, and on a POST that path crashed the request outright
+%# ("Premature connection close") rather than answering 404 -- so the refusals
+%# added for #431 could not use the idiomatic helper at all.
+<div class="error-page">
+    <h1>Not found</h1>
+    <p>That page does not exist. It may have been a link that has since
+    changed, or a registration that has already been completed.</p>
+
+    <a href="/" class="button">Return to Homepage</a>
+</div>
