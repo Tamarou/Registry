@@ -939,9 +939,25 @@ class Registry :isa(Mojolicious) {
                 # Mojolicious::Controller, so the controller's own method is
                 # not available -- asking for it is itself a 500.
                 my $slug = $c->stash('workflow');
-                unless ( $slug
-                    && $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } ) )
-                {
+
+                # Serveable, which is not the same as "has a workflow row in
+                # this schema". `index` renders a legacy `{slug}/index` template
+                # without needing a row at all, and that is how a platform
+                # funnel like tenant-signup is served from a TENANT host, where
+                # the row lives only in the registry schema. Checking the row
+                # alone 404'd an anonymous prospect reaching signup from a
+                # tenant domain -- caught by
+                # t/security/workflow-route-authorization.t, which exists for
+                # exactly that visitor.
+                my $serveable = $slug
+                  && ( $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } )
+                    || $c->app->renderer->template_path({
+                           template => "$slug/index",
+                           format   => 'html',
+                           handler  => 'ep',
+                       }) );
+
+                unless ($serveable) {
                     # Rendered AND false: an under callback that returns true
                     # lets dispatch carry on into the action, which is how this
                     # first attempt still reached
