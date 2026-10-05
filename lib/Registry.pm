@@ -1001,6 +1001,21 @@ class Registry :isa(Mojolicious) {
             );
         } )->name('platform_tenants');
 
+        # Revenue: #426 step 3, as a screen rather than a digest.
+        #
+        # It reports what payments.platform_fee_cents recorded -- what Stripe
+        # said it took -- and states how many charges it could not account for.
+        # Deriving the figure from amount x rate would look exactly as
+        # authoritative and disagree with every rate change (#277) and every
+        # fee-returning refund.
+        $platform->get('/revenue')->to( cb => sub ($c) {
+            require Registry::DAO::Tenant;
+            $c->render(
+                template => 'platform/revenue',
+                revenue  => Registry::DAO::Tenant->platform_revenue( $c->dao->db ),
+            );
+        } )->name('platform_revenue');
+
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach
         # these routes even though staff can reach other /admin/* routes.

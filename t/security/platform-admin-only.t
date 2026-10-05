@@ -145,4 +145,49 @@ subtest 'the tenant fleet screen is behind the same guard, and names what is bro
           'and machine-readably, so a later digest can reuse it' );
 };
 
+subtest 'the revenue screen is behind the guard, and admits its gaps' => sub {
+    # #426 step 3. The assertion that matters is not that a number renders --
+    # it is that an unrecorded charge is declared on the page, so the total
+    # reads as a floor. A screen that quietly omitted them would be the lie this
+    # whole feature exists to avoid.
+    my $solo = $db->query(
+        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' LIMIT 1}
+    )->hash;
+    my $earning = Test::Registry::Fixtures::create_tenant( $db, {
+        name => 'Revenue Screen Studio', slug => 'revenue_screen' } );
+    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ?,
+                 billing_status = ? WHERE id = ?',
+        $solo->{id}, 'past_due', $earning->id );
+
+    my $payer = Registry::DAO::User->create( $db, {
+        username => 'screen_payer', name => 'Payer', user_type => 'parent',
+        email => 'payer@screen.test' } );
+    require Registry::DAO::Payment;
+    my $charged = Registry::DAO::Payment->create( $db, {
+        user_id => $payer->id, amount_cents => 10000, status => 'completed',
+        metadata => { tenant_slug => 'revenue_screen', enrollment_items => [] } } );
+    $db->update( 'payments', { platform_fee_cents => 250 }, { id => $charged->id } );
+    Registry::DAO::Payment->create( $db, {
+        user_id => $payer->id, amount_cents => 50000, status => 'completed',
+        metadata => { tenant_slug => 'revenue_screen', enrollment_items => [] } } );
+
+    my $refused = Test::Registry::Mojo->new('Registry');
+    $refused->app->helper( dao => sub { $dao } );
+    authenticate_as( $refused, $morgan );
+    $refused->get_ok('/platform/revenue')->status_is( 403,
+        'a tenant admin cannot read the platform books' );
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $alex );
+
+    $t->get_ok('/platform/revenue')->status_is(200)
+      ->content_like( qr/\$2\.50/, 'the recorded fee is shown as money' )
+      ->content_like( qr/id="unrecorded-warning"/,
+          'the unrecorded charge is declared, so the total reads as a floor' )
+      ->content_like( qr/id="arrears"/, 'and the past_due tenant is surfaced' )
+      ->content_like( qr/data-rate="2\.5/,
+          'with the rate read from the plan row rather than a constant' );
+};
+
 done_testing;

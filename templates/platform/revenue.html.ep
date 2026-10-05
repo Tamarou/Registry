@@ -1,0 +1,98 @@
+% layout 'default';
+% title 'Revenue';
+
+%# #426 step 3. Every figure here is a recorded application fee -- what Stripe
+%# reported taking -- never amount x rate. A derived number would disagree with
+%# the charge on every rate change and every fee-returning refund, while looking
+%# exactly as authoritative.
+% my $revenue = stash('revenue') || {};
+% my @tenants = @{ $revenue->{tenants} || [] };
+% my $money = sub { sprintf '$%.2f', ( $_[0] // 0 ) / 100 };
+
+<div class="container">
+    <h1>Revenue</h1>
+
+    <div class="stats-grid mb-8">
+        <div class="stat-card">
+            <div class="stat-details">
+                <h3>Revenue share recorded</h3>
+                <p class="stat-value" id="fees-total"><%= $money->($revenue->{fees_cents}) %></p>
+                %# The gap, stated beside the total rather than in a footnote. A
+                %# charge settled before platform_fee_cents existed has no fee to
+                %# sum, so this total is a floor; saying so is the difference
+                %# between a lower bound and a wrong number.
+                % if ($revenue->{unrecorded}) {
+                    <p class="text-secondary" id="unrecorded-warning">
+                        At least. <%= $revenue->{unrecorded} %>
+                        <%= $revenue->{unrecorded} == 1 ? 'charge carries' : 'charges carry' %>
+                        no recorded fee &mdash; settled before Registry began
+                        recording what Stripe took. Those figures are in Stripe only.
+                    </p>
+                % } else {
+                    <p class="text-secondary">Every completed charge is accounted for.</p>
+                % }
+            </div>
+        </div>
+    </div>
+
+    %# Arrears first: #426 notes a billing_status of past_due or incomplete with
+    %# nothing surfacing it anywhere.
+    % if (my @arrears = @{ $revenue->{arrears} || [] }) {
+        <div class="alert-grid mb-8" id="arrears">
+            <h2>⚠️ <%= scalar @arrears %> in arrears</h2>
+            <div class="alert-items">
+                % for my $t (@arrears) {
+                    <div class="alert-item" data-slug="<%= $t->{slug} %>">
+                        <div>
+                            <strong><%= $t->{name} %></strong>
+                            <span class="text-secondary">(<%= $t->{slug} %>)</span>
+                        </div>
+                        <div class="alert-metrics"><%= $t->{billing_status} %></div>
+                    </div>
+                % }
+            </div>
+        </div>
+    % }
+
+    % if (!@tenants) {
+        <p>No tenants yet.</p>
+    % } else {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Tenant</th><th>Plan</th><th>Rate</th>
+                    <th>Billing</th><th>Charges</th><th>Revenue share</th>
+                </tr>
+            </thead>
+            <tbody>
+                % for my $t (@tenants) {
+                    <tr data-slug="<%= $t->{slug} %>">
+                        <td><strong><%= $t->{name} %></strong></td>
+                        <td><%= $t->{plan_name} // 'none' %></td>
+                        <td>
+                            %# From the plan row, which is the same source
+                            %# RevenueShare charges against. #426 asks for a
+                            %# displayed rate that equals the charged one, and
+                            %# reading the same row is the only way to have that.
+                            % if (defined $t->{rate_pct}) {
+                                <span data-rate="<%= $t->{rate_pct} %>"><%= sprintf '%.3g%%', $t->{rate_pct} %></span>
+                            % } else {
+                                <span data-rate="none">no rate declared</span>
+                            % }
+                        </td>
+                        <td><%= $t->{billing_status} // 'unknown' %></td>
+                        <td>
+                            <%= $t->{charges} %>
+                            % if ($t->{unrecorded}) {
+                                <br><span class="text-secondary" data-unrecorded="<%= $t->{unrecorded} %>">
+                                    <%= $t->{unrecorded} %> unrecorded
+                                </span>
+                            % }
+                        </td>
+                        <td data-fees="<%= $t->{fees_cents} %>"><%= $money->($t->{fees_cents}) %></td>
+                    </tr>
+                % }
+            </tbody>
+        </table>
+    % }
+</div>
