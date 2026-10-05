@@ -442,6 +442,90 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return $result->array->[0] > 0;
     }
 
+    # Every tenant, with what the platform's owner has to know about it.
+    #
+    # #426: "is this customer actually working" takes four psql checks per
+    # tenant today -- the row, the schema, the imports, and whether the admin
+    # user is resident in both schemas -- which is a direct tax on a 15-hour
+    # week and the reason a half-provisioned tenant stays invisible until
+    # somebody complains (#265).
+    #
+    # Per-tenant failures are CAUGHT, not raised. A screen that dies on the
+    # first broken tenant says nothing about any of the others, which is exactly
+    # the position psql leaves you in. The broken ones are the point.
+    sub fleet ( $class, $db ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $rows = $db->query( <<~'SQL' )->hashes->to_array;
+            SELECT t.id, t.slug, t.name, t.created_at, t.canonical_domain,
+                   t.billing_status, t.trial_ends_at,
+                   t.stripe_connect_account_id,
+                   t.stripe_charges_enabled,
+                   t.stripe_details_submitted,
+                   p.plan_name,
+                   EXISTS (
+                       SELECT 1 FROM information_schema.schemata s
+                        WHERE s.schema_name = t.slug
+                   ) AS schema_present
+              FROM registry.tenants t
+              LEFT JOIN registry.pricing_plans p
+                     ON p.id = t.platform_pricing_plan_id
+             ORDER BY t.created_at
+            SQL
+
+        for my $row (@$rows) {
+            my @problems;
+
+            unless ( $row->{schema_present} ) {
+                push @problems, 'schema was never created';
+                $row->{problems} = \@problems;
+                $row->{healthy}  = 0;
+                next;
+            }
+
+            # Quoted, not interpolated. Slugs are constrained on the way in, and
+            # a schema name reaching SQL unquoted is the kind of thing that stays
+            # safe only as long as every writer of a slug keeps agreeing.
+            my $schema = $db->dbh->quote_identifier( $row->{slug} );
+
+            my $health = eval {
+                $db->query( <<~"SQL", $row->{id} )->hash;
+                    SELECT (SELECT COUNT(*) FROM $schema.workflows) AS workflows,
+                           (SELECT COUNT(*) FROM $schema.templates) AS templates,
+                           EXISTS (
+                               SELECT 1
+                                 FROM $schema.users su
+                                 JOIN registry.tenant_users tu
+                                      ON tu.user_id = su.id
+                                WHERE tu.tenant_id = ? AND tu.is_primary
+                           ) AS owner_resident
+                    SQL
+            };
+
+            if ( my $err = $@ ) {
+                # A schema that exists with its tables missing: worse than
+                # absent, because every sweep and every page assumes otherwise.
+                $err =~ s/\s+/ /g;
+                push @problems, "schema is incomplete: $err";
+                $row->{problems} = \@problems;
+                $row->{healthy}  = 0;
+                next;
+            }
+
+            $row->{health} = $health;
+
+            push @problems, 'no workflows imported' unless $health->{workflows};
+            push @problems, 'no templates imported' unless $health->{templates};
+            push @problems, 'owner is not resident in the tenant schema'
+              unless $health->{owner_resident};
+
+            $row->{problems} = \@problems;
+            $row->{healthy}  = @problems ? 0 : 1;
+        }
+
+        return $rows;
+    }
+
     # Get all tenant schemas for background jobs
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;

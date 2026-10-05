@@ -1,0 +1,98 @@
+% layout 'default';
+% title 'Tenants';
+
+%# Alex's one screen for "is this customer actually working". Every field here
+%# was a psql query: the tenant row, the schema, the imports, and whether the
+%# owner is resident in both schemas (#426).
+<div class="container">
+    <h1>Tenants</h1>
+
+    % my @fleet = @{ stash('fleet') || [] };
+    % my @unhealthy = grep { !$_->{healthy} } @fleet;
+
+    %# Problems first and counted, because the whole point is not having to
+    %# scan. A fleet with nothing wrong says so rather than showing an empty box.
+    % if (@unhealthy) {
+        <div class="alert-grid mb-8" id="unhealthy-tenants">
+            <h2>⚠️ <%= scalar @unhealthy %> of <%= scalar @fleet %> need attention</h2>
+            <div class="alert-items">
+                % for my $t (@unhealthy) {
+                    <div class="alert-item">
+                        <div>
+                            <strong><%= $t->{name} %></strong>
+                            <span class="text-secondary">(<%= $t->{slug} %>)</span>
+                            <ul class="list-disc list-inside">
+                                % for my $problem (@{ $t->{problems} || [] }) {
+                                    <li><%= $problem %></li>
+                                % }
+                            </ul>
+                        </div>
+                    </div>
+                % }
+            </div>
+        </div>
+    % } elsif (@fleet) {
+        <p id="all-healthy">All <%= scalar @fleet %> tenants are provisioned and healthy.</p>
+    % }
+
+    % if (!@fleet) {
+        <p>No tenants yet.</p>
+    % } else {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Tenant</th><th>Created</th><th>Plan</th>
+                    <th>Billing</th><th>Payments</th><th>Provisioning</th>
+                </tr>
+            </thead>
+            <tbody>
+                % for my $t (@fleet) {
+                    <tr data-slug="<%= $t->{slug} %>" data-healthy="<%= $t->{healthy} ? 'true' : 'false' %>">
+                        <td>
+                            <strong><%= $t->{name} %></strong><br>
+                            <span class="text-secondary"><%= $t->{slug} %></span>
+                            % if ($t->{canonical_domain}) {
+                                <br><span class="text-secondary"><%= $t->{canonical_domain} %></span>
+                            % }
+                        </td>
+                        <td><%= substr($t->{created_at} // '', 0, 10) %></td>
+                        <td><%= $t->{plan_name} // 'none' %></td>
+                        <td>
+                            <%= $t->{billing_status} // 'unknown' %>
+                            % if ($t->{trial_ends_at}) {
+                                <br><span class="text-secondary">trial ends <%= substr($t->{trial_ends_at}, 0, 10) %></span>
+                            % }
+                        </td>
+                        <td>
+                            %# The three columns the publish gate reads. Diagnosing
+                            %# "this tenant cannot publish a paid session" was
+                            %# reading these by hand.
+                            % if (!$t->{stripe_connect_account_id}) {
+                                <span data-connect="none">not started</span>
+                            % } elsif ($t->{stripe_charges_enabled}) {
+                                <span data-connect="ready">can take payments</span>
+                            % } elsif ($t->{stripe_details_submitted}) {
+                                <span data-connect="pending">submitted, not enabled</span>
+                            % } else {
+                                <span data-connect="incomplete">onboarding unfinished</span>
+                            % }
+                        </td>
+                        <td>
+                            % if ($t->{healthy}) {
+                                <span data-provisioning="ok">ok</span>
+                                % if (my $h = $t->{health}) {
+                                    <br><span class="text-secondary">
+                                        <%= $h->{workflows} %> workflows,
+                                        <%= $h->{templates} %> templates
+                                    </span>
+                                % }
+                            % } else {
+                                <span data-provisioning="broken"><%= join '; ', @{ $t->{problems} || [] } %></span>
+                            % }
+                        </td>
+                    </tr>
+                % }
+            </tbody>
+        </table>
+    % }
+</div>
