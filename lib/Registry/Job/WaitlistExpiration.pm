@@ -20,6 +20,7 @@ class Registry::Job::WaitlistExpiration {
         try {
             my $dao = $app->dao;
 
+            my $result;
             if ($specific_waitlist_id) {
                 # NOTE: the specific_waitlist_id caller must supply a tenant-scoped
                 # dao (via $app->dao->connect_schema($slug)) so the unqualified table
@@ -27,14 +28,26 @@ class Registry::Job::WaitlistExpiration {
                 # schema.  There are currently no enqueue callers that pass this arg;
                 # if you add one, thread the tenant slug and call connect_schema here.
                 $class->expire_specific_entry($dao, $specific_waitlist_id, $log);
+                $result = {
+                    scope       => 'waitlist_entry',
+                    waitlist_id => $specific_waitlist_id,
+                };
             } else {
                 # Global sweep: iterate every tenant schema so expired offers in any
                 # tenant are reaped.  Tenant data lives in per-tenant schemas, not in
                 # registry, so a registry-scoped dao would find nothing.
-                $class->expire_all_tenant_offers($dao, $log);
+                $result = {
+                    scope => 'all_tenants',
+                    %{ $class->expire_all_tenant_offers($dao, $log) },
+                };
             }
 
-            $job->finish('Waitlist expiration processing completed successfully');
+            # Finish with what the sweep did, not a constant.  Minion persists
+            # this on the job row and Minion::Admin renders it, so the tenants
+            # covered and the tenants skipped outlive the worker's STDERR.  A
+            # sweep built to finish despite bad rows otherwise reports success
+            # identically whether it skipped none of them or half the fleet.
+            $job->finish($result);
         }
         catch ($e) {
             $log->error("WaitlistExpiration job failed: $e");
@@ -51,6 +64,7 @@ class Registry::Job::WaitlistExpiration {
 
         my $tenants = Registry::DAO::Tenant->get_all_tenant_schemas($dao->db);
 
+        my ( @covered, @skipped );
         for my $tenant (@$tenants) {
             my $slug = $tenant->{slug};
 
@@ -61,12 +75,21 @@ class Registry::Job::WaitlistExpiration {
                 $log->info("Processing waitlist expirations for tenant: $slug");
                 my $tenant_dao = $dao->connect_schema($slug);
                 $class->expire_all_old_offers($tenant_dao, $log);
+                push @covered, $slug;
             }
             catch ($e) {
                 $log->error("WaitlistExpiration failed for tenant $slug: $e");
-                # Continue to the next tenant rather than aborting the sweep.
+                # Continue to the next tenant rather than aborting the sweep,
+                # but carry the reason out with the slug.  A count of skipped
+                # tenants sends the operator back to psql to find out which and
+                # why, which is the errand this is meant to retire (#265).
+                my $reason = "$e";
+                $reason =~ s/\s+/ /g;
+                push @skipped, { slug => $slug, error => $reason };
             }
         }
+
+        return { tenants_covered => \@covered, tenants_skipped => \@skipped };
     }
     
     # Expire all old offers and process next entries
