@@ -28,7 +28,20 @@
                         no recorded fee &mdash; settled before Registry began
                         recording what Stripe took. Those figures are in Stripe only.
                     </p>
-                % } else {
+                % }
+                %# A tenant whose schema is present but unreadable is a hole of
+                %# unknown size, not a zero. Absorbing it silently would make
+                %# this total wrong in the one direction nobody checks.
+                % if (my @unreadable = @{ $revenue->{unreadable} || [] }) {
+                    <p class="text-secondary" id="unreadable-warning">
+                        <%= scalar @unreadable %>
+                        <%= @unreadable == 1 ? 'tenant could' : 'tenants could' %>
+                        not be read at all, so this total is short by an unknown
+                        amount:
+                        <%= join ', ', map { $_->{slug} } @unreadable %>.
+                    </p>
+                % }
+                % if (!$revenue->{unrecorded} && !@{ $revenue->{unreadable} || [] }) {
                     <p class="text-secondary">Every completed charge is accounted for.</p>
                 % }
             </div>
