@@ -210,4 +210,59 @@ subtest 'the revenue screen is behind the guard, and admits its gaps' => sub {
           'and a tenant whose schema cannot be read is declared, not absorbed' );
 };
 
+subtest 'the runbook queue is behind the guard, and names the family owed' => sub {
+    # #426 step 4. record_capacity_obligation recorded the debt and nothing
+    # read it, so a family could be waitlisted, owed their money, and invisible.
+    # The assertion that matters is that BOTH kinds of row reach the page: one
+    # with money still owed, and one with nothing computably owed that is held
+    # by an unresolved manual-review flag. A reader keyed on the money alone
+    # would drop the second kind, which is the kind nobody has decided about.
+    my $owing = Test::Registry::Fixtures::create_tenant( $db, {
+        name => 'Runbook Studio', slug => 'runbook_studio' } );
+
+    my $family = Registry::DAO::User->create( $db, {
+        username => 'owed_family', name => 'Owed Family', user_type => 'parent',
+        email => 'owed@screen.test' } );
+    $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
+        'runbook_studio', $family->id );
+    my $tenant_db = $dao->connect_schema('runbook_studio')->db;
+
+    require Registry::DAO::Payment;
+    my $owed = Registry::DAO::Payment->create( $tenant_db, {
+        user_id => $family->id, amount_cents => 12000,
+        status => 'refund_pending',
+        metadata => { enrollment_items => [] } } );
+    $tenant_db->update( 'payments',
+        { refund_owed_cents => 4500, refunded_cents => 0 }, { id => $owed->id } );
+
+    my $undecided = Registry::DAO::Payment->create( $tenant_db, {
+        user_id => $family->id, amount_cents => 9000,
+        status => 'refund_pending',
+        metadata => { enrollment_items => [],
+                      refund_manual_review => [ { child_id => 'x' } ] } } );
+    $tenant_db->update( 'payments',
+        { refund_owed_cents => 0 }, { id => $undecided->id } );
+
+    my $refused = Test::Registry::Mojo->new('Registry');
+    $refused->app->helper( dao => sub { $dao } );
+    authenticate_as( $refused, $morgan );
+    $refused->get_ok('/platform/runbook')->status_is( 403,
+        'a tenant admin cannot read every tenant\'s unpaid obligations' );
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $alex );
+
+    $t->get_ok('/platform/runbook')->status_is(200)
+      ->content_like( qr/Owed Family/,
+          'the family owed money is named, because the next step is contacting them' )
+      ->content_like( qr/\$45\.00/, 'with what is still owed, as money' )
+      ->content_like( qr/data-owed="4500"/,
+          'and machine-readably, so a digest can reuse it' )
+      ->content_like( qr/data-undecided="1"/,
+          'the row held by an unresolved share is on the page too' )
+      ->content_like( qr/id="undecided-total"/,
+          'counted separately, since it cannot be ranked by amount' );
+};
+
 done_testing;

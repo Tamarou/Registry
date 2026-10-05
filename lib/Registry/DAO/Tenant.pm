@@ -636,6 +636,118 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         };
     }
 
+    # Every payment with an unpaid obligation, across every tenant.
+    #
+    # record_capacity_obligation's own comment said it: "the runbook clears it
+    # by hand; there is no automated reader". So a family could be demoted to
+    # the waitlist, be owed their money back, and be visible nowhere -- the debt
+    # was recorded correctly and then read by nothing.
+    #
+    # TWO kinds of row need a human, and they are not the same predicate:
+    #
+    #   refund_owed_cents > 0   money still owed. This column is what is LEFT
+    #                           owed, not the original debt -- settling
+    #                           decrements it -- so non-zero means outstanding.
+    #
+    #   status = 'refund_pending' with nothing computably owed. An unresolved
+    #                           refund_manual_review flag deliberately holds the
+    #                           row here (Payment.pm): a share this code could
+    #                           not work out, which refunding the children it
+    #                           COULD work out does not discharge. Payment.pm
+    #                           states that the runbook finds these BY STATUS.
+    #
+    # Keying on the money alone would therefore miss precisely the rows nobody
+    # has decided about, which are the ones most in need of a person. The
+    # predicate is the union of both.
+    sub unpaid_obligations ( $class, $db ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # Payments live in the tenant's schema, so this is one query per tenant
+        # rather than a join -- see platform_revenue above for why.
+        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
+            SELECT t.slug, t.name,
+                   EXISTS (
+                       SELECT 1 FROM information_schema.schemata s
+                        WHERE s.schema_name = t.slug
+                   ) AS schema_present
+              FROM registry.tenants t
+             WHERE t.slug <> 'registry'
+             ORDER BY t.name
+            SQL
+
+        # Declared separately on purpose: in a list assignment the first
+        # array slurps the whole right-hand side.
+        my @payments;
+        my @unreadable;
+        my $owed = 0;
+
+        for my $row (@$tenants) {
+            next unless $row->{schema_present};
+
+            # Quoted, not interpolated; see fleet().
+            my $schema = $db->dbh->quote_identifier( $row->{slug} );
+
+            my $rows = eval {
+                # The payer is named because the runbook's next action is to
+                # contact a family, and an id is not a person.
+                $db->query( <<~"SQL" )->hashes->to_array;
+                    SELECT p.id            AS payment_id,
+                           p.amount_cents,
+                           p.refund_owed_cents,
+                           p.refunded_cents,
+                           p.status,
+                           p.created_at,
+                           -- name and email live on user_profiles, not users.
+                           -- COALESCE to the username so a row whose profile
+                           -- did not come across is still contactable rather
+                           -- than appearing as a blank in the queue.
+                           COALESCE(up.name, u.username) AS payer_name,
+                           up.email                      AS payer_email,
+                           COALESCE(jsonb_array_length(
+                               p.metadata->'refund_manual_review'), 0)
+                                           AS manual_review
+                      FROM $schema.payments p
+                      LEFT JOIN $schema.users u ON u.id = p.user_id
+                      LEFT JOIN $schema.user_profiles up ON up.user_id = p.user_id
+                     WHERE p.refund_owed_cents > 0
+                        OR p.status = 'refund_pending'
+                     ORDER BY p.created_at
+                    SQL
+            };
+
+            if ( my $err = $@ ) {
+                # Named rather than skipped. A runbook queue that quietly
+                # omitted a tenant would read as "nothing to do", which is the
+                # state this whole reader exists to stop being indistinguishable
+                # from "nobody looked".
+                $err =~ s/\s+/ /g;
+                push @unreadable, { slug => $row->{slug}, error => $err };
+                next;
+            }
+
+            for my $pay (@$rows) {
+                $pay->{tenant_slug} = $row->{slug};
+                $pay->{tenant_name} = $row->{name};
+                $owed += $pay->{refund_owed_cents} // 0;
+                push @payments, $pay;
+            }
+        }
+
+        # Largest debt first; an undecided row sorts with the zero-owed rows and
+        # is distinguished by manual_review, not by position.
+        my @sorted = sort {
+            ( $b->{refund_owed_cents} // 0 ) <=> ( $a->{refund_owed_cents} // 0 )
+              or ( $a->{created_at} // '' ) cmp ( $b->{created_at} // '' )
+        } @payments;
+
+        return {
+            payments   => \@sorted,
+            owed_cents => $owed,
+            unreadable => \@unreadable,
+            undecided  => [ grep { $_->{manual_review} } @sorted ],
+        };
+    }
+
     # Get all tenant schemas for background jobs
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;

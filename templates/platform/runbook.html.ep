@@ -1,0 +1,103 @@
+% layout 'default';
+% title 'Runbook';
+
+%# #426 step 4. Two different things need a person here and they are not the
+%# same question, so the page does not merge them into one count: money still
+%# owed, and a share the code could not work out and nobody has decided about.
+% my $queue = stash('queue') || {};
+% my @payments = @{ $queue->{payments} || [] };
+% my @undecided = @{ $queue->{undecided} || [] };
+% my @unreadable = @{ $queue->{unreadable} || [] };
+% my $money = sub { sprintf '$%.2f', ( $_[0] // 0 ) / 100 };
+
+<div class="container">
+    <h1>Runbook</h1>
+
+    <div class="stats-grid mb-8">
+        <div class="stat-card">
+            <div class="stat-details">
+                <h3>Owed back to families</h3>
+                <p class="stat-value" id="owed-total"><%= $money->($queue->{owed_cents}) %></p>
+                <p class="text-secondary">
+                    across <%= scalar @payments %>
+                    <%= @payments == 1 ? 'payment' : 'payments' %>
+                </p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-details">
+                <h3>Awaiting a decision</h3>
+                <p class="stat-value" id="undecided-total"><%= scalar @undecided %></p>
+                <p class="text-secondary">
+                    %# These carry no computable debt, which is exactly why they
+                    %# cannot be ranked by amount: somebody has to look.
+                    a share the code could not work out
+                </p>
+            </div>
+        </div>
+    </div>
+
+    %# A tenant that could not be read is a hole of unknown size. Saying so
+    %# beats a total that looks complete.
+    % if (@unreadable) {
+        <div class="alert-grid mb-8" id="unreadable">
+            <h2>⚠️ <%= scalar @unreadable %> unreadable</h2>
+            <ul>
+                % for my $u (@unreadable) {
+                    <li><strong><%= $u->{slug} %></strong>: <%= $u->{error} %></li>
+                % }
+            </ul>
+            <p class="text-secondary">
+                These tenants were not searched, so the figures above are a floor.
+            </p>
+        </div>
+    % }
+
+    % if (!@payments) {
+        <p id="runbook-empty">Nothing is owed and nothing is waiting on a decision.</p>
+    % } else {
+        <div class="table-scroll">
+            <table class="data-table" id="runbook-queue">
+                <thead>
+                    <tr>
+                        <th>Family</th>
+                        <th>Tenant</th>
+                        <th>Charged</th>
+                        <th>Still owed</th>
+                        <th>Returned</th>
+                        <th>Status</th>
+                        <th>Needs a decision</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    % for my $p (@payments) {
+                        <tr data-payment="<%= $p->{payment_id} %>"
+                            data-owed="<%= $p->{refund_owed_cents} %>">
+                            <td>
+                                <%= $p->{payer_name} // 'unknown' %>
+                                % if ($p->{payer_email}) {
+                                    <br><span class="text-secondary"><%= $p->{payer_email} %></span>
+                                % }
+                            </td>
+                            <td><%= $p->{tenant_name} // $p->{tenant_slug} %></td>
+                            <td><%= $money->($p->{amount_cents}) %></td>
+                            <td><%= $money->($p->{refund_owed_cents}) %></td>
+                            <td><%= $money->($p->{refunded_cents}) %></td>
+                            <td><%= $p->{status} %></td>
+                            <td>
+                                % if ($p->{manual_review}) {
+                                    <span data-undecided="<%= $p->{manual_review} %>">
+                                        <%= $p->{manual_review} %>
+                                        <%= $p->{manual_review} == 1 ? 'share' : 'shares' %>
+                                    </span>
+                                % } else {
+                                    &mdash;
+                                % }
+                            </td>
+                        </tr>
+                    % }
+                </tbody>
+            </table>
+        </div>
+    % }
+</div>

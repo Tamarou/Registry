@@ -2,11 +2,13 @@
 # ABOUTME: Alex (platform owner) journey: the automation runs without him.
 # ABOUTME: Tenant-aware sweeps process every tenant, isolate bad rows, and /health probes the DB.
 #
-# Asserts at the DAO and job layer on purpose. Alex has no screens -- no
-# platform-owner route, template or nav exists -- so unlike the other personas
-# there is no control here to press. That is a decision (perigrin, #395) rather
-# than the gap the other journey suites had: the screens Alex would need are
-# enumerated in #426, and this suite should be reshaped only when they exist.
+# Asserts at the DAO and job layer on purpose, and that is now the right layer
+# rather than the only one. The platform-owner screens #426 enumerated exist --
+# /platform/jobs, /platform/tenants, /platform/revenue, /platform/runbook, each
+# covered by t/security/platform-admin-only.t -- but the sweeps themselves have
+# no screen and need none: they report through Minion's job result, which
+# Minion::Admin renders. So what is asserted here is the sweep's own behaviour,
+# which is the thing that has no control to press.
 use 5.42.0;
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }

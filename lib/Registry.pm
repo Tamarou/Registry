@@ -1016,6 +1016,25 @@ class Registry :isa(Mojolicious) {
             );
         } )->name('platform_revenue');
 
+        # The runbook queue: #426 step 4. Payments with an unpaid obligation.
+        #
+        # record_capacity_obligation said outright that "the runbook clears it
+        # by hand; there is no automated reader", so a family could be demoted
+        # to the waitlist, be owed their money back, and appear nowhere. The
+        # debt was recorded correctly and read by nothing.
+        #
+        # No sweep section here: #470 made the sweeps finish with what they
+        # covered and skipped, and Minion::Admin at /platform/jobs already
+        # renders a job's result. A second place to look would be worse than
+        # the one that works.
+        $platform->get('/runbook')->to( cb => sub ($c) {
+            require Registry::DAO::Tenant;
+            $c->render(
+                template => 'platform/runbook',
+                queue    => Registry::DAO::Tenant->unpaid_obligations( $c->dao->db ),
+            );
+        } )->name('platform_runbook');
+
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach
         # these routes even though staff can reach other /admin/* routes.
