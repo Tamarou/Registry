@@ -335,7 +335,14 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     method get_workflow_run_step {
         my $dao = $self->dao;
-        my $run = $self->run();
+
+        # A well-formed uuid that matches no row. The route constraint keeps
+        # non-uuid shapes out; this is the other half -- an id that casts fine
+        # and names nothing. It used to fall through to `$run->data` and produce
+        # `Can't call method on an undefined value`, which then cascaded into
+        # `Could not render a response` because the error path itself failed.
+        # #431.
+        my $run = $self->run() or return $self->reply->not_found;
         my $workflow = $self->workflow();
 
         # Find the step that matches the URL parameter, not just the latest step
@@ -450,6 +457,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
                 id => $self->param('run'),
             }
         );
+
+        # Same refusal as the GET. This one resolves the run itself rather than
+        # through run(), which is why it needed its own guard -- and a POST is
+        # what a crawler replaying a form does. #431.
+        return $self->reply->not_found unless $run;
 
         # if we're done, stop now
         if ( $run->completed( $dao->db ) ) {
