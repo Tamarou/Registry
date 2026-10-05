@@ -21,6 +21,72 @@ class Registry :isa(Mojolicious) {
     use YAML::XS                 qw(Load);
     use Registry::Utility::Logger;
 
+    # What production depends on, what happens without it, and whether the value
+    # is safe to print. Every consequence here was read out of the code rather
+    # than assumed:
+    #
+    #   DB_URL                 Registry.pm's Pg helper falls back to
+    #                          postgresql://localhost/registry -- a different
+    #                          database, silently.
+    #   BASE_URL               AccountCheck builds magic-link URLs with '' as
+    #                          the base.
+    #   STRIPE_SECRET_KEY      WorkflowSteps::Payment routes every priced cart
+    #                          to create_demo_enrollments: enrolled, not charged.
+    #   STRIPE_WEBHOOK_SECRET  Webhooks refuses every delivery with a 500, so no
+    #                          payment ever settles.
+    #   POSTMARK_SERVER_TOKEN  Notification builds no transport, so nothing is
+    #                          delivered.
+    #   LOG_LEVEL              the per-request access line is at debug, so it is
+    #                          not emitted. This is the one that started #459.
+    my @PRODUCTION_CONFIG = (
+        { key => 'DB_URL', secret => 1,
+          cost => 'the app falls back to postgresql://localhost/registry' },
+        { key => 'BASE_URL',
+          cost => 'magic-link URLs are built with an empty base' },
+        { key => 'STRIPE_SECRET_KEY', secret => 1,
+          cost => 'priced enrolments complete WITHOUT charging' },
+        { key => 'STRIPE_WEBHOOK_SECRET', secret => 1,
+          cost => 'webhooks are refused, so no payment settles' },
+        { key => 'POSTMARK_SERVER_TOKEN', secret => 1,
+          cost => 'no email is delivered' },
+        { key => 'LOG_LEVEL',
+          cost => 'the per-request access line is not emitted' },
+    );
+
+    method _log_effective_configuration {
+        return unless $self->mode eq 'production';
+
+        my @effective;
+        my @missing;
+
+        for my $var (@PRODUCTION_CONFIG) {
+            my $value = $ENV{ $var->{key} };
+            my $set   = defined $value && length $value;
+
+            # A secret is reported present or absent, never echoed: this line
+            # goes to a log store, and the point is to see WHETHER a variable
+            # arrived, not what it says.
+            push @effective, sprintf '%s=%s', $var->{key},
+                !$set          ? 'unset'
+              : $var->{secret} ? 'set'
+              :                  $value;
+
+            push @missing, $var unless $set;
+        }
+
+        $self->log->info( 'effective configuration: ' . join ' ', @effective );
+
+        # One line per absence, naming the consequence. At error, because each
+        # of these means the product quietly does something other than what it
+        # is meant to -- and an operator scanning for errors is the only reader
+        # there is until #426.
+        $self->log->error(
+            sprintf '%s is not set in production: %s', $_->{key}, $_->{cost} )
+          for @missing;
+
+        return;
+    }
+
     method startup {
         # Replace default Mojolicious logger with structured JSON logger.
         # Level defaults to the LOG_LEVEL environment variable, falling back to 'info'.
@@ -29,6 +95,17 @@ class Registry :isa(Mojolicious) {
                 level => $ENV{LOG_LEVEL} // 'info'
             )
         );
+
+        # Say out loud what this process is actually configured with.
+        #
+        # #459: LOG_LEVEL was committed to render.yaml, the deploy went live
+        # with the code, the variable never arrived, and the access log stayed
+        # dark for hours. Nothing was broken -- `LOG_LEVEL // 'info'` is a
+        # legitimate default, so the feature simply did not happen, which is the
+        # hardest kind of configuration failure to notice. A boot line that
+        # states the EFFECTIVE value makes the discrepancy visible on the first
+        # deploy instead of on the day somebody goes looking.
+        $self->_log_effective_configuration;
 
         if ($ENV{MOJO_SECRET}) {
             $self->secrets( [$ENV{MOJO_SECRET}] );
