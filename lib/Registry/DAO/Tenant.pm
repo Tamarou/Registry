@@ -542,10 +542,18 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     sub platform_revenue ( $class, $db ) {
         $db = $db->db if $db isa Registry::DAO;
 
-        # The tenant a charge belongs to lives in payments.metadata, which is
-        # where create_payment snapshots it. Platform/registry payments are
-        # excluded: they are Registry's own subscriptions, not revenue share.
-        my $rows = $db->query( <<~'SQL' )->hashes->to_array;
+        # Charges live in the TENANT's schema, one table per tenant, because
+        # `tenant-scoped-payments` moved payments out of registry and
+        # Registry::DAO::Payment's SQL is unqualified throughout -- it contains
+        # no reference to registry.payments at all. So this cannot be one join;
+        # it is one query per tenant, the same shape as fleet() above.
+        #
+        # registry.payments is not a fallback to also check. It holds the
+        # platform's OWN rows -- Registry's subscription charges to its tenants
+        # -- so counting it here would add Registry's income from a tenant to
+        # Registry's income from that tenant's customers. Two different
+        # businesses, one column.
+        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
             SELECT t.slug,
                    t.name,
                    t.billing_status,
@@ -553,45 +561,78 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                    p.plan_name,
                    (p.pricing_configuration->>'percentage')::numeric * 100
                        AS rate_pct,
-                   COALESCE(c.charges, 0)      AS charges,
-                   COALESCE(c.fees_cents, 0)   AS fees_cents,
-                   COALESCE(c.unrecorded, 0)   AS unrecorded
+                   EXISTS (
+                       SELECT 1 FROM information_schema.schemata s
+                        WHERE s.schema_name = t.slug
+                   ) AS schema_present
               FROM registry.tenants t
               LEFT JOIN registry.pricing_plans p
                      ON p.id = t.platform_pricing_plan_id
-              LEFT JOIN (
-                  SELECT pay.metadata->>'tenant_slug' AS slug,
-                         COUNT(*)                                   AS charges,
-                         COALESCE(SUM(pay.platform_fee_cents), 0)    AS fees_cents,
-                         COUNT(*) FILTER (
-                             WHERE pay.platform_fee_cents IS NULL )  AS unrecorded
-                    FROM registry.payments pay
-                   WHERE pay.status = 'completed'
-                     AND pay.metadata->>'tenant_slug' IS NOT NULL
-                     AND pay.metadata->>'tenant_slug' <> 'registry'
-                   GROUP BY 1
-              ) c ON c.slug = t.slug
              WHERE t.slug <> 'registry'
-             ORDER BY c.fees_cents DESC NULLS LAST, t.name
+             ORDER BY t.name
             SQL
 
-        my $total      = 0;
-        my $unrecorded = 0;
-        for my $row (@$rows) {
-            $total      += $row->{fees_cents} // 0;
-            $unrecorded += $row->{unrecorded} // 0;
+        my ( $total, $unrecorded, @unreadable ) = ( 0, 0 );
+
+        for my $row (@$tenants) {
+            @{$row}{qw( charges fees_cents unrecorded )} = ( 0, 0, 0 );
+
+            # A tenant with no schema has no payments table to read. That is a
+            # provisioning fault, and fleet() is the screen that reports it; here
+            # it only means zero, not an error.
+            next unless $row->{schema_present};
+
+            # Quoted, not interpolated. Slugs are constrained on the way in, and
+            # a schema name reaching SQL unquoted stays safe only as long as
+            # every writer of a slug keeps agreeing.
+            my $schema = $db->dbh->quote_identifier( $row->{slug} );
+
+            my $c = eval {
+                $db->query( <<~"SQL" )->hash;
+                    SELECT COUNT(*)                                  AS charges,
+                           COALESCE(SUM(platform_fee_cents), 0)      AS fees_cents,
+                           COUNT(*) FILTER (
+                               WHERE platform_fee_cents IS NULL )    AS unrecorded
+                      FROM $schema.payments
+                     WHERE status = 'completed'
+                    SQL
+            };
+
+            if ( my $err = $@ ) {
+                # A schema present but unreadable must not be totalled as zero
+                # and must not take the page down either. It is named, so the
+                # total can be read as incomplete for a stated reason rather
+                # than being quietly short.
+                $err =~ s/\s+/ /g;
+                push @unreadable, { slug => $row->{slug}, error => $err };
+                $row->{unreadable} = $err;
+                next;
+            }
+
+            @{$row}{qw( charges fees_cents unrecorded )} =
+              @{$c}{qw( charges fees_cents unrecorded )};
+
+            $total      += $c->{fees_cents} // 0;
+            $unrecorded += $c->{unrecorded} // 0;
         }
 
+        # Biggest earner first, as the old single query did.
+        my @sorted = sort {
+            ( $b->{fees_cents} // 0 ) <=> ( $a->{fees_cents} // 0 )
+              or ( $a->{name} // '' ) cmp ( $b->{name} // '' )
+        } @$tenants;
+
         return {
-            tenants    => $rows,
+            tenants    => \@sorted,
             fees_cents => $total,
             unrecorded => $unrecorded,
+            unreadable => \@unreadable,
 
             # #426: a billing_status of past_due or incomplete with nothing
             # surfacing it. Surfaced here.
             arrears => [ grep {
                 ( $_->{billing_status} // '' ) =~ /^(past_due|incomplete)$/
-            } @$rows ],
+            } @sorted ],
         };
     }
 

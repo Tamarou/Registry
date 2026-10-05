@@ -162,14 +162,32 @@ subtest 'the revenue screen is behind the guard, and admits its gaps' => sub {
     my $payer = Registry::DAO::User->create( $db, {
         username => 'screen_payer', name => 'Payer', user_type => 'parent',
         email => 'payer@screen.test' } );
+
+    # The charges go into the tenant's own schema, which is the only place a
+    # real one goes: payments were moved out of registry and
+    # Registry::DAO::Payment's SQL is unqualified, so it writes through
+    # whatever search_path its $db carries. Writing them through the registry
+    # $db would put rows somewhere no code path puts them and then assert the
+    # page can see them.
+    $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
+        'revenue_screen', $payer->id );
+    my $tenant_db = $dao->connect_schema('revenue_screen')->db;
+
     require Registry::DAO::Payment;
-    my $charged = Registry::DAO::Payment->create( $db, {
+    my $charged = Registry::DAO::Payment->create( $tenant_db, {
         user_id => $payer->id, amount_cents => 10000, status => 'completed',
         metadata => { tenant_slug => 'revenue_screen', enrollment_items => [] } } );
-    $db->update( 'payments', { platform_fee_cents => 250 }, { id => $charged->id } );
-    Registry::DAO::Payment->create( $db, {
+    $tenant_db->update( 'payments',
+        { platform_fee_cents => 250 }, { id => $charged->id } );
+    Registry::DAO::Payment->create( $tenant_db, {
         user_id => $payer->id, amount_cents => 50000, status => 'completed',
         metadata => { tenant_slug => 'revenue_screen', enrollment_items => [] } } );
+
+    # A tenant whose schema exists without its payments table: the total has to
+    # declare it rather than absorb it as zero.
+    Registry::DAO::Tenant->create( $db, {
+        name => 'Half Provisioned Screen', slug => 'half_screen' } );
+    $db->query('CREATE SCHEMA IF NOT EXISTS half_screen');
 
     my $refused = Test::Registry::Mojo->new('Registry');
     $refused->app->helper( dao => sub { $dao } );
@@ -187,7 +205,9 @@ subtest 'the revenue screen is behind the guard, and admits its gaps' => sub {
           'the unrecorded charge is declared, so the total reads as a floor' )
       ->content_like( qr/id="arrears"/, 'and the past_due tenant is surfaced' )
       ->content_like( qr/data-rate="2\.5/,
-          'with the rate read from the plan row rather than a constant' );
+          'with the rate read from the plan row rather than a constant' )
+      ->content_like( qr/id="unreadable-warning"/,
+          'and a tenant whose schema cannot be read is declared, not absorbed' );
 };
 
 done_testing;
