@@ -526,6 +526,75 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return $rows;
     }
 
+    # What the platform has actually earned, per tenant and in total.
+    #
+    # Summed from payments.platform_fee_cents -- what Stripe reported taking --
+    # and NEVER derived from amount x rate. A derived figure disagrees with the
+    # charge on every rate change (#277), on every refund that returns the fee,
+    # and wherever Stripe's rounding differs from ours, so it would be a number
+    # that looks authoritative and is wrong.
+    #
+    # The consequence of recording rather than deriving is that charges made
+    # before the column existed have no fee, and the honest thing is to say so.
+    # `unrecorded` counts them, per tenant and overall, so the total reads as a
+    # floor rather than a fact. A sum that silently omitted them would be the
+    # same mistake in a quieter voice.
+    sub platform_revenue ( $class, $db ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        # The tenant a charge belongs to lives in payments.metadata, which is
+        # where create_payment snapshots it. Platform/registry payments are
+        # excluded: they are Registry's own subscriptions, not revenue share.
+        my $rows = $db->query( <<~'SQL' )->hashes->to_array;
+            SELECT t.slug,
+                   t.name,
+                   t.billing_status,
+                   t.stripe_subscription_id,
+                   p.plan_name,
+                   (p.pricing_configuration->>'percentage')::numeric * 100
+                       AS rate_pct,
+                   COALESCE(c.charges, 0)      AS charges,
+                   COALESCE(c.fees_cents, 0)   AS fees_cents,
+                   COALESCE(c.unrecorded, 0)   AS unrecorded
+              FROM registry.tenants t
+              LEFT JOIN registry.pricing_plans p
+                     ON p.id = t.platform_pricing_plan_id
+              LEFT JOIN (
+                  SELECT pay.metadata->>'tenant_slug' AS slug,
+                         COUNT(*)                                   AS charges,
+                         COALESCE(SUM(pay.platform_fee_cents), 0)    AS fees_cents,
+                         COUNT(*) FILTER (
+                             WHERE pay.platform_fee_cents IS NULL )  AS unrecorded
+                    FROM registry.payments pay
+                   WHERE pay.status = 'completed'
+                     AND pay.metadata->>'tenant_slug' IS NOT NULL
+                     AND pay.metadata->>'tenant_slug' <> 'registry'
+                   GROUP BY 1
+              ) c ON c.slug = t.slug
+             WHERE t.slug <> 'registry'
+             ORDER BY c.fees_cents DESC NULLS LAST, t.name
+            SQL
+
+        my $total      = 0;
+        my $unrecorded = 0;
+        for my $row (@$rows) {
+            $total      += $row->{fees_cents} // 0;
+            $unrecorded += $row->{unrecorded} // 0;
+        }
+
+        return {
+            tenants    => $rows,
+            fees_cents => $total,
+            unrecorded => $unrecorded,
+
+            # #426: a billing_status of past_due or incomplete with nothing
+            # surfacing it. Surfaced here.
+            arrears => [ grep {
+                ( $_->{billing_status} // '' ) =~ /^(past_due|incomplete)$/
+            } @$rows ],
+        };
+    }
+
     # Get all tenant schemas for background jobs
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;

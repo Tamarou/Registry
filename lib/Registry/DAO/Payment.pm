@@ -28,6 +28,14 @@ field $refund_owed_cents :param :reader = 0;
 field $refunded_cents    :param :reader = 0;
 field $refund_seq        :param :reader = 0;
 field $refund_increments :param :reader = undef;
+
+# What the platform took on this charge, and the plan version it took it under.
+# NULL on both means NOT RECORDED -- every charge made before these columns
+# existed, and any charge with no destination account (a registry/platform
+# payment has no application fee at all). Zero would claim the platform took
+# nothing, which is a different and sometimes false statement.
+field $platform_fee_cents        :param :reader = undef;
+field $platform_pricing_plan_id  :param :reader = undef;
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 
@@ -697,6 +705,18 @@ field $_stripe_client = undef;
                 };
             }
 
+            # Record what the platform actually took, from what Stripe
+            # reported -- never by recomputing the rate.
+            #
+            # This is the only moment the truth is available: _connect_params
+            # computes the fee on the way out and keeps nothing, and afterwards
+            # only Stripe knows. A figure derived later from the tenant's
+            # current rate disagrees with the charge on every rate change
+            # (#277), on every refund that returns the fee, and wherever
+            # Stripe's rounding differs from ours -- so a revenue screen built
+            # on derivation reports money that was never taken.
+            $self->_record_platform_fee( $db, $intent );
+
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
             $self->_record_processing($db);
@@ -717,6 +737,52 @@ field $_stripe_client = undef;
         }
     }
     
+    # Write down the application fee and the plan version it was charged under.
+    #
+    # Best effort: a failure here must not undo a captured charge. The payment is
+    # settled and the enrolment is the point; an unrecorded fee leaves a NULL,
+    # which the revenue view reports as a gap rather than silently summing as
+    # zero.
+    #
+    # The plan is read now rather than at intent creation, which leaves a window
+    # of seconds in which an admin could move the tenant between plan versions
+    # and have this charge attributed to the newer one. Accepted deliberately:
+    # moving a tenant is a deliberate act (#277), the window is one Stripe round
+    # trip, and the alternative is threading the id through the params builder
+    # and the webhook's run-less path for a case nobody has hit.
+    method _record_platform_fee ( $db, $intent ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $fee = $intent->{application_fee_amount};
+        return unless defined $fee && !ref $fee;
+
+        my $slug = ( ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef );
+
+        my $plan_id;
+        if ( defined $slug && !ref $slug && length $slug ) {
+            my $row = $db->query(
+                'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',
+                $slug )->hash;
+            $plan_id = $row && $row->{platform_pricing_plan_id};
+        }
+
+        eval {
+            $db->update( 'payments',
+                { platform_fee_cents       => $fee,
+                  platform_pricing_plan_id => $plan_id },
+                { id => $id } );
+            $platform_fee_cents       = $fee;
+            $platform_pricing_plan_id = $plan_id;
+            1;
+        } or do {
+            my $err = $@ || 'unknown error';
+            $err =~ s/\s+/ /g;
+            warn "could not record platform fee for payment $id: $err\n";
+        };
+
+        return;
+    }
+
     # Idempotently create the paid enrollments and queue their confirmation
     # emails. Safe to call from both the parent-return callback and the
     # payment_intent.succeeded webhook; the caller passes a $db connected to the
