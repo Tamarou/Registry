@@ -160,8 +160,25 @@ jobs:
         # Stripe is reachable and fail against the real API. Real keys live in
         # the stripe-e2e workflow.
         export STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key
-        # Run tests sequentially to avoid database conflicts
-        timeout 20m carton exec prove -lr t/ --formatter=TAP::Formatter::Console
+        # In parallel, and with a timeout the suite can finish inside.
+        #
+        # This was `timeout 20m prove -lr t/` with no -j, and the suite outgrew
+        # it. `timeout` then killed prove mid-file, so whichever file was in
+        # flight reported "All N subtests passed" and then a non-zero exit: a
+        # failure that names an innocent file, moves between runs, and
+        # reproduces nowhere.
+        #
+        # "Sequentially to avoid database conflicts" was the old reason and it
+        # does not hold. Every test file that touches a database builds its own
+        # Test::PostgreSQL -- its own server, port and data directory -- either
+        # through Test::Registry::DB, which also overrides the DB_URL exported
+        # above, or directly. The postgres service here is used by exactly one
+        # file. There is no shared state to serialise, which is why `make test`
+        # has always run -j8.
+        #
+        # -j$(nproc) rather than a literal, because each worker runs a Postgres
+        # of its own: the right width is the runner's, not a workstation's.
+        timeout 75m carton exec prove -lr -j"$(nproc)" t/ --formatter=TAP::Formatter::Console
 
   lint:
     runs-on: ubuntu-latest
