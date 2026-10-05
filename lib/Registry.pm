@@ -666,6 +666,43 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Helper: is this Alex?
+        #
+        # #426's blocker: the app could ask "what role does this user have in
+        # this tenant" and could not ask "is this the platform's owner". Those
+        # are different questions and the second had no answer, which is why
+        # there is no platform surface at all -- nothing could be put behind
+        # anything.
+        #
+        # Deliberately not a user_type. check_user_type caps that column at
+        # parent/student/staff/admin, and Morgan running a studio is every bit
+        # as much an 'admin' as Alex; what distinguishes them is which tenant
+        # they are primary of. See Registry::DAO::Tenant::is_platform_admin.
+        $self->helper(
+            require_platform_admin => sub ($c) {
+                return 0 unless $c->require_auth;
+
+                my $user = $c->stash('current_user');
+                require Registry::DAO::Tenant;
+                return 1 if Registry::DAO::Tenant->is_platform_admin(
+                    $c->dao->db, ref $user ? $user->{id} : undef );
+
+                # 403 rather than 404: hiding the route from a signed-in tenant
+                # admin buys nothing -- they can read the same refusal from the
+                # status code either way -- and a plain Forbidden is what
+                # require_role already answers, so the two surfaces agree.
+                if (   $c->req->headers->header('X-Requested-With')
+                    || ( $c->req->headers->accept // '' ) =~ m{application/json} )
+                {
+                    $c->render( json => { error => 'Forbidden' }, status => 403 );
+                }
+                else {
+                    $c->render( text => 'Forbidden', status => 403 );
+                }
+                return 0;
+            }
+        );
+
         # Helper: enforce whatever role a workflow slug demands, if it demands
         # one. Shared by the /:workflow guard and by the callcc leg, which
         # starts a run of a workflow the URL names in a different placeholder.
@@ -930,6 +967,26 @@ class Registry :isa(Mojolicious) {
         $admin->post('/sessions/:id/status')
             ->to('admin_dashboard#set_session_status')
             ->name('admin_session_status');
+
+        # Minion's own dashboard, behind the platform guard.
+        #
+        # #426's first step, and the cheapest: the job queue is the answer to
+        # "is the automation running" and it was answerable only through psql or
+        # `registry minion job`. Mounting what Minion already ships retires more
+        # terminal work than anything else on that list.
+        #
+        # Under its own `under` rather than $admin_only: that group asks
+        # require_role('admin'), which Morgan satisfies -- and the queue is every
+        # tenant's work, so it is not a tenant admin's to read.
+        #
+        # route => the mount point, so links inside the dashboard stay under it.
+        my $platform = $r->under('/platform')->to(
+            cb => sub ($c) { $c->require_platform_admin } );
+        $platform->get('/')->to( cb => sub ($c) {
+            $c->redirect_to('/platform/jobs');
+        } )->name('platform_index');
+
+        $self->plugin( 'Minion::Admin' => { route => $platform->any('/jobs') } );
 
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach

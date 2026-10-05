@@ -59,8 +59,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # are hazards today, not merely inconveniences later.
     my %RESERVED_SLUGS = map { $_ => 1 } qw(
         www registry public admin api app assets billing blog cdn dashboard dev
-        docs ftp help imap mail mx ns ns1 ns2 pop pop3 smtp staging static
-        status support test webmail
+        docs ftp help imap mail mx ns ns1 ns2 platform pop pop3 smtp staging
+        static status support test webmail
     );
 
     sub slug_is_reserved ( $class, $slug ) {
@@ -148,6 +148,47 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         else {
             return Registry::DAO->new( schema => $slug );
         }
+    }
+
+    # Which tenant is the platform itself.
+    #
+    # One owner for the question, because "is this Alex" is about to be asked
+    # from more than one place and #294 wants to collapse `registry-platform`
+    # into `registry` -- when that happens, this method changes and nothing else
+    # does.
+    #
+    # The notion is not new: create-default-pricing-relationships.sql has
+    # treated the all-zeros tenant as the platform since it was written, and
+    # production carries it as slug `registry-platform` with exactly one primary
+    # user. Resolved by slug rather than by that literal uuid, because a slug is
+    # what the rest of the system routes and reasons about.
+    sub platform ($class, $db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $class->find( $db, { slug => 'registry-platform' } );
+    }
+
+    # Is this user the platform's owner?
+    #
+    # Platform-ness is being the PRIMARY user of the platform tenant, not a
+    # user_type: `check_user_type` caps that column at parent/student/staff/admin,
+    # and Morgan running a studio is every bit as much an 'admin' as Alex. The
+    # distinction the product needs is which tenant you are primary of.
+    sub is_platform_admin ($class, $db, $user_id) {
+        $db = $db->db if $db isa Registry::DAO;
+        return 0 unless defined $user_id && !ref $user_id && length $user_id;
+
+        my $platform = $class->platform($db) or return 0;
+
+        # Asked of the join table rather than through primary_user, which
+        # returns the first of however many rows carry is_primary -- add_user
+        # does not enforce one. An auth decision should not depend on which row
+        # a LIMIT-less query happened to return first, and "is A primary of the
+        # platform" is the question anyway.
+        return $db->select( 'registry.tenant_users', 'COUNT(*)', {
+            tenant_id  => $platform->id,
+            user_id    => $user_id,
+            is_primary => 1,
+        } )->array->[0] ? 1 : 0;
     }
 
     method primary_user ($db) {
