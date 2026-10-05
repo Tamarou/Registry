@@ -983,10 +983,23 @@ class Registry :isa(Mojolicious) {
         my $platform = $r->under('/platform')->to(
             cb => sub ($c) { $c->require_platform_admin } );
         $platform->get('/')->to( cb => sub ($c) {
-            $c->redirect_to('/platform/jobs');
+            $c->redirect_to('/platform/tenants');
         } )->name('platform_index');
 
         $self->plugin( 'Minion::Admin' => { route => $platform->any('/jobs') } );
+
+        # The tenant fleet: #426's step 2, and the screen everything else about
+        # a customer hangs off. "Is this customer actually working" took four
+        # psql checks per tenant -- the row, the schema, the imports, and
+        # whether the owner is resident in both schemas -- which is why a
+        # half-provisioned tenant stayed invisible until somebody complained.
+        $platform->get('/tenants')->to( cb => sub ($c) {
+            require Registry::DAO::Tenant;
+            $c->render(
+                template => 'platform/tenants',
+                fleet    => Registry::DAO::Tenant->fleet( $c->dao->db ),
+            );
+        } )->name('platform_tenants');
 
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach

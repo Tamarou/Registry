@@ -118,4 +118,31 @@ subtest 'the dashboard assets are static, and carry no data' => sub {
         'and everything in it is namespaced under minion/, so nothing else is exposed';
 };
 
+subtest 'the tenant fleet screen is behind the same guard, and names what is broken' => sub {
+    # #426 step 2. The screen exists to answer "is this customer actually
+    # working" without a terminal, so the assertion that matters is that a
+    # broken tenant is visible ON the page -- not merely that the page renders.
+    Registry::DAO::Tenant->create( $db, {
+        name => 'Never Provisioned', slug => 'never_provisioned',
+    } );
+
+    my $refused = Test::Registry::Mojo->new('Registry');
+    $refused->app->helper( dao => sub { $dao } );
+    authenticate_as( $refused, $morgan );
+    $refused->get_ok('/platform/tenants')->status_is( 403,
+        'a tenant admin cannot read the fleet' );
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $alex );
+
+    $t->get_ok('/platform/tenants')->status_is(200)
+      ->content_like( qr/never_provisioned/,
+          'the tenant that never provisioned is on the page' )
+      ->content_like( qr/schema was never created/,
+          'with the reason, rather than just a red mark' )
+      ->content_like( qr/data-provisioning="broken"/,
+          'and machine-readably, so a later digest can reuse it' );
+};
+
 done_testing;
