@@ -20,6 +20,7 @@ class Registry::Job::ProcessWaitlist {
         try {
             my $dao = $app->dao;
 
+            my $result;
             if ($session_id) {
                 # NOTE: session_id/enrollment_id callers must supply a tenant-scoped
                 # dao (via $app->dao->connect_schema($slug)) so the unqualified table
@@ -27,17 +28,27 @@ class Registry::Job::ProcessWaitlist {
                 # schema.  There are currently no enqueue callers that pass these args;
                 # if you add one, thread the tenant slug and call connect_schema here.
                 $class->process_session_waitlist($dao, $session_id, $log);
+                $result = { scope => 'session', session_id => $session_id };
             } elsif ($enrollment_id) {
                 # See NOTE above re: tenant-scoped dao requirement.
                 $class->process_enrollment_cancellation($dao, $enrollment_id, $log);
+                $result = { scope => 'enrollment', enrollment_id => $enrollment_id };
             } else {
                 # Global sweep: iterate every tenant schema so cancellations in any
                 # tenant are processed.  Tenant data lives in per-tenant schemas, not
                 # in registry, so a registry-scoped dao would find nothing.
-                $class->process_all_tenant_cancellations($dao, $log);
+                $result = {
+                    scope => 'all_tenants',
+                    %{ $class->process_all_tenant_cancellations($dao, $log) },
+                };
             }
 
-            $job->finish('Waitlist processing completed successfully');
+            # Finish with what the sweep did, not a constant.  Minion persists
+            # this on the job row and Minion::Admin renders it, so the tenants
+            # covered and the tenants skipped outlive the worker's STDERR.  A
+            # sweep built to finish despite bad rows otherwise reports success
+            # identically whether it skipped none of them or half the fleet.
+            $job->finish($result);
         }
         catch ($e) {
             $log->error("ProcessWaitlist job failed: $e");
@@ -54,6 +65,7 @@ class Registry::Job::ProcessWaitlist {
 
         my $tenants = Registry::DAO::Tenant->get_all_tenant_schemas($dao->db);
 
+        my ( @covered, @skipped );
         for my $tenant (@$tenants) {
             my $slug = $tenant->{slug};
 
@@ -64,12 +76,21 @@ class Registry::Job::ProcessWaitlist {
                 $log->info("Processing waitlist cancellations for tenant: $slug");
                 my $tenant_dao = $dao->connect_schema($slug);
                 $class->process_recent_cancellations($tenant_dao, $log);
+                push @covered, $slug;
             }
             catch ($e) {
                 $log->error("ProcessWaitlist failed for tenant $slug: $e");
-                # Continue to the next tenant rather than aborting the sweep.
+                # Continue to the next tenant rather than aborting the sweep,
+                # but carry the reason out with the slug.  A count of skipped
+                # tenants sends the operator back to psql to find out which and
+                # why, which is the errand this is meant to retire (#265).
+                my $reason = "$e";
+                $reason =~ s/\s+/ /g;
+                push @skipped, { slug => $slug, error => $reason };
             }
         }
+
+        return { tenants_covered => \@covered, tenants_skipped => \@skipped };
     }
     
     # Process waitlist for a specific session

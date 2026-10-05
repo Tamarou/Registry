@@ -146,7 +146,8 @@ $dao->db->query(
 # MockLogger captures error() calls to an array for assertion; other levels
 # are silenced so test output stays pristine.
 # MockJob records whether finish() or fail() was called so we can assert
-# the bad row did not abort the sweep.
+# the bad row did not abort the sweep, AND what it was called with -- a sweep
+# that finishes with a constant string has thrown away everything it learned.
 
 {
     package MockLogger;
@@ -165,8 +166,8 @@ $dao->db->query(
     package MockJob;
     sub new    { bless { app => $_[1], finished => 0, failed => 0 }, $_[0] }
     sub app    { $_[0]->{app} }
-    sub finish { $_[0]->{finished}++ }
-    sub fail   { $_[0]->{failed}++  }
+    sub finish { my ($self, $result) = @_; $self->{finished}++; $self->{result} = $result }
+    sub fail   { my ($self, $err) = @_; $self->{failed}++; $self->{error} = $err }
 }
 
 {
@@ -211,6 +212,19 @@ subtest 'ProcessWaitlist: sweep reaches tenant A and B, skips registry' => sub {
 
     is $job->{finished}, 1, 'MockJob->finish was called (not fail)';
     is $job->{failed},   0, 'MockJob->fail was NOT called';
+
+    # #426 step 4. Dispatch happening is not the same as anyone being able to
+    # tell afterwards that it happened. The durable record of a sweep is what it
+    # finished with -- Minion stores that on the job row and Minion::Admin shows
+    # it -- so a sweep that finishes with a constant string has thrown away
+    # every tenant it covered.
+    my $result = $job->{result};
+    is ref $result, 'HASH',
+        'the sweep finishes with a structured result, not a prose string';
+    my %covered = map { $_ => 1 } @{ $result->{tenants_covered} // [] };
+    ok $covered{$slug_a}, "tenant A ($slug_a) is recorded as covered";
+    ok $covered{$slug_b}, "tenant B ($slug_b) is recorded as covered";
+    ok !$covered{registry}, 'and registry is not claimed as covered';
 };
 
 # ---- subtest 2: WaitlistExpiration dispatch reaches every tenant, skips registry ----
@@ -248,6 +262,19 @@ subtest 'WaitlistExpiration: sweep reaches tenant A and B, skips registry' => su
 
     is $job->{finished}, 1, 'MockJob->finish was called (not fail)';
     is $job->{failed},   0, 'MockJob->fail was NOT called';
+
+    # #426 step 4. Dispatch happening is not the same as anyone being able to
+    # tell afterwards that it happened. The durable record of a sweep is what it
+    # finished with -- Minion stores that on the job row and Minion::Admin shows
+    # it -- so a sweep that finishes with a constant string has thrown away
+    # every tenant it covered.
+    my $result = $job->{result};
+    is ref $result, 'HASH',
+        'the sweep finishes with a structured result, not a prose string';
+    my %covered = map { $_ => 1 } @{ $result->{tenants_covered} // [] };
+    ok $covered{$slug_a}, "tenant A ($slug_a) is recorded as covered";
+    ok $covered{$slug_b}, "tenant B ($slug_b) is recorded as covered";
+    ok !$covered{registry}, 'and registry is not claimed as covered';
 };
 
 # ---- subtest 3: bad-row isolation (defense-in-depth, links issue #265) ------
@@ -275,6 +302,18 @@ subtest 'ProcessWaitlist: bad row (no schema, #265) is isolated, sweep finishes'
         'bad-slug error was captured in the logger (not lost to STDERR)';
     like $bad_slug_errors[0], qr/\Q$bad_slug\E/,
         'captured error message mentions the bad slug';
+
+    # The log line above is ephemeral -- nobody reads a worker's STDERR a week
+    # later, which is #265's whole complaint. The skip has to survive on the job
+    # row, with the reason attached, or the sweep finishing "successfully" is
+    # indistinguishable from the sweep having covered everything.
+    my $result = $job->{result};
+    is ref $result, 'HASH', 'the sweep finishes with a structured result';
+    my ($skipped) = grep { ( $_->{slug} // '' ) eq $bad_slug }
+                         @{ $result->{tenants_skipped} // [] };
+    ok $skipped, "the skipped tenant ($bad_slug) is named in the result";
+    like $skipped->{error} // '', qr/\S/,
+        'with the reason it was skipped, not just the fact';
 };
 
 subtest 'WaitlistExpiration: bad row (no schema, #265) is isolated, sweep finishes' => sub {
@@ -293,6 +332,18 @@ subtest 'WaitlistExpiration: bad row (no schema, #265) is isolated, sweep finish
         'bad-slug error was captured in the logger (not lost to STDERR)';
     like $bad_slug_errors[0], qr/\Q$bad_slug\E/,
         'captured error message mentions the bad slug';
+
+    # The log line above is ephemeral -- nobody reads a worker's STDERR a week
+    # later, which is #265's whole complaint. The skip has to survive on the job
+    # row, with the reason attached, or the sweep finishing "successfully" is
+    # indistinguishable from the sweep having covered everything.
+    my $result = $job->{result};
+    is ref $result, 'HASH', 'the sweep finishes with a structured result';
+    my ($skipped) = grep { ( $_->{slug} // '' ) eq $bad_slug }
+                         @{ $result->{tenants_skipped} // [] };
+    ok $skipped, "the skipped tenant ($bad_slug) is named in the result";
+    like $skipped->{error} // '', qr/\S/,
+        'with the reason it was skipped, not just the fact';
 };
 
 # ---- subtest 4: real effect in tenant A - WaitlistExpiration flips offer ----
