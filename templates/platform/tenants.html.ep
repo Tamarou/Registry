@@ -5,6 +5,7 @@
 %# was a psql query: the tenant row, the schema, the imports, and whether the
 %# owner is resident in both schemas (#426).
 <div class="container">
+    %= include 'platform/_nav'
     <h1>Tenants</h1>
 
     % my @fleet = @{ stash('fleet') || [] };
