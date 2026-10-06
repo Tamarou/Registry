@@ -1,0 +1,34 @@
+%# The platform surface's own nav. #472: these four screens existed with no way
+%# between them, so three of them were reachable only by typing a URL.
+%#
+%# A partial rather than a layout: layouts/default.html.ep carries the theme
+%# script and the CSRF injector, and a platform layout would have had to
+%# duplicate all of it. The cost of a partial is that a new screen can forget to
+%# include it, which is exactly how this happened -- so
+%# t/security/platform-nav.t walks the platform routes and fails if one does.
+%#
+%# The active link is read from current_route rather than a stash, so a new
+%# screen gets its highlight by being named, not by remembering to set a key.
+%# current_route() with parens: after a bareword Perl reads // as an empty
+%# regex, not defined-or, and the template fails to compile.
+% my $here = current_route() // '';
+<nav class="dashboard-nav" id="platform-nav" aria-label="Platform">
+    <div class="dashboard-nav-brand"><strong>Platform</strong></div>
+    <div class="dashboard-nav-links">
+        % for my $item (
+        %     [ platform_tenants => '/platform/tenants', 'Tenants'  ],
+        %     [ platform_revenue => '/platform/revenue', 'Revenue'  ],
+        %     [ platform_runbook => '/platform/runbook', 'Runbook'  ],
+        %     #  Minion::Admin's own pages; mounted by the plugin, so they
+        %     #  cannot carry this nav. Linking in is the practical half.
+        %     [ platform_jobs    => '/platform/jobs',    'Jobs'     ],
+        % ) {
+            % my ($name, $path, $label) = @$item;
+            %#== rather than == on aria-current: an attribute echoed through
+            %#   <%= %> comes out HTML-escaped. The string is a literal here,
+            %#   not user data.
+            <a href="<%= $path %>" data-nav="<%= $name %>"
+               class="dashboard-nav-link<%= $here eq $name ? ' active' : '' %>"<%== $here eq $name ? ' aria-current="page"' : '' %>><%= $label %></a>
+        % }
+    </div>
+</nav>
