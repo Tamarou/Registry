@@ -103,10 +103,6 @@
                 <dt class="font-medium text-gray-500">Amount</dt>
                 <dd class="mt-1 text-gray-900 font-semibold"><%= $summary->{formatted_amount} || '$0.00' %></dd>
             </div>
-            <div>
-                <dt class="font-medium text-gray-500">Target Audience</dt>
-                <dd class="mt-1 text-gray-900"><%= ucfirst($summary->{target_audience} || 'individual') %></dd>
-            </div>
             <% if ($summary->{resources} && $summary->{resources}{features} && @{$summary->{resources}{features}}) { %>
                 <div class="col-span-2">
                     <dt class="font-medium text-gray-500 mb-2">Features Included</dt>

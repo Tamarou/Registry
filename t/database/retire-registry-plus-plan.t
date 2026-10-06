@@ -40,10 +40,14 @@ my $customer_plan_id = $db->query(
 )->hash->{id};
 
 # A tenant-scoped hybrid plan, but offered by a reseller rather than by the
-# platform.  PricingPlanBasics.pm:88-92 lets any author pick 'tenant', and
-# PriceOps::PricingRelationships::create passes provider_id straight through,
-# so this row is reachable from the product.  It is outside the platform's
-# signup menu and must survive.
+# platform.  PricingPlanBasics.pm lets any author pick the 'tenant' scope, so
+# the plan row itself is reachable from the product.  The relationship that
+# would put a consumer on it is NOT: PriceOps::PricingRelationships was deleted
+# in #427, and it held the only caller of
+# Registry::DAO::PricingRelationship->create, so registry.pricing_relationships
+# now has readers and no writer until #277 supplies one.  A row of this shape
+# must still survive a revert either way -- it is outside the platform's signup
+# menu, and retiring a platform plan has no business reaching it.
 my $b2b_plan_id = $db->query(
     q{INSERT INTO registry.pricing_plans (plan_name, plan_type, pricing_model_type, plan_scope)
       VALUES ('Reseller tenant-scoped hybrid', 'hybrid', 'hybrid', 'tenant')

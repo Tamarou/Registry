@@ -16,7 +16,6 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
         my @errors;
         push @errors, "Plan name is required" unless $form_data->{plan_name};
         push @errors, "Plan type is required" unless $form_data->{plan_type};
-        push @errors, "Target audience is required" unless $form_data->{target_audience};
         push @errors, "Plan scope is required" unless $form_data->{plan_scope};
 
         if (@errors) {
@@ -45,7 +44,6 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
                 plan_name => $form_data->{plan_name},
                 plan_description => $form_data->{plan_description} || '',
                 plan_type => $form_data->{plan_type},
-                target_audience => $form_data->{target_audience},
                 plan_scope => $form_data->{plan_scope},
             }
         });
@@ -78,12 +76,6 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
                 { value => 'per_use', label => 'Per-Use', description => 'Pay only for what you use' },
                 { value => 'hybrid', label => 'Hybrid', description => 'Base fee plus usage charges' },
                 { value => 'one_time', label => 'One-Time', description => 'Single payment for access' },
-            ],
-            target_audiences => [
-                { value => 'individual', label => 'Individual', description => 'Single user/student enrollment' },
-                { value => 'family', label => 'Family', description => 'Family group enrollments' },
-                { value => 'corporate', label => 'Corporate', description => 'Business/organization accounts' },
-                { value => 'nonprofit', label => 'Non-Profit', description => 'Special pricing for nonprofits' },
             ],
             plan_scopes => [
                 { value => 'customer', label => 'Customer', description => 'For your direct customers' },
