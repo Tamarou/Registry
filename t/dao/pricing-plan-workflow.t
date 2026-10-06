@@ -80,7 +80,15 @@ subtest 'Step 1: Plan Basics' => sub {
     # Test validation errors
     my $result = $step->process($db, {});
     ok($result->{stay}, 'Step requires all fields');
-    is(scalar @{$result->{errors}}, 4, 'Four required fields missing');
+    # Three, not four: target_audience was collected and read by nothing, so
+    # #427 stopped asking for it. Named rather than counted, so that a field
+    # quietly appearing or vanishing shows up here as itself.
+    is_deeply(
+        [ sort @{ $result->{errors} } ],
+        [ sort 'Plan name is required', 'Plan scope is required',
+               'Plan type is required' ],
+        'the three fields it still requires are the three it uses'
+    );
 
     # Test with incomplete data
     $result = $step->process($db, {
@@ -93,7 +101,6 @@ subtest 'Step 1: Plan Basics' => sub {
         plan_name => 'Premium Monthly',
         plan_description => 'Premium features for power users',
         plan_type => 'subscription',
-        target_audience => 'individual',
         plan_scope => 'customer'
     });
 
@@ -250,7 +257,6 @@ subtest 'Step 5: Review and Activate' => sub {
             plan_name => 'Enterprise Plan',
             plan_description => 'Full featured enterprise plan',
             plan_type => 'subscription',
-            target_audience => 'corporate',
             plan_scope => 'tenant',
             offering_tenant_id => '00000000-0000-0000-0000-000000000000'
         },
@@ -321,7 +327,6 @@ subtest 'Step 5: Review and Activate' => sub {
         plan_basics => {
             plan_name => 'Standard Plan',
             plan_type => 'subscription',
-            target_audience => 'individual',
             plan_scope => 'customer',
             offering_tenant_id => '00000000-0000-0000-0000-000000000000'
         },

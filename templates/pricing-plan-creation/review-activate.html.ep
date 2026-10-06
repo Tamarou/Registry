@@ -25,10 +25,6 @@
                         <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{plan_type} || 'standard') %></dd>
                     </div>
                     <div>
-                        <dt class="text-sm font-medium text-gray-500">Target Audience</dt>
-                        <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{target_audience} || 'individual') %></dd>
-                    </div>
-                    <div>
                         <dt class="text-sm font-medium text-gray-500">Plan Scope</dt>
                         <dd class="mt-1 text-sm text-gray-900"><%= ucfirst($summary->{plan_scope} || 'customer') %></dd>
                     </div>

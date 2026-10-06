@@ -465,7 +465,6 @@ subtest 'Pricing: PricingPlanBasics step' => sub {
             plan_name        => 'After School Standard',
             plan_description => 'Standard pricing for after school programs',
             plan_type        => 'one_time',
-            target_audience  => 'individual',
             plan_scope       => 'customer',
         }, $run);
     };

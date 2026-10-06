@@ -110,7 +110,6 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
                 pricing_configuration => $pricing_configuration,
                 metadata => {
                     description => $plan_basics->{plan_description},
-                    target_audience => $plan_basics->{target_audience},
                     is_active => $options->{is_active},
                     activation_date => $options->{activation_date},
                     draft => $options->{draft},
@@ -165,7 +164,6 @@ class Registry::DAO::WorkflowSteps::ReviewActivatePlan :isa(Registry::DAO::Workf
             plan_name => $plan_basics->{plan_name},
             plan_description => $plan_basics->{plan_description},
             plan_type => $plan_basics->{plan_type},
-            target_audience => $plan_basics->{target_audience},
             plan_scope => $plan_basics->{plan_scope},
 
             # Pricing Model

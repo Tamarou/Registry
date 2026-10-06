@@ -92,7 +92,6 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
         return {
             plan_name => $plan_basics->{plan_name},
             plan_type => $plan_basics->{plan_type},
-            target_audience => $plan_basics->{target_audience},
 
             programs => \@programs,
 

@@ -61,29 +61,6 @@
                     </div>
                 </div>
 
-                <!-- Target Audience -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
-                        Target Audience <span class="text-red-500">*</span>
-                    </label>
-                    <div class="grid grid-cols-2 gap-3">
-                        <% my $audiences = stash('step_data')->{target_audiences} || []; %>
-                        <% for my $audience (@$audiences) { %>
-                            <label class="flex items-start p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
-                                <input type="radio"
-                                       name="target_audience"
-                                       value="<%= $audience->{value} %>"
-                                       class="mt-1 mr-3"
-                                       required>
-                                <div>
-                                    <span class="font-medium text-sm"><%= $audience->{label} %></span>
-                                    <p class="text-xs text-gray-600 mt-1"><%= $audience->{description} %></p>
-                                </div>
-                            </label>
-                        <% } %>
-                    </div>
-                </div>
-
                 <!-- Plan Scope -->
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">
