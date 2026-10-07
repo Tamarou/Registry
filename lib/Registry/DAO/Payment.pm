@@ -8,6 +8,7 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 use Registry::Service::Stripe;
 use Registry::PriceOps::RevenueShare;
 use Mojo::JSON qw(encode_json decode_json);
+use Mojo::Promise ();
 use experimental 'keyword_any';
 
 field $id :param :reader = undef;
@@ -436,7 +437,16 @@ field $_stripe_client = undef;
     #
     # Shared by the sync and async wrappers so the Connect routing, application
     # fee, and idempotency key are derived in exactly one place.
-    method _intent_params ($db, $args) {
+    # Pure: builds the params and makes no call. The customer is passed IN
+    # rather than fetched here, which is the whole point -- this runs
+    # synchronously inside create_payment_intent_async, before any promise
+    # exists, so a network call from here happens in the live IOLoop where a
+    # blocking ->wait can never settle (#284).
+    method _intent_params ($db, $args, $customer_id = undef) {
+        die "an instalment intent needs a Stripe customer; resolve one before "
+          . "building the params\n"
+          if $self->is_instalment && !$customer_id;
+
         return {
             amount            => $amount_cents,
             currency          => $currency,
@@ -452,7 +462,7 @@ field $_stripe_client = undef;
             # invoice, weeks after anyone is watching.
             ( $self->is_instalment
                 ? ( setup_future_usage => 'off_session',
-                    customer           => $self->_stripe_customer_for($db) )
+                    customer           => $customer_id )
                 : () ),
 
             _stripe_metadata_params($user_id, $self->id, $metadata),
@@ -468,26 +478,50 @@ field $_stripe_client = undef;
 
         return $metadata->{stripe_customer_id} if $metadata->{stripe_customer_id};
 
+        my $customer = $self->stripe_client->create_customer(
+            $self->_customer_params($raw) );
+
+        return $self->_remember_customer( $raw, $customer->{id} );
+    }
+
+    # The async sibling, for the request path. Same early return, same recording
+    # step; only the Stripe call differs, and it has to be the one that defers.
+    method _stripe_customer_async ($db) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+
+        return Mojo::Promise->resolve( $metadata->{stripe_customer_id} )
+          if $metadata->{stripe_customer_id};
+
+        return $self->stripe_client
+          ->create_customer_async( $self->_customer_params($raw) )
+          ->then( sub ($customer) {
+              $self->_remember_customer( $raw, $customer->{id} );
+          } );
+    }
+
+    method _customer_params ($raw) {
         require Registry::DAO::User;
         my $user = Registry::DAO::User->find( $raw, { id => $user_id } );
 
-        my $customer = $self->stripe_client->create_customer( {
+        return {
             ( $user && $user->email ? ( email => $user->email ) : () ),
             ( $user && $user->name  ? ( name  => $user->name )  : () ),
             'metadata[registry_user_id]' => $user_id // '',
-        } );
+        };
+    }
 
-        # Recorded before the intent is created, so a retry reuses this customer
-        # rather than leaving a trail of them with one saved card each.
+    # Recorded before the intent is created, so a retry reuses this customer
+    # rather than leaving a trail of them with one saved card each.
+    method _remember_customer ($raw, $customer_id) {
         $raw->query( q{
             UPDATE payments
                SET metadata = COALESCE(metadata, '{}'::jsonb)
                               || jsonb_build_object('stripe_customer_id', ?::text)
              WHERE id = ?
-        }, $customer->{id}, $id );
-        $metadata->{stripe_customer_id} = $customer->{id};
+        }, $customer_id, $id );
+        $metadata->{stripe_customer_id} = $customer_id;
 
-        return $customer->{id};
+        return $customer_id;
     }
 
 
@@ -514,8 +548,12 @@ field $_stripe_client = undef;
     method create_payment_intent ($db, $args = {}) {
         my $intent;
         try {
+            # Blocking resolver here on purpose: this wrapper only runs where
+            # no loop is running. The async path above uses the deferring one.
+            my $customer_id =
+              $self->is_instalment ? $self->_stripe_customer_for($db) : undef;
             $intent = $self->stripe_client->create_payment_intent(
-                $self->_intent_params($db, $args)
+                $self->_intent_params( $db, $args, $customer_id )
             );
         }
         catch ($e) {
@@ -1959,9 +1997,23 @@ SQL
     # blocking Stripe call inside the running IOLoop can never settle, because
     # Mojo::Promise::wait is a no-op once its loop is already running.
     method create_payment_intent_async ($db, $args = {}) {
-        return $self->stripe_client->create_payment_intent_async(
-            $self->_intent_params($db, $args)
-        )->then(
+        # The customer is resolved INSIDE the chain. _intent_params is called
+        # synchronously, so anything it needed from the network would be a
+        # blocking call in the live IOLoop -- which is what #284 was: a parent
+        # choosing instalments could not check out, because _await can never
+        # settle once the loop is running.
+        # Only an instalment needs one. Resolving unconditionally would mint a
+        # Stripe customer for every one-off enrolment, which is a cost and a
+        # mess rather than a bug -- and is what the one-off subtest pins.
+        my $customer = $self->is_instalment
+            ? $self->_stripe_customer_async($db)
+            : Mojo::Promise->resolve(undef);
+
+        return $customer->then( sub ($customer_id) {
+            $self->stripe_client->create_payment_intent_async(
+                $self->_intent_params( $db, $args, $customer_id )
+            );
+        } )->then(
             sub ($intent) { $self->_record_intent($db, $intent) },
             sub ($error)  { $self->_record_intent_failure($db, $error) },
         );
