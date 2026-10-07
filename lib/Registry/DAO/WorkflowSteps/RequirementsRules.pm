@@ -84,10 +84,22 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
         my $existing_data = $run->data || {};
         my $plan_basics = $existing_data->{plan_basics} || {};
 
-        # Get available programs for prerequisites
-        my $tenant_id = $self->get_tenant_id($db, $run);
-        require Registry::DAO::Program;
-        my @programs = Registry::DAO::Program->find($db, { tenant_id => $tenant_id });
+        # The programs a plan can name as prerequisites.
+        #
+        # A "program" is a Project. There is no programs table and no
+        # Registry::DAO::Program class -- ProgramSetupOverview labels the
+        # project count "Programs", and MultiChildSessionSelection reads a
+        # program through Project->find. This used to require a DAO::Program
+        # class instead, and a failed require is fatal, so the step 500'd on
+        # every render while the suite stayed green -- nothing called
+        # prepare_template_data.
+        #
+        # Unfiltered on purpose: tenancy is the schema, and projects carries no
+        # tenant_id column, so scoping by one would be the same kind of error in
+        # the same place. Ordered by name because this renders as a checkbox
+        # list a person reads.
+        require Registry::DAO::Project;
+        my @programs = Registry::DAO::Project->find( $db, {}, { -asc => 'name' } );
 
         return {
             plan_name => $plan_basics->{plan_name},
@@ -111,23 +123,6 @@ class Registry::DAO::WorkflowSteps::RequirementsRules :isa(Registry::DAO::Workfl
         };
     }
 
-    method get_tenant_id($db, $run) {
-        my $data = $run->data || {};
-
-        if ($data->{plan_basics} && $data->{plan_basics}{offering_tenant_id}) {
-            return $data->{plan_basics}{offering_tenant_id};
-        }
-
-        # Check if we have tenant context
-        if ($data->{__tenant_slug} && $data->{__tenant_slug} ne 'registry') {
-            require Registry::DAO::Tenant;
-            my $tenant = Registry::DAO::Tenant->find($db, { slug => $data->{__tenant_slug} });
-            return $tenant->id if $tenant;
-        }
-
-        # Default to platform tenant
-        return '00000000-0000-0000-0000-000000000000';
-    }
 }
 
 1;
