@@ -404,4 +404,56 @@ subtest 'Integration: Complete Workflow Flow' => sub {
     # is($created_plan->pricing_configuration->{resources}{classes_per_month}, 20, 'Resource quota persisted');
 };
 
+subtest 'Step 4 can actually render' => sub {
+    # #396. Every other assertion in this file calls ->process. Nothing called
+    # prepare_template_data, which is the hook the renderer uses -- so the step
+    # has been crashing on every real request while this suite stayed green.
+    #
+    # It did `require Registry::DAO::Program`, a class that does not exist. A
+    # failed `require` is fatal, so the screen 500s: a tenant reaches Program
+    # Setup -> Pricing, fills in two steps, and dies on the third.
+    my $step = Registry::DAO::WorkflowSteps::RequirementsRules->new(
+        id          => $step4->id,
+        workflow_id => $workflow->id,
+        slug        => 'requirements-rules',
+        description => 'Requirements and rules step',
+        class       => 'Registry::DAO::WorkflowSteps::RequirementsRules',
+    );
+
+    my $data = eval { $step->prepare_template_data( $db, $run ) };
+    is $@, '', 'prepare_template_data does not die';
+    ok $data, 'and returns template data';
+
+    # The template renders a prerequisite_programs checkbox list from this key,
+    # so it has to be an arrayref even when the tenant has no programs yet.
+    is ref $data->{programs}, 'ARRAY', 'programs is a list the template can walk';
+
+    ok exists $data->{refund_policies},
+        'the refund policies the template needs are present';
+};
+
+subtest 'the programs offered as prerequisites come from this schema' => sub {
+    # A "program" is a Project here: there is no programs table, and
+    # ProgramSetupOverview labels the project count "Programs". Tenancy is the
+    # schema, so this must NOT filter on a tenant_id column -- projects has
+    # none, and filtering on it would be a different error in the same place.
+    require Registry::DAO::Project;
+    Registry::DAO::Project->create( $db, {
+        name => 'Prereq Program', slug => 'prereq_program' } );
+
+    my $step = Registry::DAO::WorkflowSteps::RequirementsRules->new(
+        id          => $step4->id,
+        workflow_id => $workflow->id,
+        slug        => 'requirements-rules',
+        description => 'Requirements and rules step',
+        class       => 'Registry::DAO::WorkflowSteps::RequirementsRules',
+    );
+
+    my $data = $step->prepare_template_data( $db, $run );
+    my @names = map { $_->name } @{ $data->{programs} };
+    ok scalar( grep { $_ eq 'Prereq Program' } @names ),
+        'a program in this schema is offered as a prerequisite'
+        or diag 'got: ' . join ', ', @names;
+};
+
 done_testing();

@@ -7,7 +7,6 @@ use lib qw(lib t/lib);
 use experimental qw(defer);
 use Test::More import => [qw(done_testing note ok subtest)];
 defer { done_testing };
-our $TODO;
 
 # Load the app the way a web process does, and NOTHING else. Registry::DAO is
 # the aggregator every controller and step pulls in.
@@ -56,19 +55,15 @@ subtest 'a class a step does not load itself is reachable from Registry::DAO' =>
 };
 
 # PASS 2 -- steps that require the class themselves. Loading is allowed now.
-# Registry::DAO::Program has no file and no class declaration anywhere, so it
-# cannot be fixed by loading it: TODO rather than skip, so the day someone
-# writes that class this goes green and the exemption becomes deletable. See #396.
-my %KNOWN_BROKEN = ( 'Registry::DAO::Program' => 'no such class anywhere in lib/ -- see #396' );
-
+#
+# This carried a TODO exemption for Registry::DAO::Program, which had no file
+# and no class declaration anywhere, so no amount of loading could fix it. #396
+# removed the reference instead -- a "program" is a Project -- so there is
+# nothing known-broken and the exemption is gone with it.
 subtest 'a class a step loads itself can actually be loaded' => sub {
     for my $class ( sort keys %self_loaded ) {
-        my $loaded = do {
-            local $TODO = $KNOWN_BROKEN{$class};
-            my $ok = eval "require $class; 1";
-            ok $ok, "$class loads when a step requires it";
-            $ok;
-        };
+        my $loaded = eval "require $class; 1";
+        ok $loaded, "$class loads when a step requires it";
         next unless $loaded;
 
         for my $method ( sort keys $self_loaded{$class}->%* ) {
