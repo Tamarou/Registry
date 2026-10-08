@@ -117,6 +117,58 @@ END
         return ($html, $text);
     },
 
+    waitlist_joined => sub {
+        my (%v) = @_;
+        my $name     = _escape_html($v{name}       // '');
+        my $child    = _escape_html($v{child_name} // '');
+        my $event    = _escape_html($v{event}      // '');
+        my $location = _escape_html($v{location}   // '');
+        my $who      = $child || 'your child';
+
+        # No position. It moves as people ahead accept or decline, and a parent
+        # told "you are 4th" reads any later movement as a broken promise.
+        my $charge_html = $v{nothing_charged}
+            ? '<p style="color:#333333;line-height:1.6;">Nothing has been charged. '
+            . 'A place is only charged for once it is offered and accepted.</p>'
+            : '';
+
+        my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">On the Waitlist</h2>
+<p style="color:#333333;line-height:1.6;">Hello $name,</p>
+<p style="color:#333333;line-height:1.6;">$who is on the waitlist for the following program:</p>
+<table cellpadding="8" cellspacing="0" style="width:100%;background-color:#f8f9fa;border-radius:4px;margin:16px 0;">
+  <tr><td style="color:#666666;width:120px;">Program:</td><td style="color:#333333;font-weight:bold;">$event</td></tr>
+  <tr><td style="color:#666666;">Location:</td><td style="color:#333333;">$location</td></tr>
+</table>
+$charge_html
+<p style="color:#333333;line-height:1.6;">We will email you if a place opens up.</p>
+END
+
+        my $raw_name  = $v{name}       // '';
+        my $raw_child = $v{child_name} // '';
+        my $raw_event = $v{event}      // '';
+        my $raw_loc   = $v{location}   // '';
+        my $raw_who   = $raw_child || 'your child';
+        my $charge_text = $v{nothing_charged}
+            ? "\nNothing has been charged. A place is only charged for once it is\noffered and accepted.\n"
+            : '';
+
+        my $text = <<"END";
+On the Waitlist
+
+Hello $raw_name,
+
+$raw_who is on the waitlist for the following program:
+
+  Program:  $raw_event
+  Location: $raw_loc
+$charge_text
+We will email you if a place opens up.
+END
+
+        return ($html, $text);
+    },
+
     waitlist_offer => sub {
         my (%v) = @_;
         my $name     = _escape_html($v{name}     // '');

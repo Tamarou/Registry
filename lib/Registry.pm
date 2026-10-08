@@ -8,6 +8,7 @@ use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::DomainVerification;
 use Registry::Job::InstalmentSchedule;
+use Registry::Job::SendNotifications;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -152,6 +153,7 @@ class Registry :isa(Mojolicious) {
         Registry::Job::AttendanceCheck->register($self);
         Registry::Job::DomainVerification->register($self);
         Registry::Job::InstalmentSchedule->register($self);
+        Registry::Job::SendNotifications->register($self);
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
@@ -1379,6 +1381,29 @@ class Registry :isa(Mojolicious) {
             });
 
             $self->log->info("Scheduled recurring domain verification job");
+        }
+
+        # Drain the notification queue every 5 minutes.
+        #
+        # Notification->create writes a row and nothing sent it: no ->send on
+        # the enrollment path, no sweep, no task. Every enrollment confirmation
+        # ever queued was still sitting unsent (#421), which is why this is a
+        # drainer and not just a new message type.
+        my $existing_notifications = $self->minion->jobs({
+            tasks => ['send_notifications'],
+            states => ['inactive', 'active']
+        })->total;
+
+        unless ($existing_notifications) {
+            $self->minion->enqueue('send_notifications', [], {
+                delay => 300,
+                attempts => 3,
+                # Above the sweeps: a parent waiting on a confirmation notices
+                # sooner than a waitlist offer expiring.
+                priority => 7
+            });
+
+            $self->log->info("Scheduled recurring notification sending job");
         }
 
         # Schedule waitlist expiration check to run every 5 minutes

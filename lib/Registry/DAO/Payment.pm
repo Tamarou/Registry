@@ -905,7 +905,11 @@ field $_stripe_client = undef;
         Registry::DAO::Waitlist->join_items( $db, $user_id,
             ( ref $metadata eq 'HASH' && ref $metadata->{waitlist_items} eq 'ARRAY' )
             ? $metadata->{waitlist_items}
-            : [] );
+            : [],
+            # True here and nowhere else on this path: these children have no
+            # seat, so no money attached to them. The demotion path deliberately
+            # omits this, because that parent was charged and is being refunded.
+            nothing_charged => 1 );
 
         my $items =
             ( ref $metadata eq 'HASH' && ref $metadata->{enrollment_items} eq 'ARRAY' )
