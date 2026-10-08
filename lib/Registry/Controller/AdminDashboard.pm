@@ -266,6 +266,71 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     }
 
     # Toggle publish state on a session.
+    method edit_session () {
+        my $dao = $self->dao( $self->stash('tenant') );
+        require Registry::DAO::Session;
+        require Registry::DAO::Enrollment;
+        require Registry::DAO::PricingPlan;
+
+        my $session =
+          Registry::DAO::Session->find( $dao->db, { id => $self->stash('id') } );
+        unless ($session) {
+            $self->flash( error => 'That session no longer exists.' );
+            return $self->redirect_to('admin_dashboard');
+        }
+
+        my $plans = Registry::DAO::PricingPlan->get_pricing_plans( $dao->db, $session->id );
+        my ($current) = grep { !defined $_->superseded_at } @{ $plans || [] };
+
+        # The enrolled count is shown, not just enforced. The floor on capacity
+        # is the reason an edit gets refused, so the operator should be able to
+        # see it before trying.
+        return $self->render(
+            template => 'admin-dashboard/edit_session',
+            session  => $session,
+            enrolled => Registry::DAO::Enrollment->count_for_session( $dao->db, $session->id ),
+            price_cents => $current ? $current->amount_cents : undef,
+        );
+    }
+
+    method update_session () {
+        my $dao = $self->dao( $self->stash('tenant') );
+        require Registry::DAO::Session;
+
+        my $session =
+          Registry::DAO::Session->find( $dao->db, { id => $self->stash('id') } );
+        unless ($session) {
+            $self->flash( error => 'That session no longer exists.' );
+            return $self->redirect_to('admin_dashboard');
+        }
+
+        # Only fields actually submitted are passed through, so apply_settings
+        # leaves the rest alone. An empty string means "not given" for capacity
+        # and price; the waitlist checkbox is absent when unticked, which is
+        # what makes it a real toggle rather than a one-way switch.
+        my %changes;
+        for my $field (qw( capacity price_cents )) {
+            my $value = $self->param($field);
+            $changes{$field} = $value if defined $value && $value ne '';
+        }
+        $changes{waitlist_enabled} = $self->param('waitlist_enabled') ? 1 : 0;
+
+        try {
+            $session->apply_settings( $dao->db, \%changes );
+            $self->flash( success => sprintf( '%s updated.', $session->name ) );
+        }
+        catch ($e) {
+            # Shown verbatim: the capacity refusal names the enrolled count,
+            # which is the number the operator needs in order to choose again.
+            my $why = $e;
+            $why =~ s/ at \S+ line \d+\.?\s*\z//;
+            $self->flash( error => $why );
+            return $self->redirect_to( 'admin_session_edit', id => $session->id );
+        }
+
+        return $self->redirect_to( 'admin_session_edit', id => $session->id );
+    }
+
     method set_session_status () {
         my $id     = $self->stash('id');
         my $status = $self->param('status') // '';

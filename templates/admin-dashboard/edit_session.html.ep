@@ -1,0 +1,54 @@
+% layout 'dashboard';
+% title 'Edit session';
+% my $session  = stash('session');
+% my $enrolled = stash('enrolled') // 0;
+% my $price    = stash('price_cents');
+
+<div class="container">
+    <h1><%= $session->name %></h1>
+
+    %# #419: all three of these were written once by GenerateEvents and could
+    %# never be revised. Capacity and the waitlist toggle live on the session;
+    %# the price is a versioned pricing plan, and saving one supersedes rather
+    %# than rewrites, so what somebody already paid stays on record.
+    <form method="POST" action="<%= url_for('admin_session_settings', id => $session->id) %>">
+        <div class="form-field">
+            <label for="capacity">Capacity</label>
+            <input type="number" id="capacity" name="capacity" min="<%= $enrolled || 1 %>"
+                   value="<%= $session->capacity %>">
+            % if ($enrolled) {
+                <p class="text-secondary" id="enrolled-floor">
+                    <%= $enrolled %> <%= $enrolled == 1 ? 'child is' : 'children are' %>
+                    already enrolled, so capacity cannot go below <%= $enrolled %>.
+                </p>
+            % } else {
+                <p class="text-secondary">Nobody is enrolled yet.</p>
+            % }
+        </div>
+
+        <div class="form-field">
+            <label for="price_cents">Price, in cents</label>
+            <input type="number" id="price_cents" name="price_cents" min="0"
+                   value="<%= defined $price ? $price : '' %>">
+            <p class="text-secondary">
+                % if (defined $price) {
+                    Currently <%= sprintf '$%.2f', $price / 100 %>.
+                    Changing it leaves earlier enrolments charged what they paid.
+                % } else {
+                    This session has no price yet. Zero makes it free and registerable.
+                % }
+            </p>
+        </div>
+
+        <div class="form-field">
+            <label for="waitlist_enabled">
+                <input type="checkbox" id="waitlist_enabled" name="waitlist_enabled" value="1"
+                       <%= $session->waitlist_enabled ? 'checked' : '' %>>
+                Collect a waitlist when this session is full
+            </label>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save changes</button>
+        <a href="<%= url_for('admin_dashboard') %>" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>

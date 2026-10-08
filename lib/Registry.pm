@@ -967,6 +967,15 @@ class Registry :isa(Mojolicious) {
         $admin->post('/sessions/:id/status')
             ->to('admin_dashboard#set_session_status')
             ->name('admin_session_status');
+        # #419: capacity, the waitlist toggle and the price were all written
+        # once by GenerateEvents and could never be changed. The publish toggle
+        # was the only session route in the application.
+        $admin->get('/sessions/:id/edit')
+            ->to('admin_dashboard#edit_session')
+            ->name('admin_session_edit');
+        $admin->post('/sessions/:id/settings')
+            ->to('admin_dashboard#update_session')
+            ->name('admin_session_settings');
 
         # Minion's own dashboard, behind the platform guard.
         #

@@ -2,7 +2,7 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Session :isa(Registry::DAO::Object) {
-    use Carp         qw( carp );
+    use Carp         qw( carp croak );
 
     use Mojo::JSON   qw( decode_json );
     use Scalar::Util qw( blessed );
@@ -233,6 +233,87 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     }
     
     # Status management methods
+    # Change what Morgan chose at generation time: capacity, whether a full
+    # session queues, and the price.
+    #
+    # All three were write-once (#419). GenerateEvents put them on the session
+    # it created and nothing could revise them, so a changed room, misjudged
+    # demand or a mistyped override all ended at "ask someone with database
+    # access".
+    #
+    # Only keys present are touched, so an empty change is a no-op rather than a
+    # wipe, and 0 is a value: price_cents => 0 is how a free, registerable
+    # session is expressed, and waitlist_enabled => 0 is the whole point of the
+    # toggle.
+    method apply_settings ( $db, $changes = {} ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my %set;
+
+        if ( exists $changes->{capacity} ) {
+            my $wanted = $changes->{capacity};
+            croak 'Capacity must be a positive whole number'
+                unless defined $wanted && $wanted =~ /\A[0-9]+\z/ && $wanted > 0;
+
+            # The edit that is different in kind. Turning a waitlist off affects
+            # nobody who already holds a seat; cutting capacity under the
+            # enrolled count makes the session over-subscribed by arithmetic,
+            # and every seat check in the application reads capacity. Refused
+            # with the number, because the operator's next question is "how
+            # many, then?".
+            require Registry::DAO::Enrollment;
+            my $enrolled =
+              Registry::DAO::Enrollment->count_for_session( $db, $id );
+            croak "Capacity cannot be set below the $enrolled already enrolled"
+                if $wanted < $enrolled;
+
+            $set{capacity} = $wanted;
+        }
+
+        if ( exists $changes->{waitlist_enabled} ) {
+            $set{waitlist_enabled} = $changes->{waitlist_enabled} ? 1 : 0;
+        }
+
+        # The price is a versioned pricing_plans row, not a column here.
+        # Mutating amount_cents in place would rewrite what everybody who
+        # already paid was charged under; revise() retires the current version
+        # and adds a new one, so the old price stays on record.
+        if ( exists $changes->{price_cents} ) {
+            my $cents = $changes->{price_cents};
+            croak 'A price cannot be negative'
+                unless defined $cents && $cents =~ /\A[0-9]+\z/;
+
+            require Registry::DAO::PricingPlan;
+            my $plans = Registry::DAO::PricingPlan->get_pricing_plans( $db, $id );
+            my ($current) = grep { !defined $_->superseded_at } @{ $plans || [] };
+
+            if ($current) {
+                $current->revise( $db, { amount_cents => $cents } );
+            }
+            else {
+                # GenerateEvents only creates a plan when the override was
+                # filled in, so a session legitimately has none. Setting a price
+                # has to be able to add the first one.
+                Registry::DAO::PricingPlan->create( $db, {
+                    session_id   => $id,
+                    plan_name    => 'Standard',
+                    plan_type    => 'standard',
+                    amount_cents => $cents,
+                } );
+            }
+        }
+
+        return $self unless %set;
+
+        my $row = $db->query(
+            'UPDATE sessions SET ' . join( ', ', map { "$_ = ?" } sort keys %set )
+              . ', updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING *',
+            ( map { $set{$_} } sort keys %set ), $id
+        )->expand->hash or return $self;
+
+        return __CLASS__->new(%$row);
+    }
+
     method publish($db) {
         $db = $db->db if $db isa Registry::DAO;
         my $updated = $self->update($db, { status => 'published' });
