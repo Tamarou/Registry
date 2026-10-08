@@ -5,8 +5,15 @@ use Object::Pad;
 
 class Registry::DAO::User :isa(Registry::DAO::Object) {
     use Carp         qw( carp croak );
+    use Scalar::Util qw( blessed );
+    use experimental 'keyword_any';
 
     use Crypt::Passphrase;
+
+    # The roles users.check_user_type permits. Named here so change_role refuses
+    # an unknown one with a sentence, rather than letting the CHECK constraint
+    # reject it with a database error nobody can act on.
+    our @USER_TYPES = qw( parent student staff admin );
 
     field $id :param :reader;
     field $username :param :reader;
@@ -269,6 +276,78 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         # Lost the race to another deactivation; the account is off either way.
         return $self unless $row;
         return __CLASS__->new(%$row);
+    }
+
+    # Change an existing account's role.
+    #
+    # user_type could be set when an account was created and never again: no
+    # screen, no route, no DAO path (#424). Promoting a teacher to administrator,
+    # or de-privileging someone who has left without deleting the account and
+    # orphaning events.teacher_id and attendance_records.marked_by, both needed
+    # database access.
+    #
+    # The guards mirror deactivate's, because the failure modes are the same
+    # lockout by a different route:
+    #
+    #   * Only an admin may grant admin. This is the rule CreateUser already
+    #     enforces, and it has to hold here too -- the people screen is open to
+    #     admin AND staff, so without it a staff member could mint themselves an
+    #     administrator.
+    #   * The last active administrator cannot be demoted, exactly as they
+    #     cannot be deactivated.
+    #   * Nobody changes their own role. Demoting yourself out of admin cannot be
+    #     undone from inside the product, which is deactivate's reasoning for
+    #     refusing self-deactivation.
+    #
+    # Croaks with a sentence meant for a person: the controller shows these
+    # verbatim, because each refusal needs a different response from the operator.
+    method change_role ( $db, $new_type, $acting_user = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        croak "'$new_type' is not a role"
+            unless any { $_ eq ( $new_type // '' ) } @USER_TYPES;
+
+        my $acting_id = ref $acting_user
+            ? ( blessed($acting_user) ? $acting_user->id : $acting_user->{id} )
+            : $acting_user;
+
+        croak 'You cannot change your own role'
+            if defined $acting_id && $acting_id eq $id;
+
+        # Idempotent, and checked before the privilege gate: re-asserting the
+        # role an account already has is not a grant.
+        return $self if $new_type eq $user_type;
+
+        if ( $new_type eq 'admin' ) {
+            my $acting_type = $self->_role_of( $db, $acting_id );
+            croak 'Only an administrator can make someone an administrator'
+                unless ( $acting_type // '' ) eq 'admin';
+        }
+
+        if ( $user_type eq 'admin' && $self->is_active ) {
+            my $other_admins = $db->query(
+                q{SELECT COUNT(*) FROM users
+                   WHERE user_type = 'admin' AND deactivated_at IS NULL AND id <> ?},
+                $id )->array->[0];
+            croak 'Cannot demote the last active administrator'
+                unless $other_admins;
+        }
+
+        my $row = $db->query(
+            'UPDATE users SET user_type = ? WHERE id = ? RETURNING *',
+            $new_type, $id )->hash or return $self;
+
+        return __CLASS__->new(%$row);
+    }
+
+    # The acting user's role read from the row, not from the session. A session
+    # carries whatever it was given; the privilege gate has to turn on what the
+    # database says the caller is.
+    method _role_of ( $db, $acting_id ) {
+        return undef unless defined $acting_id;
+        my $row = $db->query(
+            'SELECT user_type FROM users WHERE id = ?', $acting_id )->hash;
+        return $row && $row->{user_type};
     }
 
     # Clears the invite_pending flag, once an invitation has actually been sent.

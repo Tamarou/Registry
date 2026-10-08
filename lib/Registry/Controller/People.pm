@@ -85,6 +85,37 @@ class Registry::Controller::People :isa(Registry::Controller) {
         return $self->redirect_to('admin_people');
     }
 
+    method role {
+        my $dao  = $self->dao;
+        my $user = Registry::DAO::User->find( $dao->db, { id => $self->param('id') } );
+
+        unless ($user) {
+            $self->flash( error => 'That account no longer exists.' );
+            return $self->redirect_to('admin_people');
+        }
+
+        my $acting = $self->stash('current_user') // {};
+
+        try {
+            # The acting user is passed so the DAO can apply the privilege rule
+            # and refuse a self-change. This group is open to staff as well as
+            # admin, so the gate cannot live in the template.
+            my $updated = $user->change_role( $dao->db, scalar $self->param('user_type'),
+                $acting );
+            $self->flash( success => sprintf( '%s is now %s.',
+                $updated->name || $updated->username, $updated->user_type ) );
+        }
+        catch ($e) {
+            # Shown verbatim: each refusal the DAO raises needs a different
+            # response from the operator.
+            my $why = $e;
+            $why =~ s/ at \S+ line \d+\.?\s*\z//;
+            $self->flash( error => $why );
+        }
+
+        return $self->redirect_to('admin_people');
+    }
+
     method deactivate {
         my $dao  = $self->dao;
         my $user = Registry::DAO::User->find( $dao->db, { id => $self->param('id') } );
