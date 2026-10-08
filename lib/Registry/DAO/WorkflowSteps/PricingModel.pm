@@ -34,12 +34,6 @@ class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowSte
             push @errors, "At least one pricing tier must be defined"
                 unless $form_data->{tiers} && @{$form_data->{tiers}};
         }
-        elsif ($pricing_type eq 'usage_based') {
-            push @errors, "Usage metric must be defined"
-                unless $form_data->{usage_metric};
-            push @errors, "Rate per unit is required"
-                unless defined $form_data->{rate_per_unit} && $form_data->{rate_per_unit} > 0;
-        }
         elsif ($pricing_type eq 'hybrid') {
             push @errors, "Base amount is required for hybrid pricing"
                 unless defined $form_data->{base_amount} && $form_data->{base_amount} >= 0;
@@ -105,14 +99,6 @@ class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowSte
                 tier_mode => $form_data->{tier_mode} || 'graduated', # graduated or volume
             };
         }
-        elsif ($type eq 'usage_based') {
-            $config = {
-                usage_metric => $form_data->{usage_metric},
-                rate_per_unit => $form_data->{rate_per_unit},
-                included_units => $form_data->{included_units} || 0,
-                overage_rate => $form_data->{overage_rate} || $form_data->{rate_per_unit},
-            };
-        }
         elsif ($type eq 'hybrid') {
             $config = {
                 monthly_base => $form_data->{base_amount},
@@ -164,7 +150,12 @@ class Registry::DAO::WorkflowSteps::PricingModel :isa(Registry::DAO::WorkflowSte
                 { value => 'fixed', label => 'Fixed Price', description => 'Flat rate billing' },
                 { value => 'percentage', label => 'Percentage', description => 'Percentage of revenue or transactions' },
                 { value => 'tiered', label => 'Tiered', description => 'Different rates at different volumes' },
-                { value => 'usage_based', label => 'Usage-Based', description => 'Pay per unit consumed' },
+                # No usage_based here on purpose. It was offered, validated and
+                # configured, and pricing_plans_pricing_model_type_check does not
+                # permit it -- so selecting it produced a rejected INSERT. Adding
+                # it back needs the migration AND metering to charge on; see #480.
+                # Every value in this list is asserted storable by
+                # t/dao/pricing-model-offers-only-storable-types.t.
                 { value => 'hybrid', label => 'Hybrid', description => 'Base fee plus variable charges' },
                 { value => 'transaction_fee', label => 'Transaction Fee', description => 'Per-transaction charges' },
             ],

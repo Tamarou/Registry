@@ -168,7 +168,7 @@ document.getElementById('pricing_model_type').addEventListener('change', functio
     const advancedSection = document.getElementById('advanced-pricing');
     const basicConfig = document.getElementById('pricing-config');
 
-    if (this.value === 'percentage' || this.value === 'tiered' || this.value === 'usage_based') {
+    if (this.value === 'percentage' || this.value === 'tiered') {
         advancedSection.classList.remove('hidden');
     } else {
         advancedSection.classList.add('hidden');
