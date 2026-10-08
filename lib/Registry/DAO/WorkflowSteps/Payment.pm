@@ -454,6 +454,9 @@ method handle_payment_callback ($db, $run, $form_data) {
                             amount_cents    => $inc->{cents},
                             reason          => 'requested_by_customer',
                             idempotency_key => $settled->capacity_refund_key($inc->{seq}),
+                            # settle_refund_increment owns the status for an increment;
+                            # said rather than inferred from the key (#286).
+                            increment => 1,
                         })->then(sub ($refund) {
                             $settled->settle_refund_increment($db, $inc->{seq}, $refund)
                                 or warn "capacity refund: settling increment "
