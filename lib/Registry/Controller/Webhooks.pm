@@ -385,6 +385,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                         amount_cents    => $inc->{cents},
                         reason          => 'requested_by_customer',
                         idempotency_key => $payment->capacity_refund_key($inc->{seq}),
+                        # settle_refund_increment owns the status for an increment;
+                        # said rather than inferred from the key (#286).
+                        increment => 1,
                     })->then(sub ($refund) {
                         # Settled per increment, so a partial success is kept.
                         # Discharging the whole obligation on one response is

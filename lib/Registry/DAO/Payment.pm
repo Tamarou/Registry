@@ -1327,6 +1327,14 @@ SQL
     # already sent.
     method capacity_refund_key ($seq) { return "refund:capacity:$id:$seq" }
 
+    # One dropped seat is one refund. Keyed on the enrollment rather than a
+    # counter because the drop is the event being paid for: re-driving the
+    # workflow, or an admin pressing approve twice, reuses the key and Stripe
+    # returns the original refund instead of making a second one.
+    method drop_refund_key ($enrollment_id) {
+        return "refund:drop:$id:$enrollment_id";
+    }
+
     # Discharge one increment: mark it settled, subtract exactly its amount, and
     # add exactly its amount to the cumulative total returned.
     #
@@ -2150,10 +2158,16 @@ SQL
             $args->{idempotency_key}
                 ? ( _idempotency_key => $args->{idempotency_key} ) : (),
         })->then(sub ($refund) {
-            # An increment always travels under a per-increment idempotency key;
-            # a direct refund has none. That is what distinguishes the two here.
+            # Told, not inferred. This used to read the presence of an
+            # idempotency key as "this is a capacity increment", because at the
+            # time only increments carried one. They are two independent
+            # decisions -- whether settle_refund_increment owns the status, and
+            # whether a retry is safe -- and a direct refund that wants
+            # idempotency (a dropped seat, #286) was silently accounted as an
+            # increment, so refunded_cents never moved and the ledger denied a
+            # refund the bank had made.
             $self->_apply_refund_result( $db, $refund, $refund_cents, $reason,
-                $args->{idempotency_key} ? 1 : 0 );
+                $args->{increment} ? 1 : 0 );
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";
