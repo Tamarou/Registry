@@ -956,6 +956,10 @@ class Registry :isa(Mojolicious) {
         $admin->post('/people/:id/deactivate')->to('people#deactivate')->name('admin_people_deactivate');
         $admin->post('/people/:id/reactivate')->to('people#reactivate')->name('admin_people_reactivate');
         $admin->post('/people/:id/invite')->to('people#invite')->name('admin_people_invite');
+        # #424: user_type could be set at creation and never again. The privilege
+        # rule lives in the DAO, because this group is open to staff as well as
+        # admin and a guard only in the template is not a guard.
+        $admin->post('/people/:id/role')->to('people#role')->name('admin_people_role');
 
         $admin->get('/templates')->to('workflows#index', workflow => 'template-editor')->name('admin_templates');
         $admin->post('/templates')->to('workflows#start_workflow', workflow => 'template-editor');

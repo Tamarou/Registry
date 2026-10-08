@@ -71,6 +71,24 @@
                                         </button>
                                     </form>
                                 % }
+                                %# #424: the role was settable at creation and never
+                                %# again. Only an admin may grant admin, and the DAO
+                                %# enforces that -- this group is open to staff too,
+                                %# so a select that merely omitted the option would
+                                %# not be a guard.
+                                <form method="POST"
+                                      action="<%= url_for('admin_people_role', id => $person->id) %>">
+                                    <label class="sr-only" for="role-<%= $person->id %>">Role</label>
+                                    <select name="user_type" id="role-<%= $person->id %>">
+                                        % for my $role (qw( parent student staff admin )) {
+                                            % next if $role eq 'admin' && ($me->{user_type} // '') ne 'admin';
+                                            <option value="<%= $role %>"
+                                                <%= $role eq $person->user_type ? 'selected' : '' %>><%= ucfirst $role %></option>
+                                        % }
+                                    </select>
+                                    <button type="submit" class="btn btn-secondary">Change role</button>
+                                </form>
+
                                 <form method="POST"
                                       action="<%= url_for('admin_people_deactivate', id => $person->id) %>"
                                       onsubmit="return confirm('<%= $person->name || $person->username %> will no longer be able to sign in. Their attendance records and the classes they taught are kept. Continue?')">
