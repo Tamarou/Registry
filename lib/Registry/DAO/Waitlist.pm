@@ -79,7 +79,11 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
     # Each item is { session_id, child_id, location_id }, the same snapshot
     # shape as enrollment_items -- self-contained, so the webhook can do this
     # without the workflow run the parent walked away from.
-    sub join_items ($class, $db, $parent_id, $items) {
+    # %opt: nothing_charged => 1 asserts that no money attached to these
+    # children, which only the caller knows. The registration path says so (a
+    # child who chose to wait has no seat and so no charge); the demotion path
+    # must not, because that parent WAS charged and is being refunded.
+    sub join_items ($class, $db, $parent_id, $items, %opt) {
         $db = $db->db if $db isa Registry::DAO;
         return [] unless $parent_id && ref $items eq 'ARRAY';
 
@@ -155,6 +159,34 @@ class Registry::DAO::Waitlist :isa(Registry::DAO::Object) {
 
             push @joined, $class->join_waitlist(
                 $db, $session_id, $location_id, $child_id, $parent_id );
+        }
+
+        # In writing, from the one place the entry is written, so no path that
+        # queues a child can forget to tell their parent (#421). Idempotent per
+        # (user, session, child), because settlement can run twice.
+        #
+        # After the loop rather than inside it: a child already waiting is
+        # skipped above without reaching @joined, and re-notifying them would
+        # be a second email for a request that changed nothing.
+        require Registry::DAO::Notification;
+        for my $entry (@joined) {
+            next unless $entry;
+            try {
+                Registry::DAO::Notification->ensure_waitlist_joined( $db, {
+                    user_id         => $parent_id,
+                    session_id      => $entry->session_id,
+                    child_id        => $entry->student_id,
+                    nothing_charged => $opt{nothing_charged},
+                } );
+            }
+            catch ($e) {
+                # Never fatal. This runs inside a settlement Stripe has already
+                # captured, and a queueing failure must not roll back a seat or
+                # a refund -- the queue entry is the promise, the email is the
+                # courtesy.
+                warn "join_items: could not queue waitlist_joined for child "
+                   . ( $entry->student_id // '?' ) . ": $e";
+            }
         }
 
         return \@joined;

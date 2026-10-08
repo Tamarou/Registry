@@ -28,7 +28,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Validate type
-        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed|enrollment_confirmation)$/) {
+        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed|enrollment_confirmation|waitlist_joined)$/) {
             croak "Invalid notification type: '$type' is not a recognized notification type";
         }
         
@@ -66,6 +66,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         return 'passkey_registered'  if $type eq 'passkey_registered';
         return 'passkey_removed'     if $type eq 'passkey_removed';
         return 'enrollment_confirmation' if $type eq 'enrollment_confirmation';
+        return 'waitlist_joined'         if $type eq 'waitlist_joined';
         return '';  # general and unknown types use fallback
     }
 
@@ -121,6 +122,19 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
                 event      => $meta->{event_name}    // '',
                 start_date => $meta->{start_date}    // '',
                 location   => $meta->{location_name} // '',
+            );
+        }
+        if ($type eq 'waitlist_joined') {
+            return (
+                name       => $name,
+                child_name => $meta->{child_name}    // '',
+                event      => $meta->{event_name}    // '',
+                location   => $meta->{location_name} // '',
+                # Only asserted where it is true. The same queueing point also
+                # serves a child demoted from a paid seat, whose parent WAS
+                # charged and is being refunded -- telling them nothing had been
+                # charged would be a lie in the one message they receive.
+                nothing_charged => $meta->{nothing_charged} ? 1 : 0,
             );
         }
         return (name => $name);
@@ -450,6 +464,70 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     # redelivery for a child who is already seated, and finalize_enrollment
     # skips those before it ever gets here -- and after a drop and re-enrol a
     # second confirmation is the correct outcome anyway.
+    # Queue exactly one waitlist_joined notification per (user, session, child).
+    #
+    # #421: joining a waitlist sent nothing, so the confirmation page was the
+    # only record and it closed with the tab. Idempotent for the same reason its
+    # sibling is -- settlement can run twice, and a redelivered webhook must not
+    # mean a second email.
+    #
+    # Position is deliberately NOT included. It moves as people ahead accept or
+    # decline, and a parent told "you are 4th" reads any later movement as a
+    # broken promise.
+    sub ensure_waitlist_joined ( $class, $db, $args ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my ( $user_id, $session_id, $child_id ) =
+            @{$args}{qw( user_id session_id child_id )};
+        return unless $user_id && $session_id;
+
+        my $exists = $db->query(
+            q{SELECT 1 FROM notifications
+               WHERE user_id = ? AND type = 'waitlist_joined'
+                 AND metadata->>'session_id' = ?
+                 AND metadata->>'child_id' IS NOT DISTINCT FROM ?
+               LIMIT 1},
+            $user_id, $session_id, $child_id
+        )->rows;
+        return if $exists;
+
+        require Registry::DAO::Session;
+        my $session = Registry::DAO::Session->find( $db, { id => $session_id } )
+            or return;
+
+        my $location_name;
+        my ($event) = $session->events($db);
+        if ( $event && ( my $location_id = $event->location_id ) ) {
+            require Registry::DAO::Location;
+            if ( my $location = Registry::DAO::Location->find( $db, { id => $location_id } ) ) {
+                $location_name = $location->name;
+            }
+        }
+
+        my $child_name;
+        if ($child_id) {
+            my $row = $db->query(
+                'SELECT child_name FROM family_members WHERE id = ?', $child_id )->hash;
+            $child_name = $row && $row->{child_name};
+        }
+
+        $class->create( $db, {
+            user_id  => $user_id,
+            type     => 'waitlist_joined',
+            channel  => 'email',
+            subject  => 'You are on the waitlist: ' . $session->name,
+            message  => 'We have added you to the waitlist.',
+            metadata => {
+                session_id      => $session_id,
+                event_name      => $session->name,
+                location_name   => $location_name,
+                child_id        => $child_id,
+                child_name      => $child_name,
+                nothing_charged => $args->{nothing_charged} ? 1 : 0,
+            },
+        } );
+    }
+
     sub ensure_enrollment_confirmation ( $class, $db, $args ) {
         $db = $db->db if $db isa Registry::DAO;
 
