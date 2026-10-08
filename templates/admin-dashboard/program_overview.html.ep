@@ -48,6 +48,11 @@
                                                     <button type="submit" class="btn btn-sm btn-primary">Publish</button>
                                                 % }
                                             </form>
+                                            %# #419: the only session route used
+                                            %# to be the publish toggle, so this
+                                            %# sits where Morgan already is.
+                                            <a class="btn btn-sm btn-outline"
+                                               href="<%= url_for('admin_session_edit', id => $sess->{id}) %>">Edit</a>
                                         </li>
                                     % }
                                 </ul>
