@@ -32,9 +32,22 @@ class Registry::DAO::OutcomeDefinition :isa(Registry::DAO::Object) {
         # Handle database connection
         $db = $db->db if $db isa Registry::DAO;
         
-        # Handle JSON encoding for schema field if it's a reference
+        # -json, not encode_json. encode_json returns UTF-8 ENCODED BYTES, and
+        # handing those to a jsonb column gets them encoded a second time on the
+        # way to Postgres, so a schema property whose name carried an accent was
+        # stored mojibaked -- the accented character replaced by the two
+        # characters its UTF-8 bytes look like in Latin-1 -- and came back that
+        # way for ever after. Mojo::Pg's -json takes the structure and encodes it
+        # exactly once, which is what every other DAO here does.
+        #
+        # Found by #468, which restored t/integration/utf8-encoding.t: the file
+        # had never run, so its UTF-8 assertions had never reported this.
+        #
+        # Deliberately ASCII. This file has no `use utf8`, and a non-ASCII byte
+        # in a comment here segfaults perl at load time -- not a compile error,
+        # a SEGV, and `perl -c` on the file alone still passes.
         if ( ref $data->{schema} && ref $data->{schema} ne 'SCALAR' ) {
-            $data->{schema} = encode_json( $data->{schema} );
+            $data->{schema} = { -json => $data->{schema} };
         }
 
         # Remove slug field as it doesn't exist in the database
@@ -53,14 +66,17 @@ class Registry::DAO::OutcomeDefinition :isa(Registry::DAO::Object) {
             $file = path($file) unless ref $file;
             
             # Load the JSON schema file
-            my $schema_json = $file->slurp; 
+            my $schema_json = $file->slurp;
             my $schema = decode_json($schema_json);
 
-            # Extract name, description and prepare data
+            # The DECODED structure, not the slurped bytes. slurp returns bytes
+            # and decode_json turns them into characters; storing $schema_json
+            # put the bytes into a jsonb column to be encoded again -- the same
+            # double encoding create() had.
             my $data = {
                 name        => $schema->{name},
                 description => $schema->{description},
-                schema      => $schema_json
+                schema      => $schema,
             };
 
             # Check if outcome definition with this name already exists
@@ -73,7 +89,7 @@ class Registry::DAO::OutcomeDefinition :isa(Registry::DAO::Object) {
                     $class->table,
                     {
                         description => $data->{description},
-                        schema      => $data->{schema},
+                        schema      => { -json => $data->{schema} },
                         updated_at  => \'now()'
                     },
                     { id => $existing->id }
