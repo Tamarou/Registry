@@ -3,45 +3,34 @@
 # ABOUTME: Ensures proper encoding/decoding of non-ASCII characters
 
 use 5.42.0;
+use warnings;
 use lib qw(lib t/lib);
 use utf8;
 use Test::More;
+use Test::Registry::DB;
 use Test::Registry::Mojo;
-use Mojo::File qw(path);
 
-# Skip test if database is not available
-BEGIN {
-    plan skip_all => 'Database tests require DB_URL environment variable'
-        unless $ENV{DB_URL};
-}
+# Its own ephemeral Postgres, like every other test that touches a database.
+#
+# This used to build a schema by hand and deploy into it with
+# `sqitch deploy --target db:pg:` -- an EMPTY target, which names no host, no
+# port and no database, so sqitch fell through to libpq's defaults and looked
+# for a local Unix socket. On CI, whose postgres is a service container reached
+# over TCP, that failed and the whole file `plan skip_all`ed: every UTF-8
+# assertion here had been silently absent for as long as it existed (#468).
+#
+# Locally it was worse than a skip. The empty target resolved to whatever
+# libpq's defaults are on the developer's machine -- a real database, not a
+# test one -- and left a `test_utf8_$$` schema behind in it.
+#
+# Test::Registry::DB stands up a Test::PostgreSQL with the full schema already
+# deployed and points DB_URL at it, which is why this needs neither sqitch nor
+# a cleanup block. It must be constructed BEFORE the app, because the app reads
+# DB_URL when it is built.
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
 
-use Registry::DAO;
-
-# Initialize test application
 my $t = Test::Registry::Mojo->new('Registry');
-
-# Use test database URL from environment
-my $test_schema = 'test_utf8_' . $$;  # Use PID to make schema unique
-my $dao = Registry::DAO->new(
-    url    => $ENV{DB_URL},
-    schema => $test_schema
-);
-
-# Create test schema
-eval {
-    $dao->db->query("CREATE SCHEMA IF NOT EXISTS $test_schema");
-    $dao->db->query("SET search_path TO $test_schema");
-
-    # Deploy schema using the test schema
-    my $cmd = "carton exec sqitch deploy --target db:pg: --to-change schema 2>&1";
-    my $output = `$cmd`;
-    if ($? != 0) {
-        die "Sqitch deploy failed: $output";
-    }
-};
-if ($@) {
-    plan skip_all => "Failed to set up test database: $@";
-}
 
 # Test UTF-8 characters from various languages
 my @test_strings = (
@@ -53,7 +42,7 @@ my @test_strings = (
     'Тест кириллица',          # Russian
     'مرحبا بالعالم',           # Arabic
     'שלום עולם',              # Hebrew
-    'Emoji test 😀🎉🌟',       # Emojis
+    '😀🎉🌟',                  # Emojis
 );
 
 subtest 'Template rendering with UTF-8' => sub {
@@ -148,20 +137,33 @@ TEMPLATE
         slug => 'test-utf8-form',
     });
 
-    # Create workflow step
+    # A landing step first, then the form.
+    #
+    # Every real workflow opens with a landing step, and the engine redirects
+    # from it to the NEXT step. This fixture had one step which was also the
+    # first, so starting the run processed it and completed the workflow: POST
+    # returned 201 DONE and there was no form to submit to. Another rot the
+    # file could not report while it never ran.
+    my $landing_step = Registry::DAO::WorkflowStep->create($dao->db, {
+        workflow_id => $form_workflow->id,
+        slug        => 'landing',
+        description => 'UTF-8 Form Landing',
+        class       => 'Registry::DAO::WorkflowStep',
+    });
+
     my $form_step = Registry::DAO::WorkflowStep->create($dao->db, {
         workflow_id => $form_workflow->id,
         slug        => 'input',
         description => 'UTF-8 Form Input Step',
         class       => 'Registry::DAO::WorkflowStep',
+        depends_on  => $landing_step->id,
     });
 
     $form_step->set_template($dao->db, $form_template_obj);
 
-    # Update workflow with first step
     $dao->db->update(
         'workflows',
-        { first_step => 'input' },
+        { first_step => 'landing' },
         { id => $form_workflow->id }
     );
 
@@ -174,7 +176,9 @@ TEMPLATE
     ok($location, 'Got redirect location');
 
     # Extract run ID from location
-    my ($run_id) = $location =~ m{/test-utf8-form/(\d+)/};
+    # A run id is a uuid. This was (\d+), which could never match one -- a
+    # rot invisible for as long as the file never ran.
+    my ($run_id) = $location =~ m{/test-utf8-form/([^/]+)/};
     ok($run_id, 'Extracted run ID');
 
     # Submit form with UTF-8 data
@@ -233,7 +237,7 @@ subtest 'Dynamic content with UTF-8' => sub {
 </div>
 <script>
     // Fetch and display outcome definition
-    fetch('/api/outcome-definitions/<%= $outcome_definition_id %>')
+    fetch('/outcome/definition/<%= $outcome_definition_id %>')
         .then(response => response.json())
         .then(schema => {
             // Display the schema properties with UTF-8 labels
@@ -267,21 +271,38 @@ TEMPLATE
         slug => 'test-utf8-dynamic',
     });
 
-    # Create workflow step with outcome definition
+    # Landing first, then the form -- see the form subtest above.
+    my $dynamic_landing = Registry::DAO::WorkflowStep->create($dao->db, {
+        workflow_id => $dynamic_workflow->id,
+        slug        => 'landing',
+        description => 'UTF-8 Dynamic Landing',
+        class       => 'Registry::DAO::WorkflowStep',
+    });
+
     my $dynamic_step = Registry::DAO::WorkflowStep->create($dao->db, {
         workflow_id => $dynamic_workflow->id,
         slug        => 'form',
         description => 'UTF-8 Dynamic Form Step',
         class       => 'Registry::DAO::WorkflowStep',
         outcome_definition_id => $outcome_def->id,
+        depends_on  => $dynamic_landing->id,
     });
 
     $dynamic_step->set_template($dao->db, $dynamic_template_obj);
 
-    # Update workflow with first step
+    # DBTemplates indexes template NAMES at renderer warmup and skips the DB
+    # lookup for anything absent from that index. Warmup has already run by
+    # now -- subtest 1 triggered it -- so a template created here is never
+    # served and the step renders a 500. The plugin ships
+    # db_templates.invalidate for exactly this, and this is its first caller.
+    #
+    # Subtest 1 escaped it by creating its template before the first request,
+    # and subtest 2 by never rendering its template at all: it only POSTs.
+    $t->app->db_templates->invalidate;
+
     $dao->db->update(
         'workflows',
-        { first_step => 'form' },
+        { first_step => 'landing' },
         { id => $dynamic_workflow->id }
     );
 
@@ -290,15 +311,18 @@ TEMPLATE
       ->status_is(302);
 
     my $location = $t->tx->res->headers->location;
-    my ($run_id) = $location =~ m{/test-utf8-dynamic/(\d+)/};
+    my ($run_id) = $location =~ m{/test-utf8-dynamic/([^/]+)/};
 
     $t->get_ok("/test-utf8-dynamic/$run_id/form")
       ->status_is(200)
       ->content_type_like(qr/text\/html/)
       ->content_like(qr/Dynamic Content with UTF-8/, 'Page title present');
 
-    # Test outcome definition API endpoint
-    $t->get_ok("/api/outcome-definitions/" . $outcome_def->id)
+    # The real route is /outcome/definition/:id, named outcome.definition, and
+    # is what every live template fetches. This asserted
+    # /api/outcome-definitions/:id, which `git log -S` shows has never existed
+    # in lib/ -- the file never ran, so nothing ever reported the 404.
+    $t->get_ok("/outcome/definition/" . $outcome_def->id)
       ->status_is(200)
       ->content_type_like(qr/application\/json/)
       ->json_has('/properties/café_name/title')
@@ -349,11 +373,8 @@ subtest 'Workflow step descriptions with UTF-8' => sub {
     }
 };
 
-# Cleanup
-END {
-    if ($dao && $dao->db && $test_schema) {
-        eval { $dao->db->query("DROP SCHEMA IF EXISTS $test_schema CASCADE"); };
-    }
-}
+# No cleanup block. The database is a Test::PostgreSQL instance belonging to
+# this file alone and goes away with the process; the old DROP SCHEMA existed
+# only because the hand-built schema was created inside somebody's real one.
 
 done_testing;
