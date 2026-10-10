@@ -7,7 +7,7 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 
 use Registry::Service::Stripe;
 use Registry::PriceOps::RevenueShare;
-use Mojo::JSON qw(encode_json decode_json);
+use Mojo::JSON qw(encode_json from_json);
 use Mojo::Promise ();
 use experimental 'keyword_any';
 
@@ -59,7 +59,7 @@ field $_stripe_client = undef;
         # Decode JSON metadata if it's a string
         if (defined $metadata && !ref $metadata) {
             try {
-                $metadata = decode_json($metadata);
+                $metadata = from_json($metadata);
             } catch ($e) {
                 $metadata = {};
             }
@@ -1449,7 +1449,12 @@ SQL
             # written for things no plan priced, and a historical row must not
             # start failing because a plan family was pruned.
             pricing_plan_id => $args->{pricing_plan_id},
-            metadata => encode_json($args->{metadata} // {}),
+            # -json rather than encode_json: the latter hands UTF-8 bytes to a
+            # jsonb column and Postgres encodes them again (#485). Latent here
+            # today -- only child_id and session_id ride in this metadata, and
+            # the child's NAME goes in `description`, which is a text column --
+            # but that is a property of today's callers, not of the column.
+            metadata => { -json => $args->{metadata} // {} },
         };
         
         $db->insert('payment_items', $item);
@@ -1457,14 +1462,14 @@ SQL
     
     method line_items ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        my $items = $db->select('payment_items', '*', { payment_id => $self->id })->hashes;
-        
-        # Decode metadata for each item
-        for my $item (@$items) {
-            $item->{metadata} = decode_json($item->{metadata}) if $item->{metadata};
-        }
-        
-        return $items;
+        # ->expand, so Mojo::Pg decodes the jsonb column itself -- which is what
+        # DAO::Object::find does and what every other reader here relies on.
+        # This hand-decoded with decode_json instead, which decodes BYTES, while
+        # Postgres returns characters: it died with "Input is not UTF-8 encoded"
+        # on anything non-ASCII the moment the write side stopped storing
+        # double-encoded bytes (#485).
+        return $db->select( 'payment_items', '*',
+            { payment_id => $self->id } )->expand->hashes;
     }
     
 
