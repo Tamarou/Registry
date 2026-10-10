@@ -1,6 +1,6 @@
 # Tenant email identity and deliverability
 
-**Status:** spec, ready for `crochet:refinement`
+**Status:** spec; A and B delivered in #488, **C/D/E/F remain** for `crochet:refinement`
 **Date:** 2026-10-10
 **Issues:** #21 (custom domains, email half), #480 (metering), #438 (provisioning limit, closed)
 
@@ -64,10 +64,15 @@ too, and DMARC will not pass on a DKIM record the school never published.
 
 ## Open decisions — do NOT invent answers to these
 
-1. **Which address is `Reply-To`?** `tenant_profiles.billing_email` is the only
-   per-tenant address that exists, and it is for *billing* — a parent replying
-   about their child's enrolment should probably not reach accounts payable. The
-   alternative is a new `contact_email` the signup flow collects. Needs perigrin.
+1. ~~**Which address is `Reply-To`?**~~ **SETTLED 2026-10-10, and the question
+   was wrong.** The spec claimed `billing_email` is "for billing". The signup
+   form labels that very field **"Contact Email"** (`profile.html.ep:55`), and
+   `Workflows.pm:493` reports it as `'Contact email'` when missing — the column
+   name is a misnomer, not a different address, and the form has only ever asked
+   for one. perigrin's call once corrected: use what is already collected rather
+   than ask a solo operator for the same address twice. A tenant wanting billing
+   and parent replies to differ needs a profile-edit screen, which does not
+   exist and is separate work.
 2. **Does `From` move to the tenant's domain automatically once DKIM passes,**
    or stay platform-side until someone opts in? Automatic is the better
    experience and the worse surprise. Needs perigrin.
@@ -81,7 +86,7 @@ too, and DMARC will not pass on a DKIM record the school never published.
 
 Session-sized, vertical, each independently shippable unless marked.
 
-### A. Every message says which tenant it is from
+### A. Every message says which tenant it is from — **DONE (#488)**
 Thread `tenant_name` into the parent-facing notification types and put it in the
 `From` display name.
 - **paths:** `lib/Registry/DAO/Notification.pm`
@@ -91,7 +96,7 @@ Thread `tenant_name` into the parent-facing notification types and put it in the
   asserted against the generated MIME header rather than the metadata; a
   notification in the `registry` schema still sends with the platform name.
 
-### B. A reply reaches the school *(blocked on open decision 1)*
+### B. A reply reaches the school — **DONE (#488)**, with A
 Add `Reply-To`.
 - **paths:** `lib/Registry/DAO/Notification.pm`, possibly a migration for a new
   tenant contact field
@@ -144,8 +149,19 @@ Collect and display the DKIM record beside the routing record.
 ## Critical chain
 
 `A → F` and `E → F`. **C and D are independent of everything** and are the
-quickest route to a tenant noticing an improvement. B is small but gated on a
-decision.
+quickest route to a tenant noticing an improvement.
+
+**As of #488, A and B are done** — they proved to be one change, because both
+live in the same header block. So the chain to refine is **C, D, E, F**, with C
+and D ready now and E/F gated on open decision 2.
+
+Three things #488 found in that block, worth knowing before touching it again:
+a non-ASCII display name was emitted as raw 8-bit bytes; #484's own subjects
+interpolate a session name, so `Café Kids` put raw bytes in a `Subject`; and a
+`To` phrase of `Smith, Jones and Co` was unquoted, which reads as two
+addresses. All three are fixed, and the three cases do not combine — an
+encoded-word must not be quoted, a phrase with specials must be, plain ASCII is
+left alone.
 
 ## Not in this chain
 
