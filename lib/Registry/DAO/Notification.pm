@@ -140,6 +140,75 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         return (name => $name);
     }
 
+    # Who this message is from, as a person would read it.
+    #
+    # Notifications live in the tenant's own schema -- Notification's SQL is
+    # unqualified and resolves through the search_path -- so current_schema()
+    # names the tenant without the caller having to pass it, and every existing
+    # caller keeps working. The registry schema is the platform's own mail
+    # (magic links, verification) and keeps the platform identity.
+    #
+    # The address stays on the platform domain. Moving From to the tenant's own
+    # domain needs a DKIM record the tenant has published, which is #21.
+    method _sender_identity ($db) {
+        my $platform = $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com';
+
+        my $row = eval {
+            $db->query( <<~'SQL' )->hash;
+                SELECT t.name, tp.billing_email
+                  FROM registry.tenants t
+                  LEFT JOIN registry.tenant_profiles tp ON tp.tenant_id = t.id
+                 WHERE t.slug = current_schema()
+                SQL
+        };
+
+        # A lookup failure must not stop the mail: a message from "Registry"
+        # with no Reply-To is worse than one naming the school, and better than
+        # none at all.
+        return { address => $platform } unless $row && $row->{name};
+
+        return {
+            address      => $platform,
+            display_name => $row->{name},
+            # The address the tenant typed under the label "Contact Email" on
+            # the signup form. The column is called billing_email, which is a
+            # misnomer rather than a different address -- the form has only ever
+            # asked for one, and uses it for the Stripe customer too.
+            reply_to     => $row->{billing_email},
+        };
+    }
+
+    # RFC 2047, for header text that is not plain ASCII -- a school called
+    # "Müller's Studio", or a session called "Café Kids" reaching a Subject.
+    # Without this the header carries raw 8-bit bytes, which an MTA may mangle
+    # or refuse.
+    sub _encoded_header_text ($text) {
+        return $text unless defined $text && $text =~ /[^\x00-\x7F]/;
+        require MIME::Base64;
+        require Encode;
+        return '=?UTF-8?B?'
+             . MIME::Base64::encode_base64( Encode::encode( 'UTF-8', $text ), '' )
+             . '?=';
+    }
+
+    # A display name safe to put before an <address>.
+    #
+    # Three cases, and they do not combine: an encoded-word must NOT be quoted,
+    # a phrase containing specials MUST be quoted, and anything else is left
+    # alone. "Smith, Jones & Co" unquoted would read as two addresses.
+    sub _display_phrase ($name) {
+        return undef unless defined $name && length $name;
+        return _encoded_header_text($name) if $name =~ /[^\x00-\x7F]/;
+        return $name unless $name =~ /["(),:;<>@\\\[\]]/;
+        ( my $quoted = $name ) =~ s/(["\\])/\\$1/g;
+        return qq{"$quoted"};
+    }
+
+    sub _addressed ($name, $address) {
+        my $phrase = _display_phrase($name);
+        return defined $phrase ? sprintf( '%s <%s>', $phrase, $address ) : $address;
+    }
+
     # Build a raw multipart/alternative MIME body string.
     # This avoids a dependency on Email::MIME which is not in cpanfile.
     method _build_mime_body ($boundary, $text_part, $html_part) {
@@ -178,11 +247,22 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
             # Use a unique boundary for the multipart message
             my $boundary = 'registry_' . sprintf('%x', int(rand(0xFFFFFFFF)));
 
+            # A parent's first message from Registry used to arrive as a bare
+            # `noreply@` with no display name and no Reply-To: nothing said
+            # which school it concerned, and a reply reached nobody. Until
+            # #484's drainer none of these were delivered, so no header reached
+            # anyone and it did not show.
+            my $sender = $self->_sender_identity($db);
+
             my $email = Email::Simple->create(
                 header => [
-                    To           => sprintf('%s <%s>', $user_profile->{name} || 'User', $user_profile->{email}),
-                    From         => $ENV{NOTIFICATION_FROM_EMAIL} || 'noreply@registry.example.com',
-                    Subject      => $subject,
+                    To           => _addressed( $user_profile->{name} || 'User',
+                                                $user_profile->{email} ),
+                    From         => _addressed( $sender->{display_name},
+                                                $sender->{address} ),
+                    ( $sender->{reply_to}
+                        ? ( 'Reply-To' => $sender->{reply_to} ) : () ),
+                    Subject      => _encoded_header_text($subject),
                     'MIME-Version' => '1.0',
                     'Content-Type' => "multipart/alternative; boundary=\"$boundary\"",
                 ],
