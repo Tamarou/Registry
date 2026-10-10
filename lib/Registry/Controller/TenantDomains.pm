@@ -132,9 +132,18 @@ class Registry::Controller::TenantDomains :isa(Registry::Controller) {
                 my $result = $self->app->render_service->verify_custom_domain($td->render_domain_id);
                 if ($result && ($result->{verificationStatus} // '') eq 'confirmed') {
                     $td->mark_verified($db);
-                } else {
-                    my $err = $result ? ($result->{verificationError} // 'Verification pending') : 'Verification pending';
-                    $td->mark_failed($db, $err);
+                }
+                else {
+                    # Not yet is NOT failed, and this is the only button a
+                    # tenant has. #489 gave the background job three outcomes
+                    # for this exact reason and left this path on the old two,
+                    # which made pressing Verify while DNS propagated actively
+                    # harmful: `failed` is terminal AND takes the row out of
+                    # the job's `status = 'pending'` query, so the one control
+                    # offered for recovering from a failure was also the way to
+                    # stop the automatic retries.
+                    my $reason = $result && $result->{verificationError};
+                    $td->note_still_pending( $db, $reason ) if $reason;
                 }
             } else {
                 # No render_domain_id — mark as failed with explanation

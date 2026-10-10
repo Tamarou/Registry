@@ -210,6 +210,48 @@ subtest 'Trigger verification check' => sub {
       ->status_isnt(500, 'Verify endpoint reachable');
 };
 
+subtest 'pressing Verify while DNS is propagating does not mark it failed' => sub {
+    # The only control a tenant has, and it used to punish them for using it.
+    #
+    # #489 gave the background job three outcomes -- confirmed, a thrown error,
+    # and "not yet" which stays pending -- and left this path on the old two. So
+    # pressing Verify before DNS had spread wrote `failed`, which is terminal
+    # AND removes the row from the job's `status = 'pending'` query: the one
+    # button offered for recovering from a failure was also the way to stop the
+    # automatic retries.
+    local $active_user = $admin_user;
+    @render_calls = ();
+
+    $dao->db->insert( 'tenant_domains', {
+        tenant_id        => $tenant->id,
+        domain           => 'propagating-button.example.com',
+        status           => 'pending',
+        render_domain_id => 'render-propagating',
+    } );
+    my $td = Registry::DAO::TenantDomain->find_by_domain(
+        $dao->db, 'propagating-button.example.com' );
+
+    # Render saying "I do not see the record yet" -- not an error, just not done.
+    no warnings 'redefine';
+    local *MockRenderService::verify_custom_domain = sub ( $self, $render_id ) {
+        push @render_calls, { action => 'verify', render_id => $render_id };
+        return { id => $render_id, verificationStatus => 'pending',
+                 verificationError  => 'DNS records not found yet' };
+    };
+
+    $t->post_ok("/admin/domains/@{[$td->id]}/verify" => $host_header)
+      ->status_is(302, 'the button redirects back to the list');
+
+    my $after = Registry::DAO::TenantDomain->find_by_domain(
+        $dao->db, 'propagating-button.example.com' );
+    is $after->status, 'pending',
+        'still pending -- so the job keeps polling it';
+    is $after->verification_error, 'DNS records not found yet',
+        'and the reason is recorded, so the page can say what it waits for';
+
+    $dao->db->delete( 'tenant_domains', { id => $td->id } );
+};
+
 # ---------------------------------------------------------------------------
 # Set primary domain tests
 # ---------------------------------------------------------------------------
