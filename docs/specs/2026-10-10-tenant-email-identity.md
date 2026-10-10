@@ -1,6 +1,6 @@
 # Tenant email identity and deliverability
 
-**Status:** spec; A and B delivered in #488, **C/D/E/F remain** for `crochet:refinement`
+**Status:** spec; A, B, C, D delivered (#488, #489, #490). **E and F remain**, both gated on open decision 2.
 **Date:** 2026-10-10
 **Issues:** #21 (custom domains, email half), #480 (metering), #438 (provisioning limit, closed)
 
@@ -104,7 +104,7 @@ Add `Reply-To`.
   tenant's chosen address, and a message with no such address configured omits
   the header rather than emitting an empty one.
 
-### C. Verification tells the tenant what happened
+### C. Verification tells the tenant what happened — **DONE (#489)**
 Wire `domain_verified` and `domain_verification_failed`, which already exist as
 templates and reach nobody.
 - **paths:** `sql/{deploy,revert,verify}/domain-notification-types.sql`,
@@ -118,7 +118,7 @@ templates and reach nobody.
 - **note:** follow #484 exactly — `notification_type` is a Postgres enum, so a
   new value is a migration, and the enum value cannot be removed on revert.
 
-### D. A new tenant cannot spend the platform's reputation
+### D. A new tenant cannot spend the platform's reputation — **DONE (#490)**
 Cap outbound mail per tenant until its own domain is verified.
 - **paths:** `lib/Registry/DAO/Notification.pm` or
   `lib/Registry/Job/SendNotifications.pm`, one new function
@@ -151,9 +151,29 @@ Collect and display the DKIM record beside the routing record.
 `A → F` and `E → F`. **C and D are independent of everything** and are the
 quickest route to a tenant noticing an improvement.
 
-**As of #488, A and B are done** — they proved to be one change, because both
-live in the same header block. So the chain to refine is **C, D, E, F**, with C
-and D ready now and E/F gated on open decision 2.
+**A, B, C and D are done** (#488, #489, #490). What remains is **E and F**, the
+DKIM work, and both are gated on open decision 2 — so there is nothing left for
+refinement to decompose until that is answered.
+
+Three things the delivered units found that E and F will meet again:
+
+- **Unit C needed a prerequisite the spec did not anticipate.** The verification
+  job could not tell "DNS still propagating" from "failed": it marked any
+  non-confirmed result terminal, and the polling query selects `status =
+  'pending'`, so a correct domain was failed minutes after being added and never
+  rechecked. There was no honest transition to notify on until that was fixed.
+  Verification now has **three** outcomes, and `note_still_pending` records a
+  reason without touching status. E and F add a second verifier (Postmark) to
+  the same flow, so they inherit that three-state shape rather than a boolean.
+- **The single `status` column cannot express "routing verified, mail not"**,
+  which is exactly the state a school sits in between units E and F. Unit E
+  already names this; it is now the live constraint.
+- **Unit D's cap is narrower than "email volume"**: only
+  `message_announcement` and `message_update`, the types a tenant composes
+  freely. Auth mail, transactional mail and emergencies are exempt on stated
+  grounds. If F moves `From` to a tenant domain, the cap's premise changes --
+  a tenant sending under its OWN domain is no longer spending our reputation,
+  which is why `send_allowance` already returns "no cap" for a verified domain.
 
 Three things #488 found in that block, worth knowing before touching it again:
 a non-ASCII display name was emitted as raw 8-bit bytes; #484's own subjects
