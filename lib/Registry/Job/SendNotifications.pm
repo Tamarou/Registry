@@ -61,6 +61,7 @@ class Registry::Job::SendNotifications {
         my @skipped;
         my $sent   = 0;
         my $failed = 0;
+        my $held   = 0;
         for my $tenant (@$tenants) {
             my $slug = $tenant->{slug};
 
@@ -68,6 +69,7 @@ class Registry::Job::SendNotifications {
                 my $counts = $class->send_for_tenant( $dao, $slug, $log );
                 $sent   += $counts->{sent};
                 $failed += $counts->{failed};
+                $held   += $counts->{held} // 0;
                 push @covered, $slug;
             }
             catch ($e) {
@@ -86,7 +88,70 @@ class Registry::Job::SendNotifications {
             tenants_skipped => \@skipped,
             sent            => $sent,
             failed          => $failed,
+            # Held rather than sent or failed: a third outcome, and one an
+            # operator needs to see rather than infer from a shortfall.
+            held            => $held,
         };
+    }
+
+    # How much a tenant whose own domain is not yet verified may send in a day.
+    #
+    # A PLACEHOLDER NUMBER. perigrin has not set it, and it is deliberately
+    # generous: a tenant running one programme for a few dozen families sends
+    # well under this, while a spam run finds it useless. It lives here, in one
+    # constant read by one function, because #480 is to replace it with a
+    # plan-declared entitlement and a meter -- see that issue. Do not scatter it.
+    use constant UNVERIFIED_DAILY_CAP => 200;
+
+    # WHICH mail is capped, and this is the part worth arguing about.
+    #
+    # Only the types a tenant composes freely, in bulk, to an audience it
+    # chooses: Message.pm takes a subject and body and a scope as wide as
+    # tenant-wide, and fans one out per recipient. That is the vector -- #438
+    # established that signup is scriptable, so a minted tenant could otherwise
+    # spend the platform's sending reputation on day one.
+    #
+    # Everything else is deliberately exempt, and each for its own reason:
+    #
+    #   magic_link_*, email_verification, passkey_*  how somebody signs IN.
+    #       Capping these locks a tenant out of their own account.
+    #   enrollment_confirmation, waitlist_joined     a parent is waiting for it,
+    #       and the volume is bounded by actual enrolments, which are bounded by
+    #       payments.
+    #   attendance_*                                 bounded by real sessions
+    #       and real children.
+    #   message_emergency                            an emergency. Suppressing
+    #       one to protect a sender score is the wrong trade at any volume.
+    #   domain_verified, domain_verification_failed  the tenant's own plumbing.
+    #
+    # If this set is wrong it is wrong in the safe direction: too little capped
+    # rather than somebody locked out or an emergency withheld.
+    my %CAPPED_TYPES = map { $_ => 1 } qw( message_announcement message_update );
+
+    # undef means "no cap" -- a tenant whose own domain is verified has staked
+    # its own reputation and is not throttled on ours.
+    sub send_allowance ( $class, $db, $slug ) {
+        return undef if $slug eq 'registry';
+
+        my $verified = $db->query( <<~'SQL', $slug )->hash->{verified};
+            SELECT EXISTS (
+                SELECT 1
+                  FROM registry.tenant_domains td
+                  JOIN registry.tenants t ON t.id = td.tenant_id
+                 WHERE t.slug = ? AND td.status = 'verified'
+            ) AS verified
+            SQL
+        return undef if $verified;
+
+        my $sent = $db->query( <<~"SQL" )->hash->{n} // 0;
+            SELECT count(*) AS n FROM notifications
+             WHERE channel = 'email'
+               AND sent_at > now() - interval '1 day'
+               AND type::text IN (@{[ join ',', map { "'$_'" } sort keys %CAPPED_TYPES ]})
+            SQL
+
+        my $left = UNVERIFIED_DAILY_CAP - $sent;
+        return $left > 0 ? $left : 0;
     }
 
     sub send_for_tenant ( $class, $dao, $slug, $log ) {
@@ -121,8 +186,30 @@ class Registry::Job::SendNotifications {
              LIMIT 200
             SQL
 
-        my ( $sent, $failed ) = ( 0, 0 );
+        # Read once per run, not per message: the cap is a property of the
+        # tenant, and re-counting inside the loop would let a long run drift.
+        my $allowance = $class->send_allowance( $db, $slug );
+
+        my ( $sent, $failed, $held ) = ( 0, 0, 0 );
         for my $row (@$rows) {
+            # Over the cap: HELD, not dropped. The row keeps sent_at NULL and no
+            # failed_at, so it is still queued, still findable, and goes out on a
+            # later run once the day's window has rolled. Deleting it, or
+            # stamping it failed, would lose a message a tenant believes it sent.
+            #
+            # It does eventually expire: the query above ignores anything older
+            # than three days, so a tenant that stays over the cap that long
+            # loses the backlog -- which is the right outcome for a
+            # three-day-old announcement, and the wrong one to discover by
+            # surprise. Named in the result so it is visible in Minion::Admin.
+            if ( defined $allowance && $CAPPED_TYPES{ $row->{type} // '' } ) {
+                if ( $allowance <= 0 ) {
+                    $held++;
+                    next;
+                }
+                $allowance--;
+            }
+
             my $notification = Registry::DAO::Notification->new(%$row);
 
             # Per notification, not per tenant. One address that bounces must
@@ -143,6 +230,9 @@ class Registry::Job::SendNotifications {
             }
         }
 
-        return { sent => $sent, failed => $failed };
+        $log->info( "SendNotifications: tenant $slug is over its sending cap; "
+                  . "$held bulk message(s) held for a later run" ) if $held;
+
+        return { sent => $sent, failed => $failed, held => $held };
     }
 }
