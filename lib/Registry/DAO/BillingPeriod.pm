@@ -9,7 +9,7 @@ use Object::Pad;
 class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use List::Util qw( any );
-    use Mojo::JSON qw( decode_json encode_json );
+    use Mojo::JSON   qw( from_json );
 
     field $id :param :reader;
     field $pricing_relationship_id :param :reader;
@@ -28,9 +28,17 @@ class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
 
     ADJUST {
         # Decode JSON fields if they're strings
+        # from_json, not decode_json. decode_json decodes BYTES; Postgres hands
+        # back a jsonb column as characters, so decode_json dies with "Input is
+        # not UTF-8 encoded" on anything non-ASCII. This used to work only
+        # because the write side was equally wrong: it stored double-encoded
+        # bytes, and reading those back gave characters whose bytes happened to
+        # be valid UTF-8, so the two errors cancelled and the mojibake survived
+        # the round trip looking fine. Fixing the write side (#485) exposes this
+        # half.
         if (defined $metadata && !ref $metadata) {
             try {
-                $metadata = decode_json($metadata);
+                $metadata = from_json($metadata);
             }
             catch ($e) {
                 croak "Failed to decode JSON metadata: $e";
@@ -47,7 +55,13 @@ class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
     sub create ($class, $db, $data) {
         # Encode JSON fields
         if (exists $data->{metadata} && ref $data->{metadata}) {
-            $data->{metadata} = encode_json($data->{metadata});
+            # -json, not encode_json. encode_json returns UTF-8 ENCODED BYTES,
+            # and handing those to a jsonb column gets them encoded a second
+            # time on the way to Postgres -- so an accented character is stored
+            # as the two characters its UTF-8 bytes look like in Latin-1,
+            # corrupted on WRITE where no read-path fix recovers it. Mojo::Pg's
+            # -json takes the structure and encodes it exactly once (#485).
+            $data->{metadata} = { -json => $data->{metadata} };
         }
 
         # Set defaults
@@ -79,7 +93,7 @@ class Registry::DAO::BillingPeriod :isa(Registry::DAO::Object) {
     method update ($db, $updates) {
         # Encode JSON fields
         if (exists $updates->{metadata} && ref $updates->{metadata}) {
-            $updates->{metadata} = encode_json($updates->{metadata});
+            $updates->{metadata} = { -json => $updates->{metadata} };
         }
 
         my $result = $db->update(

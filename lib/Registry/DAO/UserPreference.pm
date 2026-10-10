@@ -5,7 +5,7 @@ use Object::Pad;
 
 class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     use Carp qw( croak );
-    use JSON qw( decode_json encode_json );
+    use Mojo::JSON qw( from_json );
     
     field $id :param :reader;
     field $user_id :param :reader;
@@ -18,9 +18,17 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Ensure preference_value is a hash ref if it's a string
+        # from_json, not decode_json. decode_json decodes BYTES; Postgres hands
+        # back a jsonb column as characters, so decode_json dies with "Input is
+        # not UTF-8 encoded" on anything non-ASCII. This used to work only
+        # because the write side was equally wrong: it stored double-encoded
+        # bytes, and reading those back gave characters whose bytes happened to
+        # be valid UTF-8, so the two errors cancelled and the mojibake survived
+        # the round trip looking fine. Fixing the write side (#485) exposes this
+        # half.
         if (defined $preference_value && !ref $preference_value) {
             try {
-                $preference_value = decode_json($preference_value);
+                $preference_value = from_json($preference_value);
             }
             catch ($e) {
                 croak "Invalid JSON in preference_value: $e";
@@ -37,7 +45,13 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
         
         # Ensure preference_value is JSON-serializable
         if (ref $data->{preference_value}) {
-            $data->{preference_value} = encode_json($data->{preference_value});
+            # -json, not encode_json. encode_json returns UTF-8 ENCODED BYTES,
+            # and handing those to a jsonb column gets them encoded a second
+            # time on the way to Postgres -- so an accented character is stored
+            # as the two characters its UTF-8 bytes look like in Latin-1,
+            # corrupted on WRITE where no read-path fix recovers it. Mojo::Pg's
+            # -json takes the structure and encodes it exactly once (#485).
+            $data->{preference_value} = { -json => $data->{preference_value} };
         }
         
         $class->SUPER::create($db, $data);
@@ -99,7 +113,7 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
         my $updated = { %$current, %$preferences };
         
         # Encode as JSON for database storage
-        $pref->update($db, { preference_value => encode_json($updated) });
+        $pref->update($db, { preference_value => { -json => $updated } });
         return $pref;
     }
     
@@ -144,7 +158,7 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
                 $preferences->{$row->{preference_key}} = $value;
             } else {
                 try {
-                    $preferences->{$row->{preference_key}} = decode_json($value);
+                    $preferences->{$row->{preference_key}} = from_json($value);
                 }
                 catch ($e) {
                     $preferences->{$row->{preference_key}} = $value;
@@ -157,8 +171,11 @@ class Registry::DAO::UserPreference :isa(Registry::DAO::Object) {
     
     # Set a specific preference value
     method set_value ($db, $new_value) {
-        my $value_to_store = ref $new_value ? encode_json($new_value) : $new_value;
-        $self->update($db, { preference_value => $value_to_store });
+        # -json for a structure, the scalar as-is otherwise. encode_json here
+        # handed UTF-8 bytes to a jsonb column and Postgres encoded them twice
+        # (#485).
+        $self->update( $db, { preference_value =>
+            ref $new_value ? { -json => $new_value } : $new_value } );
         $preference_value = $new_value;
     }
     

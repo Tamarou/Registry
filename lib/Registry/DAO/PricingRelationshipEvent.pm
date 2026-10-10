@@ -8,7 +8,7 @@ use Object::Pad;
 
 class Registry::DAO::PricingRelationshipEvent :isa(Registry::DAO::Object) {
     use Carp qw( croak );
-    use Mojo::JSON qw( decode_json encode_json );
+    use Mojo::JSON   qw( from_json );
 
     field $id :param :reader;
     field $relationship_id :param :reader;
@@ -23,9 +23,17 @@ class Registry::DAO::PricingRelationshipEvent :isa(Registry::DAO::Object) {
 
     ADJUST {
         # Decode JSON fields if they're strings
+        # from_json, not decode_json. decode_json decodes BYTES; Postgres hands
+        # back a jsonb column as characters, so decode_json dies with "Input is
+        # not UTF-8 encoded" on anything non-ASCII. This used to work only
+        # because the write side was equally wrong: it stored double-encoded
+        # bytes, and reading those back gave characters whose bytes happened to
+        # be valid UTF-8, so the two errors cancelled and the mojibake survived
+        # the round trip looking fine. Fixing the write side (#485) exposes this
+        # half.
         if (defined $event_data && !ref $event_data) {
             try {
-                $event_data = decode_json($event_data);
+                $event_data = from_json($event_data);
             }
             catch ($e) {
                 croak "Failed to decode JSON event_data: $e";
@@ -51,7 +59,13 @@ class Registry::DAO::PricingRelationshipEvent :isa(Registry::DAO::Object) {
 
         # Encode JSON fields
         if (exists $data->{event_data} && ref $data->{event_data}) {
-            $data->{event_data} = encode_json($data->{event_data});
+            # -json, not encode_json. encode_json returns UTF-8 ENCODED BYTES,
+            # and handing those to a jsonb column gets them encoded a second
+            # time on the way to Postgres -- so an accented character is stored
+            # as the two characters its UTF-8 bytes look like in Latin-1,
+            # corrupted on WRITE where no read-path fix recovers it. Mojo::Pg's
+            # -json takes the structure and encodes it exactly once (#485).
+            $data->{event_data} = { -json => $data->{event_data} };
         }
 
         # Get next aggregate version
