@@ -1,6 +1,6 @@
 # Tenant email identity and deliverability
 
-**Status:** spec; A, B, C, D delivered (#488, #489, #490). **E and F remain**, both gated on open decision 2.
+**Status:** spec; A, B, C, D delivered (#488, #489, #490). **E and F remain**, and are now UNGATED — decision 2 is settled.
 **Date:** 2026-10-10
 **Issues:** #21 (custom domains, email half), #480 (metering), #438 (provisioning limit, closed)
 
@@ -73,12 +73,28 @@ too, and DMARC will not pass on a DKIM record the school never published.
    than ask a solo operator for the same address twice. A tenant wanting billing
    and parent replies to differ needs a profile-edit screen, which does not
    exist and is separate work.
-2. **Does `From` move to the tenant's domain automatically once DKIM passes,**
-   or stay platform-side until someone opts in? Automatic is the better
-   experience and the worse surprise. Needs perigrin.
-3. **What is the cap's number, and is it per hour or per day?** Also whether it
-   applies to all mail or only parent-facing mail — a tenant's own magic link
-   should probably not be refused because it hit a marketing threshold.
+2. ~~**Does `From` move to the tenant's domain automatically once DKIM
+   passes?**~~ **SETTLED 2026-10-10: it moves.** Automatically, on verification,
+   with no opt-in step. So unit F has no gate left, and two consequences follow
+   that unit E must build for:
+
+   - **A tenant's mail identity changes without anyone pressing anything.** The
+     moment DKIM verifies, every subsequent message is from a different domain.
+     That wants telling -- #489 already queues `domain_verified`, so the natural
+     move is for that message to say mail is moving too, rather than adding a
+     second notification.
+   - **The send cap's premise lapses at the same instant.** `send_allowance`
+     already returns "no cap" for a tenant with a verified domain, so a tenant
+     gains its own `From` and its uncapped allowance from one event. That is
+     coherent, and worth stating: verification is the single thing that makes a
+     tenant responsible for its own reputation.
+3. ~~**What is the cap's number, and which mail does it apply to?**~~
+   **SETTLED 2026-10-10.** 200 a day, and only the tenant-composed bulk types
+   (`message_announcement`, `message_update`) — auth, transactional and
+   emergency mail are exempt, each on stated grounds. perigrin accepted the
+   figure on condition it be configurable, which #491 does: it is a
+   `platform_settings` row Alex can change without a deploy, with the constant
+   as its default and `0` kept distinct from unset.
 4. **Does a domain step belong in the signup relay** or is the `/admin/domains`
    nav entry enough? Custom domains are not a day-one want for every tenant.
 
@@ -151,9 +167,10 @@ Collect and display the DKIM record beside the routing record.
 `A → F` and `E → F`. **C and D are independent of everything** and are the
 quickest route to a tenant noticing an improvement.
 
-**A, B, C and D are done** (#488, #489, #490). What remains is **E and F**, the
-DKIM work, and both are gated on open decision 2 — so there is nothing left for
-refinement to decompose until that is answered.
+**A, B, C and D are done** (#488, #489, #490, with #491 making D's cap
+configurable). What remains is **E and F**, the DKIM work, and **both are now
+ungated**: `From` moves automatically on DKIM verification (decision 2,
+settled). This is the chain to refine.
 
 Three things the delivered units found that E and F will meet again:
 
