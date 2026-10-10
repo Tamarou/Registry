@@ -96,12 +96,40 @@ class Registry::Job::SendNotifications {
 
     # How much a tenant whose own domain is not yet verified may send in a day.
     #
-    # A PLACEHOLDER NUMBER. perigrin has not set it, and it is deliberately
-    # generous: a tenant running one programme for a few dozen families sends
-    # well under this, while a spam run finds it useless. It lives here, in one
-    # constant read by one function, because #480 is to replace it with a
-    # plan-declared entitlement and a meter -- see that issue. Do not scatter it.
-    use constant UNVERIFIED_DAILY_CAP => 200;
+    # The DEFAULT, not the number: `unverified_tenant_daily_mail_cap` in
+    # platform_settings overrides it, so Alex can change it without a deploy --
+    # which is perigrin's condition for keeping the figure I picked, and Pillar 5
+    # of PriceOps, the part #427 measures as absent.
+    #
+    # 200 is deliberately generous: a tenant running one programme for a few
+    # dozen families sends well under it, while a spam run finds it useless.
+    #
+    # Still read through one function, because #480 is to replace the SOURCE
+    # with a plan-declared entitlement and a meter. A platform-wide row is the
+    # right shape for "the same limit for everyone"; a per-plan entitlement is
+    # the next shape, and the baseline-plus-override pattern this follows is
+    # already described in TenantPayment's _baseline_features.
+    use constant UNVERIFIED_DAILY_CAP_DEFAULT => 200;
+
+    # NULL means not set: the default applies. 0 means hold all bulk mail from an
+    # unverified tenant, and is deliberately NOT the same thing -- collapsing
+    # them either way is a bug with teeth, as inert_after_days says at length for
+    # the same reason. Junk falls back to the default rather than to 0: a value
+    # nobody can parse must not silence a tenant's announcements.
+    sub unverified_daily_cap ( $class, $db ) {
+        require Registry::DAO::PlatformSetting;
+        my $raw = Registry::DAO::PlatformSetting->get( $db, 'unverified_tenant_daily_mail_cap' );
+
+        return UNVERIFIED_DAILY_CAP_DEFAULT unless defined $raw && $raw =~ /\S/;
+
+        ( my $v = $raw ) =~ s/^\s+|\s+$//g;
+        return $v + 0 if $v =~ /\A[0-9]+\z/;
+
+        warn "SendNotifications: unverified_tenant_daily_mail_cap is "
+           . "'$raw', which is not a number of messages; using "
+           . UNVERIFIED_DAILY_CAP_DEFAULT . "\n";
+        return UNVERIFIED_DAILY_CAP_DEFAULT;
+    }
 
     # WHICH mail is capped, and this is the part worth arguing about.
     #
@@ -150,7 +178,7 @@ class Registry::Job::SendNotifications {
                AND type::text IN (@{[ join ',', map { "'$_'" } sort keys %CAPPED_TYPES ]})
             SQL
 
-        my $left = UNVERIFIED_DAILY_CAP - $sent;
+        my $left = $class->unverified_daily_cap($db) - $sent;
         return $left > 0 ? $left : 0;
     }
 
