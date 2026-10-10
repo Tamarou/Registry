@@ -100,7 +100,7 @@ subtest 'bulk mail over the cap is held, not dropped' => sub {
     # A resident user first: notifications.user_id references the tenant
     # schema's own users table, and nothing has created one yet.
     my $resident = a_parent();
-    my $cap = Registry::Job::SendNotifications->UNVERIFIED_DAILY_CAP;
+    my $cap = Registry::Job::SendNotifications->unverified_daily_cap($tdb);
     $db->query( <<~"SQL", $resident->id, $cap );
         INSERT INTO $slug.notifications (user_id, type, channel, subject, message, sent_at)
         SELECT \$1, 'message_announcement', 'email', 's', 'm', now()
@@ -162,6 +162,42 @@ subtest 'a verified tenant sends its bulk mail regardless' => sub {
         'the new bulk mail went out, and so did the released backlog';
 
     $db->delete( 'registry.tenant_domains', { domain => 'cap2.example.com' } );
+};
+
+subtest 'the cap is a setting Alex can change, not a constant' => sub {
+    # perigrin's condition for keeping the number I picked. A row rather than an
+    # env var, so it changes without a deploy -- the same reasoning
+    # inert_after_days gives.
+    require Registry::DAO::PlatformSetting;
+
+    is Registry::Job::SendNotifications->unverified_daily_cap($tdb), 200,
+        'unset: the code default applies';
+
+    Registry::DAO::PlatformSetting->set( $db, 'unverified_tenant_daily_mail_cap', '5' );
+    is Registry::Job::SendNotifications->unverified_daily_cap($tdb), 5,
+        'and a value set by Alex is honoured';
+
+    # 0 is not "unset". Collapsing them either way is the bug
+    # platform_settings.value's COMMENT exists to warn about.
+    Registry::DAO::PlatformSetting->set( $db, 'unverified_tenant_daily_mail_cap', '0' );
+    is Registry::Job::SendNotifications->unverified_daily_cap($tdb), 0,
+        'zero means hold all bulk mail, which is distinct from not set';
+
+    # Junk falls back to the default rather than to 0: an unparseable value must
+    # not silence a tenant's announcements.
+    my @warnings;
+    {
+        local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+        Registry::DAO::PlatformSetting->set( $db, 'unverified_tenant_daily_mail_cap', 'lots' );
+        is Registry::Job::SendNotifications->unverified_daily_cap($tdb), 200,
+            'junk falls back to the default, not to zero';
+    }
+    ok scalar( grep { /not a number of messages/ } @warnings ),
+        'and says so, rather than silently picking something';
+
+    Registry::DAO::PlatformSetting->set( $db, 'unverified_tenant_daily_mail_cap', undef );
+    is Registry::Job::SendNotifications->unverified_daily_cap($tdb), 200,
+        'and unsetting it returns to the default';
 };
 
 done_testing;
