@@ -28,7 +28,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Validate type
-        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed|enrollment_confirmation|waitlist_joined)$/) {
+        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed|enrollment_confirmation|waitlist_joined|domain_verified|domain_verification_failed)$/) {
             croak "Invalid notification type: '$type' is not a recognized notification type";
         }
         
@@ -67,6 +67,8 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         return 'passkey_removed'     if $type eq 'passkey_removed';
         return 'enrollment_confirmation' if $type eq 'enrollment_confirmation';
         return 'waitlist_joined'         if $type eq 'waitlist_joined';
+        return 'domain_verified'            if $type eq 'domain_verified';
+        return 'domain_verification_failed' if $type eq 'domain_verification_failed';
         return '';  # general and unknown types use fallback
     }
 
@@ -122,6 +124,18 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
                 event      => $meta->{event_name}    // '',
                 start_date => $meta->{start_date}    // '',
                 location   => $meta->{location_name} // '',
+            );
+        }
+        if ( $type eq 'domain_verified' || $type eq 'domain_verification_failed' ) {
+            return (
+                name        => $name,
+                tenant_name => $meta->{tenant_name} // 'Registry',
+                domain      => $meta->{domain}      // '',
+                error       => $meta->{error}       // '',
+                # The failed template offers a way back. A message saying
+                # verification failed and not where to retry leaves the tenant
+                # hunting for a screen they visited once.
+                retry_url   => $meta->{retry_url}   // '',
             );
         }
         if ($type eq 'waitlist_joined') {
@@ -544,6 +558,54 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     # redelivery for a child who is already seated, and finalize_enrollment
     # skips those before it ever gets here -- and after a drop and re-enrol a
     # second confirmation is the correct outcome anyway.
+    # Tell a tenant how domain verification turned out.
+    #
+    # The templates for both outcomes have existed in full since custom domains
+    # shipped and nothing ever created either, so a tenant learned the result
+    # only by revisiting the page (#21).
+    #
+    # Idempotent per (user, domain, type): the verification job polls every
+    # fifteen minutes, and a tenant must not be told twice about one outcome.
+    # Keyed on the type as well as the domain, so a domain that fails, is
+    # corrected and then verifies produces one message of each rather than
+    # silence on the good news.
+    sub ensure_domain_outcome ( $class, $db, $args ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my ( $user_id, $domain, $verified ) =
+            @{$args}{qw( user_id domain verified )};
+        return unless $user_id && $domain;
+
+        my $type = $verified ? 'domain_verified' : 'domain_verification_failed';
+
+        my $exists = $db->query(
+            q{SELECT 1 FROM notifications
+               WHERE user_id = ? AND type = ?
+                 AND metadata->>'domain' = ?
+               LIMIT 1},
+            $user_id, $type, $domain
+        )->rows;
+        return if $exists;
+
+        $class->create( $db, {
+            user_id => $user_id,
+            type    => $type,
+            channel => 'email',
+            subject => $verified
+                ? "$domain is live"
+                : "We could not verify $domain",
+            message => $verified
+                ? "Your custom domain is verified and serving."
+                : "Your custom domain could not be verified.",
+            metadata => {
+                domain      => $domain,
+                tenant_name => $args->{tenant_name},
+                error       => $args->{error},
+                retry_url   => $args->{retry_url},
+            },
+        } );
+    }
+
     # Queue exactly one waitlist_joined notification per (user, session, child).
     #
     # #421: joining a waitlist sent nothing, so the confirmation page was the
