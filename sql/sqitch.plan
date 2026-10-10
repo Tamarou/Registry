@@ -85,3 +85,4 @@ platform-settings [payments-carry-instalments] 2026-09-30T15:45:00Z Chris Prathe
 magic-link-expiry-one-hour [platform-settings] 2026-10-03T00:30:00Z Chris Prather <chris.prather@tamarou.com> # A magic link lasts an hour rather than a day
 payments-record-platform-fee [magic-link-expiry-one-hour] 2026-10-05T18:00:00Z Chris Prather <chris.prather@tamarou.com> # Record what the platform took on a charge, and the plan version it took it under
 waitlist-joined-notification-type [payments-record-platform-fee] 2026-10-08T17:30:00Z Chris Prather <chris.prather@tamarou.com> # A parent who joins a waitlist gets it in writing
+domain-notification-types [waitlist-joined-notification-type] 2026-10-10T14:00:00Z Chris Prather <chris.prather@tamarou.com> # A tenant hears the outcome of domain verification

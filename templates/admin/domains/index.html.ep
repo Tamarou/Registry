@@ -70,6 +70,16 @@
                                         <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                                             Waiting for DNS verification
                                         </span>
+                                        %# What it is waiting FOR, when Render has
+                                        %# said. A pending row now keeps the reason
+                                        %# rather than being marked failed for it,
+                                        %# so this is the difference between "we are
+                                        %# looking" and "your record has a typo".
+                                        % if ($domain->verification_error) {
+                                            <p class="text-xs text-gray-600 mt-1" data-pending-reason>
+                                                <%= $domain->verification_error %>
+                                            </p>
+                                        % }
                                     % }
                                 </td>
 

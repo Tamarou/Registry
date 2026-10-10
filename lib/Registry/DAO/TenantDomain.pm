@@ -90,6 +90,23 @@ class Registry::DAO::TenantDomain :isa(Registry::DAO::Object) {
         return $self;
     }
 
+    # Record why a domain is not verified YET, without declaring it failed.
+    #
+    # The distinction is the point: `failed` is terminal and takes the row out
+    # of the polling query, so writing it for "DNS has not propagated" abandoned
+    # domains whose records were perfectly correct. This keeps the row pending
+    # and lets the admin page show what Render is waiting for.
+    method note_still_pending ($db, $reason) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $updated = $self->update($db, { verification_error => $reason });
+
+        if ($updated) {
+            $verification_error = $updated->verification_error;
+        }
+
+        return $self;
+    }
+
     method mark_failed ($db, $error) {
         $db = $db->db if $db isa Registry::DAO;
         my $updated = $self->update($db, {
