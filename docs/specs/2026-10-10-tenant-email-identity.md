@@ -98,6 +98,90 @@ too, and DMARC will not pass on a DKIM record the school never published.
 4. **Does a domain step belong in the signup relay** or is the `/admin/domains`
    nav entry enough? Custom domains are not a day-one want for every tenant.
 
+## Decisions settled 2026-10-11, after refinement
+
+The refinement agents surfaced thirteen open questions between them. Three
+needed no answer, five were engineering calls recorded below, and four were
+perigrin's. These four change the shape of unit E, not just its wording.
+
+5. **Both DNS records become three.** Postmark offers a Return-Path CNAME
+   (custom bounce domain) alongside the DKIM TXT. perigrin's call: **collect it
+   now**, on the same form, for the same reason the DKIM record is collected
+   there -- a school files one DNS ticket, and a second ticket later costs more
+   than a third row in the panel today. Nothing in the codebase handles bounces,
+   so a verified Return-Path buys deliverability and a bounce address that reads
+   as the school's domain rather than the relay's.
+
+   **The consequence unit E must not get wrong: Return-Path gates nothing.**
+   DMARC aligns on DKIM alone, so `From` moves on DKIM verification and on
+   nothing else. If Return-Path accidentally joins that gate, a school that
+   publishes DKIM correctly and fumbles the CNAME never gets its mail moved, and
+   the reason will not be visible anywhere. Three records, three states, one
+   gate.
+
+6. **A withdrawn verification gets its own message.** perigrin's call: when a
+   tenant's DKIM stops verifying and its mail reverts to platform-side, the
+   school is **told, in a message of its own** -- not by reusing
+   `domain_verification_failed`, which is the wrong word for a regression.
+
+   This costs a new `notification_type` value, which the chain had deliberately
+   been avoiding: the type is a Postgres enum, and Postgres has no
+   `DROP VALUE`, so the revert script cannot undo it. That is now an accepted
+   cost rather than an accident. The revert must say so in a comment rather than
+   pretend to remove it.
+
+7. **The tenant's `From` is `noreply@<their domain>`.** Reuses the platform's
+   own local part. Nothing new to collect, no new field on a form already
+   carrying three records from two APIs, and no risk of sending as an address
+   that does not exist on the new domain -- which reusing the contact email's
+   local part would have.
+
+8. **Held mail keeps the cap's rate after verification.** Verification uncaps
+   *new* mail. Anything already held drains at the pre-verification rate.
+
+   The reason is the whole reason the cap exists. A week of held announcements
+   releasing at once, from a domain with no sending history, is precisely the
+   reputation event the cap was built to prevent -- it would simply arrive later
+   and from the tenant's own domain instead of ours. A newly verified domain
+   should build history gradually. Note this makes the drain stateful in a way
+   `send_allowance` is not today: it has to distinguish mail held before
+   verification from mail composed after it.
+
+## Engineering calls, same date
+
+Recorded here rather than asked, because each is the lesson of #489 applied to
+a second verifier.
+
+- **Only an answer *about the domain* is terminal.** A Postmark response saying
+  this record is wrong is terminal. A 401, 403, 429, 5xx or timeout is "we could
+  not ask", and records a reason without touching state. Without this
+  distinction three separately reasonable decisions compose into a platform
+  outage: a throw is terminal, verified rows are polled forever, and a withdrawn
+  verification stops a tenant sending -- so one unset token walks every verified
+  domain to `failed` in a single pass. The token is `sync: false` and #459 is the
+  standing precedent for it being absent in production.
+- **A withdrawal lands on `pending`, not `failed`, and needs several
+  consecutive non-confirmations rather than one.** `pending` stays in the
+  polling query and recovers by itself; `failed` needs a human, and no route in
+  this chain re-registers a domain.
+- **A withdrawal keeps `postmark_domain_id` and the record values.** Clearing
+  them makes the row unrecoverable: the job skips it for having no id, and the
+  school has nothing left to re-publish.
+- **The seven-day window clocks from Postmark registration, not from domain
+  creation**, and DKIM never goes terminal on it -- the window stops the
+  *notifying*, not the polling. A row registered late would otherwise get a day
+  and then be dead.
+- **A row with a domain but no `postmark_domain_id` is registered on the next
+  poll.** That is exactly what a Postmark outage during the add leaves behind.
+  Nothing retried it, and the school was never told.
+
+Three questions needed no answer. **Multiple domains per tenant cannot happen**
+-- `TenantDomains.pm:58-68` enforces one domain per tenant and returns 422 for a
+second, so `is_primary` on `tenant_domains` is dormant and routing, the cap and
+the sender cannot disagree about which domain counts. **The HTMX swap-target
+bug** found in the verify button is #494, live today and independent of DKIM.
+**A domain step in the signup relay** stays a no; decision 4 is unchanged.
+
 ## Work
 
 Session-sized, vertical, each independently shippable unless marked.
@@ -146,18 +230,18 @@ Cap outbound mail per tenant until its own domain is verified.
   throttles tenant *creation* and says nothing about sending. Signup is
   scriptable by #438's own account.
 
-### E. The domain form asks for the DKIM record too *(needs open decision 2)*
-Collect and display the DKIM record beside the routing record.
+### E. The domain form asks for the DKIM and Return-Path records too
+Collect and display all three records beside each other (decision 5).
 - **paths:** `lib/Registry/Controller/TenantDomains.pm`,
   `templates/admin/domains/dns_instructions.html.ep`,
   `lib/Registry/Service/Postmark.pm` (new), migration for DKIM state on
   `tenant_domains`
-- **done when:** adding a domain shows both records in one panel, and the page
-  distinguishes "routing verified, mail not" from "both verified" — those are
-  different states for a school and the current single `status` cannot express
-  both.
+- **done when:** adding a domain shows all three records in one panel, and the
+  page distinguishes "routing verified, mail not" from "both verified" — those
+  are different states for a school and the current single `status` cannot
+  express both. Return-Path has its own state and gates nothing (decision 5).
 
-### F. Mail comes from the tenant's own domain *(blocked by A, E; needs decision 2)*
+### F. Mail comes from the tenant's own domain *(blocked by A, E)*
 - **done when:** a tenant whose DKIM has verified sends with `From` on its own
   domain; one whose has not still sends platform-side; and a verification that
   later breaks does not silently keep sending unsigned.
