@@ -183,12 +183,37 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         return $workflow;
     }
 
+    # The order a person walks the steps in, which is the `depends_on` chain --
+    # the same walk to_yaml does. It is NOT creation order: an import runs in one
+    # transaction, so every step of a workflow gets an identical `created_at` and
+    # ordering by it is a total tie that Postgres may return in any order. The
+    # progress indicator numbers the steps it is given, so a tie there means a
+    # school is told it is on step 4 of 5 with the labels in the wrong order.
     method get_ordered_steps($db) {
+        my @ordered;
+        my %seen;
+        my $step = $self->first_step($db);
+        while ($step) {
+            # A chain that loops back on itself would otherwise spin forever.
+            last if $seen{ $step->id }++;
+            push @ordered, {
+                id          => $step->id,
+                slug        => $step->slug,
+                description => $step->description,
+                label       => $step->label,
+            };
+            $step = $step->next_step($db);
+        }
+        return \@ordered if @ordered;
+
+        # No chain to walk: a workflow with no first_step set, or steps created
+        # without one. Sorted by slug after created_at so that at least the same
+        # call twice gives the same answer.
         return $db->select(
             'workflow_steps',
-            ['id', 'slug', 'description'],
+            ['id', 'slug', 'description', 'label'],
             { workflow_id => $id },
-            { -asc => 'created_at' }
+            { -asc => ['created_at', 'slug'] }
         )->hashes->to_array;
     }
 

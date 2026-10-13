@@ -54,14 +54,14 @@ subtest 'it registers the element the layout would have to emit' => sub {
     like $js, qr/data-completed-steps/, 'reads data-completed-steps';
 };
 
-subtest 'it announces navigation rather than performing it' => sub {
+subtest 'it announces navigation and then performs it' => sub {
     $t->get_ok('/js/components/workflow-progress.js')->status_is(200);
     my $js = $t->tx->res->body;
 
-    # The step labels are clickable, and the component dispatches an event
-    # instead of assigning location -- which is what lets a page decide whether
-    # a jump backwards is allowed.
+    # The step labels are clickable. The component dispatches an event AND then
+    # assigns location itself, so the event is a notification rather than a hook
+    # a page could use to refuse the jump: nothing can cancel it.
     like $js, qr/workflow-navigation/, 'dispatches a workflow-navigation event';
-    unlike $js, qr/window\.location\s*=/,
-        'and does not navigate on its own';
+    like $js, qr/window\.location\.href\s*=/,
+        'and navigates itself afterwards, in both the click and keydown paths';
 };

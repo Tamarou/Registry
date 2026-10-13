@@ -6,12 +6,15 @@ steps:
 - class: Registry::DAO::WorkflowStep
   description: New User Landing page
   slug: landing
+  label: Start
   template: user-creation-index
 - class: Registry::DAO::WorkflowStep
   description: User Info
   slug: info
+  label: Their details
   template: user-creation-info
 - class: Registry::DAO::WorkflowSteps::CreateUser
   description: User creation complete
   slug: complete
+  label: Done
   template: user-creation-complete
