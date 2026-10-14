@@ -186,8 +186,14 @@ test.describe('Payment happy path', () => {
       // payment page with #payment-error shown. Wait for whichever arrives.
       // networkidle cannot tell them apart and timed out on its own when the
       // card was refused, since a refusal never navigates.
+      // Matched on the completion page's OWN container, not on body text. The
+      // workflow progress indicator renders every step's name into its shadow
+      // DOM, and Playwright's text engine pierces shadow DOM -- so
+      // body:has-text("Registration Complete") matches the PAYMENT page, whose
+      // indicator names summer-camp's `complete` step. The wait then resolved
+      // before Stripe had redirected anywhere.
       await expect(
-        registryPage.locator('#payment-error:visible, body:has-text("Registration Complete")')
+        registryPage.locator('#payment-error:visible, .success-message')
       ).toBeVisible({ timeout: 30000 });
 
       // -----------------------------------------------------------------------
@@ -201,11 +207,18 @@ test.describe('Payment happy path', () => {
       // DOM, so body text contains "Payment Error" whether or not it is shown.
       await expect(registryPage.locator('#payment-error')).toBeHidden();
 
-      // Name the completion page. The old pattern allowed a bare "complete",
-      // which the payment page's own copy contains -- "redirected to a secure
-      // payment form to complete your registration" -- so the assertion passed
-      // on the page it was meant to prove the parent had left.
-      await expect(registryPage.locator('body')).toContainText(
+      // Name the completion page, and name it by something only that page can
+      // produce. Two false positives of the same shape have now been fixed
+      // here: a bare "complete", which the payment page's own copy contains
+      // ("redirected to a secure payment form to complete your registration"),
+      // and body text matching "Registration Complete", which the progress
+      // indicator supplies on every workflow page from the step list.
+      //
+      // .success-message is the completion template's own container, and that
+      // page renders on layouts/default, so it carries no indicator at all. The
+      // heading distinguishes a seat from a waitlist place, which a parent who
+      // has just paid very much cares about.
+      await expect(registryPage.locator('.success-message h2')).toHaveText(
         /Registration Complete/i,
         { timeout: 15000 }
       );
