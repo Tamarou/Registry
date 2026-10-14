@@ -6,12 +6,15 @@ steps:
 - class: Registry::DAO::WorkflowStep
   description: New Workflow Landing page
   slug: landing
+  label: Start
   template: workflow-creation-landing
 - class: Registry::DAO::WorkflowStep
   description: Workflow Basic Information
   slug: info
+  label: Workflow details
   template: workflow-creation-info
 - class: Registry::DAO::WorkflowSteps::CreateWorkflow
   description: Workflow creation complete
   slug: complete
+  label: Done
   template: workflow-creation-complete

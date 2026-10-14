@@ -6,12 +6,15 @@ steps:
 - class: Registry::DAO::WorkflowStep
   description: New Event Landing page
   slug: landing
+  label: Start
   template: event-creation-index
 - class: Registry::DAO::WorkflowStep
   description: Event info
   slug: info
+  label: Event details
   template: event-creation-info
 - class: Registry::DAO::WorkflowSteps::CreateEvent
   description: Event creation complete
   slug: complete
+  label: Done
   template: event-creation-complete

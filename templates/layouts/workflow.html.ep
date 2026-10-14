@@ -47,14 +47,18 @@
             </section>
         % }
 
-        % if (stash('show_workflow_progress')) {
-            <div data-component="progress-steps"
-                 data-current-step="<%= stash('current_step') || 1 %>"
-                 data-total-steps="<%= stash('total_steps') || 1 %>"
-                 data-step-names="<%= stash('step_names') || '[]' %>"
-                 data-step-urls="<%= stash('step_urls') || '[]' %>"
-                 data-completed-steps="<%= stash('completed_steps') || '[]' %>">
-            </div>
+        %# Workflows#index, #get_workflow_run_step and #_render_step_result all
+        %# stash this. A single-step workflow is left alone: there is no progress
+        %# to show through one step, and its first step is a landing page.
+        % my $progress_steps = stash('workflow_progress');
+        % if ($progress_steps && ($progress_steps->{total_steps} // 0) > 1) {
+            <workflow-progress
+                 data-current-step="<%= $progress_steps->{current_step} %>"
+                 data-total-steps="<%= $progress_steps->{total_steps} %>"
+                 data-step-names="<%= $progress_steps->{step_names} %>"
+                 data-step-urls="<%= $progress_steps->{step_urls} %>"
+                 data-completed-steps="<%= $progress_steps->{completed_steps} %>">
+            </workflow-progress>
         % }
 
         <section id="workflow-content" data-component="workflow-content">

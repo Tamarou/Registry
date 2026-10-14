@@ -788,11 +788,23 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             my $step = $steps->[$i];
             my $step_number = $i + 1;
             
-            # Use description if available, otherwise generate from slug
-            my $step_name = $step->{description};
+            # `label` is written for the person being walked through the
+            # workflow. `description` is the note for whoever maintains it --
+            # "Tenant users page" -- so it is only the fallback, ahead of a
+            # title-cased slug.
+            my $step_name = $step->{label};
+            $step_name = $step->{description}
+              unless defined $step_name && $step_name =~ /\S/;
             if (!$step_name || $step_name eq 'Auto-created first step' || $step_name eq 'Emergency auto-created step') {
                 $step_name = $self->_generate_step_name($step->{slug});
             }
+
+            # ponytail: the component splits these on ',' (workflow-progress.js),
+            # so one name carrying a comma would render as two steps and every
+            # label after it would belong to the wrong one. Replacing it keeps
+            # name and step aligned, which is the part that matters. Upgrade path
+            # is a JSON attribute, which means changing both ends.
+            $step_name =~ s/,/ /g;
             push @step_names, $step_name;
             
             # Generate URL for navigation (only for completed steps)

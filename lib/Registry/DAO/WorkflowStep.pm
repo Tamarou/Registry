@@ -13,6 +13,12 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     field $outcome_definition_id :param :reader = undef;
     field $description :param :reader;
 
+    # What a person walking the workflow reads for this step. `description`
+    # is the developer's note on the same step -- it reads like one, and the
+    # CLI listing prints it beside the slug. Different audiences, so two
+    # fields. NULL means none written; callers fall back to description.
+    field $label :param :reader = undef;
+
     field $depends_on :param = undef;
 
     # Mojo::Pg's ->expand (in Object::find/create) decodes jsonb to a
@@ -165,6 +171,7 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
         # Add basic fields if they exist
         $json->{slug} = $slug if $slug;
         $json->{description} = $description if $description;
+        $json->{label} = $label if $label;
         $json->{class} = $class if $class;
         
         # Get template information if it exists
