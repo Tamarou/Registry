@@ -7,19 +7,39 @@ const {
 
 // Serial and ordered: Morgan cannot build a program before she has a tenant to
 // build it in. The relay is within one persona now, not across three.
-// 300s, not 180s. Morgan's second test is the longest journey in the suite --
-// signup, provisioning, programme, staff, publish, storefront -- and it measures
-// ~192s on an idle machine, which is already past a 180s budget. Under the full
-// run it timed out mid-chain and the failure surfaced as a storefront assertion
-// that had never been evaluated against a loaded page.
 //
-// This is a wall-clock allowance and nothing else: no assertion changed. The
-// failure could not be reproduced in isolation, so the cause is stated as
-// measured duration against too small a budget rather than as a diagnosed race.
+// 300s because the second test is the longest journey in the suite -- signup,
+// provisioning, programme, staff, publish, storefront. #428 asked where the
+// time went; it was measured rather than guessed, with a Playwright trace for
+// the browser side and instrumentation around the Perl side-channel:
 //
-// The diagnosis is #428. A budget set to whatever the test currently takes has
-// stopped being a signal, so do not raise this again -- find out where the three
-// minutes go. Provisioning is the first suspect: clone_schema copies ~60 tables.
+//     test 1   21-25s
+//     test 2  102-150s  ~54s Playwright actions, ~6s database reads, rest other
+//     setup   ~91s      shared Postgres + schema deploy, outside both budgets
+//
+// Ranges, not points: the same test measured 102s, 126s, 132s, 150s and 156s
+// across one afternoon on an idle developer machine. A single figure here would
+// be false precision, and reading a 25% swing as a result is how the last
+// attempt at this issue reached the wrong answer.
+//
+// Neither suspect in #428 was right. It is not clone_schema provisioning, and
+// it is not Playwright: the traces total 29.5s and 53.8s of actions. Nearly
+// half of each test is `carton exec perl` startup in journey_helpers' DB
+// side-channel, which a trace cannot see because it happens between actions in
+// a child process. Loading Registry::DAO there cost 6-9s per call, and these
+// specs make 61 reads between them.
+//
+// Reads now go through psql instead, which journey_helpers does in one place:
+// 20 calls, 6.3s, 0.31s each -- against 22 calls and 83.7s through Perl, both
+// measured by instrumenting the call site rather than inferred. What is left on
+// the Perl side needs application code rather than SQL.
+//
+// The budget stays at 300s and is now a measured multiple -- 2.4x the slowest
+// observed 126s -- rather than a ceiling raised to whatever the test cost that
+// day. Under full-run contention the child-process cost inflates (query-json
+// measures 2.0-2.5s alone and 3.69s inside a run), which is the headroom that
+// multiple is for.
+
 test.describe.configure({ mode: 'serial', timeout: 300000 });
 
 const RUN = String(Date.now());
