@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib qw(lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is ok like is_deeply subtest )];
+use Test::More import => [qw( done_testing is ok like unlike is_deeply subtest )];
 defer { done_testing };
 
 # Test that the workflow layout includes the progress component
@@ -29,8 +29,22 @@ subtest 'Workflow Layout Integration' => sub {
     # Check that HTMX is included for navigation
     like($content, qr/htmx\.org/, 'Layout includes HTMX for navigation');
     
-    # Check that the progress component is conditionally rendered
-    like($content, qr/if.*workflow_progress/, 'Progress component is conditionally rendered');
+    # The layout emits the element the script defines, and reads the stash key
+    # the controller sets. Both halves matter: for most of this file's life the
+    # assertion here was qr/if.*workflow_progress/, which matched the DEAD gate
+    # `if (stash('show_workflow_progress'))` -- a key nothing ever set -- so it
+    # passed while the indicator had never once rendered (#423).
+    like($content, qr/<workflow-progress/,
+        'Layout emits the custom element, not a div the component cannot claim');
+    like($content, qr/stash\('workflow_progress'\)/,
+        "Layout reads the stash key the controller actually sets");
+    unlike($content, qr/show_workflow_progress/,
+        'and not the gate nothing sets');
+
+    # That it renders CONDITIONALLY, and on which condition, is asserted by
+    # rendering the layout in t/controller/a-workflow-says-which-step-you-are-on.t.
+    # Reading the source for an `if` cannot tell a live gate from a dead one,
+    # which is how the old assertion here passed for so long.
 };
 
 subtest 'Web Component File Exists' => sub {
