@@ -13,30 +13,33 @@ const {
 // time went; it was measured rather than guessed, with a Playwright trace for
 // the browser side and instrumentation around the Perl side-channel:
 //
-//     test 1   25-41s
-//     test 2  102-126s  ~54s Playwright actions, ~59s child processes, rest other
+//     test 1   21-25s
+//     test 2  102-150s  ~54s Playwright actions, ~6s database reads, rest other
 //     setup   ~91s      shared Postgres + schema deploy, outside both budgets
 //
-// Ranges, not points: the same run varies ~20% on a developer machine, so a
-// single figure here would be false precision.
+// Ranges, not points: the same test measured 102s, 126s, 132s, 150s and 156s
+// across one afternoon on an idle developer machine. A single figure here would
+// be false precision, and reading a 25% swing as a result is how the last
+// attempt at this issue reached the wrong answer.
 //
 // Neither suspect in #428 was right. It is not clone_schema provisioning, and
 // it is not Playwright: the traces total 29.5s and 53.8s of actions. Nearly
 // half of each test is `carton exec perl` startup in journey_helpers' DB
 // side-channel, which a trace cannot see because it happens between actions in
-// a child process. Loading Registry::DAO there cost 6-9s per call and the pair
-// makes 22 calls; lifecycle.spec.js makes 26. Only login-token needs the DAO,
-// so the SQL commands no longer load it, which took the second test from ~192s
-// to 102-126s and lifecycle.spec.js from ~306s to ~180s.
+// a child process. Loading Registry::DAO there cost 6-9s per call, and these
+// specs make 61 reads between them.
+//
+// Reads now go through psql instead, which journey_helpers does in one place:
+// 20 calls, 6.3s, 0.31s each -- against 22 calls and 83.7s through Perl, both
+// measured by instrumenting the call site rather than inferred. What is left on
+// the Perl side needs application code rather than SQL.
 //
 // The budget stays at 300s and is now a measured multiple -- 2.4x the slowest
 // observed 126s -- rather than a ceiling raised to whatever the test cost that
 // day. Under full-run contention the child-process cost inflates (query-json
 // measures 2.0-2.5s alone and 3.69s inside a run), which is the headroom that
 // multiple is for.
-//
-// The remaining lever is the 20 query-json calls at ~3.3s each: a psql
-// transport, which payment-smoke.spec.js already uses, costs ~0.07s a call.
+
 test.describe.configure({ mode: 'serial', timeout: 300000 });
 
 const RUN = String(Date.now());

@@ -14,24 +14,12 @@
 // The relay is the point, not an accident of how it was written. Splitting it
 // would leave the seams untested and look like a tidy-up while doing it.
 const { test, expect } = require('./fixtures/base');
-const { execFileSync } = require('child_process');
-
-function helper(testDB, args) {
-  return execFileSync(
-    'carton',
-    ['exec', 'perl', 't/playwright/lifecycle_helpers.pl', ...args],
-    { cwd: process.cwd(), env: { ...process.env, DB_URL: testDB.dbUrl }, encoding: 'utf8' }
-  ).trim();
-}
-function loginToken(testDB, schema, userId) { return helper(testDB, ['login-token', schema, userId]); }
-function queryJson(testDB, schema, sql, ...bind) { return JSON.parse(helper(testDB, ['query-json', schema, sql, ...bind.map(String)])); }
-
-async function loginWithToken(page, token, baseUrl = '') {
-  await page.goto(`${baseUrl}/auth/magic/${token}`);
-  await page.waitForSelector('button[type="submit"]');
-  await page.click('button[type="submit"]');
-  await page.waitForLoadState('networkidle');
-}
+// These four were duplicated here, verbatim, from the module whose own first
+// line says "one copy, because four copies of a login helper drift and only one
+// of them is right". The drift it warned about had already happened: the shared
+// queryJson now reads through psql and this copy still paid 6-9s of Perl module
+// loading per call, 26 times in this file (#428).
+const { loginToken, queryJson, loginWithToken, daysFromNow } = require('./journey_helpers');
 
 test.describe.configure({ mode: 'serial', timeout: 180000 });
 
@@ -46,12 +34,6 @@ const state = {
 
 test.describe('Lifecycle: Morgan -> Nancy -> Amara', () => {
 
-  // Helper: derive a date string N days from today in YYYY-MM-DD format.
-  function daysFromNow(n) {
-    const d = new Date();
-    d.setDate(d.getDate() + n);
-    return d.toISOString().split('T')[0];
-  }
 
   test('Leg 0: Morgan signs up and her tenant is provisioned', async ({ registryPage, testDB }) => {
     // Clear session so we always get a fresh workflow run

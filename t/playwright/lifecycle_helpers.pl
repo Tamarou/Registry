@@ -9,17 +9,15 @@ my ($cmd, @args) = @ARGV;
 my $url = $ENV{DB_URL} or die "DB_URL required\n";
 
 # Loading Registry::DAO costs 6-9 seconds of module compilation per invocation,
-# measured, and this script is run once per database assertion -- 19 times in
-# morgan.spec.js, 26 in lifecycle.spec.js. That was ~130s of morgan's ~190s
-# runtime, all of it invisible to a Playwright trace because it happens between
-# actions in a child process (#428).
+# measured, and this script runs once per call -- which is why reads no longer
+# come here at all: journey_helpers' queryJson uses psql, at ~0.2s (#428).
 #
-# Only login-token needs the DAO. The two SQL commands need a connection, so
-# they build one directly, with the SAME semantics Registry::DAO gives it:
-# Mojo::Pg (which is what the DAO uses underneath), the same
-# search_path of [$schema, 'public'], and the same client encoding. Anything
-# else here would change which schema a tenant query resolves against, and so
-# change what every journey asserts.
+# What is left needs application code rather than SQL. login-token mints a token
+# through the DAO. exec-sql writes, and keeps a connection built with the SAME
+# semantics Registry::DAO gives it: Mojo::Pg (which is what the DAO uses
+# underneath), the same search_path of [$schema, 'public'], and the same client
+# encoding. Anything else would change which schema a statement resolves
+# against, and so change what a journey asserts.
 sub pg_for ($schema) {
     require Mojo::Pg;
     my $pg = Mojo::Pg->new($url);
@@ -39,15 +37,6 @@ if ($cmd eq 'login-token') {
         $dao->db, { user_id => $user_id, purpose => 'login', expires_in => 24 }
     );
     print $plaintext;
-}
-elsif ($cmd eq 'query-json') {
-    # query-json <schema> <sql-with-?-placeholders> <bind...>
-    my ($schema, $sql, @bind) = @args;
-    my $pg = pg_for($schema); # keep alive
-    my $json = $pg->db->query(
-        qq{SELECT COALESCE(json_agg(t), '[]'::json)::text AS j FROM ($sql) t}, @bind
-    )->hash->{j};
-    print $json;
 }
 elsif ($cmd eq 'exec-sql') {
     # exec-sql <schema> <sql-with-?-placeholders> <bind...>
