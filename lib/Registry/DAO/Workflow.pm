@@ -188,7 +188,7 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     # transaction, so every step of a workflow gets an identical `created_at` and
     # ordering by it is a total tie that Postgres may return in any order. The
     # progress indicator numbers the steps it is given, so a tie there means a
-    # school is told it is on step 4 of 5 with the labels in the wrong order.
+    # tenant is told it is on step 4 of 5 with the labels in the wrong order.
     method get_ordered_steps($db) {
         my @ordered;
         my %seen;
