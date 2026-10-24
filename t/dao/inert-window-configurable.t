@@ -41,7 +41,17 @@ sub tenant_aged ( $slug, $days ) {
         $days, $slug );
 }
 
-sub reported ( $inert ) { return [ sort map { $_->{slug} } @{ $inert->{tenants} } ] }
+# Only the tenants this file made. The report is global, so asserting an exact
+# list made the test depend on every other row in the database and on the age of
+# the seeded ones: sql/test-schema.sql carries a created_at, and when a
+# regenerated dump aged past the ten-day window below, the platform's own
+# `registry-platform` row started being reported and this file failed eleven
+# days after a commit that touched nothing it tests. That was a real bug in
+# Tenant::inert, now fixed, but the assertion should not have been able to catch
+# it by accident while missing it for the eleven days before.
+sub reported ( $inert ) {
+    return [ sort grep { /^quiet_/ } map { $_->{slug} } @{ $inert->{tenants} } ];
+}
 
 # Three states, not two: not set, 0, and N. perigrin: "NULL is not set, 0 is
 # Never." Collapsing them either way is a bug with teeth, and both directions are
