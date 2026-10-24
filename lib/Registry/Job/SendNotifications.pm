@@ -156,20 +156,31 @@ class Registry::Job::SendNotifications {
     # rather than somebody locked out or an emergency withheld.
     my %CAPPED_TYPES = map { $_ => 1 } qw( message_announcement message_update );
 
-    # undef means "no cap" -- a tenant whose own domain is verified has staked
-    # its own reputation and is not throttled on ours.
+    # undef means "no cap". The cap asks one question -- whose reputation is
+    # this mail spending? -- and only the tenant sending as ITSELF changes the
+    # answer.
+    #
+    # This used to return undef for a tenant whose `tenant_domains.status` was
+    # 'verified', described as a tenant that "has staked its own reputation".
+    # That is routing verification: it means DNS points the domain at us and the
+    # tenant's site answers there. It says nothing about who signed the mail,
+    # and nothing signs mail as the tenant yet -- DKIM is #21's unit E and does
+    # not exist. So a tenant could set up a custom domain, which has worked
+    # since #21's first half, and stop being throttled while still sending
+    # entirely under our domain and on our reputation. The uncap was reachable
+    # and wrong.
+    #
+    # There is therefore no uncap path but the platform's own, and that is
+    # honest rather than temporary: nobody can send as themselves today. When
+    # unit F lands, the condition belongs on the DKIM state -- and must be a
+    # POSITIVE test for verified, never a negative test for unverified, because
+    # a left join is NULL-false for a tenant with no domain row at all and would
+    # uncap exactly the brand-new tenants this exists for.
     sub send_allowance ( $class, $db, $slug ) {
+        # The platform is exempt by identity here, which is the shape #427 is
+        # about: an entitlement of unlimited written as an `if`. It belongs in
+        # the root tenant's own plan once entitlements exist.
         return undef if $slug eq 'registry';
-
-        my $verified = $db->query( <<~'SQL', $slug )->hash->{verified};
-            SELECT EXISTS (
-                SELECT 1
-                  FROM registry.tenant_domains td
-                  JOIN registry.tenants t ON t.id = td.tenant_id
-                 WHERE t.slug = ? AND td.status = 'verified'
-            ) AS verified
-            SQL
-        return undef if $verified;
 
         my $sent = $db->query( <<~"SQL" )->hash->{n} // 0;
             SELECT count(*) AS n FROM notifications

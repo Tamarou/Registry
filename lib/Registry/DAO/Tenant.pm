@@ -348,6 +348,21 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # magic_link_tokens table holds no consumed row has never been entered.
     # Registering a passkey needs an authenticated session, so it cannot be the
     # first way in and cannot hide a login from this.
+    # The platform's own rows. They are not tenants anybody can reclaim, bill or
+    # chase, and there are TWO of them: `registry`, which has a schema, and
+    # `registry-platform`, the zero-uuid row with none. That is the shape #294
+    # collapses, and where #265's repeating sweep errors come from.
+    #
+    # Every per-tenant reader has to exclude both. Excluding only `registry` is
+    # how the platform's own row turned up in an operator's reclaim report as an
+    # abandoned tenant -- it surfaced when a regenerated sql/test-schema.sql
+    # aged past the ten-day window the test uses, eleven days after the dump was
+    # taken, so it had been wrong for as long as the second row has existed.
+    #
+    # A slug list is the identity-check shape #427 is about, and it stays only
+    # until #294 makes the root tenant one row.
+    sub platform_slugs { return [ 'registry', 'registry-platform' ] }
+
     sub inert ( $class, $db, %opt ) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -365,10 +380,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         for my $row ( $db->query( q{
             SELECT id, name, slug, created_at
               FROM registry.tenants
-             WHERE slug <> 'registry'
+             WHERE NOT ( slug = ANY($2) )
                AND created_at < now() - ($1 || ' days')::interval
              ORDER BY created_at
-        }, $days )->hashes->each )
+        }, $days, $class->platform_slugs )->hashes->each )
         {
             # A schema that is not there cannot be entered either, and a
             # half-provisioned one is its own problem (#330) rather than this
@@ -553,7 +568,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # -- so counting it here would add Registry's income from a tenant to
         # Registry's income from that tenant's customers. Two different
         # businesses, one column.
-        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
+        my $tenants = $db->query( <<~'SQL', $class->platform_slugs )->hashes->to_array;
             SELECT t.slug,
                    t.name,
                    t.billing_status,
@@ -568,7 +583,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
               FROM registry.tenants t
               LEFT JOIN registry.pricing_plans p
                      ON p.id = t.platform_pricing_plan_id
-             WHERE t.slug <> 'registry'
+             WHERE NOT ( t.slug = ANY($1) )
              ORDER BY t.name
             SQL
 
@@ -664,14 +679,14 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
         # Payments live in the tenant's schema, so this is one query per tenant
         # rather than a join -- see platform_revenue above for why.
-        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
+        my $tenants = $db->query( <<~'SQL', $class->platform_slugs )->hashes->to_array;
             SELECT t.slug, t.name,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
                    ) AS schema_present
               FROM registry.tenants t
-             WHERE t.slug <> 'registry'
+             WHERE NOT ( t.slug = ANY($1) )
              ORDER BY t.name
             SQL
 

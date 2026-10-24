@@ -13,7 +13,7 @@ SET search_path TO registry, public;
 -- "Tenant users page", "New Tenant landing page". Its other reader is the CLI
 -- listing in Registry::Command::workflow, which prints it beside the slug for
 -- somebody debugging a workflow definition. Those are the right words for that
--- audience and the wrong ones for a parent or a school owner, so this is a
+-- audience and the wrong ones for a parent or a tenant's owner, so this is a
 -- second column rather than a rewrite of the first.
 --
 -- NULLABLE on purpose. NULL means "no label written yet", and the progress

@@ -177,7 +177,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         };
 
         # A lookup failure must not stop the mail: a message from "Registry"
-        # with no Reply-To is worse than one naming the school, and better than
+        # with no Reply-To is worse than one naming the tenant, and better than
         # none at all.
         return { address => $platform } unless $row && $row->{name};
 
@@ -192,7 +192,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         };
     }
 
-    # RFC 2047, for header text that is not plain ASCII -- a school called
+    # RFC 2047, for header text that is not plain ASCII -- a tenant called
     # "Müller's Studio", or a session called "Café Kids" reaching a Subject.
     # Without this the header carries raw 8-bit bytes, which an MTA may mangle
     # or refuse.
@@ -263,7 +263,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
 
             # A parent's first message from Registry used to arrive as a bare
             # `noreply@` with no display name and no Reply-To: nothing said
-            # which school it concerned, and a reply reached nobody. Until
+            # which tenant it concerned, and a reply reached nobody. Until
             # #484's drainer none of these were delivered, so no header reached
             # anyone and it did not show.
             my $sender = $self->_sender_identity($db);

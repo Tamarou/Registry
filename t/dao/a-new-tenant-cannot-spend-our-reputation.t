@@ -1,4 +1,4 @@
-# ABOUTME: A tenant whose own domain is unverified has its BULK mail capped; everything else is exempt.
+# ABOUTME: A tenant's BULK mail is capped until it sends as itself; everything else is exempt.
 # ABOUTME: Over-cap mail is held and still queued, never dropped, and auth mail is never capped.
 #
 # #21, unit D. #438 established that signup is scriptable -- a session cookie, a
@@ -73,7 +73,7 @@ sub unsent_count () {
     )->hash->{n};
 }
 
-subtest 'an unverified tenant has an allowance; a verified one does not' => sub {
+subtest 'routing verification does not lift the cap' => sub {
     # The TENANT's handle: the cap counts that tenant's own sent mail, and
     # notifications live in its schema. Passing the registry handle counts
     # registry.notifications instead, which is empty -- so the first draft of
@@ -86,8 +86,12 @@ subtest 'an unverified tenant has an allowance; a verified one does not' => sub 
         q{INSERT INTO registry.tenant_domains (tenant_id, domain, status, render_domain_id)
           VALUES (?, ?, 'verified', 'rdm_cap')}, $tenant->id, 'cap.example.com' );
 
-    is Registry::Job::SendNotifications->send_allowance( $tdb, $slug ), undef,
-        'a tenant that has staked its own domain is not throttled on ours';
+    # A domain whose ROUTING has verified is not a domain the tenant has staked
+    # anything on. Mail still leaves under the platform's own domain, because
+    # nothing signs it as the tenant yet -- DKIM is unit E and does not exist.
+    # So the tenant is still spending our reputation, and is still capped.
+    ok defined Registry::Job::SendNotifications->send_allowance( $tdb, $slug ),
+        'still capped: routing verified is not the tenant sending as itself';
 
     $db->delete( 'registry.tenant_domains', { domain => 'cap.example.com' } );
 
@@ -147,19 +151,19 @@ subtest 'auth and transactional mail is never capped' => sub {
     is $counts->{held}, 3, 'and the earlier bulk backlog is still waiting, untouched';
 };
 
-subtest 'a verified tenant sends its bulk mail regardless' => sub {
+subtest 'a routing-verified tenant is still held at the cap' => sub {
+    # The cap's premise is whose reputation is being spent, and routing
+    # verification does not change that answer. Until the tenant's own DKIM
+    # verifies, its mail is signed by us and judged as ours.
     $db->query(
         q{INSERT INTO registry.tenant_domains (tenant_id, domain, status, render_domain_id)
           VALUES (?, ?, 'verified', 'rdm_cap2')}, $tenant->id, 'cap2.example.com' );
 
     queue( 'message_announcement', 2 );
     my ( $counts, undef ) = drain();
-    is $counts->{held}, 0, 'nothing held once the domain is verified';
-    # The two new ones AND the backlog held while unverified: verifying the
-    # domain releases what was waiting, which is the behaviour a tenant would
-    # expect after fixing their DNS.
-    cmp_ok $counts->{sent}, '>=', 5,
-        'the new bulk mail went out, and so did the released backlog';
+    cmp_ok $counts->{held}, '>', 0,
+        'bulk mail is still held: a routed domain is not a signed one';
+    is $counts->{sent}, 0, 'and none of it went out';
 
     $db->delete( 'registry.tenant_domains', { domain => 'cap2.example.com' } );
 };
