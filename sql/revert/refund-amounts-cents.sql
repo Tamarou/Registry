@@ -43,6 +43,10 @@ BEGIN
         EXECUTE format('ALTER TABLE %I.enrollments DROP COLUMN refund_amount_cents', s);
 
         EXECUTE format(
+            'COMMENT ON COLUMN %I.enrollments.refund_amount
+                IS ''Amount refunded for dropped enrollment''', s);
+
+        EXECUTE format(
             'ALTER TABLE %I.drop_requests
                 ADD COLUMN IF NOT EXISTS refund_amount_requested DECIMAL(10,2)', s);
         EXECUTE format(
