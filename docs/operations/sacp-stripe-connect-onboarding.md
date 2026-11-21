@@ -89,7 +89,6 @@ per-tenant payment tables and will abort loudly on two pre-flight conditions:
 | Pre-flight | Error trigger | Remediation |
 |---|---|---|
 | Payer-residency | A registry-resident tenant payment's payer does not exist in the tenant schema | `SELECT copy_user(dest_schema => '<slug>', user_id => '<id>');` for each missing user |
-| Schedule guard | `registry.scheduled_payments` rows reference payments tagged to a tenant | Manual investigation required; contact perigrin before proceeding |
 
 **Expected prod state before deploy:** approximately zero tenant-tagged payment
 rows in `registry.payments` (pre-alpha). Confirm actual counts with perigrin by

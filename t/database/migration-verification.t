@@ -43,10 +43,9 @@ subtest 'Verify all migrations' => sub {
     }
 };
 
-subtest 'Verify migration rollback' => sub {
-    # Skip complex rollback testing for now - focus on deploy/verify
-    pass("Skipping rollback tests - focus on deploy and verify");
-};
+# Rollback is graded by t/database/revert-round-trip.t, which for each listed
+# change deploys to its parent, deploys the change, reverts it, and diffs the
+# schema dumps.  Asserting it again here would only duplicate a full deploy.
 
 subtest 'Fresh database deployment' => sub {
     # Create another fresh database and deploy from scratch
