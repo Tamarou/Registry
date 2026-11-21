@@ -65,3 +65,4 @@ pricing-plans-amount-cents [suspend-rateless-tenant-plans] 2026-08-06T00:00:00Z 
 payments-amount-cents [pricing-plans-amount-cents] 2026-08-06T12:00:00Z Chris Prather <chris.prather@tamarou.com> # Store payments and payment_items money as integer cents
 schedule-amounts-cents [payments-amount-cents] 2026-08-06T13:00:00Z Chris Prather <chris.prather@tamarou.com> # Store installment schedule money as integer cents
 refund-amounts-cents [schedule-amounts-cents] 2026-08-06T14:00:00Z Chris Prather <chris.prather@tamarou.com> # Store refund money as integer cents
+retire-registry-plus-plan [suspend-rateless-tenant-plans] 2026-08-10T00:06:59Z Chris Prather <chris.prather@tamarou.com> # Stop offering the seeded Registry Plus hybrid plan
