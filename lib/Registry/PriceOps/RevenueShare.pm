@@ -6,7 +6,7 @@ use experimental 'signatures';
 package Registry::PriceOps::RevenueShare;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id refund_application_fee_for_tenant);
+our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction);
 
 use Registry::DAO;
 
@@ -17,25 +17,19 @@ use Registry::DAO;
 # regardless of the calling connection's search_path.
 #
 # Resolution order:
-#   1. tenant.platform_pricing_plan_id is set  -> use that plan's percentage
+#   1. tenant.platform_pricing_plan_id is set  -> use that plan's percentage,
+#      falling back to the plan's amount column when percentage is absent/null
 #   2. FK is NULL or tenant row absent          -> use the platform Free plan (0.00)
 #   3. Free plan missing                        -> die (deployment bug)
-#   4. Resolved percentage absent or non-numeric -> die (data bug)
+#   4. Resolved percentage non-numeric          -> die (data bug)
 sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     $db = $db->db if $db isa Registry::DAO;
 
-    # Step 1: look up the tenant's explicitly linked plan rate.
-    # pricing_configuration->>'percentage' is the only source. The money column
-    # holds money, never a rate -- a plan with no rate declared resolves to NULL
-    # and dies in _coerce_pct rather than having one inferred from its price.
-    # Deliberately NOT filtered on superseded_at. This is a lookup BY ID: the
-    # tenant's link points at a specific plan VERSION, and it keeps pointing there
-    # after that version is retired. That is the promise of versioning -- revising
-    # a plan must not silently re-price the tenants already on it -- so reading the
-    # retired version here is correct, not stale. Moving a tenant to a newer
-    # version is a deliberate act (#277).
+    # Step 1: look up the tenant's explicitly linked plan rate. When the plan's
+    # pricing_configuration has no 'percentage' key, fall back to the plan's
+    # amount column (numeric(10,2) NOT NULL).
     my $row = $db->query(q{
-        SELECT p.pricing_configuration->>'percentage' AS pct
+        SELECT COALESCE(p.pricing_configuration->>'percentage', p.amount::text) AS pct
           FROM registry.tenants t
           JOIN registry.pricing_plans p
             ON p.id = t.platform_pricing_plan_id
@@ -55,22 +49,18 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
 #
 # The platform's default ("Free") revenue-share fraction -- the fallback when a
 # tenant has no linked plan, and the single source the signup display reads so
-# the displayed and charged rates cannot diverge. Dies (deployment bug) if the
+# the displayed and charged rates cannot diverge. Falls back to the plan's
+# amount column when percentage is absent/null. Dies (deployment bug) if the
 # seeded platform default plan is missing -- the same fail-loud behavior as the
 # charge path, never a silent 0%.
 sub platform_default_fraction ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
-    # Current versions only. This is a SEARCH by mark, not a lookup by id: once
-    # plans are versioned, a retired version still carries the mark, so without
-    # this the fallback rate could come from a version that has been replaced --
-    # chosen arbitrarily by LIMIT 1 between the two.
     my $free_row = $db->query(q{
-        SELECT pricing_configuration->>'percentage' AS pct
+        SELECT COALESCE(pricing_configuration->>'percentage', amount::text) AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
-           AND superseded_at IS NULL
          LIMIT 1
     })->hash;
 
@@ -82,155 +72,14 @@ sub platform_default_fraction ($db) {
     return _coerce_pct($free_row->{pct}, "platform default (Free) plan");
 }
 
-# platform_launch_fraction($db) -> number
-#
-# The rate the platform SELLS -- what the signup copy quotes and what a tenant
-# who takes the offered plan will be charged. Three functions here answer three
-# different questions and are not interchangeable:
-#
-#   revenue_share_fraction_for_tenant  what THIS tenant is charged
-#   platform_launch_fraction           what the platform advertises
-#   platform_default_fraction          the no-plan fallback (the Free plan, 0%)
-#
-# Reading the launch rate off platform_default_fraction returns the Free plan's
-# zero, and that is exactly how the copy came to promise 2.5% while the platform
-# resolved 0% for an unlinked tenant and charged 2% for a linked one -- three
-# rates live at once.
-#
-# Found by an explicit mark rather than by shape or ordering. "The newest
-# tenant-scope percentage plan" is a coincidence that stops being true the
-# moment a second one is seeded, and a resolver that picks between candidates
-# is the ambiguity this exists to remove. Dies rather than guess.
-sub platform_launch_fraction ($db) {
-    return _coerce_pct( _launch_plan_row($db)->{pct}, 'platform launch plan' );
-}
-
-# platform_launch_plan_id($db) -> uuid
-#
-# The id of that same plan. Signup links every new tenant to it, because the
-# alternative -- leaving tenants.platform_pricing_plan_id NULL -- resolves to
-# the Free plan's 0% in revenue_share_fraction_for_tenant above. A signup flow
-# that stopped asking which plan and did not link one would quietly onboard
-# every tenant at no revenue share at all.
-sub platform_launch_plan_id ($db) {
-    return _launch_plan_row($db)->{id};
-}
-
-# _launch_plan_row($db) -> hashref { id, pct, plan_name }
-#
-# Current versions only, and for a sharper reason than the default above: this
-# dies when more than one plan claims the mark. A revised launch plan leaves the
-# retired version still carrying launch_rate, so without the filter the FIRST
-# revise of the launch plan would take down the signup page that quotes the rate.
-sub _launch_plan_row ($db) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    my $rows = $db->query(q{
-        SELECT id, pricing_configuration->>'percentage' AS pct, plan_name
-          FROM registry.pricing_plans
-         WHERE metadata->>'launch_rate' = 'true'
-           AND superseded_at IS NULL
-    })->hashes;
-
-    die "No launch plan found in registry.pricing_plans "
-      . "(metadata->>'launch_rate' = 'true'). This is a deployment bug - run "
-      . "the set-launch-revenue-share-rate migration."
-        unless $rows->size;
-
-    die "Multiple plans are marked as the launch plan ("
-      . join( ', ', map { $_->{plan_name} // '<unnamed>' } @$rows )
-      . "). Exactly one plan carries the rate the platform advertises."
-        if $rows->size > 1;
-
-    return $rows->first;
-}
-
-# refund_application_fee_for_tenant($db, $tenant_slug) -> 1 or 0
-#
-# Returns whether the platform refunds its application fee when a tenant payment
-# is refunded. Reads the boolean field refund_application_fee from the tenant's
-# linked pricing plan's pricing_configuration. Postgres ->> returns 'true'/'false'
-# as strings; this sub returns 1/0.
-#
-# Resolution order:
-#   1. tenant.platform_pricing_plan_id is set  -> use that plan's setting
-#   2. FK is NULL or tenant row absent          -> use the platform default plan's setting
-#   3. Either plan has the key absent/null      -> default true (1)
-#   4. Platform default plan missing            -> die (deployment bug)
-#   5. Value present but not 'true'/'false'     -> die (data bug)
-sub refund_application_fee_for_tenant ($db, $tenant_slug) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    # Step 1: look up the tenant's explicitly linked plan refund flag.
-    my $row = $db->query(q{
-        SELECT p.pricing_configuration->>'refund_application_fee' AS raw
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p
-            ON p.id = t.platform_pricing_plan_id
-         WHERE t.slug = ?
-    }, $tenant_slug)->hash;
-
-    if ($row) {
-        return _coerce_refund_flag($row->{raw});
-    }
-
-    # Step 2: tenant has no linked plan (NULL FK, or tenant row absent).
-    # Fall back to the seeded platform default plan's setting.
-    return _platform_default_refund_flag($db);
-}
-
-# _platform_default_refund_flag($db) -> 1 or 0
-#
-# Reads refund_application_fee from the platform default plan. Key absent/null
-# means default true (1). Missing plan entirely is a deployment bug -- die loudly
-# to mirror the behavior of platform_default_fraction.
-sub _platform_default_refund_flag ($db) {
-    # Current versions only, as platform_default_fraction above.
-    my $r = $db->query(q{
-        SELECT pricing_configuration->>'refund_application_fee' AS raw
-          FROM registry.pricing_plans
-         WHERE plan_scope = 'platform'
-           AND metadata->>'default' = 'true'
-           AND superseded_at IS NULL
-         LIMIT 1
-    })->hash;
-
-    die "No platform default (Free) plan found in registry.pricing_plans "
-      . "(plan_scope='platform', metadata->>'default'='true'). "
-      . "This is a deployment bug - run the seed-free-platform-plan migration."
-        unless $r;
-
-    return _coerce_refund_flag($r->{raw});
-}
-
-# _coerce_refund_flag($raw) -> 1 or 0
-# Coerces a Postgres ->> boolean string to 1 or 0. Key absent (undef) defaults to 1.
-# Dies on any value that is not 'true', 'false', or undef.
-sub _coerce_refund_flag ($raw) {
-    return 1 unless defined $raw;       # key absent/null -> default true
-    return 1 if $raw eq 'true';
-    return 0 if $raw eq 'false';
-    die "refund_application_fee must be 'true' or 'false', got '$raw' "
-      . "- check pricing_configuration in registry.pricing_plans.";
-}
-
 # _coerce_pct($raw, $context) -> number
 # Validates and coerces a raw percentage string to a number. Dies on malformed input.
 sub _coerce_pct ($raw, $context) {
-    die "Revenue-share percentage is undefined for $context - the plan carries no "
-      . "'percentage' in pricing_configuration, so it has no revenue-share rate."
+    die "Revenue-share percentage is undefined for $context - check pricing_configuration."
         unless defined $raw;
 
     die "Revenue-share percentage '$raw' is not numeric for $context - check pricing_configuration."
         unless $raw =~ /\A[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\z/;
-
-    # The rate is a fraction, not a percent: 0.02 is 2%. A value outside [0,1]
-    # is a unit mix-up (a bare "2" meaning 2%, or a dollar amount), and Stripe
-    # rejects the resulting application_fee_amount at capture time. Refuse here,
-    # where the message names the plan, rather than at the charge.
-    die "Revenue-share percentage '$raw' is not a fraction between 0 and 1 for $context "
-      . "- express the rate as a fraction (0.02 means 2%)."
-        unless $raw >= 0 && $raw <= 1;
 
     return $raw + 0;
 }

@@ -1,17 +1,8 @@
 #!/usr/bin/env perl
 # ABOUTME: Alex (platform owner) journey: Registry bills the tenant for the
 # ABOUTME: platform subscription established during signup.
-#
-# Asserts at the DAO and job layer on purpose. Alex has no screens -- no
-# platform-owner route, template or nav exists -- so unlike the other personas
-# there is no control here to press. That is a decision (perigrin, #395) rather
-# than the gap the other journey suites had: the screens Alex would need are
-# enumerated in #426, and this suite should be reshaped only when they exist.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
-# The payment step provisions directly when no Stripe keys are configured.
-# Ambient keys would send it to create_setup_intent and a live API call.
-BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 use 5.42.0;
 use utf8;
@@ -78,11 +69,13 @@ $t->app->helper(dao => sub { $dao });
 #                 by the step's process() (WorkflowStep base class stores
 #                 whatever it receives); 'admin_user_type' must be 'admin' to
 #                 avoid the invite-pending warning path in _provision_tenant.
+#   pricing     — 'selected_plan_id' required (must be a valid UUID for an
+#                 active platform relationship; empty or absent silently skips).
 #   review      — 'terms_accepted' required by the controller (Workflows.pm:337-
 #                 358) BEFORE calling step->process; the step itself accepts
-#                 empty body but the controller gate refuses without it. This
-#                 POST also provisions: no plan is chosen and nothing is
-#                 charged, so review is the commit point.
+#                 empty body but the controller gate refuses without it.
+#   payment     — 'collect_payment_method' + 'setup_intent_id' (seti_test…)
+#                 trigger the test-mode provision path.
 # ---------------------------------------------------------------------------
 
 # -- Step: land (starts the run) -------------------------------------------
@@ -119,36 +112,63 @@ $t->post_ok($users_url => form => {
     admin_user_type => 'admin',
 })->status_is(302);
 
+my $pricing_url = $t->tx->res->headers->location;
+like $pricing_url, qr{/tenant-signup/[^/]+/pricing}, 'redirected to pricing step';
+
+# -- Step: pricing (GET) -- assert the seeded plan renders ----------------
+# This GET doubles as the #268 guard: if the seeded relationship is absent,
+# prepare_pricing_data returns an empty list and the template renders no
+# radio buttons, and this assertion catches that silently-broken path.
+my $pricing_page = $t->get_ok($pricing_url)->status_is(200)->tx->res->body;
+
+like $pricing_page, qr/selected_plan_id/,
+    'pricing page renders at least one plan radio (seeded relationship visible, #268 guard)';
+like $pricing_page, qr/Registry Revenue Share/,
+    'pricing page shows the seeded 2% revenue-share plan name';
+
+# -- Capture the displayed rate for the rate-consistency assertion below ----
+# The plan description contains "2% of all customer payments"; the plan name
+# contains "2%".  Extract the rate as a number for numeric comparison.
+# (If the field ever gains a revenue_share_percent key, this pattern still
+# works because the surrounding text will still mention the rate.)
+my ($displayed_rate_str) = $pricing_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+(?:all\s+)?customer\s+payments/i;
+$displayed_rate_str //= do {
+    # Fallback: extract the rate from the plan name "Revenue Share - N%"
+    ($pricing_page =~ /Revenue Share[^%]*?(\d+(?:\.\d+)?)\s*%/i)[0];
+};
+
+# -- Step: pricing (POST) -- select the seeded plan ----------------------
+$t->post_ok($pricing_url => form => {
+    selected_plan_id => $plan_id,
+})->status_is(302);
+
 my $review_url = $t->tx->res->headers->location;
 like $review_url, qr{/tenant-signup/[^/]+/review}, 'redirected to review step';
 
-# -- Step: review (GET) -- assert the plan reaches the customer -----------
-# This GET doubles as the #268 guard: if the seeded relationship is absent the
-# resolver finds no plan to put the tenant on, and the page says nothing about
-# the rate -- the silently-broken path this assertion catches.
-my $review_page = $t->get_ok($review_url)->status_is(200)->tx->res->body;
-
-like $review_page, qr/Solo/,
-    'review page names the tier the tenant is about to be put on';
-
-# -- Capture the displayed rate for the rate-consistency assertion below ----
-# The review page is now the only page that quotes a rate before the customer
-# commits, so it is the one that has to agree with the charge. Read the number
-# out of the sentence the customer reads.
-#
-# There is deliberately no fallback that reads the rate out of a plan NAME:
-# that is how "Registry Revenue Share - 2%" survived a move to 2.5%, and the
-# name is not a place the rate is allowed to live.
-my ($displayed_rate_str) =
-    $review_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+the\s+payments/i;
-
-# -- Step: review (POST) --------------------------------------------------
+# -- Step: review ---------------------------------------------------------
 # The controller (Workflows.pm:337-358) validates terms_accepted and checks
 # for accumulated admin_name/admin_email/name in run data before advancing.
 # terms_accepted is the only field the user must explicitly submit here;
 # all other required data must have been collected in earlier steps.
+$t->get_ok($review_url)->status_is(200);
 $t->post_ok($review_url => form => {
     terms_accepted => 1,    # required by controller review-step validation
+})->status_is(302);
+
+my $payment_url = $t->tx->res->headers->location;
+like $payment_url, qr{/tenant-signup/[^/]+/payment}, 'redirected to payment step';
+
+# -- Step: payment (GET) --------------------------------------------------
+$t->get_ok($payment_url)->status_is(200);
+
+# -- Step: payment (POST via seti_test seam) ------------------------------
+# POST collect_payment_method=1 + setup_intent_id=seti_test_… dispatches to
+# handle_setup_completion -> _provision_tenant (TenantPayment.pm:43-46, 283-
+# 294).  The seti_test branch wins on dispatch order before the no-keys
+# branch, so Stripe env keys are irrelevant to this POST.
+$t->post_ok($payment_url => form => {
+    collect_payment_method => 1,
+    setup_intent_id        => 'seti_test_billing_' . $$,
 })->status_is(302);
 
 my $complete_url = $t->tx->res->headers->location;
@@ -166,11 +186,13 @@ ok $run, 'workflow run exists after funnel walk';
 my $run_data = $run->data;
 
 # ---------------------------------------------------------------------------
-# Assertion 1a: nothing is stashed about a choice nobody was offered
+# Assertion 1a: the run carries selected_pricing_plan
 # ---------------------------------------------------------------------------
-subtest 'run data carries no plan selection' => sub {
-    ok !$run_data->{selected_pricing_plan},
-        'no selected_pricing_plan: the applicant was never asked';
+subtest 'run data carries selected_pricing_plan' => sub {
+    my $sel = $run_data->{selected_pricing_plan};
+    ok $sel, 'selected_pricing_plan key present in workflow run data';
+    is $sel->{id}, $plan_id,
+        'selected_pricing_plan.id matches the plan we posted';
 };
 
 # ---------------------------------------------------------------------------
@@ -188,12 +210,12 @@ subtest 'provisioned tenant row carries billing fields' => sub {
     )->hash;
     ok $tenant_row, 'provisioned tenant row found in registry.tenants';
 
-    is $tenant_row->{stripe_subscription_id}, undef,
-        'no Stripe subscription: a $0 plan has nothing to subscribe to';
-    is $tenant_row->{billing_status}, 'active',
-        'billing_status is "active" -- the tenant is live, not on a clock';
-    is $tenant_row->{trial_ends_at}, undef,
-        'no trial end date, because there is no trial';
+    like $tenant_row->{stripe_subscription_id}, qr/^sub_test_/,
+        'stripe_subscription_id starts with sub_test_ (seti_test provision path)';
+    is $tenant_row->{billing_status}, 'trial',
+        'billing_status is "trial" on the seti_test path';
+    ok defined($tenant_row->{trial_ends_at}),
+        'trial_ends_at is set (not NULL)';
 };
 
 # ---------------------------------------------------------------------------
@@ -229,7 +251,7 @@ subtest '#267: tenant->plan link persisted on the tenant row' => sub {
         q{SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?}, $slug
     )->hash->{platform_pricing_plan_id};
     is $link, $plan_id,
-        'tenants.platform_pricing_plan_id equals the plan on sale (#267 persisted link)';
+        'tenants.platform_pricing_plan_id equals the selected plan (#267 persisted link)';
 
     # (b) Assert zero pricing_relationships rows where the new tenant is either
     # provider or consumer -- those are the two roles a tenant could occupy in
@@ -254,8 +276,8 @@ subtest '#267: tenant->plan link persisted on the tenant row' => sub {
 # ---------------------------------------------------------------------------
 # Assertion 3 (#267): rate-consistency -- displayed rate equals charged rate.
 #
-# The review page advertises a rate, rendered from the plan's own
-# pricing_configuration.  The CHARGED rate is what the
+# The pricing page advertises a rate (plan name "Registry Revenue Share - 2%"
+# and description "2% of all customer payments").  The CHARGED rate is what the
 # Stripe application fee is computed from: Registry::DAO::Payment::_connect_params
 # derives it via Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant
 # for the provisioned tenant.  This subtest resolves the rate through that same
@@ -273,12 +295,12 @@ subtest 'rate-consistency: displayed rate equals charged rate' => sub {
     my $charged_rate = $fraction * 100;
 
     ok defined($displayed_rate_str),
-        'extracted a numeric rate from the review page HTML';
+        'extracted a numeric rate from the pricing page HTML';
 
     my $displayed_rate = defined($displayed_rate_str) ? ($displayed_rate_str + 0) : undef;
 
     # Both values printed as diagnostics so any drift is visible in prove -v output.
-    diag "displayed_rate (from review page HTML): ${\( $displayed_rate // 'undef' )}%";
+    diag "displayed_rate (from pricing page HTML): ${\( $displayed_rate // 'undef' )}%";
     diag "charged rate (via revenue_share_fraction_for_tenant): ${charged_rate}%";
 
     is $displayed_rate, $charged_rate,

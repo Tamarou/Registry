@@ -47,10 +47,8 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
         # Get existing attendance records
         my $attendance = Registry::DAO::Attendance->get_event_attendance($db, $event_id, tenant => $self->stash('tenant'));
 
-        # Create attendance lookup for template. get_event_attendance returns
-        # Registry::DAO::Attendance objects, so read them through their readers
-        # -- dereferencing one as a hash dies and takes the whole register with it.
-        my %attendance_lookup = map { $_->student_id => $_->status } @$attendance;
+        # Create attendance lookup for template
+        my %attendance_lookup = map { $_->{student_id} => $_->{status} } @$attendance;
 
         $self->render(
             template   => 'teacher/attendance',
@@ -76,11 +74,6 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
             my $db = $dao->db;
             my $tx = $db->begin;
 
-            # Counted as they are marked, not taken from the submission. The
-            # loop skips any status it does not recognise, so reporting the
-            # size of the payload told a teacher the register was complete
-            # when some of it had been dropped.
-            my $marked = 0;
             for my $student_id (keys %$attendance_data) {
                 my $status = $attendance_data->{$student_id};
                 next unless $status =~ /^(present|absent)$/;
@@ -92,7 +85,6 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
                     $status,
                     $user_id
                 );
-                $marked++;
             }
 
             $tx->commit;
@@ -100,7 +92,7 @@ class Registry::Controller::TeacherDashboard :isa(Registry::Controller) {
             $self->render(json => {
                 success => 1,
                 message => 'Attendance recorded successfully',
-                total_marked => $marked
+                total_marked => scalar(keys %$attendance_data)
             });
         } catch ($error) {
             $self->render(json => {

@@ -64,7 +64,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
             selected_pricing_plan => {
                 id => $selected_plan->id,
                 plan_name => $selected_plan->plan_name,
-                amount_cents => $selected_plan->amount_cents,
+                amount => int($selected_plan->amount),
                 currency => $selected_plan->currency,
                 pricing_configuration => $selected_plan->pricing_configuration
             }
@@ -97,19 +97,19 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
                 id => $plan->id,
                 plan_name => $plan->plan_name,
                 plan_type => $plan->plan_type,
-                amount_cents => $plan->amount_cents,
+                amount => int($plan->amount),  # Convert to integer
                 currency => $plan->currency,
                 pricing_configuration => $plan->pricing_configuration,
                 metadata => $plan->metadata,
-                formatted_price => format_price($plan->amount_cents, $plan->currency),
+                formatted_price => format_price($plan->amount, $plan->currency),
             };
         }
 
-        # Sort plans by display order (if available) or by price
+        # Sort plans by display order (if available) or by amount
         @pricing_plans = sort {
             my $order_a = $a->{metadata}->{display_order} // 999;
             my $order_b = $b->{metadata}->{display_order} // 999;
-            $order_a <=> $order_b || $a->{amount_cents} <=> $b->{amount_cents}
+            $order_a <=> $order_b || $a->{amount} <=> $b->{amount}
         } @pricing_plans;
 
         return {
@@ -118,10 +118,35 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
         };
     }
 
-    # Delegates: the rule belongs to the DAO so the payment step can apply the
-    # same one without reaching across workflow steps to borrow it (#347).
     method validate_plan_selection($db, $plan_id) {
-        return Registry::DAO::PricingPlan->offered_platform_plan( $db, $plan_id );
+        return unless $plan_id;
+
+        # Check if plan_id looks like a valid UUID
+        return unless $plan_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+        # Find the plan - wrap in eval to handle database errors gracefully
+        my $plan;
+        eval {
+            $plan = Registry::DAO::PricingPlan->find_by_id($db, $plan_id);
+        };
+        return unless $plan;
+
+        # Verify plan is available for platform tenant signups
+        my $platform_uuid = PLATFORM_UUID;
+
+        my @relationships;
+        eval {
+            @relationships = Registry::DAO::PricingRelationship->find($db, {
+                provider_id => $platform_uuid,
+                pricing_plan_id => $plan_id,
+                status => 'active'
+            });
+        };
+
+        return unless @relationships;
+        return unless $plan->plan_scope eq 'tenant';
+
+        return $plan;
     }
 
     method get_organization_preview($db, $run = undef) {

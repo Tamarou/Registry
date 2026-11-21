@@ -63,25 +63,18 @@ my $program = $dao->create(Project => { status => 'published',
 
 my $teacher = $dao->create(User => { username => 'camp_teacher_err', user_type => 'staff' });
 
-# Both sessions have to be in the offered set, or the rejections asserted
-# below would come from the date filter rather than from capacity and age.
-my $open_start = days_from_now(30);
-my $open_end   = days_from_now(34);
-my $full_start = days_from_now(44);
-my $full_end   = days_from_now(48);
-
 # Session with plenty of capacity
 my $open_session = $dao->create(Session => {
     name       => 'Open Session',
-    start_date => $open_start,
-    end_date   => $open_end,
+    start_date => '2026-06-01',
+    end_date   => '2026-06-05',
     status     => 'published',
     capacity   => 16,
     metadata   => {},
 });
 
 my $open_event = $dao->create(Event => {
-    time        => "$open_start 09:00:00",
+    time        => '2026-06-01 09:00:00',
     duration    => 420,
     location_id => $location->id,
     project_id  => $program->id,
@@ -95,21 +88,21 @@ $dao->create(PricingPlan => {
     session_id => $open_session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount_cents => 30000,
+    amount     => 300.00,
 });
 
 # Full session (capacity 2, with 2 enrollments)
 my $full_session = $dao->create(Session => {
     name       => 'Full Session',
-    start_date => $full_start,
-    end_date   => $full_end,
+    start_date => '2026-06-15',
+    end_date   => '2026-06-19',
     status     => 'published',
     capacity   => 2,
     metadata   => {},
 });
 
 my $full_event = $dao->create(Event => {
-    time        => "$full_start 09:00:00",
+    time        => '2026-06-15 09:00:00',
     duration    => 420,
     location_id => $location->id,
     project_id  => $program->id,
@@ -123,7 +116,7 @@ $dao->create(PricingPlan => {
     session_id => $full_session->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount_cents => 30000,
+    amount     => 300.00,
 });
 
 # Fill the full session with 2 enrollments
@@ -132,7 +125,7 @@ my $filler_parent1 = $dao->create(User => {
     user_type => 'parent', email => 'filler1@example.com',
 });
 my $filler_child1 = Registry::DAO::Family->add_child($dao->db, $filler_parent1->id, {
-    child_name => 'Filler Child 1', birth_date => birth_date_for_age(9), grade => '3',
+    child_name => 'Filler Child 1', birth_date => '2017-01-01', grade => '3',
     medical_info => {}, emergency_contact => { name => 'Parent', phone => '555-0001' },
 });
 $dao->db->insert('enrollments', {
@@ -145,7 +138,7 @@ my $filler_parent2 = $dao->create(User => {
     user_type => 'parent', email => 'filler2@example.com',
 });
 my $filler_child2 = Registry::DAO::Family->add_child($dao->db, $filler_parent2->id, {
-    child_name => 'Filler Child 2', birth_date => birth_date_for_age(9), grade => '3',
+    child_name => 'Filler Child 2', birth_date => '2017-06-01', grade => '3',
     medical_info => {}, emergency_contact => { name => 'Parent', phone => '555-0002' },
 });
 $dao->db->insert('enrollments', {
@@ -263,10 +256,10 @@ sub advance_to_session_selection ($username, $email, $child_name, $birth_date, $
 # ============================================================
 # 1.4 Full Session
 # ============================================================
-subtest 'full session - choosing it joins the waitlist instead of refusing' => sub {
+subtest 'full session - selecting full session returns error' => sub {
     my ($run, $child) = advance_to_session_selection(
         'fullsess_parent', 'fullsess@example.com',
-        'Full Session Kid', birth_date_for_age(9), '3',
+        'Full Session Kid', '2017-05-01', '3',
     );
 
     my $step = $run->next_step($dao->db);
@@ -281,20 +274,17 @@ subtest 'full session - choosing it joins the waitlist instead of refusing' => s
 
     my $step_url = workflow_process_step_url($workflow, $run, $step);
 
+    # Try to select the full session
     my $response = $t->post_ok($step_url => form => {
         action                        => 'select_sessions',
         "session_for_${\$child->id}"  => $full_session->id,
     });
 
+    # Should redirect back to session-selection with an error, not proceed
     $response->status_is(302, 'Full session selection returns 302');
 
-    # This subtest used to assert the opposite -- back to session-selection with
-    # "is full. Please select a different session". The storefront invites a
-    # parent to join the waitlist when a session has no room, so refusing the
-    # choice told them to decide differently about the one thing they had
-    # already decided. Choosing a full session now means waiting for it.
     my $redirect_url = $response->tx->res->headers->location;
-    like $redirect_url, qr/payment/, 'Carried on to payment rather than being sent back';
+    like $redirect_url, qr/session-selection/, 'Redirected back to session-selection (not payment)';
 
     # Verify no enrollment was created for the full session
     my $enrollment = $dao->db->select('enrollments', '*', {
@@ -302,64 +292,16 @@ subtest 'full session - choosing it joins the waitlist instead of refusing' => s
         session_id       => $full_session->id,
     })->hash;
     ok !$enrollment, 'No enrollment created for full session';
-
-    # And the choice is recorded as a wait, not a seat. session_selections is
-    # what every downstream money calculation walks, so a waiting child being in
-    # it would be a charge for a place that does not exist.
-    #
-    # Re-fetched: run data is read off the object, and this one was loaded
-    # before the POST that wrote it.
-    ($run) = $dao->find(WorkflowRun => { id => $run->id });
-    my $data = $run->data;
-    is_deeply $data->{waitlist_items},
-        [ { child_id => $child->id, session_id => $full_session->id,
-            location_id => $data->{location_id} } ],
-        'the child is recorded as waiting for the session they chose';
-    ok !exists $data->{session_selections}{ $child->id },
-        'and is not among the children being charged for a seat';
-};
-
-# Morgan can switch a session's waitlist off, and then full means full: there is
-# no queue to join, so the refusal this subtest used to assert is still the
-# right answer.
-subtest 'full session with its waitlist off is still refused' => sub {
-    my ($run, $child) = advance_to_session_selection(
-        'nowait_parent', 'nowait@example.com',
-        'No Wait Kid', birth_date_for_age(9), '3',
-    );
-
-    $dao->db->query('UPDATE sessions SET waitlist_enabled = FALSE WHERE id = ?',
-        $full_session->id);
-
-    my $step     = $run->next_step($dao->db);
-    my $step_url = workflow_process_step_url($workflow, $run, $step);
-
-    my $response = $t->post_ok($step_url => form => {
-        action                        => 'select_sessions',
-        "session_for_${\$child->id}"  => $full_session->id,
-    });
-    $response->status_is(302, 'returns 302');
-
-    my $redirect_url = $response->tx->res->headers->location;
-    like $redirect_url, qr/session-selection/,
-        'Sent back to session-selection, because there is nothing to join';
-
-    ($run) = $dao->find(WorkflowRun => { id => $run->id });
-    is_deeply $run->data->{waitlist_items} // [], [],
-        'and nobody is queued against a waitlist that is switched off';
-
-    $dao->db->query('UPDATE sessions SET waitlist_enabled = TRUE WHERE id = ?',
-        $full_session->id);
 };
 
 # ============================================================
 # 1.5 Age Mismatch
 # ============================================================
 subtest 'age mismatch - underage child rejected at session selection' => sub {
-    # A three-year-old, below the program's 5-11 range
+    # Child born 2023 = age ~3, below K range (5-11)
     my ($run, $child) = advance_to_session_selection(
         'young_parent', 'young@example.com',
-        'Tiny Tot', birth_date_for_age(3), 'Pre-K',
+        'Tiny Tot', '2023-01-15', 'Pre-K',
     );
 
     my $step = $run->next_step($dao->db);

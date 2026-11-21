@@ -90,7 +90,7 @@ my $child = Registry::DAO::Family->add_child( $db, $parent->id, {
 # Payment enrolling the child in both sessions
 my $payment = Registry::DAO::Payment->create( $db, {
     user_id  => $parent->id,
-    amount_cents => 20000,
+    amount   => 200,
     metadata => {
         enrollment_items => [
             { session_id => $session_a->id, child_id => $child->id },

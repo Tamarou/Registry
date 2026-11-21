@@ -1,10 +1,4 @@
 #!/usr/bin/env perl
-
-# Email::Sender defaults to a real SMTP transport. Nothing here delivered mail
-# before message notifications were given a default of ON, so this file quietly
-# had no need of the guard; now it does, and a test suite must never attempt to
-# send actual email.
-BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use 5.42.0;
 use warnings;
 use utf8;
@@ -15,7 +9,6 @@ use Test::Deep;
 
 use lib qw(lib t/lib);
 use Test::Registry::DB;
-use Test::Registry::Helpers;
 use Test::Registry::Fixtures;
 
 use Registry::DAO::Family;
@@ -81,15 +74,10 @@ my $project = Test::Registry::Fixtures::create_project($db, {
     slug => 'test-program'
 });
 
-# A term that has finished, with its event inside it and attendance taken;
-# the waitlist session below is one a parent could still be waiting for.
-my $term_start = days_from_now(-30);
-my $term_end   = days_from_now(-23);
-
 my $session = Test::Registry::Fixtures::create_session($db, {
     name => 'Test Session',
-    start_date => $term_start,
-    end_date => $term_end,
+    start_date => '2024-03-01',
+    end_date => '2024-03-08',
     capacity => 10
 });
 
@@ -109,7 +97,7 @@ subtest 'Test dashboard data aggregation' => sub {
         location_id => $location->id,
         project_id => $project->id,
         teacher_id => $staff->id,
-        time => days_from_now(-25) . ' 14:00:00',
+        time => '2024-03-15 14:00:00',
         duration => 60
     });
     
@@ -135,8 +123,8 @@ subtest 'Test waitlist integration' => sub {
     # Create another session for waitlist testing
     my $session2 = Test::Registry::Fixtures::create_session($db, {
         name => 'Waitlist Test Session',
-        start_date => days_from_now(14),
-        end_date => days_from_now(21),
+        start_date => '2024-03-15',
+        end_date => '2024-03-22',
         capacity => 2
     });
     
@@ -189,7 +177,7 @@ subtest 'Test dashboard stats calculation' => sub {
 subtest 'Test upcoming events query' => sub {
     # Simple test to verify events exist for dashboard display
     my $events = $db->db->select('events', 'COUNT(*)', {
-        'time' => {'>=' => $term_start}
+        'time' => {'>=' => '2024-03-01'}
     })->array->[0] || 0;
     
     ok $events >= 1, 'Dashboard shows upcoming events';

@@ -27,25 +27,9 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         require Registry::DAO::ProgramType;
         require Registry::DAO::Session;
         
-        # Scoped to the run's own family. An id that resolves is not thereby
-        # ours: FamilyMember->find carries no family_id predicate and
-        # SelectChildren harvests child_<id>=1 without an ownership check, so
-        # an unscoped lookup admits any row in the tenant. That is not merely a
-        # stranger's enrollment -- the snapshot below carries child_name,
-        # birth_date and grade into the run, the payment metadata and the
-        # confirmation email, and the live row it creates makes the victim
-        # family's own paid cart read 'foreign', so their settlement refunds
-        # their share and never seats them. family_members.family_id is the
-        # run's user_id (Family::add_child sets it), so this is exact.
-        my $family_id = $run->data->{user_id};
-        # Never let structure become an operator. The controller strips
-        # bracketed server-owned keys now, so this is belt to that brace --
-        # and undef fails closed, because family_id is NOT NULL.
-        $family_id = undef if ref $family_id;
         my @children;
         for my $child_id (@$selected_child_ids) {
-            my $child = Registry::DAO::FamilyMember->find(
-                $db, { id => $child_id, family_id => $family_id } );
+            my $child = Registry::DAO::FamilyMember->find($db, { id => $child_id });
             push @children, $child if $child;
         }
         
@@ -66,52 +50,16 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         
         if ($action eq 'select_sessions') {
             # Process session selections
-            my %selections;
-            # Children who chose a session with no room: they wait for it rather
-            # than being turned away.
-            my %waitlisting;  # child_id => session_id
+            my %selections;  # child_id => session_id
             my @errors;
 
-            # Collect selections from form; template emits session_for_<child_id>.
-            # The capacity and age checks below iterate the selected children, so
-            # a selection for anyone else would be enrolled unchecked -- and
-            # unpriced, since Payment totals the children snapshot. Selections
-            # must be a subset of the children this run actually chose.
-            #
-            # Keyed on @children -- the ids that RESOLVED to a row -- not on
-            # $selected_child_ids, which is client data: SelectChildren harvests
-            # child_<id>=1 checkboxes without checking they name anything. Keying
-            # on the raw list validates the input against itself, and an
-            # unresolvable id then rides into the cart priced by nothing, because
-            # calculate_enrollment_total also iterates the resolved children. The
-            # charge looks normal and settlement dies on
-            # enrollments_family_member_id_fkey, inside the transaction, after
-            # capture -- rolling back the paying child's enrollment and the
-            # webhook dedup claim with it, so every redelivery reproduces it.
-            my %is_selected = map { $_->id => 1 } @children;
-            my %offered = map { $_->id => 1 }
-              @{ $self->offered_sessions( $db, $location_id, $program_id ) };
+            # Collect selections from form; template emits session_for_<child_id>
             for my $key (keys %$form_data) {
                 if ($key =~ /^session_for_(.+)$/) {
                     my $child_id = $1;
                     my $session_id = $form_data->{$key};
-
+                    
                     if ($session_id && $session_id ne 'none') {
-                        unless ($is_selected{$child_id}) {
-                            push @errors, "Session selected for a child that is not part of this registration";
-                            next;
-                        }
-
-                        # A duplicated key gives an ARRAYREF here --
-                        # req->params->to_hash collapses session_for_<child>=A&...=B
-                        # into a reference, which then reached the settlement
-                        # query and came back as a Postgres uuid syntax error.
-                        if ( ref $session_id || !$offered{$session_id} ) {
-                            push @errors,
-                              "That session is not available for this program";
-                            next;
-                        }
-
                         $selections{$child_id} = $session_id;
                     }
                 }
@@ -141,52 +89,14 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                 my $sess = Registry::DAO::Session->find($db, { id => $session_id });
                 next unless $sess;
 
-                # A full session is a choice to wait, not a mistake. The
-                # screen offers it marked "Full -- join the waitlist", so
-                # picking it means the parent would rather wait for this
-                # session than take one with room. Refusing it told them to
-                # choose differently, which is the one thing they had already
-                # decided against.
-                #
-                # The waiting child is kept OUT of %selections deliberately:
-                # calculate_enrollment_total walks that key, so leaving them
-                # there would charge for a seat that does not exist.
+                # Check capacity using existing DAO method
                 if ($sess->capacity) {
                     my $enrolled = Registry::DAO::Enrollment->count_for_session(
                         $db, $session_id, ['active', 'pending']
                     );
                     if ($enrolled >= $sess->capacity) {
-                        # With the waitlist off there is nothing to join, so
-                        # this is the refusal it always was. A stale page or a
-                        # typed id must not queue a child against Morgan's
-                        # decision.
-                        unless ( $sess->waitlist_enabled ) {
-                            push @errors, $sess->name
-                              . " is full. Please select a different session for "
-                              . $child->child_name;
-                            next;
-                        }
-
-                        $waitlisting{ $child->id } = $session_id;
-                        delete $selections{ $child->id };
-                        next;
+                        push @errors, $sess->name . " is full. Please select a different session for " . $child->child_name;
                     }
-                }
-
-                # A seat the child already holds elsewhere. The settlement
-                # handles this correctly if it gets that far -- the original
-                # seat stands and this cart's share is refunded -- but the
-                # refund does not recover Stripe's processing fee on the
-                # charge, which the platform pays as merchant of record on a
-                # destination charge. Refusing before the charge costs nothing;
-                # discovering it after costs the fee every time, and an honest
-                # parent re-registering a child they forgot was enrolled
-                # triggers it as readily as anyone else.
-                if ( Registry::DAO::Enrollment->holds_live_seat(
-                        $db, $session_id, $child->id ) )
-                {
-                    push @errors, $child->child_name
-                      . " is already enrolled in " . $sess->name;
                 }
 
                 # Check age eligibility using existing FamilyMember method
@@ -213,28 +123,10 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             # so calculate_enrollment_total (called from the Payment step) can
             # iterate children and look up pricing without re-querying the family.
             my @enrollment_items;
-            # Sorted. finalize_enrollment awards the last seats of a full
-            # session in list order, so an unsorted hash walk lets Perl's
-            # per-process key randomization decide which sibling loses a seat --
-            # and with siblings at different prices, how much is refunded. Two
-            # identical registrations would refund different amounts.
-            for my $child_id (sort keys %selections) {
+            for my $child_id (keys %selections) {
                 push @enrollment_items, {
                     child_id   => $child_id,
                     session_id => $selections{$child_id},
-                };
-            }
-
-            # Same snapshot shape as enrollment_items, and for the same
-            # reason: the settlement that acts on it may be the webhook, which
-            # has no run to read location_id back out of. Sorted for the same
-            # reason too -- positions on the waitlist are awarded in list order.
-            my @waitlist_items;
-            for my $child_id (sort keys %waitlisting) {
-                push @waitlist_items, {
-                    child_id    => $child_id,
-                    session_id  => $waitlisting{$child_id},
-                    location_id => $location_id,
                 };
             }
 
@@ -251,10 +143,6 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             $run->update_data($db, {
                 enrollment_items   => \@enrollment_items,
                 session_selections => \%selections,
-                # Separate from session_selections on purpose: everything
-                # downstream that charges money walks that key, and these
-                # children have no seat to pay for yet.
-                waitlist_items     => \@waitlist_items,
                 children           => \@children_data,
             });
             
@@ -276,18 +164,9 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         my $program_id  = $run->data->{program_id};
 
         # Expand child IDs into the flat-hash format the template expects.
-        # Scoped to the run's family for the same reason process is: rendering
-        # a child we would refuse to process discloses their name and age, and
-        # hands the client a session_for_<id> control aimed at them.
-        my $family_id = $run->data->{user_id};
-        # Never let structure become an operator. The controller strips
-        # bracketed server-owned keys now, so this is belt to that brace --
-        # and undef fails closed, because family_id is NOT NULL.
-        $family_id = undef if ref $family_id;
         my @children;
         for my $child_id (@$selected_child_ids) {
-            my $child = Registry::DAO::FamilyMember->find(
-                $db, { id => $child_id, family_id => $family_id } );
+            my $child = Registry::DAO::FamilyMember->find($db, { id => $child_id });
             next unless $child;
             # Compute age as integer years from birth_date (ISO string).
             my $age = $child->age // 0;
@@ -299,40 +178,54 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             };
         }
 
-        # Full sessions are dropped from what is RENDERED. They are still
-        # offered_sessions members, so process can answer "X is full" rather
-        # than "not available" -- see the note on offered_sessions.
-        # Unchanged from before offered_sessions existed: with no programme in
-        # run data the template offers nothing. Validation is deliberately
-        # broader -- see offered_sessions -- because a run can legitimately
-        # reach this step without a programme.
+        # Query published sessions that belong to this program+location.
         my @available_sessions;
-        for my $sess ( $program_id
-            ? @{ $self->offered_sessions( $db, $location_id, $program_id ) } : () ) {
-            my $enrolled = $db->query(
-                q{SELECT COUNT(*) FROM enrollments
-                  WHERE session_id = ? AND status IN ('active','pending')},
-                $sess->id
-            )->array->[0] || 0;
-            # Full sessions are OFFERED, marked full, not hidden. The
-            # storefront invites a parent to "Join Waitlist" when a session is
-            # full, and this screen used to drop it -- so the invitation led to
-            # a page with nothing on it to choose. Whether to wait for the
-            # session they wanted or take one with room is the parent's
-            # decision, and a screen that hides one of the options is making it
-            # for them.
-            my $is_full = ( $sess->capacity && $enrolled >= $sess->capacity ) ? 1 : 0;
-
-            # A full session whose waitlist Morgan turned off has nothing to
-            # offer: there is no seat and no queue to join, so showing it
-            # would be inviting a choice that cannot be honoured.
-            next if $is_full && !$sess->waitlist_enabled;
-
-            push @available_sessions, {
-                session         => $sess,
-                is_full         => $is_full,
-                available_spots => $sess->capacity ? $sess->capacity - $enrolled : undef,
+        if ($program_id && $location_id) {
+            my $sql = q{
+                SELECT DISTINCT s.*
+                FROM sessions s
+                JOIN session_events se ON se.session_id = s.id
+                JOIN events e ON e.id = se.event_id
+                WHERE e.location_id = ?
+                  AND e.project_id  = ?
+                  AND s.status      = 'published'
+                  AND s.end_date    >= CURRENT_DATE
+                ORDER BY s.start_date
             };
+            my $rows = $db->query($sql, $location_id, $program_id)->hashes;
+            for my $row (@$rows) {
+                my $sess = Registry::DAO::Session->new(%$row);
+                my $enrolled = $db->query(
+                    q{SELECT COUNT(*) FROM enrollments
+                      WHERE session_id = ? AND status IN ('active','pending')},
+                    $sess->id
+                )->array->[0] || 0;
+                push @available_sessions, $sess
+                    unless ($sess->capacity && $enrolled >= $sess->capacity);
+            }
+        } elsif ($program_id) {
+            # No location filter — find any published session for this program.
+            my $sql = q{
+                SELECT DISTINCT s.*
+                FROM sessions s
+                JOIN session_events se ON se.session_id = s.id
+                JOIN events e ON e.id = se.event_id
+                WHERE e.project_id = ?
+                  AND s.status     = 'published'
+                  AND s.end_date   >= CURRENT_DATE
+                ORDER BY s.start_date
+            };
+            my $rows = $db->query($sql, $program_id)->hashes;
+            for my $row (@$rows) {
+                my $sess = Registry::DAO::Session->new(%$row);
+                my $enrolled = $db->query(
+                    q{SELECT COUNT(*) FROM enrollments
+                      WHERE session_id = ? AND status IN ('active','pending')},
+                    $sess->id
+                )->array->[0] || 0;
+                push @available_sessions, $sess
+                    unless ($sess->capacity && $enrolled >= $sess->capacity);
+            }
         }
 
         return {
@@ -365,56 +258,6 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
         return;
     }
     
-    # The sessions this step offers, and the single definition of that.
-    #
-    # prepare_template_data renders these; process must validate against the
-    # same set. Previously the published / project / location / end_date filters
-    # lived ONLY in the list-building query, so validation's entire test was
-    # that the submitted id resolved to SOME row -- and `next unless $sess`
-    # meant an id resolving to nothing skipped the capacity and age checks in
-    # silence while still reaching enrollment_items. Settlement then ran
-    # SELECT capacity FROM sessions WHERE id = ? , found no row and died inside
-    # the transaction, after Stripe had captured.
-    #
-    # Capacity is deliberately NOT filtered here. prepare_template_data drops
-    # full sessions from what it renders, but process checks capacity itself so
-    # it can say "X is full"; validating against a capacity-filtered set would
-    # replace that with a vaguer message.
-    # Published and still running are ALWAYS required. The programme and
-    # location narrow it further, but only when the run knows them: a run
-    # started from the storefront carries program_id and location_id through
-    # the callcc, while one started directly at /summer-camp-registration
-    # carries neither. Requiring them here refused every selection in that
-    # second flow -- t/e2e/tenant-onboarding.t caught exactly that.
-    method offered_sessions ($db, $location_id, $program_id) {
-        require Registry::DAO::Session;
-
-        my @predicates;
-        my @bind;
-        if ( $program_id && !ref $program_id ) {
-            push @predicates, 'AND e.project_id = ?';
-            push @bind, $program_id;
-        }
-        if ( $location_id && !ref $location_id ) {
-            push @predicates, 'AND e.location_id = ?';
-            push @bind, $location_id;
-        }
-        my $narrowing = join ' ', @predicates;
-
-        my $rows = $db->query( qq{
-            SELECT DISTINCT s.*
-              FROM sessions s
-              JOIN session_events se ON se.session_id = s.id
-              JOIN events e ON e.id = se.event_id
-             WHERE s.status   = 'published'
-               AND s.end_date >= CURRENT_DATE
-               $narrowing
-             ORDER BY s.start_date
-        }, @bind )->hashes;
-
-        return [ map { Registry::DAO::Session->new(%$_) } @$rows ];
-    }
-
     method get_available_sessions ($db, $location_id, $program_id, $child) {
         # Get sessions that:
         # 1. Are at the specified location
@@ -433,11 +276,7 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
             AND (e.min_age IS NULL OR e.min_age <= ?)
             AND (e.max_age IS NULL OR e.max_age >= ?)
             AND s.end_date >= CURRENT_DATE
-            -- s.id breaks ties: sessions sharing a start_date (a morning and
-            -- an afternoon of the same week) would otherwise come back in
-            -- whatever order Postgres chose, reshuffling the list between
-            -- page loads.
-            ORDER BY s.start_date, s.id
+            ORDER BY s.start_date
         };
         
         my $child_age = $child->age();
@@ -454,22 +293,13 @@ class Registry::DAO::WorkflowSteps::MultiChildSessionSelection :isa(Registry::DA
                 status => ['active', 'pending']
             })->array->[0];
             
-            # A full session is offered, marked full, rather than hidden. The
-            # storefront invites a parent to "Join Waitlist" when a session has
-            # no room, and this screen then had nothing for them to choose --
-            # the invitation led nowhere. Whether to wait for a full session or
-            # take a different one is the parent's decision to make, so the
-            # screen has to show both.
-            my $full = ( $capacity && $enrolled >= $capacity ) ? 1 : 0;
-
-            # Nothing to offer when it is full and the queue is switched off.
-            next if $full && !$session->waitlist_enabled;
-
-            push @available_sessions, {
-                session         => $session,
-                available_spots => $capacity ? $capacity - $enrolled : undef,
-                is_full         => $full,
-            };
+            if (!$capacity || $enrolled < $capacity) {
+                push @available_sessions, {
+                    session => $session,
+                    available_spots => $capacity ? $capacity - $enrolled : undef,
+                    is_full => 0,
+                };
+            }
         }
         
         return \@available_sessions;

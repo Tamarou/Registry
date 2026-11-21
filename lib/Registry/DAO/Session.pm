@@ -19,11 +19,6 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     field $end_date :param :reader = undef;
     field $status :param :reader = 'draft';
     field $capacity :param :reader = undef;
-    # Whether a full session collects a queue. Morgan turns this off for a
-    # session that will not run again, or one where waiting would mislead
-    # rather than help. Defaults on, which is what every session did before
-    # the toggle existed.
-    field $waitlist_enabled :param :reader = 1;
 
     sub table { 'sessions' }
 
@@ -32,13 +27,6 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
     # When metadata is empty (e.g. a Session created directly and linked
     # to a program via a separate Event row), fall back to the
     # session_events -> events join.
-    # ONE project, for display. A session can have several -- an event has
-    # exactly one project and a session gathers events that need not share it
-    # -- so anything making a DECISION about the session's programmes wants
-    # projects() below, not this. Ordered so that a multi-project session at
-    # least answers the same way twice; it used to be LIMIT 1 with no ORDER BY,
-    # which meant the publish gate could reach opposite conclusions about the
-    # same session on consecutive calls (#404).
     method project_id ($db = undef) {
         return $metadata->{project_id} if $metadata->{project_id};
         return undef unless $db && $id;
@@ -46,34 +34,10 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
         my $row = $db->query(
             q{SELECT e.project_id FROM session_events se
               JOIN events e ON e.id = se.event_id
-              WHERE se.session_id = ?
-              ORDER BY e.time, e.project_id LIMIT 1},
+              WHERE se.session_id = ? LIMIT 1},
             $id,
         )->hash;
         return $row ? $row->{project_id} : undef;
-    }
-
-    # EVERY project this session's events belong to, earliest first. The
-    # publish rule ("a session may not go on sale before its programme") only
-    # means anything for a multi-project session if it covers all of them.
-    method projects ($db) {
-        $db = $db->db if $db isa Registry::DAO;
-        return [] unless $id;
-
-        require Registry::DAO::Project;
-        my $rows = $db->query(
-            q{SELECT e.project_id, MIN(e.time) AS first_meeting
-                FROM session_events se
-                JOIN events e ON e.id = se.event_id
-               WHERE se.session_id = ?
-               GROUP BY e.project_id
-               ORDER BY first_meeting, e.project_id},
-            $id,
-        )->hashes;
-
-        return [ grep { defined }
-            map { Registry::DAO::Project->find( $db, { id => $_->{project_id} } ) }
-            $rows->@* ];
     }
 
     method location_id ($db = undef) {
@@ -272,42 +236,6 @@ class Registry::DAO::Session :isa(Registry::DAO::Object) {
 
         # Compare date strings (YYYY-MM-DD format allows lexical comparison)
         return $start_date le $today;
-    }
-
-    # Set the session's own date range from the events linked to it.
-    #
-    # A session carries start_date/end_date of its own, and the storefront
-    # filters on them (ProgramListing: s.end_date >= CURRENT_DATE). A session
-    # generated from a location assignment had its dates written onto the
-    # events and never onto itself, so it was invisible to every parent no
-    # matter how many events it had -- see #400.
-    #
-    # Derived from the rows rather than from whatever parameters produced
-    # them, because those are the only dates that cannot disagree with when
-    # the session actually runs. A session with no events keeps a NULL range,
-    # which is the honest answer for one that has not been scheduled yet.
-    #
-    # This writes the row; it does not refresh this object's fields. Re-find
-    # the session if you need the new values in memory.
-    method refresh_date_range ($db) {
-        $db = $db->db if $db isa Registry::DAO;
-
-        $db->query( <<~'SQL', $id );
-            UPDATE sessions SET
-                start_date = (
-                    SELECT MIN(e.time)::date FROM events e
-                      JOIN session_events se ON se.event_id = e.id
-                     WHERE se.session_id = sessions.id
-                ),
-                end_date = (
-                    SELECT MAX(e.time)::date FROM events e
-                      JOIN session_events se ON se.event_id = e.id
-                     WHERE se.session_id = sessions.id
-                )
-            WHERE id = ?
-            SQL
-
-        return $self;
     }
 
     # Get sessions available for enrollment transfers

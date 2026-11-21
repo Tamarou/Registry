@@ -10,9 +10,9 @@ class Registry::Service::Stripe {
     use Digest::SHA qw(hmac_sha256_hex);
     use Carp qw(croak);
 
-    field $ua :reader = Mojo::UserAgent->new;
+    field $ua = Mojo::UserAgent->new;
     field $api_key :param;
-    field $api_version :param = '2024-12-18.acacia'; # Stripe release name for this API date; the bare date is rejected as invalid
+    field $api_version :param = '2024-12-18'; # Latest Stripe API version
     field $webhook_secret :param = undef;
     
     # Configure user agent for optimal performance
@@ -22,34 +22,13 @@ class Registry::Service::Stripe {
         $ua->request_timeout(30);
     }
     
-    # The guarded constructor. Every caller that builds a client from the
-    # environment goes through here so the live-key rule is stated once:
-    # development and test shells routinely carry an sk_live_ key, and using it
-    # reaches the real Stripe API and can create real charges and real
-    # connected accounts.
-    sub from_env ($class) {
-        my $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
-
-        if ($api_key =~ /^sk_live_/ && ($ENV{MOJO_MODE} // '') ne 'production') {
-            die "Refusing to use a live Stripe key (sk_live_) outside production "
-              . "(MOJO_MODE=" . ($ENV{MOJO_MODE} // 'unset') . "); "
-              . "set a Stripe test key (sk_test_) for development and tests.\n";
-        }
-
-        return $class->new(
-            api_key        => $api_key,
-            webhook_secret => $ENV{STRIPE_WEBHOOK_SECRET},
-        );
-    }
-
-    method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef) {
+    method _request_async($method, $endpoint, $data = {}) {
         my $url = "https://api.stripe.com/v1/$endpoint";
         my $headers = {
             'Authorization' => "Bearer $api_key",
             'Stripe-Version' => $api_version,
             'User-Agent' => 'Registry/1.0 (https://registry.com)',
         };
-        $headers->{'Idempotency-Key'} = $idempotency_key if defined $idempotency_key;
         
         my $promise;
         
@@ -88,33 +67,9 @@ class Registry::Service::Stripe {
         });
     }
     
-    # Connect Accounts API
-    #
-    # The platform creates the connected account and then hands the tenant a
-    # single-use hosted link to finish onboarding on Stripe. Nothing else in
-    # Registry could do either, which is why tenants.stripe_connect_account_id
-    # was only ever written by test fixtures (#439) -- and why the readiness
-    # gate on publishing a priced session could never pass for anybody.
-    method create_account_async($params) {
-        return $self->_request_async('POST', 'accounts', $params);
-    }
-
-    method retrieve_account_async($account_id) {
-        return $self->_request_async('GET', "accounts/$account_id");
-    }
-
-    # Account links expire in minutes and are single-use, so one is minted per
-    # visit rather than stored. refresh_url is where Stripe sends a caller
-    # holding an expired link; it has to mint another.
-    method create_account_link_async($params) {
-        return $self->_request_async('POST', 'account_links', $params);
-    }
-
     # Payment Intents API
     method create_payment_intent_async($params) {
-        my %p  = %$params;  # ponytail: shallow copy avoids mutating caller's hashref
-        my $ik = delete $p{_idempotency_key};
-        return $self->_request_async('POST', 'payment_intents', \%p, $ik);
+        return $self->_request_async('POST', 'payment_intents', $params);
     }
     
     method retrieve_payment_intent_async($intent_id) {
@@ -202,29 +157,6 @@ class Registry::Service::Stripe {
         return $self->_request_async('DELETE', "subscriptions/$subscription_id", $params);
     }
 
-    # Subscription Schedules API
-    #
-    # An instalment plan is a fixed number of charges, not an open-ended
-    # subscription: "$300 in three" ends after the third. A schedule says that
-    # directly -- phases with an iteration count and end_behavior=cancel --
-    # where a plain subscription would need a cancel_at computed from the
-    # cadence and would still charge an equal amount every time.
-    #
-    # Equal amounts are the thing instalments cannot promise. $100 in three is
-    # 33.33 / 33.33 / 33.34, and the odd cent has to land somewhere, so the last
-    # charge differs from the others. Phases are what let it.
-    method create_subscription_schedule_async($params) {
-        return $self->_request_async('POST', 'subscription_schedules', $params);
-    }
-
-    method retrieve_subscription_schedule_async($schedule_id) {
-        return $self->_request_async('GET', "subscription_schedules/$schedule_id");
-    }
-
-    method cancel_subscription_schedule_async($schedule_id, $params = {}) {
-        return $self->_request_async('POST', "subscription_schedules/$schedule_id/cancel", $params);
-    }
-
     # Invoices API (for subscription payment tracking)
     method list_invoices_async($params = {}) {
         return $self->_request_async('GET', 'invoices', $params);
@@ -236,9 +168,7 @@ class Registry::Service::Stripe {
     
     # Refunds API
     method create_refund_async($params) {
-        my %p  = %$params;  # ponytail: shallow copy avoids mutating caller's hashref
-        my $ik = delete $p{_idempotency_key};
-        return $self->_request_async('POST', 'refunds', \%p, $ik);
+        return $self->_request_async('POST', 'refunds', $params);
     }
     
     method retrieve_refund_async($refund_id) {
@@ -299,92 +229,45 @@ class Registry::Service::Stripe {
         return 1;
     }
     
-    # Block on a promise and return its RESOLVED value, or re-die its rejection.
-    # Mojo::Promise::wait returns 1 (or undef inside a running ioloop), never
-    # the resolved value, so sync wrappers must capture the settlement
-    # explicitly. Dies loudly if the promise never settles (e.g. called from
-    # inside a running event loop, where blocking is impossible) instead of
-    # silently returning undef.
-    method _await ($promise) {
-        my ($settled, $resolved, $rejected);
-        $promise->then(
-            sub { $resolved = shift; $settled = 1 },
-            sub { $rejected = shift // 'unknown promise rejection'; $settled = 1 },
-        )->wait;
-        die "Synchronous Stripe call did not settle - it was likely made "
-          . "inside a running event loop; use the _async variant there.\n"
-            unless $settled;
-        die $rejected if defined $rejected;
-        return $resolved;
-    }
-
     # Synchronous wrapper methods for backward compatibility
-    method create_account($params) {
-        return $self->_await($self->create_account_async($params));
-    }
-
-    method retrieve_account($account_id) {
-        return $self->_await($self->retrieve_account_async($account_id));
-    }
-
-    method create_account_link($params) {
-        return $self->_await($self->create_account_link_async($params));
-    }
-
-    method create_subscription_schedule($params) {
-        return $self->_await($self->create_subscription_schedule_async($params));
-    }
-
-    method retrieve_subscription_schedule($schedule_id) {
-        return $self->_await($self->retrieve_subscription_schedule_async($schedule_id));
-    }
-
-    method cancel_subscription_schedule($schedule_id, $params = {}) {
-        return $self->_await($self->cancel_subscription_schedule_async($schedule_id, $params));
-    }
-
     method create_payment_intent($params) {
-        return $self->_await($self->create_payment_intent_async($params));
+        return $self->create_payment_intent_async($params)->wait;
     }
-
+    
     method retrieve_payment_intent($intent_id) {
-        return $self->_await($self->retrieve_payment_intent_async($intent_id));
+        return $self->retrieve_payment_intent_async($intent_id)->wait;
     }
-
-    method cancel_payment_intent($intent_id) {
-        return $self->_await($self->cancel_payment_intent_async($intent_id));
-    }
-
+    
     method create_refund($params) {
-        return $self->_await($self->create_refund_async($params));
+        return $self->create_refund_async($params)->wait;
     }
-
+    
     method create_customer($params) {
-        return $self->_await($self->create_customer_async($params));
+        return $self->create_customer_async($params)->wait;
     }
-
+    
     method create_setup_intent($params) {
-        return $self->_await($self->create_setup_intent_async($params));
+        return $self->create_setup_intent_async($params)->wait;
     }
-
+    
     method create_subscription($params) {
-        return $self->_await($self->create_subscription_async($params));
+        return $self->create_subscription_async($params)->wait;
     }
 
     method retrieve_subscription($subscription_id) {
-        return $self->_await($self->retrieve_subscription_async($subscription_id));
+        return $self->retrieve_subscription_async($subscription_id)->wait;
     }
 
     method update_subscription($subscription_id, $params) {
-        return $self->_await($self->update_subscription_async($subscription_id, $params));
+        return $self->update_subscription_async($subscription_id, $params)->wait;
     }
 
     method cancel_subscription($subscription_id, $params = {}) {
-        return $self->_await($self->cancel_subscription_async($subscription_id, $params));
+        return $self->cancel_subscription_async($subscription_id, $params)->wait;
     }
 
     method list_invoices($params = {}) {
-        return $self->_await($self->list_invoices_async($params));
+        return $self->list_invoices_async($params)->wait;
     }
     
     # Helper method for secure string comparison

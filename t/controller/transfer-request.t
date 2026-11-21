@@ -14,7 +14,6 @@ use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(
-    authenticate_as
     workflow_url
     workflow_process_step_url
 );
@@ -55,23 +54,14 @@ my $program = $dao->create(Project => { status => 'published',
 
 my $teacher = $dao->create(User => { username => 'transfer_teacher', user_type => 'staff' });
 
-# A transfer is only offered out of a session that has not started --
-# _get_transferable_enrollments filters on s.start_date > NOW() -- and only
-# into one that has not started either. Both windows are derived so they stay
-# ahead of the day the suite runs.
-my $source_start = days_from_now(14);
-my $source_end   = days_from_now(18);
-my $target_start = days_from_now(21);
-my $target_end   = days_from_now(25);
-
 # Source session (currently enrolled)
 my $source_session = $dao->create(Session => {
-    name => 'Week 1 - Source', start_date => $source_start, end_date => $source_end,
+    name => 'Week 1 - Source', start_date => '2026-06-01', end_date => '2026-06-05',
     status => 'published', capacity => 16, metadata => {},
 });
 
 my $source_event = $dao->create(Event => {
-    time => "$source_start 09:00:00", duration => 420,
+    time => '2026-06-01 09:00:00', duration => 420,
     location_id => $location->id, project_id => $program->id,
     teacher_id => $teacher->id, capacity => 16, metadata => {},
 });
@@ -79,12 +69,12 @@ $source_session->add_events($dao->db, $source_event->id);
 
 # Target session (transferring to)
 my $target_session = $dao->create(Session => {
-    name => 'Week 2 - Target', start_date => $target_start, end_date => $target_end,
+    name => 'Week 2 - Target', start_date => '2026-06-08', end_date => '2026-06-12',
     status => 'published', capacity => 16, metadata => {},
 });
 
 my $target_event = $dao->create(Event => {
-    time => "$target_start 09:00:00", duration => 420,
+    time => '2026-06-08 09:00:00', duration => 420,
     location_id => $location->id, project_id => $program->id,
     teacher_id => $teacher->id, capacity => 16, metadata => {},
 });
@@ -111,22 +101,21 @@ my $enrollment = Registry::DAO::Enrollment->create($dao->db, {
 my ($workflow) = $dao->find(Workflow => { slug => 'parent-transfer-request' });
 ok $workflow, 'parent-transfer-request workflow exists';
 
-authenticate_as($t, $parent);
-
-# A run the way a parent gets one: the dashboard's Transfer link, followed while
-# signed in. The acting user is whoever the session says, so nothing here hands
-# the run a user of its own -- a hand-seeded one would test a state no request
-# can produce.
+# Helper: create a run pre-seeded through select-enrollment step
 sub create_transfer_run {
-    # A fresh session per run, so a subtest starts its own rather than resuming
-    # the one the previous subtest left unfinished.
-    $t->reset_session;
-    $t->get_ok( workflow_url($workflow) . '?enrollment_id=' . $enrollment->id )
-      ->status_is(200);
+    my $first_step = $workflow->first_step($dao->db);
+    my $run = Registry::DAO::WorkflowRun->create($dao->db, {
+        workflow_id => $workflow->id,
+    });
 
-    my $run = $workflow->latest_run($dao->db);
-    is $run->data->{enrollment_id}, $enrollment->id,
-      'the link put the run on this enrollment';
+    # Seed user data
+    $run->update_data($dao->db, {
+        user_id => $parent->id,
+        user    => { id => $parent->id, name => $parent->name, role => 'parent' },
+    });
+
+    # Process select-enrollment with enrollment_id
+    $run->process($dao->db, $first_step, { enrollment_id => $enrollment->id });
 
     return $run;
 }
@@ -193,47 +182,21 @@ subtest 'full transfer request flow completes' => sub {
         confirm => 1,
     })->status_is(302);
 
-    # Submit. The step reports its own failures as an error the run keeps, so
-    # the request itself is read back from the table rather than inferred from
-    # having arrived at the next step.
+    # Submit
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     $step = $run->next_step($dao->db);
     is $step->slug, 'submit-request', 'At submit-request step';
     $t->post_ok(workflow_process_step_url($workflow, $run, $step) => form => {})
       ->status_is(302);
 
-    my $request = $dao->db->select('transfer_requests', '*',
-        { enrollment_id => $enrollment->id })->hash;
-    ok $request, 'a transfer request was written for this enrollment';
-    is $request->{requested_by}, $parent->id, 'requested by the signed-in parent';
-    is $request->{target_session_id}, $target_session->id, 'for the session chosen';
-
-    # Complete.
-    #
-    # This step keeps no logic of its own, so whatever the request sent is what
-    # gets written back into the run -- which is where a user[id] of a client's
-    # choosing would land, and the acting user a step reads off the run is the
-    # family_id its ownership check matches on. So the last POST of the flow
-    # carries the bracketed key an attacker would use, and the run has to come
-    # out of it still acting as the parent who is signed in.
-    my $other_parent = $dao->create(User => {
-        username => 'transfer_other_parent', name => 'Other Parent',
-        user_type => 'parent', email => 'transfer_other@example.com',
-    });
-
+    # Complete
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     $step = $run->next_step($dao->db);
     is $step->slug, 'complete', 'At complete step';
-    $t->post_ok(workflow_process_step_url($workflow, $run, $step) => form => {
-        'user[id]' => $other_parent->id,
-        user_id    => $other_parent->id,
-    })->status_is(201);
+    $t->post_ok(workflow_process_step_url($workflow, $run, $step) => form => {})
+      ->status_is(201);
 
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
-    is $run->data->{user}{id}, $parent->id,
-      'the run still acts as the signed-in parent, not the id the request sent';
-    is $run->data->{user_id}, $parent->id,
-      'and the same for the id the payment steps read';
     ok $run->completed($dao->db), 'Transfer request workflow completed';
 };
 

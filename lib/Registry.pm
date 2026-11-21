@@ -3,11 +3,9 @@
 use 5.42.0;
 use Object::Pad;
 use Registry::DAO;
-use Registry::Utility::BaseDomain ();
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::DomainVerification;
-use Registry::Job::InstalmentSchedule;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -73,7 +71,6 @@ class Registry :isa(Mojolicious) {
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
         Registry::Job::DomainVerification->register($self);
-        Registry::Job::InstalmentSchedule->register($self);
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
@@ -81,17 +78,9 @@ class Registry :isa(Mojolicious) {
         $self->renderer->add_handler(csv => sub ($renderer, $c, $output, $options) {
             use Text::CSV_XS;
 
-            # The stash, not $options. Mojolicious hands a renderer its render
-            # OPTIONS -- template, format, handler, encoding -- and the values a
-            # controller passes to render() land in the stash. Reading them from
-            # $options meant this handler never once saw its data in a real
-            # request and always wrote the empty-export placeholder. The
-            # renderer's own unit test passed because it called the handler
-            # directly with a hand-built $options, which is the one arrangement
-            # production never produces.
-            my $data = $c->stash('csv') // $options->{csv} // [];
-            my $chunk_size = $c->stash('chunk_size') // $options->{chunk_size} // 1000;
-            my $stream = $c->stash('stream') // $options->{stream} // 0;
+            my $data = $options->{csv} // [];
+            my $chunk_size = $options->{chunk_size} // 1000; # Process in chunks for memory efficiency
+            my $stream = $options->{stream} // 0; # Enable true streaming mode
 
             # Handle empty data gracefully
             unless (@$data && ref $data->[0] eq 'HASH') {
@@ -183,32 +172,10 @@ class Registry :isa(Mojolicious) {
                 # X-As-Tenant and as-tenant cookie are restricted to authenticated
                 # users to prevent unauthenticated cross-tenant access.
                 # Check both session auth and bearer token (API key) auth.
-                # Acting as a tenant requires MEMBERSHIP of it, not merely a
-                # login. This value becomes __tenant_slug, which selects the
-                # Postgres schema every subsequent query runs against and the
-                # Stripe Connect account a charge is destined for -- so
-                # authentication alone let any logged-in user read and write
-                # another tenant's database and point settlement elsewhere.
-                #
-                # req->cookie returns a Mojo::Cookie::Request OBJECT, not a
-                # string. Passing it through stringified it to
-                # "as-tenant=<slug>", which failed the slug regex below and fell
-                # back to registry -- so the cookie half has never worked at all,
-                # including for t/playwright/payment-smoke.spec.js, which sets it
-                # and expects to be routed to a tenant.
-                # Skipped entirely when an explicit tenant is passed. That is
-                # not just an optimisation: the membership check below goes
-                # through $c->dao('registry'), and the dao helper calls
-                # $c->tenant(...) -- so without this short-circuit the recursive
-                # call re-enters here and never terminates. An explicit argument
-                # wins over the header regardless.
                 my $header_tenant;
-                if ( !$explicit_tenant
-                    && ( $c->session('user_id') || $c->stash('current_user') ) ) {
-                    my $cookie    = $c->req->cookie('as-tenant');
-                    my $requested = $c->req->headers->header('X-As-Tenant')
-                                 || ( $cookie ? $cookie->value : undef );
-                    $header_tenant = $self->_acting_tenant_for( $c, $requested );
+                if ($c->session('user_id') || $c->stash('current_user')) {
+                    $header_tenant = $c->req->headers->header('X-As-Tenant')
+                                  || $c->req->cookie('as-tenant');
                 }
 
                 my $subdomain_tenant = $self->_extract_tenant_from_subdomain($c);
@@ -331,20 +298,7 @@ class Registry :isa(Mojolicious) {
         );
 
         # Populate current_user stash from session or bearer token on every request
-        #
-        # Returns undef for a deactivated account, which is what revokes access.
-        # Placed here rather than at each auth path because both of them -- API key
-        # and session cookie -- funnel through this one sub, so this is the single
-        # point that covers a cookie already in a browser, a bearer token already
-        # issued, and anything added later that stashes a user the same way.
-        #
-        # The effect is that a deactivation lands on the offboarded person's very
-        # next request, rather than whenever their session happens to expire. For
-        # someone who has been walked out, "next request" is the only acceptable
-        # answer.
         my $user_to_stash = sub ($user, %extra) {
-            return undef unless $user->is_active;
-
             return {
                 id        => $user->id,
                 username  => $user->username,
@@ -384,8 +338,7 @@ class Registry :isa(Mojolicious) {
                             my $user = Registry::DAO::User->find($dao->db, { id => $api_key->user_id });
                             if ($user) {
                                 $api_key->touch($dao->db);
-                                my $stashed = $user_to_stash->($user, api_key => $api_key);
-                                $c->stash( current_user => $stashed ) if $stashed;
+                                $c->stash( current_user => $user_to_stash->($user, api_key => $api_key) );
                                 return;  # Skip session check
                             }
                         }
@@ -424,19 +377,7 @@ class Registry :isa(Mojolicious) {
                 try {
                     my $dao  = $c->dao;
                     my $user = Registry::DAO::User->find( $dao->db, { id => $user_id } );
-                    if ($user) {
-                        my $stashed = $user_to_stash->($user);
-                        if ($stashed) {
-                            $c->stash( current_user => $stashed );
-                        }
-                        else {
-                            # Deactivated while signed in. Clear the session too, so
-                            # the next request does not repeat this lookup and so
-                            # anything reading session('user_id') directly agrees
-                            # with current_user.
-                            delete $c->session->{user_id};
-                        }
-                    }
+                    $c->stash( current_user => $user_to_stash->($user) ) if $user;
                 }
                 catch ($e) {
                     $c->app->log->warn("Failed to load current_user from session: $e");
@@ -527,17 +468,6 @@ class Registry :isa(Mojolicious) {
                     $c->render( text => 'Forbidden', status => 403 );
                 }
                 return 0;
-            }
-        );
-
-        # Helper: enforce whatever role a workflow slug demands, if it demands
-        # one. Shared by the /:workflow guard and by the callcc leg, which
-        # starts a run of a workflow the URL names in a different placeholder.
-        # Returns true when the request may proceed.
-        $self->helper(
-            require_workflow_role => sub ( $c, $slug ) {
-                my $roles = $self->workflow_roles($slug) or return 1;
-                return $c->require_role(@$roles);
             }
         );
 
@@ -714,11 +644,9 @@ class Registry :isa(Mojolicious) {
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
 
-        # Root route dispatches to whichever storefront belongs to the
-        # requester -- see storefront_workflow. It deliberately names no
-        # workflow: a static one here is what made the apex serve a tenant's.
-        $self->routes->get('/')->to('workflows#index')->name('root_handler');
-        $self->routes->post('/')->to('workflows#start_workflow');
+        # Root route dispatches to the tenant-storefront workflow
+        $self->routes->get('/')->to('workflows#index', workflow => 'tenant-storefront')->name('root_handler');
+        $self->routes->post('/')->to('workflows#start_workflow', workflow => 'tenant-storefront');
 
         my $r = $self->routes;
 
@@ -755,7 +683,6 @@ class Registry :isa(Mojolicious) {
         $admin->get('/dashboard/todays_events')->to('admin_dashboard#todays_events')->name('admin_dashboard_todays_events');
         $admin->get('/dashboard/waitlist_management')->to('admin_dashboard#waitlist_management')->name('admin_dashboard_waitlist_management');
         $admin->get('/dashboard/recent_notifications')->to('admin_dashboard#recent_notifications')->name('admin_dashboard_recent_notifications');
-        $admin->get('/dashboard/outstanding_instalments')->to('admin_dashboard#outstanding_instalments')->name('admin_dashboard_outstanding_instalments');
         $admin->get('/dashboard/enrollment_trends')->to('admin_dashboard#enrollment_trends')->name('admin_dashboard_enrollment_trends');
         $admin->get('/dashboard/export')->to('admin_dashboard#export_data')->name('admin_dashboard_export');
         $admin->post('/dashboard/send_bulk_message')->to('admin_dashboard#send_bulk_message')->name('admin_dashboard_send_bulk_message');
@@ -763,14 +690,6 @@ class Registry :isa(Mojolicious) {
         $admin->post('/dashboard/process_drop_request')->to('workflows#start_workflow' => { workflow => 'admin-drop-approval' })->name('admin_dashboard_process_drop_request');
         $admin->get('/dashboard/pending_transfer_requests')->to('admin_dashboard#pending_transfer_requests')->name('admin_dashboard_pending_transfer_requests');
         $admin->post('/dashboard/process_transfer_request')->to('workflows#start_workflow' => { workflow => 'admin-transfer-approval' })->name('admin_dashboard_process_transfer_request');
-
-        # Offboarding. A departed staff member has to lose access without losing
-        # the history that points at them -- events.teacher_id and
-        # attendance_records.marked_by are NOT NULL references to their row.
-        $admin->get('/people')->to('people#index')->name('admin_people');
-        $admin->post('/people/:id/deactivate')->to('people#deactivate')->name('admin_people_deactivate');
-        $admin->post('/people/:id/reactivate')->to('people#reactivate')->name('admin_people_reactivate');
-        $admin->post('/people/:id/invite')->to('people#invite')->name('admin_people_invite');
 
         $admin->get('/templates')->to('workflows#index', workflow => 'template-editor')->name('admin_templates');
         $admin->post('/templates')->to('workflows#start_workflow', workflow => 'template-editor');
@@ -789,14 +708,6 @@ class Registry :isa(Mojolicious) {
         my $admin_only = $r->under('/admin')->to(
             cb => sub ($c) { $c->require_role('admin') }
         );
-        # Stripe Connect onboarding: admin-only, like domains. It decides where
-        # the money lands and it is the tenant's own Stripe identity, so staff
-        # who can otherwise reach /admin/* do not get to start or change it.
-        $admin_only->get('/billing')->to('StripeConnect#index')->name('admin_billing');
-        $admin_only->post('/billing/connect')->to('StripeConnect#start')->name('admin_billing_connect');
-        $admin_only->get('/billing/refresh')->to('StripeConnect#refresh')->name('admin_billing_refresh');
-        $admin_only->get('/billing/return')->to('StripeConnect#finish')->name('admin_billing_return');
-
         $admin_only->get('/domains')->to('TenantDomains#index')->name('admin_domains');
         $admin_only->post('/domains')->to('TenantDomains#add')->name('admin_domains_add');
         $admin_only->post('/domains/:id/verify')->to('TenantDomains#verify')->name('admin_domains_verify');
@@ -814,7 +725,6 @@ class Registry :isa(Mojolicious) {
         $auth->post('/magic/:token/complete')->to('Auth#complete_magic_link');
         $auth->post('/logout')->to('Auth#logout');
         $auth->get('/verify-email/:token')->to('Auth#verify_email');
-        $auth->get('/register-passkey')->to('Auth#register_passkey');
         $auth->post('/webauthn/register/begin')->to('Auth#webauthn_register_begin');
         $auth->post('/webauthn/register/complete')->to('Auth#webauthn_register_complete');
         $auth->post('/webauthn/auth/begin')->to('Auth#webauthn_auth_begin');
@@ -842,21 +752,13 @@ class Registry :isa(Mojolicious) {
         $r->post('/messages/:id/mark_read')->to('messages#mark_read')->name('messages_mark_read');
 
         # Waitlist routes -- must be declared before the /:workflow catch-all
-        # /waitlist/status must be declared before /waitlist/:id, or the literal
-        # is captured as an :id and cast to a uuid.
-        $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
         $r->get('/waitlist/:id')->to('waitlist#show')->name('waitlist_show');
         $r->post('/waitlist/:id/accept')->to('waitlist#accept')->name('waitlist_accept');
         $r->post('/waitlist/:id/decline')->to('waitlist#decline')->name('waitlist_decline');
+        $r->get('/waitlist/status')->to('waitlist#parent_status')->name('waitlist_status');
 
-        # Workflow routes -- catch-all, must be declared last among /:path routes.
-        # Nothing stood between a workflow slug and an anonymous visitor here:
-        # the controller checks no role of its own, so every admin surface was
-        # reachable by anyone who knew its slug. The guard is per-slug rather
-        # than blanket because the acquisition funnels live under this same
-        # catch-all -- see workflow_roles.
-        my $w = $r->under("/:workflow")->to( 'workflows#',
-            cb => sub ($c) { $c->require_workflow_role( $c->stash('workflow') ) } );
+        # Workflow routes -- catch-all, must be declared last among /:path routes
+        my $w = $r->any("/:workflow")->to('workflows#');
         $w->get('')->to('#index')->name("workflow_index");
         $w->post('')->to('#start_workflow')->name("workflow_start");
         $w->get("/:run/:step")->to('#get_workflow_run_step')
@@ -866,111 +768,6 @@ class Registry :isa(Mojolicious) {
         $w->post('/:run/callcc/:target')->to('#start_continuation')
           ->name("workflow_callcc");
 
-    }
-
-    # Which storefront belongs to the requester.
-    #
-    # The apex has no subdomain, so `tenant` falls back to registry (see the
-    # helper at :169). Pointing the root route at tenant-storefront therefore
-    # made the PLATFORM render a tenant's template -- and the only way to get
-    # the platform's own marketing page onto tinyartempire.com was to hand-edit
-    # registry's copy of that tenant template, which is why exactly one row in
-    # registry.templates has an updated_at that differs from its created_at.
-    #
-    # The platform has its own storefront instead.
-    # Membership of the all-zeros platform tenant. That is how
-    # create-default-pricing-relationships and the tier seed both identify a
-    # platform admin, and production carries exactly one such row.
-    method _PLATFORM_TENANT_ID { '00000000-0000-0000-0000-000000000000' }
-
-    # The tenant an authenticated user is permitted to act as, or undef.
-    # A member may act as their own tenant; a platform admin may act as any.
-    method _acting_tenant_for ($c, $requested) {
-        return undef unless defined $requested && length $requested;
-        # Same shape the caller enforces; checked here too so a malformed value
-        # never reaches the query.
-        return undef unless $requested =~ /\A[a-z][a-z0-9_]{0,62}\z/;
-
-        my $user_id = $c->session('user_id')
-          || ( $c->stash('current_user') // {} )->{id};
-        return undef unless $user_id;
-
-        my $permitted = eval {
-            $c->dao('registry')->db->query( <<~'SQL', $user_id, $requested, $self->_PLATFORM_TENANT_ID )->array;
-                SELECT 1
-                  FROM registry.tenant_users tu
-                 WHERE tu.user_id = ?
-                   AND ( tu.tenant_id = (SELECT id FROM registry.tenants WHERE slug = ?)
-                         OR tu.tenant_id = ?::uuid )
-                 LIMIT 1
-                SQL
-        };
-        if ($@) {
-            $c->app->log->warn("Tenant membership check failed: $@");
-            return undef;
-        }
-        return $permitted ? $requested : undef;
-    }
-
-    method storefront_workflow ($tenant) {
-        return $tenant eq 'registry' ? 'registry-storefront' : 'tenant-storefront';
-    }
-
-    # The roles a workflow slug demands of whoever reaches it directly, or
-    # undef for the ones anybody may walk into.
-    #
-    # This names what must be GUARDED rather than what may be public, because
-    # the public set is open-ended: a project's registration_workflow metadata
-    # aims the storefront's call-to-action at whichever workflow the tenant
-    # chose (templates/tenant-storefront/program-listing.html.ep), so an
-    # allow-list of public slugs would quietly close a tenant's own funnel.
-    # tenant-signup and summer-camp-registration are the two acquisition
-    # funnels and must stay anonymous -- registration creates the visitor's
-    # account partway through, at its account-check step, so even requiring a
-    # login would be wrong.
-    #
-    # A slug earns a role here when its steps write tenant-owned configuration
-    # or act on records the visitor does not own.
-    method workflow_roles ($slug) {
-        state %ROLES = (
-            # Admin tooling: the dashboard and the approval flows that settle
-            # other people's drop and transfer requests, plus every builder
-            # that writes programs, locations, sessions, pricing, users,
-            # templates and workflows. attendance-check is a background job
-            # workflow and is not a visitor-facing surface at all.
-            ( map { $_ => [ 'admin', 'staff' ] } qw(
-                admin-dashboard
-                admin-drop-approval
-                admin-transfer-approval
-                attendance-check
-                drop-request-processing
-                event-creation
-                location-creation
-                location-management
-                outcome-definition-creation
-                pricing-plan-creation
-                program-creation
-                program-creation-enhanced
-                program-location-assignment
-                program-setup
-                program-type-management
-                project-creation
-                session-creation
-                template-editor
-                transfer-request-processing
-                user-creation
-                workflow-creation
-                workflow-step-creation
-            ) ),
-
-            # A parent acts on their own enrollment; staff and admins reach the
-            # same flows on a family's behalf.
-            ( map { $_ => [ 'parent', 'admin', 'staff' ] } qw(
-                parent-drop-request
-                parent-transfer-request
-            ) ),
-        );
-        return $ROLES{ $slug // '' };
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {
@@ -1109,7 +906,8 @@ class Registry :isa(Mojolicious) {
     # wrongly taken as a tenant slug. 'localhost' is included so the test
     # convention <slug>.localhost keeps working.
     method _base_domains {
-        return Registry::Utility::BaseDomain::base_domains();
+        my $raw = $ENV{REGISTRY_BASE_DOMAINS} // 'tinyartempire.com,localhost';
+        return grep { length } map { s/^\s+|\s+$//gr } map { lc } split /,/, $raw;
     }
 
     method _extract_tenant_from_subdomain ($c) {

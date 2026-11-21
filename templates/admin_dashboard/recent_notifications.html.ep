@@ -1,0 +1,68 @@
+% if (@$notifications) {
+    <div class="space-y-3">
+        % for my $notification (@$notifications) {
+            <div class="border border-gray-200 rounded-lg p-3">
+                <div class="flex items-start">
+                    <div class="flex-shrink-0 mr-3 mt-1">
+                        % if ($notification->{type} =~ /^attendance/) {
+                            <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                        % } elsif ($notification->{type} =~ /^waitlist/) {
+                            <div class="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                        % } elsif ($notification->{type} =~ /^message/) {
+                            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                        % } else {
+                            <div class="w-2 h-2 bg-gray-500 rounded-full"></div>
+                        % }
+                    </div>
+                    
+                    <div class="flex-1 min-w-0">
+                        <h4 class="text-sm font-medium text-gray-900 truncate">
+                            <%= $notification->{subject} %>
+                        </h4>
+                        
+                        <p class="text-xs text-gray-600 mt-1 line-clamp-2">
+                            <%= substr($notification->{message}, 0, 100) %><%= length($notification->{message}) > 100 ? '...' : '' %>
+                        </p>
+                        
+                        <div class="flex items-center justify-between mt-2 text-xs text-gray-500">
+                            <span>
+                                To: <%= $notification->{recipient_name} || $notification->{recipient_email} || 'System' %>
+                            </span>
+                            <span>
+                                <%= DateTime->from_epoch(epoch => $notification->{sent_at})->strftime('%m/%d %I:%M %p') if $notification->{sent_at} %>
+                            </span>
+                        </div>
+                        
+                        <!-- Delivery status -->
+                        <div class="mt-1">
+                            % if ($notification->{delivered_at}) {
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                    Delivered
+                                </span>
+                            % } elsif ($notification->{sent_at}) {
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                    Sent
+                                </span>
+                            % } else {
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                    Pending
+                                </span>
+                            % }
+                            
+                            <span class="ml-2 text-xs text-gray-500 capitalize">
+                                <%= $notification->{channel} %>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        % }
+    </div>
+% } else {
+    <div class="text-center py-6">
+        <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-5 5V9a7 7 0 11-5 8z"></path>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">No recent notifications</p>
+    </div>
+% }

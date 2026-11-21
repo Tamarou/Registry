@@ -12,7 +12,6 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers;
 use Test::Registry::Fixtures;
 
 use Registry::DAO qw(Workflow);
@@ -56,7 +55,7 @@ my $teacher = $dao->create(User => {
 });
 
 my $session = $dao->create(Session => {
-    name => 'Teacher Week 1', start_date => days_from_now(-2), end_date => days_from_now(2),
+    name => 'Teacher Week 1', start_date => '2026-06-01', end_date => '2026-06-05',
     status => 'published', capacity => 16, metadata => {},
 });
 

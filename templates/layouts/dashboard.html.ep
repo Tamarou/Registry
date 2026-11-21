@@ -49,18 +49,6 @@
                    class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'locations' ? ' active' : '' %>">
                     Locations
                 </a>
-                <a href="/admin/people"
-                   class="<%= (stash('active_nav') // '') eq 'people' ? 'active' : '' %>">
-                    People
-                </a>
-                <a href="/admin/billing"
-                   class="<%= (stash('active_nav') // '') eq 'billing' ? 'active' : '' %>">
-                    Payments
-                </a>
-                <a href="/user-creation"
-                   class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'users' ? ' active' : '' %>">
-                    New User
-                </a>
                 <a href="/teacher/"
                    class="dashboard-nav-link<%= stash('active_nav') && stash('active_nav') eq 'teacher' ? ' active' : '' %>">
                     Attendance

@@ -21,14 +21,6 @@ use Registry::DAO::Family;
 use Registry::DAO::FamilyMember;
 use JSON::PP qw(encode_json);
 
-# Session dates are derived from the day the suite runs, never written down.
-# The storefront lists a session only while end_date >= CURRENT_DATE, so a
-# pinned date silently empties every screen built on this seed once it passes.
-sub days_from_now ($days) {
-    my @t = localtime( time + $days * 86_400 );
-    return sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3];
-}
-
 my $db_url = $ENV{DB_URL}
     or die "DB_URL environment variable must be set\n";
 
@@ -60,8 +52,6 @@ my $loc = Registry::DAO::Location->create($db, {
 });
 
 my $prog = Registry::DAO::Project->create($db, {
-    # Published, or the program never reaches a storefront or an overview.
-    status            => 'published',
     name              => "Admin Camp $ts",
     program_type_slug => 'summer-camp',
     metadata          => {},
@@ -69,17 +59,15 @@ my $prog = Registry::DAO::Project->create($db, {
 
 my $sess = Registry::DAO::Session->create($db, {
     name       => "Admin Week 1 $ts",
-    start_date => days_from_now(-2),
-    end_date   => days_from_now(4),
+    start_date => '2026-06-01',
+    end_date   => '2026-06-05',
     status     => 'published',
     capacity   => 16,
     metadata   => {},
 });
 
 my $evt = Registry::DAO::Event->create($db, {
-    # Today. The dashboard's whole question is what is happening now, and a
-    # literal date here answered "nothing" however right the rest was.
-    time        => days_from_now(0) . ' 09:00:00',
+    time        => '2026-06-01 09:00:00',
     duration    => 420,
     location_id => $loc->id,
     project_id  => $prog->id,
@@ -94,7 +82,7 @@ Registry::DAO::PricingPlan->create($db, {
     session_id => $sess->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount_cents => 30000,
+    amount     => 300.00,
 });
 
 # Parent with enrollment
@@ -121,13 +109,7 @@ $db->insert('enrollments', {
 });
 
 print encode_json({
-    token        => $token,
-    admin_id     => $admin->id,
-    program_name => $prog->name,
-    session_id   => $sess->id,
-    session_name => $sess->name,
-    child_name   => 'Dashboard Kid',
-    parent_id    => $parent->id,
-    child_id     => $child->id,
+    token    => $token,
+    admin_id => $admin->id,
 });
 print "\n";

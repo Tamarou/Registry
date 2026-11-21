@@ -216,6 +216,40 @@ subtest 'Multiple children check' => sub {
        'Parent has only one child');
 };
 
+subtest 'Sibling discount eligibility' => sub {
+    # Get the family_members we created earlier
+    my $family_members = Registry::DAO::Family->list_children($db, $parent1->id);
+    
+    # Create a test session
+    my $test_session = Test::Registry::Fixtures::create_session($db, {
+        name => "Sibling Discount Test Session " . time(),
+    });
+    
+    # Enroll first child using flexible architecture
+    Registry::DAO::Enrollment->create($db, {
+        session_id => $test_session->id,
+        family_member_id => $family_members->[0]->id, # Links to family_members table
+        student_type => 'family_member',              # Type of student
+        # student_id and parent_id will be auto-populated
+        status => 'active',
+    });
+    
+    ok(!Registry::DAO::Family->sibling_discount_eligible($db, $parent1->id, $test_session->id),
+       'Not eligible with one child enrolled');
+    
+    # Enroll second child - different student_id (family_member), same parent
+    Registry::DAO::Enrollment->create($db, {
+        session_id => $test_session->id,
+        family_member_id => $family_members->[1]->id, # Different child
+        student_type => 'family_member',              # Same type
+        # student_id and parent_id will be auto-populated
+        status => 'active',
+    });
+    
+    ok(Registry::DAO::Family->sibling_discount_eligible($db, $parent1->id, $test_session->id),
+       'Eligible with two children enrolled');
+};
+
 subtest 'Family member relations' => sub {
     my $children = Registry::DAO::Family->list_children($db, $parent1->id);
     my $child = $children->[0];
@@ -223,18 +257,7 @@ subtest 'Family member relations' => sub {
     # Test family relation
     my $family = $child->family($db);
     is($family->id, $parent1->id, 'Family relation works');
-
-    # Enroll the child so the relation has a row to return
-    my $relation_session = Test::Registry::Fixtures::create_session($db, {
-        name => "Family Member Relations Session " . time(),
-    });
-    Registry::DAO::Enrollment->create($db, {
-        session_id       => $relation_session->id,
-        family_member_id => $child->id,
-        student_type     => 'family_member',
-        status           => 'active',
-    });
-
+    
     # Test enrollments relation
     my $enrollments = $child->enrollments($db);
     ok($enrollments, 'Can retrieve enrollments');
@@ -296,22 +319,5 @@ subtest 'Flexible enrollment architecture' => sub {
     ok($family_enrollment->session_id eq $individual_enrollment->session_id, 
        'Both enrollment types can exist in same session');
 };
-
-
-# family_id reaches SQL::Abstract as a WHERE value, where a hashref is an
-# OPERATOR rather than a value: { '!=' => $x } renders `family_id != ?` and
-# returns every other family's children. The value arrives from workflow run
-# data, which a client could shape via bracketed form keys, so the identity
-# argument has to refuse structure at the door rather than trust its caller.
-subtest 'list_children refuses a non-scalar family id' => sub {
-    my $mine = Registry::DAO::Family->list_children($db, $parent1->id);
-    ok scalar @$mine, 'the honest call still returns this family';
-
-    throws_ok {
-        Registry::DAO::Family->list_children($db,
-            { '!=' => '00000000-0000-0000-0000-000000000000' });
-    } qr/family id/i, 'an operator hashref is refused, not honoured';
-};
-
 
 done_testing;

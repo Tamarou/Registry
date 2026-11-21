@@ -3,7 +3,6 @@
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer);
-use Registry::DAO::Tenant;
 use Test::More import => [qw( done_testing is ok like unlike is_deeply subtest use_ok can_ok )];
 defer { done_testing };
 
@@ -53,15 +52,8 @@ subtest 'RegisterTenant still has required methods' => sub {
     use_ok('Registry::DAO::WorkflowSteps::TenantPayment');
 
     can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', 'process');
-    can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', 'prepare_completion_data');
-
-    # Invitations are Tenant's now, not a signup step's. Signup must not send
-    # them: it is an anonymous form, and the addresses on it are whatever the
-    # caller typed (#438). An admin sends them from /admin/people after signing
-    # in, which is proof they hold the address the tenant was created with.
-    can_ok('Registry::DAO::Tenant', 'invite_user');
-    ok(
-        !Registry::DAO::WorkflowSteps::TenantPayment->can('_send_invitation_email'),
-        'the signup step has no invitation sender of its own'
-    );
+    can_ok('Registry::DAO::WorkflowSteps::RegisterTenant', '_format_trial_end_date');
+    # _send_invitation_email is now on TenantPayment (provisioning happens at
+    # payment-time; invites are sent as part of _provision_tenant).
+    can_ok('Registry::DAO::WorkflowSteps::TenantPayment', '_send_invitation_email');
 };

@@ -9,7 +9,6 @@ use Object::Pad;
 use Mojo::Pg;
 use Registry::DAO::Object;
 use Registry::DAO::User;
-use Registry::DAO::PlatformSetting;
 use Registry::DAO::Tenant;
 use Registry::DAO::Location;
 use Registry::DAO::Project;
@@ -27,7 +26,6 @@ use Registry::DAO::FamilyMember;
 use Registry::DAO::OutcomeDefinition;
 use Registry::DAO::CreateOutcomeDefinition;
 use Registry::DAO::TransferRequest;
-use Registry::DAO::DropRequest;
 
 class Registry::DAO {
     use Carp         qw(croak);
@@ -46,19 +44,7 @@ class Registry::DAO {
         });
         $pg_obj;
     };
-    field $db :reader = do {
-        # Mojo::Pg::Database weakens its pg attribute, so a handle that outlives
-        # the DAO that made it loses ->pg, and select/insert/update/delete all
-        # die with "Can't call method abstract on an undefined value" -- while
-        # raw query() keeps working, which is why it hides. Handles get passed to
-        # workflow steps that defer to Stripe and settle after their caller has
-        # returned, and to jobs that drop the DAO on the line that made it, so
-        # the handle has to own its Mojo::Pg. Not a cycle: Mojo::Pg pools DBI
-        # handles, not Database objects.
-        my $handle = $pg->db;
-        $handle->{registry_pg} = $pg;
-        $handle;
-    };
+    field $db :reader = $pg->db;
 
     sub import(@) {
         no warnings;

@@ -33,27 +33,10 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
 
         # This month's revenue (if payment tracking is available)
         my $month_start = DateTime->now->truncate(to => 'month')->strftime('%Y-%m-%d %H:%M:%S%z');
-        # What the tenant kept, over every status where money was actually
-        # captured.
-        #
-        # Filtering to 'completed' removed a whole cart the moment any child in
-        # it was owed a partial refund: a capacity demotion or a duplicate seat
-        # sets the row to refund_pending for a partial debt, so a $100 debt
-        # against a $300 cart cost the tile the full $300. 'refunded' and
-        # 'partially_refunded' were excluded the same way, so a settled partial
-        # refund erased the cart rather than the refunded share.
-        #
-        # Not clamped at zero. refund_owed_cents and refunded_cents are
-        # constrained to sum no higher than amount_cents, so a negative row
-        # means that invariant has been violated and should be visible rather
-        # than floored away.
-        my $monthly_revenue = $db->query(
-            q{SELECT COALESCE(SUM(amount_cents - refund_owed_cents - refunded_cents), 0)
-                FROM payments
-               WHERE status IN ('completed', 'refund_pending', 'refunded',
-                                'partially_refunded')
-                 AND created_at >= ?}, $month_start
-        )->array->[0] || 0;
+        my $monthly_revenue = $db->select('payments', 'SUM(amount)', {
+            status => 'completed',
+            created_at => { '>=' => $month_start }
+        })->array->[0] || 0;
 
         # Pending drop requests
         my $pending_drop_requests = $db->select('drop_requests', 'COUNT(*)', {
@@ -77,30 +60,22 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
     }
 
     # Get enrollment alerts (high capacity utilization)
-    # Enrolment counts against the SESSION, so the session's capacity is what
-    # "nearly full" is measured against. This divided by events.capacity, which
-    # nothing writes: COUNT / NULL is NULL, NULL > 0.9 is not true, and the
-    # panel has therefore never reported a single session. A meeting's own
-    # capacity answers a different question -- who fits in the room that week
-    # -- and a session with no capacity at all has no ratio to take, so it is
-    # excluded rather than divided by nothing (#408).
     sub get_enrollment_alerts($class, $db) {
         my $sql = q{
             SELECT
                 p.name as program_name,
                 s.name as session_name,
                 COUNT(DISTINCT e.id) as enrolled_count,
-                s.capacity,
-                (COUNT(DISTINCT e.id)::float / s.capacity * 100) as utilization_rate
+                ev.capacity,
+                (COUNT(DISTINCT e.id)::float / ev.capacity * 100) as utilization_rate
             FROM sessions s
             JOIN session_events se ON se.session_id = s.id
             JOIN events ev ON ev.id = se.event_id
             JOIN projects p ON ev.project_id = p.id
             JOIN enrollments e ON s.id = e.session_id AND e.status = 'active'
             WHERE s.start_date > ?
-              AND s.capacity IS NOT NULL
-            GROUP BY p.id, s.id, s.capacity
-            HAVING COUNT(DISTINCT e.id)::float / s.capacity > 0.9
+            GROUP BY p.id, s.id, ev.capacity
+            HAVING COUNT(DISTINCT e.id)::float / ev.capacity > 0.9
             ORDER BY utilization_rate DESC
             LIMIT 5
         };
@@ -165,12 +140,21 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
         };
     }
 
+    # Get complete admin dashboard data
+    sub get_admin_dashboard_data($class, $db, $user = undef) {
+        return {
+            overview_stats => $class->get_overview_stats($db),
+            program_summary => Registry::DAO::Project->get_program_overview($db, 'current'),
+            todays_events => Registry::DAO::Event->get_events_for_date($db, DateTime->now->ymd),
+            recent_notifications => Registry::DAO::Notification->get_recent_for_admin($db, 5, 'all'),
+            waitlist_summary => $class->get_waitlist_summary($db),
+            enrollment_alerts => $class->get_enrollment_alerts($db),
+            pending_drop_requests => Registry::DAO::DropRequest->get_detailed_requests($db, 'pending', 10),
+            pending_transfer_requests => Registry::DAO::TransferRequest->get_detailed_requests($db, 'pending')
+        };
+    }
+
     # Get export data for admin dashboard
-    # LEFT JOIN to user_profiles throughout, not JOIN. A profile row is written
-    # only when User->create is given profile data, so an inner join drops the
-    # whole enrolment, attendance record or waitlist entry whenever the parent
-    # has none -- an export that silently omits rows, which is worse than one
-    # with a blank name in it.
     sub get_export_data($class, $db, $export_type) {
         if ($export_type eq 'enrollments') {
             return $db->query(q{
@@ -186,7 +170,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                     l.name as location_name
                 FROM enrollments e
                 JOIN family_members fm ON e.family_member_id = fm.id
-                LEFT JOIN user_profiles up ON fm.family_id = up.user_id
+                JOIN user_profiles up ON fm.family_id = up.user_id
                 JOIN sessions s ON e.session_id = s.id
                 JOIN session_events se ON se.session_id = s.id
                 JOIN events ev2 ON ev2.id = se.event_id
@@ -200,14 +184,8 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                     ar.id,
                     ar.status,
                     ar.marked_at,
-                    -- events has no `name` and no `start_time`; the column is
-                    -- "time", and a meeting's label lives in metadata the way
-                    -- the attendance screen reads it. Naming columns that do not
-                    -- exist made this query raise on every call, and the
-                    -- controller's catch turned that into a flash and a redirect
-                    -- -- so the attendance export has never produced a file.
-                    ev.metadata->>'title' as event_name,
-                    ev."time" as event_time,
+                    ev.name as event_name,
+                    ev.start_time,
                     s.name as session_name,
                     fm.child_name,
                     up.name as parent_name
@@ -216,7 +194,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                 JOIN session_events se ON se.event_id = ev.id
                 JOIN sessions s ON s.id = se.session_id
                 JOIN family_members fm ON ar.student_id = fm.id
-                LEFT JOIN user_profiles up ON fm.family_id = up.user_id
+                JOIN user_profiles up ON fm.family_id = up.user_id
                 ORDER BY ar.marked_at DESC
             })->hashes->to_array;
         } elsif ($export_type eq 'waitlist') {
@@ -235,7 +213,7 @@ class Registry::DAO::AdminDashboard :isa(Registry::DAO::Object) {
                     p.name as program_name
                 FROM waitlist w
                 JOIN family_members fm ON w.student_id = fm.id
-                LEFT JOIN user_profiles up ON w.parent_id = up.user_id
+                JOIN user_profiles up ON w.parent_id = up.user_id
                 JOIN sessions s ON w.session_id = s.id
                 JOIN session_events se ON se.session_id = s.id
                 JOIN events ev2 ON ev2.id = se.event_id

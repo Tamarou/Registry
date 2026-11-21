@@ -21,15 +21,6 @@ class Registry::DAO::Family {
     # List all children in a family
     sub list_children ($class, $db, $family_id) {
         $db = $db->db if $db isa Registry::DAO;
-
-        # Refuse structure. This lands in a WHERE clause, where SQL::Abstract
-        # reads a hashref as an OPERATOR rather than a value -- { '!=' => $x }
-        # renders `family_id != ?` and returns every other family's children,
-        # names, ages, grades and allergies included. The argument comes from
-        # workflow run data, which a client can shape, so the refusal belongs
-        # here rather than in each caller.
-        croak 'list_children: family id must be a scalar'
-            if ref $family_id;
         my $results = $db->select(
             'family_members',
             undef,
@@ -71,5 +62,22 @@ class Registry::DAO::Family {
         $db = $db->db if $db isa Registry::DAO;
         my $count = $db->select('family_members', 'COUNT(*)', { family_id => $family_id })->array->[0];
         return $count > 1;
+    }
+    
+    # Get sibling discount eligibility
+    sub sibling_discount_eligible ($class, $db, $family_id, $session_id) {
+        $db = $db->db if $db isa Registry::DAO;
+        # Count active enrollments for this family in the session
+        my $sql = q{
+            SELECT COUNT(DISTINCT fm.id) 
+            FROM family_members fm
+            JOIN enrollments e ON e.family_member_id = fm.id
+            WHERE fm.family_id = ?
+            AND e.session_id = ?
+            AND e.status IN ('active', 'pending')
+        };
+        
+        my $enrolled_count = $db->query($sql, $family_id, $session_id)->array->[0];
+        return $enrolled_count >= 2;
     }
 }

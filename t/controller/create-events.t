@@ -10,7 +10,6 @@ defer { done_testing };
 use Registry::DAO           qw(Workflow);
 use Test::Registry::DB      ();
 use Test::Registry::Helpers qw(
-  authenticate_as
   workflow_url
   workflow_start_url
   workflow_run_step_url
@@ -25,13 +24,9 @@ $ENV{DB_URL} = $test_db->uri;
 my $yaml = Mojo::Home->new->child( 'workflows', 'event-creation.yml' )->slurp;
 Workflow->from_yaml( $dao, $yaml );
 
-# event-creation is admin tooling, so the person driving it needs the role the
-# route now asks for. This test drove it anonymously and passed, which is the
-# defect the guard exists to close, not a property worth preserving.
 our $user = $dao->create(
     User => {
-        username  => 'JohnnyTest',
-        user_type => 'admin',
+        username => 'JohnnyTest',
     }
 );
 our $location = $dao->create(
@@ -47,7 +42,6 @@ our $project = $dao->create(
 
 {
     my $t = Test::Registry::Mojo->new('Registry');
-    authenticate_as( $t, $user );
 
     my ($workflow) = $dao->find( Workflow => { slug => 'event-creation' } );
     my $first_step = $workflow->first_step( $dao->db );

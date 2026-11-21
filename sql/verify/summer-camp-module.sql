@@ -51,9 +51,8 @@ BEGIN
         FROM pricing
         WHERE false;
     ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'registry' AND table_name = 'pricing_plans') THEN
-        -- Table has been renamed to pricing_plans. Its money column is renamed
-        -- by a later change, so it is not asserted here.
-        PERFORM id, session_id, currency
+        -- Table has been renamed to pricing_plans
+        PERFORM id, session_id, amount, currency
         FROM pricing_plans
         WHERE false;
     ELSE

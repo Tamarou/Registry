@@ -36,34 +36,10 @@ method process ($db, $form_data, $run = undef) {
         my $schedule = Registry::DAO::Schedule->new();
         my @assignment_errors;
         
-        # A tenant of one has nobody to pick: the teacher select only renders
-        # when other users exist, and events.teacher_id is NOT NULL, so a solo
-        # operator could not schedule anything at all -- every location failed
-        # with a generic "Failed to create session" (#401).
-        #
-        # The person driving the workflow is the honest default. For a solo
-        # business they are the teacher, and the /:workflow guard means there
-        # is always an authenticated user here. Anyone who wants somebody else
-        # teaching assigns them on this same screen; this only fills the gap.
-        my $acting_user_id = $data->{user_id};
-
         # Generate events for each configured location
         my @created_sessions;
         for my $location (@{$data->{configured_locations}}) {
-            my $location_teacher_id =
-                 $teacher_assignments->{$location->{id}}
-              || $acting_user_id;
-
-            unless ($location_teacher_id) {
-                return {
-                    next_step => $self->id,
-                    errors    => [
-                        'No teacher for ' . $location->{name}
-                          . ', and no signed-in user to fall back to.'
-                    ],
-                    data => $self->prepare_data($db),
-                };
-            }
+            my $location_teacher_id = $teacher_assignments->{$location->{id}};
             my $session_data = $self->create_session_for_location(
                 $db, $data, $location, $generation_params, $location_teacher_id
             );
@@ -102,14 +78,6 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
             name => "$project_data->{project_name} at $location->{name}",
             notes => $project_data->{project_description},
             capacity => $location->{capacity},
-            # Morgan's choice, made beside capacity on configure-location:
-            # whether a full session collects a queue. Absent means on, which
-            # is how every session behaved before the control existed.
-            waitlist_enabled => (
-                exists $location->{waitlist_enabled}
-                ? ( $location->{waitlist_enabled} ? 1 : 0 )
-                : 1
-            ),
             status => 'draft',
             metadata => {
                 program_assignment => 'generated',
@@ -130,8 +98,7 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
                 session_id => $session->id,
                 plan_name  => 'Standard',
                 plan_type  => 'standard',
-                # The admin enters the override in dollars; the column is cents.
-                amount_cents => int( $override * 100 + 0.5 ),
+                amount     => $override + 0,
             });
         }
 
@@ -139,13 +106,7 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
         my @events = $self->generate_events_for_session(
             $db, $session, $location, $params, $teacher_id
         );
-
-        # The dates went onto the events; the session needs its own range or
-        # the storefront cannot list it, because ProgramListing filters on
-        # s.end_date. Derived from the events just created rather than from
-        # the parameters, so the range cannot disagree with them (#400).
-        $session->refresh_date_range($db);
-
+        
         return {
             session_id => $session->id,
             session_name => $session->name,

@@ -7,32 +7,9 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
     use Carp qw( croak );
     use Mojo::JSON qw( decode_json encode_json );
     
-    # Identity is resolved here, not in the template. The template used to call
-    # list_children with the run's user_id itself and render whatever came back
-    # -- name, age, grade, allergies, each beside a ready-made child_<id>
-    # checkbox. Run data is client-shapable, so that made a template the widest
-    # door onto other families' children, in the one layer with no way to refuse.
-    method prepare_template_data ($db, $run, $params = {}) {
-        my $data = $run->data || {};
-        my $user_id = $data->{user_id};
-
-        # list_children croaks on a non-scalar family id. Nothing should reach
-        # it with one now that the controller strips bracketed server-owned
-        # keys, so treat it as "no children to offer" rather than a 500 on a
-        # page whose whole job is to list them.
-        return { %$data, children => [] }
-            unless defined $user_id && !ref $user_id;
-
-        require Registry::DAO::Family;
-        return {
-            %$data,
-            children => Registry::DAO::Family->list_children( $db, $user_id ),
-        };
-    }
-
     method process ($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
-
+        
         # Get user_id from run data (set by account-check step)
         my $user_id = $run->data->{user_id};
         unless ($user_id) {
@@ -111,29 +88,6 @@ class Registry::DAO::WorkflowSteps::SelectChildren :isa(Registry::DAO::WorkflowS
                 return {
                     stay => 1,
                     errors => ['Please select at least one child to enroll']
-                };
-            }
-
-            # Every id must belong to this family. The checkboxes were taken at
-            # face value, so a cart naming another family's child enrolled that
-            # child under the payer's parent_id: a seat consumed in the victim's
-            # name, their child's name, birth date and grade copied into the
-            # attacker's run data and rendered back on the payment page, and --
-            # if that child already held a seat -- a fabricated cancelled row
-            # with drop_reason 'duplicate_seat_refunded' written against them.
-            #
-            # Refused entire rather than filtered down to the owned subset: a
-            # cart that silently drops half its contents still charges for what
-            # is left, and hides that the attempt happened. Waitlist.pm:53
-            # already refuses this shape on its own path.
-            require Registry::DAO::Family;
-            my %owned = map { $_->id => 1 }
-              @{ Registry::DAO::Family->list_children( $db, $user_id ) };
-
-            if ( grep { !$owned{$_} } @selected_child_ids ) {
-                return {
-                    stay   => 1,
-                    errors => ['One or more selected children are not in your family.'],
                 };
             }
             

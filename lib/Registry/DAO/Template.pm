@@ -4,9 +4,6 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::DAO::Template :isa(Registry::DAO::Object) {
-    use Digest::SHA qw( sha256_hex );
-    use Mojo::Util   qw( decode );
-
     field $id :param :reader;
     field $name :param :reader;
     field $slug :param :reader    = lc( $name =~ s/\s+/-/gr );
@@ -23,15 +20,6 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
     ADJUST { $metadata //= {} }
 
     sub table { 'templates' }
-
-    # Hash of a template's UTF-8 bytes. Both sides of every comparison are now
-    # character strings, but Perl represents an all-ASCII one without the UTF8
-    # flag, so encode conditionally rather than assuming.
-    my sub _sha ($text) {
-        my $bytes = $text // '';
-        utf8::encode($bytes) if utf8::is_utf8($bytes);
-        return sha256_hex($bytes);
-    }
 
     sub import_from_file( $class, $dao, $file ) {
         # Parse the template name from the file path
@@ -52,74 +40,18 @@ class Registry::DAO::Template :isa(Registry::DAO::Object) {
         my $template = $dao->find( 'Registry::DAO::Template' => { name => $name } )
                     || $dao->find( 'Registry::DAO::Template' => { slug => $slug } );
         
-        # Ensure UTF-8 encoding when reading file
-        # slurp returns BYTES, and the comment it used to carry was wrong.
-        # Handing bytes to DBD::Pg makes it read them as Latin-1 and encode each
-        # one to UTF-8, so a checkmark stored as three bytes comes back as three
-        # mojibake characters. That is why the deployed pricing template rendered
-        # a mangled glyph for months after #346 fixed the file, and why the row
-        # this import writes hashes to the double-encoded form of its own source.
-        # Decode to characters and the database stores what the file says.
-        my $bytes   = $file->slurp;
-        my $content = decode( 'UTF-8', $bytes ) // $bytes;
-
-        # Whether import may write is a question about this row, not about which
-        # schema it is in. Registry is the root tenant rather than a different
-        # kind of thing, so the same rule governs every schema: a row still
-        # holding exactly what the last import left is unmodified and the file
-        # may carry it forward; a row that has drifted from its stamp was
-        # customised by whoever owns it, and import leaves it alone.
-        #
-        # The previous form returned early on any existing row, which protected
-        # customisation by giving platform templates no deploy path at all --
-        # the file changed, the deployed row did not, and nothing reconciled
-        # them (#352).
-        #
-        # An unstamped row predates this mechanism. Treating it as unmodified is
-        # what lets those rows reconcile the first time; from then on every row
-        # carries a stamp and an edit is protected.
+        # If it exists, leave it alone -- tenants may have customized it
         if ($template) {
-            my $metadata = $template->metadata // {};
-            my $stamp    = $metadata->{imported_sha256};
-
-            # Drifted from its stamp: customised by whoever owns the row.
-            return $template
-              if defined $stamp && $stamp ne _sha( $template->content );
-
-            if ( $content eq $template->content ) {
-                # Already says what the file says. Stamp it anyway if it
-                # predates stamping, without moving updated_at -- otherwise it
-                # stays unstamped for good, and a later customisation would be
-                # read as bootstrap and overwritten. Only 29 of 131 production
-                # rows were stamped by the first run for exactly this reason.
-                $dao->db->update(
-                    'templates',
-                    { metadata =>
-                        { -json => { %$metadata, imported_sha256 => _sha($content) } } },
-                    { id => $template->id },
-                ) unless defined $stamp;
-                return $template;
-            }
-
-            $dao->db->update(
-                'templates',
-                {
-                    content  => $content,
-                    metadata =>
-                      { -json => { %$metadata, imported_sha256 => _sha($content) } },
-                    updated_at => \'now()',
-                },
-                { id => $template->id },
-            );
-            return $dao->find( 'Registry::DAO::Template' => { id => $template->id } );
+            return $template;
         }
-
+        
+        # Create new template - ensure UTF-8 encoding when reading file
+        my $content = $file->slurp;  # Mojo::File slurp already handles UTF-8 correctly
         $template = $dao->create(
             'Registry::DAO::Template' => {
-                name     => $name,
-                slug     => $slug,
-                content  => $content,
-                metadata => { -json => { imported_sha256 => _sha($content) } },
+                name    => $name,
+                slug    => $slug,
+                content => $content,
             }
         );
         

@@ -10,6 +10,20 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     use List::Util qw(sum max);
     use JSON qw(encode_json);
 
+    # Main admin dashboard
+    method index () {
+        my $user = $self->stash('current_user');
+        my $dao = $self->dao($self->stash('tenant'));
+
+        # Get all dashboard data
+        require Registry::DAO::AdminDashboard;
+        my $dashboard_data = Registry::DAO::AdminDashboard->get_admin_dashboard_data($dao->db, $user);
+
+        # Pass data to template
+        $self->stash(%$dashboard_data);
+        $self->render(template => 'admin_dashboard/index');
+    }
+
     # Program overview data (HTMX endpoint)
     method program_overview () {
         my $dao = $self->dao($self->stash('tenant'));
@@ -19,7 +33,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $programs = Registry::DAO::Project->get_program_overview($dao->db, $time_range);
 
         $self->stash(programs => $programs, time_range => $time_range);
-        $self->render(template => 'admin-dashboard/program_overview', layout => undef);
+        $self->render(template => 'admin_dashboard/program_overview', layout => undef);
     }
 
     # Today's events with attendance (HTMX endpoint)
@@ -31,7 +45,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $events = Registry::DAO::Event->get_events_for_date($dao->db, $date);
 
         $self->stash(events => $events, selected_date => $date);
-        $self->render(template => 'admin-dashboard/todays_events', layout => undef);
+        $self->render(template => 'admin_dashboard/todays_events', layout => undef);
     }
 
     # Waitlist management data (HTMX endpoint)
@@ -43,30 +57,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $waitlist_data = Registry::DAO::Waitlist->get_waitlist_management_data($dao->db, $status_filter);
 
         $self->stash(waitlist_data => $waitlist_data, status_filter => $status_filter);
-        $self->render(template => 'admin-dashboard/waitlist_management', layout => undef);
-    }
-
-    # What families still owe on instalment plans (HTMX endpoint).
-    #
-    # Morgan's half of keep_and_flag: a failed instalment does not cost a child
-    # their place, so the debt has to be somewhere she will see it. Without this
-    # the policy is just "do nothing", and the money quietly goes uncollected.
-    method outstanding_instalments () {
-        my $dao = $self->dao($self->stash('tenant'));
-
-        require Registry::DAO::Payment;
-        my $owed = Registry::DAO::Payment->outstanding_instalments( $dao->db );
-
-        my $failed = scalar grep { $_->{status} eq 'failed' } @$owed;
-        my $total  = 0;
-        $total += $_->{amount_cents} for @$owed;
-
-        $self->stash(
-            instalments   => $owed,
-            failed_count  => $failed,
-            owed_cents    => $total,
-        );
-        $self->render( template => 'admin-dashboard/outstanding_instalments', layout => undef );
+        $self->render(template => 'admin_dashboard/waitlist_management', layout => undef);
     }
 
     # Recent notifications (HTMX endpoint)
@@ -79,7 +70,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $notifications = Registry::DAO::Notification->get_recent_for_admin($dao->db, $limit, $type_filter);
 
         $self->stash(notifications => $notifications, type_filter => $type_filter);
-        $self->render(template => 'admin-dashboard/recent_notifications', layout => undef);
+        $self->render(template => 'admin_dashboard/recent_notifications', layout => undef);
     }
 
     # Enrollment trends data for charts (JSON endpoint)
@@ -97,21 +88,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
     method export_data () {
         my $dao = $self->dao($self->stash('tenant'));
         my $export_type = $self->param('type') || 'enrollments'; # enrollments, attendance, waitlist
-
-        # `?format=` is what the dashboard's export links carry, and Mojolicious
-        # no longer lets it take part in content negotiation -- it wants
-        # `?_format=`. So respond_to fell through to its `any` branch, rendered
-        # with the default handler, and answered text/html: a link promising a
-        # spreadsheet returned a web page. With a 200, which is all any test
-        # asked about.
-        #
-        # Both spellings are honoured, and the handler is named outright rather
-        # than inferred from a negotiation that no longer sees the parameter.
-        my $format = $self->param('format')
-          || $self->param('_format')
-          || $self->stash('format')
-          || 'csv';
-        $format = 'csv' unless $format eq 'json';
+        my $format = $self->param('format') || 'csv'; # csv, json
 
         try {
             require Registry::DAO::AdminDashboard;
@@ -130,18 +107,19 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
                 $self->res->headers->transfer_encoding('chunked');
             }
 
-            if ( $format eq 'json' ) {
-                return $self->render( json => $data );
-            }
-
-            $self->res->headers->content_type('text/csv; charset=utf-8')
-                unless $use_streaming;
-
-            return $self->render(
-                handler    => 'csv',
-                csv        => $data,
-                stream     => $use_streaming,
-                chunk_size => 500,    # Process 500 records per chunk
+            # Use format-based rendering with streaming support
+            $self->respond_to(
+                json => { json => $data },
+                csv  => {
+                    csv => $data,
+                    stream => $use_streaming,
+                    chunk_size => 500  # Process 500 records per chunk
+                },
+                any  => {
+                    csv => $data,
+                    stream => $use_streaming,
+                    chunk_size => 500
+                }
             );
         }
         catch ($e) {
@@ -159,7 +137,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $drop_requests = Registry::DAO::DropRequest->get_detailed_requests($dao->db, $status_filter);
 
         $self->stash(drop_requests => $drop_requests, status_filter => $status_filter);
-        $self->render(template => 'admin-dashboard/pending_drop_requests', layout => undef);
+        $self->render(template => 'admin_dashboard/pending_drop_requests', layout => undef);
     }
 
     # Get pending transfer requests (HTMX endpoint)
@@ -171,7 +149,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         my $transfer_requests = Registry::DAO::TransferRequest->get_detailed_requests($dao->db, $status_filter);
 
         $self->stash(transfer_requests => $transfer_requests, status_filter => $status_filter);
-        $self->render(template => 'admin-dashboard/pending_transfer_requests', layout => undef);
+        $self->render(template => 'admin_dashboard/pending_transfer_requests', layout => undef);
     }
 
     # Quick action: Send bulk message
@@ -286,66 +264,17 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
         # Publishing a session requires its parent program to be published
         # first (spec rule: program publishes before any sessions).
         if ($status eq 'published') {
-            # Every programme, not an arbitrary one. A session gathers events
-            # and each event carries its own project, so a session can span
-            # several; publishing it lists meetings from all of them, and a
-            # draft programme must not reach a parent through a sibling that
-            # happens to be published (#404).
-            my $programs = $session->projects($dao->db);
-            my @unpublished =
-                grep { $_->status ne 'published' } $programs->@*;
+            require Registry::DAO::Project;
+            my $project_id = $session->project_id($dao->db);
+            my $program    = $project_id
+                ? Registry::DAO::Project->find($dao->db, { id => $project_id })
+                : undef;
 
-            if ( !$programs->@* || @unpublished ) {
-                # Name the blocker: "parent program must be published first"
-                # told an operator nothing about WHICH one when there is more
-                # than one.
-                my $detail = @unpublished
-                    ? join( ', ', map { $_->name } @unpublished )
-                    : 'the session has no programme';
+            unless ($program && $program->status eq 'published') {
                 return $self->render(
-                    json   => {
-                        error => 'parent program must be published first',
-                        unpublished_programs => $detail,
-                    },
+                    json   => { error => 'parent program must be published first' },
                     status => 409,
                 );
-            }
-
-            # A priced session must not be listed until the tenant can actually
-            # take money for it.
-            #
-            # WorkflowSteps/Payment.pm:166 already refuses to charge unless the
-            # tenant is stripe_connect_ready -- but that is the checkout, so the
-            # first person to discover an organisation cannot take payment is a
-            # PARENT, told to "contact the program organizer". The same line,
-            # drawn here, is one the tenant can still act on.
-            #
-            # Free sessions are untouched: Payment.pm gates on total > 0 and so
-            # does this. Publishing a free programme with no Connect account is
-            # a legitimate thing to do.
-            my $plans = $session->pricing_plans($dao->db) // [];
-            if ( grep { $_->amount_cents > 0 } @$plans ) {
-                require Registry::DAO::Tenant;
-                my $row = $dao->db->query(
-                    'SELECT * FROM registry.tenants WHERE slug = ?',
-                    $self->tenant )->hash;
-                my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
-
-                unless ( $tenant && $tenant->stripe_connect_ready ) {
-                    # Name the door. This refusal used to describe a step with
-                    # nowhere to take it -- there was no onboarding screen and
-                    # no code that could create a Connect account at all (#439),
-                    # so the line was a dead end for every tenant, forever.
-                    return $self->render(
-                        json => {
-                            error => 'this organization must finish Stripe Connect '
-                                   . 'onboarding before publishing a paid session',
-                            action_url   => $self->url_for('admin_billing')->to_string,
-                            action_label => 'Set up payments',
-                        },
-                        status => 409,
-                    );
-                }
             }
         }
 

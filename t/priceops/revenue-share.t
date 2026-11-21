@@ -6,7 +6,6 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw(with_tenant_plan);
 use Registry::PriceOps::RevenueShare qw(revenue_share_fraction_for_tenant);
 
 my $test_db = Test::Registry::DB->new;
@@ -26,64 +25,15 @@ my $seeded_slug = $db->query(q{
 
 ok $seeded_slug, "found a seeded tenant backfilled to the revenue-share plan (slug=$seeded_slug)";
 
-# The rate this tenant's plan carries. The subtests below are about mechanisms --
-# DAO coercion, search_path isolation -- and pinning them to a literal made them
-# fail on a rate change for reasons that have nothing to do with what they test.
-my $seeded_rate = $db->query(q{
-    SELECT (p.pricing_configuration->>'percentage')::numeric
-      FROM registry.tenants t
-      JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
-     WHERE t.slug = ?
-}, $seeded_slug)->array->[0];
-
-# Against the plan's own row, not a literal. A test that hardcodes the rate
-# fails the day the rate moves, and the obvious repair is to edit the number --
-# which is exactly the drift that let three different rates be live at once.
-subtest 'a linked tenant is charged its plan rate' => sub {
+subtest 'backfilled tenant resolves to 0.02' => sub {
     my $fraction = revenue_share_fraction_for_tenant($db, $seeded_slug);
     ok defined $fraction, 'got a defined fraction';
-
-    my $on_the_plan = $db->query(q{
-        SELECT (p.pricing_configuration->>'percentage')::numeric
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
-         WHERE t.slug = ?
-    }, $seeded_slug)->array->[0];
-
-    cmp_ok abs($fraction - $on_the_plan), '<', 1e-9,
-        "the resolver returns what the plan carries (got $fraction)";
-};
-
-# The launch rate is a decision, and a decision belongs in one named place.
-# revenue_share_fraction_for_tenant answers "what is THIS tenant charged";
-# platform_launch_fraction answers "what does the platform sell", which is what
-# the marketing copy quotes. platform_default_fraction is neither -- it is the
-# no-plan fallback, and reading the launch rate off it returns the Free plan's
-# zero, which is how the copy came to promise a rate nothing charged.
-subtest 'the launch rate has one named source' => sub {
-    # Only one assertion here, deliberately. platform_launch_fraction dies on
-    # zero marked plans, on more than one, and on a rate that is undefined,
-    # non-numeric or outside [0,1] -- so `defined $launch` and a count of marked
-    # plans both restate its die conditions, and any state that would fail them
-    # kills the subtest before they run. A zero rate is inside the accepted
-    # range, so this is the one thing the function can return that is wrong.
-    my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
-    cmp_ok $launch, '>', 0,
-        'the launch rate is not the Free-plan zero';
-};
-
-# The whole point of naming it: displayed and charged cannot drift apart.
-subtest 'a tenant on the launch plan is charged the launch rate' => sub {
-    my $launch  = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
-    my $charged = revenue_share_fraction_for_tenant($db, $seeded_slug);
-    cmp_ok abs($charged - $launch), '<', 1e-9,
-        'what the seeded tenant is charged is what the platform advertises';
+    cmp_ok abs($fraction - 0.02), '<', 1e-9, "fraction is 0.02 (got $fraction)";
 };
 
 subtest 'Registry::DAO coercion - accepts DAO object as well as raw db handle' => sub {
     my $fraction = revenue_share_fraction_for_tenant($dao, $seeded_slug);
-    cmp_ok abs($fraction - $seeded_rate), '<', 1e-9,
-        "coercion works: DAO->db transparently";
+    cmp_ok abs($fraction - 0.02), '<', 1e-9, "coercion works: DAO->db transparently";
 };
 
 subtest 'NULL platform_pricing_plan_id falls back to Free plan (0.00)' => sub {
@@ -112,8 +62,7 @@ subtest 'search_path isolation - resolver works when search_path excludes regist
     my $fraction;
     eval { $fraction = revenue_share_fraction_for_tenant($db, $seeded_slug) };
     ok !$@, "no error when search_path = public: $@";
-    cmp_ok abs($fraction - $seeded_rate), '<', 1e-9,
-        "correct fraction even with search_path=public";
+    cmp_ok abs($fraction - 0.02), '<', 1e-9, "correct fraction even with search_path=public";
     # Restore search_path
     $db->query("SET search_path TO registry, public");
 };
@@ -148,10 +97,10 @@ subtest 'missing Free fallback plan causes die' => sub {
     $db->query(q{
         INSERT INTO registry.pricing_plans
             (id, plan_scope, plan_name, plan_type, pricing_model_type,
-             amount_cents, currency, requirements,
+             amount, currency, installments_allowed, requirements,
              pricing_configuration, metadata)
         VALUES (?, 'platform', 'Registry Free', 'standard', 'percentage',
-                0, 'USD', '{}',
+                0.00, 'USD', false, '{}',
                 '{"applies_to":"customer_payments","percentage":0.00,"minimum_monthly":0}',
                 '{"default":true,"description":"Platform fallback: no revenue share"}')
     }, $free_plan_id);
@@ -161,69 +110,66 @@ subtest 'missing Free fallback plan causes die' => sub {
     }, $saved_plan_id, $seeded_slug);
 };
 
-subtest 'linked plan with no percentage key dies rather than guessing' => sub {
-    # pricing_configuration->>'percentage' is the only rate source. A plan that
-    # declares no rate has no rate; there is nothing else on the row to read --
-    # amount_cents holds money, never a rate.
-    with_tenant_plan( $db, $seeded_slug,
-        { pricing_configuration => {}, amount_cents => 3 },
-        sub {
-            my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
-            ok !defined $fraction, 'no fraction returned when the plan declares no rate'
-                or diag "returned $fraction -- the money column was read as a rate";
-            like $@, qr/percentage/i, 'dies naming the missing percentage';
-        }
-    );
-};
+subtest 'linked plan with no percentage key falls back to amount column' => sub {
+    # The linked plan's pricing_configuration has no 'percentage' key, but its
+    # amount column is non-null. The resolver should fall back to amount.
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
 
-subtest 'fixed-price plan does not have its dollar amount read as a rate' => sub {
-    # A plan carrying a price and no rate -- the shape of "Registry Standard -
-    # $200/month", which is the plan marked default:true and so the one an admin
-    # is most likely to pick. Reading its price as a rate would yield a 20000%
-    # application fee that Stripe rejects outright.
-    with_tenant_plan( $db, $seeded_slug,
-        {   pricing_configuration => {},
-            amount_cents          => 20000,
-            pricing_model_type    => 'fixed',
-        },
-        sub {
-            my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
-            ok !defined $fraction, 'no fraction returned for a fixed-price plan'
-                or diag "returned $fraction -- a fixed plan's price was read as a rate";
-            like $@, qr/percentage|rate/i,
-                'dies pointing at the missing percentage rather than inventing one';
-        }
-    );
-};
+    my $saved = $db->query(q{
+        SELECT pricing_configuration, amount
+          FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
 
-subtest 'a rate outside 0..1 dies rather than reaching Stripe' => sub {
-    # Backstop at the coercion boundary: "2" almost certainly means 2%, but as a
-    # fraction it is a 200% fee. No legitimate revenue share sits outside [0,1],
-    # so refuse it here rather than let Stripe reject the charge at capture time.
-    for my $bad ( 2, -0.01 ) {
-        with_tenant_plan( $db, $seeded_slug,
-            { pricing_configuration => { percentage => $bad } },
-            sub {
-                my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
-                ok !defined $fraction, "percentage $bad is refused";
-                like $@, qr/between 0 and 1|fraction/i,
-                    "percentage $bad dies with a message naming the expected range";
-            }
-        );
-    }
+    # Strip the percentage key (empty config) and set amount to 0.03.
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = '{}'::jsonb, amount = 0.03
+         WHERE id = ?
+    }, $plan_id);
+
+    my $fraction = revenue_share_fraction_for_tenant($db, $seeded_slug);
+    cmp_ok abs($fraction - 0.03), '<', 1e-9,
+        "no percentage key -> falls back to amount column 0.03 (got $fraction)";
+
+    # Restore
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = ?, amount = ?
+         WHERE id = ?
+    }, $saved->{pricing_configuration}, $saved->{amount}, $plan_id);
 };
 
 subtest 'malformed/non-numeric resolved value dies' => sub {
-    # The linked plan's percentage is present but a non-numeric string, so it
-    # cannot be coerced and must not be treated as zero.
-    with_tenant_plan( $db, $seeded_slug,
-        { pricing_configuration => { percentage => 'abc' } },
-        sub {
-            my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
-            ok !defined $fraction, 'a non-numeric percentage is refused';
-            like $@, qr/not numeric|numeric/i, 'dies saying the value is not numeric';
-        }
-    );
+    # The linked plan's percentage is a non-numeric string. Even though it is
+    # present (so the amount fallback does not apply), it must die because it
+    # cannot be coerced to a number.
+    my $plan_id = $db->query(q{
+        SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
+    }, $seeded_slug)->hash->{platform_pricing_plan_id};
+
+    my $saved = $db->query(q{
+        SELECT pricing_configuration, amount
+          FROM registry.pricing_plans WHERE id = ?
+    }, $plan_id)->hash;
+
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = '{"percentage":"abc"}'::jsonb
+         WHERE id = ?
+    }, $plan_id);
+
+    my $result = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
+    like $@, qr/not numeric/i,
+        'dies with informative message when resolved value is non-numeric';
+
+    # Restore
+    $db->query(q{
+        UPDATE registry.pricing_plans
+           SET pricing_configuration = ?, amount = ?
+         WHERE id = ?
+    }, $saved->{pricing_configuration}, $saved->{amount}, $plan_id);
 };
 
 done_testing;

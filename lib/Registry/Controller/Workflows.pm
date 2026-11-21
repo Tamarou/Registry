@@ -5,8 +5,6 @@ use Object::Pad;
 class Registry::Controller::Workflows :isa(Registry::Controller) {
     use Carp qw(confess);
     use DateTime;
-    use Mojo::Promise ();
-    use Registry::Utility::BaseDomain ();
 
     method workflow ( $slug = $self->param('workflow') ) {
         my $dao = $self->dao;
@@ -50,99 +48,22 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         }
         
         my $run = $workflow->new_run( $dao->db, $config );
-        my $data =
-          $self->_apply_server_owned_data( $self->req->params->to_hash, $run );
-
+        my $data = $self->req->params->to_hash;
+        
+        # Add tenant context to workflow run data if present
+        my $tenant_slug = $self->tenant;
+        if ($tenant_slug && $tenant_slug ne 'registry') {
+            $data->{__tenant_slug} = $tenant_slug;
+        }
+        
         $run->process( $dao->db, $first_step, $data );
         return $run;
     }
 
-    # Request params are merged into a run's data verbatim, on every step, so
-    # any key the server owns has to be re-derived from the request rather than
-    # trusted. __tenant_slug alone selects the Stripe destination account,
-    # on_behalf_of, and the revenue-share rate; user_id decides whose enrollment
-    # and whose charge this is, and user names the same person for the steps
-    # that read the acting user off the run. All are dropped when there is
-    # nothing to derive -- an absent session is not a licence to invent a user.
-    method _apply_server_owned_data ( $data, $run = undef ) {
-        # Deleting the exact key is not enough. This runs on the FLAT param
-        # hash; expand_form_params runs afterwards, inside WorkflowStep, and
-        # rebuilds bracketed keys into nested structure -- its bracket branch
-        # does `$ref->{$p} = {} unless ref $ref->{$p} eq 'HASH'`, which
-        # destroys whatever scalar we set here and replaces it with data the
-        # client chose. So user_id[!=]=<uuid> survived this method untouched
-        # and then overwrote the authenticated user_id downstream.
-        #
-        # The result is not merely a wrong value. Both keys are used as
-        # SQL::Abstract WHERE values, where a hashref is an OPERATOR rather
-        # than a value: family_id => { '!=' => $x } renders `family_id != ?`
-        # and matches every other family in the tenant.
-        # selected_pricing_plan joins them: only the pricing step may write it,
-        # because it rebuilds the blob from the plan row it has just validated,
-        # and that validation is where the coming-soon refusal lives. Both
-        # consumers trust the blob verbatim -- one bills its amount_cents, the
-        # other links its id as the charge-time rate authority -- so a client
-        # -authored one is a rate and a price of the client's choosing.
-        # user is on that list for the same reason: the five parent steps take
-        # $user->{id} as the family_id their ownership checks match on, so a
-        # user[id]= of a client's choosing picks the family this request acts
-        # for. The alternation matches the bare key and the bracketed form.
-        # __remote_address joins the list for the same reason: the tenant-signup
-        # commit counts recent provisionings from the caller's address to bound
-        # the clone cost, and a client-supplied address is a rate limit the
-        # client sets for itself.
-        for my $key ( keys %$data ) {
-            delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address)(?:\[|\z)/;
-        }
-
-        # Mojolicious fills remote_address from X-Forwarded-For only in
-        # reverse-proxy mode, where the connection peer is a trusted proxy;
-        # reading the header directly here would let any client rotate it.
-        # render.yaml sets MOJO_REVERSE_PROXY=1 for exactly this.
-        if ( my $ip = $self->tx->remote_address ) {
-            $data->{__remote_address} = $ip;
-        }
-
-        my $tenant_slug = $self->tenant;
-        if ( $tenant_slug && $tenant_slug ne 'registry' ) {
-            $data->{__tenant_slug} = $tenant_slug;
-        }
-        else {
-            delete $data->{__tenant_slug};
-        }
-
-        my $current_user = $self->stash('current_user');
-        my $user_id = ref $current_user ? $current_user->{id} : undef;
-        if ($user_id) {
-            $data->{user_id} = $user_id;
-            $data->{user}    = $current_user;
-        }
-        else {
-            delete $data->{user_id};
-            delete $data->{user};
-        }
-
-        # Steps read the acting user off the run rather than off the request --
-        # the parent drop and transfer steps take $run->data->{user} -- and a
-        # run's data is written only from step RESULTS, which never carry it.
-        # Seeding it here, on every request, is what puts it there, and puts
-        # the value this method just derived rather than one a step echoed
-        # back from a form. Nothing is written when there is no session user:
-        # an absent session neither invents a user nor rewrites the run's.
-        $run->update_data( $self->dao->db, { user => $data->{user} } )
-          if $run && $data->{user};
-
-        return $data;
-    }
-
     method index() {
         my $dao = $self->dao;
-        # The root route names no workflow: which storefront to serve depends on
-        # who is asking. Everything else routes with an explicit slug.
-        my $workflow_slug = $self->param('workflow')
-          // $self->app->storefront_workflow( $self->tenant );
-        my $workflow = $self->workflow($workflow_slug);
+        my $workflow = $self->workflow();
+        my $workflow_slug = $self->param('workflow');
 
         # Backwards compatibility: if a {workflow}/index template exists,
         # use the old rendering path (no auto-run).
@@ -158,39 +79,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # directly with a live run ID, enabling callcc buttons and filter
         # forms without a separate POST step.
         my $run = $self->_find_or_create_run($workflow);
-
-        # The step the run is WAITING ON, not the one it has just left.
-        # new_run processes the first step with the request's params, so a link
-        # carrying enough to complete it advances the run there and then -- the
-        # parent dashboard's Drop and Transfer links pass enrollment_id, and
-        # SelectEnrollmentForDrop completes on exactly that. Rendering
-        # latest_step put the finished step back on screen with its form aimed at
-        # itself, and posting that form hit process_workflow_run_step's "Wrong
-        # step expected" die: a 500 on the only route a parent has to drop an
-        # enrolment.
-        #
-        # next_step falls back to first_step when the pointer has not moved (a
-        # step that returned `stay` does not advance it), so the ordinary
-        # first-visit case is unchanged. latest_step is kept behind it for a run
-        # that has finished, where there is no next step to show.
-        my $step = $run->next_step($dao->db)
-            || $run->latest_step($dao->db)
-            || $workflow->first_step($dao->db);
+        my $step = $run->latest_step($dao->db) || $workflow->first_step($dao->db);
 
         return unless $step;
 
         my $data_json = Mojo::JSON::encode_json($run->data || {});
         my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
-
-        # The request's params, the way get_workflow_run_step passes them. Without
-        # them the storefront's filter bar did nothing: it submits GET to "/",
-        # which lands here, and ProgramListing reads `location` and
-        # `program_type` out of exactly this argument. The selects still marked
-        # the chosen option, because the template reads param() directly -- so the
-        # screen showed a location selected above a list that had not been
-        # narrowed at all.
-        my $params = $self->req->params->to_hash;
-        my $template_data = $step->prepare_template_data($dao->db, $run, $params);
+        my $template_data = $step->prepare_template_data($dao->db, $run);
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
 
         $self->render(
@@ -231,9 +126,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     method start_workflow() {
         my $dao = $self->dao;
-        my $workflow = $self->workflow(
-            $self->param('workflow')
-              // $self->app->storefront_workflow( $self->tenant ) );
+        my $workflow = $self->workflow();
         
         # Now try to start the run with auto-repair in the new_run method
         my $run;
@@ -348,22 +241,6 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # Fallback to latest step if the requested step isn't found
         $step ||= $run->latest_step($dao->db) || $run->next_step($dao->db);
 
-        # Stripe sends the parent back here with a GET after confirmPayment,
-        # appending payment_intent/redirect_status to return_url. Re-rendering
-        # the card form would strand them on a paid-but-unconfirmed page, so
-        # hand the intent to the step exactly as the POST path does.
-        #
-        # Gated on the step actually handling payment callbacks, so appending
-        # ?payment_intent= to any other step's URL cannot advance a run on a GET.
-        # Safe to repeat: the intent is checked for ownership and captured amount
-        # before anything settles, and finalize_enrollment is idempotent -- the
-        # payment_intent.succeeded webhook runs the same finalizer.
-        if ( $step && $step->can('handle_payment_callback')
-             && ( my $intent = $self->param('payment_intent') ) ) {
-            return $self->_process_step( $run, $step,
-                { payment_intent_id => $intent } );
-        }
-
         # If the authenticated user is not yet recorded in this run's data,
         # store them now so that the account-check step can render the
         # "already logged in" branch.
@@ -389,17 +266,9 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             }
         }
 
-        # Get data for rendering.
-        #
-        # Both shapes, because they had different readers and only one was
-        # served. A step that refuses gets its errors flashed and the caller
-        # redirected here; every workflow template reads stash('errors'), and
-        # only errors_json was passed -- so the refusal never reached the page
-        # and the button looked like it had done nothing. The tenant-signup
-        # rate limit is the refusal that made this visible.
-        my $errors = $self->flash('validation_errors') || [];
+        # Get data for rendering
         my $data_json = Mojo::JSON::encode_json($run->data || {});
-        my $errors_json = Mojo::JSON::encode_json($errors);
+        my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
 
         # Get workflow progress data
         my $workflow_progress = $self->_get_workflow_progress($run, $step);
@@ -427,7 +296,6 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             template => $template,
             workflow => $workflow_slug,
             step     => $step_slug,
-            errors   => $errors,
             status   => 200,
             action   => $self->url_for('workflow_process_step',
                 workflow => $workflow_slug,
@@ -490,35 +358,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             }
         }
 
-        return $self->_process_step( $run, $step, $data );
-    }
-
-    # Run a step and render whatever it hands back. Shared by the POST path and
-    # by the Stripe return leg, which arrives as a GET.
-    method _process_step ( $run, $step, $data ) {
-        $self->_apply_server_owned_data( $data, $run );
-
-        my $result = $run->process( $self->dao->db, $step, $data );
-
-        # Steps that talk to Stripe hand back a promise rather than a hashref;
-        # the response can only be rendered once it settles. render_later keeps
-        # Mojolicious from closing the transaction in the meantime.
-        if ( $result isa Mojo::Promise ) {
-            $self->render_later;
-            return $result->then(
-                sub ($resolved) { $self->_render_step_result( $run, $step, $resolved ) },
-                sub ($error) {
-                    $self->app->log->error("Workflow step failed: $error");
-                    $self->render( text => 'Workflow error', status => 500 );
-                },
-            );
-        }
-
-        return $self->_render_step_result( $run, $step, $result );
-    }
-
-    method _render_step_result ( $run, $step, $result ) {
-        my $dao = $self->dao;
+        my $result = $run->process( $dao->db, $step, $data );
 
         # Check for validation errors from workflow steps.
         # Steps may use either '_validation_errors' or 'errors' key.
@@ -678,72 +518,36 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $self->render(json => $validation);
     }
     
-    # The subdomain preview and its availability.
-    #
-    # Answers about whichever the applicant gave: an explicit `subdomain` if they
-    # typed one, otherwise the slug derived from the organisation name. That
-    # distinction is the point of #443's UX half -- a derived slug silently
-    # became name_1 when the name was taken, so a squatted name looked like a
-    # name nobody wanted, and the applicant never learned they could pick
-    # another.
     method validate_subdomain {
-        my $dao  = $self->dao;
-        my $db   = $dao->db;
-        my $base = Registry::Utility::BaseDomain::primary_base_domain();
-
-        my $typed = $self->param('subdomain');
-        my $name  = $self->param('name');
-
-        unless ( ( defined $typed && length $typed ) || ( defined $name && length $name ) ) {
+        my $dao = $self->dao;
+        my $name = $self->param('name');
+        
+        unless ($name) {
             return $self->render(
-                inline      => '<span class="subdomain-slug">organization</span>.<%= $base_domain %>',
-                format      => 'html',
-                base_domain => $base,
+                inline => '<span class="subdomain-slug">organization</span>.tinyartempire.com',
+                format => 'html'
             );
         }
-
-        require Registry::DAO::Tenant;
-
-        my ( $slug, $status, $text );
-
-        if ( defined $typed && length $typed ) {
-            # Their own choosing, normalised rather than rejected: somebody
-            # typing "Clay Studio" into a subdomain box means clay_studio, and
-            # refusing it would be pedantry.
-            $slug = Registry::DAO::Tenant->slug_for_name($typed);
-
-            if ( Registry::DAO::Tenant->slug_is_reserved($slug) ) {
-                ( $status, $text ) = ( 'unavailable', 'Reserved -- please choose another' );
-            }
-            elsif ( Registry::DAO::Tenant->slug_exists( $db, $slug ) ) {
-                # Named, not suffixed. An applicant who asked for `clay` is told
-                # `clay` is gone, so they can pick `clay_pots` themselves rather
-                # than discovering `clay_1` on the confirmation page.
-                ( $status, $text ) = ( 'unavailable', 'Already taken -- please choose another' );
-            }
-            else {
-                ( $status, $text ) = ( 'available', 'Available' );
-            }
-        }
-        else {
-            # Derived from the name, suffixed to something free, as before. The
-            # applicant did not choose it, so there is nothing to refuse.
-            $slug = $self->_generate_subdomain_slug( $db, $name );
-            ( $status, $text ) = ( 'available', 'Available' );
-        }
-
+        
+        # Generate slug using same logic as RegisterTenant
+        my $slug = $self->_generate_subdomain_slug($dao->db, $name);
+        my $is_available = !$self->_slug_exists($dao->db, $slug);
+        
+        my $status_class = $is_available ? 'available' : 'unavailable';
+        my $status_text = $is_available ? 'Available' : 'Already taken';
+        
+        my $icon = $is_available ? 'OK' : 'X';
         return $self->render(
-            inline => '<span class="subdomain-slug <%= $status_class %>"><%= $slug %></span>.<%= $base_domain %>'
+            inline => '<span class="subdomain-slug <%= $status_class %>"><%= $slug %></span>.tinyartempire.com'
                      . '<div class="subdomain-status <%= $status_class %>">'
                      . '<span class="status-icon"><%= $icon %></span>'
                      . '<%= $status_text %>'
                      . '</div>',
-            format       => 'html',
-            base_domain  => $base,
-            slug         => $slug,
-            status_class => $status,
-            status_text  => $text,
-            icon         => $status eq 'available' ? 'OK' : 'X',
+            format => 'html',
+            slug => $slug,
+            status_class => $status_class,
+            status_text => $status_text,
+            icon => $icon,
         );
     }
 
@@ -820,13 +624,28 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $name;
     }
     
-    # The preview an applicant is shown must be the slug they will actually get,
-    # so the derivation is Tenant's and this only adds the availability suffix.
-    # It used to have its own copy that joined with hyphens and stripped
-    # punctuation, while provisioning replaced whitespace and nothing else.
     method _generate_subdomain_slug($db, $name) {
-        require Registry::DAO::Tenant;
-        return Registry::DAO::Tenant->available_slug_for_name($db, $name);
+        # Generate slug: lowercase, replace spaces/special chars with hyphens, remove multiple hyphens
+        my $slug = lc($name);
+        # For validation, use a simple approach without Text::Unidecode dependency
+        $slug =~ s/[^a-z0-9\s-]//g;  # Remove special characters
+        $slug =~ s/\s+/-/g;  # Replace spaces with hyphens
+        $slug =~ s/-+/-/g;   # Remove multiple consecutive hyphens
+        $slug =~ s/^-|-$//g; # Remove leading/trailing hyphens
+        $slug = substr($slug, 0, 50);  # Limit length
+        $slug = 'organization' if !$slug;  # Fallback if empty
+        
+        # Ensure uniqueness by checking existing tenants
+        my $original_slug = $slug;
+        my $counter = 1;
+        
+        while (Registry::DAO::Tenant->slug_exists($db, $slug)) {
+            $slug = "${original_slug}-${counter}";
+            $counter++;
+            last if $counter > 999;  # Prevent infinite loop
+        }
+        
+        return $slug;
     }
     
     method _slug_exists($db, $slug) {
@@ -837,12 +656,6 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     
 
     method start_continuation {
-        # The target is a workflow slug in its own right, so it needs the same
-        # role check the /:workflow guard applies -- otherwise a callcc out of
-        # any public storefront starts an admin run that the guard only
-        # notices on the redirect back, after the first step has already run.
-        return unless $self->require_workflow_role( $self->param('target') );
-
         my $dao = $self->dao;
         my $workflow = $dao->find(
             Workflow => {

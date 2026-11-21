@@ -29,12 +29,6 @@ use YAML::XS qw(Load);
 # Ensure demo payment mode (no Stripe key)
 delete $ENV{STRIPE_SECRET_KEY};
 
-# Sessions are only offered while they are still running -- both the template's
-# list query and (since #341) validation filter on end_date >= CURRENT_DATE.
-# Hardcoded dates silently expire and take the fixture out of the offered set,
-# which is how these tests came to submit a session the UI would never have
-# shown. Derive them with days_from_now from Test::Registry::Helpers.
-
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 $ENV{DB_URL} = $test_db->uri;
@@ -68,15 +62,15 @@ my $teacher = $dao->create(User => { username => 'camp_teacher_ret', user_type =
 
 my $session_week2 = $dao->create(Session => {
     name       => 'Week 2 - Jun 8-12',
-    start_date => days_from_now(37),
-    end_date   => days_from_now(42),
+    start_date => '2026-06-08',
+    end_date   => '2026-06-12',
     status     => 'published',
     capacity   => 16,
     metadata   => {},
 });
 
 my $event = $dao->create(Event => {
-    time        => days_from_now(37) . ' 09:00:00',
+    time        => '2026-06-08 09:00:00',
     duration    => 420,
     location_id => $location->id,
     project_id  => $program->id,
@@ -90,7 +84,7 @@ $dao->create(PricingPlan => {
     session_id => $session_week2->id,
     plan_name  => 'Standard',
     plan_type  => 'standard',
-    amount_cents => 30000,
+    amount     => 300.00,
 });
 
 # Pre-existing returning parent with a child

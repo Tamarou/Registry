@@ -10,13 +10,7 @@ module.exports = defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: 1,
   reporter: [
-    // open: 'never' is load-bearing. Without it, a run with any failure ends by
-    // serving the HTML report and blocking on "Press Ctrl+C to quit" -- a full
-    // suite that finished in 45 minutes sat for six hours before anyone noticed
-    // it was a web server and not a test run. The report is still written; it
-    // just is not served unless someone asks for it with `npx playwright
-    // show-report`.
-    ['html', { open: 'never' }],
+    ['html'],
     ['junit', { outputFile: 'test-results/junit.xml' }],
     ['list']
   ],
@@ -36,9 +30,9 @@ module.exports = defineConfig({
   projects: [
     {
       name: 'chromium',
-      // deploy-validation runs against the LIVE production site and belongs to
-      // playwright.deploy.config.js -- never the PR e2e gate, or every PR goes
-      // red whenever prod is unhealthy.
+      // deploy-validation runs against the LIVE production site and belongs only
+      // to its own project / the deploy-validation workflow -- never the PR e2e
+      // gate, or every PR goes red whenever prod is unhealthy.
       testIgnore: 'deploy-validation.spec.js',
       use: { ...devices['Desktop Chrome'] },
     },
@@ -46,6 +40,15 @@ module.exports = defineConfig({
       name: 'firefox',
       testIgnore: 'deploy-validation.spec.js',
       use: { ...devices['Desktop Firefox'] },
+    },
+    // Production deploy validation -- runs against the live site, no test DB needed
+    {
+      name: 'deploy-validation',
+      testMatch: 'deploy-validation.spec.js',
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.DEPLOY_VALIDATION_URL || 'https://tinyartempire.com',
+      },
     },
   ],
 });

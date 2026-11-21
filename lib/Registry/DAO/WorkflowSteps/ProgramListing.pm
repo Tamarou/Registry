@@ -7,10 +7,8 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowStep) {
     use Registry::DAO::Enrollment;
-    use Registry::Utility::PriceFormat qw(format_price);
     use Registry::DAO::ProgramType;
     use Registry::DAO::Session;
-    use Registry::DAO::PricingPlan;
 
     method process ($db, $form_data, $run = undef) {
         # The program-listing step stays on the page. Registration
@@ -100,15 +98,8 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
         my %pricing_by_session;
         if (@session_ids) {
             my $placeholders = join(',', ('?') x @session_ids);
-            # Current versions only. Plans are append-only versions now, so
-            # without this the storefront would keep advertising the price of a
-            # version that has been retired -- which is the same class of
-            # falsehood as advertising a closed early bird, and the reason the
-            # applicability filter below exists.
             my $pricing_rows = $db->query(
-                "SELECT * FROM pricing_plans
-                  WHERE session_id IN ($placeholders)
-                    AND superseded_at IS NULL",
+                "SELECT * FROM pricing_plans WHERE session_id IN ($placeholders)",
                 @session_ids
             )->expand->hashes;
 
@@ -149,46 +140,17 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 sessions     => [],
             };
 
-            # Capacity belongs to whatever the enrolment is FOR. These cards
-            # sell a SESSION -- a course of meetings -- and enrollments count
-            # against sessions, so the session's number is the one that says
-            # how many children may still join.
-            #
-            # A meeting carries its own capacity when the room it is in holds
-            # fewer people. That bounds who can be in the room that week; it
-            # does not bound who may enrol in the course, and reading it here
-            # answered the enrolment question with a room number: a session for
-            # twenty meeting once in a room for eight advertised eight places.
-            # (If single-event registration is ever added, that path reads the
-            # event's capacity, for the same reason -- see #408.)
-            my $capacity = $row->{session_capacity} || 0;
+            my $capacity = $row->{event_capacity} || $row->{session_capacity} || 0;
             my $enrolled = $row->{enrolled_count} || 0;
             my $available = $capacity > 0 ? $capacity - $enrolled : undef;
             my $is_full = defined $available && $available <= 0;
 
-            # Get best price from pre-loaded pricing.
-            #
-            # Applicable plans only. Taking MIN over every plan on the session
-            # advertised a closed early bird's price -- a number nobody can be
-            # charged -- so a card read "From $200" while the cart quoted $300.
-            # Built from the rows already loaded rather than through
-            # PricingPlan->get_best_price, which would re-query per session and
-            # undo the batch load above.
-            #
-            # child_count is 1 because a browsing parent has not chosen children
-            # yet; a family rate that needs two is not a price this visitor can
-            # have on the strength of what they have told us. "From" then covers
-            # the rest, and is shown only when more than one plan actually applies.
+            # Get best price from pre-loaded pricing
             my $plans = $pricing_by_session{$row->{session_id}} || [];
-            my $best_price_cents;
-            my $applicable = 0;
+            my $best_price;
             for my $plan (@$plans) {
-                my $price = Registry::DAO::PricingPlan->new(%$plan)
-                    ->calculate_price( { child_count => 1, date => time() } );
-                next unless defined $price;
-                $applicable++;
-                $best_price_cents = $price
-                    if !defined $best_price_cents || $price < $best_price_cents;
+                my $amount = $plan->{amount};
+                $best_price = $amount if defined $amount && (!defined $best_price || $amount < $best_price);
             }
 
             push @{$programs{$project_id}{sessions}}, {
@@ -210,15 +172,7 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
                 is_full         => $is_full,
                 has_waitlist    => $is_full,
                 pricing_plans   => $plans,
-                best_price_cents => $best_price_cents,
-                # Formatted here rather than in the template: format_price
-                # knows that $200 should not read as $200.00 and that $19.99
-                # must not be rounded, and the storefront should not have to.
-                # "From" only when there is a choice to be cheapest among.
-                best_price      => defined $best_price_cents
-                    ? ( $applicable > 1 ? 'From ' : '' )
-                      . format_price( $best_price_cents, $plans->[0]{currency} )
-                    : undef,
+                best_price      => $best_price,
                 location_id     => $row->{location_id},
                 location_name   => $row->{location_name},
                 location_slug   => $row->{location_slug},

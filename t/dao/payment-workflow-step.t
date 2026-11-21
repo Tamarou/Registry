@@ -82,7 +82,7 @@ Registry::DAO::PricingPlan->create($db, {
     session_id => $session->id,
     plan_name => 'Standard',
     plan_type => 'standard',
-    amount_cents => 15000
+    amount => 150.00
 });
 
 # Create workflow
@@ -179,8 +179,8 @@ subtest 'Payment step data preparation' => sub {
 
     is $result->{next_step}, $payment_step->id, 'Stays on payment step';
     ok $result->{data}, 'Payment data prepared';
-    cmp_ok $result->{data}{step_data}{total}, '==', 30000, 'Total calculated correctly (15000 cents * 2)';
-    is scalar(@{$result->{data}{step_data}{items}}), 2, 'Two line items prepared';
+    is $result->{data}->{total}, 300, 'Total calculated correctly (150 * 2)';
+    is scalar(@{$result->{data}->{items}}), 2, 'Two line items prepared';
 };
 
 subtest 'Payment creation without Stripe' => sub {
@@ -214,7 +214,7 @@ subtest 'Payment creation without Stripe' => sub {
     my $payment_data = $payment_step->prepare_payment_data($db, $run);
 
     ok $payment_data, 'Payment data prepared';
-    cmp_ok $payment_data->{total}, '==', 15000, 'Correct total for single enrollment';
+    is $payment_data->{total}, 150, 'Correct total for single enrollment';
     is scalar(@{$payment_data->{items}}), 1, 'One line item';
 
     # We can't test actual payment creation without Stripe or fixing the User foreign key issue
@@ -244,17 +244,16 @@ subtest 'Calculate enrollment totals' => sub {
 
     my $payment_info = Registry::DAO::Payment->calculate_enrollment_total($db, $enrollment_data);
 
-    cmp_ok $payment_info->{total}, '==', 30000, 'Total is 30000 cents for two enrollments';
+    is $payment_info->{total}, 300, 'Total is $300 for two enrollments';
     is scalar(@{$payment_info->{items}}), 2, 'Two line items generated';
 
-    # Money is integer cents end to end, so these compare as integers.
     my $item1 = $payment_info->{items}->[0];
-    cmp_ok $item1->{amount_cents}, '==', 15000, 'First item is 15000 cents';
+    is $item1->{amount}, '150.00', 'First item is $150';
     like $item1->{description}, qr/Alice Smith/, 'First item mentions Alice';
     like $item1->{description}, qr/Test Session/, 'First item mentions session';
 
     my $item2 = $payment_info->{items}->[1];
-    cmp_ok $item2->{amount_cents}, '==', 15000, 'Second item is 15000 cents';
+    is $item2->{amount}, '150.00', 'Second item is $150';
     like $item2->{description}, qr/Bob Smith/, 'Second item mentions Bob';
 };
 
@@ -305,7 +304,7 @@ subtest 'Enrollment creation on successful payment' => sub {
     eval {
         my $test_payment = Registry::DAO::Payment->create($db, {
             user_id => $parent->id,
-            amount_cents => 10000,
+            amount => 100.00,
             metadata => { test => 'direct_payment' }
         });
         diag "Direct payment creation succeeded: " . $test_payment->id;
@@ -341,7 +340,7 @@ subtest 'Enrollment creation on successful payment' => sub {
     if ($payment_id) {
         my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
         ok $payment, 'Payment record created';
-        cmp_ok $payment->amount_cents, '==', 15000, 'Payment amount correct';
+        is $payment->amount, 150, 'Payment amount correct';
         is $payment->user_id, $parent->id, 'Payment linked to correct user';
     }
 
@@ -384,67 +383,6 @@ subtest 'Demo mode: agreeTerms without Stripe creates enrollments' => sub {
 
     ok $enrollment, 'Enrollment created in demo mode';
     is $enrollment->{status}, 'active', 'Enrollment status is active';
-};
-
-# A free registration where one sibling takes a seat and the other waits for a
-# session that had none. The waiting child is joined at completion, not when the
-# session was picked -- an abandoned form must not leave anyone in a queue.
-subtest 'Demo mode: a child who chose to wait is put on the waitlist' => sub {
-    local $ENV{STRIPE_SECRET_KEY} = undef;
-
-    my $full_event = Registry::DAO::Event->create($db, {
-        time => '2024-07-01 14:00:00',
-        duration => 120,
-        location_id => $location->id,
-        project_id => $project->id,
-        teacher_id => $teacher->id,
-        metadata => {},
-        capacity => 1,
-    });
-    my $full_session = Registry::DAO::Session->create($db, {
-        name => 'Full Session',
-        start_date => '2024-07-02',
-        end_date => '2024-07-09',
-        status => 'published',
-        capacity => 1,
-        metadata => {},
-    });
-    $full_session->add_events($db, $full_event->id);
-
-    my $run = $workflow->new_run($db);
-    $run->update_data($db, {
-        user_id => $parent->id,
-        selected_child_ids => [ $child1->id, $child2->id ],
-        enrollment_items => [
-            { child_id => $child2->id, session_id => $session->id },
-        ],
-        session_selections => { $child2->id => $session->id },
-        waitlist_items => [
-            { child_id => $child1->id, session_id => $full_session->id,
-              location_id => $location->id },
-        ],
-    });
-
-    my $payment_step = $workflow->get_step($db, { slug => 'payment' });
-    my $result = $payment_step->process($db, { agreeTerms => 1 });
-
-    is $result->{next_step}, 'complete', 'the registration completes';
-    ok !$result->{errors}, 'with no errors' or diag explain $result->{errors};
-
-    my $entry = $db->select('waitlist', '*', {
-        session_id => $full_session->id,
-        student_id => $child1->id,
-    })->hash;
-
-    ok $entry, 'the waiting child is on the waitlist';
-    is $entry->{status}, 'waiting', 'as waiting';
-    is $entry->{parent_id}, $parent->id, 'attributed to the registering parent';
-
-    my $seated = $db->select('enrollments', '*', {
-        family_member_id => $child1->id,
-        session_id       => $full_session->id,
-    })->hash;
-    ok !$seated, 'and holds no enrollment -- there was no seat to give';
 };
 
 done_testing;

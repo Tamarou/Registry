@@ -12,7 +12,6 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Template;
@@ -48,11 +47,11 @@ my $project = $dao->create(Project => {
 });
 my $session = $dao->create(Session => {
     name => 'Test Session', slug => 'test-session-dbr',
-    start_date => days_from_now(-30), end_date => days_from_now(3650),
+    start_date => '2026-01-01', end_date => '2036-01-01',
     status => 'published', capacity => 999999, metadata => {},
 });
 my $event = $dao->create(Event => {
-    time => days_from_now(-30) . ' 00:00:00', duration => 0,
+    time => '2026-01-01 00:00:00', duration => 0,
     location_id => $location->id, project_id => $project->id,
     teacher_id => $teacher->id, capacity => 999999, metadata => {},
 });
@@ -65,7 +64,7 @@ $t->app->helper(dao => sub { $dao });
 # Test 1: Filesystem template renders with layout (baseline)
 # ============================================================
 subtest 'filesystem template renders with full layout' => sub {
-    $t->get_ok('/tenant-storefront')
+    $t->get_ok('/')
       ->status_is(200);
 
     # The default layout includes DOCTYPE, html, head with CSS
@@ -94,7 +93,7 @@ subtest 'DB template override renders with full layout' => sub {
         { name => 'tenant-storefront/program-listing' },
     );
 
-    $t->get_ok('/tenant-storefront')
+    $t->get_ok('/')
       ->status_is(200);
 
     # DB content is rendered
@@ -111,7 +110,7 @@ subtest 'DB template override renders with full layout' => sub {
 # Test 3: DB template layout directives work (stash, title, etc.)
 # ============================================================
 subtest 'DB template layout directives work' => sub {
-    $t->get_ok('/tenant-storefront')
+    $t->get_ok('/')
       ->status_is(200);
 
     # The title from the DB template should be in the HTML
@@ -137,7 +136,7 @@ subtest 'DB template has access to stash variables' => sub {
         { name => 'tenant-storefront/program-listing' },
     );
 
-    $t->get_ok('/tenant-storefront')
+    $t->get_ok('/')
       ->status_is(200);
 
     $t->text_like('.program-count', qr/\d+ programs/, 'Programs stash variable accessible')

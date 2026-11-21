@@ -5,29 +5,11 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const net = require('net');
 
 const DIR = __dirname; // t/playwright
 const URL_FILE = path.join(DIR, '.shared-db-url');
 const PID_FILE = path.join(DIR, '.shared-db-pid');
 const PORT = 3001;
-
-// A leftover daemon from an earlier run answers /health exactly like ours would,
-// so waitForHealth cannot tell the two apart: setup prints "ready", our own server
-// dies with EADDRINUSE, and every spec then drives a server on a FOREIGN database --
-// pages succeed while the row queries that check them come back empty. This setup is
-// the sole owner of the port, so refuse to start when anything already holds it.
-function assertPortFree() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.once('error', (e) =>
-      reject(e.code === 'EADDRINUSE'
-        ? new Error(`port ${PORT} is already in use -- kill the leftover server before running`)
-        : e));
-    probe.once('listening', () => probe.close(resolve));
-    probe.listen(PORT, '127.0.0.1');
-  });
-}
 
 function waitForHealth(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -50,8 +32,6 @@ function waitForHealth(timeoutMs) {
 }
 
 module.exports = async () => {
-  await assertPortFree();
-
   // 1) Start the shared DB and capture its URL from the JSON ready-line.
   const db = spawn('carton', ['exec', 'perl', 't/playwright/shared_db.pl'], {
     cwd: process.cwd(),
@@ -90,25 +70,11 @@ module.exports = async () => {
         // across tests; disable it for the E2E server.
         REGISTRY_RATE_LIMIT_DISABLED: '1',
       };
-      // Payment steps branch on STRIPE_SECRET_KEY: without it they take the
-      // demo path and enroll without a gateway. That is what the general e2e
-      // run wants -- it has no keys and must not reach Stripe.
-      //
-      // payment-smoke.spec.js wants the opposite, and stripping the keys made
-      // it unpassable: the server enrolled straight through to the completion
-      // page, so the Stripe Payment Element it waits for was never rendered.
-      //
-      // Test-mode keys are therefore passed through, and anything else is
-      // stripped. A live key must never reach a browser the suite drives, and
-      // the pair must agree -- half a pair mounts Stripe.js against nothing.
-      const test_mode =
-        /^sk_test_/.test(env.STRIPE_SECRET_KEY || '') &&
-        /^pk_test_/.test(env.STRIPE_PUBLISHABLE_KEY || '');
-
-      if (!test_mode) {
-        delete env.STRIPE_SECRET_KEY;
-        delete env.STRIPE_PUBLISHABLE_KEY;
-      }
+      // Unset Stripe keys so payment steps take the test-mode (no-Stripe) mock
+      // path instead of attempting real Stripe API calls, which would fail or
+      // produce side-effects in CI / local development.
+      delete env.STRIPE_SECRET_KEY;
+      delete env.STRIPE_PUBLISHABLE_KEY;
       return env;
     })(),
     stdio: ['ignore', 'inherit', 'inherit'],
@@ -121,10 +87,6 @@ module.exports = async () => {
   try {
     await new Promise((resolve, reject) => {
       server.on('error', reject); // spawn failure (e.g. binary missing) -> fail fast
-      // A server that exits during boot must fail now rather than burn the full
-      // health timeout waiting for a process that is already gone.
-      server.on('exit', (code, signal) =>
-        reject(new Error(`server exited during startup (code ${code}, signal ${signal})`)));
       waitForHealth(120000).then(resolve, reject);
     });
   } catch (e) {

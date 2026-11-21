@@ -1,9 +1,3 @@
-
-# Email::Sender defaults to a real SMTP transport. Nothing here delivered mail
-# before message notifications were given a default of ON, so this file quietly
-# had no need of the guard; now it does, and a test suite must never attempt to
-# send actual email.
-BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
@@ -452,7 +446,7 @@ my $dao = $test_db->db;
         
         Registry::DAO::Payment->create($dao->db, {
             user_id => $enrollment->{parent_id},  # Use parent_id as the paying user
-            amount_cents => $amount,
+            amount => $amount,
             currency => 'USD',
             status => 'completed',
             stripe_payment_intent_id => "pi_test_$payment_count",
@@ -572,7 +566,7 @@ Program Director
         require Registry::DAO::Payment;
         Registry::DAO::Payment->create($dao->db, {
             user_id => $new_enrollment->parent_id,
-            amount_cents => 18000, # Standard rate
+            amount => 18000, # Standard rate
             currency => 'USD',
             status => 'completed',
             stripe_payment_intent_id => "pi_test_waitlist_" . $new_enrollment->id,
@@ -602,7 +596,7 @@ Program Director
             (SELECT COUNT(*) FROM enrollments WHERE status IN ('active', 'pending')) as active_enrollments,
             (SELECT COUNT(*) FROM projects) as active_programs,
             (SELECT COUNT(*) FROM waitlist WHERE status IN ('waiting', 'offered')) as waitlist_entries,
-            (SELECT SUM(amount_cents) FROM payments WHERE status = 'completed') as total_revenue
+            (SELECT SUM(amount) FROM payments WHERE status = 'completed') as total_revenue
     })->hash;
     
     ok $dashboard_stats, 'Admin dashboard data retrieved';
@@ -687,8 +681,8 @@ Program Director
     my $financial_check = $dao->db->query(q{
         SELECT 
             COUNT(DISTINCT e.id) as paid_enrollments,
-            SUM(p.amount_cents) as total_payments,
-            AVG(p.amount_cents) as average_payment
+            SUM(p.amount) as total_payments,
+            AVG(p.amount) as average_payment
         FROM enrollments e
         JOIN payments p ON e.parent_id = p.user_id
         WHERE e.status = 'active' AND p.status = 'completed'

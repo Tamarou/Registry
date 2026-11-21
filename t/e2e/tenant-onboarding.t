@@ -106,7 +106,7 @@ subtest 'tenant has programs and sessions' => sub {
         session_id => $session->id,
         plan_name  => 'Standard',
         plan_type  => 'standard',
-        amount_cents => 30000,
+        amount     => 300.00,
     });
 
     ok $session, 'Session created with events and pricing';
@@ -117,7 +117,7 @@ subtest 'tenant has programs and sessions' => sub {
 # ============================================================
 
 subtest 'storefront shows available programs' => sub {
-    $t->get_ok('/tenant-storefront')
+    $t->get_ok('/')
       ->status_is(200);
 
     $t->content_like(qr/Potter.*Wheel Art Camp/i, 'Program visible on storefront');
@@ -244,7 +244,7 @@ subtest 'enrollment created and visible' => sub {
 # ============================================================
 
 subtest 'storefront renders after enrollment' => sub {
-    $t->get_ok('/tenant-storefront')
+    $t->get_ok('/')
       ->status_is(200);
 
     # Catalog still shows the program after enrollment

@@ -83,33 +83,36 @@
                     </div>
                 </div>
 
-                %# Instalments are a shape the plan declares, stored as
-                %# pricing_configuration.schedule. Offered here because they are
-                %# honoured now: the cart prices them, checkout charges the
-                %# first, and a Stripe subscription schedule bills the rest
-                %# (#425).
+                <!-- Installment Options -->
                 <div class="p-4 border rounded-lg">
-                    <label class="flex items-center gap-2">
+                    <div class="flex items-center mb-4">
                         <input type="checkbox"
-                               id="instalments_enabled"
-                               name="instalments_enabled"
+                               id="installments_allowed"
+                               name="installments_allowed"
                                value="1"
-                               <%= stash('instalments_enabled') ? 'checked' : '' %> />
-                        <span class="font-medium">Let families pay in instalments</span>
-                    </label>
-                    <p class="mt-1 text-sm text-gray-500">
-                        The first payment is taken at registration and the rest
-                        monthly. The total is the same either way &mdash; families
-                        pay no more for spreading it out.
-                    </p>
-                    <label class="mt-3 block text-sm">
-                        Number of payments
-                        <input type="number"
-                               name="instalment_count"
-                               min="2" max="12"
-                               value="<%= stash('instalment_count') || 3 %>"
-                               class="mt-1 block w-24 border rounded px-2 py-1" />
-                    </label>
+                               class="mr-2"
+                               hx-post="/htmx/installments-toggle"
+                               hx-target="#installments-config"
+                               hx-trigger="change">
+                        <label for="installments_allowed" class="font-medium">
+                            Allow Installment Payments
+                        </label>
+                    </div>
+                    <div id="installments-config" class="hidden">
+                        <div>
+                            <label for="installment_count" class="block text-sm font-medium text-gray-700 mb-2">
+                                Number of Installments
+                            </label>
+                            <input type="number"
+                                   id="installment_count"
+                                   name="installment_count"
+                                   min="2"
+                                   max="12"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="e.g., 3">
+                            <p class="mt-1 text-sm text-gray-500">Split payment into this many equal parts</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Advanced Pricing Options (for percentage, tiered, etc.) -->
@@ -160,7 +163,15 @@
 </div>
 
 <script>
-// The installments toggle is gone with its controls (#425).
+// Toggle installments configuration
+document.getElementById('installments_allowed').addEventListener('change', function() {
+    const config = document.getElementById('installments-config');
+    if (this.checked) {
+        config.classList.remove('hidden');
+    } else {
+        config.classList.add('hidden');
+    }
+});
 
 // Dynamic pricing type configuration
 document.getElementById('pricing_model_type').addEventListener('change', function() {

@@ -22,7 +22,7 @@ my $user = $dao->create(User => {
 
 my $payment = Registry::DAO::Payment->create($db, {
     user_id  => $user->id,
-    amount_cents => 10000,
+    amount   => 100.00,
     metadata => { tenant_slug => 'some_tenant', enrollment_items => [] },
 });
 

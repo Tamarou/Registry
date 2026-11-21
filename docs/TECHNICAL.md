@@ -29,7 +29,7 @@ sqitch deploy
 morbo registry  # Development server
 
 # Testing
-make test
+prove -lr t/
 ```
 
 ### Containerized Deployment

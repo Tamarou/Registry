@@ -10,7 +10,6 @@ use Test::Deep;
 use lib qw(lib t/lib);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers;
 
 use Registry::DAO::PricingPlan;
 use Registry::DAO::Event;
@@ -48,16 +47,16 @@ subtest 'Create pricing plan' => sub {
         session_id => $session->id,
         plan_name => 'Standard Rate',
         plan_type => 'standard',
-        amount_cents => 50000,
+        amount => 500.00,
         currency => 'USD',
     });
     
     ok($plan, 'Pricing plan created');
     is($plan->plan_name, 'Standard Rate', 'Plan name set');
     is($plan->plan_type, 'standard', 'Plan type set');
-    is($plan->amount_cents, 50000, 'Amount stored as cents');
+    is($plan->amount, '500.00', 'Amount set');
     is($plan->currency, 'USD', 'Currency set');
-    is($plan->payment_schedule, undef, 'Installments not offered by default');
+    ok(!$plan->installments_allowed, 'Installments not allowed by default');
 };
 
 subtest 'Create early bird plan' => sub {
@@ -65,7 +64,7 @@ subtest 'Create early bird plan' => sub {
         session_id => $session->id,
         plan_name => 'Early Bird Special',
         plan_type => 'early_bird',
-        amount_cents => 45000,
+        amount => 450.00,
         requirements => {
             early_bird_cutoff_date => '2024-05-01'
         }
@@ -73,7 +72,7 @@ subtest 'Create early bird plan' => sub {
     
     ok($plan, 'Early bird plan created');
     is($plan->plan_type, 'early_bird', 'Plan type is early_bird');
-    is($plan->amount_cents, 45000, 'Discounted amount stored as cents');
+    is($plan->amount, '450.00', 'Discounted amount set');
     is($plan->requirements->{early_bird_cutoff_date}, '2024-05-01', 'Cutoff date stored');
 };
 
@@ -82,7 +81,7 @@ subtest 'Create family plan' => sub {
         session_id => $session->id,
         plan_name => 'Family Discount',
         plan_type => 'family',
-        amount_cents => 42500,
+        amount => 425.00,
         requirements => {
             min_children => 2,
             percentage_discount => 15
@@ -94,37 +93,30 @@ subtest 'Create family plan' => sub {
     is($plan->requirements->{percentage_discount}, 15, 'Discount percentage set');
 };
 
-# The offer is declared in pricing_configuration now, not carried by a boolean
-# and a count -- see t/dao/instalment-schedule.t for the resolver and the
-# arithmetic. What matters here is that it survives a round trip through the
-# database, because the shape is only useful if it is stored.
 subtest 'Installment plans' => sub {
     my $plan = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Payment Plan',
         plan_type => 'standard',
-        amount_cents => 60000,
-        pricing_configuration => { schedule => { count => 3, cadence => 'monthly' } },
+        amount => 600.00,
+        installments_allowed => 1,
+        installment_count => 3
     });
-
-    my $reloaded = Registry::DAO::PricingPlan->find_by_id($db, $plan->id);
-    my $schedule = $reloaded->payment_schedule;
-    ok($schedule, 'the declared schedule survives the round trip');
-    is($schedule->{count}, 3, 'three instalments');
-
-    my $parts = $reloaded->instalment_schedule(60000, first_due => '2026-06-01');
-    cmp_ok($parts->[0]{amount_cents}, '==', 20000, 'Installment amount calculated correctly');
-
-    # A count of one is not an instalment plan. It is refused by the resolver
-    # rather than by a constructor croak, so a plan carrying nonsense is inert
-    # instead of unloadable -- the row is immutable and could not be repaired.
-    my $silly = Registry::DAO::PricingPlan->create($db, {
-        session_id => $session->id,
-        plan_name => 'Bad Plan',
-        amount_cents => 10000,
-        pricing_configuration => { schedule => { count => 1, cadence => 'monthly' } },
-    });
-    is($silly->payment_schedule, undef, 'a count of 1 offers no instalments');
+    
+    ok($plan->installments_allowed, 'Installments allowed');
+    is($plan->installment_count, 3, 'Three installments');
+    is($plan->installment_amount, '200', 'Installment amount calculated correctly');
+    
+    # Test invalid installment configuration
+    dies_ok {
+        Registry::DAO::PricingPlan->create($db, {
+            session_id => $session->id,
+            plan_name => 'Bad Plan',
+            amount => 100,
+            installments_allowed => 1,
+            installment_count => 1  # Should be > 1
+        });
+    } 'Dies when installment count is 1';
 };
 
 subtest 'Get pricing plans for session' => sub {
@@ -136,14 +128,14 @@ subtest 'Get pricing plans for session' => sub {
         session_id => $session->id,
         plan_name => 'Standard',
         plan_type => 'standard',
-        amount_cents => 50000
+        amount => 500
     });
     
     Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Early Bird',
         plan_type => 'early_bird',
-        amount_cents => 45000,
+        amount => 450,
         requirements => { early_bird_cutoff_date => '2024-05-01' }
     });
     
@@ -159,52 +151,24 @@ subtest 'Calculate price with requirements' => sub {
         session_id => $session->id,
         plan_name => 'Early Bird',
         plan_type => 'early_bird',
-        amount_cents => 40000,
+        amount => 400,
         requirements => { early_bird_cutoff_date => '2024-05-01' }
     });
     
     # Test before cutoff
     my $price = $early_bird->calculate_price({ date => '2024-04-15' });
-    is($price, 40000, 'Early bird price available before cutoff');
+    is($price, '400.00', 'Early bird price available before cutoff');
     
     # Test after cutoff
     $price = $early_bird->calculate_price({ date => '2024-05-15' });
     is($price, undef, 'Early bird price not available after cutoff');
     
-    # The default path: no date in the context, so requirements_met falls back
-    # to time(). Every existing assertion above passes an explicit date string,
-    # which is why this branch has never been graded -- and it compared a
-    # ten-digit epoch against an eight-digit YYYYMMDD, so the cutoff was always
-    # "past" and early-bird pricing was refused unconditionally.
-    #
-    # Cutoffs derived from the run date: a literal one stops testing what it
-    # says the day it expires.
-    my $open_cutoff = Registry::DAO::PricingPlan->create($db, {
-        session_id => $session->id,
-        plan_name => 'Early Bird Still Open',
-        plan_type => 'early_bird',
-        amount_cents => 35000,
-        requirements => { early_bird_cutoff_date => days_from_now(30) }
-    });
-    is($open_cutoff->calculate_price({}), 35000,
-        'a cutoff still ahead offers the early-bird price with no date supplied');
-
-    my $passed_cutoff = Registry::DAO::PricingPlan->create($db, {
-        session_id => $session->id,
-        plan_name => 'Early Bird Closed',
-        plan_type => 'early_bird',
-        amount_cents => 35000,
-        requirements => { early_bird_cutoff_date => days_from_now(-30) }
-    });
-    is($passed_cutoff->calculate_price({}), undef,
-        'a cutoff already past refuses it with no date supplied');
-
     # Test family plan
     my $family = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Family',
         plan_type => 'family',
-        amount_cents => 45000,
+        amount => 450,
         requirements => { min_children => 2 }
     });
     
@@ -212,7 +176,7 @@ subtest 'Calculate price with requirements' => sub {
     is($price, undef, 'Family price not available with 1 child');
     
     $price = $family->calculate_price({ child_count => 2 });
-    is($price, 45000, 'Family price available with 2 children');
+    is($price, '450.00', 'Family price available with 2 children');
 };
 
 subtest 'Get best price' => sub {
@@ -223,14 +187,14 @@ subtest 'Get best price' => sub {
         session_id => $session->id,
         plan_name => 'Standard',
         plan_type => 'standard',
-        amount_cents => 50000
+        amount => 500
     });
     
     Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Early Bird',
         plan_type => 'early_bird',
-        amount_cents => 45000,
+        amount => 450,
         requirements => { early_bird_cutoff_date => '2024-12-31' }
     });
     
@@ -238,7 +202,7 @@ subtest 'Get best price' => sub {
         session_id => $session->id,
         plan_name => 'Family',
         plan_type => 'family',
-        amount_cents => 42500,
+        amount => 425,
         requirements => { min_children => 2 }
     });
     
@@ -247,19 +211,19 @@ subtest 'Get best price' => sub {
         date => '2024-01-01',
         child_count => 1
     });
-    is($best, 45000, 'Early bird is best price for single child early');
+    is($best, '450.00', 'Early bird is best price for single child early');
     
     $best = Registry::DAO::PricingPlan->get_best_price($db, $session->id, {
         date => '2024-01-01',
         child_count => 2
     });
-    is($best, 42500, 'Family plan is best price for multiple children');
+    is($best, '425.00', 'Family plan is best price for multiple children');
     
     $best = Registry::DAO::PricingPlan->get_best_price($db, $session->id, {
         date => '2025-01-01',
         child_count => 1
     });
-    is($best, 50000, 'Standard price when no special plans apply');
+    is($best, '500.00', 'Standard price when no special plans apply');
 };
 
 subtest 'Session integration' => sub {
@@ -275,7 +239,7 @@ subtest 'Formatted price' => sub {
     my $plan = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Test',
-        amount_cents => 12345,
+        amount => 123.45,
         currency => 'USD'
     });
     
@@ -284,7 +248,7 @@ subtest 'Formatted price' => sub {
     $plan = Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name => 'Test EUR',
-        amount_cents => 10000,
+        amount => 100.00,
         currency => 'EUR'
     });
     

@@ -59,26 +59,3 @@ tenant-scoped-payments [payments installment-payment-schedules add-payment-to-en
 seed-free-platform-plan [unified-pricing-infrastructure] 2026-06-13T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Seed platform-scope Free (0%) fallback plan
 create-default-pricing-relationships [remove-pricing-plan-relationship-fields unified-pricing-infrastructure seed-free-platform-plan] 2026-06-13T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Create active platform relationships so tenant plans are selectable
 tenant-platform-pricing-plan [create-default-pricing-relationships] 2026-06-16T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Add tenants.platform_pricing_plan_id FK and backfill existing tenants
-refund-application-fee-config [seed-free-platform-plan] 2026-07-03T23:09:47Z Chris Prather <chris.prather@tamarou.com> # Declare refund_application_fee on seeded platform + tenant plans
-suspend-rateless-tenant-plans [create-default-pricing-relationships] 2026-08-03T23:18:43Z Chris Prather <chris.prather@tamarou.com> # Stop offering tenant plans with no resolvable revenue-share rate
-pricing-plans-amount-cents [suspend-rateless-tenant-plans] 2026-08-06T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Store pricing_plans money as integer cents; the rate lives only in pricing_configuration
-payments-amount-cents [pricing-plans-amount-cents] 2026-08-06T12:00:00Z Chris Prather <chris.prather@tamarou.com> # Store payments and payment_items money as integer cents
-schedule-amounts-cents [payments-amount-cents] 2026-08-06T13:00:00Z Chris Prather <chris.prather@tamarou.com> # Store installment schedule money as integer cents
-refund-amounts-cents [schedule-amounts-cents] 2026-08-06T14:00:00Z Chris Prather <chris.prather@tamarou.com> # Store refund money as integer cents
-drop-installment-schedules [schedule-amounts-cents tenant-scoped-payments] 2026-08-13T13:50:16Z Chris Prather <chris.prather@tamarou.com> # Drop the installment schedule tables from registry and every tenant schema
-retire-registry-plus-plan [suspend-rateless-tenant-plans] 2026-08-13T14:37:13Z Chris Prather <chris.prather@tamarou.com> # Stop offering the seeded Registry Plus hybrid plan
-webhook-events-processed-at [webhook-event-dedup] 2026-08-15T14:37:28Z Chris Prather <chris.prather@tamarou.com> # Add processed_at to registry.webhook_events for received-to-processed latency
-payments-typed-obligation [refund-amounts-cents] 2026-08-22T23:30:00Z Chris Prather <chris.prather@tamarou.com> # Typed columns for the capacity-refund obligation, and a CHECK on payments.status
-enrollment-reenrol-after-drop [flexible-enrollment-architecture] 2026-08-26T22:00:00Z Chris Prather <chris.prather@tamarou.com> # A cancelled enrollment stops occupying its seat, so a dropped child can re-join
-set-launch-revenue-share-rate [retire-registry-plus-plan] 2026-09-04T14:50:00Z Chris Prather <chris.prather@tamarou.com> # Move the offered revenue-share plan to the launch rate and mark it as the launch plan
-seed-tier-pricing-options [set-launch-revenue-share-rate] 2026-09-04T16:05:00Z Chris Prather <chris.prather@tamarou.com> # Put the Solo/Studio/Empire tier model into the plans the signup page renders
-clear-template-import-stamps [seed-tier-pricing-options] 2026-09-13T21:15:00Z Chris Prather <chris.prather@tamarou.com> # Drop stamps computed from bytes so the fixed character-based import re-stamps every row
-tenant-slug-lowercase [clear-template-import-stamps] 2026-09-14T04:05:00Z Chris Prather <chris.prather@tamarou.com> # Tenant slugs must be lowercase: clone_schema case-folds an unquoted dest_schema
-session-waitlist-toggle [tenant-slug-lowercase] 2026-09-24T12:10:00Z Chris Prather <chris.prather@tamarou.com> # A session can turn its waitlist off, so a full one is simply full
-pricing-plan-versions [session-waitlist-toggle] 2026-09-26T19:20:00Z Chris Prather <chris.prather@tamarou.com> # Pricing plans become append-only versions, and a charge records the version it used
-user-deactivation [pricing-plan-versions] 2026-09-27T15:30:00Z Chris Prather <chris.prather@tamarou.com> # A departed staff member can be deactivated, which revokes every way in
-tenant-signup-drop-plan-page [user-deactivation] 2026-09-28T17:45:00Z Chris Prather <chris.prather@tamarou.com> # Signup stops asking which plan: everyone starts on the one tier that is on sale
-tenant-created-from-ip [tenant-signup-drop-plan-page] 2026-09-28T23:20:00Z Chris Prather <chris.prather@tamarou.com> # Record which address provisioned a tenant, so the clone cost can be bounded
-instalments-declared-in-configuration [tenant-created-from-ip] 2026-09-29T17:55:00Z Chris Prather <chris.prather@tamarou.com> # An instalment offer becomes a declared shape rather than a boolean and a count
-payments-carry-instalments [instalments-declared-in-configuration] 2026-09-29T19:40:00Z Chris Prather <chris.prather@tamarou.com> # A payment can be one instalment of several, recorded at enrolment rather than derived from Stripe
-platform-settings [payments-carry-instalments] 2026-09-30T15:45:00Z Chris Prather <chris.prather@tamarou.com> # Platform configuration Alex can see and change without a deploy

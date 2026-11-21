@@ -13,8 +13,6 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
-use Test::Registry::Async qw( settle );
-use Mojo::Promise;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -63,58 +61,22 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 # Swap in a Payment whose Stripe methods are mocked. The workflow step
 # loads Payment by id, so we monkey-patch the class methods to inject
 # our mock.
-#
-# A failing $process_result must carry the intent_status process_payment_async
-# really returns. Only a terminal state (requires_payment_method =
-# declined, or canceled) earns a fresh intent; requires_action means the
-# customer is mid-3DS and minting a replacement would open a
-# double-charge window. A bare {success=>0} is a transport error and
-# deliberately gets no retry.
-#
-# The step drives Stripe through the *_async methods, so the mocks hand back
-# promises: a blocking call in the web path can never settle inside the
-# daemon's running event loop.
 sub mock_payment_with_outcome ($process_result, %more) {
     my $mock = Test::MockObject->new;
     $mock->set_always('id',                    $payment_id);
-    # The post-COMMIT refund step reads the obligation off the row. The step
-    # guards with `$due && @$due`, so an un-mocked call does not die -- it
-    # prints an un-mocked-method warning, and this suite's output has to be
-    # pristine. The mock carries the real interface rather than only the
-    # methods a given test happens to exercise.
-    $mock->set_always('unsettled_refund_increments', []);
-    # process_payment_async now runs the caller's settlement inside the
-    # transaction it opens around its own completed-write, so the mock has to
-    # invoke $settle rather than just resolve. set_always ignores arguments and
-    # would drop it, leaving the step with a raw Stripe result and no outcome.
-    $mock->mock('process_payment_async', sub ($self, $db, $intent_id, $settle = undef) {
-        return Mojo::Promise->resolve(
-            $settle ? $settle->($process_result) : $process_result);
-    });
-    # Before minting a replacement intent the retry path cancels the
-    # superseded one and rotates the idempotency token. undef here means
-    # there is no prior intent to cancel, so no stripe_client is needed.
-    $mock->set_always('stripe_payment_intent_id', undef);
-    # metadata is read by the post-COMMIT capacity-refund check.
-    $mock->set_always('metadata', {});
-    $mock->set_always('rotate_idempotency_token', 1);
+    $mock->set_always('process_payment',       $process_result);
     if (exists $more{retry_intent}) {
-        $mock->set_always('create_payment_intent_async',
-            Mojo::Promise->resolve($more{retry_intent}));
+        $mock->set_always('create_payment_intent', $more{retry_intent});
     }
     elsif (exists $more{retry_dies}) {
-        $mock->set_always('create_payment_intent_async',
-            Mojo::Promise->reject($more{retry_dies}));
+        $mock->mock('create_payment_intent', sub { die $more{retry_dies} });
     }
     return $mock;
 }
 
 subtest 'recoverable failure re-renders form with a fresh client_secret' => sub {
     my $mock = mock_payment_with_outcome(
-        {   success       => 0,
-            error         => 'Your card was declined.',
-            intent_status => 'requires_payment_method',
-        },
+        { success => 0, error => 'Your card was declined.' },
         retry_intent => {
             client_secret     => 'pi_new_secret_123',
             payment_intent_id => 'pi_new_123',
@@ -126,40 +88,33 @@ subtest 'recoverable failure re-renders form with a fresh client_secret' => sub 
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    my $result = settle($step->handle_payment_callback($db, $run, {
+    my $result = $step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_old_failed',
-    }));
+    });
 
     ok($result->{errors}, 'error array included');
     like($result->{errors}[0], qr/declined/i, 'message surfaces the decline reason');
-    # step_data is the key the template reads out of the stash; rendering data
-    # returned flat is dropped by the controller before it ever gets there.
-    ok($result->{data}{step_data}{show_stripe_form},
+    ok($result->{data}{show_stripe_form},
        'form stays visible so retry is possible');
-    is($result->{data}{step_data}{client_secret}, 'pi_new_secret_123',
+    is($result->{data}{client_secret}, 'pi_new_secret_123',
        'fresh PaymentIntent client_secret delivered');
-    is($result->{data}{step_data}{payment_id}, $payment_id,
+    is($result->{data}{payment_id}, $payment_id,
        'payment record is reused, not orphaned');
-    ok($result->{data}{step_data}{retry}, 'retry flag set for template UX');
+    ok($result->{data}{retry}, 'retry flag set for template UX');
 };
 
 subtest 'if a new intent cannot be issued, still surface an error' => sub {
-    # A genuine decline, so the step does reach for a fresh intent -- and
-    # Stripe is down when it tries.
     my $mock = mock_payment_with_outcome(
-        {   success       => 0,
-            error         => 'Your card was declined.',
-            intent_status => 'requires_payment_method',
-        },
+        { success => 0, error => 'Network error' },
         retry_dies => 'Stripe unreachable',
     );
 
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    my $result = settle($step->handle_payment_callback($db, $run, {
+    my $result = $step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_old_failed',
-    }));
+    });
 
     ok($result->{errors}, 'error array included');
     ok(!$result->{data}{show_stripe_form},
@@ -168,10 +123,7 @@ subtest 'if a new intent cannot be issued, still surface an error' => sub {
 
 subtest 'retry state persists in run data for next GET' => sub {
     my $mock = mock_payment_with_outcome(
-        {   success       => 0,
-            error         => 'Your card was declined.',
-            intent_status => 'requires_payment_method',
-        },
+        { success => 0, error => 'Your card was declined.' },
         retry_intent => {
             client_secret     => 'pi_retry_secret',
             payment_intent_id => 'pi_retry',
@@ -181,9 +133,9 @@ subtest 'retry state persists in run data for next GET' => sub {
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    settle($step->handle_payment_callback($db, $run, {
+    $step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_old_failed',
-    }));
+    });
 
     # Reload the run to make sure data was persisted.
     my $reloaded = Registry::DAO::WorkflowRun->find($db, { id => $run->id });
@@ -205,26 +157,14 @@ subtest 'retry state persists in run data for next GET' => sub {
 subtest 'successful payment still transitions to complete' => sub {
     my $mock = Test::MockObject->new;
     $mock->set_always('id', $payment_id);
-    $mock->mock('process_payment_async', sub ($self, $db, $intent_id, $settle = undef) {
-        my $result = { success => 1, payment => $mock };
-        return Mojo::Promise->resolve($settle ? $settle->($result) : $result);
-    });
-    # A successful callback finalizes the enrollment; stub it so the mock
-    # doesn't warn about the un-mocked call.
-    $mock->set_always('finalize_enrollment', 1);
-    # And the post-COMMIT capacity-refund check reads the obligation off the
-    # row. Without this the mock's AUTOLOAD returns undef, the step's guard
-    # swallows it, and every run prints an un-mocked-method warning -- output
-    # that has to be pristine.
-    $mock->set_always('unsettled_refund_increments', []);
-    $mock->set_always('metadata', {});
+    $mock->set_always('process_payment', { success => 1, payment => $mock });
 
     no warnings 'redefine';
     local *Registry::DAO::Payment::find = sub { $mock };
 
-    my $result = settle($step->handle_payment_callback($db, $run, {
+    my $result = $step->handle_payment_callback($db, $run, {
         payment_intent_id => 'pi_ok',
-    }));
+    });
 
     is($result->{next_step}, 'complete',
        'success still advances to complete step');

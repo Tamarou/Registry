@@ -51,7 +51,7 @@ subtest 'Integration test setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount_cents => 50000,  # $500.00 in cents
+        amount => 50000,  # $500.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 30,
@@ -128,13 +128,9 @@ subtest 'Full tenant signup integration test' => sub {
     ok $pricing_result->{data}->{pricing_plans}, 'Pricing plans available';
     cmp_ok scalar(@{$pricing_result->{data}->{pricing_plans}}), '>=', 1, 'At least one pricing plan available';
 
-    # By name. This file seeds its own Enterprise plan and the shipped seed offers
-    # the tier ladder beside it, so [0] is a statement about the ladder rather
-    # than about the plan this subtest selects.
-    my ($enterprise_plan) = grep { $_->{plan_name} eq 'Registry Enterprise' }
-        @{ $pricing_result->{data}->{pricing_plans} };
-    ok $enterprise_plan, 'Enterprise plan available';
-    is $enterprise_plan->{amount_cents}, 50000, 'Plan amount correct';
+    my $enterprise_plan = $pricing_result->{data}->{pricing_plans}->[0];
+    is $enterprise_plan->{plan_name}, 'Registry Enterprise', 'Enterprise plan available';
+    is $enterprise_plan->{amount}, 50000, 'Plan amount correct';
 
     # Select the enterprise plan through the run (which merges returned data)
     my $selection_result = $run->process($dao->db, $pricing_step_obj, {
@@ -149,13 +145,13 @@ subtest 'Full tenant signup integration test' => sub {
 
     ok $stored_plan, 'Pricing plan stored in workflow data';
     is $stored_plan->{plan_name}, 'Registry Enterprise', 'Correct plan name stored';
-    is $stored_plan->{amount_cents}, 50000, 'Correct amount stored';
+    is $stored_plan->{amount}, 50000, 'Correct amount stored';
 
     # Step 2: Test payment step uses selected plan
     my $payment_step_obj = $workflow->get_step($dao->db, { slug => 'payment' });
 
     # Get payment configuration
-    my $payment_config = $payment_step_obj->get_subscription_config($dao->db, $run);
+    my $payment_config = $payment_step_obj->get_subscription_config($dao->db);
 
     is $payment_config->{plan_name}, 'Registry Enterprise', 'Payment uses selected plan name';
     is $payment_config->{monthly_amount}, 50000, 'Payment uses selected plan amount';
@@ -198,7 +194,7 @@ subtest 'Backwards compatibility test' => sub {
 
     # Test that payment step falls back to default configuration
     my $legacy_payment_obj = $legacy_workflow->get_step($dao->db, { slug => 'payment' });
-    my $legacy_config = $legacy_payment_obj->get_subscription_config($dao->db, $legacy_run);
+    my $legacy_config = $legacy_payment_obj->get_subscription_config($dao->db);
 
     is $legacy_config->{plan_name}, 'Solo', 'Falls back to default plan name';
     is $legacy_config->{monthly_amount}, 0, 'Falls back to default amount (free)';

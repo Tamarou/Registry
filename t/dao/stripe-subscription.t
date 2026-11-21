@@ -10,8 +10,6 @@ use Test::Registry::Fixtures;
 use Registry::DAO::Subscription;
 use JSON;
 use DateTime;
-use Mojo::Transaction::HTTP;
-use Mojo::Promise;
 
 # Setup test database
 my $t = Test::Registry::DB->new;
@@ -28,7 +26,7 @@ $db->db->query('SELECT clone_schema(dest_schema => ?)', $tenant->slug);
 subtest 'Stripe subscription DAO creation' => sub {
     my $subscription_dao = Registry::DAO::Subscription->new(db => $db->db);
     isa_ok($subscription_dao, 'Registry::DAO::Subscription');
-    can_ok($subscription_dao, qw(create_customer_async create_subscription_async process_webhook_event));
+    can_ok($subscription_dao, qw(create_customer create_subscription process_webhook_event));
 };
 
 subtest 'Tenant billing info storage' => sub {
@@ -198,7 +196,7 @@ subtest 'Configurable subscription creation' => sub {
     my $subscription_dao = Registry::DAO::Subscription->new(db => $db->db);
     
     # Test configuration method
-    can_ok($subscription_dao, 'create_subscription_with_config_async');
+    can_ok($subscription_dao, 'create_subscription_with_config');
     
     # Test that the method exists and can be called with proper parameters
     # (We won't mock the full Stripe API here to keep tests simple)
@@ -212,63 +210,6 @@ subtest 'Configurable subscription creation' => sub {
     
     # Just verify the config is properly structured
     ok($config->{monthly_amount} == 15000, 'Configuration structure is correct');
-};
-
-subtest 'Stripe HTTP transport against a real transaction' => sub {
-    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
-
-    my $subscription_dao = Registry::DAO::Subscription->new(db => $db->db);
-
-    my $transport_tenant = Test::Registry::Fixtures::create_tenant($db, {
-        name => 'Transport Test Org',
-        slug => 'transport_test'
-    });
-
-    # Hand back a real Mojo::Transaction::HTTP rather than a stand-in. The
-    # response API this code calls is the thing under test, so a fake
-    # transaction would pass here while tenant signup dies in production.
-    #
-    # start_p, not post: the transport moved to Registry::Service::Stripe, which
-    # builds a transaction and starts it as a promise.
-    my $canned;
-    no warnings 'redefine';
-    local *Mojo::UserAgent::start_p = sub { Mojo::Promise->resolve($canned) };
-
-    $canned = Mojo::Transaction::HTTP->new;
-    $canned->res->code(200)->headers->content_type('application/json');
-    $canned->res->body(encode_json({ id => 'cus_transport', object => 'customer' }));
-
-    my $customer;
-    $subscription_dao->create_customer_async(
-        { id => $transport_tenant->id, name => 'Transport Test Org' },
-        { billing_email => 'billing@transport.test' },
-    )->then(sub { $customer = shift })->wait;
-
-    is($customer->{id}, 'cus_transport', 'successful response is parsed and returned');
-
-    my $stored = $db->db->query(
-        'SELECT stripe_customer_id FROM registry.tenants WHERE id = ?',
-        $transport_tenant->id
-    )->hash;
-    is($stored->{stripe_customer_id}, 'cus_transport', 'customer id written back to the tenant');
-
-    # Stripe reports failures as a 4xx with a JSON body. The old client warned
-    # and returned undef here, which is how an undef tenant_id once rode into a
-    # committed webhook. Registry::Service::Stripe rejects instead, so the
-    # failure cannot be mistaken for an empty result.
-    $canned = Mojo::Transaction::HTTP->new;
-    $canned->res->code(402)->headers->content_type('application/json');
-    $canned->res->body(encode_json({ error => { message => 'Your card was declined.' } }));
-
-    my ($resolved, $rejected);
-    $subscription_dao->create_customer_async(
-        { id => $transport_tenant->id, name => 'Transport Test Org' },
-        { billing_email => 'billing@transport.test' },
-    )->then(sub { $resolved = 1 }, sub { $rejected = shift })->wait;
-
-    ok(!$resolved, 'a declined request does not resolve');
-    like($rejected, qr/Your card was declined/,
-        'Stripe error message is carried on the rejection');
 };
 
 done_testing();

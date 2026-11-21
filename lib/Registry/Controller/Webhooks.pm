@@ -5,7 +5,7 @@ use Object::Pad;
 class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use JSON;
     use Digest::SHA qw(hmac_sha256_hex);
-    use Mojo::Promise;
+    use Registry::DAO::PaymentSchedule;
 
     method stripe() {
         # Verify webhook signature -- STRIPE_WEBHOOK_SECRET is mandatory.
@@ -38,90 +38,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Process the event
         my $dao = $self->app->dao;
 
-        # One connection for the whole settlement. $dao->db is a single field
-        # computed once, so every statement below lands on the same backend --
-        # which is what lets the claim and the work share a transaction. A
-        # handle acquired anywhere else is a different backend and cannot see
-        # this transaction's uncommitted rows or its search_path.
-        my $db       = $dao->db;
+        # Deduplicate by Stripe event id. Stripe may deliver the same event more
+        # than once; claim it atomically so a redelivery is acknowledged with
+        # 200 but never processed twice. On a processing failure below we release
+        # the claim so Stripe's retry can reprocess the event.
         my $event_id = $event->{id};
-
-        # Resolve the tenant before the transaction opens. The slug lives in our
-        # own snapshotted metadata (the Connect `account` field is absent on
-        # destination-charge events, which are platform events), and only
-        # payment_intent.succeeded carries one -- account.updated and the
-        # subscription branch stay in the registry schema.
-        #
-        # This lookup IS the validation. set_config accepts a nonexistent schema
-        # without complaint and only fails later, at the first unqualified table
-        # reference, so an unknown slug has to be refused before it gets there.
-        my $slug;
-        if ( $event->{type} eq 'payment_intent.succeeded' ) {
-            my $raw = $event->{data}{object}{metadata}{tenant_slug};
-            $slug = $raw if defined $raw && length $raw && $raw ne 'registry';
-
-            if ( defined $slug
-                && !$db->select( 'registry.tenants', ['id'], { slug => $slug } )->hash )
-            {
-                $self->app->log->error(
-                    "Webhook event $event_id names unknown tenant slug '$slug'");
-                $self->render( status => 500, text => 'Unknown tenant' );
-                return;
-            }
-        }
-
-        # Prefetch before the transaction, and skip it for an event we have
-        # already handled.
-        #
-        # The lookup is a Stripe round trip. Inside the transaction it would
-        # hold the dedup claim open for its duration, so it cannot go there --
-        # and the claim is the transaction, so there is no "after the claim but
-        # outside it". Resolving it first is what lets the settlement stay
-        # entirely on the database.
-        #
-        # Unconditionally above it, every duplicate redelivery paid for a live
-        # Stripe call before discovering it had nothing to do, blocking the
-        # IOLoop each time. This cheap SELECT is not the claim and does not need
-        # to be authoritative: the real ON CONFLICT claim below still decides.
-        # It only spares the common case -- a redelivery of an event already
-        # processed -- from the network.
-        my $seen = $db->select( 'registry.webhook_events', ['id'],
-            { stripe_event_id => $event_id } )->hash;
-
-        # The prefetch is the only Stripe call on this path, and it resolves
-        # before the transaction opens. Everything inside the chain below is
-        # database work on one connection.
-        $self->render_later;
-
-        return (
-            $seen
-            ? Mojo::Promise->resolve(undef)
-            : $self->_prefetch_subscription_async( $dao, $event )
-          )->then( sub ($subscription) {
-            $self->_settle_event( $dao, $db, $event, $event_id, $slug, $subscription );
-          } )->catch( sub ($err) {
-            # Reached when the prefetch rejects, or when _settle_event throws
-            # outside its own try -- opening the transaction, say. Its internal
-            # failures render there and never arrive here, so this cannot
-            # double-render. Nothing to release either way: a prefetch failure
-            # has not claimed, and a claim that was taken rolls back with its
-            # transaction. A 500 asks Stripe to redeliver.
-            $self->app->log->error("Webhook failed before settlement: $err");
-            $self->render( status => 500, text => 'Webhook processing failed' );
-          } );
-    }
-
-    # The settlement itself: claim, work, commit. Called with the subscription
-    # already in hand, so nothing here reaches the network.
-    method _settle_event ($dao, $db, $event, $event_id, $slug, $subscription) {
-
-        # Claim and work are one transaction on one connection. A failure rolls
-        # the claim back with the work, so Stripe's retry re-claims and
-        # reprocesses -- no compensating delete, which could not run here anyway
-        # once the transaction is aborted.
-        my $tx = $db->begin;
-
-        my $claimed = $db->query(
+        my $claimed = $dao->db->query(
             q{INSERT INTO registry.webhook_events (stripe_event_id, event_type)
               VALUES (?, ?) ON CONFLICT (stripe_event_id) DO NOTHING},
             $event_id, $event->{type}
@@ -133,425 +55,87 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
-        # Set inside the transaction, acted on after it: the id of a payment the
-        # capacity gate demoted and now owes a refund.
-        my $refund_for;
-
-        # Set when instalment one has just been paid: the id whose remaining
-        # instalments need a Stripe schedule, built after the COMMIT below.
-        my $schedule_for;
-
         try {
-            # Transaction-local, so it reverts at COMMIT and cannot ride back
-            # into the connection pool the way a session-level setting would.
-            # Bound as a parameter: Postgres validates the GUC rather than
-            # splicing it into SQL text.
-            $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" )
-                if defined $slug;
-
             # One-time program payment finalized by Stripe (e.g. 3DS/redirect
             # cards confirmed off-site). Idempotent with the parent-return path.
             if ($event->{type} eq 'payment_intent.succeeded') {
-                $refund_for = $self->_process_payment_intent_succeeded($db, $event);
-                $schedule_for = $self->_instalment_to_schedule($db, $event);
+                $self->_process_payment_intent_succeeded($dao, $event);
             }
             # Mirror connected account capability changes to the tenant row so
             # the paid-enrollment readiness gate reflects Stripe's current view.
             elsif ($event->{type} eq 'account.updated') {
-                $self->_process_account_updated($db, $event);
+                $self->_process_account_updated($dao, $event);
             }
-            # An instalment of a plan a parent chose at checkout. Routed here
-            # before the tenant-billing branch below, which reads invoice events
-            # as OUR subscription being paid -- a family's instalment is not that,
-            # and letting it fall through would move a tenant's billing status on
-            # a parent's card.
-            elsif ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/
-                    && $self->_invoice_is_instalment($db, $event) ) {
-                $self->_process_instalment_invoice($db, $event);
-            }
-            else {
+            # Determine if this is an installment payment or tenant billing event
+            elsif ($self->_is_installment_payment_event($event)) {
+                $self->_process_installment_payment_event($dao->db, $event);
+            } else {
                 # Handle tenant billing events (existing logic)
                 my $subscription_dao = Registry::DAO::Subscription->new(db => $dao);
                 $subscription_dao->process_webhook_event(
-                    $db,
+                    $dao->db,
                     $event->{id},
                     $event->{type},
-                    $event->{data},
-                    $subscription,
+                    $event->{data}
                 );
             }
-
-            # received_at to processed_at is the latency of the money path.
-            $db->query(
-                q{UPDATE registry.webhook_events SET processed_at = now()
-                  WHERE stripe_event_id = ?}, $event_id
-            );
-
-            $tx->commit;
         }
         catch ($e) {
-            # No claim release here: $tx goes out of scope and rolls the claim
-            # back with the work. A delete would also fail -- the transaction is
-            # already aborted and rejects every further statement.
+            # Release the claim so Stripe's retry can reprocess this event.
+            $dao->db->delete('registry.webhook_events', { stripe_event_id => $event_id });
             $self->app->log->error("Webhook processing failed: $e");
             $self->render(status => 500, text => 'Webhook processing failed');
             return;
         }
 
-        # Post-COMMIT. Reached only on success, so a refund failure below cannot
-        # be confused with a settlement failure above.
-
-        # The Stripe schedule for instalments two onwards. After the COMMIT and
-        # in a job, not here: it is a network call, and one made inside the
-        # transaction above would hold a row lock across Stripe's latency and
-        # lose its work on any failure -- which is #284's shape. The job retries
-        # on Minion's backoff, and without it the family pays instalment one and
-        # nothing more.
-        if ($schedule_for) {
-            $self->app->minion->enqueue(
-                instalment_schedule => [ $schedule_for, $slug // 'registry' ] );
-        }
-
-        return $self->_settle_owed_refund($dao, $slug, $refund_for) if $refund_for;
-
         $self->render(status => 200, text => 'OK');
-    }
-
-    # --- Instalments -------------------------------------------------------
-
-    # The payment id whose remaining instalments still need scheduling, or undef.
-    #
-    # Read after _process_payment_intent_succeeded has completed the row, because
-    # a charge that did not complete has no card to schedule against.
-    method _instalment_to_schedule ($db, $event) {
-        my $payment_id = $event->{data}{object}{metadata}{payment_id} or return undef;
-
-        require Registry::DAO::Payment;
-        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id })
-            or return undef;
-
-        return undef unless $payment->is_instalment;
-        return undef unless $payment->instalment_seq == 1;
-        return undef if $payment->stripe_schedule_id;    # already scheduled
-        return $payment_id;
-    }
-
-    # Is this invoice one of a family's instalments, rather than a tenant paying
-    # us? Both arrive as invoice.paid, and the tenant-billing handler would read
-    # a parent's instalment as our own subscription being settled.
-    method _invoice_is_instalment ($db, $event) {
-        my $schedule = $self->_invoice_schedule_id($event) or return 0;
-
-        my $row = $db->query(
-            'SELECT 1 FROM payments WHERE stripe_schedule_id = ? LIMIT 1',
-            $schedule )->hash;
-        return $row ? 1 : 0;
-    }
-
-    method _invoice_schedule_id ($event) {
-        my $invoice = $event->{data}{object} // {};
-
-        # Stripe has moved this field across API versions: a schedule id appears
-        # on the invoice itself on some, and under subscription_details on
-        # others. Both are read rather than one being assumed, because guessing
-        # wrong means an instalment is never recorded as paid and the family
-        # appears to owe money they have already sent.
-        return $invoice->{subscription_details}{metadata}{schedule}
-            // $invoice->{schedule}
-            // $invoice->{subscription_schedule};
-    }
-
-    # Mark the earliest still-owed instalment of this set paid, or failed.
-    #
-    # Matched by position rather than by amount: only the last instalment differs
-    # from the others, so amounts are not distinguishing, while "the earliest one
-    # still owed" is exactly what a schedule bills next. The Stripe payment
-    # intent is recorded on the row, which is what makes a redelivery idempotent.
-    method _process_instalment_invoice ($db, $event) {
-        my $invoice  = $event->{data}{object} // {};
-        my $schedule = $self->_invoice_schedule_id($event) or return;
-        my $paid     = $event->{type} eq 'invoice.paid';
-
-        my $intent = $invoice->{payment_intent};
-
-        # Already recorded. A redelivery of the same invoice must not advance the
-        # set by another instalment.
-        if ($intent) {
-            my $seen = $db->query(
-                'SELECT 1 FROM payments WHERE stripe_payment_intent_id = ? LIMIT 1',
-                $intent )->hash;
-            return if $seen;
-        }
-
-        my $row = $db->query( q{
-            SELECT id FROM payments
-             WHERE stripe_schedule_id = ?
-               AND status IN ('pending', 'failed')
-             ORDER BY instalment_seq
-             LIMIT 1
-             FOR UPDATE
-        }, $schedule )->hash or do {
-            $self->app->log->info(
-                "instalment invoice for schedule $schedule matched no owed row");
-            return;
-        };
-
-        if ($paid) {
-            $db->query( q{
-                UPDATE payments
-                   SET status = 'completed', completed_at = now(),
-                       stripe_payment_intent_id = ?, error_message = NULL
-                 WHERE id = ?
-            }, $intent, $row->{id} );
-            return;
-        }
-
-        # Failed. The enrolment is NOT touched: a child who has been attending
-        # for six weeks does not lose their place over an expired card. The debt
-        # stands on the row and surfaces on Morgan's dashboard, and she decides --
-        # she knows her families. That is the keep_and_flag policy, and it is the
-        # default rather than the only option (#425).
-        my $why = $invoice->{last_finalization_error}{message}
-            // 'The card was declined.';
-        $db->query( q{
-            UPDATE payments
-               SET status = 'failed', error_message = ?,
-                   stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id)
-             WHERE id = ?
-        }, $why, $intent, $row->{id} );
-    }
-
-    # Refund what the capacity gate demoted, after its transaction committed.
-    #
-    # On a tenant-scoped DAO, not the transaction's handle. The search_path
-    # override was transaction-local and is gone by now, so this handle is back
-    # on registry -- and settle_refund_increment writes the status itself, inside
-    # its own ->then, on whatever handle it was given. Unqualified, that write
-    # would hit registry.payments, match no rows, and return quietly while
-    # Stripe had already refunded the customer. connect_schema hands back a
-    # connection whose search_path Mojo::Pg set when it opened it.
-    #
-    # Always renders 2xx. A refund failure on an already-committed settlement
-    # must not answer Stripe with a 500: the retry would hit the dedup claim and
-    # be acknowledged as a duplicate, so the refund would never be retried
-    # anyway -- and repeated 500s on successful deliveries are how an endpoint
-    # gets disabled. The row stays refund_pending for the runbook to find.
-    method _settle_owed_refund ($dao, $slug, $payment_id) {
-        my $tdao = ( $slug && $slug ne 'registry' ) ? $dao->connect_schema($slug) : $dao;
-        my $tdb  = $tdao->db;
-
-        require Registry::DAO::Payment;
-        my $payment = Registry::DAO::Payment->find($tdb, { id => $payment_id });
-
-        unless ($payment) {
-            $self->app->log->error(
-                "capacity refund: payment $payment_id vanished after commit");
-            return $self->render(status => 200, text => 'OK');
-        }
-
-
-        # Started from a resolved promise so a *synchronous* throw becomes a
-        # rejection this chain's ->catch can see. refund_async dies before
-        # returning a promise in several real ways -- the status guard, a
-        # missing intent id, stripe_client refusing a live key or failing SSL
-        # init -- and a bare ->catch on the returned promise never sees any of
-        # them. The exception escapes the action and Mojolicious renders a 500
-        # on an already-committed settlement, which is precisely what the
-        # always-2xx rule below exists to prevent.
-        # One Stripe call per unsettled increment, each for its own amount under
-        # its own key -- never the accumulated balance under a key that changes
-        # as the balance grows, which is how one debt got paid twice. Sequenced
-        # rather than concurrent so a failure stops the chain with the remaining
-        # increments still owed and still retryable.
-        # Inside the ->then, not above it. unsettled_refund_increments casts
-        # jsonb the runbook now invites operators to hand-edit, so it can throw
-        # -- and above the resolve that exception escapes the action, after
-        # render_later and after the COMMIT, producing exactly the 500 on an
-        # already-committed settlement that the always-2xx rule below exists to
-        # prevent.
-        #
-        # The work queue is the predicate, in both callers. An earlier version
-        # gated here on refund_owed_cents while the workflow step gated on the
-        # queue; they agree only while the invariant holds, and a migration bug
-        # produced precisely the row where they disagreed.
-        return Mojo::Promise->resolve->then(sub {
-            my $due = $payment->unsettled_refund_increments($tdb);
-            return unless $due && @$due;
-
-            my $chain = Mojo::Promise->resolve;
-            for my $inc (@$due) {
-                $chain = $chain->then(sub {
-                    $payment->refund_async($tdb, {
-                        amount_cents    => $inc->{cents},
-                        reason          => 'requested_by_customer',
-                        idempotency_key => $payment->capacity_refund_key($inc->{seq}),
-                    })->then(sub ($refund) {
-                        # Settled per increment, so a partial success is kept.
-                        # Discharging the whole obligation on one response is
-                        # how a debt that grew mid-flight got erased.
-                        # A zero-row settle is indistinguishable from success
-                        # otherwise: Stripe has paid and the increment is still
-                        # due, with nobody told.
-                        $payment->settle_refund_increment($tdb, $inc->{seq}, $refund)
-                            or $self->app->log->error(
-                                "capacity refund: settling increment $inc->{seq} of "
-                              . "payment $payment_id matched no row after Stripe paid");
-                        return $refund;
-                    });
-                });
-            }
-            return $chain;
-        })->then(sub {
-            $self->render(status => 200, text => 'OK');
-        })->catch(sub ($err) {
-            # Say whether anything was sent. 'not_sent' is certain -- no
-            # request was dispatched, so no money moved -- and it spares the
-            # operator the runbook's list-refunds-from-Stripe step, which
-            # exists only because the row could not answer that question.
-            my $class = Registry::DAO::Payment->classify_refund_failure($err);
-            $payment->record_refund_failure( $tdb, $err );
-
-            $self->app->log->error(
-                "capacity refund failed for payment $payment_id "
-              . "($class, nothing was sent to Stripe): $err")
-                if $class eq 'not_sent';
-            $self->app->log->error(
-                "capacity refund failed for payment $payment_id "
-              . "($class, the refund may or may not have been taken): $err")
-                if $class ne 'not_sent';
-            $self->render(status => 200, text => 'OK');
-        });
-    }
-
-    # Subscription lookups for invoice events are the one blocking Stripe call
-    # on this path. Fetch it up front so the settlement transaction never waits
-    # on the network; process_webhook_event falls back to fetching it itself
-    # when this returns undef, which keeps its other callers working unchanged.
-    method _prefetch_subscription_async ($dao, $event) {
-        return Mojo::Promise->resolve(undef)
-            unless $event->{type} eq 'invoice.payment_failed'
-            || $event->{type} eq 'invoice.payment_succeeded';
-
-        my $subscription_id = $event->{data}{object}{subscription}
-            or return Mojo::Promise->resolve(undef);
-
-        return Registry::DAO::Subscription->new(db => $dao)
-            ->get_subscription_async($subscription_id);
     }
 
     # Finalize a one-time program payment when Stripe confirms the intent. This
     # is the safety net for cards finalized off-site (3DS / redirect) where the
     # parent may never return to the success page. finalize_enrollment is
     # idempotent, so this is safe alongside the parent-return callback.
-    # $db arrives inside the caller's transaction with search_path already
-    # pointing at the tenant, so every unqualified name below resolves there.
-    method _process_payment_intent_succeeded ($db, $event) {
+    method _process_payment_intent_succeeded ($dao, $event) {
         my $intent     = $event->{data}{object} // {};
         my $payment_id = $intent->{metadata}{payment_id};
         return unless $payment_id;    # not a Registry one-time payment -- ignore
 
+        # The tenant is resolved from our own snapshotted metadata. The Connect
+        # `account` field is absent on destination-charge payment_intent events
+        # (they are platform events), so metadata is the source of truth.
         my $slug = $intent->{metadata}{tenant_slug};
 
+        # The payment row lives in the schema the registration ran under. A
+        # one-time payment without a tenant slug is a registry-schema payment
+        # (platform/test); anything else must resolve, or we fail loudly so
+        # Stripe retries rather than silently dropping a paid enrollment.
+        my $tdao = ($slug && $slug ne 'registry') ? $dao->connect_schema($slug) : $dao;
+        my $tdb  = $tdao->db;
+
         require Registry::DAO::Payment;
-        # FOR UPDATE: this path carries its own copy of the amount and completed
-        # checks rather than calling _apply_intent, so it needs its own lock --
-        # locking one site and not the other leaves the two racing each other.
-        # Safe as a find-by-id: { for => 'update' } occupies the $order slot and
-        # silently drops the default ORDER BY, which is immaterial for a unique
-        # key and would not be on a filter that matches more than one row.
-        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id },
-            { for => 'update' });
+        my $payment = Registry::DAO::Payment->find($tdb, { id => $payment_id });
         die "payment_intent.succeeded: payment $payment_id not found"
           . ($slug ? " in tenant schema '$slug'" : ' in registry schema') . "\n"
             unless $payment;
 
-        # The intent's captured amount must match the payment row before the
-        # enrollment snapshot is granted: a stale intent completing after a
-        # cart refresh must not enroll the new cart against the old charge.
-        # Dying releases the dedup claim, so Stripe retries and a healed row
-        # finalizes on a later delivery. Events without an amount (internal
-        # fixtures) pass; real Stripe events always carry one.
-        if ( defined $intent->{amount} ) {
-            my $row_cents = $payment->amount_cents;
-            die "payment_intent.succeeded: intent $intent->{id} amount "
-              . "$intent->{amount} does not match payment $payment_id "
-              . "amount $row_cents\n"
-                if $intent->{amount} != $row_cents;
+        unless (($payment->status // '') eq 'completed') {
+            $payment->update($tdb, {
+                status                   => 'completed',
+                stripe_payment_intent_id => $intent->{id},
+            });
         }
 
-        # "Not completed" is not the same question as "not settled". A refunded
-        # or refund_pending row reaching mark_completed here is the double-refund
-        # path: re-completed, re-demoted by the capacity gate below, and refunded
-        # again. Redelivery makes this reachable without any concurrency, because
-        # a retry carries a different event id and the dedup claim lets it past.
-        # The write decides, and says so if it refuses. The _money_has_moved
-        # test above it and mark_completed's own predicate answer the same
-        # question, and agreeing by coincidence is exactly the two-classifiers
-        # shape this leg exists to remove -- so the guard is gone and the
-        # statement is the authority.
-        #
-        # payment_method is passed because save() used to carry that column and
-        # nothing else writes it.
-        $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} )
-            or $self->app->log->info(
-                "payment $payment_id not completed from status @{[ $payment->status ]}");
-
-        # Non-zero when the capacity gate demoted someone: the caller refunds
-        # after the COMMIT. Returns the payment id rather than the amount so the
-        # post-COMMIT step re-reads the committed row instead of trusting a
-        # value carried across the transaction boundary.
-        $payment->finalize_enrollment($db);
-
-        # Gate on the row's persisted obligation, not on what this pass alone
-        # computed. An earlier delivery can have recorded a debt whose refund
-        # failed; this pass may demote nobody new and still owe it.
-        #
-        # NOT because redelivery retries it. Earlier comments here claimed
-        # "Stripe's own redelivery becomes the retry, the only automated retry
-        # there is" -- that is false and measured false: the dedup claim is on
-        # stripe_event_id and commits WITH the settlement, so a redelivery of
-        # the same event is refused above before this is reached. Only a
-        # DIFFERENT event on the same payment reaches here. Until Leg 3's
-        # ProcessRefunds exists, a failed capacity refund waits for the runbook.
-        # The runbook says so correctly; this file said the opposite.
-        my $settled = Registry::DAO::Payment->find($db, { id => $payment_id });
-
-        # The work queue, not the balance -- the same predicate
-        # _settle_owed_refund uses. Round 1 unified the two callers one frame
-        # too shallow: this gate decides whether the settle runs at all, and it
-        # still read the balance. A row whose balance was zeroed while
-        # increments remained due is then invisible to a later event that would
-        # otherwise have carried the refund.
-        #
-        # jsonb_array_length, not unsettled_refund_increments: this runs INSIDE
-        # the settlement transaction, and that method casts (e->>'cents')::int
-        # over jsonb the runbook lets operators hand-edit. A non-numeric value
-        # there would throw here, roll back a captured charge with no
-        # enrollments, and take the dedup claim with it -- so every retry
-        # reproduces it.
-        #
-        # A length test still raises on a non-array, so the real guarantee is
-        # payments_refund_increments_is_array, which makes that state
-        # unrepresentable. This predicate is cheap and cast-free; the constraint
-        # is what makes it safe.
-        return undef unless $settled;
-        my $due = $db->query(
-            q{SELECT 1 FROM payments
-               WHERE id = ?
-                 AND ( refund_owed_cents > 0
-                       OR jsonb_array_length(refund_increments) > 0 )},
-            $payment_id )->rows;
-        return $due ? $payment_id : undef;
+        $payment->finalize_enrollment($tdb);
     }
 
     # Connect sends account.updated when a connected account's capabilities
     # change. Mirror charges_enabled/details_submitted onto the tenant so the
     # paid-enrollment readiness gate reflects Stripe's current view.
-    method _process_account_updated ($db, $event) {
+    method _process_account_updated ($dao, $event) {
         my $account = $event->{data}{object} // {};
         my $acct_id = $account->{id} or return;
 
-        my $updated = $db->query(
+        my $updated = $dao->db->query(
             q{UPDATE registry.tenants
               SET stripe_charges_enabled = ?, stripe_details_submitted = ?
               WHERE stripe_connect_account_id = ?},
@@ -568,39 +152,21 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return 0 unless defined $endpoint_secret;
 
         my @sig_elements = split /,/, $sig_header;
-        my ( @v1, $timestamp );
+        my %sigs;
 
-        # v1 accumulates. During endpoint-secret rotation Stripe signs the
-        # payload with both the old and the new secret and sends both in one
-        # header, so keeping only the last one rejects live confirmations for
-        # the whole rotation window -- and repeated 4xx is how Stripe disables
-        # an endpoint. Whichever secret this deployment holds must verify,
-        # wherever its signature sits in the list.
         for my $element (@sig_elements) {
             my ($key, $value) = split /=/, $element, 2;
             if ($key eq 'v1') {
-                push @v1, $value;
+                $sigs{v1} = $value;
             } elsif ($key eq 't') {
-                $timestamp = $value;
+                $sigs{t} = $value;
             }
         }
 
-        return 0 unless @v1;
-
-        # Cap the candidate list. Stripe sends one signature normally and two
-        # during an endpoint-secret rotation; anything beyond that is someone
-        # else's idea. Uncapped, this loop is a CPU amplifier on the one route
-        # that opts out of rate limiting (Middleware/RateLimit.pm's
-        # @EXCLUDED_PREFIXES) -- measured at 62x over the single-signature form
-        # at Mojo's header ceiling, blocking a worker for the duration.
-        return 0 if @v1 > 8;
-        # A bare `unless $timestamp` would also reject t=0. Test for presence.
-        return 0 unless defined $timestamp && length $timestamp;
-        # The header is attacker-controlled, so a non-numeric t must be a quiet
-        # rejection rather than an uninitialized-value warning in the log.
-        return 0 unless $timestamp =~ /\A[0-9]+\z/;
+        return 0 unless $sigs{v1} && $sigs{t};
 
         # Check timestamp (within 5 minutes)
+        my $timestamp = $sigs{t};
         my $current_time = time();
         return 0 if abs($current_time - $timestamp) > 300;
 
@@ -608,15 +174,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $signed_payload = $timestamp . '.' . $payload;
         my $expected_sig = hmac_sha256_hex($signed_payload, $endpoint_secret);
 
-        # Stop at the first match. An earlier version deliberately did not, to
-        # avoid leaking through timing which candidate matched -- but the
-        # candidates are supplied by whoever sent the header, so there is
-        # nothing to leak to them that they do not already know. The
-        # non-short-circuit form bought a real DoS against a vacuous threat.
-        for my $candidate (@v1) {
-            return 1 if _secure_compare( $expected_sig, $candidate );
-        }
-        return 0;
+        return _secure_compare($expected_sig, $sigs{v1});
     }
 
     sub _secure_compare ($a, $b) {
@@ -629,4 +187,90 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return $result == 0;
     }
 
+    method _is_installment_payment_event($event) {
+        # Check if this event is related to installment payment subscriptions
+        my $event_type = $event->{type};
+
+        return 0 unless defined $event_type && $event_type =~ /^(invoice\.paid|invoice\.payment_failed|customer\.subscription\..+)$/;
+
+        # Check if the subscription has payment_schedule_id in metadata
+        my $subscription_id;
+        if ($event_type =~ /^invoice\./) {
+            $subscription_id = $event->{data}->{object}->{subscription};
+        } elsif ($event_type =~ /^customer\.subscription\./) {
+            $subscription_id = $event->{data}->{object}->{id};
+        }
+
+        return 0 unless $subscription_id;
+
+        # Look for payment schedule with this subscription ID
+        my $dao = $self->app->dao;
+        my $schedules = Registry::DAO::PaymentSchedule->find_by_stripe_subscription_id(
+            $dao->db, $subscription_id
+        );
+
+        return @$schedules > 0;
+    }
+
+    method _process_installment_payment_event($db, $event) {
+        my $event_type = $event->{type};
+        my $event_data = $event->{data};
+
+        # Import PriceOps classes
+        require Registry::PriceOps::ScheduledPayment;
+
+        my $payment_ops = Registry::PriceOps::ScheduledPayment->new;
+
+        if ($event_type eq 'invoice.paid') {
+            return $payment_ops->handle_invoice_paid($db, $event_data->{object});
+        }
+        elsif ($event_type eq 'invoice.payment_failed') {
+            return $payment_ops->handle_invoice_payment_failed($db, $event_data->{object});
+        }
+        elsif ($event_type eq 'customer.subscription.updated') {
+            # Handle subscription status changes (active, past_due, etc.)
+            return $self->_handle_installment_subscription_updated($db, $event_data->{object});
+        }
+        elsif ($event_type eq 'customer.subscription.deleted') {
+            # Handle subscription cancellation
+            return $self->_handle_installment_subscription_cancelled($db, $event_data->{object});
+        }
+
+        # Log unhandled event types
+        $self->app->log->info("Unhandled installment payment event: $event_type");
+    }
+
+    method _handle_installment_subscription_updated($db, $subscription) {
+        # Find payment schedule by subscription ID
+        my $schedules = Registry::DAO::PaymentSchedule->find_by_stripe_subscription_id(
+            $db, $subscription->{id}
+        );
+
+        return unless @$schedules;
+
+        my $schedule = $schedules->[0]; # Should only be one per subscription
+
+        # Update schedule status based on subscription status
+        my $new_status = $subscription->{status} eq 'active' ? 'active'
+                       : $subscription->{status} eq 'past_due' ? 'past_due'
+                       : $subscription->{status} eq 'canceled' ? 'cancelled'
+                       : $schedule->status; # Keep existing status
+
+        # Use DAO method to update status
+        $schedule->update_status($db, $new_status);
+    }
+
+    method _handle_installment_subscription_cancelled($db, $subscription) {
+        # Find payment schedule and mark as cancelled
+        my $schedules = Registry::DAO::PaymentSchedule->find_by_stripe_subscription_id(
+            $db, $subscription->{id}
+        );
+
+        return unless @$schedules;
+
+        my $schedule = $schedules->[0]; # Should only be one per subscription
+
+        # Use DAO method to cancel schedule and all pending payments atomically
+        $schedule->cancel_with_pending_payments($db);
+    }
 }

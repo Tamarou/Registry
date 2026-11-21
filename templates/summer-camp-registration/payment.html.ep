@@ -98,7 +98,7 @@
                     <div class="border-l-4 border-blue-500 pl-4">
                         <h3 class="font-semibold"><%= $item->{description} %></h3>
                         <p class="text-gray-600">
-                            <span class="font-medium">Cost: $<%= sprintf('%.2f', $item->{amount_cents} / 100) %></span>
+                            <span class="font-medium">Cost: $<%= $item->{amount} %></span>
                         </p>
                     </div>
                 <% } %>
@@ -107,52 +107,11 @@
             <div class="mt-6 pt-6 border-t">
                 <div class="flex justify-between items-center text-xl font-bold">
                     <span>Total:</span>
-                    <span>$<%= sprintf('%.2f', ($step_data->{total} || 0) / 100) %></span>
+                    <span>$<%= $step_data->{total} || 0 %></span>
                 </div>
             </div>
         <% } %>
     </div>
-
-    %# How to pay, when the programme offers a choice. Shown only when there is
-    %# more than one option: a single radio button is not a choice, it is an
-    %# explanation nobody asked for.
-    %#
-    %# Every instalment is listed with its date and amount, because "3 monthly
-    %# payments" leaves a parent to work out what leaves their account and when.
-    %# The totals are identical by construction -- paying in parts costs no more
-    %# -- and the page says so rather than making them add it up.
-    % my $options = $step_data->{schedule_options} || [];
-    % if (@$options > 1) {
-        <div class="bg-white shadow rounded-lg p-6 mb-6">
-            <h2 class="text-xl font-semibold mb-4">How would you like to pay?</h2>
-            % for my $option (@$options) {
-                % my $parts = $option->{instalments} || [];
-                <label class="block p-4 border rounded-lg mb-3 cursor-pointer">
-                    <span class="flex items-center gap-2">
-                        <input type="radio"
-                               name="payment_plan"
-                               value="<%= $option->{key} %>"
-                               form="payment-form"
-                               <%= $option->{key} eq 'full' ? 'checked' : '' %> />
-                        <span class="font-medium"><%= $option->{label} %></span>
-                    </span>
-                    % if (@$parts > 1) {
-                        <span class="mt-2 block text-sm text-gray-600">
-                            % for my $part (@$parts) {
-                                <span class="flex justify-between">
-                                    <span><%= $part->{due_date} %></span>
-                                    <span>$<%= sprintf('%.2f', $part->{amount_cents} / 100) %></span>
-                                </span>
-                            % }
-                            <span class="mt-1 block">
-                                The same total &mdash; no extra charge for paying over time.
-                            </span>
-                        </span>
-                    % }
-                </label>
-            % }
-        </div>
-    % }
 
     <% if ($show_stripe) { %>
         <!-- Stripe Payment Form -->
@@ -173,7 +132,7 @@
                     Back
                 </a>
                 <button id="submit" type="submit" class="bg-green-500 text-white px-6 py-2 rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <span id="button-text">Pay $<%= sprintf('%.2f', ($step_data->{total} || 0) / 100) %></span>
+                    <span id="button-text">Pay $<%= $step_data->{total} || 0 %></span>
                     <span id="spinner" class="hidden">Processing...</span>
                 </button>
             </div>
@@ -196,16 +155,10 @@
                 e.preventDefault();
                 setLoading(true);
                 
-                // Stripe appends payment_intent, payment_intent_client_secret
-                // and redirect_status to return_url itself; the GET handler
-                // picks up payment_intent and finishes the enrollment. Build
-                // the URL from the route rather than window.location.href so a
-                // retry after a failed attempt does not carry the previous
-                // attempt's parameters back into this one.
                 const {error} = await stripe.confirmPayment({
                     elements,
                     confirmParams: {
-                        return_url: '<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => "payment")->to_abs %>',
+                        return_url: window.location.href + '&payment_intent_id={PAYMENT_INTENT}',
                     },
                 });
                 

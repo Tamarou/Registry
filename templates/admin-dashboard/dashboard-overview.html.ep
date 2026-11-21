@@ -193,12 +193,6 @@
                         </button>
                     </div>
                 </div>
-                %# Publishing says nothing on its own: both publish forms are
-                %# hx-swap="none", so a refusal is discarded and a success
-                %# leaves a stale badge (#409, #181). One region, written to by
-                %# the one handler in the script at the foot of this page,
-                %# because every publish control should behave the same way.
-                <div id="publish-feedback" class="alert alert-error" role="alert" hidden></div>
                 <div id="program-overview-content" class="dashboard-card-content">
                     %= include 'admin-dashboard/program_overview'
                 </div>
@@ -476,99 +470,4 @@ setInterval(function() {
     htmx.trigger('#todays-events-content', 'refresh');
     htmx.trigger('#waitlist-content', 'refresh');
 }, 300000); // 5 minutes
-
-// Every publish control, one behaviour. The forms POST with hx-swap="none"
-// and the endpoint answers JSON, so without this the page never moves: a 409
-// explaining exactly what to do is discarded (#409), and a success leaves the
-// badge and the button label describing the state the row was in before the
-// click (#181).
-//
-// Bound to document rather than to the forms: the partial holding them is
-// replaced whenever the section reloads, and a handler bound to the old
-// markup would go with it.
-// Put a row in the state the server just reported: the badge it shows and the
-// action its button now offers. This is the whole of #181 -- the forms are
-// hx-swap="none", so without it a successful publish leaves the badge reading
-// Draft and the button still offering Publish.
-function reflectStatus(form, status) {
-    var row = form && form.closest('li[data-session-id], [data-program-id]');
-    if (!row) { return; }
-
-    var badge = row.querySelector('.badge');
-    if (badge) {
-        badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
-        var tone = status === 'published' ? 'badge-green'
-                 : status === 'closed'    ? 'badge-gray'
-                                          : 'badge-yellow';
-        var spacing = badge.classList.contains('ml-2') ? ' ml-2' : '';
-        badge.className = 'badge ' + tone + spacing;
-    }
-
-    var input  = form.querySelector('input[name="status"]');
-    var button = form.querySelector('button[type="submit"]');
-    if (input && button) {
-        var published = status === 'published';
-        // The hidden value is what the NEXT press will ask for, so it is the
-        // opposite of where the row now stands.
-        input.value = published ? 'draft' : 'published';
-        button.textContent = published ? 'Unpublish' : 'Publish';
-        button.className = 'btn btn-sm ' + (published ? 'btn-outline' : 'btn-primary');
-    }
-}
-
-document.addEventListener('htmx:afterRequest', function (evt) {
-    var el = evt.detail && evt.detail.elt;
-    if (!el || !el.closest) return;
-    if (!el.closest('form.publish-toggle, form.publish-toggle-session')) return;
-
-    var box = document.getElementById('publish-feedback');
-    var xhr = evt.detail.xhr;
-
-    if (evt.detail.successful) {
-        if (box) { box.hidden = true; box.textContent = ''; }
-        // Update THIS row from what the server said, rather than reloading the
-        // whole section. Reloading replaced the list under the operator's
-        // cursor: publish a programme, and the next thing you click is inside
-        // markup that has just been swapped out. It also threw away scroll
-        // position and whichever slice was being viewed.
-        var form = el.closest('form.publish-toggle, form.publish-toggle-session');
-        try {
-            var body = JSON.parse(xhr.responseText);
-            if (body && body.status) { reflectStatus(form, body.status); }
-        } catch (e) {
-            // No usable body: leave the row alone rather than guess at it.
-        }
-        return;
-    }
-
-    var message = 'That could not be changed. Please try again.';
-    var action = null;
-    try {
-        var body = JSON.parse(xhr.responseText);
-        if (body.error) { message = body.error; }
-        if (body.unpublished_programs) {
-            message += ' Still in draft: ' + body.unpublished_programs + '.';
-        }
-        // A refusal the operator can act on says where to go. Rendered as a
-        // link rather than appended to the text, because a URL the operator
-        // has to retype is barely better than no URL.
-        if (body.action_url) {
-            action = { url: body.action_url, label: body.action_label || 'Fix this' };
-        }
-    } catch (e) {
-        // A non-JSON body (a proxy error page, say) leaves the generic message
-        // rather than showing the operator raw HTML.
-    }
-    if (box) {
-        box.textContent = message;
-        if (action) {
-            box.appendChild(document.createTextNode(' '));
-            var link = document.createElement('a');
-            link.href = action.url;
-            link.textContent = action.label;
-            box.appendChild(link);
-        }
-        box.hidden = false;
-    }
-});
 </script>

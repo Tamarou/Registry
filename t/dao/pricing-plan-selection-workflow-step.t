@@ -51,7 +51,7 @@ subtest 'Test data setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount_cents => 10000,  # $100.00 in cents
+        amount => 10000,  # $100.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 14,
@@ -74,7 +74,7 @@ subtest 'Test data setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount_cents => 20000,  # $200.00 in cents
+        amount => 20000,  # $200.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 30,
@@ -101,7 +101,7 @@ subtest 'Test data setup' => sub {
         plan_type => 'standard',
         plan_scope => 'tenant',
         pricing_model_type => 'fixed',
-        amount_cents => 50000,  # $500.00 in cents
+        amount => 50000,  # $500.00 in cents
         currency => 'USD',
         pricing_configuration => {
             trial_days => 30,
@@ -205,26 +205,16 @@ subtest 'PricingPlanSelection step functionality' => sub {
     ok $result->{data}->{pricing_plans}, 'Pricing plans available';
     cmp_ok scalar(@{$result->{data}->{pricing_plans}}), '>=', 3, 'At least three pricing plans available';
 
-    # By name, not by position. This file seeds its own plans, and the shipped
-    # seed offers the Solo/Studio/Empire ladder alongside them -- so an index is
-    # a statement about what else happens to be on offer, which is not what this
-    # subtest is about. Their relative order is asserted directly instead.
+    # Verify plans are ordered correctly
     my $plans = $result->{data}->{pricing_plans};
-    my %pos   = map { $plans->[$_]{plan_name} => $_ } 0 .. $#$plans;
-
-    ok defined $pos{'Registry Basic'},        'Basic is on offer';
-    ok defined $pos{'Registry Professional'}, 'Professional is on offer';
-    ok defined $pos{'Registry Enterprise'},   'Enterprise is on offer';
-
-    cmp_ok $pos{'Registry Basic'}, '<', $pos{'Registry Professional'},
-        'Basic sorts before Professional';
-    cmp_ok $pos{'Registry Professional'}, '<', $pos{'Registry Enterprise'},
-        'Professional sorts before Enterprise';
+    is $plans->[0]->{plan_name}, 'Registry Basic', 'First plan is Basic';
+    is $plans->[1]->{plan_name}, 'Registry Professional', 'Second plan is Professional';
+    is $plans->[2]->{plan_name}, 'Registry Enterprise', 'Third plan is Enterprise';
 
     # Verify plan data structure
-    my $basic_plan = $plans->[ $pos{'Registry Basic'} ];
+    my $basic_plan = $plans->[0];
     ok $basic_plan->{id}, 'Plan has ID';
-    is $basic_plan->{amount_cents}, 10000, 'Plan amount correct';
+    is $basic_plan->{amount}, 10000, 'Plan amount correct';
     is $basic_plan->{currency}, 'USD', 'Plan currency correct';
     ok $basic_plan->{pricing_configuration}, 'Plan has pricing configuration';
     ok $basic_plan->{pricing_configuration}->{features}, 'Plan has features list';
@@ -246,9 +236,7 @@ subtest 'Plan selection processing' => sub {
     # Get available plans to select from
     my $initial_result = $pricing_step->process($dao->db, {});
     my $plans = $initial_result->{data}->{pricing_plans};
-    my ($professional_plan) =
-        grep { $_->{plan_name} eq 'Registry Professional' } @$plans;
-    ok $professional_plan, 'Professional is on offer to select';
+    my $professional_plan = $plans->[1];  # Professional plan
 
     # Test plan selection through the run (which merges the returned data)
     my $result = $run->process($dao->db, $pricing_step, {
@@ -264,7 +252,7 @@ subtest 'Plan selection processing' => sub {
     ok $stored_plan, 'Pricing plan stored in workflow data';
     is $stored_plan->{id}, $professional_plan->{id}, 'Correct plan ID stored';
     is $stored_plan->{plan_name}, 'Registry Professional', 'Correct plan name stored';
-    is $stored_plan->{amount_cents}, 20000, 'Correct amount stored';
+    is $stored_plan->{amount}, 20000, 'Correct amount stored';
     ok $stored_plan->{pricing_configuration}, 'Pricing configuration stored';
 };
 
@@ -301,7 +289,7 @@ subtest 'Error handling' => sub {
         plan_name => 'Inactive Plan',
         plan_type => 'standard',
         plan_scope => 'tenant',
-        amount_cents => 15000,
+        amount => 15000,
         currency => 'USD',
         pricing_configuration => { trial_days => 14 }
     });

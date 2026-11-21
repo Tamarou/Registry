@@ -9,11 +9,9 @@ use warnings;
 use utf8;
 
 use lib qw(lib t/lib);
-use Registry::PriceOps::RevenueShare;
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Template;
@@ -21,7 +19,7 @@ use Mojo::Home;
 use Mojo::File;
 use YAML::XS qw(Load);
 
-my $template_file = 'templates/registry-storefront/landing.html.ep';
+my $template_file = 'templates/registry/tenant-storefront-program-listing.html.ep';
 plan skip_all => "Template file $template_file not found" unless -f $template_file;
 
 my $test_db = Test::Registry::DB->new;
@@ -54,11 +52,11 @@ my $project = $dao->create(Project => { status => 'published',
 });
 my $session = $dao->create(Session => {
     name => 'Get Started', slug => 'get-started-reg-test',
-    start_date => days_from_now(-30), end_date => days_from_now(3650),
+    start_date => '2026-01-01', end_date => '2036-01-01',
     status => 'published', capacity => 999999, metadata => {},
 });
 my $event = $dao->create(Event => {
-    time => days_from_now(-30) . ' 00:00:00', duration => 0,
+    time => '2026-01-01 00:00:00', duration => 0,
     location_id => $location->id, project_id => $project->id,
     teacher_id => $teacher->id, capacity => 999999, metadata => {},
 });
@@ -137,16 +135,7 @@ subtest 'alignment section with pricing' => sub {
     $t->get_ok('/')
       ->status_is(200);
 
-    # Resolved, not restated. A literal here pins the page against itself: move
-    # the launch rate and this test keeps passing on the old number while the
-    # page keeps quoting it. t/priceops/tier-options.t holds the one place the
-    # rate's value is written down.
-    my $pct = 0 + sprintf '%g',
-        Registry::PriceOps::RevenueShare::platform_launch_fraction(
-            $t->app->dao->db ) * 100;
-
-    $t->content_like(qr/(?<![\d.])\Q$pct\E%/,
-        "revenue share shown as ${pct}%, the rate the platform charges")
+    $t->content_like(qr/2\.5%/, 'Revenue share percentage visible')
       ->content_like(qr/Free to Start/i, 'Free to start messaging visible');
 };
 
