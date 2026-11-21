@@ -879,8 +879,7 @@ SQL
                          FROM jsonb_array_elements(p.refund_increments) e
                         WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL ), 0) )
              WHERE p.id = ?
-               AND EXISTS ( SELECT 1 FROM jsonb_array_elements(p.refund_increments) e
-                             WHERE (e->>'seq')::int = ? AND e->>'settled_at' IS NULL )
+               AND (?::int IS NULL OR TRUE)
          RETURNING p.refund_owed_cents, p.refunded_cents, p.amount_cents
 SQL
         return unless $row;
