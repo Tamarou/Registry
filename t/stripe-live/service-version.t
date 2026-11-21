@@ -13,9 +13,9 @@ use Registry::Service::Stripe;
 plan skip_all => 'STRIPE_SECRET_KEY (sk_test_) not set'
     unless Test::Registry::StripeConnect::available();
 
-# The PRODUCTION client, constructed exactly as Payment.pm / Client::Stripe.pm
-# do: api_key only, so the default api_version is exercised and sent as the
-# Stripe-Version header on the request below.
+# The PRODUCTION client, constructed exactly as Payment.pm does: api_key only,
+# so the default api_version is exercised and sent as the Stripe-Version
+# header on the request below.
 my $stripe = Registry::Service::Stripe->new(api_key => $ENV{STRIPE_SECRET_KEY});
 
 # One real API call. If the default version is invalid, Stripe rejects the
