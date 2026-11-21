@@ -41,6 +41,9 @@ BEGIN
                 SET refund_amount = refund_amount_cents::DECIMAL / 100
               WHERE refund_amount_cents IS NOT NULL', s);
         EXECUTE format('ALTER TABLE %I.enrollments DROP COLUMN refund_amount_cents', s);
+        EXECUTE format(
+            'COMMENT ON COLUMN %I.enrollments.refund_amount
+                IS ''Amount refunded for dropped enrollment''', s);
 
         EXECUTE format(
             'ALTER TABLE %I.drop_requests

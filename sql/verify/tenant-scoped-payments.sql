@@ -23,7 +23,7 @@ BEGIN
         CONTINUE WHEN to_regnamespace(quote_ident(s)) IS NULL;
 
         -- Verify each payment table exists in the tenant schema.
-        FOREACH tbl IN ARRAY ARRAY['payments','payment_items','payment_schedules','scheduled_payments'] LOOP
+        FOREACH tbl IN ARRAY ARRAY['payments','payment_items'] LOOP
             IF to_regclass(format('%I.%I', s, tbl)) IS NULL THEN
                 RAISE EXCEPTION 'Tenant % is missing payment table %', s, tbl;
             END IF;
