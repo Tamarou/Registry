@@ -379,6 +379,15 @@ follow.
   in-studio or after-school, launches on today's pricing tables. Fixing the
   failing CI on `main` is the first step, so every later step can keep it
   green.
+- **Stripe is the source of truth for money and customers; Registry follows
+  it.** A refund issued in a tenant's Stripe dashboard, a lost dispute, or a
+  customer changed there is applied to the matching entitlement as if a
+  lifecycle step had done it: a full refund ends the entitlement and frees its
+  resources, a partial refund is recorded against it, and a lost dispute ends
+  it. Registry never contradicts Stripe and never re-charges to undo it.
+  Dispute fees fall where Stripe puts them, on the tenant as merchant. This
+  needs Connect webhook handling for `charge.refunded`, `charge.dispute.*` and
+  customer events, which today's handler (`Webhooks.pm`) does not have.
 - **The platform and SACP are both ready on day one.** The platform's
   recurring percentage-of-sales offer is part of the first slice, not
   deferred to later steps.
