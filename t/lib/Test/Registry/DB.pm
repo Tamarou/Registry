@@ -224,10 +224,6 @@ package Test::Registry::DB {
         }
     }
 
-    # Mark every open DBI connection InactiveDestroy so DBD::Pg's destructors
-    # never execute against an about-to-stop server and emit "terminating
-    # connection due to administrator command" -- noise that dirties the exit
-    # code. See issue #186.
     # A test's app helper usually closes over a file-scope DAO, so its
     # Mojo::Pg::Database lives until global destruction, where perl frees
     # objects in no fixed order. When DBI's inner handle goes first,
@@ -246,6 +242,10 @@ package Test::Registry::DB {
         };
     }
 
+    # Mark every open DBI connection InactiveDestroy so DBD::Pg's destructors
+    # never execute against an about-to-stop server and emit "terminating
+    # connection due to administrator command" -- noise that dirties the exit
+    # code. See issue #186.
     sub _neutralize_dbi_handles {
         DBI->visit_handles(sub {
             my $h = shift;
