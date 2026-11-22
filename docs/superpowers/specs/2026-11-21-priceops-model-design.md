@@ -275,6 +275,8 @@ stay.
 
 Each step leaves `main` releasable with the suite green.
 
+0. **Green CI on `main`.** The suite fails today; nothing else starts until it
+   passes.
 1. **The platform as a real tenant** (#294/#265), with exemptions turned into
    entitlements.
 2. **Resources, offers with policies, and entitlements as first-class data,**
@@ -294,9 +296,10 @@ Each step leaves `main` releasable with the suite green.
    whether priced or not. The email send cap becomes an entitlement check on
    that meter.
 
-In-studio bookings needs steps 1–4 and builds its own product on them. Steps
-5–7 can follow, or run alongside in-studio work, in whatever order the launch
-needs.
+Day one needs steps 0–4, with SACP's in-studio offers and the platform's
+recurring revenue-share offer both published through step 3. Step 5 moves
+after-school onto the same model before it sells anything. Steps 6–7 can
+follow.
 
 ## Goals
 
@@ -349,10 +352,36 @@ needs.
   account.** That account is also the Connect platform account, so the revenue
   share (the application fee on every tenant's sale) and the platform
   tenant's own sales to tenants both land there. The payment steps are shared:
-  each tenant record names the Stripe account its sales settle to, and the
-  platform tenant's is Tamarou's. A sale that settles to the platform account
-  itself needs no transfer, which follows from the account, not from a check
-  for the platform tenant.
+  each tenant record names its Stripe account, and the `registry` row names
+  Tamarou's. Every tenant holds a revenue-share offer from the platform; the
+  platform tenant's offer from itself is an explicit 0%, so its own sales send
+  no `application_fee_amount` by the ordinary "omitted, never 0" rule rather
+  than by a check for the platform. Whether a charge on the Connect platform
+  account itself takes a `Stripe-Account` header naming that account is
+  unverified; the builder checks it with Stripe in test mode before step 4.
+- **Alex administers the platform tenant.** The persona Alex
+  (`docs/personas/alex.md`, which replaced Alice in 08c3a5a) stands in for
+  perigrin and Tamarou: an ordinary
+  admin of the `registry` tenant, using the same admin screens and workflows as
+  any tenant's admin. The `/platform/*` screens, the `registry platform` CLI
+  and `is_platform_admin` become that tenant's admin surface, not a separate
+  one.
+- **The platform's customers are tenants.** SACP and every other tenant are
+  the platform tenant's customers, as organisations. An entitlement names its
+  holder, which is a person for a studio's sale and a tenant for the
+  platform's.
+- **Tamarou keeps its share on a refund** unless Tamarou caused the sale to be
+  wrong. That is a term of the offer between the platform and the tenant, not
+  of the offer the customer accepted: the platform's revenue-share offer
+  carries a refund policy of "keep the fee", with an exception the platform
+  tenant's admin applies when the fault is Tamarou's.
+- **Everything moves to the new model, and CI goes green first.** No product,
+  in-studio or after-school, launches on today's pricing tables. Fixing the
+  failing CI on `main` is the first step, so every later step can keep it
+  green.
+- **The platform and SACP are both ready on day one.** The platform's
+  recurring percentage-of-sales offer is part of the first slice, not
+  deferred to later steps.
 - **Nothing has been sold through Registry yet.** SACP still sells after-school
   and camps on Sawyer and in-studio on PlaceFull. There are no live
   entitlements to backfill, so offers are re-created under SACP's stated terms
