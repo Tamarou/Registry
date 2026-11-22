@@ -51,19 +51,18 @@ jobs:
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
 
-    - name: Cache Perl dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/perl5
-        key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
-        restore-keys: |
-          ${{ runner.os }}-perl-
-
+    # No cache step: carton installs into ./local, so the ~/perl5 cache that
+    # was here saved nothing (see the database-compatibility job).
     - name: Install Perl dependencies
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
         export PATH="$HOME/perl5/bin:$PATH"
-        carton install --deployment
+        # On failure, print each build log: cpanm writes them to disk and the
+        # job output otherwise says only "See .../build.log".
+        carton install --deployment || {
+          for f in ~/.cpanm/work/*/build.log; do echo "::group::$f"; tail -n 120 "$f"; echo "::endgroup::"; done
+          exit 1
+        }
 
     - name: Setup test database
       run: |
@@ -304,14 +303,17 @@ jobs:
 
     # No cache step here. actions-setup-perl already restores local/ -- PERL5LIB
     # names it before carton runs -- so `carton install --deployment` completes in
-    # about a tenth of a second. The test job's ~/perl5 cache is pointed at the
-    # wrong directory for the same reason (carton installs into ./local) and saves
-    # nothing; copying it here would only add a second broken cache.
+    # about a tenth of a second. The test job's ~/perl5 cache was pointed at the
+    # wrong directory for the same reason (carton installs into ./local) and has
+    # been removed.
     - name: Install Perl dependencies
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
         export PATH="$HOME/perl5/bin:$PATH"
-        carton install --deployment
+        carton install --deployment || {
+          for f in ~/.cpanm/work/*/build.log; do echo "::group::$f"; tail -n 120 "$f"; echo "::endgroup::"; done
+          exit 1
+        }
 
     - name: Test database migration
       run: |
@@ -380,7 +382,10 @@ jobs:
       run: |
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
-        carton install --deployment
+        carton install --deployment || {
+          for f in ~/.cpanm/work/*/build.log; do echo "::group::$f"; tail -n 120 "$f"; echo "::endgroup::"; done
+          exit 1
+        }
 
     - name: Check dependencies
       run: |

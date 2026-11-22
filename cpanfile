@@ -29,6 +29,11 @@ requires 'JSON';
 requires 'Text::Unidecode';
 requires 'Text::CSV_XS';
 requires 'IO::Socket::SSL';
+# IO::Socket::SSL's Makefile.PL adds Mozilla::CA as a prerequisite at build
+# time when OpenSSL's OPENSSLDIR has no CA store, as on CI's setup-perl
+# toolchain. `carton install --deployment` refuses anything the snapshot does
+# not name, so it is pinned here rather than left to that decision.
+requires 'Mozilla::CA';
 requires 'SlapbirdAPM::Agent::Mojo';
 requires 'CBOR::XS';
 requires 'CryptX';

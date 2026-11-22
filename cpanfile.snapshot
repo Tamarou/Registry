@@ -1975,6 +1975,12 @@ DISTRIBUTIONS
     requirements:
       ExtUtils::MakeMaker 0
       Module::Runtime 0.014
+  Mozilla-CA-20261105
+    pathname: L/LW/LWP/Mozilla-CA-20261105.tar.gz
+    provides:
+      Mozilla::CA 20261105
+    requirements:
+      ExtUtils::MakeMaker 0
   Net-SSLeay-1.94
     pathname: C/CH/CHRISN/Net-SSLeay-1.94.tar.gz
     provides:
