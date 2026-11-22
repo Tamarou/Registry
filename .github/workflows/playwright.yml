@@ -9,16 +9,6 @@ on:
   push:
     branches: [ main ]
 
-# DBD::Pg 3.18.0 does not compile as C23, which the runner's compiler now
-# defaults to: types.h declares `char* (*quote)();`, and in C23 an empty
-# parameter list means "no arguments", so Pg.xs:330's four-argument call
-# is an error. Building C extensions as C17 restores the old meaning.
-# PERL_MM_OPT reaches every Makefile.PL that carton runs; OPTIMIZE is
-# MakeMaker's own slot for compiler flags (default -O2), so nothing else
-# on the compile line changes.
-env:
-  PERL_MM_OPT: "OPTIMIZE='-O2 -std=gnu17'"
-
 jobs:
   e2e:
     runs-on: ubuntu-latest

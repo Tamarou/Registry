@@ -490,11 +490,11 @@ DISTRIBUTIONS
       ExtUtils::MakeMaker 0
       Math::BigInt 0
       perl 5.006
-  DBD-Pg-3.18.0
-    pathname: T/TU/TURNSTEP/DBD-Pg-3.18.0.tar.gz
+  DBD-Pg-3.21.2
+    pathname: T/TU/TURNSTEP/DBD-Pg-3.21.2.tar.gz
     provides:
-      Bundle::DBD::Pg v3.18.0
-      DBD::Pg v3.18.0
+      Bundle::DBD::Pg v3.21.2
+      DBD::Pg v3.21.2
     requirements:
       DBI 1.614
       ExtUtils::MakeMaker 6.58
