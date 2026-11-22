@@ -75,6 +75,8 @@ sub succeeded_payment () {
     $mock->set_true('finalize_enrollment');
     # Read by the post-COMMIT capacity-refund check.
     $mock->set_always('metadata', {});
+    # Read after settlement for refunds still owed; a fresh payment owes none.
+    $mock->set_always('unsettled_refund_increments', []);
     return $mock;
 }
 

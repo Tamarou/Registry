@@ -232,7 +232,9 @@ subtest 'pressing Verify while DNS is propagating does not mark it failed' => su
         $dao->db, 'propagating-button.example.com' );
 
     # Render saying "I do not see the record yet" -- not an error, just not done.
-    no warnings 'redefine';
+    # Installed through a string glob above, so this is the only time perl
+    # sees the name at compile time.
+    no warnings qw(redefine once);
     local *MockRenderService::verify_custom_domain = sub ( $self, $render_id ) {
         push @render_calls, { action => 'verify', render_id => $render_id };
         return { id => $render_id, verificationStatus => 'pending',
