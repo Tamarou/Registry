@@ -224,8 +224,11 @@ These still hold:
 - **Schema and tenancy:**
   - tables about the platform tenant's customers (tenants, and what they hold
     from the platform) live in the `registry` schema, as any tenant's customer
-    tables live in its own; code reaches them fully qualified, they are left
-    out of `clone_schema`, and no foreign keys cross schemas;
+    tables live in its own; code reaches them fully qualified, and no foreign
+    keys cross schemas. `clone_schema` copies the structure of every table in
+    `registry` (`fix-clone-schema-identifier-quoting.sql:359-367`), so every
+    tenant schema has these tables, empty unless that tenant has customers of
+    its own;
   - payments live per tenant schema, so migrations loop over tenants;
   - one schedule phase is in effect at a time, by exclusion constraint.
 - **Refunds are per entitlement**, never the whole cart. A `pending` refund is
