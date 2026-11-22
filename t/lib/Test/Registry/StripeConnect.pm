@@ -34,6 +34,17 @@ package Test::Registry::StripeConnect {
         return Mojo::UserAgent->new( connect_timeout => 10, inactivity_timeout => 30 );
     }
 
+    # With no response at all (DNS, TLS, a refused connection) the status is
+    # undef and the reason is only in $tx->error; say it, rather than
+    # "HTTP " and an uninitialized-value warning.
+    sub _why {
+        my ($tx) = @_;
+        my $code = $tx->res->code;
+        return "HTTP $code" if defined $code;
+        my $err = $tx->error;
+        return "no response: " . ( $err && $err->{message} // "unknown error" );
+    }
+
     sub _post {
         my ( $path, $params ) = @_;
         my $key = _key();
@@ -43,7 +54,7 @@ package Test::Registry::StripeConnect {
             form => $params,
         );
         my $data = $tx->res->json
-            or die "Stripe POST $path: no JSON body (HTTP " . $tx->res->code . ")\n";
+            or die "Stripe POST $path: no JSON body (" . _why($tx) . ")\n";
         die "Stripe POST $path error: $data->{error}{message}\n" if $data->{error};
         return $data;
     }
@@ -56,7 +67,7 @@ package Test::Registry::StripeConnect {
             { Authorization => "Bearer $key" },
         );
         my $data = $tx->res->json
-            or die "Stripe GET $path: no JSON body (HTTP " . $tx->res->code . ")\n";
+            or die "Stripe GET $path: no JSON body (" . _why($tx) . ")\n";
         die "Stripe GET $path error: $data->{error}{message}\n" if $data->{error};
         return $data;
     }
