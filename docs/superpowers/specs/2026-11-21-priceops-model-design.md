@@ -215,7 +215,8 @@ These still hold:
 - **PriceOps never moves money.** It decides what is owed; Stripe moves the
   money and is the truth for it.
 - **Stripe rules:**
-  - direct charges on the tenant's connected account;
+  - direct charges on the seller's own Stripe account (see "Decided with
+    perigrin");
   - `application_fee_amount` is omitted, never 0;
   - fractions versus percentages to at most 4 decimal places;
   - `proration_behavior: 'none'` on modifications;
@@ -323,6 +324,14 @@ needs.
   The platform's sales to tenants are ordinary entitlements in its own schema.
   `registry.pricing_relationships` becomes, or is replaced by, that entitlement
   table rather than a special case.
+- **Direct charges: each tenant owns its customers.** Every sale is charged on
+  the selling tenant's own Stripe account (tenants connect Standard accounts,
+  `StripeConnect.pm:17`), so the customer, payment method, refunds and disputes
+  live there, and the platform takes its share as `application_fee_amount`.
+  The code makes destination charges today (`Payment.pm:357-359`, and
+  `transfer_data` on instalment schedules at `Payment.pm:142`); moving to direct charges is launch work,
+  done before the first real sale because no customers or payment methods
+  exist yet to move.
 - **Tamarou operates the platform tenant, and Tamarou's Stripe account is its
   account.** That account is also the Connect platform account, so the revenue
   share (the application fee on every tenant's sale) and the platform
