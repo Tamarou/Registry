@@ -4,8 +4,9 @@ Status: draft for perigrin's review. Base: `main` at 4e6664b. This design
 supersedes the model sections of
 `docs/superpowers/specs/2026-08-07-priceops-alignment-design.md` (the "August
 spec") where the two conflict. It keeps the August spec's money and schema rules
-(see "Carried forward"). The in-studio bookings design is rewritten on top of
-this one.
+(see "Rules that hold"). The in-studio bookings draft
+(`docs/in-studio-bookings-design` branch) predates this model and is to be
+rewritten on top of it; where the two disagree, this one wins.
 
 ## Why
 
@@ -25,7 +26,8 @@ an instance of it, not another argument about it.
 **PriceOps is the software that models the relationship between a tenant and
 its customers.** Each tenant is a tiny empire with its own customers. Anything a
 tenant manages and sells through an offer and a payment is controlled through
-PriceOps. Nothing a tenant sells exists outside it.
+PriceOps. Nothing a tenant sells through Registry exists outside it. Sales at
+the studio's counter, through its own point of sale, are outside Registry.
 
 **The platform is just a tenant.** Its customers are the tenants. What the
 platform sells SACP and what SACP sells someone booking a wheel class are the
@@ -84,6 +86,12 @@ A tenant's terms for granting access to a resource. An offer has:
     what fee, to which targets;
   - **use**: what counts as using it;
   - **expiry**: when it lapses unused, and what that means.
+- **conditions**: requirements the customer must meet to accept the offer,
+  checked at acceptance against facts the tenant already holds. A sibling
+  discount is an offer whose condition is "another child in this family holds
+  an entitlement in this program". Conditions are declared data on the offer
+  version, never code branches, and the customer sees each offer and its
+  conditions rather than having the system pick one for them.
 
 Offers are versioned and **immutable once published** (Pillar 1). A change to
 an offer is a new version. A special arrangement for one customer is its own
@@ -128,7 +136,11 @@ plan dictates:
 
 A tenant's take is shaped by the platform tenant's offer to that tenant. The
 revenue share is a term of the offer SACP accepted from the platform, not a
-special calculation.
+special calculation. Today the charge-time rate is read from
+`registry.tenants.platform_pricing_plan_id` (`RevenueShare.pm:15-50`), while
+`registry.pricing_relationships` only backs the signup menu; under this model
+the tenant's entitlement from the platform is the one source, and both of
+those give way to it.
 
 ### Metering
 
@@ -151,7 +163,14 @@ Each of these is a workflow step:
 - moving an entitlement through its life.
 
 There is no CLI-only path and no platform admin screen that tenants lack. Adding
-a new offer, price or policy setting needs no code change and no deploy.
+a new offer, price or policy setting needs no code change and no deploy. Who
+may run which workflow is data too; today's hard-coded `workflow_roles` map in
+`Registry.pm` is one of the things that becomes data.
+
+Workflow steps name Perl classes, and `CreateWorkflow.pm:55` takes the class
+from the submitted form, which `WorkflowStep.pm:84-87` then loads. Before the
+right to create workflows is anything a tenant can hold, step classes come
+from an allowlist; a tenant composes allowed steps, it never names code.
 
 That is what makes PriceOps developer-friendly here. Anyone allowed to author
 workflows can build or change a product's pricing: Tamarou as the platform
@@ -180,7 +199,11 @@ Granting a tenant a workflow is an entitlement, not a copy. Today a tenant gets
 the registry's workflows copied into its schema at creation, so a workflow added
 later, such as in-studio booking, never reaches an existing tenant without a
 migration. Under this model the tenant holds an entitlement to run that
-workflow, and gaining a new one is accepting an offer.
+workflow, and gaining a new one is accepting an offer. Workflow definitions
+live per tenant schema and no foreign key crosses schemas, so a held workflow
+may still be copied into the tenant's schema; what changes is that the
+entitlement, not the copy's existence, decides whether the tenant may run it,
+and accepting the offer is what brings the copy.
 
 ## After-school, re-expressed
 
@@ -198,13 +221,21 @@ After-school already does all of this, on structures that don't say so:
 | use policy | attendance | stated as the offer's use policy |
 | expiry | nothing | stated: an occurrence-bound entitlement expires when its occurrence ends |
 
-Today's drop and transfer defects (drop approval never advances; transfer skips
-capacity and moves no money) come from building policies as standalone admin
-flows. Re-expressing them as policies is the fix, not a patch on each flow.
+Today's drop and transfer defects have two causes. Drop approval never
+advances because nothing runs a workflow's later steps without a person at the
+screen: `Registry::WorkflowProcessor->new_run` processes only the first step
+(`Utility/WorkflowProcessor.pm:9-14`), and the job that would carry a run
+forward (`Job/WorkflowExecutor.pm`) is never registered. Transfer skips
+capacity and moves no money because it was built as a standalone admin flow.
+Re-expressing drop and transfer as policies fixes the second; the first needs
+a driver for unattended steps, which every lifecycle step (refund, change,
+expire) also needs.
 
-## Carried forward from the August spec
+## Rules that hold
 
-These still hold:
+Most of these come from the August spec. They are rules for the build, not a
+description of today's code; where the code does not yet follow one, the rule
+says so.
 
 - **Immutability and stamping.** Offer versions are append-only and immutable,
   enforced in the database. Every charge stamps the offer version and terms it
@@ -212,15 +243,22 @@ These still hold:
   backwards, not forwards".
 - **Absence is not zero.** If no offer resolves, refuse; never charge $0 by
   default. Every tenant always resolves to some offer from the platform tenant.
+  Today's fallback to the Free plan at 0% when a tenant has no linked plan
+  (`RevenueShare.pm:17-23`) breaks this rule and goes.
 - **PriceOps never moves money.** It decides what is owed; Stripe moves the
   money and is the truth for it.
 - **Stripe rules:**
   - direct charges on the seller's own Stripe account (see "Decided with
     perigrin");
-  - `application_fee_amount` is omitted, never 0;
+  - `application_fee_amount` is omitted, never 0. The destination-charge code
+    sends it unconditionally (`Payment.pm:357-359`, and a test asserts 0), so
+    the move to direct charges fixes this too;
   - fractions versus percentages to at most 4 decimal places;
-  - `proration_behavior: 'none'` on modifications;
-  - the Accounts v2 settings recorded there are one-way doors.
+  - `proration_behavior: 'none'` whenever a recurring contract is modified (no
+    code modifies one yet);
+  - tenants connect Standard accounts through the v1 Accounts API
+    (`StripeConnect.pm:17`). If that moves to Accounts v2, the settings chosen
+    there are one-way doors.
 - **Schema and tenancy:**
   - tables about the platform tenant's customers (tenants, and what they hold
     from the platform) live in the `registry` schema, as any tenant's customer
@@ -230,13 +268,17 @@ These still hold:
     tenant schema has these tables, empty unless that tenant has customers of
     its own;
   - payments live per tenant schema, so migrations loop over tenants;
-  - one schedule phase is in effect at a time, by exclusion constraint.
+  - one schedule phase is in effect at a time, enforced by an exclusion
+    constraint (none exists yet; step 3 adds it).
 - **Refunds are per entitlement**, never the whole cart. A `pending` refund is
   not terminal.
 - **Revenue share comes only through Stripe.** Offline sales earn nothing for
   now (#410).
-- **The launch rate:** Solo at $0 plus 2.5%, marked by
-  `metadata->>'launch_rate'` and read from the database in tests.
+- **The launch rate:** Solo at $0 plus 2.5% is the platform tenant's offer to
+  new tenants, published through product design like any offer. Today it is
+  found by `metadata->>'launch_rate'` (`RevenueShare.pm:125-140`), a lookup by
+  marker that the anti-goals rule out; it goes once the offer is published
+  through step 4.
 
 ## What this drops from the August spec
 
@@ -247,7 +289,8 @@ These still hold:
   the customer can see.
 - **The payment form fused into a component's `cadence`.** Payment is a policy
   offering one or more plans.
-- **The CLI as the author of platform plans,** and the `audience` split between
+- **Migrations and metadata markers as the author of platform plans** (the
+  August spec planned a CLI; none was built), and the `audience` split between
   revenue-share plans and the signup menu. The platform tenant authors its
   offers through the same product design workflow as anyone.
 - **"The transfer chain moves no money."** Change is a priced policy.
@@ -261,15 +304,38 @@ The platform is still two rows (`registry` and `registry-platform`, #294). The
 second has no schema, so code that walks tenants breaks on it and sweeps log
 errors for it. Making the platform an ordinary tenant (one tenant, with a
 schema, holding its offers to other tenants) comes first, because every other
-step needs somewhere for the platform's offers to live. The identity-check
-exemptions noted in the memory become entitlements:
+step needs somewhere for the platform's offers to live.
 
-- `SendNotifications.pm:162`
-- `Payment.pm:341,374`
-- `PricingPlanBasics.pm:61-68`
+**Code that asks "is this the platform?" goes,** and each answer comes from data
+instead:
 
-Structural `slug <> 'registry'` checks (schema housekeeping, not business rules)
-stay.
+- checks against the all-zeros id: `PricingRelationship.pm:154`,
+  `PricingPlanBasics.pm:68`, `PricingPlanSelection.pm:14`, `PricingPlan.pm:255`,
+  `Registry.pm:1202`. #294 keeps that id so the rename is one migration; these
+  checks are then removed as step 3 gives them data to read;
+- `Tenant->platform`, which finds the platform by the slug `registry-platform`
+  (`Tenant.pm:167`). The rename breaks it, so it changes in the same commit as
+  the rename, or `is_platform_admin` is false for everyone and every
+  `/platform/*` route returns 403 (`t/security/platform-nav.t`,
+  `t/security/platform-admin-only.t`);
+- `is_platform_admin` and the `/platform/*` screens become the `registry`
+  tenant's ordinary admin role and screens (see "Decided with perigrin");
+- `SendNotifications.pm:162` and `Payment.pm:341,374`, which branch on the
+  platform slug, become reads of the tenant's entitlements and Stripe account.
+
+**Which `slug <> 'registry'` checks stay.** A check stays only where `registry`
+has already been handled another way: a migration loop that changed
+`registry` first, or a connection where `connect_schema('registry')` is the
+default connection. Every other check is a business rule that treats the
+platform tenant as something other than a tenant, and goes. Before each one
+goes, the job is tested against the platform tenant, because some would harm
+it: the inert-tenant sweep (`Tenant.pm:364-368`) must count the platform as
+active or it reports the platform for reclaiming. The known business-rule
+checks are `TenantProcessor.pm`, `ProcessWaitlist.pm:73`,
+`WaitlistExpiration.pm:72`, `Tenant.pm:364-368,571,674`, `ProgramListing.pm:269`
+and the `registry-storefront` workflow (`Registry.pm:1282`,
+`Tenant.pm:876-878`). The builder confirms the list with a search rather than
+trusting this one.
 
 ## Order of work
 
@@ -277,29 +343,49 @@ Each step leaves `main` releasable with the suite green.
 
 0. **Green CI on `main`.** The suite fails today; nothing else starts until it
    passes.
-1. **The platform as a real tenant** (#294/#265), with exemptions turned into
-   entitlements.
-2. **Resources, offers with policies, and entitlements as first-class data,**
-   alongside today's tables. Offer versions keep the immutability triggers that
-   `pricing-plan-versions.sql` already has.
-3. **The product design workflow steps** that publish offers and policies, used
-   first by the platform tenant for its own plans. That retires the CLI path and
-   the shared-platform-plan workaround.
-4. **Lifecycle steps** (accept and pay, use, change, refund, expire) that read
-   the stamped policies.
-5. **After-school re-expressed:** enrollments as entitlements, drop and transfer
-   as the refund and change policies. This fixes the drop-approval and transfer
-   defects at the root.
-6. **Workflows as entitlements:** tenants hold entitlements to run workflows
-   instead of copies, so new workflows reach existing tenants.
-7. **Metering** for email sends, workflow runs and, later, AI tokens, recorded
+1. **The platform as a real tenant** (#294/#265): the rename, `Tenant->platform`
+   in the same commit, the `registry` tenant's admin role replacing
+   `is_platform_admin`, and the `slug <> 'registry'` checks handled by the rule
+   above.
+2. **Direct charges, with Stripe as the source of truth.** Charges, refunds
+   and the payment form move to the selling tenant's account:
+   - the Stripe client sends the `Stripe-Account` header (`Service/Stripe.pm`
+     has no support for it);
+   - refunds stop using `reverse_transfer` (`Payment.pm:362-383`);
+   - the browser's Payment Element is given the tenant's account;
+   - `application_fee_amount` is omitted at 0;
+   - a Connect webhook endpoint, with its own secret, reads `event.account` to
+     find the tenant instead of metadata (`Webhooks.pm`), and handles
+     `charge.refunded`, `charge.dispute.*` and customer events;
+   - the tests that pin destination charges are rewritten;
+   - the builder checks in test mode whether a charge on the Connect platform
+     account itself accepts a `Stripe-Account` header naming that account.
+3. **Resources, offers with policies and conditions, and entitlements as
+   first-class data.** Offer versions keep the immutability triggers that
+   `pricing-plan-versions.sql` already has. The identity checks above read
+   entitlements from here.
+4. **The product design workflow steps** that publish offers and policies. Both
+   day-one users run them: the platform tenant publishing its recurring
+   revenue-share offer and the launch rate, and SACP publishing its in-studio
+   offers. That retires the migrations and metadata markers that author
+   platform plans today.
+5. **Lifecycle steps** (accept and pay, use, change, refund, expire) that read
+   the stamped policies, plus a driver that runs workflow steps no person is
+   waiting on (registering `Job/WorkflowExecutor.pm` or its replacement) and a
+   scheduled job that expires entitlements. Stripe-reported refunds and
+   disputes from step 2 arrive here as lifecycle moves.
+6. **After-school re-expressed:** enrollments as entitlements, drop and transfer
+   as the refund and change policies, sibling discounts as offer conditions,
+   before after-school sells anything.
+7. **Workflows as entitlements:** a tenant's right to run a workflow comes from
+   an entitlement, so new workflows reach existing tenants by offer.
+8. **Metering** for email sends, workflow runs and, later, AI tokens, recorded
    whether priced or not. The email send cap becomes an entitlement check on
    that meter.
 
-Day one needs steps 0–4, with SACP's in-studio offers and the platform's
-recurring revenue-share offer both published through step 3. Step 5 moves
-after-school onto the same model before it sells anything. Steps 6–7 can
-follow.
+Day one is steps 0–5: SACP's in-studio offers and the platform's recurring
+revenue-share offer are both live. Step 6 follows before after-school sells.
+Steps 7–8 can follow after that.
 
 ## Goals
 
@@ -316,7 +402,7 @@ follow.
 - A tenant-facing workflow authoring UI beyond what exists. The entitlement to
   create workflows is modelled; better tooling is separate work.
 - Running old and new after-school paths side by side. With nothing sold,
-  step 5 replaces the old path rather than coexisting with it.
+  step 6 replaces the old path rather than coexisting with it.
 
 ## Anti-goals
 
@@ -332,22 +418,23 @@ follow.
   is deleted and the all-zeros `registry-platform` row is renamed to
   `registry`, so the sentinel UUID hardcoded across the code keeps resolving.
   Because `registry` is a tenant schema, anything that runs per tenant runs on
-  it too: `TenantProcessor.pm`'s `slug ne 'registry'` filter goes, so the
-  nightly jobs cover the platform tenant. Migrations keep their
+  it too, and nightly jobs cover the platform tenant. Migrations keep their
   `slug != 'registry'` loops, because each one changes `registry` first
   (`SET search_path TO registry`) and the loop reaches every other tenant
   once; that is not an exclusion.
   The platform's sales to tenants are ordinary entitlements in its own schema.
-  `registry.pricing_relationships` becomes, or is replaced by, that entitlement
-  table rather than a special case.
+  That entitlement table replaces both `registry.pricing_relationships` and
+  `tenants.platform_pricing_plan_id` as the record of what a tenant holds.
+  `TenantProcessor.pm` and the other business-rule exclusions are covered in
+  "The platform tenant made real".
 - **Direct charges: each tenant owns its customers.** Every sale is charged on
   the selling tenant's own Stripe account (tenants connect Standard accounts,
   `StripeConnect.pm:17`), so the customer, payment method, refunds and disputes
   live there, and the platform takes its share as `application_fee_amount`.
   The code makes destination charges today (`Payment.pm:357-359`, and
-  `transfer_data` on instalment schedules at `Payment.pm:142`); moving to direct charges is launch work,
-  done before the first real sale because no customers or payment methods
-  exist yet to move.
+  `transfer_data` on instalment schedules at `Payment.pm:142`). Moving to
+  direct charges is step 2, done before the first real sale because no
+  customers or payment methods exist yet to move.
 - **Tamarou operates the platform tenant, and Tamarou's Stripe account is its
   account.** That account is also the Connect platform account, so the revenue
   share (the application fee on every tenant's sale) and the platform
@@ -358,11 +445,10 @@ follow.
   no `application_fee_amount` by the ordinary "omitted, never 0" rule rather
   than by a check for the platform. Whether a charge on the Connect platform
   account itself takes a `Stripe-Account` header naming that account is
-  unverified; the builder checks it with Stripe in test mode before step 4.
+  unverified; the builder checks it with Stripe in test mode in step 2.
 - **Alex administers the platform tenant.** The persona Alex
   (`docs/personas/alex.md`, which replaced Alice in 08c3a5a) stands in for
-  perigrin and Tamarou: an ordinary
-  admin of the `registry` tenant, using the same admin screens and workflows as
+  perigrin and Tamarou: an ordinary admin of the `registry` tenant, using the same admin screens and workflows as
   any tenant's admin. The `/platform/*` screens, the `registry platform` CLI
   and `is_platform_admin` become that tenant's admin surface, not a separate
   one.
@@ -403,42 +489,54 @@ follow.
 
 ## Settled details
 
-These came up in the builder review; each is *(my call)*.
+These came up in the builder reviews; each is *(my call)*.
 
-- **Exemptions move with entitlements.** Step 1 only collapses the platform
-  into one tenant. Turning the identity-check exemptions into entitlements
-  happens in step 2, when entitlements exist.
-- **Bootstrap.** Every tenant, the platform included, starts with seeded
-  entitlements: the platform tenant's own default offer, granted at tenant
-  creation, which "absence is not zero" requires anyway. The platform tenant's
-  first entitlements, including the one to run product design, are seed data.
-  The root has to start somewhere, and everything after it goes through
-  workflows.
-- **The minimum shapes for the first slice** (what in-studio needs from
-  steps 2–4):
+- **Identity checks move with entitlements.** Step 1 collapses the platform
+  into one tenant and fixes what the rename breaks. The all-zeros id checks and
+  the slug branches in `SendNotifications.pm` and `Payment.pm` turn into reads
+  of entitlements in step 3, when entitlements exist.
+- **Bootstrap.** Every tenant starts with seeded entitlements through the same
+  tenant-creation step, including the revenue-share offer it is on. The one
+  thing that exists before any workflow can run is the platform tenant's own
+  row, its first admin and its right to run product design, created by the
+  deploy migration as the row is today. That is the root, not a path: nothing
+  after it is created any other way.
+- **The minimum shapes for day one** (what steps 3–5 must support):
   - a finite, discrete resource (seats in an occurrence) with offers that use
-    N seats each;
+    N seats each, and a per-booking cap on how many of an offer one booking
+    may take;
   - a one-time payment plan;
   - a refund policy of "none" or "full, until a cutoff";
   - a change policy of window (hours before the occurrence held), fee, and
-    targets limited to occurrences of the same offer;
+    targets limited to occurrences of the same offer. The fee is a one-time
+    payment like any other, so the revenue share applies to it, and it is
+    refunded automatically if the move cannot complete;
+  - the platform's revenue-share offer: a recurring term whose price is a
+    percentage of each sale the tenant makes, collected per sale as
+    `application_fee_amount`, not invoiced;
   - expiry at the end of the occurrence;
-  - use as optional attendance.
+  - use as optional attendance;
+  - lifecycle moves reported by Stripe: full refund, partial refund, lost
+    dispute.
 
-  Instalments, recurring contracts and metered entitlements are re-expressed
-  later, in steps 5–7.
+  Extras sold with a booking stay out (they go through the studio's point of
+  sale). Instalments, metered entitlements and offer conditions arrive with
+  after-school and metering, in steps 6 and 8.
 - **"Offer" is already used by the waitlist** (`Waitlist.pm`,
   `accepted_offer_ids`). In this model a waitlist offer is a time-limited hold:
   a discrete entitlement with an expiry policy. The waitlist's term is renamed
-  to "hold" when step 5 reaches it.
-- **Tenant-edited workflows.** No tenant-facing workflow editor exists, so
-  there are no tenant edits to preserve when step 6 swaps copies for
-  entitlements. Verify with a query across tenant schemas before step 6.
+  to "hold" when step 6 reaches it.
+- **Tenant-edited workflows.** Every tenant gets the `workflow-creation`
+  workflow copied in (`Tenant.pm:873-882`), so a tenant may already have
+  edited or added workflows. Step 7 queries every tenant schema for workflows
+  that differ from the platform's and keeps them.
+- **The Alex persona** (`docs/personas/alex.md`) says paid enrollment is live
+  on destination charges. It is updated to this model in step 2.
 
 ## What's left to the builder
 
-- Table and column design for resources, offers, policies and entitlements,
-  within the rules above.
+- Table and column design for resources, offers, policies, conditions and
+  entitlements, within the rules above.
 - Whether existing `pricing_plans` rows, which are configuration only, are
   converted to offer versions or re-entered through product design.
 - How the lifecycle steps are grouped into workflows.
