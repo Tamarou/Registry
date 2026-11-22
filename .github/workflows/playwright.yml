@@ -11,7 +11,10 @@ on:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    # ubuntu-latest became 26.04, which Playwright 1.55.1 refuses ("does not
+    # support chromium on ubuntu26.04-x64"), so this job stopped before any
+    # test. Pinned until Playwright is moved to a release that supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
