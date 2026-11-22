@@ -58,7 +58,12 @@ package Test::Registry::StripeConnect {
         my $code = $tx->res->code;
         return "HTTP $code" if defined $code;
         my $err = $tx->error;
-        return "no response: " . ( $err && $err->{message} // "unknown error" );
+        my $why = $err && $err->{message} // "unknown error";
+        # Mojo reports only that TLS is unavailable; the reason is the failed
+        # require, so say what it was.
+        $why .= " (require IO::Socket::SSL: " . ( eval { require IO::Socket::SSL; "loaded " . IO::Socket::SSL->VERSION } // $@ =~ s/\s+\z//r ) . ")"
+          if $why =~ /IO::Socket::SSL/;
+        return "no response: $why";
     }
 
     sub _post {
