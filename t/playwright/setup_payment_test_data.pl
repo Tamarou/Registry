@@ -9,6 +9,15 @@ use experimental 'signatures';
 
 use lib qw(lib t/lib);
 
+# Under Playwright in CI this process could not load IO::Socket::SSL (Mojo then
+# reports only "IO::Socket::SSL 2.009+ required for TLS support", and a second
+# require says the first one failed). Load it before anything else does, so
+# the first failure's own reason reaches stderr, which execSync reports.
+BEGIN {
+    eval { require IO::Socket::SSL; 1 }
+      or print STDERR "IO::Socket::SSL failed to load under $^X: $@";
+}
+
 use Registry::DAO;
 use Registry::DAO::User;
 use Registry::DAO::Tenant;
