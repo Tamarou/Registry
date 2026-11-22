@@ -75,6 +75,7 @@ Perl warnings (unambiguous noise):
 | `t/dao/drop-refund-is-a-request-not-a-refund.t` | `Use of uninitialized value $user_role in string eq/ne` | `lib/Registry/DAO/Enrollment.pm` lines 692 and 708 |
 | `t/controller/tenant-domains.t` | `Name "MockRenderService::verify_custom_domain" used only once: possible typo` | the test, line 236 |
 | `t/controller/payment-return-callback.t` | `Un-mocked method 'unsettled_refund_increments()' called` | a Test::MockObject reaching `lib/Registry/DAO/WorkflowSteps/Payment.pm` line 447 |
+| `t/controller/workflow-layout-issues.t` | `(in cleanup) Can't call method "FETCH" on an undefined value at .../Mojo/Pg/Database.pm line 35 during global destruction.` | a database handle outliving its connection at exit; also twice in the CI sweep log |
 
 Errors printed from deliberately exercised failure paths (the assertion
 passes; the message reaches stderr instead of being captured and checked):
@@ -87,6 +88,27 @@ passes; the message reaches stderr instead of being captured and checked):
 | `t/unit/email-templates.t` | `Unknown email template: 'nonexistent_template'` |
 | `t/robustness/db-constraints.t` | constraint-violation `DETAIL:` lines from `User.pm` line 208 |
 | `t/database/seed-tier-pricing-options.t`, `t/database/retire-registry-plus-plan.t` | `psql:` pre-flight `ERROR:` lines and `Deploy failed` from migrations the tests expect to refuse |
+| `t/dao/enrollment-capacity-partial-fit.t`, `t/dao/payment-capacity-obligation.t` | `finalize_enrollment: unresolvable refund share for child ... in session ... (payment ...)` |
+| `t/dao/payment-refund-increments.t` | `record_capacity_obligation: no headroom for 2500 cents on payment ...` and `refusing negative share -2500` |
+| `t/dao/payment-step-readiness-gate.t`, `t/integration/tenant-paid-enrollment.t`, `t/user-journeys/alex/02-activate-and-collect.t` | `checkout refused: tenant '...' is not Stripe Connect ready, so a priced cart cannot be charged` |
+
+`diag` output on stderr from files that pass (lines beginning `#`, which a
+TAP harness shows but does not count as failure):
+
+| file | `#` lines |
+|---|---|
+| `t/dao/waitlist-position-debug.t` | 52 |
+| `t/dao/waitlist-rapid-test.t` | 27 |
+| `t/e2e/admin-program-management.t` | 8 |
+| `t/user-journeys/alex/03-platform-billing.t` | 2 |
+| `t/database/enrollment-reenrol-tenant.t` | 1 |
+| `t/controller/stripe-connect-onboarding.t` | 1 |
+
+How this section was derived, so it can be re-derived: each file run alone
+with `carton exec perl -Ilib <file>` under `LC_ALL=C.UTF-8`, stderr captured
+per file; a file is listed above if its stderr has any line that is not a
+`#` diagnostic, blank, or a structured `{"level":...}` log line, or (for the
+`diag` table) if it passed and printed `#` lines. Every such file is listed.
 
 Application log lines (structured JSON on stderr) appear in most controller,
 security and user-journey files: `MOJO_SECRET not set -- using hostname for
