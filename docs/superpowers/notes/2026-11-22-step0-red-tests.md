@@ -122,9 +122,11 @@ green issue's call.
 
 ## Green
 
-Recorded 2026-11-22 at 28c9f0c, the first commit on which CI's `test`, `e2e`,
-`database-compatibility` (16/17/18), `lint` and `security` jobs all passed,
-and `stripe-e2e`'s six real-Stripe Perl suites passed. Locally, `make test`
+Recorded 2026-11-22 at 28c9f0c. On it CI's `test`, `e2e`,
+`database-compatibility` (16/17/18), `lint` and `security` jobs all pass, as
+do `stripe-e2e`'s six real-Stripe Perl suites (both already true at 5059670);
+28c9f0c is the first commit on which the Playwright seeder also succeeds, so
+the browser leg reaches the payment step. Locally, `make test`
 and the `-j8` sweep are clean except `t/service/stripe-async-bug.t`, which
 needs the network and passes in CI. Not green at this point, by perigrin's
 decision to close step 0 here: the browser leg of `stripe-e2e`
