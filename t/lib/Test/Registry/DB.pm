@@ -3,6 +3,12 @@ use 5.42.0;
 # ABOUTME: Loads schema from a pre-generated dump file for fast test startup.
 use App::Sqitch ();
 use Test::PostgreSQL ();
+
+# initdb takes its encoding from the locale, so a POSIX-locale shell made a
+# SQL_ASCII cluster and every non-ASCII template failed to store ("Wide
+# character in subroutine entry"), while CI's UTF-8 runner made a UTF8 one.
+# Production databases are UTF8; ask for it rather than inherit it.
+my $INITDB_ENCODING = '-E UTF8';
 use DBI ();
 
 package Test::Registry::DB {
@@ -53,7 +59,7 @@ package Test::Registry::DB {
     sub generate_dump {
         # Deploy schema via Sqitch into a temp DB, then pg_dump it.
         # Called by `make test-schema` or manually when migrations change.
-        my $template_db = Test::PostgreSQL->new();
+        my $template_db = Test::PostgreSQL->new( extra_initdb_args => $INITDB_ENCODING );
         my $uri = $template_db->uri;
 
         warn "Deploying schema via Sqitch...\n";
@@ -145,7 +151,7 @@ package Test::Registry::DB {
     sub new {
         my $class = shift;
         my $self = bless {}, $class;
-        $self->{pgsql} = Test::PostgreSQL->new();
+        $self->{pgsql} = Test::PostgreSQL->new( extra_initdb_args => $INITDB_ENCODING );
 
         if (-f $DUMP_FILE && -s $DUMP_FILE) {
             # Fast path: load from pre-generated dump
