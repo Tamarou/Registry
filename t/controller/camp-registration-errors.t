@@ -180,12 +180,18 @@ subtest 'duplicate email - shows error, not 500' => sub {
     my $user_count_before = $dao->db->select('users', 'COUNT(*)')->array->[0];
 
     # POST create_account with email belonging to existing user
-    my $response = $t->post_ok($step_url => form => {
-        action   => 'create_account',
-        username => 'existing.parent',
-        email    => 'existing@example.com',
-        name     => 'Duplicate Attempt',
-    });
+    my @warnings;
+    my $response = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        $t->post_ok($step_url => form => {
+            action   => 'create_account',
+            username => 'existing.parent',
+            email    => 'existing@example.com',
+            name     => 'Duplicate Attempt',
+        });
+    };
+    like "@warnings", qr/Error creating Registry::DAO::User.*users_username_key/s,
+        'The duplicate-key failure is logged';
 
     # Should redirect back to same step with errors (302), NOT 500
     $response->status_is(302, 'Duplicate email returns 302, not 500');

@@ -11,6 +11,14 @@ use Test::PostgreSQL ();
 my $INITDB_ENCODING = '-E UTF8';
 use DBI ();
 
+# Registry::startup sets its logger's level from LOG_LEVEL (default 'info'), so
+# every app a test built printed the MOJO_SECRET warning and five
+# scheduled-job lines to stderr -- about 200 lines a run that nobody read. A
+# test that inspects the log sets its own level (access-log.t and friends call
+# ->level('debug')); one that wants the noise back can export LOG_LEVEL. The
+# production default is untouched.
+$ENV{LOG_LEVEL} //= 'fatal';
+
 package Test::Registry::DB {
     use File::Basename qw(dirname);
     use File::Spec ();

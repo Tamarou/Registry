@@ -18,7 +18,7 @@ use utf8;
 use warnings;
 use lib qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing diag is like ok subtest BAIL_OUT )];
+use Test::More import => [qw( done_testing note is like ok subtest BAIL_OUT )];
 defer { done_testing };
 
 use Test::Registry::Mojo;
@@ -278,8 +278,8 @@ subtest 'rate-consistency: displayed rate equals charged rate' => sub {
     my $displayed_rate = defined($displayed_rate_str) ? ($displayed_rate_str + 0) : undef;
 
     # Both values printed as diagnostics so any drift is visible in prove -v output.
-    diag "displayed_rate (from review page HTML): ${\( $displayed_rate // 'undef' )}%";
-    diag "charged rate (via revenue_share_fraction_for_tenant): ${charged_rate}%";
+    note "displayed_rate (from review page HTML): ${\( $displayed_rate // 'undef' )}%";
+    note "charged rate (via revenue_share_fraction_for_tenant): ${charged_rate}%";
 
     is $displayed_rate, $charged_rate,
         'displayed plan rate matches the charged rate (both plan-driven, #267)';

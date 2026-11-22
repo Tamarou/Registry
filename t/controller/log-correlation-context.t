@@ -23,7 +23,9 @@ subtest 'JSON log lines carry request_id and tenant_id during a request' => sub 
     my $log_buf = '';
     open my $log_fh, '>', \$log_buf or die "Cannot open string buffer: $!";
 
-    my $logger = Registry::Utility::Logger->new(level => 'debug');
+    # Logger's BUILD lets LOG_LEVEL override the level passed in, and the test
+    # harness exports a quiet one; this capture needs the level it asks for.
+    my $logger = do { delete local $ENV{LOG_LEVEL}; Registry::Utility::Logger->new(level => 'debug') };
     $logger->handle($log_fh);
     $t->app->log($logger);
 
@@ -60,7 +62,7 @@ subtest 'context is cleared after request (no stale fields)' => sub {
     # Log a line outside of a request -- it should NOT carry request_id
     my $out_buf = '';
     open my $out_fh, '>', \$out_buf or die "Cannot open string buffer: $!";
-    my $bare_logger = Registry::Utility::Logger->new(level => 'debug');
+    my $bare_logger = do { delete local $ENV{LOG_LEVEL}; Registry::Utility::Logger->new(level => 'debug') };
     $bare_logger->handle($out_fh);
     $bare_logger->info('outside request');
     close $out_fh;

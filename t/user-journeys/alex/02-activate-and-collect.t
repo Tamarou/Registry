@@ -325,11 +325,17 @@ subtest 'gated: unready tenant blocks paid enrollment' => sub {
     # deliberately -- the controller's error rendering varies with request
     # type, and the load-bearing invariants are the ones asserted below:
     # the run stays on the payment step and no payment row exists anywhere.
-    $t->post_ok(
-        workflow_process_step_url($reg_wf, $run, $step),
-        \%tenant_host,
-        form => { agreeTerms => 1 }
-    );
+    my @warnings;
+    {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        $t->post_ok(
+            workflow_process_step_url($reg_wf, $run, $step),
+            \%tenant_host,
+            form => { agreeTerms => 1 }
+        );
+    }
+    like "@warnings", qr/checkout refused: tenant '[^']+' is not Stripe Connect ready/,
+        'the refusal is logged';
 
     my $response_code = $t->tx->res->code;
     ok $response_code == 302 || $response_code == 200,

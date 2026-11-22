@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is ok like is_deeply diag )];
+use Test::More import => [qw( done_testing is ok like is_deeply note )];
 defer { done_testing };
 
 use Test::Registry::DB;
@@ -66,7 +66,7 @@ for my $i (0..5) {
     );
 }
 
-diag "Initial waitlist created with 6 students";
+note "Initial waitlist created with 6 students";
 
 # Accept first two to fill capacity
 for (1..2) {
@@ -74,22 +74,22 @@ for (1..2) {
     $offer->accept_offer($db);
 }
 
-diag "Capacity filled, 4 students remaining on waitlist";
+note "Capacity filled, 4 students remaining on waitlist";
 
 # Create 3 offers in rapid succession
 my @offers;
 for my $round (1..3) {
-    diag "Creating offer $round";
+    note "Creating offer $round";
     my $offer = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
     if ($offer) {
         push @offers, $offer;
         # Immediately expire it
         $offer->update($db, { expires_at => \"NOW() - INTERVAL '1 hour'" });
-        diag "Offer $round created and pre-expired";
+        note "Offer $round created and pre-expired";
     }
 }
 
-diag "Created " . scalar(@offers) . " offers and pre-expired them";
+note "Created " . scalar(@offers) . " offers and pre-expired them";
 
 # Check current state
 my $state = $db->db->select('waitlist', ['id', 'status', 'position', 'expires_at'], {
@@ -97,9 +97,9 @@ my $state = $db->db->select('waitlist', ['id', 'status', 'position', 'expires_at
     status => 'offered'
 })->hashes;
 
-diag "Offered entries before expiration:";
+note "Offered entries before expiration:";
 for my $entry (@$state) {
-    diag sprintf("  ID: %s, status: %s, position: %d",
+    note sprintf("  ID: %s, status: %s, position: %d",
         substr($entry->{id}, 0, 8),
         $entry->{status},
         $entry->{position}
@@ -107,18 +107,18 @@ for my $entry (@$state) {
 }
 
 # Try to expire all at once - first call
-diag "\nFirst call to expire_old_offers:";
+note "\nFirst call to expire_old_offers:";
 my $expired_batch = Registry::DAO::Waitlist->expire_old_offers($db);
-diag "First batch expired " . scalar(@$expired_batch) . " entries";
+note "First batch expired " . scalar(@$expired_batch) . " entries";
 
 # Check state after first expiration
 $state = $db->db->select('waitlist', ['id', 'status', 'position'], {
     session_id => $session->id
 }, { order_by => { -asc => 'position' } })->hashes;
 
-diag "\nWaitlist state after first expiration:";
+note "\nWaitlist state after first expiration:";
 for my $entry (@$state) {
-    diag sprintf("  ID: %s, status: %s, position: %d",
+    note sprintf("  ID: %s, status: %s, position: %d",
         substr($entry->{id}, 0, 8),
         $entry->{status},
         $entry->{position}
@@ -126,9 +126,9 @@ for my $entry (@$state) {
 }
 
 # Try second call (should expire nothing)
-diag "\nSecond call to expire_old_offers:";
+note "\nSecond call to expire_old_offers:";
 my $expired_batch2 = Registry::DAO::Waitlist->expire_old_offers($db);
-diag "Second batch expired " . scalar(@$expired_batch2) . " entries";
+note "Second batch expired " . scalar(@$expired_batch2) . " entries";
 
 is scalar(@$expired_batch), 3, "First expiration expired 3 entries";
 is scalar(@$expired_batch2), 0, "Second expiration expired 0 entries (no duplicates)";

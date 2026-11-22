@@ -9,7 +9,7 @@ use warnings;
 use utf8;
 use lib qw(lib t/lib);
 use experimental qw(defer signatures);
-use Test::More import => [qw( done_testing is isnt ok like unlike subtest diag )];
+use Test::More import => [qw( done_testing is isnt ok like unlike subtest diag note )];
 defer { done_testing };
 
 use Mojo::File qw( path );
@@ -64,7 +64,7 @@ subtest 'the product can create a connected account at all' => sub {
     ok scalar(@writers),
         'something under lib/ writes tenants.stripe_connect_account_id'
         or diag 'nothing does -- the readiness gate can never pass';
-    diag "writers: @writers" if @writers;
+    note "writers: @writers" if @writers;
 };
 
 subtest 'a fresh tenant is offered the way to switch payments on' => sub {

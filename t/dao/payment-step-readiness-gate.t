@@ -184,7 +184,13 @@ subtest 'paid + tenant not ready: gate returns error, no payment row' => sub {
     my $run  = make_paid_run();
     my $step = get_payment_step();
 
-    my $result = settle($step->process($tenant_db, { agreeTerms => 1 }, $run));
+    my @warnings;
+    my $result = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        settle($step->process($tenant_db, { agreeTerms => 1 }, $run));
+    };
+    like "@warnings", qr/checkout refused: tenant '\Q${\ $tenant->slug }\E' is not Stripe Connect ready/,
+        'the refusal is logged';
 
     ok $result->{errors}, 'gate returned errors';
     # Asserted against the method rather than a phrase: the wording changed

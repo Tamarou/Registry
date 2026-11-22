@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;
 use App::Sqitch;
+use Capture::Tiny qw( capture_stderr );
 use Test::PostgreSQL;
 use Mojo::Pg;
 
@@ -153,8 +154,14 @@ ok scalar @$before >= 2,
 $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = 'registry'},
     $plus_plan_id );
 
-dies_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', 'retire-registry-plus-plan' ) }
-    'the deploy refuses to run while a tenant is subscribed to the plan';
+# psql prints the refusal to stderr; capture it so the test shows WHY the
+# deploy failed and the expected error does not leak into the TAP stream.
+my $stderr = capture_stderr {
+    dies_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', 'retire-registry-plus-plan' ) }
+        'the deploy refuses to run while a tenant is subscribed to the plan';
+};
+like $stderr, qr/retire-registry-plus-plan pre-flight FAILED: tenants \[registry\] are subscribed/,
+    'and it refuses on the subscribed-tenant pre-flight, not some other error';
 is_deeply retired_ids(), $before,
     'the refused deploy suspended nothing';
 is $db->query( q{SELECT count(*) FROM sqitch.changes WHERE change = 'retire-registry-plus-plan'} )

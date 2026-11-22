@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is ok like is_deeply diag )];
+use Test::More import => [qw( done_testing is ok like is_deeply note )];
 defer { done_testing };
 
 use Test::Registry::DB;
@@ -66,9 +66,9 @@ sub show_waitlist_state {
         session_id => $session->id
     }, { order_by => { -asc => 'position' } })->hashes;
 
-    diag "\n=== $label ===";
+    note "\n=== $label ===";
     for my $entry (@$all_entries) {
-        diag sprintf("Student %d: pos=%d, status=%s",
+        note sprintf("Student %d: pos=%d, status=%s",
             $entry->{student_id} =~ /(\d)$/ ? $1 : 0,
             $entry->{position},
             $entry->{status}
@@ -77,7 +77,7 @@ sub show_waitlist_state {
 }
 
 # Add 5 students to waitlist
-diag "Adding 5 students to waitlist";
+note "Adding 5 students to waitlist";
 for my $i (0..4) {
     my $entry = Registry::DAO::Waitlist->join_waitlist(
         $db, $session->id, $location->id, $students[$i]->id, $parents[$i]->id
@@ -88,13 +88,13 @@ for my $i (0..4) {
 show_waitlist_state("After adding all students");
 
 # Process and accept first offer
-diag "\nProcessing first offer";
+note "\nProcessing first offer";
 my $offer1 = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
 ok $offer1, "First offer created";
 
 show_waitlist_state("After first offer");
 
-diag "\nAccepting first offer";
+note "\nAccepting first offer";
 $offer1->accept_offer($db);
 
 show_waitlist_state("After accepting first offer");
@@ -104,17 +104,17 @@ for my $i (1..4) {
     my $pos = Registry::DAO::Waitlist->get_student_position(
         $db, $session->id, $students[$i]->id
     );
-    diag "Student $i calculated position: " . ($pos // 'undef');
+    note "Student $i calculated position: " . ($pos // 'undef');
 }
 
 # Process and decline second offer
-diag "\nProcessing second offer";
+note "\nProcessing second offer";
 my $offer2 = Registry::DAO::Waitlist->process_waitlist($db, $session->id);
 ok $offer2, "Second offer created";
 
 show_waitlist_state("After second offer");
 
-diag "\nDeclining second offer";
+note "\nDeclining second offer";
 my $offer3 = $offer2->decline_offer($db);
 ok $offer3, "Third person offered after decline";
 
@@ -122,9 +122,9 @@ show_waitlist_state("After declining second offer");
 
 # Check final positions
 my @waiting = @{Registry::DAO::Waitlist->get_session_waitlist($db, $session->id, 'waiting')};
-diag "\nFinal waiting list:";
+note "\nFinal waiting list:";
 for my $entry (@waiting) {
-    diag sprintf("Entry: pos=%d, status=%s", $entry->position, $entry->status);
+    note sprintf("Entry: pos=%d, status=%s", $entry->position, $entry->status);
 }
 
 is scalar(@waiting), 2, "Two students still waiting";

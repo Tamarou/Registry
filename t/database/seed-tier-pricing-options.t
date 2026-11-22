@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;
 use App::Sqitch;
+use Capture::Tiny qw( capture_stderr );
 use Test::PostgreSQL;
 use Mojo::Pg;
 use Mojo::JSON qw( decode_json );
@@ -128,8 +129,15 @@ subtest 'the deploy refuses a name it did not create' => sub {
         q{UPDATE registry.pricing_plans SET plan_name = 'Studio'
            WHERE plan_name = 'Operator Tier'} );
 
-    dies_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', CHANGE ) }
-        'the deploy fails rather than adopting a plan it does not own';
+    # psql prints the refusal to stderr; capture it so the test shows WHY the
+    # deploy failed and the expected error does not leak into the TAP stream.
+    my $stderr = capture_stderr {
+        dies_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', CHANGE ) }
+            'the deploy fails rather than adopting a plan it does not own';
+    };
+    like $stderr,
+        qr/a tenant plan named Studio already exists and was not created by this change/,
+        'and it fails on the name-collision pre-flight, not some other error';
 
     is $db->query(
         q{SELECT COUNT(*) FROM registry.pricing_plans WHERE plan_name = 'Studio'}

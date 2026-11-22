@@ -150,14 +150,22 @@ subtest 'Test waitlist integration' => sub {
 };
 
 subtest 'Test message integration for dashboard' => sub {
-    my $message = Registry::DAO::Message->send_message($db, {
-        sender_id => $staff->id, # Using staff as sender
-        subject => 'Dashboard Test Message',
-        body => 'This is a test message for dashboard display',
-        message_type => 'announcement',
-        scope => 'tenant-wide'
-    }, [$parent->id], send_now => 1);
-    
+    # The parent fixture has no email, so the email notification fails and is
+    # logged rather than aborting the send.
+    my @warnings;
+    my $message = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        Registry::DAO::Message->send_message($db, {
+            sender_id => $staff->id, # Using staff as sender
+            subject => 'Dashboard Test Message',
+            body => 'This is a test message for dashboard display',
+            message_type => 'announcement',
+            scope => 'tenant-wide'
+        }, [$parent->id], send_now => 1);
+    };
+    like "@warnings", qr/Failed to send email notification .*No email found for user/,
+        'Missing parent email is logged, not fatal';
+
     ok $message, 'Message created for dashboard display';
     
     # Get messages for parent
