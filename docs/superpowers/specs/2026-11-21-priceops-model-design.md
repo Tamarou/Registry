@@ -604,6 +604,9 @@ can follow after that.
   of the offer the customer accepted: Solo carries a refund policy of "keep the
   fee", with an exception the platform tenant's admin applies when the fault
   is Tamarou's.
+- **Only tenant admins publish offers.** `staff` may run a tenant's programs
+  but not publish its prices, so a `staff` user of `registry` cannot change
+  what every tenant is charged.
 - **A change holds the target seat before charging the fee,** and releases it
   if the charge fails. No system-issued refund of a change fee exists.
 - **Everything moves to the new model, and CI goes green first.** No product,
@@ -643,9 +646,6 @@ These came up in the builder reviews; each is *(my call)*.
   design, its operator right, and the first version of Solo. The deploy
   migration creates it, as it creates the row today. Nothing after it is
   created any other way.
-- **Only tenant admins publish offers.** `staff` may run a tenant's programs
-  but not publish its prices, so a `staff` user of `registry` cannot change
-  what every tenant is charged.
 - **The minimum shapes for day one** (what steps 3–7 must support):
   - a finite, discrete resource (seats in an occurrence) with offers that use
     N seats each, and a per-booking cap on how many of an offer one booking
