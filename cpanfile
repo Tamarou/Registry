@@ -16,6 +16,7 @@ requires 'Crypt::URandom';     # Cryptographic random bytes for challenges and t
 requires 'DBD::Pg';
 requires 'Mojo::Pg';
 requires 'Mojolicious';
+requires 'Module::Runtime';    # loads workflow step classes without a string eval
 requires 'Object::Pad';
 requires 'Sub::Identify';
 requires 'YAML::XS';

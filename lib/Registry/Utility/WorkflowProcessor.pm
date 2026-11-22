@@ -7,8 +7,10 @@ class Registry::WorkflowProcessor {
     field $dao :param;
 
     method new_run ( $workflow, $data //= {} ) {
-        my $run  = $workflow->new_run($dao, { data => $data });
+        # The first step is loaded before the run is created, so a step that
+        # refuses to load (its class is not allowed) leaves no run behind.
         my $step = $workflow->first_step($dao);
+        my $run  = $workflow->new_run($dao, { data => $data });
         $run->process( $dao, $step, $data );
         return $run;
     }

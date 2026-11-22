@@ -5,6 +5,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     use Carp qw(confess);
+    use Module::Runtime qw(require_module);
     use Registry::WorkflowStepClasses;
 
     field $id :param :reader;
@@ -81,9 +82,17 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
               $db->select( $class->table, '*', $filter, $order )->expand->hash;
             return unless $data;
 
-            # Load the workflow step class module before calling new() on it
+            # The class column names code, and a stored row is not trusted:
+            # it may predate the creation-time check or have been written
+            # around the DAO. Check it against the allowlist before loading
+            # anything, load it without a string eval (a string eval ran the
+            # column as Perl), and refuse a class that is not a step before
+            # its constructor runs.
             my $step_class = $data->{class};
-            eval "require $step_class" or confess "Failed to load workflow step class $step_class: $@";
+            Registry::DAO::WorkflowStep->refuse_unless_allowed($step_class);
+            require_module($step_class);
+            confess "$step_class is not a workflow step"
+              unless $step_class->isa('Registry::DAO::WorkflowStep');
 
             return $step_class->new( $data->%* );
         }

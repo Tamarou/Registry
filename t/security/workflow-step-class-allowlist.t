@@ -181,4 +181,137 @@ subtest 'updating a stored step to a refused class is refused and leaves it unch
     is $reread->class, $before, 'the stored class is unchanged';
 };
 
+# ----------------------------------------------------------------------------
+# Load time. Rows already stored -- before the creation check existed, or
+# written by anything that bypasses the DAO -- are not trusted either.
+# ----------------------------------------------------------------------------
+
+# Store a step row directly, as a bypass of the DAO would, and return its id.
+sub plant_step ( $class, $conn = $db ) {
+    state $n = 0;
+    $n++;
+    $conn->insert(
+        'workflow_steps',
+        {
+            workflow_id => $creation->id,
+            slug        => "planted-$n",
+            description => 'planted',
+            class       => $class,
+        },
+        { returning => 'id' }
+    )->hash->{id};
+}
+
+subtest 'find refuses a stored non-allowlisted class without loading it' => sub {
+    delete $INC{'IO/Socket/INET.pm'};
+    ok !$INC{'IO/Socket/INET.pm'}, 'IO::Socket::INET is not loaded beforehand';
+
+    my $id = plant_step('IO::Socket::INET');
+    my $ok = eval { Registry::DAO::WorkflowStep->find( $db, { id => $id } ); 1 };
+    ok !$ok, 'find dies';
+    like $@, qr/not an allowed workflow step class/, 'saying the class is not allowed';
+    ok !$INC{'IO/Socket/INET.pm'}, 'and the class was never required';
+};
+
+subtest 'find refuses a stored class carrying perl source without running it' => sub {
+    no warnings 'once';
+    undef $main::PWNED;
+    my $id = plant_step('Registry::DAO::WorkflowStep; $main::PWNED = 1');
+    my $ok = eval { Registry::DAO::WorkflowStep->find( $db, { id => $id } ); 1 };
+    ok !$ok, 'find dies';
+    like $@, qr/not an allowed workflow step class/, 'saying the class is not allowed';
+    ok !defined $main::PWNED, 'and the source in the class column never ran';
+};
+
+subtest 'find still loads a shipped step class' => sub {
+    for my $shipped (
+        qw(
+        Registry::DAO::WorkflowStep
+        Registry::DAO::WorkflowSteps::Payment
+        Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor
+        )
+      )
+    {
+        my $id   = plant_step($shipped);
+        my $step = Registry::DAO::WorkflowStep->find( $db, { id => $id } );
+        is ref $step, $shipped, "$shipped is found and blessed into its class";
+    }
+};
+
+subtest 'find refuses a stored class with a trailing newline' => sub {
+    my $id = plant_step("Registry::DAO::WorkflowStep\n");
+    my $ok = eval { Registry::DAO::WorkflowStep->find( $db, { id => $id } ); 1 };
+    ok !$ok, 'find dies';
+    like $@, qr/not an allowed workflow step class/, 'saying the class is not allowed';
+};
+
+# The name check and the isa check are separate defences. If the name check
+# were ever wrong -- a non-step helper module living in WorkflowSteps/, say --
+# the isa check must still stop a non-step class before its constructor runs.
+subtest 'find refuses a loaded class that is not a workflow step before its constructor' => sub {
+    require IO::Handle;
+    my $constructed = 0;
+    no warnings 'redefine';
+    local *IO::Handle::new = sub { $constructed++; bless {}, shift };
+    local *Registry::WorkflowStepClasses::is_allowed = sub { 1 };
+
+    my $id = plant_step('IO::Handle');
+    my $ok = eval { Registry::DAO::WorkflowStep->find( $db, { id => $id } ); 1 };
+    ok !$ok, 'find dies';
+    like $@, qr/IO::Handle is not a workflow step/, 'saying it is not a step';
+    is $constructed, 0, 'and IO::Handle->new was never called';
+};
+
+# A tenant's schema holds its own copy of workflow_steps. Rows there are no
+# more trusted than rows in registry: the check is at load, on any connection.
+subtest 'find refuses a non-allowlisted class planted in a tenant schema' => sub {
+    require Test::Registry::Fixtures;
+    Test::Registry::Fixtures::create_tenant( $db,
+        { name => 'Allowlist Tenant', slug => 'allowlist_tenant' } );
+    my $tenant_db = Registry::DAO->new( url => $test_db->uri, schema => 'allowlist_tenant' )->db;
+
+    my $workflow = Registry::DAO::Workflow->create( $tenant_db,
+        { slug => 'tenant-wf', name => 'Tenant WF', description => 'x' } );
+    my $id = $tenant_db->insert(
+        'workflow_steps',
+        {
+            workflow_id => $workflow->id,
+            slug        => 'planted',
+            description => 'planted in the tenant schema',
+            class       => 'IO::Socket::INET',
+        },
+        { returning => 'id' }
+    )->hash->{id};
+
+    my $ok = eval { Registry::DAO::WorkflowStep->find( $tenant_db, { id => $id } ); 1 };
+    ok !$ok, 'find on the tenant connection dies';
+    like $@, qr/not an allowed workflow step class/, 'saying the class is not allowed';
+};
+
+subtest 'a workflow whose first step is refused cannot be started' => sub {
+    require Registry::Utility::WorkflowProcessor;
+    my $workflow = Registry::DAO::Workflow->create( $db,
+        { slug => 'refused-first', name => 'Refused First', description => 'x' } );
+    my $id = $db->insert(
+        'workflow_steps',
+        {
+            workflow_id => $workflow->id,
+            slug        => 'first',
+            description => 'refused',
+            class       => 'IO::Socket::INET',
+        },
+        { returning => 'id' }
+    )->hash->{id};
+    $db->update( 'workflows', { first_step => 'first' }, { id => $workflow->id } );
+    ($workflow) = Registry::DAO::Workflow->find( $db, { id => $workflow->id } );
+
+    my $ok = eval {
+        Registry::WorkflowProcessor->new( dao => $dao )->new_run( $workflow, {} );
+        1;
+    };
+    ok !$ok, 'starting the workflow dies';
+    is $db->select( 'workflow_runs', 'count(*)', { workflow_id => $workflow->id } )->array->[0],
+      0, 'and no run was left behind for it';
+};
+
 done_testing;
