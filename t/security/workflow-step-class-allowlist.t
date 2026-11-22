@@ -314,4 +314,32 @@ subtest 'a workflow whose first step is refused cannot be started' => sub {
       0, 'and no run was left behind for it';
 };
 
+# The same through HTTP, which is how a visitor starts a workflow. The
+# controller's start path has a fallback that builds a run by hand when
+# new_run dies; a refused step class must not be papered over by it.
+subtest 'starting a workflow over HTTP whose first step is refused leaves no run' => sub {
+    require Test::Registry::Mojo;
+    local $ENV{DB_URL} = $test_db->uri;
+
+    my $workflow = Registry::DAO::Workflow->create( $db,
+        { slug => 'refused-over-http', name => 'Refused Over HTTP', description => 'x' } );
+    my $step_id = $db->insert(
+        'workflow_steps',
+        {
+            workflow_id => $workflow->id,
+            slug        => 'first',
+            description => 'refused',
+            class       => 'IO::Socket::INET',
+        },
+        { returning => 'id' }
+    )->hash->{id};
+    $db->update( 'workflows', { first_step => 'first' }, { id => $workflow->id } );
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->post_ok( '/refused-over-http' => form => {} );
+    isnt $t->tx->res->code, 200, 'the start is not reported as a success';
+    is $db->select( 'workflow_runs', 'count(*)', { workflow_id => $workflow->id } )->array->[0],
+      0, 'and no run exists for the workflow, let alone one pointing at the refused step';
+};
+
 done_testing;

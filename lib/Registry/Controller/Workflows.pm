@@ -242,10 +242,16 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         eval {
             $run = $self->new_run($workflow);
         };
-        if ($@) {
+        if ( my $error = $@ ) {
+            # A step whose class the allowlist refuses is a refusal, not a
+            # lookup glitch: the repair below would build a run around the
+            # refused step, so it propagates instead.
+            die $error
+              if $error =~ /is not an allowed workflow step class|is not a workflow step/;
+
             # TODO: Replace with proper logging
             # warn "Error during new_run: $@";
-            
+
             # Manual repair approach if normal workflow fails
             my $first_step_slug = $workflow->first_step_slug($dao->db) || 'landing';
             
