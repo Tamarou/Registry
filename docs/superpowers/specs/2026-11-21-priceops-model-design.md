@@ -222,8 +222,10 @@ These still hold:
   - `proration_behavior: 'none'` on modifications;
   - the Accounts v2 settings recorded there are one-way doors.
 - **Schema and tenancy:**
-  - cross-party tables live in the registry schema, fully qualified, outside
-    `clone_schema`, with no foreign keys across schemas;
+  - tables about the platform tenant's customers (tenants, and what they hold
+    from the platform) live in the `registry` schema, as any tenant's customer
+    tables live in its own; code reaches them fully qualified, they are left
+    out of `clone_schema`, and no foreign keys cross schemas;
   - payments live per tenant schema, so migrations loop over tenants;
   - one schedule phase is in effect at a time, by exclusion constraint.
 - **Refunds are per entitlement**, never the whole cart. A `pending` refund is
