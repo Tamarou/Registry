@@ -9,12 +9,13 @@ no warnings 'experimental::builtin';
 use Mojo::File qw(path);
 use YAML::XS qw(Load);
 
-# Returns one line per problem, each naming the file and (where it has one)
+# Walks the directory with list_tree, as the importers do, so a workflow in a
+# subdirectory is checked too. Returns one line per problem, each naming the file and (where it has one)
 # the slug. $roles is a code ref: slug -> the workflow_roles entry or undef.
 sub problems ( $dir, $roles ) {
     my @problems;
-    for my $file ( path($dir)->list->grep(qr/\.ya?ml\z/)->sort->each ) {
-        my $name = $file->basename;
+    for my $file ( path($dir)->list_tree->grep(qr/\.ya?ml\z/)->sort->each ) {
+        my $name = $file->to_rel($dir)->to_string;
 
         my $data = eval { Load( $file->slurp ) };
         if ( !$data || ref $data ne 'HASH' ) {

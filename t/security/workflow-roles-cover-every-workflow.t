@@ -25,7 +25,7 @@ my $roles = sub ($slug) { $app->workflow_roles($slug) };
 
 subtest 'every shipped workflow has a role entry or the public mark' => sub {
     my $dir = Mojo::Home->new->child('workflows');
-    ok scalar $dir->list->grep(qr/\.ya?ml\z/)->each, 'there are workflow files to check';
+    ok scalar $dir->list_tree->grep(qr/\.ya?ml\z/)->each, 'there are workflow files to check';
     is_deeply [ Test::Registry::WorkflowRoleCoverage::problems( $dir, $roles ) ], [],
       'and none of them is uncovered, contradictory or unreadable';
 };
@@ -38,12 +38,22 @@ my $fixture_roles = sub ($slug) { $FIXTURE_ROLES{$slug} };
 sub problems_for (%files) {
     my $dir = File::Temp->newdir;
     for my $name ( keys %files ) {
+        Mojo::File->new("$dir/$name")->dirname->make_path;
         open my $fh, '>', "$dir/$name" or die $!;
         print $fh $files{$name};
         close $fh;
     }
     return [ Test::Registry::WorkflowRoleCoverage::problems( "$dir", $fixture_roles ) ];
 }
+
+# The importers (Registry->import_workflows, `registry workflow import`) walk
+# workflows/ with list_tree, so a file in a subdirectory is imported too.
+subtest 'a workflow in a subdirectory is checked like any other' => sub {
+    my $problems = problems_for( 'sub/nested.yml' => workflow_yaml('nested-flow') );
+    is scalar @$problems, 1, 'the nested file is checked';
+    like $problems->[0], qr{sub/nested\.yml}, 'reported by its path under the directory';
+    like $problems->[0], qr/nested-flow/, 'and by its slug';
+};
 
 sub workflow_yaml ( $slug, %extra ) {
     my $yaml = "name: $slug\nslug: $slug\ndescription: fixture\n";
