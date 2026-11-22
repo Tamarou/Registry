@@ -87,6 +87,8 @@ Specialized workflow steps allow for complex business logic to be encapsulated w
 
 **Which classes a step may name.** A step's `class` is accepted only if it is `Registry::DAO::WorkflowStep` itself or a module shipped under `lib/Registry/DAO/WorkflowSteps/` (`Registry::WorkflowStepClasses::is_allowed`). The list is derived from that directory, located from the allowlist module's own file rather than `@INC`, so adding a step class means adding its file there. Every write of the column goes through the check: `WorkflowStep->create` (and so `Workflow->add_step`, `from_yaml` and the workflow-creation workflow, which checks every submitted step before storing any) and `WorkflowStep->update`. A tenant composes allowed steps; it never names code.
 
+Loading is checked too, because a stored row is not trusted: it may predate the creation check, have been written around the DAO, or sit in a tenant schema's own `workflow_steps`. `WorkflowStep->find` refuses a stored class outside the allowlist before loading anything, loads an allowed one with `Module::Runtime::require_module` (never a string `eval`, which would run the column as Perl), and refuses a loaded class that is not a `Registry::DAO::WorkflowStep` before its constructor runs. The caller sees `find` die with "'<class>' is not an allowed workflow step class" (or "<class> is not a workflow step"); a workflow whose first step is refused cannot be started, and `Registry::WorkflowProcessor->new_run` leaves no run behind for it.
+
 ### Outcomes
 
 Outcomes define what successful completion of a workflow step looks like. They specify the data that needs to be collected and validated at each step of a process.
