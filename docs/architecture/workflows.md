@@ -41,7 +41,7 @@ steps:
     slug: confirmation
     description: Final confirmation of enrollment
     template: confirmation-form
-    class: Registry::DAO::EnrollStudent
+    class: Registry::DAO::WorkflowSteps::RegistrationComplete
 ```
 
 ## Workflow Components
@@ -78,12 +78,14 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
 A key feature of Registry's workflow system is the ability to create specialized workflow step classes. These classes inherit from `Registry::DAO::WorkflowStep` and override the `process` method to implement custom logic.
 
 Examples of specialized workflow steps include:
-- `Registry::DAO::CreateProject` - Creates a project and adds it to the workflow data
-- `Registry::DAO::CreateUser` - Creates a user account
-- `Registry::DAO::CreateEvent` - Creates an event
-- `Registry::DAO::RegisterTenant` - Sets up a new tenant in the system
+- `Registry::DAO::WorkflowSteps::CreateProject` - Creates a project and adds it to the workflow data
+- `Registry::DAO::WorkflowSteps::CreateUser` - Creates a user account
+- `Registry::DAO::WorkflowSteps::CreateEvent` - Creates an event
+- `Registry::DAO::WorkflowSteps::RegisterTenant` - Sets up a new tenant in the system
 
 Specialized workflow steps allow for complex business logic to be encapsulated within a workflow step, making workflows more powerful while keeping their definition simple.
+
+**Which classes a step may name.** A step's `class` is accepted only if it is `Registry::DAO::WorkflowStep` itself or a module shipped under `lib/Registry/DAO/WorkflowSteps/` (`Registry::WorkflowStepClasses::is_allowed`). The list is derived from that directory, located from the allowlist module's own file rather than `@INC`, so adding a step class means adding its file there. Every write of the column goes through the check: `WorkflowStep->create` (and so `Workflow->add_step`, `from_yaml` and the workflow-creation workflow, which checks every submitted step before storing any) and `WorkflowStep->update`. A tenant composes allowed steps; it never names code.
 
 ### Outcomes
 
@@ -280,7 +282,7 @@ steps:
 
   - slug: create-event
     description: Create the event in the system
-    class: Registry::DAO::CreateEvent
+    class: Registry::DAO::WorkflowSteps::CreateEvent
 ```
 
 ### Workflow With Continuations
@@ -297,7 +299,7 @@ steps:
 
   - slug: create-events
     description: Start event creation workflow
-    class: Registry::DAO::InitiateEventWorkflow
+    class: Registry::DAO::WorkflowSteps::InitiateEventWorkflow  # illustrative: would need a shipped file
 
   - slug: review-events
     description: Review created events
@@ -305,7 +307,7 @@ steps:
 
   - slug: create-session
     description: Create the session with events
-    class: Registry::DAO::CreateSession
+    class: Registry::DAO::WorkflowSteps::CreateSession
 ```
 
 ### Specialized Workflow Step
@@ -322,7 +324,7 @@ steps:
 
   - slug: create-user
     description: Create the user account
-    class: Registry::DAO::CreateUser
+    class: Registry::DAO::WorkflowSteps::CreateUser
 
   - slug: confirmation
     description: Confirm user creation
@@ -336,7 +338,7 @@ The Perl codebase implements workflows using the following classes:
 - `Registry::DAO::Workflow` - Manages workflow definitions and execution
 - `Registry::DAO::WorkflowStep` - Base class for all workflow steps
 - `Registry::DAO::WorkflowRun` - Tracks workflow execution and data
-- Specialized step classes (e.g., `Registry::DAO::CreateUser`) - Implement custom logic
+- Specialized step classes (e.g., `Registry::DAO::WorkflowSteps::CreateUser`) - Implement custom logic
 
 ## Development Guidelines
 
