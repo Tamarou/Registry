@@ -60,7 +60,7 @@ jobs:
         # On failure, print each build log: cpanm writes them to disk and the
         # job output otherwise says only "See .../build.log".
         carton install --deployment || {
-          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{b=""} {b=b"\n"$0} /-> FAIL/{print b; b=""}' "$f" | tail -n 200; echo "::endgroup::"; done
+          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
         }
 
@@ -311,7 +311,7 @@ jobs:
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
         export PATH="$HOME/perl5/bin:$PATH"
         carton install --deployment || {
-          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{b=""} {b=b"\n"$0} /-> FAIL/{print b; b=""}' "$f" | tail -n 200; echo "::endgroup::"; done
+          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
         }
 
@@ -383,7 +383,7 @@ jobs:
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
         carton install --deployment || {
-          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{b=""} {b=b"\n"$0} /-> FAIL/{print b; b=""}' "$f" | tail -n 200; echo "::endgroup::"; done
+          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
         }
 
