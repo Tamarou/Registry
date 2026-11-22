@@ -2,6 +2,9 @@
 description: A workflow to onboard new tenants
 name: Tenant Onboarding
 slug: tenant-signup
+# Anyone may walk into this workflow, deliberately: it has no workflow_roles
+# entry. t/security/workflow-roles-cover-every-workflow.t enforces the choice.
+public: true
 steps:
 - class: Registry::DAO::WorkflowStep
   description: New Tenant landing page
