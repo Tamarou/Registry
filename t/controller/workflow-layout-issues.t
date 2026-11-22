@@ -105,10 +105,4 @@ subtest 'Profile step has title in layout header only, not duplicated in content
     }
 };
 
-# The app's dao helper closes over $db. Left to global destruction, the
-# database handle can be freed before Mojo::Pg::Database's DESTROY runs, which
-# prints "(in cleanup) Can't call method FETCH". Release them in order.
-undef $t;
-undef $db;
-
 done_testing();

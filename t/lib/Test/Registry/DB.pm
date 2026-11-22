@@ -228,6 +228,24 @@ package Test::Registry::DB {
     # never execute against an about-to-stop server and emit "terminating
     # connection due to administrator command" -- noise that dirties the exit
     # code. See issue #186.
+    # A test's app helper usually closes over a file-scope DAO, so its
+    # Mojo::Pg::Database lives until global destruction, where perl frees
+    # objects in no fixed order. When DBI's inner handle goes first,
+    # Mojo::Pg::Database::DESTROY reads the dead handle to decide whether to
+    # pool it and prints "(in cleanup) Can't call method "FETCH" on an
+    # undefined value ... during global destruction" -- in a different file
+    # each run. At that point there is no pool left to return a handle to, so
+    # skip the method then. Installed from END, so every DESTROY while the
+    # tests run is untouched.
+    sub _quiet_mojo_pg_at_global_destruction {
+        my $destroy = Mojo::Pg::Database->can('DESTROY') or return;
+        no warnings 'redefine';
+        *Mojo::Pg::Database::DESTROY = sub {
+            return if ${^GLOBAL_PHASE} eq 'DESTRUCT';
+            goto &$destroy;
+        };
+    }
+
     sub _neutralize_dbi_handles {
         DBI->visit_handles(sub {
             my $h = shift;
@@ -244,6 +262,7 @@ package Test::Registry::DB {
     END {
         local $?;
         _neutralize_dbi_handles();
+        _quiet_mojo_pg_at_global_destruction();
         for my $instance ( grep { defined } @LIVE_INSTANCES ) {
             $instance->cleanup_test_database;
         }
