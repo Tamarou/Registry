@@ -56,14 +56,10 @@ jobs:
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
 
-    - name: Cache Perl dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/perl5
-        key: ${{ runner.os }}-perl-${{ hashFiles('cpanfile.snapshot') }}
-        restore-keys: |
-          ${{ runner.os }}-perl-
-
+    # No ~/perl5 cache (as in ci.yml): carton installs into ./local, and the
+    # cache, keyed only on "Linux", carried modules built on another runner
+    # image onto PERL5LIB -- on ubuntu-24.04 IO::Socket::SSL would not load
+    # ("IO::Socket::SSL 2.009+ required for TLS support").
     - name: Install Perl dependencies
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
