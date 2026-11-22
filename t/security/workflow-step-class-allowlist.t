@@ -78,6 +78,43 @@ subtest 'a step class planted earlier on the include path is refused' => sub {
       'a step file planted at the front of @INC is not allowed';
 };
 
+# The registry script loads lib/ through a relative `use lib`, so __FILE__ is
+# relative too. A directory resolved from it at each check would move with the
+# working directory: a process that chdir'd somewhere holding a planted
+# lib/Registry/DAO/WorkflowSteps/X.pm would allow X.
+subtest 'the allowlist directory does not move with the working directory' => sub {
+    require Cwd;
+    require File::Temp;
+    require File::Path;
+    my $home = Cwd::getcwd();
+    my $dir  = File::Temp->newdir;
+    File::Path::make_path("$dir/lib/Registry/DAO/WorkflowSteps");
+    open my $fh, '>', "$dir/lib/Registry/DAO/WorkflowSteps/Planted.pm" or die $!;
+    print $fh "package Registry::DAO::WorkflowSteps::Planted; 1;\n";
+    close $fh;
+
+    chdir "$dir" or die $!;
+    my $planted = Registry::WorkflowStepClasses::is_allowed('Registry::DAO::WorkflowSteps::Planted');
+    my $shipped = Registry::WorkflowStepClasses::is_allowed('Registry::DAO::WorkflowSteps::Payment');
+    chdir $home or die $!;
+
+    ok !$planted, 'a step file planted under the new working directory is not allowed';
+    ok $shipped,  'and the shipped Payment step still is';
+};
+
+# On a case-insensitive filesystem a file test accepts PAYMENT.pm for
+# Payment.pm. Loading such a name could not run injected code, but the check is
+# meant to name shipped classes exactly. (This filesystem is case-sensitive, so
+# this subtest guards the rule rather than reproducing the bug.)
+subtest 'a class name matches its file name exactly' => sub {
+    ok !Registry::WorkflowStepClasses::is_allowed($_), "$_ is refused"
+      for qw(
+      Registry::DAO::WorkflowSteps::PAYMENT
+      Registry::DAO::WorkflowSteps::PayMent
+      Registry::DAO::WorkflowSteps::AttendanceCheck::upcomingEventProcessor
+    );
+};
+
 # ----------------------------------------------------------------------------
 # The creation paths, on a real database.
 # ----------------------------------------------------------------------------
