@@ -320,7 +320,15 @@ needs.
 ## Decided with perigrin
 
 - **The platform tenant is `registry`, and the `registry` schema is its tenant
-  schema.** `registry-platform` merges into it (the August spec's Decision 2).
+  schema.** The two tenant rows collapse the way #294 says: the `registry` row
+  is deleted and the all-zeros `registry-platform` row is renamed to
+  `registry`, so the sentinel UUID hardcoded across the code keeps resolving.
+  Because `registry` is a tenant schema, anything that runs per tenant runs on
+  it too: `TenantProcessor.pm`'s `slug ne 'registry'` filter goes, so the
+  nightly jobs cover the platform tenant. Migrations keep their
+  `slug != 'registry'` loops, because each one changes `registry` first
+  (`SET search_path TO registry`) and the loop reaches every other tenant
+  once; that is not an exclusion.
   The platform's sales to tenants are ordinary entitlements in its own schema.
   `registry.pricing_relationships` becomes, or is replaced by, that entitlement
   table rather than a special case.
