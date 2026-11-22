@@ -4,6 +4,7 @@
 # Step 0 spike: what is red on `main`
 
 Commit: 16ca8b8b3af7d998f0cdf71e21b2a2d189b0c898
+Green: 28c9f0c1d728a6c35a92f574c4275912eff8fb05
 
 That commit is `main` (4e6664b) plus PR #500's CI and dependency changes
 (`Mozilla::CA` pinned, DBD::Pg 3.18.0 → 3.21.2, CI build-log extract, dead
@@ -118,3 +119,15 @@ production-configuration checks the tests provoke on purpose. They are one
 cause, not one per file: the test app logs to stderr at its default level.
 Whether the suite silences them (a test log level) or asserts them is the
 green issue's call.
+
+## Green
+
+Recorded 2026-11-22 at 28c9f0c, the first commit on which CI's `test`, `e2e`,
+`database-compatibility` (16/17/18), `lint` and `security` jobs all passed,
+and `stripe-e2e`'s six real-Stripe Perl suites passed. Locally, `make test`
+and the `-j8` sweep are clean except `t/service/stripe-async-bug.t`, which
+needs the network and passes in CI. Not green at this point, by perigrin's
+decision to close step 0 here: the browser leg of `stripe-e2e`
+(`t/playwright/payment-smoke.spec.js`), where the Stripe Payment Element
+never renders. It is filed as its own issue, as is the unexplained
+IO::Socket::SSL load-order failure in the Playwright seeder.
