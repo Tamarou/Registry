@@ -11,9 +11,11 @@ test-schema:
 # .t file is named below; add new ones here.  The placeholder key is CI's, so
 # the run does not depend on what the shell exports.  CI keeps its bare sweep on
 # purpose (.github/workflows/ci.yml): that placeholder holds the gate shut, and
-# the sweep is what proves the excluded files still compile.
+# the sweep is what proves the excluded files still compile.  The locale is
+# pinned for the same reason: CI's runner is UTF-8, and a POSIX-locale shell
+# would otherwise report template-importing tests red.
 test: sql/test-schema.sql
-	STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lr t/auth \
+	LANG=C.UTF-8 LC_ALL=C.UTF-8 STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lr t/auth \
 	  t/controller t/css t/dao t/database t/deploy t/e2e t/frontend t/integration t/job \
 	  t/priceops t/robustness t/security t/seed t/service t/unit t/user-journeys \
 	  t/workflow -j8
