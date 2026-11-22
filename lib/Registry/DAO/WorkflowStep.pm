@@ -5,6 +5,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     use Carp qw(confess);
+    use Registry::WorkflowStepClasses;
 
     field $id :param :reader;
     field $slug :param :reader;
@@ -93,7 +94,23 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
 
     sub create ( $class, $db, $data ) {
         $data->{class} //= $class;
+        Registry::DAO::WorkflowStep->refuse_unless_allowed( $data->{class} );
         $class->SUPER::create( $db, $data );
+    }
+
+    # The class column is the one place a stored row names code, so every
+    # write of it goes through the allowlist: create above, and update here,
+    # which would otherwise be a way round the check.
+    method update ( $db, $data, @rest ) {
+        Registry::DAO::WorkflowStep->refuse_unless_allowed( $data->{class} )
+          if exists $data->{class};
+        return $self->SUPER::update( $db, $data, @rest );
+    }
+
+    sub refuse_unless_allowed ( $, $step_class ) {
+        return if Registry::WorkflowStepClasses::is_allowed($step_class);
+        confess sprintf '%s is not an allowed workflow step class',
+          defined $step_class ? "'$step_class'" : 'an undefined class';
     }
 
     method next_step ($db) {

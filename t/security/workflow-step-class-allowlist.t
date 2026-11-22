@@ -78,4 +78,107 @@ subtest 'a step class planted earlier on the include path is refused' => sub {
       'a step file planted at the front of @INC is not allowed';
 };
 
+# ----------------------------------------------------------------------------
+# The creation paths, on a real database.
+# ----------------------------------------------------------------------------
+use Mojo::Home;
+use Registry::DAO;
+use Test::Registry::DB;
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
+my $db      = $dao->db;
+
+my $creation = Registry::DAO::Workflow->from_yaml( $dao,
+    Mojo::Home->new->child('workflows/workflow-creation.yml')->slurp );
+
+# Walk the real workflow-creation workflow to its CreateWorkflow step with the
+# given submission, the way a tenant's staff member would.
+sub create_through_the_workflow ($submission) {
+    my $run = $creation->new_run($db);
+    $run->process( $db, $run->next_step($db), {} );
+    $run->process( $db, $run->next_step($db), $submission );
+    return $run->process( $db, $run->next_step($db), {} );
+}
+
+sub steps_with_class ($class) {
+    $db->select( 'workflow_steps', 'count(*)', { class => $class } )->array->[0];
+}
+
+sub workflow_exists ($slug) {
+    $db->select( 'workflows', 'count(*)', { slug => $slug } )->array->[0];
+}
+
+subtest 'workflow-creation naming a refused class is refused and stores nothing' => sub {
+    my $ok = eval {
+        create_through_the_workflow(
+            {
+                name        => 'Socket',
+                slug        => 'socket-workflow',
+                description => 'names a class that is not a step',
+                steps       => [
+                    { slug => 'only', description => 'x', class => 'IO::Socket::INET' },
+                ],
+            }
+        );
+        1;
+    };
+    ok !$ok, 'the submission is refused';
+    like $@, qr/not an allowed workflow step class/, 'with a reason';
+    is workflow_exists('socket-workflow'), 0, 'no workflow was stored';
+    is steps_with_class('IO::Socket::INET'), 0, 'no step naming the class was stored';
+};
+
+subtest 'from_yaml naming a refused class dies and stores nothing' => sub {
+    my $yaml = <<~'YAML';
+        name: Planted
+        slug: planted-yaml
+        description: a YAML workflow naming a class outside the allowlist
+        steps:
+          - slug: first
+            description: fine
+            class: Registry::DAO::WorkflowStep
+          - slug: second
+            description: not fine
+            class: IO::Socket::INET
+        YAML
+    my $ok = eval { Registry::DAO::Workflow->from_yaml( $dao, $yaml ); 1 };
+    ok !$ok, 'the import dies';
+    like $@, qr/not an allowed workflow step class/, 'with a reason';
+    is workflow_exists('planted-yaml'), 0, 'no workflow was stored';
+    is steps_with_class('IO::Socket::INET'), 0, 'no step naming the class was stored';
+};
+
+subtest 'a refused last step leaves no workflow and no earlier steps' => sub {
+    my $ok = eval {
+        create_through_the_workflow(
+            {
+                name        => 'Three',
+                slug        => 'three-steps',
+                description => 'only the third step is refused',
+                steps       => [
+                    { slug => 'one',   description => 'x', class => 'Registry::DAO::WorkflowStep' },
+                    { slug => 'two',   description => 'x', class => 'Registry::DAO::WorkflowStep' },
+                    { slug => 'three', description => 'x', class => 'IO::Socket::INET' },
+                ],
+            }
+        );
+        1;
+    };
+    ok !$ok, 'the submission is refused';
+    is workflow_exists('three-steps'), 0, 'no workflow was stored';
+    is $db->select( 'workflow_steps', 'count(*)', { slug => [qw(one two three)] } )->array->[0],
+      0, 'and neither of the allowed earlier steps was left behind';
+};
+
+subtest 'updating a stored step to a refused class is refused and leaves it unchanged' => sub {
+    my $step = $creation->first_step($db);
+    my $before = $step->class;
+    my $ok = eval { $step->update( $db, { class => 'IO::Socket::INET' } ); 1 };
+    ok !$ok, 'the update is refused';
+    like $@, qr/not an allowed workflow step class/, 'with a reason';
+    my ($reread) = Registry::DAO::WorkflowStep->find( $db, { id => $step->id } );
+    is $reread->class, $before, 'the stored class is unchanged';
+};
+
 done_testing;
