@@ -30,6 +30,14 @@ envVarGroups:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      # Tamarou's own Stripe account (acct_...) and whether Stripe has
+      # approved it (true/false). `./registry platform bootstrap` writes both
+      # onto the platform tenant on every start; a production boot with either
+      # missing is refused.
+      - key: PLATFORM_STRIPE_ACCOUNT_ID
+        sync: false
+      - key: PLATFORM_STRIPE_READY
+        sync: false
   - name: registry-config
     envVars:
       - key: BASE_URL

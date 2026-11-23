@@ -6,6 +6,7 @@ use Object::Pad;
 
 class Registry::Command::platform :isa(Mojolicious::Command) {
     use Registry::DAO::PlatformSetting;
+    use Registry::DAO::Tenant;
 
     field $description :reader = 'Platform configuration';
     field $usage :reader       = <<~"END";
@@ -15,6 +16,8 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
             * settings           - list every platform setting and its value
             * set <key> <value>  - set one
             * unset <key>        - return one to its default
+            * bootstrap          - write PLATFORM_STRIPE_ACCOUNT_ID and
+                                   PLATFORM_STRIPE_READY onto the platform tenant
 
         END
 
@@ -80,6 +83,20 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
                 $why =~ s/ at \S+ line \d+\.?\s*\z//;
                 say $why;
             };
+            return;
+        }
+
+        # Run by docker-entrypoint.sh on every start, after sqitch deploy. A
+        # problem dies rather than printing, so ./registry exits non-zero and
+        # the entrypoint can refuse a production boot over it.
+        if ( $cmd eq 'bootstrap' ) {
+            my $platform = Registry::DAO::Tenant->bootstrap_platform( $dao->db, {
+                map { $_ => $ENV{$_} }
+                    qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY )
+            } );
+            say sprintf 'Platform Stripe account: %s (%s)',
+                $platform->stripe_connect_account_id,
+                $platform->stripe_connect_ready ? 'ready' : 'not ready';
             return;
         }
 

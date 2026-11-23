@@ -109,6 +109,14 @@ Set these environment variables in your Render dashboard:
 - `STRIPE_SECRET_KEY` - Your Stripe secret key  
 - `STRIPE_WEBHOOK_SECRET` - Your Stripe webhook endpoint secret
 
+**Required in production (the platform's own Stripe account):**
+- `PLATFORM_STRIPE_ACCOUNT_ID` - Tamarou's Stripe account id (`acct_...`)
+- `PLATFORM_STRIPE_READY` - `true` once Stripe has approved that account, else `false`
+
+`docker-entrypoint.sh` runs `./registry platform bootstrap` after the schema
+deploy, which writes both onto the `registry` tenant. With `MOJO_MODE=production`
+a missing or refused value stops the boot; elsewhere it is a warning.
+
 **Email Configuration:**
 - `EMAIL_FROM` - Default: `noreply@registry-demo.onrender.com`
 - `SUPPORT_EMAIL` - Default: `support@registry-demo.onrender.com`

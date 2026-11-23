@@ -180,11 +180,25 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     sub bootstrap_platform ( $class, $db, $config ) {
         $db = $db->db if $db isa Registry::DAO;
 
+        my @missing = grep { !defined $config->{$_} }
+            qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY );
+        die 'Not set: ' . join( ', ', @missing )
+          . " -- the platform's Stripe account was left as it is\n"
+          if @missing;
+
         my $platform = $class->platform($db);
+        my $account  = $config->{PLATFORM_STRIPE_ACCOUNT_ID};
         my $ready    = $config->{PLATFORM_STRIPE_READY} ? 1 : 0;
 
+        # Runs on every start, so a row already saying this is left untouched
+        # rather than rewritten with the same values.
+        return $platform
+          if ( $platform->stripe_connect_account_id // '' ) eq $account
+          && !!$platform->stripe_charges_enabled   == !!$ready
+          && !!$platform->stripe_details_submitted == !!$ready;
+
         return $platform->update( $db, {
-            stripe_connect_account_id => $config->{PLATFORM_STRIPE_ACCOUNT_ID},
+            stripe_connect_account_id => $account,
             stripe_charges_enabled    => $ready,
             stripe_details_submitted  => $ready,
         } );
