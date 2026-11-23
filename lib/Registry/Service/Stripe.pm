@@ -14,6 +14,7 @@ class Registry::Service::Stripe {
     field $api_key :param;
     field $api_version :param = '2024-12-18.acacia'; # Stripe release name for this API date; the bare date is rejected as invalid
     field $webhook_secret :param = undef;
+    field $stripe_account :param :reader = undef;
     
     # Configure user agent for optimal performance
     ADJUST {
@@ -42,6 +43,18 @@ class Registry::Service::Stripe {
         );
     }
 
+    # A client for one connected account: every request it makes names that
+    # account in a Stripe-Account header. The platform's own calls use the
+    # unbound client from_env returns.
+    method for_account($account_id) {
+        return (ref $self)->new(
+            api_key        => $api_key,
+            api_version    => $api_version,
+            webhook_secret => $webhook_secret,
+            stripe_account => $account_id,
+        );
+    }
+
     method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef) {
         my $url = "https://api.stripe.com/v1/$endpoint";
         my $headers = {
@@ -50,6 +63,7 @@ class Registry::Service::Stripe {
             'User-Agent' => 'Registry/1.0 (https://registry.com)',
         };
         $headers->{'Idempotency-Key'} = $idempotency_key if defined $idempotency_key;
+        $headers->{'Stripe-Account'} = $stripe_account if defined $stripe_account;
         
         my $promise;
         
