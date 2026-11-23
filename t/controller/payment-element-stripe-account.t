@@ -201,4 +201,15 @@ subtest 'page never contains a secret key' => sub {
       ->content_unlike(qr/sk_(?:test|live)_/, 'no Stripe secret key is in the page');
 };
 
+# A declined card leaves the row failed, and the retry intent is created on
+# the same row and account. The card form for that retry must still carry the
+# account, or the browser cannot confirm the retry.
+subtest 'a declined card retry form keeps the intent account' => sub {
+    my $run = run_awaiting_card('ta');
+    $dao->connect_schema('ta')->db->query(
+        q{UPDATE payments SET status = 'failed' WHERE id = ?}, $run->data->{payment_id} );
+    $t->get_ok( payment_url($run) => { Host => 'ta.localhost' } )->status_is(200)
+      ->content_like( qr/stripeAccount: 'acct_x'/, 'the retry form is initialised on the intent account' );
+};
+
 done_testing();

@@ -116,16 +116,17 @@ method _render_data ($db, $run, %extra) {
 
 # The Stripe account this run's payment intent was created on, for the browser:
 # a direct charge's client_secret confirms only in Stripe.js initialised with
-# it. Read from the run's own payment row's account-bound client, never from
-# the request or the retry state, and set last so neither can override it.
-# undef when there is no such payment, or it has no account (stripe_client
-# dies), in which case there is no intent for the browser to confirm either.
+# it. Read from the account snapshotted on the run's own payment row, never
+# from the request or the retry state, and set last so neither can override
+# it. Any status: a declined card leaves the row failed, and its retry intent
+# is on the same row and account. undef when there is no such payment.
 method _intent_account ($db, $run) {
     my $payment_id = $self->_run_payment_id($run) // return undef;
     return undef unless $payment_id =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
-    my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
-    return undef unless __PACKAGE__->_reusable_payment_row($payment, $run->id);
-    return eval { $payment->stripe_client->stripe_account };
+    my $payment = Registry::DAO::Payment->find($db, { id => $payment_id }) // return undef;
+    my $meta    = $payment->metadata // {};
+    return undef unless ( $meta->{workflow_run_id} // '' ) eq $run->id;
+    return $meta->{stripe_account_id};
 }
 
 # The run's payment_id is bound straight into a WHERE clause, so it must be a
