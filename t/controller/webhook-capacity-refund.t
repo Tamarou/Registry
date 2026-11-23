@@ -80,11 +80,11 @@ sub a_full_session () {
 }
 
 # A captured tenant payment for a seat that is gone.
-sub a_doomed_payment () {
+sub a_doomed_payment (%extra) {
     my $session = a_full_session();
     my $child   = a_child();
     my $p = Registry::DAO::Payment->create($tdb, {
-        user_id => $parent->id, amount_cents => 15000, status => 'pending',
+        user_id => $parent->id, amount_cents => 15000, status => 'pending', %extra,
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
             tenant_slug      => $slug } });
@@ -98,15 +98,16 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
 
 my $evt = 0;
-sub post_settlement ($payment) {
+sub post_settlement ($payment, %opts) {
     $evt++;
     return Test::Registry::StripeWebhook::post_connect($t, {
-        id      => "evt_cr_${$}_$evt",
+        id      => $opts{event_id} // "evt_cr_${$}_$evt",
         type    => 'payment_intent.succeeded',
         account => 'acct_cr_test',
         data    => { object => {
             id       => 'pi_cr_' . $payment->id,
             amount   => 15000,
+            ( exists $opts{fee} ? ( application_fee_amount => $opts{fee} ) : () ),
             metadata => { payment_id => $payment->id, tenant_slug => $slug },
         } },
     });
@@ -349,6 +350,73 @@ subtest 'a row whose balance was zeroed but still owes increments is still refun
     ok scalar @refunds,
         'the gate sees the work queue, not just the balance -- a zeroed balance '
         . 'with increments due is still refunded';
+};
+
+# Everything one settlement leaves behind for a payment, so two deliveries can
+# be compared with one.
+sub settled_once ($payment) {
+    my $row = $tdb->select('payments', ['status', 'completed_at', 'platform_fee_cents'],
+        { id => $payment->id })->hash;
+    my $jobs = 0;
+    $t->app->minion->jobs({ tasks => ['instalment_schedule'] })
+        ->each(sub ($job, @) { $jobs++ if $job->{args}[0] eq $payment->id });
+    return {
+        %$row,
+        enrollments => scalar @{ $tdb->select('enrollments', ['id'],
+            { payment_id => $payment->id })->hashes },
+        schedule_jobs => $jobs,
+    };
+}
+
+# Instalment one of a cart whose seat is gone: one delivery completes it,
+# records the fee, refunds the seat and asks for the rest to be scheduled.
+sub an_instalment_for_a_gone_seat () {
+    a_doomed_payment( instalment_seq => 1, instalment_count => 3 );
+}
+
+subtest 'redelivered event settles once' => sub {
+    my $payment = an_instalment_for_a_gone_seat();
+    my @refunds;
+    my $after_first;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_redeliver', status => 'succeeded' });
+        };
+        my $event_id = "evt_cr_redeliver_$$";
+        post_settlement($payment, event_id => $event_id, fee => 450)->status_is(200);
+        $after_first = settled_once($payment);
+        post_settlement($payment, event_id => $event_id, fee => 450)
+            ->status_is(200)->content_is('OK (duplicate)');
+    }
+
+    is $after_first->{platform_fee_cents}, 450, 'the first delivery records the fee';
+    is $after_first->{schedule_jobs}, 1, 'and asks once for the rest to be scheduled';
+    is_deeply settled_once($payment), $after_first, 'the redelivery changes nothing';
+    cmp_ok scalar @refunds, '<=', 1, 'and at most one capacity refund is issued';
+};
+
+subtest 'second event id for completed payment changes nothing' => sub {
+    my $payment = an_instalment_for_a_gone_seat();
+    my @refunds;
+    my $after_first;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_second_' . scalar(@refunds), status => 'succeeded' });
+        };
+        post_settlement($payment, fee => 450)->status_is(200);
+        $after_first = settled_once($payment);
+        # A different fee, so a second recording would show.
+        post_settlement($payment, fee => 999)->status_is(200);
+    }
+
+    is $after_first->{schedule_jobs}, 1, 'the first event asks once for scheduling';
+    is_deeply settled_once($payment), $after_first,
+        'a second event id changes no status, fee, enrollment or job';
+    is scalar @refunds, 1, 'and issues no second capacity refund';
 };
 
 done_testing;

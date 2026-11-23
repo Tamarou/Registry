@@ -259,9 +259,23 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # lose its work on any failure -- which is #284's shape. The job retries
         # on Minion's backoff, and without it the family pays instalment one and
         # nothing more.
+        #
+        # One job per payment: a second event for it finds the first still
+        # waiting and adds nothing. Keyed by a note named for the payment,
+        # because Minion filters notes by key.
+        # shortcut: check-then-enqueue, so two events settling at the same
+        # instant can still queue two; make it a guarded insert if that is seen.
         if ($schedule_for) {
-            $self->app->minion->enqueue(
-                instalment_schedule => [ $schedule_for, $slug // 'registry' ] );
+            my $minion = $self->app->minion;
+            my $queued = $minion->jobs( {
+                tasks  => ['instalment_schedule'],
+                notes  => [$schedule_for],
+                states => [ 'inactive', 'active' ],
+            } )->total;
+            $minion->enqueue(
+                instalment_schedule => [ $schedule_for, $slug // 'registry' ],
+                { notes => { $schedule_for => 1 } } )
+                unless $queued;
         }
 
         return $self->_settle_owed_refund($dao, $slug, $refund_for) if $refund_for;
