@@ -327,5 +327,45 @@ subtest 'async create_payment_intent_async is a direct charge on the tenant acco
         "async: application_fee_amount is $expected_fee_2pct cents";
 };
 
+# ---- (f) the platform sells like any seller: no slug exemption --------------
+subtest 'registry seller is charged directly on its own account' => sub {
+    # The platform tenant, linked to the seeded Free plan explicitly rather than
+    # by fallback, with Tamarou's account planted as a fixture.
+    my $free_plan_id = $db->query(q{
+        SELECT id FROM registry.pricing_plans
+         WHERE plan_scope = 'platform' AND metadata->>'default' = 'true'
+    })->hash->{id};
+    ok $free_plan_id, 'seeded Free plan found';
+    $db->query(
+        'UPDATE registry.tenants SET stripe_connect_account_id = ?, platform_pricing_plan_id = ? WHERE slug = ?',
+        'acct_platform123', $free_plan_id, 'registry',
+    );
+
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id      => $admin->id,
+        amount_cents => 10000,
+        metadata     => { tenant_slug => 'registry', enrollment_items => [] },
+    });
+
+    my ($captured, $account);
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_payment_intent = sub {
+            my ($self, $params) = @_;
+            ($captured, $account) = ($params, $self->stripe_account);
+            return { id => 'pi_registry_123', client_secret => 'cs_registry_123' };
+        };
+        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
+        $payment->create_payment_intent($db, { description => 'Platform sale' });
+    }
+
+    is $account, 'acct_platform123',
+        'the registry sale is made on the account its seller row names';
+    ok !exists $captured->{'transfer_data[destination]'}, 'no transfer_data[destination]';
+    ok !exists $captured->{'on_behalf_of'}, 'no on_behalf_of';
+    ok !exists $captured->{'application_fee_amount'},
+        'an explicit 0% plan sends no application_fee_amount';
+};
+
 $test_db->cleanup_test_database;
 done_testing;

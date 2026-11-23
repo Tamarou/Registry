@@ -384,10 +384,9 @@ field $_stripe_client = undef;
         # kept with the payment: every intent, retry, retrieve and cancel for
         # this payment goes to the account it was first charged on, even if the
         # tenant's account changes later. Server-owned, so a caller's value is
-        # never trusted.
+        # never trusted. The platform tenant sells like any other seller.
         delete $data->{metadata}{stripe_account_id};
-        my $slug = $data->{metadata}{tenant_slug};
-        if ( $slug && $slug ne 'registry' ) {
+        if ( my $slug = $data->{metadata}{tenant_slug} ) {
             my $row = $raw_db->query(
                 'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
                 $slug )->hash;
