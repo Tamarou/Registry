@@ -314,9 +314,14 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         croak 'You cannot change your own role'
             if defined $acting_id && $acting_id eq $id;
 
+        # The role that decides anything here is this tenant's: the membership
+        # role where the account has one (ADR 005, ruling 4), the local
+        # user_type for an account that lives only in this tenant.
+        my $current = $self->_role_of( $db, $id ) // $user_type;
+
         # Idempotent, and checked before the privilege gate: re-asserting the
         # role an account already has is not a grant.
-        return $self if $new_type eq $user_type;
+        return $self if $new_type eq $current;
 
         if ( $new_type eq 'admin' ) {
             my $acting_type = $self->_role_of( $db, $acting_id );
@@ -324,11 +329,17 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
                 unless ( $acting_type // '' ) eq 'admin';
         }
 
-        if ( $user_type eq 'admin' && $self->is_active ) {
-            my $other_admins = $db->query(
-                q{SELECT COUNT(*) FROM users
-                   WHERE user_type = 'admin' AND deactivated_at IS NULL AND id <> ?},
-                $id )->array->[0];
+        my $tenant = $db->query('SELECT current_schema()')->array->[0];
+
+        # Counted by the same rule: another active account whose role in this
+        # tenant is admin. A copy whose user_type says admin is not one unless
+        # its role here is.
+        if ( $current eq 'admin' && $self->is_active ) {
+            require Registry::DAO::Tenant;
+            my $other_admins = grep {
+                ( Registry::DAO::Tenant->role_in( $db, $tenant, $_ ) // '' ) eq 'admin'
+            } $db->query( q{SELECT id FROM users WHERE deactivated_at IS NULL AND id <> ?}, $id )
+                ->arrays->map( sub { $_->[0] } )->@*;
             croak 'Cannot demote the last active administrator'
                 unless $other_admins;
         }
@@ -336,6 +347,14 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         my $row = $db->query(
             'UPDATE users SET user_type = ? WHERE id = ? RETURNING *',
             $new_type, $id )->hash or return $self;
+
+        # And the membership, which is what authority reads.
+        $db->query( <<~'SQL', $new_type, $id, $tenant );
+            UPDATE registry.tenant_users tu
+               SET role = ?
+              FROM registry.tenants t
+             WHERE tu.tenant_id = t.id AND tu.user_id = ? AND t.slug = ?
+            SQL
 
         return __CLASS__->new(%$row);
     }

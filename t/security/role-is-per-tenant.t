@@ -174,4 +174,44 @@ subtest 'the platform tenant is a tenant like any other' => sub {
       ->status_is( 200, 'and served the staff surfaces' );
 };
 
+# The people screen's role change is how a tenant demotes or promotes someone.
+# Authority is the membership role, so that is what the change must write --
+# otherwise demoting an admin who is a registry user would leave them admin.
+subtest 'a role change on the people screen changes the membership role in that tenant' => sub {
+    my $owner = account('role_change_owner');
+    my $taylor = account('role_change_taylor');
+    $alpha->add_user( $db, $owner,  1, 'admin' );
+    $alpha->add_user( $db, $taylor, 0, 'admin' );
+    $beta->add_user(  $db, $taylor, 0, 'admin' );
+    resident( $_, $alpha, $beta ) for $owner, $taylor;
+
+    my $alpha_db = $dao->connect_schema('role_alpha')->db;
+    my ($local) = Registry::DAO::User->find( $alpha_db, { id => $taylor->id } );
+    $local->change_role( $alpha_db, 'staff', $owner );
+
+    is Registry::DAO::Tenant->role_in( $db, 'role_alpha', $taylor->id ), 'staff',
+        'Taylor is staff in the tenant that demoted her';
+    is Registry::DAO::Tenant->role_in( $db, 'role_beta', $taylor->id ), 'admin',
+        'and still admin in the other';
+
+    app_as($taylor)->get_ok( '/admin/domains' => { Host => $HOST{alpha} } )
+      ->status_is( 403, 'so the admin-only action is refused her there' );
+};
+
+subtest 'the last admin of a tenant cannot be demoted by membership' => sub {
+    my $gamma = Registry::DAO::Tenant->provision( $db, { name => 'Role Epsilon', slug => 'role_epsilon', users => [] } );
+    my $solo  = account('role_epsilon_solo');
+    my $staff = account('role_epsilon_staff');
+    $gamma->add_user( $db, $solo,  1, 'admin' );
+    $gamma->add_user( $db, $staff, 0, 'staff' );
+    resident( $_, $gamma ) for $solo, $staff;
+
+    # Another tenant's admin user_type copy must not count as an admin here.
+    my $gamma_db = $dao->connect_schema('role_epsilon')->db;
+    my ($local) = Registry::DAO::User->find( $gamma_db, { id => $solo->id } );
+    my $err = do { local $@; eval { $local->change_role( $gamma_db, 'staff', $staff ); 1 } ? '' : "$@" };
+    like $err, qr/last active administrator/, 'the only admin-role member cannot be demoted';
+    is Registry::DAO::Tenant->role_in( $db, 'role_epsilon', $solo->id ), 'admin', 'and stays admin';
+};
+
 done_testing;
