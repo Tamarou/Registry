@@ -209,4 +209,22 @@ subtest 'a recorded fee on a platform tenant payment is counted' => sub {
     is $by_slug{registry}{fees_cents}, 120, 'and the fee as recorded on it';
 };
 
+subtest 'the platform tenant is listed once and tenants are never mixed' => sub {
+    my $before = Registry::DAO::Tenant->platform_revenue($db);
+    my %was = map { $_->{slug} => $_ } @{ $before->{tenants} };
+
+    a_platform_charge( 7000, 70 );
+    a_charge( 'earning_studio', 9000, 90 );
+
+    my $after = Registry::DAO::Tenant->platform_revenue($db);
+    my @platform_rows = grep { $_->{slug} eq 'registry' } @{ $after->{tenants} };
+    is scalar @platform_rows, 1, 'the platform tenant appears exactly once';
+
+    my %now = map { $_->{slug} => $_ } @{ $after->{tenants} };
+    is $now{registry}{fees_cents} - $was{registry}{fees_cents}, 70,
+        "the platform's total moved by its own charge only";
+    is $now{earning_studio}{fees_cents} - $was{earning_studio}{fees_cents}, 90,
+        "the studio's total moved by its own charge only";
+};
+
 done_testing;

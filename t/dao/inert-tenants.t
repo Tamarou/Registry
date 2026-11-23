@@ -122,4 +122,16 @@ subtest 'reporting does not reap' => sub {
     }
 };
 
+subtest 'reporting the platform tenant as inert never removes it' => sub {
+    $db->query( q{UPDATE registry.magic_link_tokens SET consumed_at = NULL} );
+    my $listed = grep { $_->{slug} eq 'registry' }
+        @{ Registry::DAO::Tenant->inert( $db, older_than_days => 30 )->{tenants} };
+    ok $listed, 'the report lists the platform tenant';
+
+    ok $db->query( q{SELECT 1 FROM registry.tenants WHERE slug = 'registry'} )->hash,
+        'its row still exists';
+    ok $db->query( q{SELECT 1 FROM information_schema.schemata WHERE schema_name = 'registry'} )->hash,
+        'and so does its schema';
+};
+
 $t_db->cleanup_test_database;

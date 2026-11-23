@@ -154,4 +154,16 @@ subtest 'an unpaid obligation on a platform payment is in the queue' => sub {
     is $row && $row->{refund_owed_cents}, 2500, 'with what is outstanding';
 };
 
+subtest 'a platform obligation is listed once and a paid one not at all' => sub {
+    my $owing = a_platform_payment(
+        status => 'refund_pending', refund_owed_cents => 900, refunded_cents => 0 );
+    my $paid = a_platform_payment(
+        status => 'refunded', refund_owed_cents => 0, refunded_cents => 10000 );
+
+    my @ids = map { $_->{payment_id} }
+        @{ Registry::DAO::Tenant->unpaid_obligations($db)->{payments} };
+    is scalar( grep { $_ eq $owing->id } @ids ), 1, 'the platform obligation is listed exactly once';
+    is scalar( grep { $_ eq $paid->id } @ids ), 0, 'a fully refunded platform payment is not listed';
+};
+
 done_testing;
