@@ -61,6 +61,25 @@ subtest 'the platform tenant has one owner, and the DAO can say who' => sub {
         'nor is nobody';
 };
 
+subtest 'a non-primary admin member of the platform tenant is a platform admin' => sub {
+    # A second admin Tamarou adds to the platform is as much its admin as the
+    # owner: membership plus the admin role, not being primary.
+    my $second = Registry::DAO::User->create( $db, {
+        username => 'second_platform_admin', name => 'Second Admin',
+        user_type => 'admin', email => 'second@registry.test',
+    } );
+    $platform->add_user( $db, $second );
+
+    ok Registry::DAO::Tenant->is_platform_admin( $db, $second->id ),
+        'a second admin of the platform tenant is a platform admin';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $second );
+
+    $t->get_ok('/platform/jobs')->status_is( 200, 'and is served the queue' );
+};
+
 subtest 'the job queue is not served to an anonymous visitor' => sub {
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper( dao => sub { $dao } );

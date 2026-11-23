@@ -179,15 +179,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
         my $platform = $class->platform($db) or return 0;
 
-        # Asked of the join table rather than through primary_user, which
-        # returns the first of however many rows carry is_primary -- add_user
-        # does not enforce one. An auth decision should not depend on which row
-        # a LIMIT-less query happened to return first, and "is A primary of the
-        # platform" is the question anyway.
+        # The membership's role, not users.user_type: that column is global,
+        # so a studio's admin added to the platform as support would otherwise
+        # be a platform admin (ADR 005, ruling 4).
         return $db->select( 'registry.tenant_users', 'COUNT(*)', {
-            tenant_id  => $platform->id,
-            user_id    => $user_id,
-            is_primary => 1,
+            tenant_id => $platform->id,
+            user_id   => $user_id,
+            role      => 'admin',
         } )->array->[0] ? 1 : 0;
     }
 
@@ -433,7 +431,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             {
                 tenant_id  => $id,
                 user_id    => $user->id,
-                is_primary => $is_primary ? 1 : 0
+                is_primary => $is_primary ? 1 : 0,
+                role       => $user->user_type,
             },
             { returning => '*' }
         );
