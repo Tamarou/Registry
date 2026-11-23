@@ -30,6 +30,9 @@ envVarGroups:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      # The Connect endpoint's (/webhooks/stripe/connect) own signing secret.
+      - key: STRIPE_CONNECT_WEBHOOK_SECRET
+        sync: false
       # Tamarou's own Stripe account (acct_...) and whether Stripe has
       # approved it (true/false). `./registry platform bootstrap` writes both
       # onto the platform tenant on every start; a production boot with either

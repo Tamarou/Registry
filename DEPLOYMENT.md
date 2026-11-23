@@ -108,6 +108,10 @@ Set these environment variables in your Render dashboard:
 - `STRIPE_PUBLIC_KEY` - Your Stripe publishable key
 - `STRIPE_SECRET_KEY` - Your Stripe secret key  
 - `STRIPE_WEBHOOK_SECRET` - Your Stripe webhook endpoint secret
+- `STRIPE_CONNECT_WEBHOOK_SECRET` - The signing secret of the Connect webhook
+  endpoint (`/webhooks/stripe/connect`), which receives events on sellers'
+  own accounts. Required in production: without it every Connect delivery is
+  refused and no such event settles
 
 **Required in production (the platform's own Stripe account and first admin):**
 - `PLATFORM_STRIPE_ACCOUNT_ID` - Tamarou's Stripe account id (`acct_...`)
