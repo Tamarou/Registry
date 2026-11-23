@@ -62,5 +62,22 @@ subtest 'zero fee omits application fee amount while nonzero fee is sent' => sub
         'a 2.5% charge on $100.00 still carries its 250 cent fee';
 };
 
+subtest 'fee rounding to zero cents is omitted' => sub {
+    # 2.5% of 19 cents is 0.475 cents, which rounds to 0.
+    is Registry::DAO::Payment::application_fee_cents( 19, 0.025 ), 0,
+        '19 cents at 2.5% computes a 0 cent fee';
+    my $params = params_for( $solo, 19 );
+    ok !exists $params->{application_fee_amount},
+        'so the 2.5% charge sends no application_fee_amount key';
+};
+
+subtest 'zero fee is never sent as a value' => sub {
+    my $params = params_for( $free, 10000 );
+    ok !( grep { $_ eq 'application_fee_amount' } keys %$params ),
+        'application_fee_amount is not a key at all';
+    ok !exists $params->{application_fee_amount},
+        'so it is not 0, "0", an empty string or undef';
+};
+
 $test_db->cleanup_test_database;
 done_testing;
