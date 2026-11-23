@@ -13,6 +13,7 @@ use Registry::DAO::User;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
+use Mojo::JSON;
 
 local $ENV{STRIPE_SECRET_KEY}             = 'sk_test_connect_endpoint';
 local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_local_platform_endpoint';
@@ -99,6 +100,70 @@ subtest 'unknown account settles into no schema' => sub {
     Test::Registry::StripeWebhook::post_connect($t, $event)->status_is(200);
     ok scalar( grep { $_->[1] =~ /acct_nobody_$$/ } @logs ), 'the unknown account is logged';
     is scalar @{ claims($event->{id}) }, 0, 'nothing is claimed or settled';
+};
+
+subtest 'connect signed delivery to platform endpoint is refused' => sub {
+    my $event = { id => "evt_conn_to_platform_$$", type => 'payment_intent.succeeded',
+                  account => $account, data => { object => { id => 'pi_conn', metadata => {} } } };
+    Test::Registry::StripeWebhook::post_connect($t, $event, path => '/webhooks/stripe')
+        ->status_is(400);
+    is scalar @{ claims($event->{id}) }, 0, 'nothing is claimed';
+};
+
+subtest 'altered body missing or stale signature is refused' => sub {
+    my $event = { id => "evt_conn_tamper_$$", type => 'customer.created', account => $account };
+
+    my $altered = Mojo::JSON::encode_json({ %$event, account => 'acct_attacker' });
+    Test::Registry::StripeWebhook::post_connect($t, {%$event}, body => $altered)
+        ->status_is(400, 'a body altered after signing');
+
+    $t->tx( $t->ua->post('/webhooks/stripe/connect' => { 'Content-Type' => 'application/json' }
+        => Mojo::JSON::encode_json($event)) )->status_is(400, 'no signature header');
+
+    Test::Registry::StripeWebhook::post_connect($t, {%$event}, timestamp => time() - 600)
+        ->status_is(400, 'a timestamp outside the tolerance');
+
+    is scalar @{ claims($event->{id}) }, 0, 'nothing is claimed';
+};
+
+subtest 'event without account never defaults to registry' => sub {
+    @logs = ();
+    my $event = { id => "evt_conn_noacct_$$", type => 'customer.created' };
+    Test::Registry::StripeWebhook::post_connect($t, $event)
+        ->status_is(200)->content_is('OK (no tenant)');
+    ok scalar( grep { $_->[1] =~ /\Q$event->{id}\E/ } @logs ), 'the event is logged';
+    ok !scalar( grep { $_->[1] =~ /for tenant/ } @logs ), 'and routed to no tenant, registry included';
+    is scalar @{ claims($event->{id}) }, 0, 'nothing is claimed or settled';
+};
+
+subtest 'case prefix or injected account resolves no tenant' => sub {
+    my $prefix = substr $account, 0, -1;
+    for my $impostor ( uc($account), $prefix, "$prefix%", "acct_x' OR '1'='1", "$account' --" ) {
+        my $event = { type => 'customer.created', account => $impostor };
+        Test::Registry::StripeWebhook::post_connect($t, $event)
+            ->status_is(200)->content_is('OK (no tenant)', "'$impostor' names no tenant");
+        is scalar @{ claims($event->{id}) }, 0, 'and claims nothing';
+    }
+};
+
+subtest 'already claimed event id is a duplicate' => sub {
+    @logs = ();
+    my $event_id = "evt_conn_claimed_$$";
+
+    # A different backend from the app's: the claim it sees is a committed one.
+    my $other = Registry::DAO->new( url => $test_db->uri )->db;
+    $other->query(
+        q{INSERT INTO registry.webhook_events (stripe_event_id, event_type) VALUES (?, ?)},
+        $event_id, 'customer.created' );
+
+    Test::Registry::StripeWebhook::post_connect($t,
+        { id => $event_id, type => 'customer.created', account => $account })
+        ->status_is(200)->content_is('OK (duplicate)');
+
+    my $rows = claims($event_id);
+    is scalar @$rows, 1, 'still one claim';
+    ok !$rows->[0]{processed_at}, 'and nothing processed it';
+    ok !scalar( grep { $_->[1] =~ /for tenant/ } @logs ), 'no handling was attempted';
 };
 
 done_testing;
