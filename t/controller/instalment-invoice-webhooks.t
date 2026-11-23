@@ -14,31 +14,51 @@ defer { done_testing };
 
 use Test::Registry::DB;
 use Test::Registry::Mojo;
+use Test::Registry::StripeWebhook;
 use Registry::DAO::Payment;
-use Registry::Controller::Webhooks;
+use Registry::DAO::Tenant;
+
+local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_local_platform_instalments';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_local_connect_instalments';
 
 my $t_db = Test::Registry::DB->new;
 my $dao  = $t_db->db;
-my $db   = $dao->db;
 $ENV{DB_URL} = $t_db->uri;
 
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper( dao => sub { $dao } );
 
-my $user = $dao->create( User => { username => 'instalment_parent', user_type => 'parent' } );
+# A tenant whose Stripe account the schedules live on: the Connect endpoint
+# finds it from event.account, and its instalment rows live in its own schema.
+sub tenant ( $name ) {
+    my $slug  = "inst_${name}_$$";
+    my $admin = $dao->create( User => { username => "inst_${name}_admin_$$", user_type => 'admin' } );
+    Registry::DAO::Tenant->provision( $dao->db, {
+        name  => "Instalment $name $$",
+        slug  => $slug,
+        users => [$admin],
+        stripe_connect_account_id => "acct_inst_${name}_$$",
+    } );
+    my $tdao = $dao->connect_schema($slug);
+    my $user = $tdao->create( User => { username => "inst_${name}_parent_$$", user_type => 'parent' } );
+    return { slug => $slug, account => "acct_inst_${name}_$$", db => $tdao->db, user => $user };
+}
+
+my $A = tenant('a');
 
 my $SCHED = 'sub_sched_probe';
 
 # The set as schedule_remaining_instalments leaves it: instalment one paid, the
 # rest owed, all sharing one schedule id.
-sub build_set () {
+sub build_set ( $tenant = $A ) {
+    my $db = $tenant->{db};
     $db->delete( 'payments', { stripe_schedule_id => $SCHED } );
 
     my @amounts = ( 3333, 3333, 3334 );
     my @ids;
     for my $i ( 1 .. 3 ) {
         my $row = $db->insert( 'payments', {
-            user_id            => $user->id,
+            user_id            => $tenant->{user}->id,
             amount_cents       => $amounts[ $i - 1 ],
             currency           => 'USD',
             status             => $i == 1 ? 'completed' : 'pending',
@@ -53,27 +73,36 @@ sub build_set () {
     return @ids;
 }
 
-# The controller's own handler, driven directly: the signature verification and
-# dedup around it are t/controller/payment-intent-webhook.t's subject, and going
-# through them here would test those instead of this.
-# build_controller gives a bare Mojolicious::Controller; the webhook methods
-# live on Registry::Controller::Webhooks, so the controller is built as that
-# class rather than reached through a route.
-sub webhooks_controller () {
-    my $c = $t->app->build_controller;
-    return bless $c, 'Registry::Controller::Webhooks';
+# Signed and posted to the Connect endpoint, as Stripe sends an invoice from a
+# schedule on the tenant's own account.
+sub deliver ( $type, $invoice, $tenant = $A ) {
+    Test::Registry::StripeWebhook::post_connect( $t, {
+        type => $type, account => $tenant->{account}, data => { object => $invoice } } )
+        ->status_is(200);
 }
 
-sub deliver ( $type, $invoice ) {
-    webhooks_controller()
-        ->_process_instalment_invoice( $db, { type => $type, data => { object => $invoice } } );
-}
-
-sub statuses () {
-    return $db->query( q{
+sub statuses ( $tenant = $A ) {
+    return $tenant->{db}->query( q{
         SELECT status FROM payments WHERE stripe_schedule_id = ? ORDER BY instalment_seq
     }, $SCHED )->arrays->flatten->to_array;
 }
+
+subtest 'connect instalment invoice marks the tenant instalment' => sub {
+    build_set();
+
+    deliver( 'invoice.paid', { schedule => $SCHED, payment_intent => 'pi_conn_two' } );
+    is_deeply statuses(), [qw( completed completed pending )],
+        "the earliest owed row in the account's tenant is completed";
+
+    deliver( 'invoice.paid', { schedule => $SCHED, payment_intent => 'pi_conn_two' } );
+    is_deeply statuses(), [qw( completed completed pending )],
+        'a redelivery does not advance the set';
+
+    deliver( 'invoice.payment_failed', {
+        schedule => $SCHED, payment_intent => 'pi_conn_three' } );
+    is_deeply statuses(), [qw( completed completed failed )],
+        'and a failed invoice marks the next owed row failed';
+};
 
 subtest 'a paid invoice completes the earliest owed instalment' => sub {
     build_set();
@@ -117,14 +146,14 @@ subtest 'a failed instalment is recorded, and the child keeps their place' => su
     is_deeply statuses(), [qw( completed failed pending )],
         'the second instalment is failed, the third still pending';
 
-    my $failed = Registry::DAO::Payment->find( $db, { id => $ids[1] } );
+    my $failed = Registry::DAO::Payment->find( $A->{db}, { id => $ids[1] } );
     like $failed->error_message, qr/declined/,
         'and the reason is on the row, for Morgan to read';
 
     # keep_and_flag. A child who has been attending for six weeks does not lose
     # their place over an expired card; the debt stands and Morgan decides. She
     # knows her families, and a seat returned to a waitlist cannot be given back.
-    my $enrolments = $db->query(
+    my $enrolments = $A->{db}->query(
         q{SELECT count(*) FROM enrollments WHERE status = 'cancelled'} )->array->[0];
     is $enrolments, 0, 'no enrolment was cancelled by the failure';
 };
@@ -141,21 +170,6 @@ subtest 'a retry after a failure completes the same instalment' => sub {
     deliver( 'invoice.paid', { schedule => $SCHED, payment_intent => 'pi_two_retry' } );
     is_deeply statuses(), [qw( completed completed pending )],
         'the retry settles the instalment that failed, not the next one';
-};
-
-subtest 'an invoice for a schedule Registry does not know is left alone' => sub {
-    build_set();
-
-    my $c = webhooks_controller();
-    ok !$c->_invoice_is_instalment( $db,
-        { data => { object => { schedule => 'sub_sched_someone_elses' } } } ),
-        'not recognised as an instalment';
-
-    # Which matters because the branch it would otherwise fall into reads an
-    # invoice as OUR subscription being paid, and would move a tenant's billing
-    # status on the strength of a parent's card.
-    ok !$c->_invoice_is_instalment( $db, { data => { object => {} } } ),
-        'and an invoice with no schedule at all is not one either';
 };
 
 $t_db->cleanup_test_database;

@@ -202,17 +202,34 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $tx = $db->begin;
         return unless $self->_claim_event( $db, $event );
 
-        # Transaction-local, as in _settle_event.
-        $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" );
+        try {
+            # Transaction-local, as in _settle_event.
+            $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" );
 
-        $self->app->log->info(
-            "Connect webhook event $event_id ($event->{type}) for tenant $slug not handled");
+            # A family's instalment, billed by the schedule Registry made on
+            # this account, so matched in this tenant's schema only. Never
+            # tenant billing: that is the platform's own subscriptions.
+            if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/
+                    && $self->_invoice_is_instalment($db, $event) ) {
+                $self->_process_instalment_invoice($db, $event);
+            }
+            else {
+                $self->app->log->info(
+                    "Connect webhook event $event_id ($event->{type}) for tenant $slug not handled");
+            }
 
-        $db->query(
-            q{UPDATE registry.webhook_events SET processed_at = now()
-              WHERE stripe_event_id = ?}, $event_id
-        );
-        $tx->commit;
+            $db->query(
+                q{UPDATE registry.webhook_events SET processed_at = now()
+                  WHERE stripe_event_id = ?}, $event_id
+            );
+            $tx->commit;
+        }
+        catch ($e) {
+            # The claim rolls back with $tx, so Stripe's retry reprocesses.
+            $self->app->log->error("Connect webhook event $event_id failed: $e");
+            $self->render( status => 500, text => 'Webhook processing failed' );
+            return;
+        }
 
         $self->render( status => 200, text => 'OK' );
     }
@@ -255,15 +272,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # the paid-enrollment readiness gate reflects Stripe's current view.
             elsif ($event->{type} eq 'account.updated') {
                 $self->_process_account_updated($db, $event);
-            }
-            # An instalment of a plan a parent chose at checkout. Routed here
-            # before the tenant-billing branch below, which reads invoice events
-            # as OUR subscription being paid -- a family's instalment is not that,
-            # and letting it fall through would move a tenant's billing status on
-            # a parent's card.
-            elsif ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/
-                    && $self->_invoice_is_instalment($db, $event) ) {
-                $self->_process_instalment_invoice($db, $event);
             }
             else {
                 # Handle tenant billing events (existing logic)
