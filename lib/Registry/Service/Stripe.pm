@@ -265,6 +265,17 @@ class Registry::Service::Stripe {
     method retrieve_refund_async($refund_id) {
         return $self->_request_async('GET', "refunds/$refund_id");
     }
+
+    # Application Fees API
+    #
+    # Returning the platform's fee is the exception to keeping it on a refund
+    # (005). A fee is an object on the platform's own account, so this call is
+    # the platform's to make, on an unbound client.
+    method create_application_fee_refund_async($fee_id, $params = {}) {
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', "application_fees/$fee_id/refunds", \%p, $ik);
+    }
     
     # Prices API (for subscriptions)
     method create_price_async($params) {
@@ -384,6 +395,10 @@ class Registry::Service::Stripe {
 
     method create_refund($params) {
         return $self->_await($self->create_refund_async($params));
+    }
+
+    method create_application_fee_refund($fee_id, $params = {}) {
+        return $self->_await($self->create_application_fee_refund_async($fee_id, $params));
     }
 
     method create_customer($params) {
