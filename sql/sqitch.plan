@@ -91,3 +91,4 @@ workflow-step-label [send-cap-setting] 2026-10-13T16:10:00Z Chris Prather <chris
 collapse-platform-tenant [workflow-step-label] 2026-11-23T12:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform is one tenant row: the all-zeros row, slug registry
 tenant-users-role [collapse-platform-tenant] 2026-11-23T18:00:00Z Chris Prather <chris.prather@tamarou.com> # A membership carries its own role, so authority is read per tenant
 platform-tenant-unlinks-solo [tenant-users-role] 2026-11-23T20:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform takes no share of its own sales
+operator-right [platform-tenant-unlinks-solo] 2026-11-23T22:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform tenant holds the operator right as seeded data

@@ -256,6 +256,27 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         } )->array->[0] ? 1 : 0;
     }
 
+    # Does tenant $tenant_id hold resource $resource?
+    #
+    # The one seam every caller asks, about the resource and never a plan or a
+    # slug: the operator right is held by whichever tenant the data says holds
+    # it. Reads the interim table operator-right.sql seeds; step 3 re-points
+    # this at its entitlement table, so nothing else reads that table.
+    #
+    # Qualified with registry: clone_schema gives every tenant schema an empty
+    # copy of the table, and a row a tenant writes into its own copy grants
+    # nothing.
+    sub holds ($class, $db, $tenant_id, $resource) {
+        $db = $db->db if $db isa Registry::DAO;
+        return 0 unless defined $tenant_id && length $tenant_id
+                     && defined $resource  && length $resource;
+
+        return $db->select( 'registry.tenant_resources', 'COUNT(*)', {
+            tenant_id => $tenant_id,
+            resource  => $resource,
+        } )->array->[0] ? 1 : 0;
+    }
+
     method primary_user ($db) {
         my $sql = <<~'SQL';
             SELECT u.*
