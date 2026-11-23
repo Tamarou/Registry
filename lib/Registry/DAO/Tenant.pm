@@ -1042,11 +1042,20 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             $tenant->set_primary_user($db, $primary_user) if $primary_user;
         }
 
-        # Copy each supplied user into the tenant schema
+        # Copy each supplied user into the tenant schema, and make them a
+        # member: their role in the tenant is the membership's (ruling 4), so a
+        # team member copied in without one would have none. The role is the
+        # user_type chosen for them at signup; the primary's membership is
+        # already there and is kept.
         for my $user (@$users) {
             my $user_id = ref $user eq 'HASH' ? $user->{id} : $user->id;
             $db->query('SELECT copy_user(dest_schema => ?, user_id => ?)',
                 $tenant->slug, $user_id);
+            $db->query( <<~'SQL', $tenant->id, $user_id );
+                INSERT INTO registry.tenant_users (tenant_id, user_id, is_primary, role)
+                SELECT ?, u.id, false, u.user_type FROM registry.users u WHERE u.id = ?
+                ON CONFLICT (tenant_id, user_id) DO NOTHING
+                SQL
         }
 
         # Copy OutcomeDefinitions into the tenant schema BEFORE copying workflows.

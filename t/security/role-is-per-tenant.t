@@ -132,6 +132,29 @@ subtest 'an account local to one tenant has the role that tenant recorded' => su
       ->status_is( 403, 'admin-only actions are not' );
 };
 
+subtest 'everyone a tenant is provisioned with is a member in the role chosen for them' => sub {
+    # Tenant signup names an admin and a team; the team are created as
+    # registry accounts and copied in, so without a membership they would
+    # have no role in the tenant they were just added to.
+    my $owner = account('role_gamma_owner');
+    my $staff = Registry::DAO::User->create( $db, {
+        username => 'role_gamma_staff', name => 'Gamma Staff', user_type => 'staff',
+        email => 'gamma-staff@role-per-tenant.test',
+    } );
+    Registry::DAO::Tenant->provision( $db, {
+        name => 'Role Gamma', slug => 'role_gamma', users => [ $owner, $staff ],
+    } );
+
+    is Registry::DAO::Tenant->role_in( $db, 'role_gamma', $owner->id ), 'admin',
+        'the owner is an admin member';
+    is Registry::DAO::Tenant->role_in( $db, 'role_gamma', $staff->id ), 'staff',
+        'the team member is a staff member';
+
+    my $t = app_as($staff);
+    $t->get_ok( '/admin/people' => { Host => 'role_gamma.localhost' } )
+      ->status_is( 200, 'and is served the staff surfaces of their tenant' );
+};
+
 subtest 'the platform tenant is a tenant like any other' => sub {
     # The hole ruling 4 closes: every studio owner is an admin by user_type,
     # and the platform host is a tenant whose admin screens they reached.
