@@ -106,4 +106,41 @@ subtest 'Unverified custom domain does not resolve to tenant' => sub {
       ->status_isnt(301, 'Pending domain does not resolve to tenant (no canonical redirect)');
 };
 
+# The platform tenant is redirected by the same rule as every tenant. The bare
+# host resolves to it.
+sub platform_canonical ($domain) {
+    $dao->db->update( 'registry.tenants', { canonical_domain => $domain }, { slug => 'registry' } );
+}
+
+subtest 'the platform tenant without a canonical domain is not redirected' => sub {
+    platform_canonical(undef);
+    $t->get_ok( '/auth/login' => { Host => 'localhost' } )
+      ->status_isnt( 301, 'no canonical domain, no redirect' );
+};
+
+subtest 'the platform tenant with a canonical domain is redirected to it' => sub {
+    platform_canonical('platform-home.example');
+    $t->get_ok( '/auth/login' => { Host => 'localhost' } )
+      ->status_is( 301, 'the platform on another host is redirected' )
+      ->header_like( Location => qr{^https?://platform-home\.example/auth/login},
+        'to its canonical domain, path kept' );
+};
+
+subtest 'a request on the platform canonical domain is not redirected' => sub {
+    platform_canonical('registry.example');
+    $t->get_ok( '/auth/login' => { Host => 'registry.example' } )
+      ->status_isnt( 301, 'already there: no redirect, so no loop' );
+};
+
+subtest 'the platform canonical domain never captures another tenant host' => sub {
+    platform_canonical('platform-home.example');
+    $t->get_ok( '/auth/login' => { Host => 'dance_stars.localhost' } )
+      ->status_is(301)
+      ->header_like( Location => qr{^https?://dance-stars\.com/},
+        "a tenant with its own canonical domain goes to its own" );
+    $t->get_ok( '/auth/login' => { Host => 'plain_tenant.localhost' } )
+      ->status_isnt( 301, 'a tenant with none is not sent to the platform' );
+    platform_canonical(undef);
+};
+
 done_testing();

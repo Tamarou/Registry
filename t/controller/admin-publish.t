@@ -11,6 +11,7 @@ use Registry;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::Project;
 use Registry::DAO::Session;
 
@@ -28,6 +29,7 @@ my $admin = $dao->create(User => {
     user_type => 'admin',
     password  => 'x',
 });
+join_tenant( $dao, $admin );
 authenticate_as($t, $admin);
 
 # Create a draft program that Victoria is about to publish.

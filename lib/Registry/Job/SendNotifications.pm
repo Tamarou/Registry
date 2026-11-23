@@ -143,7 +143,8 @@ class Registry::Job::SendNotifications {
     #
     #   magic_link_*, email_verification, passkey_*  how somebody signs IN.
     #       Capping these locks a tenant out of their own account.
-    #   enrollment_confirmation, waitlist_joined     a parent is waiting for it,
+    #   enrollment_confirmation, waitlist_joined,    a parent is waiting for it,
+    #   waitlist_offer, waitlist_expiration
     #       and the volume is bounded by actual enrolments, which are bounded by
     #       payments.
     #   attendance_*                                 bounded by real sessions

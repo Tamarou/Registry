@@ -430,12 +430,21 @@ class Registry :isa(Mojolicious) {
                 username  => $user->username,
                 name      => $user->name,
                 email     => $user->email,
+                # The account's own kind, global. Never authority in a tenant:
+                # that is 'role', below.
                 user_type => $user->user_type,
-                # Provide a 'role' alias for backward compatibility with
-                # controllers that check $user->{role}
-                role      => $user->user_type,
                 %extra,
             };
+        };
+
+        # 'role' is the user's role in the tenant this request acts on -- the
+        # membership's (ADR 005, ruling 4), '' where they have none -- so that
+        # everything reading $user->{role} reads the per-tenant answer.
+        # Filled after the stash is set because tenant_role asks it.
+        my $stash_user = sub ($c, $stashed) {
+            $c->stash( current_user => $stashed );
+            $stashed->{role} = $c->tenant_role // '';
+            return $stashed;
         };
 
         $self->hook(
@@ -465,7 +474,7 @@ class Registry :isa(Mojolicious) {
                             if ($user) {
                                 $api_key->touch($dao->db);
                                 my $stashed = $user_to_stash->($user, api_key => $api_key);
-                                $c->stash( current_user => $stashed ) if $stashed;
+                                $stash_user->( $c, $stashed ) if $stashed;
                                 return;  # Skip session check
                             }
                         }
@@ -507,7 +516,7 @@ class Registry :isa(Mojolicious) {
                     if ($user) {
                         my $stashed = $user_to_stash->($user);
                         if ($stashed) {
-                            $c->stash( current_user => $stashed );
+                            $stash_user->( $c, $stashed );
                         }
                         else {
                             # Deactivated while signed in. Clear the session too, so
@@ -638,15 +647,30 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Helper: the signed-in user's role in the current tenant, or undef.
+        # Asked of the data on every call rather than read from the session,
+        # which carries the global user_type. See
+        # Registry::DAO::Tenant::role_in.
+        $self->helper(
+            tenant_role => sub ($c) {
+                my $user = $c->stash('current_user');
+                return undef unless ref $user;
+                require Registry::DAO::Tenant;
+                return Registry::DAO::Tenant->role_in(
+                    $c->dao('registry')->db, $c->tenant, $user->{id} );
+            }
+        );
+
         # Helper: require an authenticated session AND one of the given roles.
-        # Calls require_auth first, then checks user_type against allowed roles.
+        # Calls require_auth first, then checks the user's role in the current
+        # tenant -- their membership's, not the global user_type (ADR 005,
+        # ruling 4) -- against allowed roles.
         # Sends 403 to wrong-role browser requests; 403 JSON to API clients.
         $self->helper(
             require_role => sub ( $c, @allowed_roles ) {
                 return 0 unless $c->require_auth;
 
-                my $user      = $c->stash('current_user');
-                my $user_role = $user->{user_type} // '';
+                my $user_role = $c->tenant_role // '';
 
                 for my $allowed (@allowed_roles) {
                     return 1 if $user_role eq $allowed;
@@ -678,8 +702,9 @@ class Registry :isa(Mojolicious) {
         #
         # Deliberately not a user_type. check_user_type caps that column at
         # parent/student/staff/admin, and Morgan running a studio is every bit
-        # as much an 'admin' as Alex; what distinguishes them is which tenant
-        # they are primary of. See Registry::DAO::Tenant::is_platform_admin.
+        # as much an 'admin' as Alex; what distinguishes them is membership of
+        # the platform tenant with the admin role. See
+        # Registry::DAO::Tenant::is_platform_admin.
         $self->helper(
             require_platform_admin => sub ($c) {
                 return 0 unless $c->require_auth;
@@ -693,6 +718,35 @@ class Registry :isa(Mojolicious) {
                 # admin buys nothing -- they can read the same refusal from the
                 # status code either way -- and a plain Forbidden is what
                 # require_role already answers, so the two surfaces agree.
+                if (   $c->req->headers->header('X-Requested-With')
+                    || ( $c->req->headers->accept // '' ) =~ m{application/json} )
+                {
+                    $c->render( json => { error => 'Forbidden' }, status => 403 );
+                }
+                else {
+                    $c->render( text => 'Forbidden', status => 403 );
+                }
+                return 0;
+            }
+        );
+
+        # Helper: may this user use the operator right?
+        #
+        # The surfaces that cross tenants -- the job queue, every tenant's
+        # arguments included, and the cross-tenant revenue view -- are one
+        # resource held by a tenant like any other, and usable by that
+        # tenant's admins. Asked of the data, never of the platform's slug or
+        # id, so removing the platform's holding refuses even Alex. See
+        # Registry::DAO::Tenant::admin_of_holder.
+        $self->helper(
+            require_operator => sub ($c) {
+                return 0 unless $c->require_auth;
+
+                my $user = $c->stash('current_user');
+                require Registry::DAO::Tenant;
+                return 1 if Registry::DAO::Tenant->admin_of_holder(
+                    $c->dao->db, ref $user ? $user->{id} : undef, 'operator' );
+
                 if (   $c->req->headers->header('X-Requested-With')
                     || ( $c->req->headers->accept // '' ) =~ m{application/json} )
                 {
@@ -735,7 +789,7 @@ class Registry :isa(Mojolicious) {
                 my $method = $c->req->method;
 
                 # Only validate state-changing HTTP methods
-                return unless $method eq 'POST' || $method eq 'PUT' || $method eq 'DELETE';
+                return unless $method =~ /\A(?:POST|PUT|PATCH|DELETE)\z/;
 
                 # Webhook endpoints use their own authentication scheme
                 return if $c->req->url->path =~ m{^/webhooks/};
@@ -746,6 +800,22 @@ class Registry :isa(Mojolicious) {
 
                 # WebAuthn endpoints have built-in origin validation via the protocol
                 return if $c->req->url->path =~ m{^/auth/webauthn/};
+
+                # Minion's dashboard is Minion's own templates, and its job
+                # form (retry, stop, remove) carries no CSRF token. Its posts are
+                # held to the other standard defence instead: they must come from
+                # this app's own origin, by Origin or else Referer. A request
+                # with neither is refused, as a cross-site one is.
+                if ( $c->req->url->path =~ m{^/platform/jobs/} ) {
+                    my $own  = $c->req->url->to_abs;
+                    my $from = $c->req->headers->origin
+                        || $c->req->headers->referrer || '';
+                    my $src  = Mojo::URL->new($from);
+                    return if length $from
+                        && lc( $src->host // '' ) eq lc( $own->host // '' )
+                        && ( $src->port // '' ) eq ( $own->port // '' )
+                        && ( $src->scheme // '' ) eq ( $own->scheme // '' );
+                }
 
                 my $expected = $c->csrf_token;
 
@@ -848,8 +918,9 @@ class Registry :isa(Mojolicious) {
                 return unless $host;
 
                 # Resolve tenant and check for canonical domain
+                # The platform tenant included: with a canonical_domain set it
+                # is redirected like any tenant, and without one it is not.
                 my $tenant_slug = $c->tenant;
-                return if $tenant_slug eq 'registry';
 
                 try {
                     # Look up the tenant record in the registry schema (tenants table lives there)
@@ -983,25 +1054,32 @@ class Registry :isa(Mojolicious) {
             ->to('admin_dashboard#update_session')
             ->name('admin_session_settings');
 
-        # Minion's own dashboard, behind the platform guard.
-        #
-        # #426's first step, and the cheapest: the job queue is the answer to
-        # "is the automation running" and it was answerable only through psql or
-        # `registry minion job`. Mounting what Minion already ships retires more
-        # terminal work than anything else on that list.
+        # The platform tenant's own admin screens: the fleet and the runbook.
         #
         # Under its own `under` rather than $admin_only: that group asks
-        # require_role('admin'), which Morgan satisfies -- and the queue is every
-        # tenant's work, so it is not a tenant admin's to read.
-        #
-        # route => the mount point, so links inside the dashboard stay under it.
+        # require_role('admin'), which Morgan satisfies -- and these are the
+        # platform's screens, not a tenant admin's to read.
         my $platform = $r->under('/platform')->to(
             cb => sub ($c) { $c->require_platform_admin } );
         $platform->get('/')->to( cb => sub ($c) {
             $c->redirect_to('/platform/tenants');
         } )->name('platform_index');
 
-        $self->plugin( 'Minion::Admin' => { route => $platform->any('/jobs') } );
+        # The surfaces that cross tenants, behind the operator right rather
+        # than platform-admin-ness: a sibling `under` on the same prefix, not
+        # one nested inside $platform, because the right belongs to whichever
+        # tenant holds it and its admins need not be the platform's.
+        my $operator = $r->under('/platform')->to(
+            cb => sub ($c) { $c->require_operator } );
+
+        # Minion's own dashboard. #426's first step, and the cheapest: the job
+        # queue is the answer to "is the automation running" and it was
+        # answerable only through psql or `registry minion job`. Mounting what
+        # Minion already ships retires more terminal work than anything else on
+        # that list.
+        #
+        # route => the mount point, so links inside the dashboard stay under it.
+        $self->plugin( 'Minion::Admin' => { route => $operator->any('/jobs') } );
 
         # The tenant fleet: #426's step 2, and the screen everything else about
         # a customer hangs off. "Is this customer actually working" took four
@@ -1023,7 +1101,7 @@ class Registry :isa(Mojolicious) {
         # Deriving the figure from amount x rate would look exactly as
         # authoritative and disagree with every rate change (#277) and every
         # fee-returning refund.
-        $platform->get('/revenue')->to( cb => sub ($c) {
+        $operator->get('/revenue')->to( cb => sub ($c) {
             require Registry::DAO::Tenant;
             $c->render(
                 template => 'platform/revenue',
@@ -1049,6 +1127,49 @@ class Registry :isa(Mojolicious) {
                 queue    => Registry::DAO::Tenant->unpaid_obligations( $c->dao->db ),
             );
         } )->name('platform_runbook');
+
+        # Platform settings: the screen for what `registry platform settings`
+        # lists, so changing one needs no shell on the server. The same DAO the
+        # CLI calls; there is no second write path.
+        $platform->get('/settings')->to( cb => sub ($c) {
+            require Registry::DAO::PlatformSetting;
+            $c->render(
+                template => 'platform/settings',
+                settings => Registry::DAO::PlatformSetting->all( $c->dao->db ),
+            );
+        } )->name('platform_settings');
+
+        # `registry platform set` and `unset` as one screen action: `unset=1`
+        # returns the key to NULL, otherwise `value` is stored. The acting
+        # user is passed as the actor, so updated_by records who changed it.
+        $platform->post('/settings/:key')->to( cb => sub ($c) {
+            require Registry::DAO::PlatformSetting;
+            my $user  = $c->stash('current_user');
+            my $key   = $c->stash('key');
+            my $value = $c->param('unset') ? undef : $c->param('value');
+
+            # As the CLI does: a blank is refused rather than stored, since
+            # stored it reads as "set to nothing"; an unknown key is refused
+            # by name. Both answer on the screen, with what exists beside it.
+            my $error;
+            if ( !$c->param('unset') && ( $value // '' ) !~ /\S/ ) {
+                $error = "'$key' needs a value; use Unset to return it to its default";
+            }
+            else {
+                eval {
+                    Registry::DAO::PlatformSetting->set( $c->dao->db, $key, $value, $user->{id} );
+                    1;
+                } or $error = $@ =~ s/ at \S+ line \d+\.?\s*\z//r;
+            }
+
+            return $c->redirect_to('/platform/settings') unless $error;
+            $c->render(
+                template => 'platform/settings',
+                status   => 400,
+                error    => $error,
+                settings => Registry::DAO::PlatformSetting->all( $c->dao->db ),
+            );
+        } )->name('platform_settings_update');
 
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach
@@ -1196,13 +1317,11 @@ class Registry :isa(Mojolicious) {
     # registry.templates has an updated_at that differs from its created_at.
     #
     # The platform has its own storefront instead.
-    # Membership of the all-zeros platform tenant. That is how
-    # create-default-pricing-relationships and the tier seed both identify a
-    # platform admin, and production carries exactly one such row.
-    method _PLATFORM_TENANT_ID { '00000000-0000-0000-0000-000000000000' }
-
     # The tenant an authenticated user is permitted to act as, or undef.
-    # A member may act as their own tenant; a platform admin may act as any.
+    # A member may act as their own tenant. Acting as any other is the operator
+    # right (spec, "Decided with perigrin"): an admin-role member of a tenant
+    # that holds `operator`, asked of the one read seam -- never the platform's
+    # slug or id. Either way the tenant must exist.
     method _acting_tenant_for ($c, $requested) {
         return undef unless defined $requested && length $requested;
         # Same shape the caller enforces; checked here too so a malformed value
@@ -1214,14 +1333,14 @@ class Registry :isa(Mojolicious) {
         return undef unless $user_id;
 
         my $permitted = eval {
-            $c->dao('registry')->db->query( <<~'SQL', $user_id, $requested, $self->_PLATFORM_TENANT_ID )->array;
-                SELECT 1
-                  FROM registry.tenant_users tu
-                 WHERE tu.user_id = ?
-                   AND ( tu.tenant_id = (SELECT id FROM registry.tenants WHERE slug = ?)
-                         OR tu.tenant_id = ?::uuid )
-                 LIMIT 1
-                SQL
+            require Registry::DAO::Tenant;
+            my $db = $c->dao('registry')->db;
+            my $tenant_id = $db->query(
+                'SELECT id FROM registry.tenants WHERE slug = ?', $requested )->array;
+            $tenant_id
+              && ( $db->query( 'SELECT 1 FROM registry.tenant_users WHERE user_id = ? AND tenant_id = ?',
+                       $user_id, $tenant_id->[0] )->rows
+                || Registry::DAO::Tenant->admin_of_holder( $db, $user_id, 'operator' ) );
         };
         if ($@) {
             $c->app->log->warn("Tenant membership check failed: $@");

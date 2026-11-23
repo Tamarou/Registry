@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers;
+use Test::Registry::Helpers qw(join_tenant);
 use Test::Registry::Fixtures;
 
 use Registry::DAO::User;
@@ -79,6 +80,8 @@ my $nancy = Registry::DAO::User->create( $db->db, {
     email     => 'nancy.sched@family.example',
     user_type => 'parent',
 } );
+# A parent member of the platform tenant, whose host these requests use.
+join_tenant( $db, $nancy );
 
 my $child = Registry::DAO::FamilyMember->create( $db->db, {
     family_id  => $nancy->id,

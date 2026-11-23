@@ -84,10 +84,27 @@ subtest 'a tenant created yesterday is nobody business yet' => sub {
     note 'one-day window: ' . join ', ', @{ slugs_of($all) };
 };
 
-subtest 'the platform schema is never reported' => sub {
-    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 1 )->{tenants};
-    ok !scalar( grep { $_->{slug} eq 'registry' } @$inert ),
-        'registry is not a tenant anybody signs into';
+# The platform is a tenant like any other: old and never signed into, it is
+# reported; signed into, it is not. No exemption by slug.
+subtest 'the platform tenant is inert only by the ordinary rule' => sub {
+    $db->query( q{UPDATE registry.tenants SET created_at = now() - interval '60 days' WHERE slug = 'registry'} );
+    $db->query( q{UPDATE registry.magic_link_tokens SET consumed_at = NULL} );
+
+    my $reported = sub {
+        scalar grep { $_->{slug} eq 'registry' }
+            @{ Registry::DAO::Tenant->inert( $db, older_than_days => 30 )->{tenants} };
+    };
+    ok $reported->(), 'old and never signed into, it is reported';
+
+    my $user = $dao->create( User => {
+        username => 'platform_signer', user_type => 'admin',
+        email => 'platform_signer@aged.example', name => 'Platform Signer',
+    } );
+    my ($token) = Registry::DAO::MagicLinkToken->generate( $db,
+        { user_id => $user->id, purpose => 'login', expires_in => 24 } );
+    $db->query( 'UPDATE registry.magic_link_tokens SET consumed_at = now() WHERE id = ?', $token->id );
+
+    ok !$reported->(), 'once somebody has signed in, it is not';
 };
 
 # The point of it being a report. Nothing here deletes anything, and the test
@@ -103,6 +120,18 @@ subtest 'reporting does not reap' => sub {
             'SELECT 1 FROM information_schema.schemata WHERE schema_name = ?', $slug )->hash,
             "and so does its schema";
     }
+};
+
+subtest 'reporting the platform tenant as inert never removes it' => sub {
+    $db->query( q{UPDATE registry.magic_link_tokens SET consumed_at = NULL} );
+    my $listed = grep { $_->{slug} eq 'registry' }
+        @{ Registry::DAO::Tenant->inert( $db, older_than_days => 30 )->{tenants} };
+    ok $listed, 'the report lists the platform tenant';
+
+    ok $db->query( q{SELECT 1 FROM registry.tenants WHERE slug = 'registry'} )->hash,
+        'its row still exists';
+    ok $db->query( q{SELECT 1 FROM information_schema.schemata WHERE schema_name = 'registry'} )->hash,
+        'and so does its schema';
 };
 
 $t_db->cleanup_test_database;

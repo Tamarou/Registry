@@ -54,7 +54,7 @@ subtest 'the walk finds the screens it is supposed to police' => sub {
     ok scalar @screens, 'the route walk found platform screens at all';
 
     my %by_name = map { $_->{name} => $_->{path} } @screens;
-    for my $expected (qw( platform_tenants platform_revenue platform_runbook )) {
+    for my $expected (qw( platform_tenants platform_revenue platform_runbook platform_settings )) {
         ok $by_name{$expected}, "$expected is among them ($by_name{$expected})"
           or diag 'found: ' . join ', ', sort keys %by_name;
     }
@@ -76,6 +76,8 @@ subtest 'every platform screen carries the nav, with every destination on it' =>
               "$screen->{path} links to Revenue" )
           ->content_like( qr/data-nav="platform_runbook"/,
               "$screen->{path} links to Runbook" )
+          ->content_like( qr/data-nav="platform_settings"/,
+              "$screen->{path} links to Settings" )
           ->content_like( qr/data-nav="platform_jobs"/,
               "$screen->{path} links to the job queue" );
     }

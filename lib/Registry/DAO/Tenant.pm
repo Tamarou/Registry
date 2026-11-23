@@ -19,7 +19,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     field $stripe_charges_enabled    :param :reader = 0;
     field $stripe_details_submitted  :param :reader = 0;
 
-    sub table { 'tenants' }
+    # registry.tenants is the directory. clone_schema gives every tenant schema
+    # an empty copy of this table, and a tenant connection searches its own
+    # schema first, so an unqualified name read and wrote that copy instead.
+    sub table { 'registry.tenants' }
 
     # A slug is a PostgreSQL schema name, a DNS label, and a routing key, and
     # all three want the same shape.
@@ -57,10 +60,15 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     #
     # This is a squatting fix (#443) but it is also a routing one: the first two
     # are hazards today, not merely inconveniences later.
+    #
+    # registry-platform is the platform's retired second row (collapse-platform-
+    # tenant). Held in both spellings, since provision turns the hyphen into an
+    # underscore, so nothing that still remembers the name can find a studio.
     my %RESERVED_SLUGS = map { $_ => 1 } qw(
         www registry public admin api app assets billing blog cdn dashboard dev
         docs ftp help imap mail mx ns ns1 ns2 platform pop pop3 smtp staging
         static status support test webmail
+        registry-platform registry_platform
     );
 
     sub slug_is_reserved ( $class, $slug ) {
@@ -152,50 +160,254 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
     # Which tenant is the platform itself.
     #
-    # One owner for the question, because "is this Alex" is about to be asked
-    # from more than one place and #294 wants to collapse `registry-platform`
-    # into `registry` -- when that happens, this method changes and nothing else
-    # does.
+    # One owner for the question, because "is this Alex" is asked from more
+    # than one place.
     #
-    # The notion is not new: create-default-pricing-relationships.sql has
-    # treated the all-zeros tenant as the platform since it was written, and
-    # production carries it as slug `registry-platform` with exactly one primary
-    # user. Resolved by slug rather than by that literal uuid, because a slug is
-    # what the rest of the system routes and reasons about.
+    # The platform tenant is `registry`: the all-zeros row that
+    # create-default-pricing-relationships.sql has treated as the platform since
+    # it was written, which collapse-platform-tenant.sql renamed from
+    # `registry-platform` when it folded the old `registry` row into it. It owns
+    # the `registry` schema and has exactly one primary user. Resolved by slug
+    # rather than by that literal uuid, because a slug is what the rest of the
+    # system routes and reasons about.
     sub platform ($class, $db) {
         $db = $db->db if $db isa Registry::DAO;
-        return $class->find( $db, { slug => 'registry-platform' } );
+        return $class->find( $db, { slug => 'registry' } );
     }
 
-    # Is this user the platform's owner?
+    # Write Tamarou's Stripe account and readiness onto the platform row, and
+    # the address of its first admin onto that admin's profile, from
+    # deployment configuration, the way STRIPE_SECRET_KEY reaches the app.
     #
-    # Platform-ness is being the PRIMARY user of the platform tenant, not a
-    # user_type: `check_user_type` caps that column at parent/student/staff/admin,
-    # and Morgan running a studio is every bit as much an 'admin' as Alex. The
-    # distinction the product needs is which tenant you are primary of.
+    # The migrations create the row and an admin whose address nobody
+    # receives; a migration runs once and cannot read the container's
+    # environment, so `registry platform bootstrap` calls this on every start
+    # (ADR 005, ruling 5). $config is keyed by the variable names so whatever
+    # is wrong with it can be reported by the name an operator sets.
+    #
+    # Dies, writing nothing, when a value is missing or malformed, when the
+    # admin address already belongs to anyone but the platform's admin, or
+    # when there is no platform row: everything is checked before anything is
+    # written. Returns the platform tenant, and in list context a second
+    # value: why the row was kept, when it already names a different account.
+    # That account is one an admin has chosen since, and the ruling is that
+    # bootstrap never overwrites it.
+    my %READY_VALUE = (
+        ( map { $_ => 1 } qw( 1 true yes on ) ),
+        ( map { $_ => 0 } qw( 0 false no off ) ),
+    );
+
+    my $UNCHANGED = " -- the platform tenant and its admin were left as they are\n";
+
+    sub bootstrap_platform ( $class, $db, $config ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my @missing = grep { !defined $config->{$_} }
+            qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY PLATFORM_ADMIN_EMAIL );
+        die 'Not set: ' . join( ', ', @missing ) . $UNCHANGED
+          if @missing;
+
+        my $account = $config->{PLATFORM_STRIPE_ACCOUNT_ID};
+        die "PLATFORM_STRIPE_ACCOUNT_ID '$account' is not a Stripe account id (acct_...)"
+          . $UNCHANGED
+          unless $account =~ /\Aacct_\w+\z/a;
+
+        my $ready = $READY_VALUE{ lc $config->{PLATFORM_STRIPE_READY} };
+        die "PLATFORM_STRIPE_READY '$config->{PLATFORM_STRIPE_READY}' is not true or false"
+          . $UNCHANGED
+          unless defined $ready;
+
+        # One address and nothing else: no whitespace or control characters,
+        # so a value carrying a newline cannot smuggle a header (Bcc: ...)
+        # into the mail sent to it.
+        my $email = $config->{PLATFORM_ADMIN_EMAIL};
+        unless ( length $email <= 255
+            && $email =~ /\A[^\s\@[:cntrl:]]+\@[^\s\@[:cntrl:]]+\z/ )
+        {
+            ( my $shown = $email ) =~ s/([[:cntrl:]])/sprintf '\\x%02x', ord $1/ge;
+            die "PLATFORM_ADMIN_EMAIL '$shown' is not a single email address" . $UNCHANGED;
+        }
+
+        my $platform = $class->platform($db)
+            or die "There is no platform tenant (slug 'registry') to bootstrap;"
+                 . " deploy the schema first. No tenant was created.\n";
+
+        # The platform's primary admin. A primary member who is not admin-role
+        # is not it, and is never promoted: with no admin-role member at all a
+        # new admin is created. An admin-role member who is not primary still
+        # counts, so a second admin is never made beside one.
+        my $admin = $db->query( q{
+            SELECT tu.user_id, up.email
+              FROM registry.tenant_users tu
+              LEFT JOIN registry.user_profiles up ON up.user_id = tu.user_id
+             WHERE tu.tenant_id = ? AND tu.role = 'admin'
+             ORDER BY tu.is_primary DESC, tu.created_at, tu.user_id
+             LIMIT 1
+        }, $platform->id )->hash;
+
+        # An address someone else signs in with -- a studio's user, say -- is
+        # not taken over: that would hand them the platform, or the platform
+        # their account. Compared without case, as mail delivery does.
+        die "PLATFORM_ADMIN_EMAIL '$email' is already in use by another user" . $UNCHANGED
+          if $db->query( q{
+                SELECT 1 FROM registry.user_profiles
+                 WHERE lower(email) = lower(?) AND user_id IS DISTINCT FROM ?
+            }, $email, $admin && $admin->{user_id} )->rows;
+
+        if ( !$admin ) {
+            my $user = Registry::DAO::User->create( $db, {
+                username  => $email,
+                user_type => 'admin',
+                email     => $email,
+                name      => 'Platform Admin',
+            } );
+            $platform->add_user( $db, $user, 1, 'admin' );
+        }
+        elsif ( ( $admin->{email} // '' ) ne $email ) {
+            $db->insert( 'registry.user_profiles',
+                { user_id => $admin->{user_id}, email => $email, name => 'Platform Admin' },
+                { on_conflict => [ user_id => { email => $email } ] } );
+        }
+
+        my $recorded = $platform->stripe_connect_account_id;
+        if ( defined $recorded && $recorded ne $account ) {
+            return wantarray
+              ? ( $platform, "The platform tenant already records Stripe account $recorded;"
+                  . " PLATFORM_STRIPE_ACCOUNT_ID is $account. Kept $recorded and its readiness as they were." )
+              : $platform;
+        }
+
+        # Runs on every start, so a row already saying this is left untouched
+        # rather than rewritten with the same values.
+        return $platform
+          if ( $platform->stripe_connect_account_id // '' ) eq $account
+          && !!$platform->stripe_charges_enabled   == !!$ready
+          && !!$platform->stripe_details_submitted == !!$ready;
+
+        return $platform->update( $db, {
+            stripe_connect_account_id => $account,
+            stripe_charges_enabled    => $ready,
+            stripe_details_submitted  => $ready,
+        } );
+    }
+
+    # Is this user an admin of the platform?
+    #
+    # Platform-ness is a membership of the platform tenant whose role is
+    # 'admin', primary or not. Not a user_type: `check_user_type` caps that
+    # column at parent/student/staff/admin, and Morgan running a studio is every
+    # bit as much an 'admin' as Alex. The distinction the product needs is which
+    # tenant you are an admin member of.
     sub is_platform_admin ($class, $db, $user_id) {
         $db = $db->db if $db isa Registry::DAO;
         return 0 unless defined $user_id && !ref $user_id && length $user_id;
 
         my $platform = $class->platform($db) or return 0;
 
-        # Asked of the join table rather than through primary_user, which
-        # returns the first of however many rows carry is_primary -- add_user
-        # does not enforce one. An auth decision should not depend on which row
-        # a LIMIT-less query happened to return first, and "is A primary of the
-        # platform" is the question anyway.
+        # The membership's role, not users.user_type: that column is global,
+        # so a studio's admin added to the platform as support would otherwise
+        # be a platform admin (ADR 005, ruling 4).
         return $db->select( 'registry.tenant_users', 'COUNT(*)', {
-            tenant_id  => $platform->id,
-            user_id    => $user_id,
-            is_primary => 1,
+            tenant_id => $platform->id,
+            user_id   => $user_id,
+            role      => 'admin',
         } )->array->[0] ? 1 : 0;
+    }
+
+    # What role does $user_id have in the tenant whose slug is $slug?
+    #
+    # The membership's role for that tenant (ADR 005, ruling 4), never the
+    # global users.user_type: an admin of one tenant is whatever their
+    # membership says in another, and nothing at all where they have none.
+    #
+    # One exception, because it cannot hold a membership: an account that
+    # exists only in the tenant's own schema -- a parent who registered at the
+    # tenant's storefront, staff the tenant created -- has no registry.users row
+    # for tenant_users.user_id to reference. That row is the tenant's own record
+    # of them, per tenant by construction, so its user_type is their role there
+    # and nowhere else.
+    # A workflow just created $user in the tenant whose schema is $slug (the
+    # handle's current schema by default). Authority there is the membership
+    # role, so a registry account is made a member in its own role. An account
+    # local to a studio's schema cannot hold a membership (tenant_users.user_id
+    # references registry.users) and keeps its local role; nothing to do.
+    sub admit_new_account ($class, $db, $user, $slug = undef) {
+        $db = $db->db if $db isa Registry::DAO;
+        $slug //= $db->query('SELECT current_schema()')->array->[0];
+        return unless $db->select( 'registry.users', 'COUNT(*)', { id => $user->id } )->array->[0];
+        my $tenant = $class->find( $db, { slug => $slug } ) or return;
+        return if $db->select( 'registry.tenant_users', 'COUNT(*)',
+            { tenant_id => $tenant->id, user_id => $user->id } )->array->[0];
+        $tenant->add_user( $db, $user, 0, $user->user_type );
+        return;
+    }
+
+    sub role_in ($class, $db, $slug, $user_id) {
+        $db = $db->db if $db isa Registry::DAO;
+        return undef unless defined $user_id && !ref $user_id && length $user_id;
+        return undef unless defined $slug && $slug =~ /\A[a-z][a-z0-9_]{0,62}\z/;
+
+        my $membership = $db->query( <<~'SQL', $slug, $user_id )->hash;
+            SELECT tu.role
+              FROM registry.tenant_users tu
+              JOIN registry.tenants t ON t.id = tu.tenant_id
+             WHERE t.slug = ? AND tu.user_id = ?
+            SQL
+        return $membership->{role} if $membership;
+
+        return undef if $db->select( 'registry.users', 'COUNT(*)', { id => $user_id } )
+                           ->array->[0];
+
+        my $schema = $db->dbh->quote_identifier($slug);
+        my $local  = eval {
+            $db->query( "SELECT user_type FROM $schema.users WHERE id = ?", $user_id )->hash;
+        };
+        return $local ? $local->{user_type} : undef;
+    }
+
+    # Does tenant $tenant_id hold resource $resource?
+    #
+    # The one seam every caller asks, about the resource and never a plan or a
+    # slug: the operator right is held by whichever tenant the data says holds
+    # it. Reads the interim table operator-right.sql seeds; step 3 re-points
+    # this at its entitlement table, so nothing else reads that table.
+    #
+    # Qualified with registry: clone_schema gives every tenant schema an empty
+    # copy of the table, and a row a tenant writes into its own copy grants
+    # nothing.
+    sub holds ($class, $db, $tenant_id, $resource) {
+        $db = $db->db if $db isa Registry::DAO;
+        return 0 unless defined $tenant_id && length $tenant_id
+                     && defined $resource  && length $resource;
+
+        return $db->select( 'registry.tenant_resources', 'COUNT(*)', {
+            tenant_id => $tenant_id,
+            resource  => $resource,
+        } )->array->[0] ? 1 : 0;
+    }
+
+    # Is $user_id an admin of some tenant that holds $resource?
+    #
+    # A right a tenant holds is usable by that tenant's admins: a membership
+    # whose role is admin (ADR 005, ruling 4), never users.user_type. Whether
+    # the tenant holds it is asked of holds, the one seam.
+    sub admin_of_holder ($class, $db, $user_id, $resource) {
+        $db = $db->db if $db isa Registry::DAO;
+        return 0 unless defined $user_id && !ref $user_id && length $user_id;
+
+        my $tenant_ids = $db->select( 'registry.tenant_users', 'tenant_id', {
+            user_id => $user_id,
+            role    => 'admin',
+        } )->arrays->map( sub { $_->[0] } );
+
+        return ( grep { $class->holds( $db, $_, $resource ) } @$tenant_ids ) ? 1 : 0;
     }
 
     method primary_user ($db) {
         my $sql = <<~'SQL';
             SELECT u.*
-            FROM users u
-            INNER JOIN tenant_users tu ON u.id = tu.user_id
+            FROM registry.users u
+            INNER JOIN registry.tenant_users tu ON u.id = tu.user_id
             WHERE tu.tenant_id = ? AND tu.is_primary is true
             SQL
         my $user_data = $db->query( $sql, $id )->expand->hash;
@@ -203,12 +415,15 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return Registry::DAO::User->new( $user_data->%* );
     }
 
+    # Memberships and the users they name live in registry, so these are
+    # qualified: a tenant-scoped handle searches only its own schema and
+    # public, where tenant_users and users are the tenant's clones.
     method users ($db) {
-
-        # TODO: this should be a join
-        $db->select( 'tenant_users', '*', { tenant_id => $id } )
-          ->hashes->map(
-            sub { Registry::DAO::User->find( $db, { id => $_->{user_id} } ) } )
+        $db->query(
+            'SELECT u.* FROM registry.users u
+               JOIN registry.tenant_users tu ON u.id = tu.user_id
+              WHERE tu.tenant_id = ?', $id )
+          ->expand->hashes->map( sub { Registry::DAO::User->new( $_->%* ) } )
           ->to_array->@*;
     }
 
@@ -348,20 +563,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # magic_link_tokens table holds no consumed row has never been entered.
     # Registering a passkey needs an authenticated session, so it cannot be the
     # first way in and cannot hide a login from this.
-    # The platform's own rows. They are not tenants anybody can reclaim, bill or
-    # chase, and there are TWO of them: `registry`, which has a schema, and
-    # `registry-platform`, the zero-uuid row with none. That is the shape #294
-    # collapses, and where #265's repeating sweep errors come from.
-    #
-    # Every per-tenant reader has to exclude both. Excluding only `registry` is
-    # how the platform's own row turned up in an operator's reclaim report as an
-    # abandoned tenant -- it surfaced when a regenerated sql/test-schema.sql
-    # aged past the ten-day window the test uses, eleven days after the dump was
-    # taken, so it had been wrong for as long as the second row has existed.
-    #
-    # A slug list is the identity-check shape #427 is about, and it stays only
-    # until #294 makes the root tenant one row.
-    sub platform_slugs { return [ 'registry', 'registry-platform' ] }
+    # The platform tenant is judged by the same rule: it is one row now, slug
+    # registry, and an exemption by slug is the identity check #427 removes.
 
     sub inert ( $class, $db, %opt ) {
         $db = $db->db if $db isa Registry::DAO;
@@ -380,10 +583,9 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         for my $row ( $db->query( q{
             SELECT id, name, slug, created_at
               FROM registry.tenants
-             WHERE NOT ( slug = ANY($2) )
-               AND created_at < now() - ($1 || ' days')::interval
+             WHERE created_at < now() - ($1 || ' days')::interval
              ORDER BY created_at
-        }, $days, $class->platform_slugs )->hashes->each )
+        }, $days )->hashes->each )
         {
             # A schema that is not there cannot be entered either, and a
             # half-provisioned one is its own problem (#330) rather than this
@@ -409,13 +611,16 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             "$schema.$table" )->hash->{ok} ? 1 : 0;
     }
 
+    # A new membership takes the user's user_type as its role, as add_user's
+    # does; an existing one keeps the role it has.
     method set_primary_user ( $db, $user ) {
         $db->insert(
-            'tenant_users',
+            'registry.tenant_users',
             {
                 tenant_id  => $id,
                 user_id    => $user->id,
-                is_primary => 1
+                is_primary => 1,
+                role       => $user->user_type,
             },
             {
                 on_conflict => [
@@ -425,15 +630,19 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         );
     }
 
-    method add_user ( $db, $user, $is_primary = 0 ) {
+    # The membership role is this tenant's view of the user (ruling 4). It
+    # defaults to the user's user_type, which is what every membership meant
+    # before memberships had roles.
+    method add_user ( $db, $user, $is_primary = 0, $role = undef ) {
         Carp::croak 'user must be a Registry::DAO::User'
           unless $user isa Registry::DAO::User;
         $db->insert(
-            'tenant_users',
+            'registry.tenant_users',
             {
                 tenant_id  => $id,
                 user_id    => $user->id,
-                is_primary => $is_primary ? 1 : 0
+                is_primary => $is_primary ? 1 : 0,
+                role       => $role // $user->user_type,
             },
             { returning => '*' }
         );
@@ -563,12 +772,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # no reference to registry.payments at all. So this cannot be one join;
         # it is one query per tenant, the same shape as fleet() above.
         #
-        # registry.payments is not a fallback to also check. It holds the
-        # platform's OWN rows -- Registry's subscription charges to its tenants
-        # -- so counting it here would add Registry's income from a tenant to
-        # Registry's income from that tenant's customers. Two different
-        # businesses, one column.
-        my $tenants = $db->query( <<~'SQL', $class->platform_slugs )->hashes->to_array;
+        # The platform tenant is one of them: registry.payments is its own
+        # schema's table, holding its own sales, and its row shows the fees
+        # recorded on them like any tenant's.
+        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
             SELECT t.slug,
                    t.name,
                    t.billing_status,
@@ -583,7 +790,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
               FROM registry.tenants t
               LEFT JOIN registry.pricing_plans p
                      ON p.id = t.platform_pricing_plan_id
-             WHERE NOT ( t.slug = ANY($1) )
              ORDER BY t.name
             SQL
 
@@ -679,14 +885,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
         # Payments live in the tenant's schema, so this is one query per tenant
         # rather than a join -- see platform_revenue above for why.
-        my $tenants = $db->query( <<~'SQL', $class->platform_slugs )->hashes->to_array;
+        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
             SELECT t.slug, t.name,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
                    ) AS schema_present
               FROM registry.tenants t
-             WHERE NOT ( t.slug = ANY($1) )
              ORDER BY t.name
             SQL
 
@@ -853,11 +1058,20 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             $tenant->set_primary_user($db, $primary_user) if $primary_user;
         }
 
-        # Copy each supplied user into the tenant schema
+        # Copy each supplied user into the tenant schema, and make them a
+        # member: their role in the tenant is the membership's (ruling 4), so a
+        # team member copied in without one would have none. The role is the
+        # user_type chosen for them at signup; the primary's membership is
+        # already there and is kept.
         for my $user (@$users) {
             my $user_id = ref $user eq 'HASH' ? $user->{id} : $user->id;
             $db->query('SELECT copy_user(dest_schema => ?, user_id => ?)',
                 $tenant->slug, $user_id);
+            $db->query( <<~'SQL', $tenant->id, $user_id );
+                INSERT INTO registry.tenant_users (tenant_id, user_id, is_primary, role)
+                SELECT ?, u.id, false, u.user_type FROM registry.users u WHERE u.id = ?
+                ON CONFLICT (tenant_id, user_id) DO NOTHING
+                SQL
         }
 
         # Copy OutcomeDefinitions into the tenant schema BEFORE copying workflows.

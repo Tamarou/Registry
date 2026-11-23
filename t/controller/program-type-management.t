@@ -11,6 +11,7 @@ use Registry;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO qw(Workflow);
 use Registry::DAO::ProgramType;
 use Mojo::Home;
@@ -37,6 +38,7 @@ my $admin = $dao->create(User => {
     user_type => 'admin',
     password => 'x',
 });
+join_tenant( $dao, $admin );
 authenticate_as($t, $admin);
 
 # Seed a program type so the list has something.

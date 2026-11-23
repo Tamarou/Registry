@@ -11,6 +11,7 @@ use Registry;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO qw(Workflow);
 use Mojo::Home;
 use YAML::XS qw(Load);
@@ -37,6 +38,7 @@ my $admin = $dao->create(User => {
     user_type => 'admin',
     password  => 'x',
 });
+join_tenant( $dao, $admin );
 authenticate_as($t, $admin);
 
 subtest 'overview page renders the checklist' => sub {

@@ -16,6 +16,7 @@ use Test::Registry::Helpers qw(
   workflow_run_step_url
   workflow_process_step_url
 );
+use Test::Registry::Helpers qw(join_tenant);
 
 my $test_db = Test::Registry::DB->new();
 my $dao = $test_db->db;
@@ -47,6 +48,7 @@ our $project = $dao->create(
 
 {
     my $t = Test::Registry::Mojo->new('Registry');
+    join_tenant( $dao, $user );
     authenticate_as( $t, $user );
 
     my ($workflow) = $dao->find( Workflow => { slug => 'event-creation' } );

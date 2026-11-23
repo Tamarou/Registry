@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: "Is this Alex" becomes a question the app can ask, and the job queue is behind it.
-# ABOUTME: Platform-ness is being the primary user of the platform tenant, not a user_type.
+# ABOUTME: Platform-ness is membership of the platform tenant with the admin role, not a user_type.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -42,6 +42,16 @@ my $studio = Test::Registry::Fixtures::create_tenant( $db, {
 } );
 $studio->add_user( $db, $morgan, 1 );
 
+subtest 'the platform tenant is the registry row with the all-zeros id' => sub {
+    # collapse-platform-tenant.sql folded the old `registry` row into the
+    # all-zeros row and gave it the slug; the platform is that one row now.
+    my $found = Registry::DAO::Tenant->platform($db);
+    ok $found, 'the platform tenant is found';
+    is $found && $found->slug, 'registry', 'by the slug registry';
+    is $found && $found->id, '00000000-0000-0000-0000-000000000000',
+        'and it is the all-zeros row';
+};
+
 subtest 'the platform tenant has one owner, and the DAO can say who' => sub {
     ok Registry::DAO::Tenant->is_platform_admin( $db, $alex->id ),
         'so he is the platform admin';
@@ -49,6 +59,130 @@ subtest 'the platform tenant has one owner, and the DAO can say who' => sub {
         'and a tenant admin is not, despite being an admin';
     ok !Registry::DAO::Tenant->is_platform_admin( $db, undef ),
         'nor is nobody';
+};
+
+subtest 'a non-primary admin member of the platform tenant is a platform admin' => sub {
+    # A second admin Tamarou adds to the platform is as much its admin as the
+    # owner: membership plus the admin role, not being primary.
+    my $second = Registry::DAO::User->create( $db, {
+        username => 'second_platform_admin', name => 'Second Admin',
+        user_type => 'admin', email => 'second@registry.test',
+    } );
+    $platform->add_user( $db, $second );
+
+    ok Registry::DAO::Tenant->is_platform_admin( $db, $second->id ),
+        'a second admin of the platform tenant is a platform admin';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $second );
+
+    $t->get_ok('/platform/jobs')->status_is( 200, 'and is served the queue' );
+};
+
+subtest 'a staff member of the platform tenant is not a platform admin' => sub {
+    my $staff = Registry::DAO::User->create( $db, {
+        username => 'platform_staff', name => 'Platform Staff',
+        user_type => 'staff', email => 'staff@registry.test',
+    } );
+    $platform->add_user( $db, $staff );
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $staff->id ),
+        'membership alone is not the admin role';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $staff );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'a staff member is refused' );
+};
+
+subtest 'a studio admin added to the platform tenant as staff is not a platform admin' => sub {
+    # Ruling 4's case: an admin everywhere by user_type, added to the platform
+    # as support. The membership's role is what counts, and here it is staff.
+    my $support = Registry::DAO::User->create( $db, {
+        username => 'studio_admin_support', name => 'Studio Admin',
+        user_type => 'admin', email => 'support@studio.test',
+    } );
+    $platform->add_user( $db, $support, 0, 'staff' );
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $support->id ),
+        'an admin by user_type with a staff membership is not a platform admin';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $support );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'and is refused the queue' );
+};
+
+subtest 'an admin with no platform membership is refused' => sub {
+    # The shape of every studio founder: created in registry.users as an
+    # admin and copied out to the studio's schema, with no membership of the
+    # platform tenant at all.
+    my $founder = Registry::DAO::User->create( $db, {
+        username => 'unaffiliated_admin', name => 'Unaffiliated Admin',
+        user_type => 'admin', email => 'founder@elsewhere.test',
+    } );
+    is $db->select( 'registry.tenant_users', 'COUNT(*)',
+        { user_id => $founder->id } )->array->[0], 0,
+        'the admin has no membership anywhere';
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $founder->id ),
+        'and is not a platform admin';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $founder );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'so is refused the queue' );
+};
+
+subtest 'a parent member of the platform tenant is refused' => sub {
+    my $parent = Registry::DAO::User->create( $db, {
+        username => 'platform_parent', name => 'Platform Parent',
+        user_type => 'parent', email => 'parent@registry.test',
+    } );
+    $platform->add_user( $db, $parent );
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $parent->id ),
+        'a parent membership is not the admin role';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $parent );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'a parent member is refused' );
+};
+
+subtest 'removing platform membership takes effect on the next request' => sub {
+    # An admin of the platform as Alex is, but not Alex: the subtests after
+    # this one still need him to be served.
+    my $leaver = Registry::DAO::User->create( $db, {
+        username => 'leaving_platform_admin', name => 'Leaving Admin',
+        user_type => 'admin', email => 'leaver@registry.test',
+    } );
+    $platform->add_user( $db, $leaver );
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $leaver );
+
+    $t->get_ok('/platform/jobs')->status_is( 200, 'served while a member' );
+
+    $db->delete( 'registry.tenant_users',
+        { tenant_id => $platform->id, user_id => $leaver->id } );
+
+    $t->get_ok('/platform/jobs')->status_is( 403,
+        'and refused on the next request in the same session' );
+};
+
+subtest 'an unauthenticated request is not served the platform dashboard' => sub {
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+
+    $t->get_ok('/platform/jobs')->status_isnt( 200, 'not a success' )
+      ->content_unlike( qr/minion/i, 'and not the Minion dashboard' );
 };
 
 subtest 'the job queue is not served to an anonymous visitor' => sub {
@@ -263,6 +397,28 @@ subtest 'the runbook queue is behind the guard, and names the family owed' => su
           'the row held by an unresolved share is on the page too' )
       ->content_like( qr/id="undecided-total"/,
           'counted separately, since it cannot be ranked by amount' );
+};
+
+# Last, because it deletes the platform row out from under everything above.
+subtest 'with no platform tenant row the guard refuses with 403' => sub {
+    my $tx = $db->begin;
+    $db->query( q{DELETE FROM registry.billing_periods WHERE pricing_relationship_id IN
+                    (SELECT id FROM registry.pricing_relationships WHERE provider_id = ?)}, $platform->id );
+    $db->query( q{DELETE FROM registry.pricing_relationships WHERE provider_id = ?}, $platform->id );
+    for my $table (qw( tenant_users tenant_profiles tenant_domains subscription_events )) {
+        $db->query( "DELETE FROM registry.$table WHERE tenant_id = ?", $platform->id );
+    }
+    $db->query( q{DELETE FROM registry.tenants WHERE id = ?}, $platform->id );
+    $tx->commit;
+
+    is Registry::DAO::Tenant->platform($db), undef, 'there is no platform tenant to find';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $alex );
+
+    $t->get_ok('/platform/jobs')->status_is( 403,
+        'Alex is refused rather than served a 500' );
 };
 
 done_testing;

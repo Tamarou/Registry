@@ -92,8 +92,9 @@ subtest 'run creation ignores posted server-owned keys' => sub {
     my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
     my $data = data_for($run_id);
 
-    ok !exists $data->{__tenant_slug},
-        'posted __tenant_slug is not stored at run creation';
+    # The bare host resolves to the platform tenant, which sells like any other.
+    is $data->{__tenant_slug}, 'registry',
+        'the stored __tenant_slug is the platform, not the posted victim_tenant';
     ok !exists $data->{user_id},
         'posted user_id is not stored at run creation';
 };
@@ -107,10 +108,18 @@ subtest 'a later step cannot plant them either' => sub {
     })->status_is(201);
 
     my $data = data_for($run->id);
-    ok !exists $data->{__tenant_slug},
-        'posted __tenant_slug is not stored on a subsequent step';
+    is $data->{__tenant_slug}, 'registry',
+        'the stored __tenant_slug is the platform, not the posted victim_tenant';
     ok !exists $data->{user_id},
         'posted user_id is not stored on a subsequent step';
+};
+
+subtest 'a run on the platform tenant carries the registry seller slug' => sub {
+    $t->post_ok('/run-data-test' => form => {})->status_is(302);
+
+    my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+    is data_for($run_id)->{__tenant_slug}, 'registry',
+        'the shared payment step can find the platform as the seller';
 };
 
 subtest 'on a tenant host a later step gets the host tenant, not the posted one' => sub {
@@ -123,6 +132,29 @@ subtest 'on a tenant host a later step gets the host tenant, not the posted one'
 
     is data_for($run->id)->{__tenant_slug}, 'hosttenant',
         'run data carries the tenant the request actually arrived at';
+};
+
+subtest 'posting registry as the seller on a tenant host stores the host tenant' => sub {
+    $t->post_ok('/run-data-test'
+        => { Host => 'hosttenant.localhost' }
+        => form => { __tenant_slug => 'registry' }
+    )->status_is(302);
+
+    my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+    is data_for($run_id)->{__tenant_slug}, 'hosttenant',
+        "a tenant's run cannot be made to sell as the platform";
+};
+
+subtest 'a posted seller slug on a later step does not change the stored seller' => sub {
+    my $run = run_on_second_step();
+    $run->update_data( $dao->db, { __tenant_slug => 'registry' } );
+
+    $t->post_ok("/run-data-test/${\ $run->id}/complete"
+        => form => { __tenant_slug => 'hosttenant' }
+    )->status_is(201);
+
+    is data_for($run->id)->{__tenant_slug}, 'registry',
+        'the stored seller is still the platform, not the posted hosttenant';
 };
 
 subtest 'a bracketed variant cannot smuggle a structure into a server-owned key' => sub {

@@ -314,9 +314,14 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         croak 'You cannot change your own role'
             if defined $acting_id && $acting_id eq $id;
 
+        # The role that decides anything here is this tenant's: the membership
+        # role where the account has one (ADR 005, ruling 4), the local
+        # user_type for an account that lives only in this tenant.
+        my $current = $self->_role_of( $db, $id ) // $user_type;
+
         # Idempotent, and checked before the privilege gate: re-asserting the
         # role an account already has is not a grant.
-        return $self if $new_type eq $user_type;
+        return $self if $new_type eq $current;
 
         if ( $new_type eq 'admin' ) {
             my $acting_type = $self->_role_of( $db, $acting_id );
@@ -324,11 +329,17 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
                 unless ( $acting_type // '' ) eq 'admin';
         }
 
-        if ( $user_type eq 'admin' && $self->is_active ) {
-            my $other_admins = $db->query(
-                q{SELECT COUNT(*) FROM users
-                   WHERE user_type = 'admin' AND deactivated_at IS NULL AND id <> ?},
-                $id )->array->[0];
+        my $tenant = $db->query('SELECT current_schema()')->array->[0];
+
+        # Counted by the same rule: another active account whose role in this
+        # tenant is admin. A copy whose user_type says admin is not one unless
+        # its role here is.
+        if ( $current eq 'admin' && $self->is_active ) {
+            require Registry::DAO::Tenant;
+            my $other_admins = grep {
+                ( Registry::DAO::Tenant->role_in( $db, $tenant, $_ ) // '' ) eq 'admin'
+            } $db->query( q{SELECT id FROM users WHERE deactivated_at IS NULL AND id <> ?}, $id )
+                ->arrays->map( sub { $_->[0] } )->@*;
             croak 'Cannot demote the last active administrator'
                 unless $other_admins;
         }
@@ -337,17 +348,27 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
             'UPDATE users SET user_type = ? WHERE id = ? RETURNING *',
             $new_type, $id )->hash or return $self;
 
+        # And the membership, which is what authority reads.
+        $db->query( <<~'SQL', $new_type, $id, $tenant );
+            UPDATE registry.tenant_users tu
+               SET role = ?
+              FROM registry.tenants t
+             WHERE tu.tenant_id = t.id AND tu.user_id = ? AND t.slug = ?
+            SQL
+
         return __CLASS__->new(%$row);
     }
 
-    # The acting user's role read from the row, not from the session. A session
+    # The acting user's role read from the data, not from the session. A session
     # carries whatever it was given; the privilege gate has to turn on what the
-    # database says the caller is.
+    # database says the caller is -- in the tenant this handle is scoped to,
+    # which is their membership's role there (ADR 005, ruling 4), not their
+    # global user_type.
     method _role_of ( $db, $acting_id ) {
         return undef unless defined $acting_id;
-        my $row = $db->query(
-            'SELECT user_type FROM users WHERE id = ?', $acting_id )->hash;
-        return $row && $row->{user_type};
+        require Registry::DAO::Tenant;
+        my $tenant = $db->query('SELECT current_schema()')->array->[0];
+        return Registry::DAO::Tenant->role_in( $db, $tenant, $acting_id );
     }
 
     # Clears the invite_pending flag, once an invitation has actually been sent.

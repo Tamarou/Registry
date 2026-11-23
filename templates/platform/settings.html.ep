@@ -1,0 +1,66 @@
+% layout 'default';
+% title 'Platform settings';
+
+%# The screen for `registry platform settings`: every key, its value, what it
+%# does and what applies when it is not set. "Not set" is printed as those
+%# words, exactly as the CLI prints it: a blank reads as "set to nothing", and
+%# for these keys nothing and 0 mean opposite things.
+% my @settings = @{ stash('settings') || [] };
+
+<div class="container">
+    %= include 'platform/_nav'
+    <h1>Platform settings</h1>
+
+    % if (my $error = stash('error')) {
+        <div class="alert alert-error" role="alert" id="settings-error"><%= $error %></div>
+    % }
+
+    % if (!@settings) {
+        <p id="settings-empty">No platform settings are defined.</p>
+    % } else {
+        <div class="table-scroll">
+            <table class="data-table" id="platform-settings">
+                <thead>
+                    <tr>
+                        <th>Setting</th>
+                        <th>Value</th>
+                        <th>What it does</th>
+                        <th>When not set</th>
+                        <th>Change</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    % for my $s (@settings) {
+                        <tr data-setting="<%= $s->key %>">
+                            <td class="setting-key"><code><%= $s->key %></code></td>
+                            <td class="setting-value"><%= defined $s->value ? $s->value : '(not set)' %></td>
+                            <td class="setting-description"><%= $s->description %></td>
+                            <td class="setting-default text-secondary"><%= $s->default_note %></td>
+                            <td class="setting-change">
+                                %# The same PlatformSetting->set the CLI's `set`
+                                %# and `unset` call, with the acting user recorded.
+                                <form method="post" action="/platform/settings/<%= $s->key %>">
+                                    <div class="form-group">
+                                        <label for="value-<%= $s->key %>" class="form-label">New value</label>
+                                        <input type="text" id="value-<%= $s->key %>" name="value"
+                                               class="form-input" required
+                                               value="<%= $s->value // '' %>">
+                                    </div>
+                                    <div class="form-actions">
+                                        <button type="submit" class="btn btn-primary btn-sm">Set</button>
+                                    </div>
+                                </form>
+                                % if (defined $s->value) {
+                                    <form method="post" action="/platform/settings/<%= $s->key %>">
+                                        <input type="hidden" name="unset" value="1">
+                                        <button type="submit" class="btn btn-outline btn-sm">Unset</button>
+                                    </form>
+                                % }
+                            </td>
+                        </tr>
+                    % }
+                </tbody>
+            </table>
+        </div>
+    % }
+</div>

@@ -61,6 +61,10 @@ method process ($db, $form_data, $run = undef) {
                         user_type => 'staff',
                     });
                 };
+                if ( $user ) {
+                    require Registry::DAO::Tenant;
+                    Registry::DAO::Tenant->admit_new_account( $db, $user );
+                }
                 if (my $e = $@) {
                     my $msg = "$e";
                     if ($msg =~ /duplicate key|unique constraint|already exists/i) {

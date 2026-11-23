@@ -15,7 +15,7 @@ class Registry::Controller::Messages :isa(Registry::Controller) {
         my $user = $self->stash('current_user');
         return $self->render(status => 401, text => 'Unauthorized') unless $user;
 
-        if ($user->{role} eq 'parent' || $user->{user_type} eq 'parent') {
+        if ($user->{role} eq 'parent') {
             return $self->_parent_inbox($user);
         } elsif ($user->{role} =~ /^(admin|staff|instructor)$/) {
             return $self->_staff_compose($user);
@@ -176,7 +176,7 @@ class Registry::Controller::Messages :isa(Registry::Controller) {
         return $self->render(status => 404, text => 'Message not found') unless $message;
 
         # Check if user has access to this message
-        if ($user->{role} eq 'parent' || $user->{user_type} eq 'parent') {
+        if ($user->{role} eq 'parent') {
             # Verify parent is a recipient
             my $recipient = $db->select('message_recipients',
                 ['*'],
@@ -209,7 +209,7 @@ class Registry::Controller::Messages :isa(Registry::Controller) {
         my $user = $self->stash('current_user');
         return $self->render(status => 401, text => 'Unauthorized') unless $user;
         return $self->render(status => 403, text => 'Forbidden')
-            unless $user->{role} eq 'parent' || $user->{user_type} eq 'parent';
+            unless $user->{role} eq 'parent';
 
         my $message_id = $self->param('id');
         my $db = $self->dao($self->stash('tenant'))->db;
@@ -257,7 +257,7 @@ class Registry::Controller::Messages :isa(Registry::Controller) {
         my $user = $self->stash('current_user');
         return $self->render(status => 401, text => 'Unauthorized') unless $user;
         return $self->render(status => 403, text => 'Forbidden')
-            unless $user->{role} eq 'parent' || $user->{user_type} eq 'parent';
+            unless $user->{role} eq 'parent';
 
         my $db = $self->dao($self->stash('tenant'))->db;
         my $count = Registry::DAO::Message->get_unread_count($db, $user->{id});

@@ -16,6 +16,7 @@ use experimental 'signatures';
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw( authenticate_as );
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::User;
 
 my $test_db = Test::Registry::DB->new;
@@ -24,12 +25,16 @@ $ENV{DB_URL} = $test_db->uri;
 my $db = $dao->db;
 
 my $n = 0;
+# Each account is a member of the platform tenant, whose schema these run
+# against, with its type as its role there: the privilege gate reads that role.
 sub make_user ( $type ) {
     $n++;
-    return $dao->create( User => {
+    my $user = $dao->create( User => {
         username => "rc_${type}_$n", name => "RC " . ucfirst($type) . " $n",
         email => "rc_${type}_$n\@test.local", user_type => $type, password => 'x',
     } );
+    join_tenant( $dao, $user );
+    return $user;
 }
 sub type_of ($user) {
     return $db->query( 'SELECT user_type FROM users WHERE id = ?', $user->id )

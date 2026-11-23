@@ -33,9 +33,10 @@ class Registry::Job::WaitlistExpiration {
                     waitlist_id => $specific_waitlist_id,
                 };
             } else {
-                # Global sweep: iterate every tenant schema so expired offers in any
-                # tenant are reaped.  Tenant data lives in per-tenant schemas, not in
-                # registry, so a registry-scoped dao would find nothing.
+                # Global sweep: iterate every tenant schema, the platform's
+                # registry schema included, so expired offers in any tenant are
+                # reaped.  A single registry-scoped dao would see only the
+                # platform's own rows.
                 $result = {
                     scope => 'all_tenants',
                     %{ $class->expire_all_tenant_offers($dao, $log) },
@@ -56,8 +57,9 @@ class Registry::Job::WaitlistExpiration {
     }
 
     # Iterate every tenant schema and run expire_all_old_offers for each.
-    # The registry schema itself is skipped because tenant waitlist data lives
-    # in per-tenant schemas, not in registry.  Per-tenant failures are caught and
+    # The platform is a tenant too: its row's slug is `registry` and its
+    # waitlist lives in the registry schema, so it is swept through
+    # connect_schema like every other slug.  Per-tenant failures are caught and
     # logged so one broken tenant does not abort the sweep for the others.
     sub expire_all_tenant_offers ($class, $dao, $log) {
         require Registry::DAO::Tenant;
@@ -67,9 +69,6 @@ class Registry::Job::WaitlistExpiration {
         my ( @covered, @skipped );
         for my $tenant (@$tenants) {
             my $slug = $tenant->{slug};
-
-            # Waitlist data lives in each tenant's own schema, not in registry.
-            next if $slug eq 'registry';
 
             try {
                 $log->info("Processing waitlist expirations for tenant: $slug");
@@ -175,10 +174,15 @@ class Registry::Job::WaitlistExpiration {
             return;
         }
         
-        my $student_name = $student ? $student->name : 'your child';
-        my $subject = "Waitlist Offer Expired: " . $session->name;
+        # A student with no name on file gets the fallback rather than an
+        # empty string and an uninitialized-value warning in the message.
+        my $student_name = ( $student ? $student->name : undef ) // q{your child};
+        # Not "${session->name}" in the body below: that is a symbolic deref of
+        # the bareword `session`, which died after the offer had been expired.
+        my $session_name = $session->name;
+        my $subject = "Waitlist Offer Expired: $session_name";
         my $message = qq{
-Your waitlist offer for $student_name in the program "${session->name}" has expired.
+Your waitlist offer for $student_name in the program "$session_name" has expired.
 
 We're sorry you weren't able to accept the offer in time. $student_name will remain on the waitlist and will be notified if another spot becomes available.
 
@@ -187,7 +191,7 @@ Current waitlist position: We'll update you on your position when spaces become 
 If you have any questions, please contact us.
 
 Program Details:
-- Session: ${session->name}
+- Session: $session_name
 - Student: $student_name
         };
         

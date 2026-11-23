@@ -97,5 +97,8 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     my ($bob) = $dao2->find( User => { username => 'Bob' } );
     is $bob->username, 'Bob', 'User exists';
 
-    is $dao2->find( Tenant => {} ), undef, 'No tenants exists';
+    # Tenant reads registry.tenants, the directory, on any connection, so ask
+    # the tenant schema's own (cloned, unused) copy directly.
+    is $dao2->db->query('SELECT count(*) FROM tenants')->array->[0], 0,
+      'No tenants exists';
 }

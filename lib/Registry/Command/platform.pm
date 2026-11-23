@@ -1,11 +1,12 @@
-# ABOUTME: Platform-owner CLI: see and change the configuration Alex owns.
-# ABOUTME: The first piece of PriceOps Pillar 5 tooling -- changes through a tool, not psql (#427).
+# ABOUTME: Shell front end to the platform settings the platform tenant's admins change at /platform/settings.
+# ABOUTME: Same PlatformSetting DAO, no CLI-only path; `bootstrap` alone is CLI-only, as the deploy-time root.
 use 5.42.0;
 use utf8;
 use Object::Pad;
 
 class Registry::Command::platform :isa(Mojolicious::Command) {
     use Registry::DAO::PlatformSetting;
+    use Registry::DAO::Tenant;
 
     field $description :reader = 'Platform configuration';
     field $usage :reader       = <<~"END";
@@ -15,6 +16,9 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
             * settings           - list every platform setting and its value
             * set <key> <value>  - set one
             * unset <key>        - return one to its default
+            * bootstrap          - write PLATFORM_STRIPE_ACCOUNT_ID and
+                                   PLATFORM_STRIPE_READY onto the platform tenant,
+                                   and PLATFORM_ADMIN_EMAIL onto its first admin
 
         END
 
@@ -80,6 +84,26 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
                 $why =~ s/ at \S+ line \d+\.?\s*\z//;
                 say $why;
             };
+            return;
+        }
+
+        # Run by docker-entrypoint.sh on every start, after sqitch deploy. A
+        # problem dies rather than printing, so ./registry exits non-zero and
+        # the entrypoint can refuse a production boot over it.
+        if ( $cmd eq 'bootstrap' ) {
+            my ( $platform, $kept ) = Registry::DAO::Tenant->bootstrap_platform( $dao->db, {
+                map { $_ => $ENV{$_} }
+                    qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY PLATFORM_ADMIN_EMAIL )
+            } );
+
+            # An account an admin recorded since is not a deploy failure:
+            # bootstrap never overwrites it (ADR 005, ruling 5). Said loudly so
+            # the configuration can be brought into line.
+            say "WARNING: $kept" if $kept;
+            say sprintf 'Platform Stripe account: %s (%s)',
+                $platform->stripe_connect_account_id,
+                $platform->stripe_connect_ready ? 'ready' : 'not ready';
+            say "Platform admin email: $ENV{PLATFORM_ADMIN_EMAIL}";
             return;
         }
 

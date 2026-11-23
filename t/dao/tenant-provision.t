@@ -44,6 +44,13 @@ ok( !(any { $_ eq 'tenant-signup' } @slugs), 'tenant does NOT have tenant-signup
 my $copied = $tenant_dao->find(User => { username => 'prov_admin' });
 ok $copied, 'admin user copied into tenant schema';
 
+# The founder's membership records their role (ruling 4). Left to the column
+# default it would say 'parent', and an admin check reading the membership
+# would refuse the studio's own founder.
+is $db->select('registry.tenant_users', ['role'],
+    { tenant_id => $tenant->id, user_id => $admin->id })->hash->{role},
+    'admin', "the founder's membership carries their admin role";
+
 # Regression pin for the outcome-definition FK ordering bug fixed in 3652f34.
 #
 # Background: copy_workflow inserts workflow_steps rows that carry an

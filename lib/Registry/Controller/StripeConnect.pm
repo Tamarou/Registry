@@ -59,6 +59,17 @@ class Registry::Controller::StripeConnect :isa(Registry::Controller) {
         my $tenant = $self->_tenant($db)
             or return $self->render( text => 'Tenant not found', status => 404 );
 
+        # The platform's account is Tamarou's own Stripe account, written from
+        # deployment configuration by `registry platform bootstrap`. It is not
+        # a connected account: there is nothing to onboard and nothing to
+        # create, so this never asks Stripe for either.
+        my $platform = Registry::DAO::Tenant->platform($db);
+        if ( $tenant->stripe_connect_account_id
+            && $platform && $tenant->id eq $platform->id )
+        {
+            return $self->redirect_to('admin_billing');
+        }
+
         if ( my $account_id = $tenant->stripe_connect_account_id ) {
             return $self->_redirect_to_onboarding( $tenant, $account_id );
         }

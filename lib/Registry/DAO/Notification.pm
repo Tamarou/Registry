@@ -28,7 +28,7 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
     
     ADJUST {
         # Validate type
-        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed|enrollment_confirmation|waitlist_joined|domain_verified|domain_verification_failed)$/) {
+        unless ($type && $type =~ /^(attendance_missing|attendance_reminder|general|message_announcement|message_update|message_emergency|magic_link_login|magic_link_invite|email_verification|passkey_registered|passkey_removed|enrollment_confirmation|waitlist_joined|waitlist_offer|waitlist_expiration|domain_verified|domain_verification_failed)$/) {
             croak "Invalid notification type: '$type' is not a recognized notification type";
         }
         

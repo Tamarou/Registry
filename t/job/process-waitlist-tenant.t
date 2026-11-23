@@ -181,8 +181,8 @@ subtest 'perform: global sweep calls process_recent_cancellations per tenant' =>
         "process_recent_cancellations was called for tenant schema '$slug'";
 
     my @registry_calls = grep { $_ eq 'registry' } @called_schemas;
-    is scalar(@registry_calls), 0,
-        'registry schema is not included in the sweep (tenant data is not there)';
+    is scalar(@registry_calls), 1,
+        'registry schema is included in the sweep once (it is the platform tenant)';
 };
 
 # The two halves of the chain were each proven and the join between them was
@@ -207,6 +207,124 @@ subtest 'perform: the sweep really does offer the freed seat' => sub {
         'the scheduled sweep promoted them without anyone pressing anything';
     ok $after->{offered_at}, 'and recorded when the offer went out';
     ok $after->{expires_at}, 'and when it lapses, so the seat is not held forever';
+};
+
+# ---- The platform tenant is a tenant ----------------------------------------
+#
+# The platform is the tenant row whose slug is `registry`, and its schema is
+# the registry schema. Its sessions, enrollments and waitlist live there, so the
+# sweep reaches them through connect_schema('registry') like any other slug.
+
+# Plant a session in the registry schema with one cancelled enrollment and the
+# given number of waiting families. Returns the session and the waitlist ids in
+# position order.
+sub plant_platform_session ( $label, $capacity, $waiting ) {
+    my $db = $dao->db;
+
+    my $loc = Registry::DAO::Location->create( $db, {
+        name         => "Platform $label Location",
+        slug         => "platform-$label-loc-$$",
+        address_info => { street => '1 Platform St' },
+    });
+
+    my $sess = Registry::DAO::Session->create( $db, {
+        name     => "Platform $label Session",
+        slug     => "platform-$label-session-$$",
+        capacity => $capacity,
+    });
+
+    my $leaver = Test::Registry::Fixtures::create_user( $dao, {
+        username  => "pf_${label}_leaver_$$",
+        password  => 'pw',
+        user_type => 'student',
+    });
+    Registry::DAO::Enrollment->create( $db, {
+        session_id => $sess->id,
+        student_id => $leaver->id,
+        parent_id  => $parent->id,
+        status     => 'cancelled',
+    });
+
+    my @wl_ids;
+    for my $n ( 1 .. $waiting ) {
+        my $kid = Test::Registry::Fixtures::create_user( $dao, {
+            username  => "pf_${label}_kid${n}_$$",
+            password  => 'pw',
+            user_type => 'student',
+        });
+        push @wl_ids, Registry::DAO::Waitlist->create( $db, {
+            session_id  => $sess->id,
+            location_id => $loc->id,
+            student_id  => $kid->id,
+            parent_id   => $parent->id,
+            position    => $n,
+            status      => 'waiting',
+        })->id;
+    }
+
+    return ( $sess, @wl_ids );
+}
+
+subtest 'the cancellation sweep covers the platform tenant and offers its freed seat' => sub {
+    ok Registry::DAO::Tenant->platform( $dao->db ), 'the platform tenant row exists';
+
+    my ( $pf_session, $pf_wl_id ) = plant_platform_session( 'cover', 1, 1 );
+
+    my $result = Registry::Job::ProcessWaitlist->process_all_tenant_cancellations( $dao, $log );
+
+    my @registry = grep { $_ eq 'registry' } $result->{tenants_covered}->@*;
+    is scalar(@registry), 1, 'registry is reported in tenants_covered once';
+    is_deeply $result->{tenants_skipped}, [],
+        'and no tenant was skipped (the offer notification no longer dies after the offer)';
+
+    my $row = $dao->db->query(
+        'SELECT status, offered_at FROM registry.waitlist WHERE id = ?', $pf_wl_id )->hash;
+    is $row->{status}, 'offered', 'the waitlisted platform family is offered the freed seat';
+    ok $row->{offered_at}, 'and the offer is dated';
+};
+
+subtest 'sweeping twice offers one freed platform seat to one family once' => sub {
+    my ( $pf_session, $first_id, $second_id ) = plant_platform_session( 'twice', 1, 2 );
+
+    my $offers_for = sub {
+        return $dao->db->query(q{
+            SELECT id, status, offered_at FROM registry.waitlist
+             WHERE session_id = ? ORDER BY position, created_at
+        }, $pf_session->id )->hashes->to_array;
+    };
+
+    Registry::Job::ProcessWaitlist->process_all_tenant_cancellations( $dao, $log );
+    my %after_one = map { $_->{id} => $_ } $offers_for->()->@*;
+
+    Registry::Job::ProcessWaitlist->process_all_tenant_cancellations( $dao, $log );
+    my %after_two = map { $_->{id} => $_ } $offers_for->()->@*;
+
+    is $after_two{$first_id}{status},  'offered', 'the first family in line holds the offer';
+    is $after_two{$second_id}{status}, 'waiting', 'the second family is still waiting';
+    is scalar( grep { $_->{status} eq 'offered' } values %after_two ), 1,
+        'exactly one family holds an offer for the one freed seat';
+    is $after_two{$first_id}{offered_at}, $after_one{$first_id}{offered_at},
+        'the second pass did not re-offer the seat';
+};
+
+subtest 'a tenant row with no schema does not stop the sweep' => sub {
+    my $ghost = 'ghost_' . $$;
+    $dao->db->query(
+        'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', "Ghost $$", $ghost );
+    ok !$dao->db->query(
+        'SELECT 1 FROM information_schema.schemata WHERE schema_name = ?', $ghost )->array,
+        'the ghost tenant has no schema';
+
+    my $result = Registry::Job::ProcessWaitlist->process_all_tenant_cancellations( $dao, $log );
+    my %covered = map { $_ => 1 } $result->{tenants_covered}->@*;
+    my %skipped = map { $_->{slug} => $_->{error} } $result->{tenants_skipped}->@*;
+
+    ok $covered{registry}, 'the sweep still covers registry';
+    ok $covered{$slug},    'and the provisioned tenant';
+    ok !$covered{$ghost},  'the schema-less tenant is not reported covered';
+    ok $skipped{$ghost},   'it is reported skipped, with a reason';
+
+    $dao->db->query( 'DELETE FROM registry.tenants WHERE slug = ?', $ghost );
 };
 
 $t->cleanup_test_database;

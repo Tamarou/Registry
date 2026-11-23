@@ -13,6 +13,7 @@ defer { done_testing };
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO;
 use Registry::DAO::User;
 use Registry::DAO::Family;
@@ -110,6 +111,7 @@ for my $child ($child1, $child2) {
 }
 
 # Authenticate as Amara
+join_tenant( $dao, $amara );
 authenticate_as($t, $amara);
 
 # === Amara's Teaching Journey ===

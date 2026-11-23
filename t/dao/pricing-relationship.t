@@ -334,4 +334,27 @@ subtest 'Relationship helpers' => sub {
     ok(!defined $consumer_tenant, 'Consumer tenant check works (B2C user has no tenant)');
 };
 
+# Memberships are registry.tenant_users. On a tenant-scoped handle an
+# unqualified tenant_users is that tenant's empty clone, so the consumer's
+# tenant was not found there.
+subtest 'the consumer tenant is found on a tenant-scoped handle' => sub {
+    my $tenant = Test::Registry::Fixtures::create_tenant($db, {
+        name => 'Consumer Studio', slug => 'consumer_studio' });
+    my $user = Registry::DAO::User->create($db, {
+        username => 'consumer_studio_owner', passhash => '$2b$12$DummyHashForTesting' });
+    $tenant->add_user($db, $user, 1, 'admin');
+    $db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', 'consumer_studio', $user->id);
+
+    my $plan = Registry::DAO::PricingPlan->create($db, {
+        plan_name => 'Consumer Plan', plan_type => 'standard',
+        pricing_model_type => 'fixed', amount_cents => 100 });
+    my $relationship = Registry::DAO::PricingRelationship->create($db, {
+        provider_id => '00000000-0000-0000-0000-000000000000',
+        consumer_id => $user->id, pricing_plan_id => $plan->id });
+
+    my $tenant_db = $dao->connect_schema('consumer_studio')->db;
+    my $found = $relationship->get_consumer_tenant($tenant_db);
+    is $found && $found->id, $tenant->id, "the consumer's primary tenant is found";
+};
+
 done_testing();

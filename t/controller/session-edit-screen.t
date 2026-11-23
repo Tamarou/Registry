@@ -10,6 +10,7 @@ use experimental 'signatures';
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw( authenticate_as );
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::Location;
 use Registry::DAO::Project;
 use Registry::DAO::Event;
@@ -55,6 +56,7 @@ sub reload ($s) { Registry::DAO::Session->find( $db, { id => $s->id } ) }
 sub as_admin () {
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper( dao => sub { $dao } );
+    join_tenant( $dao, $admin );
     authenticate_as( $t, $admin );
     return $t;
 }
@@ -120,6 +122,7 @@ subtest 'a parent cannot reach it' => sub {
     my $session = a_session(10);
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper( dao => sub { $dao } );
+    join_tenant( $dao, $parent );
     authenticate_as( $t, $parent );
 
     $t->get_ok("/admin/sessions/@{[ $session->id ]}/edit")->status_isnt(200);

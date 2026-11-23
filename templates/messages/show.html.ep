@@ -222,7 +222,7 @@
 % }
 
 // Auto-mark as read for parents
-% if ($c->stash('current_user')->{role} eq 'parent' || $c->stash('current_user')->{user_type} eq 'parent') {
+% if ($c->stash('current_user')->{role} eq 'parent') {
     // Check if message was already marked as read when loading this page
     // This is handled by the controller's mark_as_read call
 % }

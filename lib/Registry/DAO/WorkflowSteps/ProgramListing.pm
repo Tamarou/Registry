@@ -266,7 +266,7 @@ class Registry::DAO::WorkflowSteps::ProgramListing :isa(Registry::DAO::WorkflowS
         # This populates stash('page_title') which the template uses as the nav logo.
         my $current_slug = $db->query('SELECT current_schema()')->array->[0];
         my $tenant_name;
-        if ($current_slug && $current_slug ne 'registry') {
+        if ($current_slug) {
             my $row = $db->query(
                 q{SELECT name FROM registry.tenants WHERE slug = ?},
                 $current_slug

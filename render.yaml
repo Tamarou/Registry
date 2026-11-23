@@ -30,6 +30,14 @@ envVarGroups:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      # Tamarou's own Stripe account (acct_...) and whether Stripe has
+      # approved it (true/false). `./registry platform bootstrap` writes both
+      # onto the platform tenant on every start; a production boot with either
+      # missing is refused.
+      - key: PLATFORM_STRIPE_ACCOUNT_ID
+        sync: false
+      - key: PLATFORM_STRIPE_READY
+        sync: false
   - name: registry-config
     envVars:
       - key: BASE_URL
@@ -42,6 +50,11 @@ envVarGroups:
       # here. Registry::DAO::Notification routes email through Postmark's
       # SMTP relay when this is present.
       - key: POSTMARK_SERVER_TOKEN
+        sync: false
+      # The platform tenant's first admin, who signs in by magic link to this
+      # address. `./registry platform bootstrap` writes it onto that admin's
+      # profile (creating the admin if the platform has none) on every start.
+      - key: PLATFORM_ADMIN_EMAIL
         sync: false
 
 

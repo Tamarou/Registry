@@ -16,8 +16,8 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 
-# A tenant schema with a hyphen -- e.g. the real "registry-platform" tenant.
-# An unquoted identifier here ("SET search_path TO registry-platform, ...")
+# A tenant schema with a hyphen in its name, such as "my-tenant".
+# An unquoted identifier here ("SET search_path TO my-tenant, ...")
 # is a syntax error in PostgreSQL, so the schema must be quoted.
 my $schema = 'test-hyphen-tenant';
 $db->query(qq{CREATE SCHEMA IF NOT EXISTS "$schema"});

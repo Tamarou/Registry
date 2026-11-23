@@ -19,6 +19,7 @@
         %     [ platform_tenants => '/platform/tenants', 'Tenants'  ],
         %     [ platform_revenue => '/platform/revenue', 'Revenue'  ],
         %     [ platform_runbook => '/platform/runbook', 'Runbook'  ],
+        %     [ platform_settings => '/platform/settings', 'Settings' ],
         %     #  Minion::Admin's own pages; mounted by the plugin, so they
         %     #  cannot carry this nav. Linking in is the practical half.
         %     [ platform_jobs    => '/platform/jobs',    'Jobs'     ],

@@ -6,25 +6,18 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw(with_tenant_plan);
+use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
 use Registry::PriceOps::RevenueShare qw(revenue_share_fraction_for_tenant);
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;     # Registry::DAO
 my $db      = $dao->db;         # Mojo::Pg::Database
 
-# Determine the slug of a seeded (backfilled) tenant. Both seeded tenants use the
-# Revenue Share plan; pick one that has the column set.
-my $seeded_slug = $db->query(q{
-    SELECT t.slug
-      FROM registry.tenants t
-      JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
-     WHERE p.pricing_model_type = 'percentage'
-       AND p.plan_scope = 'tenant'
-     LIMIT 1
-})->hash->{slug};
+# A tenant linked to the revenue-share plan. The seed no longer holds one: its
+# only linked tenant was the platform, which takes no share of itself.
+my $seeded_slug = solo_linked_tenant($db);
 
-ok $seeded_slug, "found a seeded tenant backfilled to the revenue-share plan (slug=$seeded_slug)";
+ok $seeded_slug, "made a tenant linked to the revenue-share plan (slug=$seeded_slug)";
 
 # The rate this tenant's plan carries. The subtests below are about mechanisms --
 # DAO coercion, search_path isolation -- and pinning them to a literal made them

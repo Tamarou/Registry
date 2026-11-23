@@ -130,4 +130,40 @@ subtest 'a tenant whose schema cannot be read is named, not skipped silently' =>
         'and the readable tenants are still totalled';
 };
 
+# The platform's own payments are in registry.payments, its own schema.
+sub a_platform_payment ( %col ) {
+    my $p = Registry::DAO::Payment->create( $db, {
+        user_id      => $parent->id,
+        amount_cents => delete $col{amount_cents} // 10000,
+        status       => delete $col{status}       // 'completed',
+        metadata     => { enrollment_items => [] },
+    } );
+    $db->update( 'payments', \%col, { id => $p->id } ) if %col;
+    return $p;
+}
+
+subtest 'an unpaid obligation on a platform payment is in the queue' => sub {
+    my $platform_owed = a_platform_payment(
+        status => 'refund_pending', refund_owed_cents => 2500, refunded_cents => 0 );
+
+    my %by_id = map { $_->{payment_id} => $_ }
+        @{ Registry::DAO::Tenant->unpaid_obligations($db)->{payments} };
+    my $row = $by_id{ $platform_owed->id };
+    ok $row, 'the platform payment with money owed is in the queue';
+    is $row && $row->{tenant_slug}, 'registry', 'attributed to the platform tenant';
+    is $row && $row->{refund_owed_cents}, 2500, 'with what is outstanding';
+};
+
+subtest 'a platform obligation is listed once and a paid one not at all' => sub {
+    my $owing = a_platform_payment(
+        status => 'refund_pending', refund_owed_cents => 900, refunded_cents => 0 );
+    my $paid = a_platform_payment(
+        status => 'refunded', refund_owed_cents => 0, refunded_cents => 10000 );
+
+    my @ids = map { $_->{payment_id} }
+        @{ Registry::DAO::Tenant->unpaid_obligations($db)->{payments} };
+    is scalar( grep { $_ eq $owing->id } @ids ), 1, 'the platform obligation is listed exactly once';
+    is scalar( grep { $_ eq $paid->id } @ids ), 0, 'a fully refunded platform payment is not listed';
+};
+
 done_testing;

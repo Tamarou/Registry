@@ -16,6 +16,7 @@ use Mojo::File qw( path );
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::PricingPlan;
 use Registry::Service::Stripe;
 
@@ -68,6 +69,7 @@ subtest 'the product can create a connected account at all' => sub {
 };
 
 subtest 'a fresh tenant is offered the way to switch payments on' => sub {
+    join_tenant( $dao, $admin );
     authenticate_as( $t, $admin );
 
     $t->get_ok('/admin/billing')
@@ -85,6 +87,7 @@ subtest 'a fresh tenant is offered the way to switch payments on' => sub {
 };
 
 subtest 'the state the screen reports follows the tenant row' => sub {
+    join_tenant( $dao, $admin );
     authenticate_as( $t, $admin );
 
     # Half-onboarded: Stripe has an account but has not approved it. This is the
@@ -126,6 +129,7 @@ subtest 'starting onboarding is admin-only' => sub {
 
     my $t_staff = Test::Registry::Mojo->new('Registry');
     $t_staff->app->helper( dao => sub { $dao } );
+    join_tenant( $dao, $staff );
     authenticate_as( $t_staff, $staff );
 
     # Staff reach other /admin/* routes; this one decides where the money lands
@@ -145,6 +149,7 @@ subtest 'starting onboarding is admin-only' => sub {
 # The refusal that had nowhere to send anyone.
 # ---------------------------------------------------------------------------
 subtest 'the publish refusal names the screen that fixes it' => sub {
+    join_tenant( $dao, $admin );
     authenticate_as( $t, $admin );
 
     my $program = $dao->create( Project => {

@@ -11,6 +11,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw( authenticate_as );
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::User;
 use Registry::DAO::MagicLinkToken;
 
@@ -21,11 +22,15 @@ my $db = $dao->db;
 
 my $t = Test::Registry::Mojo->new('Registry');
 
+# A member of the platform tenant, whose host these requests use, with its
+# type as its role there.
 sub make_user ( $username, $type ) {
-    return $dao->create( User => {
+    my $user = $dao->create( User => {
         username => $username, name => ucfirst $username,
         email => "$username\@test.local", user_type => $type, password => 'x',
     } );
+    join_tenant( $dao, $user );
+    return $user;
 }
 
 subtest 'a deactivated account cannot request a magic link' => sub {

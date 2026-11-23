@@ -14,11 +14,16 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor 
         
         my $processed_count = 0;
         my $notifications_sent = 0;
+
+        # The loop points the search_path at each tenant schema in turn; a
+        # tenant schema has its own workflow_runs, so restore the caller's
+        # search_path before recording the result on this run.
+        my $search_path = $db->query('SHOW search_path')->array->[0];
         
         for my $schema (@$tenant_schemas) {
             try {
                 # Set schema search path. Quote the tenant schema so names
-                # containing hyphens (e.g. "registry-platform") stay valid.
+                # containing hyphens (e.g. "my-tenant") stay valid.
                 my $quoted = $db->dbh->quote_identifier($schema);
                 $db->query("SET search_path TO $quoted, registry, public");
                 
@@ -30,6 +35,8 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor 
                 warn "Error processing missing attendance for tenant $schema: $e";
             }
         }
+
+        $db->query("SET search_path TO $search_path");
         
         $run->update_data($db, {
             missing_attendance_processed => $processed_count,
