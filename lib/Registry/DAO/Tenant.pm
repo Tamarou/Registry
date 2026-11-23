@@ -170,6 +170,26 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return $class->find( $db, { slug => 'registry' } );
     }
 
+    # Write Tamarou's Stripe account and readiness onto the platform row from
+    # deployment configuration, the way STRIPE_SECRET_KEY reaches the app.
+    #
+    # The migrations create the row; a migration runs once and cannot read the
+    # container's environment, so `registry platform bootstrap` calls this on
+    # every start (ADR 005, ruling 5). $config is keyed by the variable names
+    # so whatever is wrong with it can be reported by the name an operator sets.
+    sub bootstrap_platform ( $class, $db, $config ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my $platform = $class->platform($db);
+        my $ready    = $config->{PLATFORM_STRIPE_READY} ? 1 : 0;
+
+        return $platform->update( $db, {
+            stripe_connect_account_id => $config->{PLATFORM_STRIPE_ACCOUNT_ID},
+            stripe_charges_enabled    => $ready,
+            stripe_details_submitted  => $ready,
+        } );
+    }
+
     # Is this user an admin of the platform?
     #
     # Platform-ness is a membership of the platform tenant whose role is
