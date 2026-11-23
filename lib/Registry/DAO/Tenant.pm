@@ -19,7 +19,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     field $stripe_charges_enabled    :param :reader = 0;
     field $stripe_details_submitted  :param :reader = 0;
 
-    sub table { 'tenants' }
+    # registry.tenants is the directory. clone_schema gives every tenant schema
+    # an empty copy of this table, and a tenant connection searches its own
+    # schema first, so an unqualified name read and wrote that copy instead.
+    sub table { 'registry.tenants' }
 
     # A slug is a PostgreSQL schema name, a DNS label, and a routing key, and
     # all three want the same shape.
