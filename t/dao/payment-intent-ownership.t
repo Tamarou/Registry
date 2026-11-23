@@ -155,4 +155,24 @@ subtest 'intent made on another tenant account is unreachable' => sub {
     like $out->{error}, qr/No such payment_intent/, 'Stripe does not find it there';
 };
 
+# The seller account is server-owned: whatever a caller puts in metadata is
+# discarded, and the account comes from the seller row named by tenant_slug.
+subtest 'a planted seller account in payment metadata is never stored' => sub {
+    require Test::Registry::Fixtures;
+    my $seller = Test::Registry::Fixtures::platform_seller($db);
+    my $stored = sub ($p) {
+        Registry::DAO::Payment->find( $db, { id => $p->id } )->metadata->{stripe_account_id};
+    };
+
+    my $sold = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 1000, status => 'pending',
+        metadata => { enrollment_items => [], tenant_slug => $seller, stripe_account_id => 'acct_planted' } } );
+    is $stored->($sold), 'acct_platform_test', "the seller row's account wins over the planted one";
+
+    my $unsold = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 1000, status => 'pending',
+        metadata => { enrollment_items => [], tenant_slug => undef, stripe_account_id => 'acct_planted' } } );
+    is $stored->($unsold), undef, 'with no seller, the planted account is dropped rather than kept';
+};
+
 done_testing;
