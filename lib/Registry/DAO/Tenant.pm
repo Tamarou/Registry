@@ -277,6 +277,23 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         } )->array->[0] ? 1 : 0;
     }
 
+    # Is $user_id an admin of some tenant that holds $resource?
+    #
+    # A right a tenant holds is usable by that tenant's admins: a membership
+    # whose role is admin (ADR 005, ruling 4), never users.user_type. Whether
+    # the tenant holds it is asked of holds, the one seam.
+    sub admin_of_holder ($class, $db, $user_id, $resource) {
+        $db = $db->db if $db isa Registry::DAO;
+        return 0 unless defined $user_id && !ref $user_id && length $user_id;
+
+        my $tenant_ids = $db->select( 'registry.tenant_users', 'tenant_id', {
+            user_id => $user_id,
+            role    => 'admin',
+        } )->arrays->map( sub { $_->[0] } );
+
+        return ( grep { $class->holds( $db, $_, $resource ) } @$tenant_ids ) ? 1 : 0;
+    }
+
     method primary_user ($db) {
         my $sql = <<~'SQL';
             SELECT u.*

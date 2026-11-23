@@ -706,6 +706,35 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Helper: may this user use the operator right?
+        #
+        # The surfaces that cross tenants -- the job queue, every tenant's
+        # arguments included, and the cross-tenant revenue view -- are one
+        # resource held by a tenant like any other, and usable by that
+        # tenant's admins. Asked of the data, never of the platform's slug or
+        # id, so removing the platform's holding refuses even Alex. See
+        # Registry::DAO::Tenant::admin_of_holder.
+        $self->helper(
+            require_operator => sub ($c) {
+                return 0 unless $c->require_auth;
+
+                my $user = $c->stash('current_user');
+                require Registry::DAO::Tenant;
+                return 1 if Registry::DAO::Tenant->admin_of_holder(
+                    $c->dao->db, ref $user ? $user->{id} : undef, 'operator' );
+
+                if (   $c->req->headers->header('X-Requested-With')
+                    || ( $c->req->headers->accept // '' ) =~ m{application/json} )
+                {
+                    $c->render( json => { error => 'Forbidden' }, status => 403 );
+                }
+                else {
+                    $c->render( text => 'Forbidden', status => 403 );
+                }
+                return 0;
+            }
+        );
+
         # Helper: enforce whatever role a workflow slug demands, if it demands
         # one. Shared by the /:workflow guard and by the callcc leg, which
         # starts a run of a workflow the URL names in a different placeholder.
@@ -985,25 +1014,32 @@ class Registry :isa(Mojolicious) {
             ->to('admin_dashboard#update_session')
             ->name('admin_session_settings');
 
-        # Minion's own dashboard, behind the platform guard.
-        #
-        # #426's first step, and the cheapest: the job queue is the answer to
-        # "is the automation running" and it was answerable only through psql or
-        # `registry minion job`. Mounting what Minion already ships retires more
-        # terminal work than anything else on that list.
+        # The platform tenant's own admin screens: the fleet and the runbook.
         #
         # Under its own `under` rather than $admin_only: that group asks
-        # require_role('admin'), which Morgan satisfies -- and the queue is every
-        # tenant's work, so it is not a tenant admin's to read.
-        #
-        # route => the mount point, so links inside the dashboard stay under it.
+        # require_role('admin'), which Morgan satisfies -- and these are the
+        # platform's screens, not a tenant admin's to read.
         my $platform = $r->under('/platform')->to(
             cb => sub ($c) { $c->require_platform_admin } );
         $platform->get('/')->to( cb => sub ($c) {
             $c->redirect_to('/platform/tenants');
         } )->name('platform_index');
 
-        $self->plugin( 'Minion::Admin' => { route => $platform->any('/jobs') } );
+        # The surfaces that cross tenants, behind the operator right rather
+        # than platform-admin-ness: a sibling `under` on the same prefix, not
+        # one nested inside $platform, because the right belongs to whichever
+        # tenant holds it and its admins need not be the platform's.
+        my $operator = $r->under('/platform')->to(
+            cb => sub ($c) { $c->require_operator } );
+
+        # Minion's own dashboard. #426's first step, and the cheapest: the job
+        # queue is the answer to "is the automation running" and it was
+        # answerable only through psql or `registry minion job`. Mounting what
+        # Minion already ships retires more terminal work than anything else on
+        # that list.
+        #
+        # route => the mount point, so links inside the dashboard stay under it.
+        $self->plugin( 'Minion::Admin' => { route => $operator->any('/jobs') } );
 
         # The tenant fleet: #426's step 2, and the screen everything else about
         # a customer hangs off. "Is this customer actually working" took four
@@ -1025,7 +1061,7 @@ class Registry :isa(Mojolicious) {
         # Deriving the figure from amount x rate would look exactly as
         # authoritative and disagree with every rate change (#277) and every
         # fee-returning refund.
-        $platform->get('/revenue')->to( cb => sub ($c) {
+        $operator->get('/revenue')->to( cb => sub ($c) {
             require Registry::DAO::Tenant;
             $c->render(
                 template => 'platform/revenue',
