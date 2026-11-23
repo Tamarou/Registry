@@ -6,6 +6,8 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Exception;
+use Mojo::Promise;
 use Mojolicious::Lite;
 use Registry::Service::Stripe;
 
@@ -67,6 +69,65 @@ subtest 'bound client passes idempotency keys through' => sub {
     is $seen->[0]->header('Idempotency-Key'), 'ik_pi', 'payment intent keeps its idempotency key';
     is $seen->[1]->header('Idempotency-Key'), 'ik_re', 'refund keeps its idempotency key';
     is_deeply accounts_sent($seen), ['acct_header_test', 'acct_header_test'], 'both name the account';
+};
+
+subtest 'for_account refuses undef or empty account' => sub {
+    my $client = Registry::Service::Stripe->new(api_key => $key);
+    my $seen = capture($client);
+
+    throws_ok { $client->for_account(undef) } qr/Stripe account/, 'undef refused';
+    throws_ok { $client->for_account('') }    qr/Stripe account/, 'empty string refused';
+    is scalar @$seen, 0, 'no request made';
+};
+
+subtest 'for_account refuses malformed or header injecting account' => sub {
+    my $client = Registry::Service::Stripe->new(api_key => $key);
+    my $seen = capture($client);
+
+    for my $bad ('acct_', 'cus_123', 'acct_ab cd', 'acct_x-y', "acct_x\r\nX-Evil: 1", "acct_x\n") {
+        (my $shown = $bad) =~ s/\r/\\r/g; $shown =~ s/\n/\\n/g;
+        throws_ok { $client->for_account($bad) } qr/Stripe account/, "'$shown' refused";
+    }
+    is scalar @$seen, 0, 'no request made';
+};
+
+subtest 'binding leaves the source client unbound' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = $key;
+    my $client = Registry::Service::Stripe->from_env;
+    my $seen = capture($client);
+
+    $client->for_account('acct_header_test');
+    $client->retrieve_payment_intent_async('pi_local')->wait;
+
+    is $client->stripe_account, undef, 'source client still unbound';
+    is_deeply accounts_sent($seen), [], 'its next request carries no Stripe-Account';
+};
+
+subtest 'rebinding sends exactly one stripe account header' => sub {
+    my $client = Registry::Service::Stripe->new(api_key => $key)
+        ->for_account('acct_a')->for_account('acct_b');
+    my $seen = capture($client);
+
+    $client->retrieve_payment_intent_async('pi_local')->wait;
+
+    is_deeply accounts_sent($seen), ['acct_b'], 'only the new account is sent';
+};
+
+subtest 'interleaved clients send only their own account' => sub {
+    my $platform = Registry::Service::Stripe->new(api_key => $key);
+    my $a = $platform->for_account('acct_tenanta');
+    my $b = $platform->for_account('acct_tenantb');
+    my ($seen_a, $seen_b) = (capture($a), capture($b));
+
+    Mojo::Promise->all(
+        $a->retrieve_payment_intent_async('pi_a1'),
+        $b->retrieve_payment_intent_async('pi_b1'),
+        $a->create_payment_intent_async({ amount => 100, currency => 'usd' }),
+        $b->create_payment_intent_async({ amount => 200, currency => 'usd' }),
+    )->wait;
+
+    is_deeply accounts_sent($seen_a), ['acct_tenanta', 'acct_tenanta'], 'tenant A sends only its account';
+    is_deeply accounts_sent($seen_b), ['acct_tenantb', 'acct_tenantb'], 'tenant B sends only its account';
 };
 
 done_testing;

@@ -45,8 +45,13 @@ class Registry::Service::Stripe {
 
     # A client for one connected account: every request it makes names that
     # account in a Stripe-Account header. The platform's own calls use the
-    # unbound client from_env returns.
+    # unbound client from_env returns. The id goes into a header, so only
+    # acct_ followed by word characters is accepted (no CR/LF injection), and
+    # undef or '' never quietly yields a client acting on the platform account.
     method for_account($account_id) {
+        croak "Stripe account id must look like acct_<alnum>"
+            unless defined $account_id && $account_id =~ /\Aacct_[A-Za-z0-9_]+\z/;
+
         return (ref $self)->new(
             api_key        => $api_key,
             api_version    => $api_version,
