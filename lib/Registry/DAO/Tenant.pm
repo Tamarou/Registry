@@ -637,12 +637,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # no reference to registry.payments at all. So this cannot be one join;
         # it is one query per tenant, the same shape as fleet() above.
         #
-        # registry.payments is not a fallback to also check. It holds the
-        # platform's OWN rows -- Registry's subscription charges to its tenants
-        # -- so counting it here would add Registry's income from a tenant to
-        # Registry's income from that tenant's customers. Two different
-        # businesses, one column.
-        my $tenants = $db->query( <<~'SQL', $class->platform_slugs )->hashes->to_array;
+        # The platform tenant is one of them: registry.payments is its own
+        # schema's table, holding its own sales, and its row shows the fees
+        # recorded on them like any tenant's.
+        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
             SELECT t.slug,
                    t.name,
                    t.billing_status,
@@ -657,7 +655,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
               FROM registry.tenants t
               LEFT JOIN registry.pricing_plans p
                      ON p.id = t.platform_pricing_plan_id
-             WHERE NOT ( t.slug = ANY($1) )
              ORDER BY t.name
             SQL
 
