@@ -104,8 +104,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             $data->{__remote_address} = $ip;
         }
 
+        # The platform tenant sells through the shared steps like any other, so
+        # registry is stamped too; the payment step finds the seller by it.
         my $tenant_slug = $self->tenant;
-        if ( $tenant_slug && $tenant_slug ne 'registry' ) {
+        if ($tenant_slug) {
             $data->{__tenant_slug} = $tenant_slug;
         }
         else {
