@@ -32,6 +32,8 @@ class Registry::DAO::WorkflowSteps::AccountCheck :isa(Registry::DAO::WorkflowSte
                     name      => $form_data->{name},
                     user_type => 'parent',
                 });
+                require Registry::DAO::Tenant;
+                Registry::DAO::Tenant->admit_new_account( $db, $user );
             }
             catch ($e) {
                 if ($e =~ /duplicate key|unique constraint|already exists/i) {

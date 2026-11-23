@@ -63,6 +63,8 @@ class Registry::DAO::WorkflowSteps::CreateUser :isa(Registry::DAO::WorkflowStep)
         }
 
         my $user = Registry::DAO::User->create( $user_db, \%user_data );
+        require Registry::DAO::Tenant;
+        Registry::DAO::Tenant->admit_new_account( $db, $user, $data->{__tenant_slug} );
 
         $run->update_data(
             $db,

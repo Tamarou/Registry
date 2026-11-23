@@ -326,6 +326,22 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # for tenant_users.user_id to reference. That row is the tenant's own record
     # of them, per tenant by construction, so its user_type is their role there
     # and nowhere else.
+    # A workflow just created $user in the tenant whose schema is $slug (the
+    # handle's current schema by default). Authority there is the membership
+    # role, so a registry account is made a member in its own role. An account
+    # local to a studio's schema cannot hold a membership (tenant_users.user_id
+    # references registry.users) and keeps its local role; nothing to do.
+    sub admit_new_account ($class, $db, $user, $slug = undef) {
+        $db = $db->db if $db isa Registry::DAO;
+        $slug //= $db->query('SELECT current_schema()')->array->[0];
+        return unless $db->select( 'registry.users', 'COUNT(*)', { id => $user->id } )->array->[0];
+        my $tenant = $class->find( $db, { slug => $slug } ) or return;
+        return if $db->select( 'registry.tenant_users', 'COUNT(*)',
+            { tenant_id => $tenant->id, user_id => $user->id } )->array->[0];
+        $tenant->add_user( $db, $user, 0, $user->user_type );
+        return;
+    }
+
     sub role_in ($class, $db, $slug, $user_id) {
         $db = $db->db if $db isa Registry::DAO;
         return undef unless defined $user_id && !ref $user_id && length $user_id;
