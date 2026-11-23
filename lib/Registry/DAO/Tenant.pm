@@ -193,8 +193,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     method primary_user ($db) {
         my $sql = <<~'SQL';
             SELECT u.*
-            FROM users u
-            INNER JOIN tenant_users tu ON u.id = tu.user_id
+            FROM registry.users u
+            INNER JOIN registry.tenant_users tu ON u.id = tu.user_id
             WHERE tu.tenant_id = ? AND tu.is_primary is true
             SQL
         my $user_data = $db->query( $sql, $id )->expand->hash;
@@ -202,12 +202,15 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return Registry::DAO::User->new( $user_data->%* );
     }
 
+    # Memberships and the users they name live in registry, so these are
+    # qualified: a tenant-scoped handle searches only its own schema and
+    # public, where tenant_users and users are the tenant's clones.
     method users ($db) {
-
-        # TODO: this should be a join
-        $db->select( 'tenant_users', '*', { tenant_id => $id } )
-          ->hashes->map(
-            sub { Registry::DAO::User->find( $db, { id => $_->{user_id} } ) } )
+        $db->query(
+            'SELECT u.* FROM registry.users u
+               JOIN registry.tenant_users tu ON u.id = tu.user_id
+              WHERE tu.tenant_id = ?', $id )
+          ->expand->hashes->map( sub { Registry::DAO::User->new( $_->%* ) } )
           ->to_array->@*;
     }
 
@@ -412,7 +415,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # does; an existing one keeps the role it has.
     method set_primary_user ( $db, $user ) {
         $db->insert(
-            'tenant_users',
+            'registry.tenant_users',
             {
                 tenant_id  => $id,
                 user_id    => $user->id,
@@ -434,7 +437,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         Carp::croak 'user must be a Registry::DAO::User'
           unless $user isa Registry::DAO::User;
         $db->insert(
-            'tenant_users',
+            'registry.tenant_users',
             {
                 tenant_id  => $id,
                 user_id    => $user->id,
