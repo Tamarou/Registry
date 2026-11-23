@@ -1145,10 +1145,30 @@ class Registry :isa(Mojolicious) {
         $platform->post('/settings/:key')->to( cb => sub ($c) {
             require Registry::DAO::PlatformSetting;
             my $user  = $c->stash('current_user');
+            my $key   = $c->stash('key');
             my $value = $c->param('unset') ? undef : $c->param('value');
-            Registry::DAO::PlatformSetting->set( $c->dao->db,
-                $c->stash('key'), $value, $user->{id} );
-            $c->redirect_to('/platform/settings');
+
+            # As the CLI does: a blank is refused rather than stored, since
+            # stored it reads as "set to nothing"; an unknown key is refused
+            # by name. Both answer on the screen, with what exists beside it.
+            my $error;
+            if ( !$c->param('unset') && ( $value // '' ) !~ /\S/ ) {
+                $error = "'$key' needs a value; use Unset to return it to its default";
+            }
+            else {
+                eval {
+                    Registry::DAO::PlatformSetting->set( $c->dao->db, $key, $value, $user->{id} );
+                    1;
+                } or $error = $@ =~ s/ at \S+ line \d+\.?\s*\z//r;
+            }
+
+            return $c->redirect_to('/platform/settings') unless $error;
+            $c->render(
+                template => 'platform/settings',
+                status   => 400,
+                error    => $error,
+                settings => Registry::DAO::PlatformSetting->all( $c->dao->db ),
+            );
         } )->name('platform_settings_update');
 
         # Domain management routes: admin-only (staff cannot access)

@@ -11,6 +11,10 @@
     %= include 'platform/_nav'
     <h1>Platform settings</h1>
 
+    % if (my $error = stash('error')) {
+        <div class="alert alert-error" role="alert" id="settings-error"><%= $error %></div>
+    % }
+
     % if (!@settings) {
         <p id="settings-empty">No platform settings are defined.</p>
     % } else {
