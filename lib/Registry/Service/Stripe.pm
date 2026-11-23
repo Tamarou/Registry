@@ -60,7 +60,9 @@ class Registry::Service::Stripe {
         );
     }
 
-    method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef) {
+    # $on_platform drops Stripe-Account, for objects only the platform's own
+    # account holds.
+    method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef, $on_platform = 0) {
         my $url = "https://api.stripe.com/v1/$endpoint";
         my $headers = {
             'Authorization' => "Bearer $api_key",
@@ -68,7 +70,7 @@ class Registry::Service::Stripe {
             'User-Agent' => 'Registry/1.0 (https://registry.com)',
         };
         $headers->{'Idempotency-Key'} = $idempotency_key if defined $idempotency_key;
-        $headers->{'Stripe-Account'} = $stripe_account if defined $stripe_account;
+        $headers->{'Stripe-Account'} = $stripe_account if defined $stripe_account && !$on_platform;
         
         my $promise;
         
@@ -269,16 +271,24 @@ class Registry::Service::Stripe {
     # Application Fees API
     #
     # Returning the platform's fee is the exception to keeping it on a refund
-    # (005). A fee is an object on the platform's own account, so this call is
-    # the platform's to make, on an unbound client.
+    # (005). A fee is an object on the platform's own account, so these calls
+    # never send Stripe-Account, whichever client they are made on. The id goes
+    # into the URL path, so only fee_ followed by alphanumerics is accepted.
+    sub _check_fee_id ($fee_id) {
+        croak "Stripe application fee id must look like fee_<alnum>"
+            unless defined $fee_id && $fee_id =~ /\Afee_[A-Za-z0-9]+\z/;
+    }
+
     method create_application_fee_refund_async($fee_id, $params = {}) {
+        _check_fee_id($fee_id);
         my %p  = %$params;
         my $ik = delete $p{_idempotency_key};
-        return $self->_request_async('POST', "application_fees/$fee_id/refunds", \%p, $ik);
+        return $self->_request_async('POST', "application_fees/$fee_id/refunds", \%p, $ik, 1);
     }
 
     method retrieve_application_fee_async($fee_id) {
-        return $self->_request_async('GET', "application_fees/$fee_id");
+        _check_fee_id($fee_id);
+        return $self->_request_async('GET', "application_fees/$fee_id", {}, undef, 1);
     }
     
     # Prices API (for subscriptions)

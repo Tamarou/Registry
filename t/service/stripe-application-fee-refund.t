@@ -60,4 +60,48 @@ subtest 'no idempotency key is sent when none is given' => sub {
     is $seen->[0]{headers}->header('Idempotency-Key'), undef, 'no Idempotency-Key header';
 };
 
+subtest 'fee refund never carries stripe account' => sub {
+    my $client = Registry::Service::Stripe->new(api_key => $key)
+        ->for_account('acct_tenant_bound');
+    my $seen = capture($client);
+
+    $client->retrieve_application_fee_async('fee_123')->wait;
+    $client->create_application_fee_refund_async('fee_123', { amount => 50 })->wait;
+    $client->create_application_fee_refund('fee_123', { amount => 50 });
+
+    is scalar @$seen, 3, 'three requests made';
+    is_deeply [ map { @{ $_->{headers}->every_header('Stripe-Account') } } @$seen ], [],
+        'none names the bound account';
+};
+
+subtest 'malformed fee id is refused before request' => sub {
+    my $client = Registry::Service::Stripe->new(api_key => $key);
+    my $seen = capture($client);
+
+    for my $bad (undef, '', 'fee_', 'fee_1/../../charges', '../fee_1', 'fee_1/x',
+                 'ch_123', 'fee_a b', "fee_1\n", 'fee_1..') {
+        my $shown = defined $bad ? $bad =~ s/\n/\\n/gr : 'undef';
+        throws_ok { $client->create_application_fee_refund_async($bad, { amount => 50 }) }
+            qr/application fee id/, "refund of '$shown' refused";
+        throws_ok { $client->retrieve_application_fee_async($bad) }
+            qr/application fee id/, "retrieval of '$shown' refused";
+    }
+    is scalar @$seen, 0, 'no request made';
+};
+
+subtest 'same idempotency key is sent unchanged' => sub {
+    my $client = Registry::Service::Stripe->new(api_key => $key);
+    my $seen = capture($client);
+    my $params = { amount => 50, _idempotency_key => 'fee-refund:42' };
+
+    $client->create_application_fee_refund_async('fee_123', $params)->wait;
+    $client->create_application_fee_refund_async('fee_123', $params)->wait;
+
+    is scalar @$seen, 2, 'two requests made';
+    is_deeply [ map { $_->{headers}->header('Idempotency-Key') } @$seen ],
+        [ 'fee-refund:42', 'fee-refund:42' ], 'both carry the same key unchanged';
+    is_deeply $params, { amount => 50, _idempotency_key => 'fee-refund:42' },
+        'the caller params are left as given';
+};
+
 done_testing;
