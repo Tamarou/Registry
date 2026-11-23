@@ -116,6 +116,75 @@ subtest 'a studio admin added to the platform tenant as staff is not a platform 
     $t->get_ok('/platform/jobs')->status_is( 403, 'and is refused the queue' );
 };
 
+subtest 'an admin with no platform membership is refused' => sub {
+    # The shape of every studio founder: created in registry.users as an
+    # admin and copied out to the studio's schema, with no membership of the
+    # platform tenant at all.
+    my $founder = Registry::DAO::User->create( $db, {
+        username => 'unaffiliated_admin', name => 'Unaffiliated Admin',
+        user_type => 'admin', email => 'founder@elsewhere.test',
+    } );
+    is $db->select( 'registry.tenant_users', 'COUNT(*)',
+        { user_id => $founder->id } )->array->[0], 0,
+        'the admin has no membership anywhere';
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $founder->id ),
+        'and is not a platform admin';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $founder );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'so is refused the queue' );
+};
+
+subtest 'a parent member of the platform tenant is refused' => sub {
+    my $parent = Registry::DAO::User->create( $db, {
+        username => 'platform_parent', name => 'Platform Parent',
+        user_type => 'parent', email => 'parent@registry.test',
+    } );
+    $platform->add_user( $db, $parent );
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $parent->id ),
+        'a parent membership is not the admin role';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $parent );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'a parent member is refused' );
+};
+
+subtest 'removing platform membership takes effect on the next request' => sub {
+    # An admin of the platform as Alex is, but not Alex: the subtests after
+    # this one still need him to be served.
+    my $leaver = Registry::DAO::User->create( $db, {
+        username => 'leaving_platform_admin', name => 'Leaving Admin',
+        user_type => 'admin', email => 'leaver@registry.test',
+    } );
+    $platform->add_user( $db, $leaver );
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $leaver );
+
+    $t->get_ok('/platform/jobs')->status_is( 200, 'served while a member' );
+
+    $db->delete( 'registry.tenant_users',
+        { tenant_id => $platform->id, user_id => $leaver->id } );
+
+    $t->get_ok('/platform/jobs')->status_is( 403,
+        'and refused on the next request in the same session' );
+};
+
+subtest 'an unauthenticated request is not served the platform dashboard' => sub {
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+
+    $t->get_ok('/platform/jobs')->status_isnt( 200, 'not a success' )
+      ->content_unlike( qr/minion/i, 'and not the Minion dashboard' );
+};
+
 subtest 'the job queue is not served to an anonymous visitor' => sub {
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper( dao => sub { $dao } );
