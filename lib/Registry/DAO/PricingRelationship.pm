@@ -189,9 +189,10 @@ class Registry::DAO::PricingRelationship :isa(Registry::DAO::Object) {
         my $user = $self->get_consumer_user($db);
         return unless $user;
 
-        # Check if user is associated with a tenant via tenant_users table
+        # Memberships are registry.tenant_users; qualified so a tenant-scoped
+        # handle does not read its own empty copy.
         my $result = $db->query(q{
-            SELECT tenant_id FROM tenant_users
+            SELECT tenant_id FROM registry.tenant_users
             WHERE user_id = ?
             AND is_primary = true
             LIMIT 1
