@@ -241,4 +241,45 @@ subtest 'instalment customer is created on the seller account' => sub {
     is $accounts[1], 'acct_instal_seller', 'async: the customer is created on the seller account';
 };
 
+subtest 'customer from tenant a is never reused on tenant b' => sub {
+    # The same family buys from a second studio, on that studio's own account.
+    my $slug_b = 'instal_async_b';
+    Test::Registry::Fixtures::create_tenant( $db, { name => 'Second Studio', slug => $slug_b } );
+    $db->query( 'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
+        'acct_instal_b', $slug_b );
+    $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug_b, $parent->id );
+    my $tdb_b = $dao->connect_schema($slug_b)->db;
+
+    my %customers;    # account => [ customer ids created there ]
+    my %intents;      # account => customer sent on the intent
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_customer = sub ( $self, $params ) {
+        my $id = 'cus_on_' . $self->stripe_account;
+        push @{ $customers{ $self->stripe_account } }, $id;
+        return { id => $id };
+    };
+    local *Registry::Service::Stripe::create_payment_intent = sub ( $self, $params ) {
+        $intents{ $self->stripe_account } = $params->{customer};
+        return { id => 'pi_' . $self->stripe_account, client_secret => 'secret' };
+    };
+
+    for ( [ $tdb, $slug ], [ $tdb_b, $slug_b ] ) {
+        my ( $sdb, $s ) = @$_;
+        Registry::DAO::Payment->create( $sdb, {
+            user_id => $parent->id, amount_cents => 30000, status => 'pending',
+            instalment_seq => 1, instalment_count => 3,
+            metadata => { tenant_slug => $s, enrollment_items => [] },
+        } )->create_payment_intent($sdb);
+    }
+
+    is_deeply \%customers,
+        { acct_instal_seller => ['cus_on_acct_instal_seller'],
+          acct_instal_b      => ['cus_on_acct_instal_b'] },
+        'one customer on each account';
+    is $intents{acct_instal_b}, 'cus_on_acct_instal_b',
+        "B's intent carries B's own customer";
+    isnt $intents{acct_instal_b}, 'cus_on_acct_instal_seller',
+        "A's customer id is never sent on B's intent";
+};
+
 done_testing;

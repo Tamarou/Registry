@@ -9,6 +9,8 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::DAO::Payment;
+use Registry::Service::Stripe;
+use Mojo::Promise;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_intent_ownership';
 
@@ -111,6 +113,46 @@ subtest 'a payment that never took money cannot be refunded' => sub {
         like $err, qr/Cannot refund a payment with status '$status'/,
             "a $status row refuses to refund";
     }
+};
+
+subtest 'intent made on another tenant account is unreachable' => sub {
+    $db->query( q{INSERT INTO registry.tenants (name, slug, stripe_connect_account_id)
+                  VALUES ('Own A', 'own_a', 'acct_own_a'), ('Own B', 'own_b', 'acct_own_b')} );
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 200000, status => 'pending',
+        metadata => { enrollment_items => [], tenant_slug => 'own_a' } });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_on_a' }, { id => $payment->id });
+    $payment = Registry::DAO::Payment->find($db, { id => $payment->id });
+
+    # Stripe's own rule: an intent is visible only through the account it was
+    # made on. Each call records the account that asked.
+    my %intents = ( acct_own_a => 'pi_on_a', acct_own_b => 'pi_on_b' );
+    my @asked;
+    my $lookup = sub ($self, $intent_id) {
+        push @asked, $self->stripe_account;
+        die "No such payment_intent: '$intent_id'\n"
+            unless ( $intents{ $self->stripe_account // '' } // '' ) eq $intent_id;
+        return { id => $intent_id, status => 'processing', amount => 200000,
+                 metadata => { payment_id => $payment->id } };
+    };
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent = $lookup;
+    local *Registry::Service::Stripe::cancel_payment_intent_async =
+        sub { Mojo::Promise->resolve( $lookup->(@_) ) };
+
+    $payment->process_payment($db, 'pi_on_a');
+    is $asked[-1], 'acct_own_a', 'retrieve goes through the payment\'s own account';
+
+    my $cancel_error;
+    $payment->stripe_client->cancel_payment_intent_async('pi_on_a')
+        ->catch(sub ($e) { $cancel_error = $e })->wait;
+    is $asked[-1], 'acct_own_a', 'cancel goes through the payment\'s own account';
+    is $cancel_error, undef, 'and reaches its own intent';
+
+    my $out = $payment->process_payment($db, 'pi_on_b');
+    is $asked[-1], 'acct_own_a', 'a foreign intent id is still looked up on this payment\'s account';
+    is $out->{success}, 0, "an intent made on tenant B's account is not reachable from A's payment";
+    like $out->{error}, qr/No such payment_intent/, 'Stripe does not find it there';
 };
 
 done_testing;

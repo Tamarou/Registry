@@ -90,10 +90,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # __remote_address joins the list for the same reason: the tenant-signup
         # commit counts recent provisionings from the caller's address to bound
         # the clone cost, and a client-supplied address is a rate limit the
-        # client sets for itself.
+        # client sets for itself. stripe_account_id is the seller account a
+        # payment snapshots; only the server resolves it, from the seller row.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address|stripe_account_id)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in

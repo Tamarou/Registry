@@ -19,6 +19,14 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::User;
+use Registry::DAO::Family;
+use Registry::DAO::Session;
+use Registry::DAO::PricingPlan;
+use Registry::DAO::Payment;
+use Registry::DAO::WorkflowSteps::Payment;
+use Registry::Service::Stripe;
+use Mojo::Promise;
+use Test::Registry::Async qw( settle );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -215,6 +223,74 @@ subtest 'selected_pricing_plan cannot be planted by a client' => sub {
 
     ok !exists data_for($run->id)->{selected_pricing_plan},
         'a posted selected_pricing_plan is not stored';
+};
+
+subtest 'submitted seller account or tenant slug is ignored' => sub {
+    # The host tenant sells on its own account; the victim's account is what an
+    # attacker would like the charge to land on instead.
+    $dao->db->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_host',
+                         stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE
+                        WHERE slug = 'hosttenant'} );
+    Test::Registry::Fixtures::create_tenant( $dao->db, { name => 'Victim', slug => 'victim_tenant' } );
+    $dao->db->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_victim'
+                        WHERE slug = 'victim_tenant'} );
+
+    # Posted: neither key reaches the run.
+    $t->post_ok('/run-data-test' => { Host => 'hosttenant.localhost' } => form => {
+        __tenant_slug => 'victim_tenant', stripe_account_id => 'acct_victim',
+    })->status_is(302);
+    my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+    my $stored = data_for($run_id);
+    is $stored->{__tenant_slug}, 'hosttenant', 'the posted seller slug is not stored';
+    ok !exists $stored->{stripe_account_id}, 'the posted seller account is not stored';
+
+    # Planted anyway, in run data and in the submitted form: the real payment
+    # step still charges the cart's own tenant on its own account.
+    my $tdb    = $dao->connect_schema('hosttenant')->db;
+    my $parent = Registry::DAO::User->create( $tdb, {
+        username => 'seller_parent', email => 'seller_parent@example.com',
+        name => 'Seller Parent', user_type => 'parent' } );
+    my $child = Registry::DAO::Family->add_child( $tdb, $parent->id, {
+        child_name => 'Seller Child', birth_date => '2018-03-15', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'E', phone => '555-0100' } } );
+    my $session = Registry::DAO::Session->create( $tdb, {
+        name => 'Seller Week', start_date => '2026-07-01', end_date => '2026-07-07',
+        status => 'published', capacity => 20, metadata => {} } );
+    Registry::DAO::PricingPlan->create( $tdb, {
+        session_id => $session->id, plan_name => 'Standard', plan_type => 'standard',
+        amount_cents => 15_000 } );
+    my $wf = Registry::DAO::Workflow->create( $tdb, {
+        name => 'Seller Pay', slug => 'seller-pay', description => 'Payment step only' } );
+    Registry::DAO::WorkflowStep->create( $tdb, {
+        workflow_id => $wf->id, slug => 'payment',
+        class => 'Registry::DAO::WorkflowSteps::Payment', description => 'Payment' } );
+    $wf->update( $tdb, { first_step => 'payment' }, { id => $wf->id } );
+
+    my $run = $wf->new_run($tdb);
+    $run->update_data( $tdb, {
+        user_id            => $parent->id,
+        children           => [ { id => $child->id, first_name => 'Seller', last_name => 'Child',
+                                  birth_date => '2018-03-15', grade => '3' } ],
+        session_selections => { $child->id => $session->id },
+        enrollment_items   => [ { child_id => $child->id, session_id => $session->id } ],
+        __tenant_slug      => 'hosttenant',
+        stripe_account_id  => 'acct_victim',
+    } );
+
+    my $account;
+    {
+        no warnings 'redefine';
+        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ( $self, $params ) {
+            $account = $self->stripe_account;
+            return Mojo::Promise->resolve( { id => 'pi_seller', client_secret => 'cs_seller' } );
+        };
+        settle( $wf->get_step( $tdb, { slug => 'payment' } )->process( $tdb, {
+            agreeTerms => 1, __tenant_slug => 'victim_tenant', stripe_account_id => 'acct_victim',
+        }, $run ) );
+    }
+
+    is $account, 'acct_host', "the charge is made on the cart's own tenant account";
 };
 
 # authenticate_as installs a permanent before_dispatch hook, so every request
