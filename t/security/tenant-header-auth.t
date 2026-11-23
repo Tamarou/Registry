@@ -135,12 +135,37 @@ subtest 'a platform admin may act as any tenant' => sub {
         'INSERT INTO registry.tenant_users (tenant_id, user_id) '
       . "VALUES ('00000000-0000-0000-0000-000000000000', ?) ON CONFLICT DO NOTHING",
         $user->id );
+    $dao->db->query(
+        "UPDATE registry.tenant_users SET role = 'admin' "
+      . "WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND user_id = ?",
+        $user->id );
 
     my $c = $t->app->build_controller;
     $c->session(user_id => $user->id);
     $c->req->headers->header('X-As-Tenant' => 'target_tenant');
 
     is $c->tenant, 'target_tenant', 'platform standing crosses tenants deliberately';
+};
+
+# Ruling 4: platform standing is the admin ROLE on the platform membership, not
+# the membership alone. A studio admin added to the platform as staff keeps a
+# global user_type of admin, so letting them act as a studio would hand them
+# that studio's admin pages through require_role.
+subtest 'a platform member without the admin role may not act as another tenant' => sub {
+    my $user = Registry::DAO::User->create($dao->db, {
+        name => 'Platform Staff', username => 'platform_staff_hdr',
+        email => 'platform_staff_hdr@example.com', user_type => 'admin',
+    });
+    $dao->db->query(
+        'INSERT INTO registry.tenant_users (tenant_id, user_id, role) '
+      . "VALUES ('00000000-0000-0000-0000-000000000000', ?, 'staff') ON CONFLICT DO NOTHING",
+        $user->id );
+
+    my $c = $t->app->build_controller;
+    $c->session(user_id => $user->id);
+    $c->req->headers->header('X-As-Tenant' => 'target_tenant');
+
+    isnt $c->tenant, 'target_tenant', 'a staff role on the platform crosses no tenant';
 };
 
 # collapse-platform-tenant.sql renamed the all-zeros platform row from

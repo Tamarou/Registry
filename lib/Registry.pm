@@ -1203,7 +1203,8 @@ class Registry :isa(Mojolicious) {
     method _PLATFORM_TENANT_ID { '00000000-0000-0000-0000-000000000000' }
 
     # The tenant an authenticated user is permitted to act as, or undef.
-    # A member may act as their own tenant; a platform admin may act as any.
+    # A member may act as their own tenant; a platform admin -- a platform
+    # membership with the admin role (ruling 4) -- may act as any.
     method _acting_tenant_for ($c, $requested) {
         return undef unless defined $requested && length $requested;
         # Same shape the caller enforces; checked here too so a malformed value
@@ -1220,7 +1221,7 @@ class Registry :isa(Mojolicious) {
                   FROM registry.tenant_users tu
                  WHERE tu.user_id = ?
                    AND ( tu.tenant_id = (SELECT id FROM registry.tenants WHERE slug = ?)
-                         OR tu.tenant_id = ?::uuid )
+                         OR ( tu.tenant_id = ?::uuid AND tu.role = 'admin' ) )
                  LIMIT 1
                 SQL
         };
