@@ -17,7 +17,7 @@ my $db      = $dao->db;         # Mojo::Pg::Database
 # only linked tenant was the platform, which takes no share of itself.
 my $seeded_slug = solo_linked_tenant($db);
 
-ok $seeded_slug, "found a seeded tenant backfilled to the revenue-share plan (slug=$seeded_slug)";
+ok $seeded_slug, "made a tenant linked to the revenue-share plan (slug=$seeded_slug)";
 
 # The rate this tenant's plan carries. The subtests below are about mechanisms --
 # DAO coercion, search_path isolation -- and pinning them to a literal made them

@@ -18,7 +18,7 @@ my $db      = $dao->db;         # Mojo::Pg::Database
 # A tenant linked to the revenue-share plan (the seed holds none; see PricingProbe).
 my $seeded_slug = solo_linked_tenant($db);
 
-ok $seeded_slug, "found a seeded tenant linked to a plan (slug=$seeded_slug)";
+ok $seeded_slug, "made a tenant linked to a plan (slug=$seeded_slug)";
 
 subtest 'linked plan without refund_application_fee key defaults to true (1)' => sub {
     # A plan carrying no refund_application_fee at all, which is the absent-key
@@ -176,9 +176,8 @@ use Registry::DAO::Payment;
 use Mojo::Promise;
 use Registry::Service::Stripe;  # load package before glob replacement
 
-# The seeded_slug ('registry') is excluded by _refund_connect_params' gate
-# (slug ne 'registry'). Create a separate test tenant with a non-registry slug
-# linked to the same plan so we can exercise the Connect-param path.
+# A second tenant linked to the same plan, so the Connect-param path runs on a
+# tenant of its own.
 my $a2_plan_id = $db->query(q{
     SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?
 }, $seeded_slug)->hash->{platform_pricing_plan_id};
