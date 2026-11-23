@@ -7,6 +7,7 @@ BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;
 
@@ -15,6 +16,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 
 my $user_id = $db->query(q{
     INSERT INTO registry.users (username, passhash)
@@ -29,7 +31,7 @@ sub captured_payment () {
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id  => $user_id,
         amount_cents => 15000,
-        metadata => {},
+        metadata => { tenant_slug => $platform },
     } );
     $payment->update( $db, { stripe_payment_intent_id => 'pi_second' } );
 
@@ -91,7 +93,7 @@ subtest 'the current intent still completes a pending payment' => sub {
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id  => $user_id,
         amount_cents => 4200,
-        metadata => {},
+        metadata => { tenant_slug => $platform },
     } );
     $payment->update( $db, { stripe_payment_intent_id => 'pi_only' } );
     my $reloaded = Registry::DAO::Payment->find( $db, { id => $payment->id } );
@@ -117,7 +119,7 @@ subtest 'a genuine decline on a pending payment still reports intent_status' => 
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id  => $user_id,
         amount_cents => 9900,
-        metadata => {},
+        metadata => { tenant_slug => $platform },
     } );
     $payment->update( $db, { stripe_payment_intent_id => 'pi_declined' } );
     my $reloaded = Registry::DAO::Payment->find( $db, { id => $payment->id } );

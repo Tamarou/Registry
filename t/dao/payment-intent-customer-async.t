@@ -94,7 +94,7 @@ sub an_instalment_payment {
         status           => 'pending',
         instalment_seq   => 1,
         instalment_count => 3,
-        metadata         => { enrollment_items => [] },
+        metadata         => { tenant_slug => $slug, enrollment_items => [] },
     } );
 }
 
@@ -142,7 +142,7 @@ subtest 'a one-off charge needs no customer and makes no extra call' => sub {
         user_id      => $parent->id,
         amount_cents => 10000,
         status       => 'pending',
-        metadata     => { enrollment_items => [] },
+        metadata     => { tenant_slug => $slug, enrollment_items => [] },
     } );
     ok !$payment->is_instalment, 'not an instalment';
 

@@ -367,5 +367,113 @@ subtest 'registry seller is charged directly on its own account' => sub {
         'an explicit 0% plan sends no application_fee_amount';
 };
 
+# A tenant with its own schema, a parent resident there, and the given account.
+my $seller_n = 0;
+sub seller_with_account ($account) {
+    my $s = 'seller_' . ++$seller_n . "_$$";
+    my $a = Registry::DAO::User->create($db, {
+        username => "${s}_admin", email => "${s}_admin\@test.example",
+        name => 'Seller Admin', user_type => 'admin',
+    });
+    Registry::DAO::Tenant->provision($db, { name => "Seller $s", slug => $s, users => [ $a ] });
+    $db->query('UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
+        $account, $s);
+    my $sdb = Registry::DAO->new(url => $test_db->uri, schema => $s)->db;
+    my $p = Registry::DAO::User->create($sdb, {
+        username => "${s}_parent", email => "${s}_parent\@test.example",
+        name => 'Seller Parent', user_type => 'parent',
+    });
+    return ($s, $sdb, $p);
+}
+
+subtest 'seller without connect account is refused before stripe' => sub {
+    for my $case ( [ 'NULL', undef ], [ 'empty', '' ] ) {
+        my ($label, $account) = @$case;
+        my ($s, $sdb, $p) = seller_with_account($account);
+        my $payment = Registry::DAO::Payment->create($sdb, {
+            user_id => $p->id, amount_cents => 10000,
+            metadata => { tenant_slug => $s, enrollment_items => [] },
+        });
+
+        my $requests = 0;
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::_request_async = sub {
+            $requests++;
+            return Mojo::Promise->resolve({ id => 'pi_never', client_secret => 'cs_never' });
+        };
+        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
+
+        my $ok = eval { $payment->create_payment_intent($sdb, {}); 1 };
+        ok !$ok, "$label account: the sync charge is refused";
+        like $@, qr/no seller Stripe account/, "$label account: refused for the missing account";
+
+        my $async_error;
+        $payment->create_payment_intent_async($sdb, {})
+            ->catch(sub ($e) { $async_error = $e })->wait;
+        like $async_error, qr/no seller Stripe account/,
+            "$label account: the async charge is refused for the missing account";
+
+        is $requests, 0, "$label account: no request reached Stripe";
+    }
+};
+
+subtest 'no params carry transfer data or on_behalf_of' => sub {
+    my @sent;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_customer = sub { { id => 'cus_np' } };
+    local *Registry::Service::Stripe::create_customer_async = sub {
+        Mojo::Promise->resolve({ id => 'cus_np' });
+    };
+    local *Registry::Service::Stripe::create_payment_intent = sub {
+        push @sent, $_[1]; { id => 'pi_np', client_secret => 'cs_np' };
+    };
+    local *Registry::Service::Stripe::create_payment_intent_async = sub {
+        push @sent, $_[1]; Mojo::Promise->resolve({ id => 'pi_np', client_secret => 'cs_np' });
+    };
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
+
+    for my $instalment ( 0, 1 ) {
+        for my $async ( 0, 1 ) {
+            my $payment = Registry::DAO::Payment->create($tenant_db, {
+                user_id => $parent->id, amount_cents => 10000,
+                ( $instalment ? ( instalment_seq => 1, instalment_count => 3 ) : () ),
+                metadata => { tenant_slug => $slug, enrollment_items => [] },
+            });
+            $async ? $payment->create_payment_intent_async($tenant_db, {})->wait
+                   : $payment->create_payment_intent($tenant_db, {});
+        }
+    }
+
+    is scalar @sent, 4, 'one-off and instalment-first, sync and async, all sent';
+    my @leaks = grep { /\Atransfer_data\[|\Aon_behalf_of\z/ } map { keys %$_ } @sent;
+    is_deeply \@leaks, [], 'no transfer_data[...] key and no on_behalf_of on any path';
+};
+
+subtest 'retry after account change reuses first account and key' => sub {
+    my ($s, $sdb, $p) = seller_with_account('acct_first');
+    my $payment = Registry::DAO::Payment->create($sdb, {
+        user_id => $p->id, amount_cents => 10000,
+        metadata => { tenant_slug => $s, enrollment_items => [] },
+    });
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_payment_intent = sub {
+        push @calls, [ $_[0]->stripe_account, $_[1]{_idempotency_key} ];
+        return { id => 'pi_retry_same', client_secret => 'cs_retry_same' };
+    };
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
+
+    $payment->create_payment_intent($sdb, {});
+    $db->query('UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
+        'acct_second', $s);
+    Registry::DAO::Payment->find($sdb, { id => $payment->id })
+        ->create_payment_intent($sdb, {});
+
+    is $calls[0][0], 'acct_first', 'the first create is on the first account';
+    is $calls[1][0], 'acct_first', 'the retry is still on the first-resolved account';
+    is $calls[1][1], $calls[0][1], 'and replays the same idempotency key';
+};
+
 $test_db->cleanup_test_database;
 done_testing;

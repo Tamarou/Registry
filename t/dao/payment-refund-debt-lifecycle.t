@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO::Payment;
 use Registry::DAO::Enrollment;
@@ -20,6 +21,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_refund_debt';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 
 my $loc = $dao->create(Location => {
     name => 'DBT Studio', slug => 'dbt-studio', address_info => {}, metadata => {} });
@@ -59,7 +61,7 @@ sub a_paid_cart (@pairs) {
         metadata => {
             enrollment_items => [ map { { session_id => $_->{session}->id,
                                           child_id   => $_->{child}->id } } @pairs ],
-            tenant_slug => undef } });
+            tenant_slug => $platform } });
     $db->update('payments', { stripe_payment_intent_id => 'pi_dbt_' . $p->id },
         { id => $p->id });
     for my $pair (@pairs) {

@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;
@@ -16,6 +17,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_refund_plumbing';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 
 my $parent = $dao->create(User => {
     username => 'rp_parent', name => 'RP Parent', user_type => 'parent',
@@ -27,7 +29,7 @@ sub payment_with ($status) {
         user_id => $parent->id,
         amount_cents => 15000,
         status => $status,
-        metadata => { enrollment_items => [], tenant_slug => undef },
+        metadata => { enrollment_items => [], tenant_slug => $platform },
     });
     # A completed payment has an intent; the guards check for one separately.
     $db->update('payments', { stripe_payment_intent_id => 'pi_rp_' . $p->id },

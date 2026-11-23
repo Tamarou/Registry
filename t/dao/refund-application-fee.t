@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Mojo::JSON qw(decode_json encode_json);
 use Test::Registry::Async qw( settle );
 use Registry::PriceOps::RevenueShare qw(refund_application_fee_for_tenant);
@@ -184,10 +185,15 @@ my $a2_plan_id = $db->query(q{
 
 my $a2_slug = 'a2test_tenant';
 $db->query(q{
-    INSERT INTO registry.tenants (name, slug, platform_pricing_plan_id)
-    VALUES ('A2 Test Tenant', ?, ?)
-    ON CONFLICT (slug) DO UPDATE SET platform_pricing_plan_id = EXCLUDED.platform_pricing_plan_id
+    INSERT INTO registry.tenants (name, slug, platform_pricing_plan_id, stripe_connect_account_id)
+    VALUES ('A2 Test Tenant', ?, ?, 'acct_a2test')
+    ON CONFLICT (slug) DO UPDATE SET platform_pricing_plan_id = EXCLUDED.platform_pricing_plan_id,
+                                     stripe_connect_account_id = EXCLUDED.stripe_connect_account_id
 }, $a2_slug, $a2_plan_id);
+
+# Refunds go through the payment's seller-bound client, so the platform's own
+# row needs an account too.
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 
 ok $a2_plan_id, "resolved plan_id for A2 subtests (slug=$a2_slug)";
 
@@ -263,13 +269,13 @@ subtest 'tenant refund with absent refund_application_fee key defaults to 1' => 
   } );
 };
 
-subtest 'registry (non-tenant) payment refund sends no Connect params' => sub {
+subtest 'platform payment refund sends no Connect params' => sub {
     my $payment = Registry::DAO::Payment->create($db, {
         user_id                  => $test_user_id,
         amount_cents             => 5000,
         status                   => 'completed',
         stripe_payment_intent_id => 'pi_registry_only',
-        metadata                 => {},
+        metadata                 => { tenant_slug => $platform },
     });
 
     my %captured;

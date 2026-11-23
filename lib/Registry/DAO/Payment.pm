@@ -406,13 +406,13 @@ field $_stripe_client = undef;
     method stripe_client {
         return $_stripe_client if $_stripe_client;
 
+        # No fallback to an unbound client: that would charge the platform's
+        # own account for a sale that belongs to the seller.
         my $acct = ref $metadata eq 'HASH' ? $metadata->{stripe_account_id} : undef;
+        die "payment $id has no seller Stripe account to charge on\n" unless $acct;
 
         # Handle SSL requirement gracefully in test environments
-        eval {
-            my $client = Registry::Service::Stripe->from_env;
-            $_stripe_client = $acct ? $client->for_account($acct) : $client;
-        };
+        eval { $_stripe_client = Registry::Service::Stripe->from_env->for_account($acct) };
 
         if ($@) {
             # If SSL or other requirements fail, re-throw with a clear message

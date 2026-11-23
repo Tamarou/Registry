@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
@@ -23,6 +24,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_callback_atomicity';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 my $uri     = $test_db->uri;
 
 # --- fixtures: a real payment row, because _apply_intent genuinely writes to it
@@ -75,7 +77,7 @@ sub fresh_payment () {
         status => 'pending',
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
-            tenant_slug      => undef,
+            tenant_slug      => $platform,
         },
     });
 }
@@ -170,7 +172,7 @@ subtest 'the settlement holds the payment row while it decides' => sub {
         metadata => {
             enrollment_items => [ { session_id => $session->id,
                                     child_id   => $probe_child->id } ],
-            tenant_slug => undef },
+            tenant_slug => $platform },
     });
     my $run = run_for($payment);
     my ( $payment_locked, $session_locked );
@@ -245,7 +247,7 @@ subtest 'the parent-return path refunds each increment separately' => sub {
         user_id => $parent->id, amount_cents => 10000, status => 'pending',
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $kid->id } ],
-            tenant_slug      => undef },
+            tenant_slug      => $platform },
     });
     my $run = run_for($payment);
 
