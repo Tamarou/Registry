@@ -22,6 +22,7 @@ requires 'Sub::Identify';
 requires 'YAML::XS';
 requires 'Test::PostgreSQL';
 requires 'Test::MockObject';
+requires 'Capture::Tiny';    # tests capture stderr from failure paths they provoke
 requires 'Minion';
 requires 'Minion::Backend::Pg';
 requires 'Email::Simple';

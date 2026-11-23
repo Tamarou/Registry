@@ -154,6 +154,21 @@ DISTRIBUTIONS
       perl 5.006001
       strict 0
       warnings 0
+  Capture-Tiny-0.50
+    pathname: D/DA/DAGOLDEN/Capture-Tiny-0.50.tar.gz
+    provides:
+      Capture::Tiny 0.50
+    requirements:
+      Carp 0
+      Exporter 0
+      ExtUtils::MakeMaker 6.17
+      File::Spec 0
+      File::Temp 0
+      IO::Handle 0
+      Scalar::Util 0
+      perl 5.006
+      strict 0
+      warnings 0
   CBOR-XS-1.87
     pathname: M/ML/MLEHMANN/CBOR-XS-1.87.tar.gz
     provides:
