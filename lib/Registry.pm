@@ -678,8 +678,9 @@ class Registry :isa(Mojolicious) {
         #
         # Deliberately not a user_type. check_user_type caps that column at
         # parent/student/staff/admin, and Morgan running a studio is every bit
-        # as much an 'admin' as Alex; what distinguishes them is which tenant
-        # they are primary of. See Registry::DAO::Tenant::is_platform_admin.
+        # as much an 'admin' as Alex; what distinguishes them is membership of
+        # the platform tenant with the admin role. See
+        # Registry::DAO::Tenant::is_platform_admin.
         $self->helper(
             require_platform_admin => sub ($c) {
                 return 0 unless $c->require_auth;

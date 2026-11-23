@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: "Is this Alex" becomes a question the app can ask, and the job queue is behind it.
-# ABOUTME: Platform-ness is being the primary user of the platform tenant, not a user_type.
+# ABOUTME: Platform-ness is membership of the platform tenant with the admin role, not a user_type.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -78,6 +78,42 @@ subtest 'a non-primary admin member of the platform tenant is a platform admin' 
     authenticate_as( $t, $second );
 
     $t->get_ok('/platform/jobs')->status_is( 200, 'and is served the queue' );
+};
+
+subtest 'a staff member of the platform tenant is not a platform admin' => sub {
+    my $staff = Registry::DAO::User->create( $db, {
+        username => 'platform_staff', name => 'Platform Staff',
+        user_type => 'staff', email => 'staff@registry.test',
+    } );
+    $platform->add_user( $db, $staff );
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $staff->id ),
+        'membership alone is not the admin role';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $staff );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'a staff member is refused' );
+};
+
+subtest 'a studio admin added to the platform tenant as staff is not a platform admin' => sub {
+    # Ruling 4's case: an admin everywhere by user_type, added to the platform
+    # as support. The membership's role is what counts, and here it is staff.
+    my $support = Registry::DAO::User->create( $db, {
+        username => 'studio_admin_support', name => 'Studio Admin',
+        user_type => 'admin', email => 'support@studio.test',
+    } );
+    $platform->add_user( $db, $support, 0, 'staff' );
+
+    ok !Registry::DAO::Tenant->is_platform_admin( $db, $support->id ),
+        'an admin by user_type with a staff membership is not a platform admin';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $support );
+
+    $t->get_ok('/platform/jobs')->status_is( 403, 'and is refused the queue' );
 };
 
 subtest 'the job queue is not served to an anonymous visitor' => sub {

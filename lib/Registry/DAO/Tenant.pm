@@ -167,12 +167,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return $class->find( $db, { slug => 'registry' } );
     }
 
-    # Is this user the platform's owner?
+    # Is this user an admin of the platform?
     #
-    # Platform-ness is being the PRIMARY user of the platform tenant, not a
-    # user_type: `check_user_type` caps that column at parent/student/staff/admin,
-    # and Morgan running a studio is every bit as much an 'admin' as Alex. The
-    # distinction the product needs is which tenant you are primary of.
+    # Platform-ness is a membership of the platform tenant whose role is
+    # 'admin', primary or not. Not a user_type: `check_user_type` caps that
+    # column at parent/student/staff/admin, and Morgan running a studio is every
+    # bit as much an 'admin' as Alex. The distinction the product needs is which
+    # tenant you are an admin member of.
     sub is_platform_admin ($class, $db, $user_id) {
         $db = $db->db if $db isa Registry::DAO;
         return 0 unless defined $user_id && !ref $user_id && length $user_id;
@@ -423,7 +424,10 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         );
     }
 
-    method add_user ( $db, $user, $is_primary = 0 ) {
+    # The membership role is this tenant's view of the user (ruling 4). It
+    # defaults to the user's user_type, which is what every membership meant
+    # before memberships had roles.
+    method add_user ( $db, $user, $is_primary = 0, $role = undef ) {
         Carp::croak 'user must be a Registry::DAO::User'
           unless $user isa Registry::DAO::User;
         $db->insert(
@@ -432,7 +436,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                 tenant_id  => $id,
                 user_id    => $user->id,
                 is_primary => $is_primary ? 1 : 0,
-                role       => $user->user_type,
+                role       => $role // $user->user_type,
             },
             { returning => '*' }
         );
