@@ -1,3 +1,22 @@
+# ABOUTME: The single GitHub Actions workflow: unit/integration tests, lint, security, migrations, quality,
+# ABOUTME: Playwright and real-Stripe e2e, and post-deploy validation -- one workflow, many jobs, local/ built once.
+
+# Every job runs on ubuntu-24.04, pinned, not ubuntu-latest. The `install` job
+# builds ./local once (XS modules such as DBD::Pg and Net::SSLeay compiled
+# against the setup-perl 5.42 and this image's system libraries) and the other
+# jobs download it, so every consumer must run on the same image as the
+# builder. ubuntu-latest is now 26.04, which Playwright 1.55.1 also refuses
+# ("does not support chromium on ubuntu26.04-x64"), so the browser jobs were
+# already pinned to 24.04; the rest follow them. Do not unpin one job alone.
+#
+# This file was four workflows (CI, Playwright, Stripe E2E, Deploy
+# Validation). The `on:` block below is the union of their triggers, and each
+# job's `if:` restricts it to exactly the events that ran it before:
+#   test, lint, security, database-compatibility, install: pull_request, push, schedule
+#   quality:            push, schedule
+#   e2e:                pull_request, push
+#   stripe-e2e:         pull_request (same-repo only), push
+#   deploy-validation:  push, workflow_dispatch
 name: CI
 
 on:
@@ -9,10 +28,85 @@ on:
     # Run weekly on Sundays at 2 AM UTC for quality checks
     - cron: '0 2 * * 0'
 
+  # Allow manual trigger for ad-hoc deploy validation (deploy-validation job only)
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL to validate'
+        default: 'https://tinyartempire.com'
+
 jobs:
+  # Builds ./local once and hands it to every job that runs Perl from it.
+  install:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'schedule'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.42'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libpq-dev \
+          postgresql-client \
+          build-essential \
+          libssl-dev \
+          libz-dev
+
+    - name: Install cpanm and carton
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+
+    # No cache step. local/ is built here, fresh, on the same pinned image
+    # every consumer runs on, and passed on as an artifact (#501).
+    - name: Install Perl dependencies
+      run: |
+        # Build Net::SSLeay against the system OpenSSL, the one DBD::Pg's libpq
+        # links. actions-setup-perl exports OPENSSL_PREFIX at its own (3.2+)
+        # OpenSSL and restores a cached ./local built against it; a process
+        # holds one libssl.so.3, so one that touched the database first then
+        # failed "version `OPENSSL_3.2.0' not found", which Mojo reports as
+        # "IO::Socket::SSL 2.009+ required for TLS support" (#501).
+        export OPENSSL_PREFIX=/usr
+        rm -rf local
+        # On failure, print each build log: cpanm writes them to disk and the
+        # job output otherwise says only "See .../build.log".
+        carton install --deployment || {
+          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
+          exit 1
+        }
+        # Prove it: load the database client first, then TLS -- the order that
+        # broke -- and show which libssl Net::SSLeay links.
+        ldd local/lib/perl5/x86_64-linux/auto/Net/SSLeay/SSLeay.so | grep libssl
+        # shellcheck disable=SC2016  # the single-quoted string is Perl code
+        carton exec perl -MDBD::Pg -MIO::Socket::SSL -e 'print "IO::Socket::SSL $IO::Socket::SSL::VERSION loads after libpq\n"'
+
+    # Tarred so file modes (local/bin scripts) and symlinks survive the
+    # artifact round trip, which a plain directory upload does not preserve.
+    - name: Pack local/
+      run: tar -cf local.tar local
+
+    - name: Upload local/
+      uses: actions/upload-artifact@v4
+      with:
+        name: perl-local
+        path: local.tar
+        if-no-files-found: error
+        retention-days: 1
+
   test:
-    runs-on: ubuntu-latest
-    
+    runs-on: ubuntu-24.04
+    needs: install
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'schedule'
+
     services:
       postgres:
         image: postgres:18
@@ -51,35 +145,15 @@ jobs:
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
 
-    # No cache step: carton installs into ./local, so the ~/perl5 cache that
-    # was here saved nothing (see the database-compatibility job).
-    - name: Install Perl dependencies
-      run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
-        # On failure, print each build log: cpanm writes them to disk and the
-        # job output otherwise says only "See .../build.log".
-        # Build Net::SSLeay against the system OpenSSL. actions-setup-perl
-        # exports OPENSSL_PREFIX pointing at its own (3.2+) OpenSSL, while
-        # DBD::Pg's libpq uses the system's (3.0 on 24.04): whichever loads first
-        # owns libssl.so.3 in the process, and a process that touched the
-        # database first then failed "version `OPENSSL_3.2.0' not found" --
-        # Mojo reports that as "IO::Socket::SSL 2.009+ required for TLS support".
-        # Unsetting it was not enough (Makefile.PL found the toolcache
-        # OpenSSL anyway), so name the system one.
-        export OPENSSL_PREFIX=/usr
-        # actions-setup-perl restores a cached ./local, built against its own
-        # OpenSSL, so carton found nothing to build and none of this applied.
-        # Build ./local fresh.
-        rm -rf local
-        carton install --deployment || {
-          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
-          exit 1
-        }
-        # Prove it: load the database client first, then TLS -- the order that
-        # broke -- and show which libssl Net::SSLeay links.
-        ldd local/lib/perl5/x86_64-linux/auto/Net/SSLeay/SSLeay.so | grep libssl
-        carton exec perl -MDBD::Pg -MIO::Socket::SSL -e 'print "IO::Socket::SSL $IO::Socket::SSL::VERSION loads after libpq\n"'
+    # local/ comes from the install job (see there for why there is no cache).
+    - name: Download local/
+      uses: actions/download-artifact@v4
+      with:
+        name: perl-local
+
+    - name: Extract local/
+      # setup-perl may restore its own stale cached local/; replace it, not merge into it.
+      run: rm -rf local && tar -xf local.tar && rm local.tar
 
     - name: Setup test database
       run: |
@@ -108,15 +182,11 @@ jobs:
         
     - name: Deploy database schema
       run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
         carton exec sqitch deploy db:pg://postgres@localhost/registry_test
 
     - name: Import workflows and templates
       run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
         export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         echo "Importing workflows..."
@@ -165,8 +235,6 @@ jobs:
 
     - name: Run test suite
       run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
         export DB_URL="postgresql://postgres:postgres@localhost:5432/registry_test"
         export EMAIL_SENDER_TRANSPORT=Test
@@ -174,7 +242,7 @@ jobs:
         # calls. It must NOT start with sk_test_: t/stripe-live/ gates itself on
         # that prefix, so a test-shaped placeholder makes the live suite believe
         # Stripe is reachable and fail against the real API. Real keys live in
-        # the stripe-e2e workflow.
+        # the stripe-e2e job.
         export STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key
         # In parallel, and with a timeout the suite can finish inside.
         #
@@ -197,7 +265,8 @@ jobs:
         timeout 75m carton exec prove -lr -j"$(nproc)" t/ --formatter=TAP::Formatter::Console
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'schedule'
     
     steps:
     - name: Checkout code
@@ -239,7 +308,8 @@ jobs:
         echo "No orphaned sqitch changes."
 
   security:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'schedule'
     
     steps:
     - name: Checkout code
@@ -262,8 +332,12 @@ jobs:
         echo "Security check completed"
 
   database-compatibility:
-    runs-on: ubuntu-latest
-    # No `if:` here, deliberately. This job used to be gated on
+    runs-on: ubuntu-24.04
+    needs: install
+    # The `if:` is an event filter only: the pull_request/push/schedule events
+    # this job always ran on, excluding the workflow_dispatch that exists for
+    # deploy-validation. No changed-paths gate here, deliberately. This job used
+    # to be gated on
     #   contains(github.event.head_commit.modified, 'sql/')
     # and `head_commit` is null on pull_request events, so both contains() calls
     # were false and the job skipped on every PR -- including the ones that
@@ -274,6 +348,7 @@ jobs:
     # or a base-ref diff with its own edge cases (shallow clones, force pushes,
     # first push on a branch). Running it every time costs three parallel jobs
     # and cannot silently skip, which is the property that was missing.
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'schedule'
 
     strategy:
       matrix:
@@ -311,48 +386,25 @@ jobs:
         sudo apt-get install -y \
           libpq-dev \
           postgresql-client \
-          build-essential \
-          libssl-dev \
-          libz-dev
+          build-essential
 
     - name: Install cpanm and carton
       run: |
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
 
-    # No cache step here. actions-setup-perl restores a cached local/ of its
-    # own, built against the toolcache OpenSSL; the install step below deletes
-    # it and builds fresh (see the comment there).
-    - name: Install Perl dependencies
-      run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
-        # Build Net::SSLeay against the system OpenSSL. actions-setup-perl
-        # exports OPENSSL_PREFIX pointing at its own (3.2+) OpenSSL, while
-        # DBD::Pg's libpq uses the system's (3.0 on 24.04): whichever loads first
-        # owns libssl.so.3 in the process, and a process that touched the
-        # database first then failed "version `OPENSSL_3.2.0' not found" --
-        # Mojo reports that as "IO::Socket::SSL 2.009+ required for TLS support".
-        # Unsetting it was not enough (Makefile.PL found the toolcache
-        # OpenSSL anyway), so name the system one.
-        export OPENSSL_PREFIX=/usr
-        # actions-setup-perl restores a cached ./local, built against its own
-        # OpenSSL, so carton found nothing to build and none of this applied.
-        # Build ./local fresh.
-        rm -rf local
-        carton install --deployment || {
-          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
-          exit 1
-        }
-        # Prove it: load the database client first, then TLS -- the order that
-        # broke -- and show which libssl Net::SSLeay links.
-        ldd local/lib/perl5/x86_64-linux/auto/Net/SSLeay/SSLeay.so | grep libssl
-        carton exec perl -MDBD::Pg -MIO::Socket::SSL -e 'print "IO::Socket::SSL $IO::Socket::SSL::VERSION loads after libpq\n"'
+    # local/ comes from the install job (see there for why there is no cache).
+    - name: Download local/
+      uses: actions/download-artifact@v4
+      with:
+        name: perl-local
+
+    - name: Extract local/
+      # setup-perl may restore its own stale cached local/; replace it, not merge into it.
+      run: rm -rf local && tar -xf local.tar && rm local.tar
 
     - name: Test database migration
       run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
         
         echo "Testing PostgreSQL ${{ matrix.postgres-version }} migration..."
@@ -381,7 +433,8 @@ jobs:
     # job. That is the harness; this step was a decoy beside it.
 
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    needs: install
     if: github.event_name == 'schedule' || github.event_name == 'push'
     
     services:
@@ -410,33 +463,23 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libpq-dev postgresql-client build-essential libssl-dev libz-dev
+        sudo apt-get install -y libpq-dev postgresql-client build-essential
 
     - name: Install dependencies and tools
       run: |
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
-        # Build Net::SSLeay against the system OpenSSL. actions-setup-perl
-        # exports OPENSSL_PREFIX pointing at its own (3.2+) OpenSSL, while
-        # DBD::Pg's libpq uses the system's (3.0 on 24.04): whichever loads first
-        # owns libssl.so.3 in the process, and a process that touched the
-        # database first then failed "version `OPENSSL_3.2.0' not found" --
-        # Mojo reports that as "IO::Socket::SSL 2.009+ required for TLS support".
-        # Unsetting it was not enough (Makefile.PL found the toolcache
-        # OpenSSL anyway), so name the system one.
-        export OPENSSL_PREFIX=/usr
-        # actions-setup-perl restores a cached ./local, built against its own
-        # OpenSSL, so carton found nothing to build and none of this applied.
-        # Build ./local fresh.
-        rm -rf local
-        carton install --deployment || {
-          for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
-          exit 1
-        }
-        # Prove it: load the database client first, then TLS -- the order that
-        # broke -- and show which libssl Net::SSLeay links.
-        ldd local/lib/perl5/x86_64-linux/auto/Net/SSLeay/SSLeay.so | grep libssl
-        carton exec perl -MDBD::Pg -MIO::Socket::SSL -e 'print "IO::Socket::SSL $IO::Socket::SSL::VERSION loads after libpq\n"'
+
+    # local/ comes from the install job (see there for why there is no cache).
+    # `carton check` below verifies it satisfies the cpanfile.
+    - name: Download local/
+      uses: actions/download-artifact@v4
+      with:
+        name: perl-local
+
+    - name: Extract local/
+      # setup-perl may restore its own stale cached local/; replace it, not merge into it.
+      run: rm -rf local && tar -xf local.tar && rm local.tar
 
     - name: Check dependencies
       run: |
@@ -474,8 +517,6 @@ jobs:
 
     - name: Performance test - Database schema deployment
       run: |
-        export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
-        export PATH="$HOME/perl5/bin:$PATH"
         export PGPASSWORD=postgres
         
         echo "Testing schema deployment performance..."
@@ -493,3 +534,265 @@ jobs:
       with:
         name: dependency-report
         path: dependency-report.txt
+  e2e:
+    # ubuntu-latest became 26.04, which Playwright 1.55.1 refuses ("does not
+    # support chromium on ubuntu26.04-x64"), so this job stopped before any
+    # test. Pinned until Playwright is moved to a release that supports it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Browser tests only after the unit tests pass.
+    needs: [install, test]
+    # The pull_request/push events of the old Playwright workflow; not on
+    # schedule or workflow_dispatch.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.42'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev postgresql-client build-essential libssl-dev libz-dev
+
+    - name: Install cpanm and Carton
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+
+    # local/ comes from the install job (see there for why there is no cache).
+    - name: Download local/
+      uses: actions/download-artifact@v4
+      with:
+        name: perl-local
+
+    - name: Extract local/
+      # setup-perl may restore its own stale cached local/; replace it, not merge into it.
+      run: rm -rf local && tar -xf local.tar && rm local.tar
+
+    - name: Install Node dependencies
+      run: npm install
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps chromium firefox
+
+    # The harness provisions its own ephemeral Postgres via Test::PostgreSQL
+    # (globalSetup), so no service container is needed. Confirm Test::PostgreSQL
+    # can start on the runner before running the suite; fail fast with a clear
+    # message if the postgres binaries are unavailable.
+    - name: Verify Test::PostgreSQL can start
+      run: |
+        # shellcheck disable=SC2016 # the single quotes are Perl source, not shell
+        carton exec perl -MTest::PostgreSQL -e 'my $pg = Test::PostgreSQL->new; print "Test::PostgreSQL OK: ", $pg->uri, "\n"'
+
+    # No STRIPE_SECRET_KEY: registration's free path stays in demo/decision-step
+    # mode and no Stripe calls are made.
+    - name: Run Playwright tests
+      env:
+        EMAIL_SENDER_TRANSPORT: Test
+      run: |
+        npx playwright test --project=chromium --project=firefox
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 14
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-test-results
+        path: test-results/
+        retention-days: 14
+
+  stripe-e2e:
+    # ubuntu-latest became 26.04, which Playwright 1.55.1 refuses ("does not
+    # support chromium on ubuntu26.04-x64"), so this job stopped before any
+    # test. Pinned until Playwright is moved to a release that supports it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Browser tests only after the unit tests pass.
+    needs: [install, test]
+
+    # Only the pull_request/push events of the old Stripe E2E workflow (not
+    # schedule or workflow_dispatch), AND:
+    # Skip for fork PRs: they have no access to repo secrets.
+    # Runs on direct pushes to main and on same-repo PRs only.
+    if: >
+      (github.event_name == 'pull_request' || github.event_name == 'push') &&
+      (github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+
+    env:
+      # Stripe test-mode secrets -- must be pk_test_* / sk_test_* / whsec_* values.
+      # Set STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, and STRIPE_WEBHOOK_SECRET
+      # in GitHub repo Settings → Secrets and variables → Actions.
+      # Job-level on purpose: no other job in this workflow may see them.
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      EMAIL_SENDER_TRANSPORT: Test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: '5.42'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev postgresql-client build-essential libssl-dev libz-dev
+
+    - name: Install cpanm and Carton
+      run: |
+        curl -L https://cpanmin.us | perl - App::cpanminus
+        cpanm --notest Carton
+
+    # local/ comes from the install job (see there for why there is no cache).
+    - name: Download local/
+      uses: actions/download-artifact@v4
+      with:
+        name: perl-local
+
+    - name: Extract local/
+      # setup-perl may restore its own stale cached local/; replace it, not merge into it.
+      run: rm -rf local && tar -xf local.tar && rm local.tar
+
+    - name: Install Node dependencies
+      run: npm install
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps chromium
+
+    - name: Verify Test::PostgreSQL can start
+      run: |
+        # shellcheck disable=SC2016 # the single quotes are Perl source, not shell
+        carton exec perl -MTest::PostgreSQL -e 'my $pg = Test::PostgreSQL->new; print "Test::PostgreSQL OK: ", $pg->uri, "\n"'
+
+    # Without this, the job passes without testing anything. Every file under
+    # t/stripe-live/ calls Test::Registry::StripeConnect::available(), which is
+    # `$ENV{STRIPE_SECRET_KEY} =~ /^sk_test_/`, and plan skip_all when it is
+    # false. No key was ever provisioned, so the suite reported
+    # `Files=4, Tests=0 ... Result: NOTESTS` -- and prove exits 0 on NOTESTS, so
+    # the checks UI showed a green tick. A SKIP and a PASS must not look alike in
+    # the one suite that guards the money path against real Stripe.
+    - name: Require a Stripe test key
+      run: |
+        case "${STRIPE_SECRET_KEY}" in
+          sk_test_*) echo "Stripe test key present; the live suites will run." ;;
+          "") echo "::error::STRIPE_SECRET_KEY is not set. Add a Stripe TEST-mode secret key (sk_test_...) under Settings -> Secrets and variables -> Actions. Until then this suite tests nothing."
+              exit 1 ;;
+          sk_live_*) echo "::error::STRIPE_SECRET_KEY is a LIVE key. This suite creates real charges against whatever key it is given; only sk_test_ values are permitted."
+              exit 1 ;;
+          *) echo "::error::STRIPE_SECRET_KEY does not start with sk_test_, so every file under t/stripe-live/ will skip_all and report success without testing anything."
+             exit 1 ;;
+        esac
+
+    - name: Run real-Stripe Perl suites
+      run: |
+        carton exec prove -lv t/stripe-live/
+
+    - name: Run Playwright payment smoke test
+      run: |
+        npx playwright test t/playwright/payment-smoke.spec.js --project=chromium
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: stripe-e2e-playwright-report
+        path: playwright-report/
+        retention-days: 14
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: stripe-e2e-test-results
+        path: test-results/
+        retention-days: 14
+
+  # Post-deploy browser validation against the live production site: runs
+  # Playwright tests after Render deploys to verify rendering and functionality.
+  deploy-validation:
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    # After a push to main (Render auto-deploys on push), or a manual
+    # workflow_dispatch for ad-hoc validation. Never on pull_request or schedule.
+    # Needs no Perl, so it does not wait for install.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps chromium
+
+    - name: Wait for Render deploy
+      run: |
+        URL="${{ github.event.inputs.url || 'https://tinyartempire.com' }}"
+        echo "Waiting for deploy to complete at $URL..."
+        # Render deploys take ~2-3 minutes after push
+        sleep 180
+        # Verify the site is up. The loop used to fall out of its last iteration
+        # and let the step succeed, so a site that never came back looked the
+        # same as one that did.
+        for i in $(seq 1 10); do
+          if curl -sf --max-time 10 "$URL/health" > /dev/null 2>&1; then
+            echo "Site is up"
+            exit 0
+          fi
+          echo "Attempt $i: site not ready, waiting..."
+          sleep 15
+        done
+        echo "::error::$URL/health did not respond after 10 attempts"
+        exit 1
+
+    # playwright.deploy.config.js, not the main config: that one's globalSetup is
+    # config-level and spawns `carton exec` to start a local DB and server, which
+    # this job has no Perl for. It failed here with `spawn carton ENOENT` on every
+    # run from 2026-04-12 onward, before reaching a single assertion.
+    - name: Run deploy validation
+      env:
+        DEPLOY_VALIDATION_URL: ${{ github.event.inputs.url || 'https://tinyartempire.com' }}
+      run: npx playwright test --config=playwright.deploy.config.js
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: deploy-validation-results
+        path: test-results/
+        retention-days: 7
