@@ -1128,6 +1128,17 @@ class Registry :isa(Mojolicious) {
             );
         } )->name('platform_runbook');
 
+        # Platform settings: the screen for what `registry platform settings`
+        # lists, so changing one needs no shell on the server. The same DAO the
+        # CLI calls; there is no second write path.
+        $platform->get('/settings')->to( cb => sub ($c) {
+            require Registry::DAO::PlatformSetting;
+            $c->render(
+                template => 'platform/settings',
+                settings => Registry::DAO::PlatformSetting->all( $c->dao->db ),
+            );
+        } )->name('platform_settings');
+
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach
         # these routes even though staff can reach other /admin/* routes.
