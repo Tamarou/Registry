@@ -222,8 +222,11 @@ subtest 'refund event for unknown account has no tenant' => sub {
     my $event = refund_event( id => "evt_moves_unknown_$$", account => "acct_nobody_moves_$$" );
     Test::Registry::StripeWebhook::post_connect($t, {%$event})->status_is(200);
 
-    ok !scalar( grep { defined $_->{tenant_id} } @{ stored($event->{id}) } ),
-        'no tenant is attributed the event';
+    my $rows = stored($event->{id});
+    is scalar @$rows, 1, 'the event is stored, not lost';
+    is $rows->[0]{account}, $event->{account}, 'with the account that sent it';
+    ok !defined $rows->[0]{tenant_id}, 'attributed to no tenant';
+    ok !defined $rows->[0]{processed_at}, 'and not applied';
 };
 
 subtest 'storage failure rolls back claim and answers 500' => sub {

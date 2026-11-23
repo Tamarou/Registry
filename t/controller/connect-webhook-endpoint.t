@@ -95,7 +95,7 @@ subtest 'missing connect secret answers 500' => sub {
 
 subtest 'unknown account settles into no schema' => sub {
     @logs = ();
-    my $event = { id => "evt_conn_unknown_$$", type => 'customer.created',
+    my $event = { id => "evt_conn_unknown_$$", type => 'product.created',
                   account => 'acct_nobody_' . $$ };
     Test::Registry::StripeWebhook::post_connect($t, $event)->status_is(200);
     ok scalar( grep { $_->[1] =~ /acct_nobody_$$/ } @logs ), 'the unknown account is logged';
@@ -128,7 +128,7 @@ subtest 'altered body missing or stale signature is refused' => sub {
 
 subtest 'event without account never defaults to registry' => sub {
     @logs = ();
-    my $event = { id => "evt_conn_noacct_$$", type => 'customer.created' };
+    my $event = { id => "evt_conn_noacct_$$", type => 'product.created' };
     Test::Registry::StripeWebhook::post_connect($t, $event)
         ->status_is(200)->content_is('OK (no tenant)');
     ok scalar( grep { $_->[1] =~ /\Q$event->{id}\E/ } @logs ), 'the event is logged';
@@ -139,7 +139,7 @@ subtest 'event without account never defaults to registry' => sub {
 subtest 'case prefix or injected account resolves no tenant' => sub {
     my $prefix = substr $account, 0, -1;
     for my $impostor ( uc($account), $prefix, "$prefix%", "acct_x' OR '1'='1", "$account' --" ) {
-        my $event = { type => 'customer.created', account => $impostor };
+        my $event = { type => 'product.created', account => $impostor };
         Test::Registry::StripeWebhook::post_connect($t, $event)
             ->status_is(200)->content_is('OK (no tenant)', "'$impostor' names no tenant");
         is scalar @{ claims($event->{id}) }, 0, 'and claims nothing';

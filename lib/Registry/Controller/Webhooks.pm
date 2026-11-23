@@ -132,11 +132,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 q{UPDATE registry.webhook_events
                      SET account = ?, tenant_id = ?, payload = ?::jsonb
                    WHERE stripe_event_id = ?},
-                $event->{account}, $tenant->{id}, { json => $event }, $event->{id}
+                ( ref $event->{account} ? undef : $event->{account} ),
+                ( $tenant ? $tenant->{id} : undef ), { json => $event }, $event->{id}
             );
             $tx->commit;
             $self->app->log->info( "Connect webhook event $event->{id} ($event->{type}) "
-                  . "for tenant $tenant->{slug} stored, not yet applied" );
+                  . ( $tenant ? "for tenant $tenant->{slug}" : 'for no tenant' )
+                  . ' stored, not yet applied' );
         }
         catch ($e) {
             $self->app->log->error("Storing Connect webhook event $event->{id} failed: $e");
@@ -164,8 +166,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             : undef;
 
         # No tenant to settle into, and a redelivery cannot create one, so
-        # Stripe is told to stop rather than asked to retry. Nothing is claimed
-        # and no schema is chosen -- in particular not registry.
+        # Stripe is told to stop rather than asked to retry. No schema is
+        # chosen -- in particular not registry. A money or customer event is
+        # still kept, attributed to no tenant, so none is lost before step 5
+        # applies them; anything else is not claimed.
+        return $self->_store_stripe_move( $db, $event, undef )
+            if !$tenant && ( $event->{type} // '' ) =~ STRIPE_MOVES;
         unless ($tenant) {
             $self->app->log->warn( "Connect webhook event $event_id names no tenant's account"
                   . ( defined $account && !ref $account ? " '$account'" : '' ) );
