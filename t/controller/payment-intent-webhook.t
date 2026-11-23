@@ -9,6 +9,8 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::StripeWebhook;
+use Registry::DAO::Tenant;
 use Digest::SHA qw(hmac_sha256_hex);
 use Mojo::JSON qw(encode_json);
 use Registry::DAO::Family;
@@ -16,6 +18,7 @@ use Registry::DAO::Payment;
 
 local $ENV{STRIPE_SECRET_KEY}     = 'sk_test_fake_for_webhook_tests';
 local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_test_fake_for_webhook_tests';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_fake_for_connect_webhook_tests';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -23,6 +26,12 @@ my $db      = $dao->db;
 
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
+
+# Every log line the app writes, kept here instead of on stderr.
+my @logs;
+$t->app->log->unsubscribe('message');
+$t->app->log->level('info');
+$t->app->log->on(message => sub ($log, $level, @lines) { push @logs, [ $level, "@lines" ] });
 
 # --- seed a registration's worth of data ---
 my $loc = $dao->create(Location => { name => 'PI Studio', slug => 'pi-studio', address_info => {}, metadata => {} });
@@ -345,6 +354,87 @@ subtest 'a delivery onto a settled row does not re-complete it (Leg 0 Task 3)' =
                 "and no enrollment is created against $settled money";
         }
     }
+};
+
+# --- Connect: sellers with their own accounts and schemas ---
+
+my $admin = $dao->create(User => { username => 'pi_conn_admin', name => 'A',
+    user_type => 'admin', email => 'pi_conn_admin@test.local' });
+
+# A seller with a schema of its own, a seat to sell, and a family to sell it to.
+sub a_seller ($tag) {
+    my $slug    = "pi_${tag}_$$";
+    my $account = "acct_pi_${tag}_$$";
+    Registry::DAO::Tenant->provision($db, {
+        name => "PI $tag $$", slug => $slug, users => [$admin],
+        stripe_connect_account_id => $account,
+        stripe_charges_enabled => 1, stripe_details_submitted => 1 });
+    my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
+
+    my $loc = Registry::DAO::Location->create($tdb, { name => "PI $tag Studio",
+        slug => "pi-$tag-studio", address_info => {}, metadata => {} });
+    my $prog = Registry::DAO::Project->create($tdb, { name => "PI $tag Camp",
+        status => 'published', program_type_slug => 'summer-camp', metadata => {} });
+    my $teacher = Registry::DAO::User->create($tdb, { username => "pi_${tag}_teacher",
+        name => 'T', user_type => 'staff', email => "pi_${tag}_t\@test.local" });
+    my $session = Registry::DAO::Session->create($tdb, { name => "PI $tag Week",
+        start_date => '2026-01-01', end_date => '2026-12-31',
+        status => 'published', capacity => 10, metadata => {} });
+    my $event = Registry::DAO::Event->create($tdb, { time => '2026-06-15 09:00:00',
+        duration => 60, location_id => $loc->id, project_id => $prog->id,
+        teacher_id => $teacher->id, capacity => 10, metadata => {} });
+    $session->add_events($tdb, $event->id);
+    my $parent = Registry::DAO::User->create($tdb, { username => "pi_${tag}_parent",
+        name => 'P', user_type => 'parent', email => "pi_${tag}_p\@test.local" });
+
+    return { slug => $slug, account => $account, tdb => $tdb,
+             session => $session, parent => $parent };
+}
+
+my $kids = 0;
+sub a_sale ($seller) {
+    my $tdb   = $seller->{tdb};
+    my $child = Registry::DAO::Family->add_child($tdb, $seller->{parent}->id, {
+        child_name => 'PI Conn Kid ' . ++$kids, birth_date => '2018-01-01', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
+    return Registry::DAO::Payment->create($tdb, {
+        user_id => $seller->{parent}->id, amount_cents => 10000, status => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $seller->{session}->id, child_id => $child->id } ],
+            tenant_slug      => $seller->{slug} } });
+}
+
+# Everything a settlement could write in a seller's schema, as one comparable value.
+sub ledger ($seller) {
+    my $tdb = $seller->{tdb};
+    return {
+        payments    => $tdb->query(q{SELECT id, status, completed_at, platform_fee_cents
+                                     FROM payments ORDER BY id})->hashes->to_array,
+        enrollments => $tdb->query('SELECT id FROM enrollments ORDER BY id')->hashes->to_array,
+    };
+}
+
+my $seller_a = a_seller('a');
+
+subtest 'connect event for charge registry did not make is ignored' => sub {
+    a_sale($seller_a);    # something there to leave alone
+    my $before = ledger($seller_a);
+
+    for my $case ( [ 'no payment id' => {} ],
+                   [ 'unknown payment id' =>
+                       { payment_id => '00000000-0000-0000-0000-000000000000' } ] ) {
+        my ( $name, $metadata ) = @$case;
+        @logs = ();
+        Test::Registry::StripeWebhook::post_connect($t, {
+            type    => 'payment_intent.succeeded',
+            account => $seller_a->{account},
+            data    => { object => { id => "pi_counter_$name", amount => 10000,
+                                     metadata => $metadata } },
+        })->status_is(200, "$name: answered 200");
+        ok scalar( grep { $_->[1] =~ /pi_counter_\Q$name\E/ } @logs ), "$name: logged";
+    }
+
+    is_deeply ledger($seller_a), $before, 'and no row in the seller schema was created or changed';
 };
 
 done_testing;

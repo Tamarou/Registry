@@ -517,9 +517,16 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     method _process_payment_intent_succeeded ($db, $event) {
         my $intent     = $event->{data}{object} // {};
         my $payment_id = $intent->{metadata}{payment_id};
-        return unless $payment_id;    # not a Registry one-time payment -- ignore
 
-        my $slug = $intent->{metadata}{tenant_slug};
+        # A charge Registry did not make -- a seller's own Terminal or counter
+        # sale -- or one this schema has no row for. A retry cannot change
+        # that, so it is acknowledged rather than refused.
+        my sub ignore ($why) {
+            my $pi = $intent->{id} // 'an intent with no id';
+            $self->app->log->info("payment_intent.succeeded for $pi ignored: $why");
+            return undef;
+        }
+        return ignore('no payment_id in metadata') unless $payment_id;
 
         require Registry::DAO::Payment;
         # FOR UPDATE: this path carries its own copy of the amount and completed
@@ -530,9 +537,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # key and would not be on a filter that matches more than one row.
         my $payment = Registry::DAO::Payment->find($db, { id => $payment_id },
             { for => 'update' });
-        die "payment_intent.succeeded: payment $payment_id not found"
-          . ($slug ? " in tenant schema '$slug'" : ' in registry schema') . "\n"
-            unless $payment;
+        return ignore("payment $payment_id not found") unless $payment;
 
         # The intent's captured amount must match the payment row before the
         # enrollment snapshot is granted: a stale intent completing after a

@@ -198,34 +198,24 @@ subtest 'connect succeeded event finalizes enrollment in account tenant' => sub 
 };
 
 # ---------------------------------------------------------------------------
-# Subtest 2: missing payment_id -- die with not-found message (Stripe retries).
+# Subtest 2: a payment this schema has no row for -- logged and ignored, since
+# a retry cannot create the row.
 # ---------------------------------------------------------------------------
 
-subtest 'missing payment dies with not-found message' => sub {
+subtest 'missing payment is logged and ignored' => sub {
     my $bad_id = '00000000-0000-0000-0000-000000000000';
     my $evt = {
         type => 'payment_intent.succeeded',
         data => { object => {
             id       => 'pi_tenant_bad_1',
-            metadata => {
-                payment_id  => $bad_id,
-                tenant_slug => $slug,
-            },
+            metadata => { payment_id => $bad_id },
         } },
     };
 
-    my $died = 0;
-    my $msg  = '';
-    eval {
-        $wh->_process_payment_intent_succeeded($db, $evt);
-    };
-    if ($@) {
-        $died = 1;
-        $msg  = $@;
-    }
-    ok $died, 'handler dies when payment not found';
-    like $msg, qr/payment.*not found/i, 'die message mentions payment not found';
-    like $msg, qr/\Q$slug\E/, 'die message includes tenant slug';
+    @log_messages = ();
+    my $returned = eval { $wh->_process_payment_intent_succeeded($db, $evt); 1 };
+    ok $returned, 'handler returns without dying';
+    ok scalar(grep { /\Q$bad_id\E.*not found/ } @log_messages), 'the missing payment is logged';
 };
 
 # ---------------------------------------------------------------------------
