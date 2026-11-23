@@ -437,4 +437,22 @@ subtest 'connect event for charge registry did not make is ignored' => sub {
     is_deeply ledger($seller_a), $before, 'and no row in the seller schema was created or changed';
 };
 
+subtest 'platform endpoint ignores metadata tenant slug' => sub {
+    my $sale   = a_sale($seller_a);
+    my $before = ledger($seller_a);
+
+    post_webhook({
+        id   => "evt_platform_slug_$$",
+        type => 'payment_intent.succeeded',
+        data => { object => {
+            id       => 'pi_platform_slug_' . $sale->id,
+            amount   => 10000,
+            metadata => { payment_id => $sale->id, tenant_slug => $seller_a->{slug} },
+        } },
+    })->status_is(200);
+
+    is_deeply ledger($seller_a), $before,
+        "the tenant's schema is untouched -- metadata does not choose where to settle";
+};
+
 done_testing;

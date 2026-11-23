@@ -21,30 +21,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $db       = $dao->db;
         my $event_id = $event->{id};
 
-        # Resolve the tenant before the transaction opens. The slug lives in our
-        # own snapshotted metadata (the Connect `account` field is absent on
-        # destination-charge events, which are platform events), and only
-        # payment_intent.succeeded carries one -- account.updated and the
-        # subscription branch stay in the registry schema.
-        #
-        # This lookup IS the validation. set_config accepts a nonexistent schema
-        # without complaint and only fails later, at the first unqualified table
-        # reference, so an unknown slug has to be refused before it gets there.
-        my $slug;
-        if ( $event->{type} eq 'payment_intent.succeeded' ) {
-            my $raw = $event->{data}{object}{metadata}{tenant_slug};
-            $slug = $raw if defined $raw && length $raw && $raw ne 'registry';
-
-            if ( defined $slug
-                && !$db->select( 'registry.tenants', ['id'], { slug => $slug } )->hash )
-            {
-                $self->app->log->error(
-                    "Webhook event $event_id names unknown tenant slug '$slug'");
-                $self->render( status => 500, text => 'Unknown tenant' );
-                return;
-            }
-        }
-
         # Prefetch before the transaction, and skip it for an event we have
         # already handled.
         #
@@ -73,7 +49,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             ? Mojo::Promise->resolve(undef)
             : $self->_prefetch_subscription_async( $dao, $event )
           )->then( sub ($subscription) {
-            $self->_settle_event( $dao, $db, $event, $event_id, $slug, $subscription );
+            # Events on the platform's own account settle in the registry
+            # schema (no slug). A seller's events arrive at stripe_connect,
+            # which finds the tenant from event.account, never from metadata.
+            $self->_settle_event( $dao, $db, $event, $event_id, undef, $subscription );
           } )->catch( sub ($err) {
             # Reached when the prefetch rejects, or when _settle_event throws
             # outside its own try -- opening the transaction, say. Its internal
