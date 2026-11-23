@@ -172,4 +172,21 @@ subtest 'a retry after a failure completes the same instalment' => sub {
         'the retry settles the instalment that failed, not the next one';
 };
 
+# The studio's own invoicing on its own account is not Registry's to record, and
+# reading it as tenant billing would move a tenant's status on a parent's card.
+subtest 'unmatched connect invoice changes nothing and skips billing' => sub {
+    build_set();
+
+    for my $type (qw( invoice.paid invoice.payment_failed )) {
+        my $event = { type => $type, account => $A->{account},
+            data => { object => { schedule => 'sub_sched_studio_own', payment_intent => "pi_studio_$type" } } };
+        Test::Registry::StripeWebhook::post_connect( $t, $event )
+            ->status_is(200)->content_is('OK');
+
+        is_deeply statuses(), [qw( completed pending pending )], "$type changes no instalment";
+        is $dao->db->select( 'registry.subscription_events', ['id'],
+            { stripe_event_id => $event->{id} } )->rows, 0, 'and never reaches tenant billing';
+    }
+};
+
 $t_db->cleanup_test_database;
