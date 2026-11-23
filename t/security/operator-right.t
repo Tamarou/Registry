@@ -80,4 +80,87 @@ subtest 'an admin of another tenant is refused jobs and revenue' => sub {
     $t->get_ok('/platform/revenue')->status_is( 403, 'and the revenue view' );
 };
 
+subtest 'staff and parent members of the platform tenant are refused the operator routes' => sub {
+    # Ruling 4: the membership's role is what counts. Both are admins by the
+    # global user_type, which must not be read.
+    for my $role (qw( staff parent )) {
+        my $member = Registry::DAO::User->create( $db, {
+            username => "operator_platform_$role", name => "Platform \u$role",
+            user_type => 'admin', email => "$role\@operator-platform.test",
+        } );
+        $platform->add_user( $db, $member, 0, $role );
+
+        my $t = app_as($member);
+        $t->get_ok('/platform/jobs')->status_is( 403,
+            "a $role member is refused the job queue" );
+        $t->get_ok('/platform/revenue')->status_is( 403,
+            "a $role member is refused the revenue view" );
+    }
+};
+
+subtest 'an operator grant in a tenant own schema copy grants nothing' => sub {
+    # clone_schema gave the studio its own, empty, copy of the table. A row
+    # there is a tenant writing its own grant, and must be ignored.
+    $db->insert( 'operator_right_studio.tenant_resources',
+        { tenant_id => $studio->id, resource => 'operator' } );
+
+    ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ),
+        'the read seam answers false through the registry handle';
+    my $studio_db = $dao->connect_schema('operator_right_studio')->db;
+    ok !Registry::DAO::Tenant->holds( $studio_db, $studio->id, 'operator' ),
+        'and through a handle searching the studio schema first';
+
+    my $t = app_as($morgan);
+    $t->get_ok('/platform/jobs')->status_is( 403, 'the studio admin is refused the job queue' );
+    $t->get_ok('/platform/revenue')->status_is( 403, 'and the revenue view' );
+
+    $db->delete( 'operator_right_studio.tenant_resources', { tenant_id => $studio->id } );
+};
+
+subtest 'a differently named resource does not grant the operator right' => sub {
+    $db->insert( 'registry.tenant_resources',
+        { tenant_id => $studio->id, resource => 'operators' } );
+
+    ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ),
+        'holding another resource is not holding operator';
+
+    my $t = app_as($morgan);
+    $t->get_ok('/platform/jobs')->status_is( 403, 'the studio admin is refused the job queue' );
+    $t->get_ok('/platform/revenue')->status_is( 403, 'and the revenue view' );
+
+    $db->delete( 'registry.tenant_resources', { tenant_id => $studio->id } );
+};
+
+subtest 'without the operator right a minion action that changes a job is refused' => sub {
+    my $t = app_as($alex);
+    my $minion = $t->app->minion;
+    my $id = $minion->enqueue( 'operator_right_probe', [], { queue => 'operator_right_probe' } );
+
+    $db->delete( 'registry.tenant_resources',
+        { tenant_id => $platform->id, resource => 'operator' } );
+
+    $t->patch_ok( '/platform/jobs/jobs', form => { id => $id, do => 'remove' } )
+      ->status_is( 403, 'removing a job is refused' );
+    ok $minion->job($id), 'and the job is still there';
+    $t->patch_ok( '/platform/jobs/jobs', form => { id => $id, do => 'retry' } )
+      ->status_is( 403, 'retrying a job is refused' );
+    is $minion->job($id)->info->{retries}, 0, 'and it was not retried';
+
+    $db->insert( 'registry.tenant_resources',
+        { tenant_id => $platform->id, resource => 'operator' } );
+
+    # The control: the same request is one the dashboard accepts once the right
+    # is back, so the refusal above was the guard and not the request's shape.
+    $t->patch_ok( '/platform/jobs/jobs', form => { id => $id, do => 'remove' } )
+      ->status_is( 302, 'with the right the same request is handled' );
+    ok !$minion->job($id), 'and removes the job';
+};
+
+subtest 'an unauthenticated request is served neither operator route' => sub {
+    my $t = app_as();
+    $t->get_ok('/platform/jobs')->status_isnt( 200, 'the job queue is not served' )
+      ->content_unlike( qr/minion/i, 'and is not the Minion dashboard' );
+    $t->get_ok('/platform/revenue')->status_isnt( 200, 'the revenue view is not served' );
+};
+
 done_testing;
