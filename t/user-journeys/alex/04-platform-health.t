@@ -179,9 +179,9 @@ $dao->db->query(
     sub log { $_[0]->{log} }
 }
 
-# ---- subtest 1: ProcessWaitlist dispatch reaches every tenant, skips registry ----
+# ---- subtest 1: ProcessWaitlist dispatch reaches every tenant, registry included ----
 
-subtest 'ProcessWaitlist: sweep reaches tenant A and B, skips registry' => sub {
+subtest 'ProcessWaitlist: sweep reaches tenant A and B and the platform tenant' => sub {
     my $log = MockLogger->new;
     my $app = MockApp->new( $dao, $log );
     my $job = MockJob->new( $app );
@@ -209,8 +209,8 @@ subtest 'ProcessWaitlist: sweep reaches tenant A and B, skips registry' => sub {
         "process_recent_cancellations dispatched for tenant B ($slug_b)";
 
     my @reg_calls = grep { $_ eq 'registry' } @called_schemas;
-    is scalar(@reg_calls), 0,
-        'registry schema is not included in the ProcessWaitlist sweep';
+    is scalar(@reg_calls), 1,
+        'registry schema (the platform tenant) is included in the ProcessWaitlist sweep once';
 
     is $job->{finished}, 1, 'MockJob->finish was called (not fail)';
     is $job->{failed},   0, 'MockJob->fail was NOT called';
@@ -226,12 +226,12 @@ subtest 'ProcessWaitlist: sweep reaches tenant A and B, skips registry' => sub {
     my %covered = map { $_ => 1 } @{ $result->{tenants_covered} // [] };
     ok $covered{$slug_a}, "tenant A ($slug_a) is recorded as covered";
     ok $covered{$slug_b}, "tenant B ($slug_b) is recorded as covered";
-    ok !$covered{registry}, 'and registry is not claimed as covered';
+    ok $covered{registry}, 'and registry is recorded as covered';
 };
 
-# ---- subtest 2: WaitlistExpiration dispatch reaches every tenant, skips registry ----
+# ---- subtest 2: WaitlistExpiration dispatch reaches every tenant, registry included ----
 
-subtest 'WaitlistExpiration: sweep reaches tenant A and B, skips registry' => sub {
+subtest 'WaitlistExpiration: sweep reaches tenant A and B and the platform tenant' => sub {
     my $log = MockLogger->new;
     my $app = MockApp->new( $dao, $log );
     my $job = MockJob->new( $app );
@@ -259,8 +259,8 @@ subtest 'WaitlistExpiration: sweep reaches tenant A and B, skips registry' => su
         "expire_all_old_offers dispatched for tenant B ($slug_b)";
 
     my @reg_calls = grep { $_ eq 'registry' } @called_schemas;
-    is scalar(@reg_calls), 0,
-        'registry schema is not included in the WaitlistExpiration sweep';
+    is scalar(@reg_calls), 1,
+        'registry schema (the platform tenant) is included in the WaitlistExpiration sweep once';
 
     is $job->{finished}, 1, 'MockJob->finish was called (not fail)';
     is $job->{failed},   0, 'MockJob->fail was NOT called';
@@ -276,7 +276,7 @@ subtest 'WaitlistExpiration: sweep reaches tenant A and B, skips registry' => su
     my %covered = map { $_ => 1 } @{ $result->{tenants_covered} // [] };
     ok $covered{$slug_a}, "tenant A ($slug_a) is recorded as covered";
     ok $covered{$slug_b}, "tenant B ($slug_b) is recorded as covered";
-    ok !$covered{registry}, 'and registry is not claimed as covered';
+    ok $covered{registry}, 'and registry is recorded as covered';
 };
 
 # ---- subtest 3: bad-row isolation (defense-in-depth, links issue #265) ------
