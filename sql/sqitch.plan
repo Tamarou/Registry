@@ -92,3 +92,4 @@ collapse-platform-tenant [workflow-step-label] 2026-11-23T12:00:00Z Chris Prathe
 tenant-users-role [collapse-platform-tenant] 2026-11-23T18:00:00Z Chris Prather <chris.prather@tamarou.com> # A membership carries its own role, so authority is read per tenant
 platform-tenant-unlinks-solo [tenant-users-role] 2026-11-23T20:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform takes no share of its own sales
 operator-right [platform-tenant-unlinks-solo] 2026-11-23T22:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform tenant holds the operator right as seeded data
+waitlist-offer-notification-types [operator-right] 2026-11-23T23:00:00Z Chris Prather <chris.prather@tamarou.com> # A parent who opted in hears about a waitlist offer and its expiry
