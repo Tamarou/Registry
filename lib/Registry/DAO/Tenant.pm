@@ -448,10 +448,9 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         for my $row ( $db->query( q{
             SELECT id, name, slug, created_at
               FROM registry.tenants
-             WHERE NOT ( slug = ANY($2) )
-               AND created_at < now() - ($1 || ' days')::interval
+             WHERE created_at < now() - ($1 || ' days')::interval
              ORDER BY created_at
-        }, $days, $class->platform_slugs )->hashes->each )
+        }, $days )->hashes->each )
         {
             # A schema that is not there cannot be entered either, and a
             # half-provisioned one is its own problem (#330) rather than this

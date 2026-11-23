@@ -84,10 +84,27 @@ subtest 'a tenant created yesterday is nobody business yet' => sub {
     note 'one-day window: ' . join ', ', @{ slugs_of($all) };
 };
 
-subtest 'the platform schema is never reported' => sub {
-    my $inert = Registry::DAO::Tenant->inert( $db, older_than_days => 1 )->{tenants};
-    ok !scalar( grep { $_->{slug} eq 'registry' } @$inert ),
-        'registry is not a tenant anybody signs into';
+# The platform is a tenant like any other: old and never signed into, it is
+# reported; signed into, it is not. No exemption by slug.
+subtest 'the platform tenant is inert only by the ordinary rule' => sub {
+    $db->query( q{UPDATE registry.tenants SET created_at = now() - interval '60 days' WHERE slug = 'registry'} );
+    $db->query( q{UPDATE registry.magic_link_tokens SET consumed_at = NULL} );
+
+    my $reported = sub {
+        scalar grep { $_->{slug} eq 'registry' }
+            @{ Registry::DAO::Tenant->inert( $db, older_than_days => 30 )->{tenants} };
+    };
+    ok $reported->(), 'old and never signed into, it is reported';
+
+    my $user = $dao->create( User => {
+        username => 'platform_signer', user_type => 'admin',
+        email => 'platform_signer@aged.example', name => 'Platform Signer',
+    } );
+    my ($token) = Registry::DAO::MagicLinkToken->generate( $db,
+        { user_id => $user->id, purpose => 'login', expires_in => 24 } );
+    $db->query( 'UPDATE registry.magic_link_tokens SET consumed_at = now() WHERE id = ?', $token->id );
+
+    ok !$reported->(), 'once somebody has signed in, it is not';
 };
 
 # The point of it being a report. Nothing here deletes anything, and the test
