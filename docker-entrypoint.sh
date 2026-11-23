@@ -54,10 +54,12 @@ deploy_schema() {
     echo "Templates imported successfully"
 
     # Tamarou's Stripe account and readiness, from PLATFORM_STRIPE_ACCOUNT_ID
-    # and PLATFORM_STRIPE_READY, onto the registry row the migrations created.
-    # Without them the platform reads as not connected and the connect action
-    # would mint it a second Stripe account. A development stack has no
-    # account to configure, so only production refuses to start over it.
+    # and PLATFORM_STRIPE_READY, onto the registry row the migrations created,
+    # and PLATFORM_ADMIN_EMAIL onto the platform's first admin. Without them
+    # the platform reads as not connected, the connect action would mint it a
+    # second Stripe account, and no one can sign in as its admin. A
+    # development stack has none of these to configure, so only production
+    # refuses to start over it.
     echo "Bootstrapping the platform tenant..."
     if ! ./registry platform bootstrap; then
         if [ "${MOJO_MODE:-}" = "production" ]; then

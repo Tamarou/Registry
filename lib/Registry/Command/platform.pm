@@ -103,6 +103,7 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
             say sprintf 'Platform Stripe account: %s (%s)',
                 $platform->stripe_connect_account_id,
                 $platform->stripe_connect_ready ? 'ready' : 'not ready';
+            say "Platform admin email: $ENV{PLATFORM_ADMIN_EMAIL}";
             return;
         }
 

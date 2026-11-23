@@ -104,6 +104,7 @@ sub without_platform_members ( $db, $code ) {
 my $configured = {
     PLATFORM_STRIPE_ACCOUNT_ID => 'acct_test_platform',
     PLATFORM_STRIPE_READY      => 1,
+    PLATFORM_ADMIN_EMAIL       => 'alex@tamarou.test',
 };
 
 sub reset_platform ($db) {
@@ -122,6 +123,7 @@ subtest 'bootstrap writes the configured stripe account onto the registry row' =
     Registry::DAO::Tenant->bootstrap_platform( $db, {
         PLATFORM_STRIPE_ACCOUNT_ID => 'acct_test_platform',
         PLATFORM_STRIPE_READY      => 1,
+        PLATFORM_ADMIN_EMAIL       => 'alex@tamarou.test',
     } );
 
     my $row = platform_row($db);
@@ -157,7 +159,8 @@ subtest 'a missing account id is reported by name and writes nothing' => sub {
     my $before = platform_row($db);
 
     my $ok = eval {
-        Registry::DAO::Tenant->bootstrap_platform( $db, { PLATFORM_STRIPE_READY => 1 } );
+        Registry::DAO::Tenant->bootstrap_platform( $db,
+            { PLATFORM_STRIPE_READY => 1, PLATFORM_ADMIN_EMAIL => 'alex@tamarou.test' } );
         1;
     };
     ok !$ok, 'bootstrap does not succeed';
@@ -191,6 +194,7 @@ subtest 'the bootstrap command reads the environment' => sub {
             %ENV,
             PLATFORM_STRIPE_ACCOUNT_ID => 'acct_from_environment',
             PLATFORM_STRIPE_READY      => 'true',
+            PLATFORM_ADMIN_EMAIL       => 'alex@tamarou.test',
         );
         my $out = run_command( $t->app, 'bootstrap' );
         like $out, qr/acct_from_environment/, 'the command says what it wrote';
@@ -284,6 +288,7 @@ subtest 'the bootstrap command exits non-zero when a value is missing' => sub {
         local %ENV = %ENV;
         delete $ENV{PLATFORM_STRIPE_ACCOUNT_ID};
         $ENV{PLATFORM_STRIPE_READY} = 'true';
+        $ENV{PLATFORM_ADMIN_EMAIL}  = 'alex@tamarou.test';
         $ENV{DB_URL}                = $test_db->uri;
         qx{"$^X" ./registry platform bootstrap 2>&1};
     };
@@ -361,6 +366,172 @@ subtest 'the bootstrap command reads the admin email from the environment' => su
 
     is platform_primary_admin($db)->{email}, 'alex.from.env@tamarou.test',
         'the primary admin email came from PLATFORM_ADMIN_EMAIL';
+};
+
+# Everything bootstrap could write: the registry row, every profile, every
+# membership and the set of users, each with its row version.
+sub bootstrap_state ($db) {
+    return {
+        platform    => platform_row($db),
+        profiles    => $db->query('SELECT *, xmin::text AS v FROM registry.user_profiles ORDER BY user_id')->hashes->to_array,
+        memberships => $db->query('SELECT *, xmin::text AS v FROM registry.tenant_users ORDER BY tenant_id, user_id')->hashes->to_array,
+        users       => $db->query('SELECT id, xmin::text AS v FROM registry.users ORDER BY id')->hashes->to_array,
+    };
+}
+
+# A studio provisioned the way signup provisions one, with its own admin.
+sub provision_studio ( $db, $slug, $email ) {
+    my $admin = $dao->create( User => {
+        username => "${slug}_admin", user_type => 'admin',
+        email    => $email,          name      => ucfirst $slug,
+    } );
+    my $tenant = Registry::DAO::Tenant->provision( $db, {
+        name => ucfirst($slug) . ' Studio', slug => $slug, users => [$admin],
+    } );
+    return ( $tenant, $admin );
+}
+
+subtest 'a malformed or header-injecting admin email is refused by name' => sub {
+    my $db = $dao->db;
+    Registry::DAO::Tenant->bootstrap_platform( $db, {%$configured} );
+    reset_platform($db);    # so a Stripe write would show too
+    my $before = bootstrap_state($db);
+
+    for my $bad ( '', '   ', 'alex.tamarou.test', 'alex@', '@tamarou.test',
+        "alex\@tamarou.test\nBcc: everyone\@elsewhere.test",
+        "alex\@tamarou.test\r\nBcc: everyone\@elsewhere.test",
+        'alex @tamarou.test' )
+    {
+        ( my $shown = $bad ) =~ s/\r?\n/\\n/g;
+        my $ok = eval {
+            Registry::DAO::Tenant->bootstrap_platform( $db,
+                { %$configured, PLATFORM_ADMIN_EMAIL => $bad } );
+            1;
+        };
+        ok !$ok, "'$shown' is refused";
+        like $@, qr/PLATFORM_ADMIN_EMAIL/, 'by the variable name';
+        is_deeply bootstrap_state($db), $before,
+            'and nothing changed: no profile, user, membership or Stripe field';
+    }
+};
+
+subtest 'a missing admin email creates no user' => sub {
+    my $db = $dao->db;
+
+    without_platform_members( $db, sub {
+        reset_platform($db);
+        my $before = bootstrap_state($db);
+
+        my %config = %$configured;
+        delete $config{PLATFORM_ADMIN_EMAIL};
+        my $ok = eval { Registry::DAO::Tenant->bootstrap_platform( $db, \%config ); 1 };
+
+        ok !$ok, 'bootstrap does not succeed';
+        like $@, qr/PLATFORM_ADMIN_EMAIL/, 'and names the missing variable';
+        is_deeply bootstrap_state($db), $before,
+            'no user was created and nothing else was written';
+    } );
+};
+
+subtest 'an admin email already used by a studio user is refused' => sub {
+    my $db = $dao->db;
+    Registry::DAO::Tenant->bootstrap_platform( $db, {%$configured} );
+    my ( undef, $morgan ) = provision_studio( $db, 'morgans', 'morgan@studio.test' );
+    reset_platform($db);
+    my $before = bootstrap_state($db);
+
+    # Addresses are compared without regard to case: magic links reach both.
+    for my $taken ( 'morgan@studio.test', 'Morgan@Studio.TEST' ) {
+        my $ok = eval {
+            Registry::DAO::Tenant->bootstrap_platform( $db,
+                { %$configured, PLATFORM_ADMIN_EMAIL => $taken } );
+            1;
+        };
+        ok !$ok, "'$taken' is refused";
+        like $@, qr/\Q$taken\E.*already in use/i, 'as an address already in use';
+        is_deeply bootstrap_state($db), $before, 'and nothing was written';
+    }
+
+    without_platform_members( $db, sub {
+        my $before_bare = bootstrap_state($db);
+        my $ok = eval {
+            Registry::DAO::Tenant->bootstrap_platform( $db,
+                { %$configured, PLATFORM_ADMIN_EMAIL => 'morgan@studio.test' } );
+            1;
+        };
+        ok !$ok, 'with no platform admin it is refused too';
+        is_deeply bootstrap_state($db), $before_bare,
+            'and no admin was created, nor the studio user made a member';
+        ok !Registry::DAO::Tenant->is_platform_admin( $db, $morgan->id ),
+            'the studio user is not a platform admin';
+    } );
+
+    # The real script, as the entrypoint runs it. Measured afresh: putting the
+    # seed's memberships back above rewrote those rows.
+    $before = bootstrap_state($db);
+    my $out = do {
+        local %ENV = %ENV;
+        $ENV{PLATFORM_STRIPE_ACCOUNT_ID} = 'acct_test_platform';
+        $ENV{PLATFORM_STRIPE_READY}      = 'true';
+        $ENV{PLATFORM_ADMIN_EMAIL}       = 'morgan@studio.test';
+        $ENV{DB_URL}                     = $test_db->uri;
+        qx{"$^X" ./registry platform bootstrap 2>&1};
+    };
+    my $status = $? >> 8;
+    isnt $status, 0, 'registry platform bootstrap exits non-zero';
+    like $out, qr/morgan\@studio\.test.*already in use/i, 'and says the address is in use';
+    is_deeply bootstrap_state($db), $before, 'and wrote nothing';
+};
+
+subtest 'bootstrap never promotes a platform staff member' => sub {
+    my $db = $dao->db;
+
+    without_platform_members( $db, sub {
+        my $staff = $dao->create( User => {
+            username => 'platform_staffer', user_type => 'staff',
+            email    => 'staffer@tamarou.test', name => 'Staffer',
+        } );
+        Registry::DAO::Tenant->platform($db)->add_user( $db, $staff, 1, 'staff' );
+        my $staff_membership = $db->select( 'registry.tenant_users', '*',
+            { user_id => $staff->id } )->hash;
+
+        Registry::DAO::Tenant->bootstrap_platform( $db,
+            { %$configured, PLATFORM_ADMIN_EMAIL => 'new.admin@tamarou.test' } );
+
+        is_deeply $db->select( 'registry.tenant_users', '*', { user_id => $staff->id } )->hash,
+            $staff_membership, "the staff member's membership is unchanged";
+        ok !Registry::DAO::Tenant->is_platform_admin( $db, $staff->id ),
+            'and the staff member is not a platform admin';
+        is $db->select( 'registry.user_profiles', 'email', { user_id => $staff->id } )->array->[0],
+            'staffer@tamarou.test', 'nor was their email changed';
+
+        my $admins = platform_admin_members($db);
+        is scalar @$admins, 1, 'a single admin was created instead';
+        isnt $admins->[0]{id}, $staff->id, 'who is not the staff member';
+        is $admins->[0]{email}, 'new.admin@tamarou.test', 'with the configured address';
+    } );
+};
+
+subtest 'bootstrap touches no studio admin email' => sub {
+    my $db = $dao->db;
+    my ( $studio, $admin ) = provision_studio( $db, 'quiet', 'quiet.admin@studio.test' );
+    my $schema  = $db->dbh->quote_identifier( $studio->slug );
+    my $profile = sub {
+        return [
+            $db->query( 'SELECT *, xmin::text AS v FROM registry.user_profiles WHERE user_id = ?', $admin->id )->hash,
+            $db->query( "SELECT *, xmin::text AS v FROM $schema.user_profiles WHERE user_id = ?", $admin->id )->hash,
+        ];
+    };
+    my $before = $profile->();
+    is $before->[1]{email}, 'quiet.admin@studio.test', "the studio's own copy has the address";
+
+    Registry::DAO::Tenant->bootstrap_platform( $db,
+        { %$configured, PLATFORM_ADMIN_EMAIL => 'alex.again@tamarou.test' } );
+
+    is platform_primary_admin($db)->{email}, 'alex.again@tamarou.test',
+        'bootstrap did write the platform admin';
+    is_deeply $profile->(), $before,
+        "the studio admin's profile is unchanged in registry and in the studio's schema";
 };
 
 subtest 'the connect action mints no second stripe account' => sub {

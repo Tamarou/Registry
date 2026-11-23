@@ -170,78 +170,105 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return $class->find( $db, { slug => 'registry' } );
     }
 
-    # Write Tamarou's Stripe account and readiness onto the platform row from
+    # Write Tamarou's Stripe account and readiness onto the platform row, and
+    # the address of its first admin onto that admin's profile, from
     # deployment configuration, the way STRIPE_SECRET_KEY reaches the app.
     #
-    # The migrations create the row; a migration runs once and cannot read the
-    # container's environment, so `registry platform bootstrap` calls this on
-    # every start (ADR 005, ruling 5). $config is keyed by the variable names
-    # so whatever is wrong with it can be reported by the name an operator sets.
+    # The migrations create the row and an admin whose address nobody
+    # receives; a migration runs once and cannot read the container's
+    # environment, so `registry platform bootstrap` calls this on every start
+    # (ADR 005, ruling 5). $config is keyed by the variable names so whatever
+    # is wrong with it can be reported by the name an operator sets.
     #
-    # Dies, writing nothing, when a value is missing or malformed or there is
-    # no platform row. Returns the platform tenant, and in list context a
-    # second value: why the row was kept, when it already names a different
-    # account. That account is one an admin has chosen since, and the ruling
-    # is that bootstrap never overwrites it.
+    # Dies, writing nothing, when a value is missing or malformed, when the
+    # admin address already belongs to anyone but the platform's admin, or
+    # when there is no platform row: everything is checked before anything is
+    # written. Returns the platform tenant, and in list context a second
+    # value: why the row was kept, when it already names a different account.
+    # That account is one an admin has chosen since, and the ruling is that
+    # bootstrap never overwrites it.
     my %READY_VALUE = (
         ( map { $_ => 1 } qw( 1 true yes on ) ),
         ( map { $_ => 0 } qw( 0 false no off ) ),
     );
 
+    my $UNCHANGED = " -- the platform tenant and its admin were left as they are\n";
+
     sub bootstrap_platform ( $class, $db, $config ) {
         $db = $db->db if $db isa Registry::DAO;
 
         my @missing = grep { !defined $config->{$_} }
-            qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY );
-        die 'Not set: ' . join( ', ', @missing )
-          . " -- the platform's Stripe account was left as it is\n"
+            qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY PLATFORM_ADMIN_EMAIL );
+        die 'Not set: ' . join( ', ', @missing ) . $UNCHANGED
           if @missing;
 
         my $account = $config->{PLATFORM_STRIPE_ACCOUNT_ID};
         die "PLATFORM_STRIPE_ACCOUNT_ID '$account' is not a Stripe account id (acct_...)"
-          . " -- the platform's Stripe account was left as it is\n"
+          . $UNCHANGED
           unless $account =~ /\Aacct_\w+\z/a;
 
         my $ready = $READY_VALUE{ lc $config->{PLATFORM_STRIPE_READY} };
         die "PLATFORM_STRIPE_READY '$config->{PLATFORM_STRIPE_READY}' is not true or false"
-          . " -- the platform's Stripe account was left as it is\n"
+          . $UNCHANGED
           unless defined $ready;
+
+        # One address and nothing else: no whitespace or control characters,
+        # so a value carrying a newline cannot smuggle a header (Bcc: ...)
+        # into the mail sent to it.
+        my $email = $config->{PLATFORM_ADMIN_EMAIL};
+        unless ( length $email <= 255
+            && $email =~ /\A[^\s\@[:cntrl:]]+\@[^\s\@[:cntrl:]]+\z/ )
+        {
+            ( my $shown = $email ) =~ s/([[:cntrl:]])/sprintf '\\x%02x', ord $1/ge;
+            die "PLATFORM_ADMIN_EMAIL '$shown' is not a single email address" . $UNCHANGED;
+        }
 
         my $platform = $class->platform($db)
             or die "There is no platform tenant (slug 'registry') to bootstrap;"
                  . " deploy the schema first. No tenant was created.\n";
 
-        if ( defined( my $email = $config->{PLATFORM_ADMIN_EMAIL} ) ) {
-            my $admin = $db->query( q{
-                SELECT tu.user_id, up.email
-                  FROM registry.tenant_users tu
-                  LEFT JOIN registry.user_profiles up ON up.user_id = tu.user_id
-                 WHERE tu.tenant_id = ? AND tu.role = 'admin'
-                 ORDER BY tu.is_primary DESC, tu.created_at, tu.user_id
-                 LIMIT 1
-            }, $platform->id )->hash;
+        # The platform's primary admin. A primary member who is not admin-role
+        # is not it, and is never promoted: with no admin-role member at all a
+        # new admin is created. An admin-role member who is not primary still
+        # counts, so a second admin is never made beside one.
+        my $admin = $db->query( q{
+            SELECT tu.user_id, up.email
+              FROM registry.tenant_users tu
+              LEFT JOIN registry.user_profiles up ON up.user_id = tu.user_id
+             WHERE tu.tenant_id = ? AND tu.role = 'admin'
+             ORDER BY tu.is_primary DESC, tu.created_at, tu.user_id
+             LIMIT 1
+        }, $platform->id )->hash;
 
-            if ( !$admin ) {
-                my $user = Registry::DAO::User->create( $db, {
-                    username  => $email,
-                    user_type => 'admin',
-                    email     => $email,
-                    name      => 'Platform Admin',
-                } );
-                $platform->add_user( $db, $user, 1, 'admin' );
-            }
-            elsif ( ( $admin->{email} // '' ) ne $email ) {
-                $db->insert( 'registry.user_profiles',
-                    { user_id => $admin->{user_id}, email => $email, name => 'Platform Admin' },
-                    { on_conflict => [ user_id => { email => $email } ] } );
-            }
+        # An address someone else signs in with -- a studio's user, say -- is
+        # not taken over: that would hand them the platform, or the platform
+        # their account. Compared without case, as mail delivery does.
+        die "PLATFORM_ADMIN_EMAIL '$email' is already in use by another user" . $UNCHANGED
+          if $db->query( q{
+                SELECT 1 FROM registry.user_profiles
+                 WHERE lower(email) = lower(?) AND user_id IS DISTINCT FROM ?
+            }, $email, $admin && $admin->{user_id} )->rows;
+
+        if ( !$admin ) {
+            my $user = Registry::DAO::User->create( $db, {
+                username  => $email,
+                user_type => 'admin',
+                email     => $email,
+                name      => 'Platform Admin',
+            } );
+            $platform->add_user( $db, $user, 1, 'admin' );
+        }
+        elsif ( ( $admin->{email} // '' ) ne $email ) {
+            $db->insert( 'registry.user_profiles',
+                { user_id => $admin->{user_id}, email => $email, name => 'Platform Admin' },
+                { on_conflict => [ user_id => { email => $email } ] } );
         }
 
         my $recorded = $platform->stripe_connect_account_id;
         if ( defined $recorded && $recorded ne $account ) {
             return wantarray
               ? ( $platform, "The platform tenant already records Stripe account $recorded;"
-                  . " PLATFORM_STRIPE_ACCOUNT_ID is $account. Kept $recorded and changed nothing." )
+                  . " PLATFORM_STRIPE_ACCOUNT_ID is $account. Kept $recorded and its readiness as they were." )
               : $platform;
         }
 
