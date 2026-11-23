@@ -275,4 +275,26 @@ subtest 'the runbook queue is behind the guard, and names the family owed' => su
           'counted separately, since it cannot be ranked by amount' );
 };
 
+# Last, because it deletes the platform row out from under everything above.
+subtest 'with no platform tenant row the guard refuses with 403' => sub {
+    my $tx = $db->begin;
+    $db->query( q{DELETE FROM registry.billing_periods WHERE pricing_relationship_id IN
+                    (SELECT id FROM registry.pricing_relationships WHERE provider_id = ?)}, $platform->id );
+    $db->query( q{DELETE FROM registry.pricing_relationships WHERE provider_id = ?}, $platform->id );
+    for my $table (qw( tenant_users tenant_profiles tenant_domains subscription_events )) {
+        $db->query( "DELETE FROM registry.$table WHERE tenant_id = ?", $platform->id );
+    }
+    $db->query( q{DELETE FROM registry.tenants WHERE id = ?}, $platform->id );
+    $tx->commit;
+
+    is Registry::DAO::Tenant->platform($db), undef, 'there is no platform tenant to find';
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $alex );
+
+    $t->get_ok('/platform/jobs')->status_is( 403,
+        'Alex is refused rather than served a 500' );
+};
+
 done_testing;

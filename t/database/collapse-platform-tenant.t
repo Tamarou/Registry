@@ -95,4 +95,94 @@ subtest 'the two platform rows collapse into one registry row' => sub {
           ->hash->{canonical_domain}, 'registry.example', 'the canonical domain moved';
 };
 
+subtest 'a member of both rows keeps one membership, primary if either was' => sub {
+    my ( $uri, $db ) = fresh_db();
+    my $deleted = registry_id($db);
+
+    my $both = make_user( $db, 'member_of_both' );
+    $db->query( q{INSERT INTO registry.tenant_users (tenant_id, user_id, is_primary) VALUES (?, ?, true)},
+        $deleted, $both );
+    $db->query( q{INSERT INTO registry.tenant_users (tenant_id, user_id, is_primary) VALUES (?, ?, false)},
+        PLATFORM_UUID, $both );
+
+    lives_ok { deploy($uri) } 'the change deploys despite the shared membership';
+
+    my $rows = $db->query( q{SELECT tenant_id, is_primary FROM registry.tenant_users WHERE user_id = ?}, $both )
+        ->hashes;
+    is scalar @$rows, 1, 'exactly one membership remains for the user';
+    is $rows->[0]{tenant_id}, PLATFORM_UUID, 'on the all-zeros row';
+    ok $rows->[0]{is_primary}, 'and it is primary, because the deleted one was';
+};
+
+subtest 'the kept row value is not overwritten by the deleted row value' => sub {
+    my ( $uri, $db ) = fresh_db();
+    my $deleted = registry_id($db);
+
+    $db->query( q{UPDATE registry.tenants SET canonical_domain = 'old-registry.example' WHERE id = ?}, $deleted );
+    $db->query( q{UPDATE registry.tenants SET canonical_domain = 'platform.example' WHERE id = ?}, PLATFORM_UUID );
+
+    lives_ok { deploy($uri) } 'the change deploys';
+
+    is $db->query( q{SELECT canonical_domain FROM registry.tenants WHERE id = ?}, PLATFORM_UUID )
+          ->hash->{canonical_domain}, 'platform.example',
+        "the kept row's canonical domain stands";
+};
+
+subtest 'no tenant_id column still holds the deleted row id' => sub {
+    my ( $uri, $db ) = fresh_db();
+    my $deleted = registry_id($db);
+
+    # Something for the column sweep to move: subscription_events.tenant_id is
+    # the one tenant_id column the deploy does not handle by name.
+    $db->query(
+        q{INSERT INTO registry.subscription_events (tenant_id, stripe_event_id, event_type, event_data)
+          VALUES (?, 'evt_collapse', 'customer.subscription.updated', '{}')}, $deleted );
+    my $member = make_user( $db, 'swept_member' );
+    $db->query( q{INSERT INTO registry.tenant_users (tenant_id, user_id) VALUES (?, ?)}, $deleted, $member );
+
+    lives_ok { deploy($uri) } 'the change deploys';
+
+    # Discovered, not listed: the assertion has to cover a column added later
+    # as well as the ones that exist today.
+    my $columns = $db->query(
+        q{SELECT c.table_name, c.column_name
+            FROM information_schema.columns c
+            JOIN information_schema.tables t
+              ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+           WHERE c.table_schema = 'registry'
+             AND t.table_type   = 'BASE TABLE'
+             AND c.data_type    = 'uuid'
+             AND c.column_name LIKE '%tenant\_id'
+           ORDER BY 1, 2}
+    )->hashes;
+    ok scalar @$columns, 'the sweep finds tenant_id columns to look in';
+
+    for my $col (@$columns) {
+        my ( $table, $column ) = map { $db->dbh->quote_identifier($_) } @$col{qw(table_name column_name)};
+        is $db->query( "SELECT count(*) FROM registry.$table WHERE $column = ?", $deleted )->array->[0], 0,
+            "registry.$col->{table_name}.$col->{column_name} no longer holds the deleted id";
+    }
+
+    is $db->query(q{SELECT tenant_id FROM registry.subscription_events WHERE stripe_event_id = 'evt_collapse'})
+          ->hash->{tenant_id}, PLATFORM_UUID, 'the subscription event now names the platform row';
+};
+
+subtest 'the deploy succeeds with no dependants on the deleted row' => sub {
+    my ( $uri, $db ) = fresh_db();
+    my $deleted = registry_id($db);
+
+    # The seed's registry row normally carries nothing; make sure of it, so this
+    # scenario does not depend on what an earlier change happened to seed.
+    for my $table (qw( tenant_users tenant_profiles tenant_domains subscription_events )) {
+        $db->query( "DELETE FROM registry.$table WHERE tenant_id = ?", $deleted );
+    }
+    $db->query( q{DELETE FROM registry.pricing_relationships WHERE provider_id = ?}, $deleted );
+
+    lives_ok { deploy($uri) } 'the change deploys';
+
+    my $rows = $db->query(q{SELECT id FROM registry.tenants WHERE slug = 'registry'})->hashes;
+    is scalar @$rows, 1, 'exactly one tenant row has slug registry';
+    is $rows->[0]{id}, PLATFORM_UUID, 'and it is the all-zeros row';
+};
+
 done_testing;

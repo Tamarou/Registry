@@ -143,6 +143,29 @@ subtest 'a platform admin may act as any tenant' => sub {
     is $c->tenant, 'target_tenant', 'platform standing crosses tenants deliberately';
 };
 
+# collapse-platform-tenant.sql renamed the all-zeros platform row from
+# `registry-platform` to `registry`. A header or cookie still carrying the old
+# slug must name nothing, rather than reach the platform by its former name.
+subtest 'the retired registry-platform slug resolves to no tenant' => sub {
+    is Registry::DAO::Tenant->find( $dao->db, { slug => 'registry-platform' } ), undef,
+        'no tenant row carries the retired slug';
+
+    my $user = Registry::DAO::User->find( $dao->db, { username => 'member_of_other' } );
+
+    my $plain = $t->app->build_controller;
+    $plain->session( user_id => $user->id );
+    my $without_header = $plain->tenant;
+
+    my $c = $t->app->build_controller;
+    $c->session( user_id => $user->id );
+    $c->req->headers->header( 'X-As-Tenant' => 'registry-platform' );
+
+    isnt $c->tenant, 'registry-platform', 'the header does not select the retired slug';
+    is $c->tenant, $without_header, 'the header changes nothing: it is ignored, not honoured';
+    ok !Registry::DAO::Tenant->is_platform_admin( $dao->db, $user->id ),
+        'and sending it does not make the sender the platform';
+};
+
 subtest 'unauthenticated build_controller ignores header' => sub {
     my $c = $t->app->build_controller;
     # No session user_id
