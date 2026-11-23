@@ -71,4 +71,34 @@ subtest 'a connect event for a known account is claimed once' => sub {
     is scalar @{ claims($event->{id}) }, 1, 'a redelivery claims nothing more';
 };
 
+subtest 'platform signed delivery is refused' => sub {
+    my $event = { id => "evt_conn_platform_$$", type => 'customer.created', account => $account };
+    Test::Registry::StripeWebhook::post_connect($t, $event,
+        secret => $ENV{STRIPE_WEBHOOK_SECRET})->status_is(400);
+    is scalar @{ claims($event->{id}) }, 0, 'nothing is claimed';
+};
+
+subtest 'missing connect secret answers 500' => sub {
+    @logs = ();
+    my $event = { id => "evt_conn_nosecret_$$", type => 'customer.created', account => $account };
+    {
+        my $signed_with = $ENV{STRIPE_CONNECT_WEBHOOK_SECRET};
+        delete local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET};
+        Test::Registry::StripeWebhook::post_connect($t, $event, secret => $signed_with)
+            ->status_is(500);
+    }
+    ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /STRIPE_CONNECT_WEBHOOK_SECRET/ } @logs ),
+        'the missing secret is logged as an error';
+    is scalar @{ claims($event->{id}) }, 0, 'nothing is claimed';
+};
+
+subtest 'unknown account settles into no schema' => sub {
+    @logs = ();
+    my $event = { id => "evt_conn_unknown_$$", type => 'customer.created',
+                  account => 'acct_nobody_' . $$ };
+    Test::Registry::StripeWebhook::post_connect($t, $event)->status_is(200);
+    ok scalar( grep { $_->[1] =~ /acct_nobody_$$/ } @logs ), 'the unknown account is logged';
+    is scalar @{ claims($event->{id}) }, 0, 'nothing is claimed or settled';
+};
+
 done_testing;
