@@ -33,8 +33,17 @@ $ENV{DB_URL} = $test_db->uri;
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper( dao => sub { $dao } );
 
+# An ordinary studio, not the platform: the platform tenant's Stripe account is
+# Tamarou's own, written from deployment configuration, and is never onboarded
+# through this button. The admin is that studio's admin-role member, which is
+# what authority in a tenant reads (ADR 005, ruling 4).
 my $admin = $dao->create( User => { username => 'live_connect_admin', user_type => 'admin' } );
+Registry::DAO::Tenant->provision( $dao->db, {
+    name => 'Live Connect Studio', slug => 'live_connect', users => [$admin] } );
+my $HOST = { Host => 'live_connect.localhost' };
 authenticate_as( $t, $admin );
+
+sub studio () { Registry::DAO::Tenant->find( $dao->db, { slug => 'live_connect' } ) }
 
 # Accounts created here are real objects in Stripe's test mode and are deleted
 # at the end. Collected as we go so a mid-test failure still cleans up.
@@ -83,18 +92,18 @@ subtest 'the service can create an account and a hosted onboarding link' => sub 
 # hand.
 # ---------------------------------------------------------------------------
 subtest 'pressing the button on the admin screen creates and persists the account' => sub {
-    my $before = Registry::DAO::Tenant->find( $dao->db, { slug => 'registry' } );
+    my $before = studio();
     is $before->stripe_connect_account_id, undef,
         'the tenant starts with no connected account';
     ok !$before->stripe_connect_ready, 'and cannot take money';
 
-    $t->post_ok('/admin/billing/connect')->status_is(302);
+    $t->post_ok( '/admin/billing/connect' => $HOST )->status_is(302);
 
     my $location = $t->tx->res->headers->location;
     like $location, qr{^https://connect\.stripe\.com/},
         'the tenant is redirected to Stripe to finish onboarding';
 
-    my $after = Registry::DAO::Tenant->find( $dao->db, { slug => 'registry' } );
+    my $after = studio();
     like $after->stripe_connect_account_id, qr/^acct_/,
         'and the account id is persisted before the redirect'
         or return;
@@ -108,20 +117,20 @@ subtest 'pressing the button on the admin screen creates and persists the accoun
     # Stripe, the webhook matches tenants by its id, and an orphan would leave
     # the tenant's money routed to an account nothing reads.
     my $first_id = $after->stripe_connect_account_id;
-    $t->post_ok('/admin/billing/connect')->status_is(302);
-    my $again = Registry::DAO::Tenant->find( $dao->db, { slug => 'registry' } );
+    $t->post_ok( '/admin/billing/connect' => $HOST )->status_is(302);
+    my $again = studio();
     is $again->stripe_connect_account_id, $first_id,
         'a second attempt reuses the account rather than orphaning it';
 };
 
 subtest 'the return URL reads the real account rather than assuming' => sub {
-    my $tenant = Registry::DAO::Tenant->find( $dao->db, { slug => 'registry' } );
+    my $tenant = studio();
     my $account_id = $tenant->stripe_connect_account_id
         or plan skip_all => 'no account was created';
 
-    $t->get_ok('/admin/billing/return')->status_is(200);
+    $t->get_ok( '/admin/billing/return' => $HOST )->status_is(200);
 
-    my $after = Registry::DAO::Tenant->find( $dao->db, { slug => 'registry' } );
+    my $after = studio();
     my $live  = Registry::Service::Stripe->from_env->retrieve_account($account_id);
 
     is $after->stripe_charges_enabled   ? 1 : 0, $live->{charges_enabled}   ? 1 : 0,
