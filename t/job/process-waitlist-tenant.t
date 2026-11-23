@@ -283,5 +283,49 @@ subtest 'the cancellation sweep covers the platform tenant and offers its freed 
     ok $row->{offered_at}, 'and the offer is dated';
 };
 
+subtest 'sweeping twice offers one freed platform seat to one family once' => sub {
+    my ( $pf_session, $first_id, $second_id ) = plant_platform_session( 'twice', 1, 2 );
+
+    my $offers_for = sub {
+        return $dao->db->query(q{
+            SELECT id, status, offered_at FROM registry.waitlist
+             WHERE session_id = ? ORDER BY position, created_at
+        }, $pf_session->id )->hashes->to_array;
+    };
+
+    Registry::Job::ProcessWaitlist->process_all_tenant_cancellations( $dao, $log );
+    my %after_one = map { $_->{id} => $_ } $offers_for->()->@*;
+
+    Registry::Job::ProcessWaitlist->process_all_tenant_cancellations( $dao, $log );
+    my %after_two = map { $_->{id} => $_ } $offers_for->()->@*;
+
+    is $after_two{$first_id}{status},  'offered', 'the first family in line holds the offer';
+    is $after_two{$second_id}{status}, 'waiting', 'the second family is still waiting';
+    is scalar( grep { $_->{status} eq 'offered' } values %after_two ), 1,
+        'exactly one family holds an offer for the one freed seat';
+    is $after_two{$first_id}{offered_at}, $after_one{$first_id}{offered_at},
+        'the second pass did not re-offer the seat';
+};
+
+subtest 'a tenant row with no schema does not stop the sweep' => sub {
+    my $ghost = 'ghost_' . $$;
+    $dao->db->query(
+        'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', "Ghost $$", $ghost );
+    ok !$dao->db->query(
+        'SELECT 1 FROM information_schema.schemata WHERE schema_name = ?', $ghost )->array,
+        'the ghost tenant has no schema';
+
+    my $result = Registry::Job::ProcessWaitlist->process_all_tenant_cancellations( $dao, $log );
+    my %covered = map { $_ => 1 } $result->{tenants_covered}->@*;
+    my %skipped = map { $_->{slug} => $_->{error} } $result->{tenants_skipped}->@*;
+
+    ok $covered{registry}, 'the sweep still covers registry';
+    ok $covered{$slug},    'and the provisioned tenant';
+    ok !$covered{$ghost},  'the schema-less tenant is not reported covered';
+    ok $skipped{$ghost},   'it is reported skipped, with a reason';
+
+    $dao->db->query( 'DELETE FROM registry.tenants WHERE slug = ?', $ghost );
+};
+
 $t->cleanup_test_database;
 done_testing;

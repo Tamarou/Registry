@@ -174,7 +174,9 @@ class Registry::Job::WaitlistExpiration {
             return;
         }
         
-        my $student_name = $student ? $student->name : 'your child';
+        # A student with no name on file gets the fallback rather than an
+        # empty string and an uninitialized-value warning in the message.
+        my $student_name = ( $student ? $student->name : undef ) // q{your child};
         # Not "${session->name}" in the body below: that is a symbolic deref of
         # the bareword `session`, which died after the offer had been expired.
         my $session_name = $session->name;

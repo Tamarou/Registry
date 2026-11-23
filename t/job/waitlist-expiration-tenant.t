@@ -221,5 +221,67 @@ subtest 'the expiration sweep covers the platform tenant and expires its old off
     is platform_status($pf_id), 'expired', 'the lapsed platform offer is expired';
 };
 
+subtest 'a platform offer not yet expired is left alone' => sub {
+    my $pf_id = plant_platform_offer( 'fresh', '1 minute' );
+
+    my $result = Registry::Job::WaitlistExpiration->expire_all_tenant_offers( $dao, $log );
+
+    ok( ( grep { $_ eq 'registry' } $result->{tenants_covered}->@* ),
+        'the sweep covered registry' );
+    is platform_status($pf_id), 'offered',
+        'an offer with a minute left is still offered';
+};
+
+subtest 'expiring platform offers touches no other tenant schema' => sub {
+    # Two offers in the provisioned tenant's own schema: one lapsed, one live.
+    my $t_session = Registry::DAO::Session->create( $t_db, {
+        name => 'WE Isolation Session',
+        slug => 'we-isolation-session-' . $$,
+    });
+    my %t_offer;
+    for my $case ( [ lapsed => '-1 hour' ], [ live => '1 hour' ] ) {
+        my ( $name, $expires_in ) = @$case;
+        my $kid = Test::Registry::Fixtures::create_user( $dao, {
+            username  => "we_iso_${name}_$$",
+            password  => 'pw',
+            user_type => 'student',
+        });
+        $dao->db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug, $kid->id );
+        $t_offer{$name} = $t_db->query(q{
+            INSERT INTO waitlist
+                (session_id, location_id, student_id, parent_id, position, status,
+                 offered_at, expires_at)
+            VALUES (?, ?, ?, ?, 1, 'offered', NOW() - INTERVAL '2 hours', NOW() + ?::interval)
+            RETURNING id
+        }, $t_session->id, $location->id, $kid->id, $parent->id, $expires_in )->array->[0];
+    }
+    my $t_status = sub ($id) {
+        $t_db->query( 'SELECT status FROM waitlist WHERE id = ?', $id )->array->[0];
+    };
+
+    my $pf_id = plant_platform_offer( 'isolation', '-1 hour' );
+
+    # Expire the registry schema's offers alone.
+    Registry::Job::WaitlistExpiration->expire_all_old_offers(
+        $dao->connect_schema('registry'), $log );
+
+    is platform_status($pf_id), 'expired', "the platform's lapsed offer is expired";
+    is $t_status->( $t_offer{lapsed} ), 'offered',
+        "the tenant's lapsed offer is not touched by the platform's expiry";
+    is $t_status->( $t_offer{live} ), 'offered',
+        "the tenant's live offer is not touched either";
+
+    # Now the whole sweep: the tenant's lapsed offer expires in its own schema.
+    Registry::Job::WaitlistExpiration->expire_all_tenant_offers( $dao, $log );
+
+    is $t_status->( $t_offer{lapsed} ), 'expired',
+        "the tenant's lapsed offer is expired in its own schema";
+    is $t_status->( $t_offer{live} ), 'offered', "its live offer is still offered";
+    is $dao->db->query(
+        'SELECT COUNT(*) FROM registry.waitlist WHERE id IN (?, ?)',
+        $t_offer{lapsed}, $t_offer{live} )->array->[0], 0,
+        'no tenant offer has a row in the registry schema';
+};
+
 $t->cleanup_test_database;
 done_testing;
