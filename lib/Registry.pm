@@ -849,8 +849,9 @@ class Registry :isa(Mojolicious) {
                 return unless $host;
 
                 # Resolve tenant and check for canonical domain
+                # The platform tenant included: with a canonical_domain set it
+                # is redirected like any tenant, and without one it is not.
                 my $tenant_slug = $c->tenant;
-                return if $tenant_slug eq 'registry';
 
                 try {
                     # Look up the tenant record in the registry schema (tenants table lives there)
