@@ -90,10 +90,15 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
         # problem dies rather than printing, so ./registry exits non-zero and
         # the entrypoint can refuse a production boot over it.
         if ( $cmd eq 'bootstrap' ) {
-            my $platform = Registry::DAO::Tenant->bootstrap_platform( $dao->db, {
+            my ( $platform, $kept ) = Registry::DAO::Tenant->bootstrap_platform( $dao->db, {
                 map { $_ => $ENV{$_} }
                     qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY )
             } );
+
+            # An account an admin recorded since is not a deploy failure:
+            # bootstrap never overwrites it (ADR 005, ruling 5). Said loudly so
+            # the configuration can be brought into line.
+            say "WARNING: $kept" if $kept;
             say sprintf 'Platform Stripe account: %s (%s)',
                 $platform->stripe_connect_account_id,
                 $platform->stripe_connect_ready ? 'ready' : 'not ready';

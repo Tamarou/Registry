@@ -148,4 +148,120 @@ subtest 'the bootstrap command reads the environment' => sub {
         'and readiness from PLATFORM_STRIPE_READY';
 };
 
+subtest 'a malformed account id is refused by name' => sub {
+    my $db = $dao->db;
+    reset_platform($db);
+    Registry::DAO::Tenant->bootstrap_platform( $db, {%$configured} );
+    my $before = platform_row($db);
+
+    for my $bad ( '', '   ', 'cus_not_an_account', ' acct_test_platform' ) {
+        my $ok = eval {
+            Registry::DAO::Tenant->bootstrap_platform( $db,
+                { %$configured, PLATFORM_STRIPE_ACCOUNT_ID => $bad } );
+            1;
+        };
+        ok !$ok, "'$bad' is refused";
+        like $@, qr/PLATFORM_STRIPE_ACCOUNT_ID/, 'by the variable name';
+        is_deeply platform_row($db), $before, 'and the row is unchanged';
+    }
+};
+
+subtest 'an unrecognised readiness value is refused by name' => sub {
+    my $db = $dao->db;
+    reset_platform($db);
+    Registry::DAO::Tenant->bootstrap_platform( $db,
+        { %$configured, PLATFORM_STRIPE_READY => 'false' } );
+    my $before = platform_row($db);
+    ok !$before->{stripe_charges_enabled}, "'false' is read as not ready";
+
+    for my $bad ( '', 'maybe', 'yes please', '2' ) {
+        my $ok = eval {
+            Registry::DAO::Tenant->bootstrap_platform( $db,
+                { %$configured, PLATFORM_STRIPE_READY => $bad } );
+            1;
+        };
+        ok !$ok, "'$bad' is refused";
+        like $@, qr/PLATFORM_STRIPE_READY/, 'by the variable name';
+        is_deeply platform_row($db), $before, 'and both flags are as they were';
+    }
+};
+
+subtest 'bootstrap refuses to replace a different recorded stripe account' => sub {
+    my $db = $dao->db;
+    reset_platform($db);
+
+    # An admin has since recorded another account. The deployment value is
+    # what the platform started with, not what it has decided since.
+    $db->query(q{
+        UPDATE registry.tenants SET stripe_connect_account_id = 'acct_chosen_by_admin',
+            stripe_charges_enabled = FALSE, stripe_details_submitted = FALSE
+        WHERE slug = 'registry'
+    });
+    my $before = platform_row($db);
+
+    my ( undef, $refusal ) =
+        Registry::DAO::Tenant->bootstrap_platform( $db, {%$configured} );
+
+    like $refusal, qr/acct_chosen_by_admin/, 'the refusal names the recorded account';
+    like $refusal, qr/acct_test_platform/,   'and the configured one';
+    is_deeply platform_row($db), $before, 'and the row is unchanged';
+};
+
+subtest 'with no platform tenant row bootstrap creates no tenant' => sub {
+    my $db = $dao->db;
+    my $tx = $db->begin;    # rolled back when it goes out of scope
+
+    $db->query(q{UPDATE registry.tenants SET slug = 'registry-moved-aside' WHERE slug = 'registry'});
+    my $before = tenant_rows($db);
+
+    my $ok = eval { Registry::DAO::Tenant->bootstrap_platform( $db, {%$configured} ); 1 };
+    ok !$ok, 'bootstrap does not succeed';
+    like $@, qr/platform tenant/i, 'and says there is no platform tenant';
+    is_deeply tenant_rows($db), $before, 'no tenant row was created or changed';
+};
+
+subtest 'the bootstrap command exits non-zero when a value is missing' => sub {
+    reset_platform( $dao->db );
+    my $before = platform_row( $dao->db );
+
+    # The real script, as the entrypoint runs it.
+    my $out = do {
+        local %ENV = %ENV;
+        delete $ENV{PLATFORM_STRIPE_ACCOUNT_ID};
+        $ENV{PLATFORM_STRIPE_READY} = 'true';
+        $ENV{DB_URL}                = $test_db->uri;
+        qx{"$^X" ./registry platform bootstrap 2>&1};
+    };
+    my $status = $? >> 8;
+
+    isnt $status, 0, 'registry platform bootstrap exits non-zero';
+    like $out, qr/PLATFORM_STRIPE_ACCOUNT_ID/, 'and names the missing variable';
+    is_deeply platform_row( $dao->db ), $before, 'and the row is unchanged';
+};
+
+subtest 'the connect action mints no second stripe account' => sub {
+    my $db = $dao->db;
+    reset_platform($db);
+    Registry::DAO::Tenant->bootstrap_platform( $db, {%$configured} );
+    my $before = platform_row($db);
+
+    # With no key no Stripe client can be built, so any path that would call
+    # Stripe -- to create an account or anything else -- renders "Payments
+    # are not configured" (502) instead of returning.
+    local $ENV{STRIPE_SECRET_KEY};
+    delete $ENV{STRIPE_SECRET_KEY};
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    my $admin = $dao->create( User => { username => 'platform_connect_admin', user_type => 'admin' } );
+    authenticate_as( $t, $admin );
+
+    $t->post_ok('/admin/billing/connect')
+      ->status_is( 302, 'the platform is sent back to its billing page without asking Stripe' )
+      ->header_like( Location => qr{/admin/billing$} );
+
+    is_deeply platform_row($db), $before,
+        'stripe_connect_account_id and the readiness flags are unchanged';
+};
+
 done_testing;

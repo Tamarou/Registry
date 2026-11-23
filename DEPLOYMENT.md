@@ -115,7 +115,9 @@ Set these environment variables in your Render dashboard:
 
 `docker-entrypoint.sh` runs `./registry platform bootstrap` after the schema
 deploy, which writes both onto the `registry` tenant. With `MOJO_MODE=production`
-a missing or refused value stops the boot; elsewhere it is a warning.
+a missing or malformed value stops the boot; elsewhere it is a warning. If the
+`registry` tenant already records a different Stripe account (one an admin set
+since), bootstrap keeps it, changes nothing, and prints a warning naming both.
 
 **Email Configuration:**
 - `EMAIL_FROM` - Default: `noreply@registry-demo.onrender.com`
