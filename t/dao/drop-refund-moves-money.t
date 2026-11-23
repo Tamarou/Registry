@@ -4,7 +4,7 @@
 # #286. An admin could approve a refund, the parent was shown "pending", and no
 # money ever left -- worse than not offering refunds. The money machinery was
 # already there and proven (Payment->refund_async accumulates refunded_cents,
-# re-checks capacity debt, sends reverse_transfer); what was missing was a
+# re-checks capacity debt, refunds on the seller's account); what was missing was a
 # caller.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -42,11 +42,9 @@ my $parent = $dao->create( User => {
     username => 'dr_parent', name => 'DR Parent', user_type => 'parent',
     email => 'dr@test.local' } );
 
-# A Connect-ready tenant, because the refund has to reverse the transfer: the
-# platform took an application fee on the way in, and the tenant -- not the
-# platform -- bears the refund. Without a tenant_slug and a connect account
-# _refund_connect_params returns nothing, and the assertion below would pass
-# against an empty hash.
+# A Connect-ready tenant, because the payment is a direct charge on the
+# tenant's account: the refund is made there too, and the tenant -- not the
+# platform -- bears it.
 my $tenant = Test::Registry::Fixtures::create_tenant( $db, {
     name => 'Refunding Studio', slug => 'refunding_studio' } );
 $db->query(
@@ -142,7 +140,7 @@ sub refunded_cents_of ($payment) {
 # method is replaced: refund_async's own guards must run for real.
 sub capturing_stripe ( $calls, %opt ) {
     return sub ( $self, $params ) {
-        push @$calls, $params;
+        push @$calls, { %$params, _account => $self->stripe_account };
         return Mojo::Promise->reject( $opt{fail} ) if $opt{fail};
         return Mojo::Promise->resolve( {
             id     => 'rf_' . scalar(@$calls),
@@ -182,8 +180,6 @@ subtest 'an approved refund actually moves the money' => sub {
     is scalar @calls, 1, 'Stripe was asked for exactly one refund';
     is $calls[0]{amount}, 5000, 'for the approved amount, not the whole cart';
     is $calls[0]{payment_intent}, 'pi_drop_' . $payment->id, 'against the right intent';
-    is $calls[0]{reverse_transfer}, 'true',
-        'reversing the transfer, so the tenant bears it rather than the platform';
     like $calls[0]{_idempotency_key}, qr/\Qrefund:drop:\E/,
         'under an idempotency key, so a retry cannot double-refund';
 
@@ -191,6 +187,25 @@ subtest 'an approved refund actually moves the money' => sub {
     is refund_status_of($dropped), 'processed',
         'and the enrollment says processed -- the status that had no writer at all';
     is refunded_cents_of($payment), 5000, 'the payment records what went back';
+};
+
+subtest 'drop refund is made on the tenant account without reverse transfer' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is scalar @calls, 1, 'one refund request';
+    is $calls[0]{_account}, 'acct_drop_refund', 'sent on the tenant account';
+    ok !exists $calls[0]{reverse_transfer}, 'no transfer to reverse on a direct charge';
+    ok !exists $calls[0]{refund_application_fee}, 'and the platform fee is kept';
 };
 
 subtest 'a refund with no amount refuses rather than refunding the whole cart' => sub {
