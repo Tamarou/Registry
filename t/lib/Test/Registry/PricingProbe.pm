@@ -6,7 +6,7 @@ use warnings;
 package Test::Registry::PricingProbe;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( with_tenant_plan );
+our @EXPORT_OK = qw( with_tenant_plan solo_linked_tenant );
 
 use Mojo::JSON qw( encode_json );
 
@@ -29,6 +29,30 @@ use Mojo::JSON qw( encode_json );
 # `superseded_at` is deliberately not settable through here. Retiring a version is
 # a different operation with its own rules (exactly one current version per
 # family), and a test that wants it should say so explicitly.
+# solo_linked_tenant($db) -> $slug
+#
+# A tenant linked to the revenue-share (Solo) plan, made on first call. These
+# tests used to find one in the seed, and the only seeded one was the platform
+# row -- which takes no share of itself now (platform-tenant-unlinks-solo).
+# Solo is found by tenant-platform-pricing-plan's own backfill predicate.
+sub solo_linked_tenant ($db) {
+    my $slug = 'solo_linked_probe';
+    $db->query( q{
+        INSERT INTO registry.tenants (name, slug, platform_pricing_plan_id)
+        SELECT 'Solo Linked Probe', ?, id FROM registry.pricing_plans
+         WHERE plan_scope = 'tenant'
+           AND pricing_model_type = 'percentage'
+           AND metadata->>'default' IS DISTINCT FROM 'true'
+         ORDER BY created_at
+         LIMIT 1
+        ON CONFLICT (slug) DO NOTHING
+    }, $slug );
+    die "solo_linked_tenant: no revenue-share plan to link '$slug' to\n"
+      unless $db->query( 'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?', $slug )
+        ->hash->{platform_pricing_plan_id};
+    return $slug;
+}
+
 sub with_tenant_plan ( $db, $slug, $overrides, $cb ) {
     my $original = $db->query(
         'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',

@@ -8,7 +8,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::PricingPlan;
-use Test::Registry::PricingProbe qw(with_tenant_plan);
+use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
 my $test_db = Test::Registry::DB->new;
@@ -98,13 +98,7 @@ subtest 'the seeded plans are backfilled by meaning, not blindly' => sub {
 };
 
 subtest 'the revenue-share rate no longer comes from the money column' => sub {
-    my $slug = $db->query(q{
-        SELECT t.slug
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
-         WHERE p.pricing_model_type = 'percentage' AND p.plan_scope = 'tenant'
-         LIMIT 1
-    })->hash->{slug};
+    my $slug = solo_linked_tenant($db);
     ok $slug, "found a tenant on the revenue-share plan (slug=$slug)";
 
     # Whatever the plan carries. The property under test is that a dollar amount
