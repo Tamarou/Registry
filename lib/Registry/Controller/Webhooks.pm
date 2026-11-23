@@ -144,6 +144,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # A sale's completion settles through the same code as the platform
         # endpoint, in the schema the account names.
         if ( $event->{type} eq 'payment_intent.succeeded' ) {
+            # Stripe is the source of truth: the account wins over whatever
+            # tenant our own metadata names.
+            my $named = $event->{data}{object}{metadata}{tenant_slug};
+            $self->app->log->warn( "Connect webhook event $event_id names tenant '$named' "
+                  . "in metadata but account $account is tenant '$slug'; settling in '$slug'" )
+                if defined $named && !ref $named && $named ne $slug;
+
             $self->render_later;
             return $self->_settle_event( $self->app->dao, $db, $event, $event_id, $slug, undef );
         }
@@ -549,7 +556,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # The fee Stripe reports is recorded only by the delivery that completes
         # the row, so a redelivery or a later event cannot overwrite it.
         if ( $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} ) ) {
-            $payment->_record_platform_fee( $db, $intent );
+            # Stripe omits a zero application fee rather than sending 0, so an
+            # intent with none -- an explicit 0% sale -- took nothing.
+            $payment->_record_platform_fee( $db,
+                { %$intent, application_fee_amount => $intent->{application_fee_amount} // 0 } );
         }
         else {
             $self->app->log->info(

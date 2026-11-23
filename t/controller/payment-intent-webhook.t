@@ -392,13 +392,14 @@ sub a_seller ($tag) {
 }
 
 my $kids = 0;
-sub a_sale ($seller) {
+sub a_sale ($seller, %extra) {
     my $tdb   = $seller->{tdb};
     my $child = Registry::DAO::Family->add_child($tdb, $seller->{parent}->id, {
         child_name => 'PI Conn Kid ' . ++$kids, birth_date => '2018-01-01', grade => '3',
         medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
     return Registry::DAO::Payment->create($tdb, {
         user_id => $seller->{parent}->id, amount_cents => 10000, status => 'pending',
+        %extra,
         metadata => {
             enrollment_items => [ { session_id => $seller->{session}->id, child_id => $child->id } ],
             tenant_slug      => $seller->{slug} } });
@@ -453,6 +454,97 @@ subtest 'platform endpoint ignores metadata tenant slug' => sub {
 
     is_deeply ledger($seller_a), $before,
         "the tenant's schema is untouched -- metadata does not choose where to settle";
+};
+
+my $seller_b = a_seller('b');
+
+sub sale_status ($seller, $sale) {
+    Registry::DAO::Payment->find($seller->{tdb}, { id => $sale->id })->status;
+}
+
+sub settle_on ($seller, $sale, %object) {
+    return Test::Registry::StripeWebhook::post_connect($t, {
+        type    => 'payment_intent.succeeded',
+        account => $seller->{account},
+        data    => { object => {
+            id       => 'pi_conn_' . $sale->id,
+            amount   => 10000,
+            metadata => { payment_id => $sale->id },
+            %object,
+        } },
+    });
+}
+
+subtest 'metadata tenant mismatch settles only in account tenant' => sub {
+    my $sale     = a_sale($seller_a);
+    my $b_before = ledger($seller_b);
+
+    @logs = ();
+    settle_on($seller_a, $sale,
+        metadata => { payment_id => $sale->id, tenant_slug => $seller_b->{slug} })
+        ->status_is(200);
+
+    is sale_status($seller_a, $sale), 'completed', 'the account names the tenant it settles in';
+    is_deeply ledger($seller_b), $b_before, 'the tenant metadata names is untouched';
+    ok scalar( grep { $_->[0] eq 'warn'
+                      && $_->[1] =~ /\Q$seller_b->{slug}\E/ && $_->[1] =~ /\Q$seller_a->{slug}\E/ } @logs ),
+        'and the mismatch is logged';
+};
+
+subtest 'payment id from another tenant is not completed' => sub {
+    my $sale     = a_sale($seller_b);
+    my $b_before = ledger($seller_b);
+
+    settle_on($seller_a, $sale)->status_is(200);
+
+    is sale_status($seller_b, $sale), 'pending', "B's payment is not completed by A's event";
+    is_deeply ledger($seller_b), $b_before, "and nothing in B's schema moved";
+};
+
+subtest 'explicit zero percent sale records fee zero not null' => sub {
+    my $sale = a_sale($seller_a);
+
+    # Stripe omits a zero application fee, so a 0% sale's intent carries none.
+    settle_on($seller_a, $sale, application_fee_amount => undef)->status_is(200);
+
+    my $row = $seller_a->{tdb}->select('payments', ['status', 'platform_fee_cents'],
+        { id => $sale->id })->hash;
+    is $row->{status}, 'completed', 'the sale finalizes';
+    is $row->{platform_fee_cents}, 0, 'and records a fee of 0, not NULL';
+};
+
+subtest 'settlement failure leaves event unclaimed and nothing behind' => sub {
+    # Instalment one, so success would enqueue a schedule job; and a cart naming
+    # a child who does not exist, so the enrollment insert fails after the
+    # payment has been completed and its fee written in the same transaction.
+    my $sale = a_sale($seller_a, instalment_seq => 1, instalment_count => 3);
+    $seller_a->{tdb}->query(
+        q{UPDATE payments
+             SET metadata = jsonb_set(metadata, '{enrollment_items,0,child_id}', to_jsonb(?::text))
+           WHERE id = ?}, '00000000-0000-0000-0000-000000000000', $sale->id);
+    my $jobs_before = $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total;
+
+    my $event_id = "evt_conn_fail_$$";
+    Test::Registry::StripeWebhook::post_connect($t, {
+        id      => $event_id,
+        type    => 'payment_intent.succeeded',
+        account => $seller_a->{account},
+        data    => { object => {
+            id => 'pi_conn_fail', amount => 10000, application_fee_amount => 300,
+            metadata => { payment_id => $sale->id },
+        } },
+    })->status_is(500);
+
+    my $row = $seller_a->{tdb}->select('payments', ['status', 'platform_fee_cents'],
+        { id => $sale->id })->hash;
+    is $row->{status}, 'pending', 'the payment is not completed';
+    is $row->{platform_fee_cents}, undef, 'no fee is left recorded';
+    is $seller_a->{tdb}->select('enrollments', ['id'], { payment_id => $sale->id })->rows, 0,
+        'no enrollment is left behind';
+    is $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total, $jobs_before,
+        'no schedule job is enqueued';
+    is $db->select('registry.webhook_events', ['id'], { stripe_event_id => $event_id })->rows, 0,
+        'and the event stays unclaimed for the retry';
 };
 
 done_testing;
