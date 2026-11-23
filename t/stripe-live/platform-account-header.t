@@ -70,7 +70,8 @@ subtest 'own account intent is retrievable without header' => sub {
 subtest 'nonexistent account header is refused by stripe' => sub {
     my ( $c, $r ) = call( POST => '/customers', account => 'acct_doesnotexist' );
     isnt $c, 200, 'a header naming no account is refused';
-    ok $r->{error}, 'with an error, so the header is checked rather than ignored';
+    is $r->{error} && $r->{error}{code}, 'account_invalid',
+        'because of the account, so the header is checked rather than ignored';
 };
 
 subtest 'live key makes the probe refuse to run' => sub {
