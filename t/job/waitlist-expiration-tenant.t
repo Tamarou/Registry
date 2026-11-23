@@ -142,7 +142,7 @@ $t_db->query(q{
     WHERE session_id = ? AND student_id = ?
 }, $session->id, $student->id);
 
-subtest 'perform: global sweep calls expire_all_old_offers per tenant, not for registry' => sub {
+subtest 'perform: global sweep calls expire_all_old_offers per tenant, registry included' => sub {
     my @called_schemas;
     {
         no warnings 'redefine';
@@ -162,8 +162,63 @@ subtest 'perform: global sweep calls expire_all_old_offers per tenant, not for r
         "expire_all_old_offers was called for tenant schema '$slug'";
 
     my @registry_calls = grep { $_ eq 'registry' } @called_schemas;
-    is scalar(@registry_calls), 0,
-        'registry schema is not included in the sweep (tenant data is not there)';
+    is scalar(@registry_calls), 1,
+        'registry schema is included in the sweep once (it is the platform tenant)';
+};
+
+# ---- The platform tenant is a tenant ----------------------------------------
+#
+# The platform is the tenant row whose slug is `registry`, and its schema is
+# the registry schema, so its waitlist is registry.waitlist and the sweep
+# reaches it through connect_schema('registry') like any other slug.
+
+# Plant an offered waitlist entry in the registry schema, on its own session,
+# whose expires_at is NOW() plus the given interval. Returns its id.
+sub plant_platform_offer ( $label, $expires_in ) {
+    my $db = $dao->db;
+
+    my $loc = Registry::DAO::Location->create( $db, {
+        name         => "Platform $label Location",
+        slug         => "platform-$label-loc-$$",
+        address_info => { street => '1 Platform St' },
+    });
+    my $sess = Registry::DAO::Session->create( $db, {
+        name => "Platform $label Session",
+        slug => "platform-$label-session-$$",
+    });
+    my $kid = Test::Registry::Fixtures::create_user( $dao, {
+        username  => "pf_${label}_kid_$$",
+        password  => 'pw',
+        user_type => 'student',
+    });
+
+    return $db->query(q{
+        INSERT INTO registry.waitlist
+            (session_id, location_id, student_id, parent_id, position, status,
+             offered_at, expires_at)
+        VALUES (?, ?, ?, ?, 1, 'offered', NOW() - INTERVAL '1 hour', NOW() + ?::interval)
+        RETURNING id
+    }, $sess->id, $loc->id, $kid->id, $parent->id, $expires_in)->array->[0];
+}
+
+sub platform_status ($id) {
+    return $dao->db->query(
+        'SELECT status FROM registry.waitlist WHERE id = ?', $id )->array->[0];
+}
+
+subtest 'the expiration sweep covers the platform tenant and expires its old offer' => sub {
+    ok Registry::DAO::Tenant->platform( $dao->db ), 'the platform tenant row exists';
+
+    my $pf_id = plant_platform_offer( 'old', '-1 hour' );
+    is platform_status($pf_id), 'offered', 'the platform offer is outstanding before the sweep';
+
+    my $result = Registry::Job::WaitlistExpiration->expire_all_tenant_offers( $dao, $log );
+
+    my @registry = grep { $_ eq 'registry' } $result->{tenants_covered}->@*;
+    is scalar(@registry), 1, 'registry is reported in tenants_covered once';
+    is_deeply $result->{tenants_skipped}, [], 'and no tenant was skipped';
+
+    is platform_status($pf_id), 'expired', 'the lapsed platform offer is expired';
 };
 
 $t->cleanup_test_database;
