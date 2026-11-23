@@ -32,13 +32,17 @@ subtest 'duplicate username gives clear error' => sub {
     });
 
     my $dup;
+    my @warnings;
     eval {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
         $dup = Registry::DAO::User->create($dao->db, {
             username => 'unique_user', name => 'Second',
             email => 'second@test.com', user_type => 'parent',
         });
     };
 
+    like "@warnings", qr/Error creating Registry::DAO::User.*users_username_key/s,
+        'Duplicate username failure is logged';
     ok $@, 'Duplicate username throws error';
     like $@, qr/duplicate|unique|constraint|already exists/i,
         'Error message indicates uniqueness violation';
@@ -119,13 +123,17 @@ subtest 'enrollment with nonexistent session gives clear error' => sub {
 # ============================================================
 subtest 'user creation with missing username fails clearly' => sub {
     my $bad;
+    my @warnings;
     eval {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
         $bad = Registry::DAO::User->create($dao->db, {
             name => 'No Username', email => 'nousername@test.com',
             user_type => 'parent',
         });
     };
 
+    like "@warnings", qr/Error creating Registry::DAO::User.*null value in column "username"/s,
+        'Missing username failure is logged';
     ok $@, 'Missing username throws error';
     like $@, qr/null|not-null|required|username/i, 'Error indicates missing field';
 };

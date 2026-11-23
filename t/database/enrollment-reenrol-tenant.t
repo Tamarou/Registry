@@ -46,7 +46,7 @@ my $before = $db->query(q{
            = ARRAY['session_id','student_id','student_type']}, $slug)->arrays->flatten->to_array;
 ok scalar @$before, 'the cloned tenant starts with a total uniqueness rule'
     or diag 'nothing to remove -- the fixture proves nothing';
-diag "  tenant's rule is named: @$before";
+note "  tenant's rule is named: @$before";
 
 deploy_to($CHANGE);
 

@@ -16,11 +16,13 @@ requires 'Crypt::URandom';     # Cryptographic random bytes for challenges and t
 requires 'DBD::Pg';
 requires 'Mojo::Pg';
 requires 'Mojolicious';
+requires 'Module::Runtime';    # loads workflow step classes without a string eval
 requires 'Object::Pad';
 requires 'Sub::Identify';
 requires 'YAML::XS';
 requires 'Test::PostgreSQL';
 requires 'Test::MockObject';
+requires 'Capture::Tiny';    # tests capture stderr from failure paths they provoke
 requires 'Minion';
 requires 'Minion::Backend::Pg';
 requires 'Email::Simple';
@@ -29,6 +31,11 @@ requires 'JSON';
 requires 'Text::Unidecode';
 requires 'Text::CSV_XS';
 requires 'IO::Socket::SSL';
+# IO::Socket::SSL's Makefile.PL adds Mozilla::CA as a prerequisite at build
+# time when OpenSSL's OPENSSLDIR has no CA store, as on CI's setup-perl
+# toolchain. `carton install --deployment` refuses anything the snapshot does
+# not name, so it is pinned here rather than left to that decision.
+requires 'Mozilla::CA';
 requires 'SlapbirdAPM::Agent::Mojo';
 requires 'CBOR::XS';
 requires 'CryptX';

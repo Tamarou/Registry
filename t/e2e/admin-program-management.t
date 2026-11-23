@@ -7,7 +7,7 @@ BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is ok like is_deeply diag )];
+use Test::More import => [qw( done_testing is ok like is_deeply diag note )];
 defer { done_testing };
 
 use Registry::DAO;
@@ -197,7 +197,7 @@ my $dao = $test_db->db;
                     end_time => $end_dt,
                     capacity => 20
                 });
-                diag "Created STEM event for week " . ($week + 1) . " day " . (($day == 1) ? "1" : "2") if $week == 0 && $day == 1; # Only log first event
+                note "Created STEM event for week " . ($week + 1) . " day " . (($day == 1) ? "1" : "2") if $week == 0 && $day == 1; # Only log first event
             }
             catch ($e) {
                 diag "Error creating STEM event: $e";
@@ -228,7 +228,7 @@ my $dao = $test_db->db;
     
     # Debug: Check if events were actually persisted
     my $db_events_after_creation = $dao->db->select('events', 'COUNT(*)')->array->[0];
-    diag "Events in database after creation step: $db_events_after_creation";
+    note "Events in database after creation step: $db_events_after_creation";
 }
 
 {    # Step 6: Staff Assignment
@@ -302,7 +302,7 @@ my $dao = $test_db->db;
                 status => 'active'
             });
             $stem_enrollments++;
-            diag "Created STEM enrollment " . $enrollment->id . " for family $i" if $i == 0; # Log first one
+            note "Created STEM enrollment " . $enrollment->id . " for family $i" if $i == 0; # Log first one
         }
         catch ($e) {
             diag "Error creating STEM enrollment for family $i: $e";
@@ -350,7 +350,7 @@ my $dao = $test_db->db;
     
     # Debug: Check if enrollments were actually persisted
     my $db_enrollments = $dao->db->select('enrollments', 'COUNT(*)', { session_id => $stem_session->id })->array->[0];
-    diag "Enrollments in database for STEM session: $db_enrollments";
+    note "Enrollments in database for STEM session: $db_enrollments";
     
     # Verify waitlist positions
     my $waitlist_entries = Registry::DAO::Waitlist->get_session_waitlist(
@@ -367,11 +367,11 @@ my $dao = $test_db->db;
     
     # Debug: Check if session_events junction table has entries
     my $junction_count = $dao->db->select('session_events', 'COUNT(*)', { session_id => $stem_session->id })->array->[0];
-    diag "Session events junction table entries for STEM session: $junction_count";
+    note "Session events junction table entries for STEM session: $junction_count";
     
     # Debug: Check total events in database
     my $total_events = $dao->db->select('events', 'COUNT(*)')->array->[0];
-    diag "Total events in database: $total_events";
+    note "Total events in database: $total_events";
     
     # Get first week's events via session events method
     my $all_events = $stem_session->events($dao);
@@ -397,7 +397,7 @@ my $dao = $test_db->db;
     }, $stem_session->id)->hashes->to_array;
     
     # Debug: Check how many students found
-    diag "Found " . scalar(@$enrolled_students) . " enrolled students for attendance";
+    note "Found " . scalar(@$enrolled_students) . " enrolled students for attendance";
     
     # Take attendance for first event
     require Registry::DAO::Attendance;
@@ -694,7 +694,7 @@ Program Director
         WHERE e.status = 'active' AND p.status = 'completed'
     })->hash;
     
-    diag "Financial check: paid_enrollments=" . ($financial_check->{paid_enrollments} || 0) . 
+    note "Financial check: paid_enrollments=" . ($financial_check->{paid_enrollments} || 0) . 
          ", total_payments=" . ($financial_check->{total_payments} || 0);
     ok $financial_check->{paid_enrollments} >= 20, 'All active enrollments have payments';
     ok $financial_check->{total_payments} >= 300000, 'Total payments match expected revenue';

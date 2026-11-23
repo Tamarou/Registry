@@ -1249,6 +1249,12 @@ class Registry :isa(Mojolicious) {
     #
     # A slug earns a role here when its steps write tenant-owned configuration
     # or act on records the visitor does not own.
+    #
+    # The gate stays open by default for the reason above, so the guard against
+    # adding a workflow and forgetting it is a test, not this map:
+    # t/security/workflow-roles-cover-every-workflow.t fails unless every
+    # imported workflow either has an entry here or carries `public: true` in
+    # its own YAML file -- a reviewed declaration that anyone may walk into it.
     method workflow_roles ($slug) {
         state %ROLES = (
             # Admin tooling: the dashboard and the approval flows that settle

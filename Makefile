@@ -11,7 +11,9 @@ test-schema:
 # .t file is named below; add new ones here.  The placeholder key is CI's, so
 # the run does not depend on what the shell exports.  CI keeps its bare sweep on
 # purpose (.github/workflows/ci.yml): that placeholder holds the gate shut, and
-# the sweep is what proves the excluded files still compile.
+# the sweep is what proves the excluded files still compile.  The locale is
+# deliberately not pinned: C.UTF-8 is missing on macOS, and the test
+# harness asks initdb for UTF8 itself, so any locale gives the same result.
 test: sql/test-schema.sql
 	STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec prove -lr t/auth \
 	  t/controller t/css t/dao t/database t/deploy t/e2e t/frontend t/integration t/job \

@@ -147,8 +147,14 @@ subtest 'an unpriced child does not take the settlement down with them' => sub {
     my $kid = a_child();
     my $payment = a_cart($session, [$kid], 0);   # no line items
 
-    my ($owed, $err) = finalize($payment);
+    my @warnings;
+    my ($owed, $err) = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        finalize($payment);
+    };
     is $err, '', 'the settlement does not die';
+    like "@warnings", qr/finalize_enrollment: unresolvable refund share for child \Q${\ $kid->id }\E/,
+        'and the unresolvable share is logged';
     is statuses_for($payment)->{cancelled}, 1, 'the child is still demoted';
     is waiting_in($session), 1, 'and still reaches the queue';
 

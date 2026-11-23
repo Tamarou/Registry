@@ -189,7 +189,13 @@ subtest 'gate refusal: unready tenant blocks paid enrollment' => sub {
 
     my $run    = make_e2e_run();
     my $step   = get_payment_step();
-    my $result = settle($step->process($tdb, { agreeTerms => 1 }, $run));
+    my @warnings;
+    my $result = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        settle($step->process($tdb, { agreeTerms => 1 }, $run));
+    };
+    like "@warnings", qr/checkout refused: tenant '\Q${\ $tenant->slug }\E' is not Stripe Connect ready/,
+        'the refusal is logged';
 
     ok $result->{errors}, 'gate returned errors';
     # Asserted against the method rather than a phrase: the wording changed

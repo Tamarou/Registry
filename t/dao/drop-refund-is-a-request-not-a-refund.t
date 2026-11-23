@@ -41,7 +41,9 @@ my $child = Registry::DAO::Family->add_child($db, $parent->id, {
 });
 
 # The acting user as the workflow carries it: a plain hash off the session.
-my $acting = { id => $parent->id, user_type => 'parent' };
+# Shaped like the hash Registry.pm stashes as current_user, which carries the
+# 'role' alias Enrollment reads as well as user_type.
+my $acting = { id => $parent->id, user_type => 'parent', role => 'parent' };
 
 my $hour = 9;
 sub make_session ( $name, $start, $end ) {
@@ -136,7 +138,7 @@ subtest 'a parent cannot drop a child who is not theirs' => sub {
     my ( $enrollment ) = paid_enrollment($session);
 
     my $result = Registry::DAO::DropRequest->request_for_enrollment(
-        $db, $enrollment->id, { id => $stranger->id, user_type => 'parent' },
+        $db, $enrollment->id, { id => $stranger->id, user_type => 'parent', role => 'parent' },
         'Not mine', 1 );
 
     like $result->{error}, qr/do not own/, 'the request is refused';

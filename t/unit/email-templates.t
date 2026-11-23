@@ -114,13 +114,17 @@ subtest 'missing variables produce graceful fallback (no crash)' => sub {
 
 subtest 'missing template produces graceful fallback (no crash)' => sub {
     my $result;
+    my @warnings;
     eval {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
         $result = Registry::Email::Template->render('nonexistent_template',
             name => 'Test User',
         );
     };
     ok(!$@, 'render does not crash with unknown template') or diag("Error: $@");
     ok($result, 'render returns something for unknown template');
+    like("@warnings", qr/Unknown email template: 'nonexistent_template'/,
+        'unknown template is warned about');
 };
 
 subtest 'HTML has inline CSS styles (no external stylesheets)' => sub {

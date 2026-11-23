@@ -23,7 +23,9 @@ my $t = Test::Registry::Mojo->new('Registry');
 my sub with_captured_log ($app, $level, $cb) {
     my $buf = '';
     open my $fh, '>', \$buf or die "Cannot open log buffer: $!";
-    my $logger = Registry::Utility::Logger->new(level => $level);
+    # Logger's BUILD lets LOG_LEVEL override the level passed in, and the test
+    # harness exports a quiet one; this capture needs the level it asks for.
+    my $logger = do { delete local $ENV{LOG_LEVEL}; Registry::Utility::Logger->new(level => $level) };
     $logger->handle($fh);
     my $prev_log = $app->log;
     $app->log($logger);

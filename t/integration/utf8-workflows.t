@@ -7,6 +7,7 @@ use utf8;
 use lib qw(lib t/lib);
 use experimental qw(defer);
 use Test::More;
+use Test2::Plugin::UTF8;    # test names here are non-ASCII; give TAP a UTF-8 layer
 use Test::Mojo;
 use Test::Registry::DB;
 

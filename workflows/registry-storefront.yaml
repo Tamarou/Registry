@@ -1,5 +1,8 @@
 name: Registry Storefront
 slug: registry-storefront
+# Anyone may walk into this workflow, deliberately: it has no workflow_roles
+# entry. t/security/workflow-roles-cover-every-workflow.t enforces the choice.
+public: true
 description: Public-facing landing page for the platform itself, leading into tenant onboarding
 first_step: landing
 steps:

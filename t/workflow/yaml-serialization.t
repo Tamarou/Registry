@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw( done_testing is like is_deeply fail note)];
+use Test::More import => [qw( done_testing is like is_deeply fail note subtest)];
 defer { done_testing };
 
 use Mojo::Home;
@@ -93,6 +93,25 @@ END_YAML
     like $@, qr/Missing required field/, 'missing required fields throws error';
 }
 
+# `public: true` declares, in the workflow's own file, that it deliberately
+# has no workflow_roles entry (t/security/workflow-roles-cover-every-workflow.t).
+# It is a declaration about the file, not a column: from_yaml must not try to
+# store it.
+subtest 'a workflow with the public mark imports without a public column' => sub {
+    my $yaml = <<~'YAML';
+        name: Marked Public
+        slug: marked-public
+        description: carries the public mark
+        public: true
+        steps:
+          - slug: only
+            description: the only step
+        YAML
+    my $workflow = eval { Registry::DAO::Workflow->from_yaml( $dao, $yaml ) };
+    is $@, '', 'the import does not die';
+    is $workflow && $workflow->slug, 'marked-public', 'and the workflow is stored';
+};
+
 {
     # Import templates
     my @templates =
@@ -168,7 +187,11 @@ END_YAML
     if (!exists $original->{first_step} && exists $from_db->{first_step}) {
         delete $from_db->{first_step};
     }
-            
+
+    # The public mark is a declaration in the file, never stored, so it
+    # cannot come back out of the database.
+    delete $original->{public};
+
             is_deeply $from_db, $original, "able to round trip $file";
         }
         catch ($e) {

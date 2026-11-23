@@ -233,14 +233,14 @@ $t->ua->max_redirects(0);
 
 # ---------------------------------------------------------------------------
 # 3. Obtain both Stripe test accounts.
-#    unready_account() returns immediately; ready_account() polls up to 90s.
+#    unready_account() returns immediately; ready_account() polls up to 180s.
 # ---------------------------------------------------------------------------
 
 note 'Fetching unready Stripe test account (instant)...';
 my $unready_acct = Test::Registry::StripeConnect::unready_account();
 like $unready_acct, qr/^acct_/, 'unready account id obtained';
 
-note 'Waiting for charges_enabled on ready Stripe test account (up to 90s)...';
+note 'Waiting for charges_enabled on ready Stripe test account (up to 180s)...';
 my $ready_acct = Test::Registry::StripeConnect::ready_account();
 like $ready_acct, qr/^acct_/, 'ready account id obtained';
 

@@ -161,7 +161,13 @@ subtest 'a pass that demotes nobody leaves an unpaid debt alone' => sub {
     );
     occupy($session, 1);
 
-    my $after_one = settle($payment);
+    my @warnings;
+    my $after_one = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        settle($payment);
+    };
+    like "@warnings", qr/finalize_enrollment: unresolvable refund share/,
+        'pass 1 logs the unpriced share';
     is $after_one->refund_owed_cents, 10000, 'pass 1 owes the priced child';
     ok $after_one->metadata->{refund_manual_review}, 'and flags the unpriced one';
 
@@ -181,7 +187,13 @@ subtest 'an unresolvable share is still findable by the runbook' => sub {
     );
     occupy($session, 1);
 
-    my $after = settle($payment);
+    my @warnings;
+    my $after = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        settle($payment);
+    };
+    like "@warnings", qr/finalize_enrollment: unresolvable refund share/,
+        'the unresolvable share is logged';
     ok $after->metadata->{refund_manual_review}, 'the share is flagged';
     is $after->status, 'refund_pending',
         'and the row is findable by a status scan, not silently completed';
@@ -322,7 +334,13 @@ subtest 'discharging an obligation does NOT clear the manual-review flag' => sub
         { session => $session, child => a_child(), priced => 0 },
     );
     occupy($session, 1);
-    settle($payment);
+    my @warnings;
+    {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        settle($payment);
+    }
+    like "@warnings", qr/finalize_enrollment: unresolvable refund share/,
+        'the unpriced share is logged';
 
     my $owing = reload($payment);
     ok $owing->metadata->{refund_manual_review}, 'the unresolvable share is flagged';

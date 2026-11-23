@@ -121,19 +121,22 @@ subtest 'step process receives the correct run object' => sub {
 # means the latest belongs to whoever started most recently -- so a step that
 # falls back writes one visitor's answers into another's registration.
 subtest 'a step receives the run being processed, not the latest one' => sub {
-    Registry::DAO::WorkflowStep->create($dao->db, {
+    # The row is stored with the shipped base class: the step-class allowlist
+    # refuses to store a t/lib class (t/security/workflow-step-class-allowlist.t).
+    # The recorder is built from that row instead, which is all this test needs,
+    # since it hands the step object to process() directly.
+    my $row = Registry::DAO::WorkflowStep->create($dao->db, {
         workflow_id => $workflow->id,
         slug        => 'recorder',
         description => 'Records the run it was handed',
-        class       => 'Test::Registry::RunRecorderStep',
     });
-
-    # Re-found, not used as created: create() blesses into the base class, and
-    # find() is what loads the subclass named in the `class` column and blesses
-    # into it. Using the created object silently ran the base step's process.
-    my $recorder = Registry::DAO::WorkflowStep->find($dao->db, {
-        workflow_id => $workflow->id, slug => 'recorder',
-    });
+    my $recorder = Test::Registry::RunRecorderStep->new(
+        id          => $row->id,
+        slug        => $row->slug,
+        workflow_id => $row->workflow_id,
+        description => $row->description,
+        class       => $row->class,
+    );
     isa_ok $recorder, 'Test::Registry::RunRecorderStep';
 
     my $first = Registry::DAO::WorkflowRun->create($dao->db, {

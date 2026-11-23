@@ -17,6 +17,13 @@ use Carp qw(croak);
         croak "Missing required field: steps"
           unless $data->{steps} && ref $data->{steps} eq 'ARRAY';
 
+        # Every submitted class is checked before anything is written, so a
+        # refused step anywhere in the list leaves no workflow and none of
+        # the steps before it.
+        Registry::DAO::WorkflowStep->refuse_unless_allowed(
+            $_->{class} // 'Registry::DAO::WorkflowStep' )
+          for $data->{steps}->@*;
+
         # Create the new workflow
         my $new_workflow = Registry::DAO::Workflow->create(
             $db,

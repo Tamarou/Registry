@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use experimental 'signatures';
 use Mojo::JSON qw(decode_json);
+use Capture::Tiny qw(capture_stderr);
 use Test::Registry::DB;
 use Registry;
 
@@ -33,7 +34,11 @@ sub boot_lines ( %env ) {
     my $buf = '';
     open my $fh, '>', \$buf or die "cannot open scalar handle: $!";
 
-    my $app = Registry->new( mode => 'production' );
+    # startup logs the configuration once to stderr before the handle can be
+    # redirected; the call below logs it again into $buf, which is what is
+    # checked, so the startup copy is captured and dropped.
+    my $app;
+    capture_stderr { $app = Registry->new( mode => 'production' ) };
     $app->log->handle($fh);
     $app->log->level('debug');
     $app->_log_effective_configuration;

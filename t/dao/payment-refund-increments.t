@@ -176,7 +176,13 @@ subtest 'a fully refunded charge cannot take on new debt' => sub {
     $p->settle_refund_increment( $db, 1, { id => 're_all' } );
     is row_of($p)->{status}, 'refunded', 'the whole cart went back';
 
-    $p->record_capacity_obligation( $db, 2500, ['child-b'] );
+    my @warnings;
+    {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        $p->record_capacity_obligation( $db, 2500, ['child-b'] );
+    }
+    like "@warnings", qr/record_capacity_obligation: no headroom for 2500 cents/,
+        'the refused debt is logged';
 
     my $r = row_of($p);
     is $r->{refund_owed_cents}, 0, 'no further debt is recordable';
@@ -199,8 +205,14 @@ subtest 'a negative share is refused, not subtracted' => sub {
     my $p = a_payment(9000);
     $p->record_capacity_obligation( $db, 6000, ['child-a'] );
 
-    my $err = do { local $@; eval { $p->record_capacity_obligation( $db, -2500, ['child-b'] ); 1 }; $@ };
+    my @warnings;
+    my $err = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        local $@; eval { $p->record_capacity_obligation( $db, -2500, ['child-b'] ); 1 }; $@
+    };
     is $err, '', 'it does not throw inside the settlement transaction';
+    like "@warnings", qr/record_capacity_obligation: refusing negative share -2500/,
+        'the refused share is logged';
 
     my $r = row_of($p);
     is $r->{refund_owed_cents}, 6000, 'and does not reduce a real debt';

@@ -292,6 +292,10 @@ class Registry::DAO::WorkflowSteps::YourNewStep :isa(Registry::DAO::WorkflowStep
 # t/dao/workflow-steps/your-new-step.t
 ```
 
+A step class must live under `lib/Registry/DAO/WorkflowSteps/` (or be `Registry::DAO::WorkflowStep` itself): the server-side allowlist (`Registry::WorkflowStepClasses`) refuses to store any other class name, including test-only classes in `t/lib`. A test that needs a custom step builds the object directly rather than storing its class (see `t/controller/workflow-run-isolation.t`).
+
+A new workflow needs a `workflow_roles` entry in `lib/Registry.pm`, or `public: true` in its YAML if anyone may walk into it. `t/security/workflow-roles-cover-every-workflow.t` fails for a workflow with neither.
+
 ## Testing
 
 Registry has comprehensive test coverage across multiple layers:

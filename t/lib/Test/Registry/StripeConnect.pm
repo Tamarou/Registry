@@ -7,6 +7,13 @@ package Test::Registry::StripeConnect {
 
     my $BASE = 'https://api.stripe.com/v1';
 
+    # How long ready_account waits for Stripe test mode to enable charges.
+    # The spike measured ~48 s; one CI run (2026-11-22) still saw card_payments
+    # pending at 90 s while two other accounts in the same run made it, so the
+    # limit is Stripe's latency, not our code. Each wait is logged so the real
+    # spread is visible (perigrin's ruling, ADR 005).
+    my $READY_WAIT_SECONDS = 180;
+
     # Per-process cache: one ready and one unready account id.
     # ponytail: global per-process cache; separate per-worker if parallel suites matter
     my $_ready_id;
@@ -30,8 +37,33 @@ package Test::Registry::StripeConnect {
         return ( ( $ENV{STRIPE_SECRET_KEY} // '' ) =~ /^sk_test_/ ) ? 1 : 0;
     }
 
+    # A test reads this as a TAP note on stdout; a plain script (the Playwright
+    # seeder, whose stdout is parsed as JSON) gets it on stderr instead.
+    sub _log {
+        my ($msg) = @_;
+        if ( $INC{'Test/More.pm'} ) { Test::More::note($msg) }
+        else                        { print STDERR "$msg\n" }
+        return;
+    }
+
     sub _ua {
         return Mojo::UserAgent->new( connect_timeout => 10, inactivity_timeout => 30 );
+    }
+
+    # With no response at all (DNS, TLS, a refused connection) the status is
+    # undef and the reason is only in $tx->error; say it, rather than
+    # "HTTP " and an uninitialized-value warning.
+    sub _why {
+        my ($tx) = @_;
+        my $code = $tx->res->code;
+        return "HTTP $code" if defined $code;
+        my $err = $tx->error;
+        my $why = $err && $err->{message} // "unknown error";
+        # Mojo reports only that TLS is unavailable; the reason is the failed
+        # require, so say what it was.
+        $why .= " (require IO::Socket::SSL: " . ( eval { require IO::Socket::SSL; "loaded " . IO::Socket::SSL->VERSION } // $@ =~ s/\s+\z//r ) . ")"
+          if $why =~ /IO::Socket::SSL/;
+        return "no response: $why";
     }
 
     sub _post {
@@ -43,7 +75,7 @@ package Test::Registry::StripeConnect {
             form => $params,
         );
         my $data = $tx->res->json
-            or die "Stripe POST $path: no JSON body (HTTP " . $tx->res->code . ")\n";
+            or die "Stripe POST $path: no JSON body (" . _why($tx) . ")\n";
         die "Stripe POST $path error: $data->{error}{message}\n" if $data->{error};
         return $data;
     }
@@ -56,7 +88,7 @@ package Test::Registry::StripeConnect {
             { Authorization => "Bearer $key" },
         );
         my $data = $tx->res->json
-            or die "Stripe GET $path: no JSON body (HTTP " . $tx->res->code . ")\n";
+            or die "Stripe GET $path: no JSON body (" . _why($tx) . ")\n";
         die "Stripe GET $path error: $data->{error}{message}\n" if $data->{error};
         return $data;
     }
@@ -75,7 +107,8 @@ package Test::Registry::StripeConnect {
     # Creates one on first call using the Leg 0 magic values (Jenny Rosen / 1901-01-01 / SSN 000-00-0000 /
     # address_full_match), then polls GET /v1/accounts/{id} every 3 s until charges_enabled is true
     # (measured: ~48 s in the validated spike).  Subsequent calls return the cached id.
-    # Aborts with a clear message if charges_enabled does not flip within 90 s.
+    # Aborts with a clear message if charges_enabled does not flip within
+    # $READY_WAIT_SECONDS, and logs how long activation took when it does.
     sub ready_account {
         return $_ready_id if defined $_ready_id;
 
@@ -116,16 +149,19 @@ package Test::Registry::StripeConnect {
         push @_created_ids, $id;
 
         # Poll until charges_enabled.  Check immediately, then sleep 3 s between polls.
-        my $deadline  = time() + 90;
+        my $started   = time();
+        my $deadline  = $started + $READY_WAIT_SECONDS;
         my $last_caps = {};
         while (1) {
             my $data = _get("/accounts/$id");
             if ( $data->{charges_enabled} ) {
+                _log( sprintf 'Stripe enabled charges on %s after %ds',
+                    $id, time() - $started );
                 $_ready_id = $id;
                 return $id;
             }
             $last_caps = $data->{capabilities} // {};
-            die "Timed out after 90s waiting for charges_enabled on $id. "
+            die "Timed out after ${READY_WAIT_SECONDS}s waiting for charges_enabled on $id. "
               . "Last capability states: "
               . join( ', ', map { "$_=$last_caps->{$_}" } sort keys %$last_caps ) . "\n"
               if time() >= $deadline;

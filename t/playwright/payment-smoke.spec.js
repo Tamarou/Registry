@@ -23,7 +23,7 @@ function seedPaymentData(testDB) {
         REGISTRY_STRIPE_KEEP_ACCOUNTS: '1',
       },
       encoding: 'utf8',
-      timeout: 150000,   // ready_account() polls Stripe for up to 90 s
+      timeout: 240000,   // ready_account() polls Stripe for up to 180 s
     }
   ).trim();
 
@@ -65,7 +65,9 @@ test.describe('Payment happy path', () => {
   });
 
   // Run serially -- the single test is inherently sequential.
-  test.describe.configure({ mode: 'serial', timeout: 180000 });
+  // Seeding may wait up to 240 s for Stripe to enable charges, and the
+  // browser leg's own waits add about 150 s more.
+  test.describe.configure({ mode: 'serial', timeout: 420000 });
 
   test('card payment charges Stripe and creates an enrollment in the tenant schema',
     async ({ registryPage, testDB }) => {

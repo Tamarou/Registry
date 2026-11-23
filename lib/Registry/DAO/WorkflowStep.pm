@@ -5,6 +5,8 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
     use Carp qw(confess);
+    use Module::Runtime qw(require_module);
+    use Registry::WorkflowStepClasses;
 
     field $id :param :reader;
     field $slug :param :reader;
@@ -80,9 +82,17 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
               $db->select( $class->table, '*', $filter, $order )->expand->hash;
             return unless $data;
 
-            # Load the workflow step class module before calling new() on it
+            # The class column names code, and a stored row is not trusted:
+            # it may predate the creation-time check or have been written
+            # around the DAO. Check it against the allowlist before loading
+            # anything, load it without a string eval (a string eval ran the
+            # column as Perl), and refuse a class that is not a step before
+            # its constructor runs.
             my $step_class = $data->{class};
-            eval "require $step_class" or confess "Failed to load workflow step class $step_class: $@";
+            Registry::DAO::WorkflowStep->refuse_unless_allowed($step_class);
+            require_module($step_class);
+            confess "$step_class is not a workflow step"
+              unless $step_class->isa('Registry::DAO::WorkflowStep');
 
             return $step_class->new( $data->%* );
         }
@@ -93,7 +103,23 @@ class Registry::DAO::WorkflowStep :isa(Registry::DAO::Object) {
 
     sub create ( $class, $db, $data ) {
         $data->{class} //= $class;
+        Registry::DAO::WorkflowStep->refuse_unless_allowed( $data->{class} );
         $class->SUPER::create( $db, $data );
+    }
+
+    # The class column is the one place a stored row names code, so every
+    # write of it goes through the allowlist: create above, and update here,
+    # which would otherwise be a way round the check.
+    method update ( $db, $data, @rest ) {
+        Registry::DAO::WorkflowStep->refuse_unless_allowed( $data->{class} )
+          if exists $data->{class};
+        return $self->SUPER::update( $db, $data, @rest );
+    }
+
+    sub refuse_unless_allowed ( $, $step_class ) {
+        return if Registry::WorkflowStepClasses::is_allowed($step_class);
+        confess sprintf '%s is not an allowed workflow step class',
+          defined $step_class ? "'$step_class'" : 'an undefined class';
     }
 
     method next_step ($db) {

@@ -3,7 +3,21 @@ use 5.42.0;
 # ABOUTME: Loads schema from a pre-generated dump file for fast test startup.
 use App::Sqitch ();
 use Test::PostgreSQL ();
+
+# initdb takes its encoding from the locale, so a POSIX-locale shell made a
+# SQL_ASCII cluster and every non-ASCII template failed to store ("Wide
+# character in subroutine entry"), while CI's UTF-8 runner made a UTF8 one.
+# Production databases are UTF8; ask for it rather than inherit it.
+my $INITDB_ENCODING = '-E UTF8';
 use DBI ();
+
+# Registry::startup sets its logger's level from LOG_LEVEL (default 'info'), so
+# every app a test built printed the MOJO_SECRET warning and five
+# scheduled-job lines to stderr -- about 200 lines a run that nobody read. A
+# test that inspects the log sets its own level (access-log.t and friends call
+# ->level('debug')); one that wants the noise back can export LOG_LEVEL. The
+# production default is untouched.
+$ENV{LOG_LEVEL} //= 'fatal';
 
 package Test::Registry::DB {
     use File::Basename qw(dirname);
@@ -53,7 +67,7 @@ package Test::Registry::DB {
     sub generate_dump {
         # Deploy schema via Sqitch into a temp DB, then pg_dump it.
         # Called by `make test-schema` or manually when migrations change.
-        my $template_db = Test::PostgreSQL->new();
+        my $template_db = Test::PostgreSQL->new( extra_initdb_args => $INITDB_ENCODING );
         my $uri = $template_db->uri;
 
         warn "Deploying schema via Sqitch...\n";
@@ -145,7 +159,7 @@ package Test::Registry::DB {
     sub new {
         my $class = shift;
         my $self = bless {}, $class;
-        $self->{pgsql} = Test::PostgreSQL->new();
+        $self->{pgsql} = Test::PostgreSQL->new( extra_initdb_args => $INITDB_ENCODING );
 
         if (-f $DUMP_FILE && -s $DUMP_FILE) {
             # Fast path: load from pre-generated dump
@@ -210,6 +224,24 @@ package Test::Registry::DB {
         }
     }
 
+    # A test's app helper usually closes over a file-scope DAO, so its
+    # Mojo::Pg::Database lives until global destruction, where perl frees
+    # objects in no fixed order. When DBI's inner handle goes first,
+    # Mojo::Pg::Database::DESTROY reads the dead handle to decide whether to
+    # pool it and prints "(in cleanup) Can't call method "FETCH" on an
+    # undefined value ... during global destruction" -- in a different file
+    # each run. At that point there is no pool left to return a handle to, so
+    # skip the method then. Installed from END, so every DESTROY while the
+    # tests run is untouched.
+    sub _quiet_mojo_pg_at_global_destruction {
+        my $destroy = Mojo::Pg::Database->can('DESTROY') or return;
+        no warnings 'redefine';
+        *Mojo::Pg::Database::DESTROY = sub {
+            return if ${^GLOBAL_PHASE} eq 'DESTRUCT';
+            goto &$destroy;
+        };
+    }
+
     # Mark every open DBI connection InactiveDestroy so DBD::Pg's destructors
     # never execute against an about-to-stop server and emit "terminating
     # connection due to administrator command" -- noise that dirties the exit
@@ -230,6 +262,7 @@ package Test::Registry::DB {
     END {
         local $?;
         _neutralize_dbi_handles();
+        _quiet_mojo_pg_at_global_destruction();
         for my $instance ( grep { defined } @LIVE_INSTANCES ) {
             $instance->cleanup_test_database;
         }

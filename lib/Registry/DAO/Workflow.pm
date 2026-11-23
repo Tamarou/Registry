@@ -130,6 +130,11 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         my $steps = delete $data->{steps};
         die "Missing required field: steps" unless $steps;
 
+        # `public: true` is a declaration in the file that the workflow has no
+        # workflow_roles entry on purpose (enforced by
+        # t/security/workflow-roles-cover-every-workflow.t), not a column.
+        delete $data->{public};
+
         if ( my $workflow =
             $db->find( 'Registry::DAO::Workflow', { slug => $data->{slug} } ) )
         {
