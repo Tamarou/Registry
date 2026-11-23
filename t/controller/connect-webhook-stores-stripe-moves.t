@@ -104,4 +104,38 @@ subtest 'refund event is stored with account tenant and payload unapplied' => su
     is_deeply payment_row(), $before, 'the payment row is unchanged';
 };
 
+subtest 'dispute and customer events are stored unapplied once' => sub {
+    my $before = payment_row();
+    my $users_before = $tdb->query(q{SELECT * FROM users ORDER BY id})->hashes;
+
+    my @events = (
+        { id => "evt_moves_dispute_$$", type => 'charge.dispute.closed', account => $account,
+          data => { object => { id => "dp_conn_moves_$$", object => 'dispute', status => 'lost',
+                                amount => 15000, charge => "ch_conn_moves_$$",
+                                payment_intent => "pi_conn_moves_$$" } } },
+        { id => "evt_moves_customer_$$", type => 'customer.updated', account => $account,
+          data => { object => { id => "cus_conn_moves_$$", object => 'customer',
+                                email => "changed_$$\@test.example", name => 'Changed In Stripe' },
+                    previous_attributes => { name => 'Connect Moves Parent' } } },
+    );
+
+    for my $event (@events) {
+        Test::Registry::StripeWebhook::post_connect($t, {%$event})
+            ->status_is(200)->content_is('OK', "$event->{type} is answered");
+        Test::Registry::StripeWebhook::post_connect($t, {%$event})
+            ->status_is(200)->content_is('OK (duplicate)', "its redelivery is a duplicate");
+
+        my $rows = stored($event->{id});
+        is scalar @$rows, 1, "$event->{type} is stored once";
+        is $rows->[0]{account},   $account,    'with the connected account';
+        is $rows->[0]{tenant_id}, $tenant->id, 'with the tenant';
+        is_deeply $rows->[0]{payload}, $event, 'with the payload';
+        is $rows->[0]{processed_at}, undef, 'and left unapplied';
+    }
+
+    is_deeply payment_row(), $before, 'the payment row is unchanged';
+    is_deeply $tdb->query(q{SELECT * FROM users ORDER BY id})->hashes, $users_before,
+        'no customer row is added or changed';
+};
+
 done_testing;
