@@ -17,7 +17,8 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
             * set <key> <value>  - set one
             * unset <key>        - return one to its default
             * bootstrap          - write PLATFORM_STRIPE_ACCOUNT_ID and
-                                   PLATFORM_STRIPE_READY onto the platform tenant
+                                   PLATFORM_STRIPE_READY onto the platform tenant,
+                                   and PLATFORM_ADMIN_EMAIL onto its first admin
 
         END
 
@@ -92,7 +93,7 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
         if ( $cmd eq 'bootstrap' ) {
             my ( $platform, $kept ) = Registry::DAO::Tenant->bootstrap_platform( $dao->db, {
                 map { $_ => $ENV{$_} }
-                    qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY )
+                    qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY PLATFORM_ADMIN_EMAIL )
             } );
 
             # An account an admin recorded since is not a deploy failure:

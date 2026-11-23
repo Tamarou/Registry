@@ -212,12 +212,29 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                  . " deploy the schema first. No tenant was created.\n";
 
         if ( defined( my $email = $config->{PLATFORM_ADMIN_EMAIL} ) ) {
-            $db->query( q{
-                UPDATE registry.user_profiles up SET email = ?
+            my $admin = $db->query( q{
+                SELECT tu.user_id, up.email
                   FROM registry.tenant_users tu
-                 WHERE tu.user_id = up.user_id AND tu.tenant_id = ?
-                   AND tu.is_primary AND tu.role = 'admin'
-            }, $email, $platform->id );
+                  LEFT JOIN registry.user_profiles up ON up.user_id = tu.user_id
+                 WHERE tu.tenant_id = ? AND tu.role = 'admin'
+                 ORDER BY tu.is_primary DESC, tu.created_at, tu.user_id
+                 LIMIT 1
+            }, $platform->id )->hash;
+
+            if ( !$admin ) {
+                my $user = Registry::DAO::User->create( $db, {
+                    username  => $email,
+                    user_type => 'admin',
+                    email     => $email,
+                    name      => 'Platform Admin',
+                } );
+                $platform->add_user( $db, $user, 1, 'admin' );
+            }
+            elsif ( ( $admin->{email} // '' ) ne $email ) {
+                $db->insert( 'registry.user_profiles',
+                    { user_id => $admin->{user_id}, email => $email, name => 'Platform Admin' },
+                    { on_conflict => [ user_id => { email => $email } ] } );
+            }
         }
 
         my $recorded = $platform->stripe_connect_account_id;

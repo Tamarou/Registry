@@ -109,12 +109,16 @@ Set these environment variables in your Render dashboard:
 - `STRIPE_SECRET_KEY` - Your Stripe secret key  
 - `STRIPE_WEBHOOK_SECRET` - Your Stripe webhook endpoint secret
 
-**Required in production (the platform's own Stripe account):**
+**Required in production (the platform's own Stripe account and first admin):**
 - `PLATFORM_STRIPE_ACCOUNT_ID` - Tamarou's Stripe account id (`acct_...`)
 - `PLATFORM_STRIPE_READY` - `true` once Stripe has approved that account, else `false`
+- `PLATFORM_ADMIN_EMAIL` - the address of the platform tenant's first admin,
+  who signs in by magic link to it
 
 `docker-entrypoint.sh` runs `./registry platform bootstrap` after the schema
-deploy, which writes both onto the `registry` tenant. With `MOJO_MODE=production`
+deploy, which writes the Stripe values onto the `registry` tenant and gives the
+`registry` tenant's primary admin the configured email address (creating that
+admin if the platform tenant has no admin-role member). With `MOJO_MODE=production`
 a missing or malformed value stops the boot; elsewhere it is a warning. If the
 `registry` tenant already records a different Stripe account (one an admin set
 since), bootstrap keeps it, changes nothing, and prints a warning naming both.

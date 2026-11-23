@@ -59,6 +59,48 @@ sub platform_primary_admin ($db) {
     })->hash;
 }
 
+sub platform_admin_members ($db) {
+    return $db->query(q{
+        SELECT u.id, tu.is_primary, up.email
+          FROM registry.tenant_users tu
+          JOIN registry.tenants t ON t.id = tu.tenant_id
+          JOIN registry.users u ON u.id = tu.user_id
+          LEFT JOIN registry.user_profiles up ON up.user_id = u.id
+         WHERE t.slug = 'registry' AND tu.role = 'admin'
+    })->hashes->to_array;
+}
+
+sub user_count ($db) {
+    return $db->query('SELECT COUNT(*) FROM registry.users')->array->[0];
+}
+
+# Run $code with the platform tenant's memberships removed, then put the
+# seed's members back and remove any user the code made a member. Not a
+# transaction: User->create begins its own, which cannot nest.
+sub without_platform_members ( $db, $code ) {
+    my $platform_id = Registry::DAO::Tenant->platform($db)->id;
+    my $saved = $db->select( 'registry.tenant_users', '*',
+        { tenant_id => $platform_id } )->hashes->to_array;
+    my %seed = map { $_->{user_id} => 1 } @$saved;
+    my $users_before = $db->select( 'registry.users', 'id' )->arrays->map( sub { $_->[0] } )->to_array;
+    my %existed = map { $_ => 1 } @$users_before;
+
+    $db->delete( 'registry.tenant_users', { tenant_id => $platform_id } );
+    my $ok  = eval { $code->(); 1 };
+    my $err = $@;
+
+    $db->delete( 'registry.tenant_users', { tenant_id => $platform_id } );
+    my @made = grep { !$existed{$_} }
+        $db->select( 'registry.users', 'id' )->arrays->map( sub { $_->[0] } )->@*;
+    for my $id (@made) {
+        $db->delete( 'registry.user_profiles', { user_id => $id } );
+        $db->delete( 'registry.users',         { id      => $id } );
+    }
+    $db->insert( 'registry.tenant_users', $_ ) for @$saved;
+
+    die $err unless $ok;
+}
+
 my $configured = {
     PLATFORM_STRIPE_ACCOUNT_ID => 'acct_test_platform',
     PLATFORM_STRIPE_READY      => 1,
@@ -265,6 +307,60 @@ subtest 'bootstrap gives the platform primary admin the configured email' => sub
         "the primary admin's profile email is the configured address";
     ok Registry::DAO::Tenant->is_platform_admin( $db, $admin->{id} ),
         'and that user is a platform admin';
+};
+
+subtest 'bootstrap run twice with the same admin email changes nothing' => sub {
+    my $db = $dao->db;
+    my $config = { %$configured, PLATFORM_ADMIN_EMAIL => 'alex@tamarou.test' };
+
+    Registry::DAO::Tenant->bootstrap_platform( $db, {%$config} );
+    my $admin_first = platform_primary_admin($db);
+    my $users_first = user_count($db);
+
+    Registry::DAO::Tenant->bootstrap_platform( $db, {%$config} );
+
+    is_deeply platform_primary_admin($db), $admin_first,
+        'the second run did not write to the admin profile';
+    is user_count($db), $users_first, 'and created no user';
+};
+
+subtest 'bootstrap creates one admin when the platform tenant has none' => sub {
+    my $db = $dao->db;
+
+    without_platform_members( $db, sub {
+        my $users_before = user_count($db);
+
+        Registry::DAO::Tenant->bootstrap_platform( $db,
+            { %$configured, PLATFORM_ADMIN_EMAIL => 'first.admin@tamarou.test' } );
+
+        is user_count($db), $users_before + 1, 'exactly one user was created';
+        my $admins = platform_admin_members($db);
+        is scalar @$admins, 1, 'the platform tenant has exactly one admin-role member';
+        ok $admins->[0]{is_primary}, 'who is its primary member';
+        is $admins->[0]{email}, 'first.admin@tamarou.test', 'with the configured address';
+        ok Registry::DAO::Tenant->is_platform_admin( $db, $admins->[0]{id} ),
+            'and is a platform admin';
+    } );
+};
+
+subtest 'the bootstrap command reads the admin email from the environment' => sub {
+    my $db = $dao->db;
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+
+    {
+        local %ENV = (
+            %ENV,
+            PLATFORM_STRIPE_ACCOUNT_ID => 'acct_test_platform',
+            PLATFORM_STRIPE_READY      => 'true',
+            PLATFORM_ADMIN_EMAIL       => 'alex.from.env@tamarou.test',
+        );
+        run_command( $t->app, 'bootstrap' );
+    }
+
+    is platform_primary_admin($db)->{email}, 'alex.from.env@tamarou.test',
+        'the primary admin email came from PLATFORM_ADMIN_EMAIL';
 };
 
 subtest 'the connect action mints no second stripe account' => sub {

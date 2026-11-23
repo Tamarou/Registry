@@ -51,6 +51,11 @@ envVarGroups:
       # SMTP relay when this is present.
       - key: POSTMARK_SERVER_TOKEN
         sync: false
+      # The platform tenant's first admin, who signs in by magic link to this
+      # address. `./registry platform bootstrap` writes it onto that admin's
+      # profile (creating the admin if the platform has none) on every start.
+      - key: PLATFORM_ADMIN_EMAIL
+        sync: false
 
 
 databases:
