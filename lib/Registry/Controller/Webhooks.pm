@@ -545,9 +545,16 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         #
         # payment_method is passed because save() used to carry that column and
         # nothing else writes it.
-        $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} )
-            or $self->app->log->info(
+        #
+        # The fee Stripe reports is recorded only by the delivery that completes
+        # the row, so a redelivery or a later event cannot overwrite it.
+        if ( $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} ) ) {
+            $payment->_record_platform_fee( $db, $intent );
+        }
+        else {
+            $self->app->log->info(
                 "payment $payment_id not completed from status @{[ $payment->status ]}");
+        }
 
         # Non-zero when the capacity gate demoted someone: the caller refunds
         # after the COMMIT. Returns the payment id rather than the amount so the

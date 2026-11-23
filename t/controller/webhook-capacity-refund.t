@@ -1,5 +1,5 @@
 # ABOUTME: The post-COMMIT capacity refund, driven end to end through the real webhook action.
-# ABOUTME: Covers tenant schema routing, ordering after COMMIT, and that a failed refund still answers 2xx.
+# ABOUTME: Delivered to the Connect endpoint. Covers tenant routing by event.account, ordering after COMMIT, and that a failed refund still answers 2xx.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -8,6 +8,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
+use Test::Registry::StripeWebhook;
 use Registry::DAO;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
@@ -15,13 +16,12 @@ use Registry::DAO::Family;
 use Registry::DAO::Payment;
 use Registry::DAO::Enrollment;
 use Registry::Service::Stripe;
-use Digest::SHA qw(hmac_sha256_hex);
-use Mojo::JSON qw(encode_json);
 use Mojo::Pg;
 use Mojo::Promise;
 
 local $ENV{STRIPE_SECRET_KEY}     = 'sk_test_capacity_refund';
 local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_test_capacity_refund';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_capacity_refund_connect';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -100,29 +100,23 @@ $t->app->helper(dao => sub { $dao });
 my $evt = 0;
 sub post_settlement ($payment) {
     $evt++;
-    my $event = {
-        id   => "evt_cr_${$}_$evt",
-        type => 'payment_intent.succeeded',
-        data => { object => {
+    return Test::Registry::StripeWebhook::post_connect($t, {
+        id      => "evt_cr_${$}_$evt",
+        type    => 'payment_intent.succeeded',
+        account => 'acct_cr_test',
+        data    => { object => {
             id       => 'pi_cr_' . $payment->id,
             amount   => 15000,
             metadata => { payment_id => $payment->id, tenant_slug => $slug },
         } },
-    };
-    my $payload   = encode_json($event);
-    my $timestamp = time();
-    my $sig       = hmac_sha256_hex("$timestamp.$payload", $ENV{STRIPE_WEBHOOK_SECRET});
-    return $t->tx( $t->ua->post('/webhooks/stripe' => {
-        'stripe-signature' => "t=$timestamp,v1=$sig",
-        'Content-Type'     => 'application/json',
-    } => $payload) );
+    });
 }
 
 sub tenant_payment ($payment) {
     Registry::DAO::Payment->find($tdb, { id => $payment->id });
 }
 
-subtest 'the refund lands in the tenant schema, not registry' => sub {
+subtest 'capacity refund settles in the account resolved tenant' => sub {
     my $payment = a_doomed_payment();
     my @refunds;
 
