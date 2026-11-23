@@ -41,14 +41,21 @@ jobs:
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
 
-    # No ~/perl5 cache (as in ci.yml): carton installs into ./local, and the
-    # cache, keyed only on "Linux", carried modules built on another runner
-    # image onto PERL5LIB -- on ubuntu-24.04 IO::Socket::SSL would not load
-    # ("IO::Socket::SSL 2.009+ required for TLS support").
+    # No ~/perl5 cache (as in ci.yml): carton installs into ./local, so the
+    # cache saved nothing, and its key named only "Linux". (It was first
+    # blamed for "IO::Socket::SSL 2.009+ required"; the cause was the
+    # OPENSSL_PREFIX mismatch fixed in the install step below.)
     - name: Install Perl dependencies
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
         export PATH="$HOME/perl5/bin:$PATH"
+        # Build Net::SSLeay against the system OpenSSL. actions-setup-perl
+        # exports OPENSSL_PREFIX pointing at its own (3.2+) OpenSSL, while
+        # DBD::Pg's libpq uses the system's (3.0 on 24.04): whichever loads first
+        # owns libssl.so.3 in the process, and a process that touched the
+        # database first then failed "version `OPENSSL_3.2.0' not found" --
+        # Mojo reports that as "IO::Socket::SSL 2.009+ required for TLS support".
+        unset OPENSSL_PREFIX
         carton install --deployment
 
     - name: Install Node dependencies

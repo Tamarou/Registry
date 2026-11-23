@@ -9,24 +9,6 @@ use experimental 'signatures';
 
 use lib qw(lib t/lib);
 
-# Under Playwright in CI, every Perl process Node starts (this seeder and
-# the app server) fails to load IO::Socket::SSL: Mojo then says only
-# "IO::Socket::SSL 2.009+ required for TLS support", because its own eval
-# swallows the reason, and loading the module first hides the failure. A
-# __DIE__ hook runs even inside an eval, so report the first SSL-related
-# death, with its stack, on stderr (execSync reports it). Temporary: it
-# names the cause, then goes.
-BEGIN {
-    require Carp;
-    my $seen;
-    $SIG{__DIE__} = sub {
-        return if $seen || "@_" !~ /SSL|SSLeay/;
-        $seen = 1;
-        print STDERR "FIRST SSL LOAD FAILURE:\n", Carp::longmess("@_"),
-          "\n\@INC: @INC\n";
-    };
-}
-
 use Registry::DAO;
 use Registry::DAO::User;
 use Registry::DAO::Tenant;
