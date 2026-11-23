@@ -12,6 +12,7 @@ use lib qw(lib t/lib);
 use Registry::DAO;
 use Registry::DAO::User;
 use Registry::DAO::MagicLinkToken;
+use Registry::DAO::Tenant;
 use Registry::DAO::Location;
 use Registry::DAO::Project;
 use Registry::DAO::Session;
@@ -35,6 +36,10 @@ my $teacher = Registry::DAO::User->create($db, {
     name      => 'Amara Chen',
     user_type => 'staff',
 });
+
+# The browser signs in on the platform host, where authority is the
+# membership role (ADR 005, ruling 4): make the account a platform member.
+Registry::DAO::Tenant->platform($db)->add_user( $db, $teacher, 0, $teacher->user_type );
 
 my (undef, $teacher_token) = Registry::DAO::MagicLinkToken->generate($db, {
     user_id    => $teacher->id,
