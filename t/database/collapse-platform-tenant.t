@@ -10,6 +10,7 @@ use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
 use Mojo::URL;
+use Capture::Tiny qw( capture_merged );
 
 use constant PLATFORM_UUID => '00000000-0000-0000-0000-000000000000';
 use constant CHANGE        => 'collapse-platform-tenant';
@@ -126,6 +127,36 @@ subtest 'the kept row value is not overwritten by the deleted row value' => sub 
     is $db->query( q{SELECT canonical_domain FROM registry.tenants WHERE id = ?}, PLATFORM_UUID )
           ->hash->{canonical_domain}, 'platform.example',
         "the kept row's canonical domain stands";
+};
+
+subtest 'the deleted row stripe customer and subscription fill the kept row gaps' => sub {
+    my ( $uri, $db ) = fresh_db();
+    my $deleted = registry_id($db);
+    $db->query( q{UPDATE registry.tenants SET stripe_customer_id = 'cus_old', stripe_subscription_id = 'sub_old',
+                  trial_ends_at = '2026-01-01', subscription_started_at = '2025-12-01' WHERE id = ?}, $deleted );
+
+    lives_ok { deploy($uri) } 'the change deploys';
+
+    my $row = $db->query( q{SELECT stripe_customer_id, stripe_subscription_id, trial_ends_at::date AS t,
+                                   subscription_started_at::date AS s
+                              FROM registry.tenants WHERE id = ?}, PLATFORM_UUID )->hash;
+    is $row->{stripe_customer_id},     'cus_old',    'the customer id is carried over';
+    is $row->{stripe_subscription_id}, 'sub_old',    'the subscription id is carried over';
+    is $row->{t},                      '2026-01-01', 'the trial end is carried over';
+    is $row->{s},                      '2025-12-01', 'the subscription start is carried over';
+};
+
+# The deleted row was the one a login on the registry schema read, so its
+# expiry is the one in force. Two different values is a choice for a person.
+subtest 'a differing magic link expiry refuses the deploy' => sub {
+    my ( $uri, $db ) = fresh_db();
+    my $deleted = registry_id($db);
+    $db->query( q{UPDATE registry.tenants SET magic_link_expiry_hours = 4 WHERE id = ?}, $deleted );
+
+    my $err = do { local $@; eval { capture_merged { deploy($uri) }; 1 } ? '' : "$@" };
+    isnt $err, '', 'the deploy refuses';
+    ok $db->query( q{SELECT 1 FROM registry.tenants WHERE id = ?}, $deleted )->hash,
+        'and nothing was collapsed: the deleted row is still there';
 };
 
 subtest 'no tenant_id column still holds the deleted row id' => sub {

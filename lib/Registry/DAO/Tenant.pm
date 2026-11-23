@@ -60,10 +60,15 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     #
     # This is a squatting fix (#443) but it is also a routing one: the first two
     # are hazards today, not merely inconveniences later.
+    #
+    # registry-platform is the platform's retired second row (collapse-platform-
+    # tenant). Held in both spellings, since provision turns the hyphen into an
+    # underscore, so nothing that still remembers the name can find a studio.
     my %RESERVED_SLUGS = map { $_ => 1 } qw(
         www registry public admin api app assets billing blog cdn dashboard dev
         docs ftp help imap mail mx ns ns1 ns2 platform pop pop3 smtp staging
         static status support test webmail
+        registry-platform registry_platform
     );
 
     sub slug_is_reserved ( $class, $slug ) {

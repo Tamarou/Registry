@@ -50,6 +50,25 @@ subtest 'the names the platform needs for itself are reserved' => sub {
         'and the Postgres system schemas';
 };
 
+# collapse-platform-tenant retired the platform's second row and its slug. A
+# studio holding it would read as the old platform row to anything that still
+# remembers the name, so it stays the platform's. provision normalises the
+# hyphen to an underscore, so both spellings are held.
+subtest 'the retired platform slug is reserved' => sub {
+    ok Registry::DAO::Tenant->slug_is_reserved($_), "$_ is reserved"
+        for qw( registry-platform registry_platform );
+
+    my $err = do {
+        local $@;
+        eval { Registry::DAO::Tenant->provision( $db, {
+            name => 'Retired Probe', slug => 'registry-platform', users => [] } ); 1 };
+        $@;
+    };
+    like $err, qr/reserved/i, 'provisioning it dies naming the reason';
+    ok !$db->query( q{SELECT 1 FROM registry.tenants WHERE slug IN ('registry-platform', 'registry_platform')} )->hash,
+        'and no tenant row was created';
+};
+
 subtest 'an ordinary studio name is not reserved' => sub {
     ok !Registry::DAO::Tenant->slug_is_reserved('clay_kiln_studio'),
         'a real one is free';

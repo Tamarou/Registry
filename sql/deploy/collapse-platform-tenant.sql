@@ -32,6 +32,21 @@ BEGIN
     SELECT * INTO old FROM registry.tenants WHERE slug = 'registry' AND id <> kept;
 
     IF FOUND THEN
+        -- The magic-link expiry a login on the registry schema obeyed was the
+        -- deleted row's, not the kept row's, and the two are a policy rather than
+        -- a gap to fill: if they differ, a person chooses which stands.
+        IF old.magic_link_expiry_hours IS DISTINCT FROM
+           (SELECT magic_link_expiry_hours FROM registry.tenants WHERE id = kept) THEN
+            RAISE EXCEPTION 'collapse-platform-tenant: the registry row''s magic_link_expiry_hours (%) differs from the platform row''s (%); set them equal, to the one that should stand, and deploy again',
+                old.magic_link_expiry_hours,
+                (SELECT magic_link_expiry_hours FROM registry.tenants WHERE id = kept);
+        END IF;
+
+        -- Deliberately not carried: name and billing_status. The kept row's are
+        -- the platform's own ('Registry Platform', 'active'); the deleted row's
+        -- are what the seed gave the schema owner ('Registry System', 'trial').
+        -- The platform bills nobody for itself, and its name is an admin edit.
+
         -- Memberships.  The key is (tenant_id, user_id), so a user who belongs to
         -- both rows keeps the kept row's membership, made primary if either was.
         UPDATE registry.tenant_users k
@@ -118,6 +133,10 @@ BEGIN
        SET slug                      = 'registry',
            canonical_domain          = COALESCE(k.canonical_domain, old.canonical_domain),
            created_from_ip           = COALESCE(k.created_from_ip,  old.created_from_ip),
+           stripe_customer_id        = COALESCE(k.stripe_customer_id,      old.stripe_customer_id),
+           stripe_subscription_id    = COALESCE(k.stripe_subscription_id,  old.stripe_subscription_id),
+           trial_ends_at             = COALESCE(k.trial_ends_at,           old.trial_ends_at),
+           subscription_started_at   = COALESCE(k.subscription_started_at, old.subscription_started_at),
            stripe_connect_account_id = COALESCE(k.stripe_connect_account_id, old.stripe_connect_account_id),
            stripe_charges_enabled    = CASE WHEN k.stripe_connect_account_id IS NULL
                                              AND old.stripe_connect_account_id IS NOT NULL
