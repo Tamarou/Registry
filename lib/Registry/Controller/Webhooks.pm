@@ -114,6 +114,39 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return $claimed;
     }
 
+    # The Stripe moves applied to entitlements later: refunds, disputes and
+    # customer changes made on a tenant's own account. The one list of them.
+    use constant STRIPE_MOVES => qr/\A(?:charge\.refunded|charge\.refund\.updated
+        |refund\.[\w.]+|charge\.dispute\.[\w.]+|customer\.[\w.]+)\z/x;
+
+    # Claim a Stripe move and store it with its account, tenant and payload,
+    # left unprocessed. Nothing it names is changed here. A failure to store
+    # rolls the claim back and answers 500, so Stripe's redelivery is not
+    # mistaken for a duplicate.
+    method _store_stripe_move ($db, $event, $tenant) {
+        my $tx = $db->begin;
+        return unless $self->_claim_event( $db, $event );
+
+        try {
+            $db->query(
+                q{UPDATE registry.webhook_events
+                     SET account = ?, tenant_id = ?, payload = ?::jsonb
+                   WHERE stripe_event_id = ?},
+                $event->{account}, $tenant->{id}, { json => $event }, $event->{id}
+            );
+            $tx->commit;
+            $self->app->log->info( "Connect webhook event $event->{id} ($event->{type}) "
+                  . "for tenant $tenant->{slug} stored, not yet applied" );
+        }
+        catch ($e) {
+            $self->app->log->error("Storing Connect webhook event $event->{id} failed: $e");
+            $self->render( status => 500, text => 'Webhook processing failed' );
+            return;
+        }
+
+        $self->render( status => 200, text => 'OK' );
+    }
+
     # Events that happened on a connected account. Stripe names that account
     # in the top-level `account`, and that -- not our own metadata -- is what
     # finds the tenant.
@@ -126,7 +159,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # An exact, bound match: an id that only resembles a tenant's names none.
         my $tenant = defined $account && !ref $account
-            ? $db->select( 'registry.tenants', ['slug'],
+            ? $db->select( 'registry.tenants', [ 'id', 'slug' ],
                 { stripe_connect_account_id => $account } )->hash
             : undef;
 
@@ -140,6 +173,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
         my $slug = $tenant->{slug};
+
+        return $self->_store_stripe_move( $db, $event, $tenant )
+            if ( $event->{type} // '' ) =~ STRIPE_MOVES;
 
         # A sale's completion settles through the same code as the platform
         # endpoint, in the schema the account names.

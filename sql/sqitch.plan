@@ -94,3 +94,4 @@ platform-tenant-unlinks-solo [tenant-users-role] 2026-11-23T20:00:00Z Chris Prat
 operator-right [platform-tenant-unlinks-solo] 2026-11-23T22:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform tenant holds the operator right as seeded data
 waitlist-offer-notification-types [operator-right] 2026-11-23T23:00:00Z Chris Prather <chris.prather@tamarou.com> # A parent who opted in hears about a waitlist offer and its expiry
 tenant-stripe-account-unique [waitlist-offer-notification-types] 2026-11-24T00:00:00Z Chris Prather <chris.prather@tamarou.com> # A Stripe account id belongs to one tenant at most
+webhook-events-connect-payload [tenant-stripe-account-unique] 2026-11-24T01:00:00Z Chris Prather <chris.prather@tamarou.com> # Store refund, dispute and customer events from the Connect endpoint for later

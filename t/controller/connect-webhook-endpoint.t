@@ -55,8 +55,8 @@ sub claims ($event_id) {
 
 subtest 'a connect event for a known account is claimed once' => sub {
     @logs = ();
-    my $event = { id => "evt_conn_known_$$", type => 'customer.created', account => $account,
-                  data => { object => { id => 'cus_conn' } } };
+    my $event = { id => "evt_conn_known_$$", type => 'product.created', account => $account,
+                  data => { object => { id => 'prod_conn' } } };
 
     Test::Registry::StripeWebhook::post_connect($t, {%$event})
         ->status_is(200)->content_is('OK');
