@@ -345,27 +345,6 @@ field $_stripe_client = undef;
         return $fee ? ( application_fee_amount => $fee ) : ();
     }
 
-    # Connect refunds: for a destination charge the tenant received the tuition, so
-    # the transfer must be reversed; whether the platform also returns its
-    # application fee is governed by the tenant's plan. Registry/platform payments
-    # (no tenant_slug, or tenant_slug eq 'registry') are unchanged -- neither
-    # parameter is sent and Stripe defaults apply.
-    #
-    # Stripe's form-encoded API (Stripe.pm posts `form => $data`) requires string
-    # booleans ('true'/'false'). Sending numeric 1/0 yields an "Invalid boolean"
-    # API error on every refund, so these values must always be strings.
-    method _refund_connect_params ($db) {
-        my $slug = ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef;
-        return () unless $slug && $slug ne 'registry';
-        $db = $db->db if $db isa Registry::DAO;
-        my $refund_fee =
-            Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db, $slug);
-        return (
-            reverse_transfer       => 'true',
-            refund_application_fee => $refund_fee ? 'true' : 'false',
-        );
-    }
-
     sub create ($class, $db, $data) {
         my $raw_db = ($db isa Registry::DAO) ? $db->db : $db;
 
@@ -2169,7 +2148,6 @@ SQL
             payment_intent => $stripe_payment_intent_id,
             amount         => $refund_cents,
             reason         => $reason,
-            $self->_refund_connect_params($db),
             $args->{idempotency_key}
                 ? ( _idempotency_key => $args->{idempotency_key} ) : (),
         })->then(sub ($refund) {
