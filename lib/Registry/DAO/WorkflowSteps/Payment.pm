@@ -97,6 +97,7 @@ method prepare_template_data ($db, $run, $params = {}) {
         step_data => {
             %$step_data,
             %$retry_state,
+            stripe_account => $self->_intent_account($db, $run),
         },
     };
 }
@@ -107,7 +108,24 @@ method prepare_template_data ($db, $run, $params = {}) {
 # the floor, card form included. Same shape prepare_template_data returns, so
 # both entry points (POST render and flash-redirect GET) agree.
 method _render_data ($db, $run, %extra) {
-    return { step_data => { %{ $self->prepare_payment_data($db, $run) }, %extra } };
+    return { step_data => {
+        %{ $self->prepare_payment_data($db, $run) }, %extra,
+        stripe_account => $self->_intent_account($db, $run),
+    } };
+}
+
+# The Stripe account this run's payment intent was created on, for the browser:
+# a direct charge's client_secret confirms only in Stripe.js initialised with
+# it. Read from the run's own payment row's account-bound client, never from
+# the request or the retry state, and set last so neither can override it.
+# undef when there is no such payment, or it has no account (stripe_client
+# dies), in which case there is no intent for the browser to confirm either.
+method _intent_account ($db, $run) {
+    my $payment_id = $self->_run_payment_id($run) // return undef;
+    return undef unless $payment_id =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
+    my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
+    return undef unless __PACKAGE__->_reusable_payment_row($payment, $run->id);
+    return eval { $payment->stripe_client->stripe_account };
 }
 
 # The run's payment_id is bound straight into a WHERE clause, so it must be a

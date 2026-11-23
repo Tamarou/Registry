@@ -182,7 +182,8 @@
         <script src="https://js.stripe.com/v3/"></script>
         <script>
             // Initialize Stripe
-            const stripe = Stripe('<%= $step_data->{stripe_publishable_key} %>');
+            // A direct charge's intent confirms only on the account it was created on.
+            const stripe = Stripe('<%= $step_data->{stripe_publishable_key} %>'<% if (my $account = $step_data->{stripe_account}) { %>, { stripeAccount: '<%= $account %>' }<% } %>);
             const clientSecret = '<%= $step_data->{client_secret} %>';
             
             // Create payment element
