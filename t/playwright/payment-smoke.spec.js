@@ -94,6 +94,22 @@ test.describe('Payment happy path', () => {
       //    pre-seeded workflow run already at the session-selection step so
       //    next_step() returns payment).
       // -----------------------------------------------------------------------
+      // What the browser saw, for the step-6 failure message: the card form
+      // has failed to mount in CI with no other sign, and a Content-Security-
+      // Policy refusal or a Stripe.js error shows only in the browser.
+      // Redacted: Stripe's request URLs carry the PaymentIntent client_secret.
+      const redact = (s) => String(s)
+        .replace(/(client_secret|payment_intent_client_secret)=[^&\s"']+/g, '$1=[redacted]')
+        .replace(/\b(pi_[A-Za-z0-9]+)_secret_[A-Za-z0-9]+/g, '$1_secret_[redacted]')
+        .replace(/\b(pk|sk|rk)_(test|live)_[A-Za-z0-9]+/g, '$1_$2_[redacted]');
+      const browserLog = [];
+      registryPage.on('console', (m) => {
+        if (['error', 'warning'].includes(m.type())) browserLog.push(`console.${m.type()}: ${redact(m.text())}`);
+      });
+      registryPage.on('pageerror', (e) => browserLog.push(`pageerror: ${redact(e.message)}`));
+      registryPage.on('requestfailed', (r) =>
+        browserLog.push(`requestfailed: ${redact(r.url())} (${r.failure() && r.failure().errorText})`));
+
       const data = seedPaymentData(testDB);
       const { tenant_slug, run_id, session_id, child_id, parent } = data;
       seededConnectAccount = data.connect_account;
@@ -149,7 +165,30 @@ test.describe('Payment happy path', () => {
       // 6. Wait for the Stripe Payment Element iframe to mount inside #payment-element.
       //    Stripe.js loads asynchronously; allow up to 30 s.
       // -----------------------------------------------------------------------
-      await registryPage.waitForSelector('#payment-element iframe', { timeout: 30000 });
+      try {
+        await registryPage.waitForSelector('#payment-element iframe', { timeout: 30000 });
+      } catch (err) {
+        const page = await registryPage.evaluate(() => ({
+          stripeLoaded: typeof window.Stripe,
+          paymentElement: (document.querySelector('#payment-element') || {}).outerHTML || '(no #payment-element)',
+          url: location.pathname,
+          // The step answers a refusal or a failed intent with an error and
+          // no card form; the page's own words say which.
+          text: (document.querySelector('main') || document.body).innerText.replace(/\s+/g, ' ').trim(),
+        }));
+        const csp = await registryPage.evaluate(async () =>
+          (await fetch(location.href, { method: 'HEAD' })).headers.get('content-security-policy'));
+        console.log([
+          'Payment Element did not mount. What the browser saw:',
+          `  typeof window.Stripe: ${page.stripeLoaded}`,
+          `  #payment-element: ${redact(page.paymentElement).slice(0, 500)}`,
+          `  Content-Security-Policy: ${csp}`,
+          `  page: ${page.url}`,
+          `  page text: ${redact(page.text).slice(0, 1200)}`,
+          ...(browserLog.length ? browserLog.map((l) => `  ${l}`) : ['  (no console errors, page errors or failed requests)']),
+        ].join('\n'));
+        throw err;
+      }
 
       // -----------------------------------------------------------------------
       // 7. Fill the Stripe test card (4242... instant approval, no 3DS) inside

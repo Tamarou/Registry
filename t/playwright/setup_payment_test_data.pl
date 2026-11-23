@@ -9,17 +9,6 @@ use experimental 'signatures';
 
 use lib qw(lib t/lib);
 
-# Under Playwright in CI, IO::Socket::SSL failed to load when something else
-# loaded it first (Mojo then reported only "IO::Socket::SSL 2.009+ required for
-# TLS support"); loaded here, before anything else, it loads and seeding
-# works. Why the later load fails is not known -- it loads fine locally in the
-# same order -- and is its own issue. Keep this first; if the load ever fails
-# here, its reason goes to stderr, which execSync reports.
-BEGIN {
-    eval { require IO::Socket::SSL; 1 }
-      or print STDERR "IO::Socket::SSL failed to load under $^X: $@";
-}
-
 use Registry::DAO;
 use Registry::DAO::User;
 use Registry::DAO::Tenant;
