@@ -11,6 +11,7 @@ use Test::More import => [qw( done_testing is ok like is_deeply subtest note )];
 defer { done_testing };
 
 use Registry::DAO::Payment;
+use Registry::PriceOps::RevenueShare;
 
 sub phases_for ( @amounts ) {
     my $parts = [ map { { amount_cents => $_, due_date => '2026-06-01' } } @amounts ];
@@ -114,5 +115,84 @@ subtest 'a tenant with no revenue share still gets its money' => sub {
         'and no application fee key at all, rather than a zero Stripe may reject';
 };
 
-# No database anywhere in this file: every one of these is a pure translation,
-# which is the point of it being a function rather than a method on a row.
+# Everything above is a pure translation. Below, the real scheduling path
+# against a real database, with only the Stripe HTTP calls replaced: they are
+# recorded with the account the client was bound to, which is the subject.
+
+use Test::Registry::DB;
+use Test::Registry::Fixtures;
+
+my $t_db = Test::Registry::DB->new;
+my $dao  = $t_db->db;
+my $db   = $dao->db;
+
+my $seller = Test::Registry::Fixtures::platform_seller($db);
+my $plan_id = $db->query(q{
+    SELECT id FROM registry.pricing_plans
+     WHERE plan_scope = 'tenant' AND pricing_model_type = 'percentage'
+       AND metadata->>'default' IS DISTINCT FROM 'true'
+     ORDER BY created_at LIMIT 1
+})->hash->{id};
+$db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
+    $plan_id, $seller );
+my $plan_pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+    $db, $seller ) * 100;
+
+my $parent = $dao->create( User => { username => 'schedule_parent', user_type => 'parent' } );
+
+# Instalment one, paid, as checkout leaves it.
+sub first_instalment () {
+    return Registry::DAO::Payment->create( $db, {
+        user_id                  => $parent->id,
+        amount_cents             => 3333,
+        status                   => 'completed',
+        instalment_seq           => 1,
+        instalment_count         => 3,
+        stripe_payment_intent_id => 'pi_first',
+        metadata => {
+            tenant_slug     => $seller,
+            instalment_plan => [
+                { amount_cents => 3333, due_date => '2026-06-01' },
+                { amount_cents => 3333, due_date => '2026-07-01' },
+                { amount_cents => 3334, due_date => '2026-08-01' },
+            ],
+        },
+    } );
+}
+
+# Runs $code with the three Stripe calls recorded rather than sent.
+sub with_stripe_calls ( $code ) {
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
+        push @calls, [ retrieve_payment_intent => $s->stripe_account, $pi ];
+        return { id => $pi, customer => 'cus_one', payment_method => 'pm_one' };
+    };
+    local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
+        push @calls, [ create_product => $s->stripe_account, $p ];
+        return { id => 'prod_one' };
+    };
+    local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
+        push @calls, [ create_subscription_schedule => $s->stripe_account, $p ];
+        return { id => 'sub_sched_' . scalar @calls };
+    };
+    $code->();
+    return \@calls;
+}
+
+subtest 'schedule is made on the tenant account with fee percent and no transfer' => sub {
+    my $payment = first_instalment();
+    my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
+
+    is_deeply [ map { $_->[0] } @$calls ],
+        [qw( retrieve_payment_intent create_product create_subscription_schedule )],
+        'the intent, the product and the schedule';
+    is_deeply [ map { $_->[1] } @$calls ], [ ('acct_platform_test') x 3 ],
+        'all on the seller account, where the customer and card live';
+
+    my $params = $calls->[2][2];
+    ok $plan_pct > 0, 'the seller is on a revenue-share plan';
+    is $params->{'default_settings[application_fee_percent]'}, $plan_pct,
+        'our share is the application fee percent';
+    ok !( grep { /transfer_data/ } keys %$params ), 'and nothing is transferred';
+};

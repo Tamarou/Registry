@@ -197,17 +197,13 @@ field $_stripe_client = undef;
         my $slug = $meta->{tenant_slug}
             or die "cannot schedule instalments without a tenant slug\n";
 
-        # Where the money goes, and what our share of it is -- read at scheduling
-        # time from the tenant's linked plan, the same authority the one-off
-        # charge path reads in _connect_params.
-        my $acct = $raw->query(
-            'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
-            $slug )->hash->{stripe_connect_account_id}
-            or die "tenant '$slug' has no Connect account to pay instalments into\n";
-
+        # Our share -- read at scheduling time from the tenant's linked plan, the
+        # same authority the one-off charge path reads in _connect_params.
         my $pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
             $raw, $slug ) * 100;
 
+        # Bound to the account instalment one was charged on, where its customer
+        # and card live; dies, before any Stripe call, when there is none.
         my $client = $self->stripe_client;
 
         # The customer the first charge was made against, and the card it saved.
