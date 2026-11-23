@@ -171,6 +171,10 @@ test.describe('Payment happy path', () => {
         const page = await registryPage.evaluate(() => ({
           stripeLoaded: typeof window.Stripe,
           paymentElement: (document.querySelector('#payment-element') || {}).outerHTML || '(no #payment-element)',
+          url: location.pathname,
+          // The step answers a refusal or a failed intent with an error and
+          // no card form; the page's own words say which.
+          text: (document.querySelector('main') || document.body).innerText.replace(/\s+/g, ' ').trim(),
         }));
         const csp = await registryPage.evaluate(async () =>
           (await fetch(location.href, { method: 'HEAD' })).headers.get('content-security-policy'));
@@ -179,6 +183,8 @@ test.describe('Payment happy path', () => {
           `  typeof window.Stripe: ${page.stripeLoaded}`,
           `  #payment-element: ${redact(page.paymentElement).slice(0, 500)}`,
           `  Content-Security-Policy: ${csp}`,
+          `  page: ${page.url}`,
+          `  page text: ${redact(page.text).slice(0, 1200)}`,
           ...(browserLog.length ? browserLog.map((l) => `  ${l}`) : ['  (no console errors, page errors or failed requests)']),
         ].join('\n'));
         throw err;
