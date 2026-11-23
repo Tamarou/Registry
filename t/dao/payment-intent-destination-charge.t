@@ -194,8 +194,8 @@ subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => 
         'transfer_data[destination] still set for NULL-plan tenant';
     is $captured->{'on_behalf_of'}, 'acct_free123',
         'on_behalf_of still set for NULL-plan tenant';
-    is $captured->{'application_fee_amount'}, 0,
-        'application_fee_amount is 0 (Free plan) for NULL-plan tenant';
+    ok !exists $captured->{'application_fee_amount'},
+        'no application_fee_amount (Free plan, 0 fee) for NULL-plan tenant';
 };
 
 # ---- (b) platform payment (no tenant_slug): no connect params ------------------

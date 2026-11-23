@@ -352,11 +352,13 @@ field $_stripe_client = undef;
         # (Free 0% when the tenant has no plan link). $db is already a Mojo::Pg
         # handle here (coerced at the top of this sub).
         my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant($db, $slug);
+        my $fee      = application_fee_cents($amount_cents, $fraction);
 
+        # Stripe's rule: a zero application fee is omitted, never sent as 0.
         return (
             'transfer_data[destination]' => $acct,
             on_behalf_of                 => $acct,
-            application_fee_amount       => application_fee_cents($amount_cents, $fraction),
+            ( $fee ? ( application_fee_amount => $fee ) : () ),
         );
     }
 
