@@ -272,6 +272,45 @@ subtest 'a refund already processed is not refunded again' => sub {
     is refunded_cents_of($payment), 5000, 'the money went back exactly once';
 };
 
+# Stripe paid and the payment recorded it, but the step died before writing
+# 'processed' (ProcessDropRefund's enrollment->update). The payment now reads
+# partially_refunded, so refund_async's guards refuse the retry with
+# REFUND_NOT_SENT and the drop would stay pending for good.
+subtest 'a drop refund retried after a partial failure reaches processed without a second refund' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ( $self, $params ) {
+        push @calls, $params;
+        # Stripe replays the refund it already made for a key it has seen.
+        return Mojo::Promise->resolve( {
+            id => "rf_$params->{_idempotency_key}", amount => $params->{amount},
+            status => 'succeeded' } );
+    };
+
+    # The first attempt, up to the point where the step failed: the money moved
+    # and the payment recorded it, the enrollment did not.
+    settle( $payment->refund_async( $db, {
+        amount_cents    => 5000,
+        reason          => 'requested_by_customer',
+        idempotency_key => $payment->drop_refund_key( $dropped->id ),
+    } ) );
+    is refunded_cents_of($payment), 5000, 'the dropped seat is back with the parent';
+    is refund_status_of($dropped), 'pending', 'but the enrollment never heard';
+
+    my $retry = run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is $retry->{refund_processed}, 1, 'the retry finishes' or diag explain $retry;
+    is refund_status_of($dropped), 'processed', 'and the enrollment says processed';
+    is scalar @calls, 1, 'without a second refund at Stripe';
+    is refunded_cents_of($payment), 5000, 'and the money is counted once';
+};
+
 subtest 'the refund settles inside a running IOLoop' => sub {
     # The workflow runs in a web request, so the step has to defer rather than
     # block. See #284: a blocking Stripe call there can never settle.

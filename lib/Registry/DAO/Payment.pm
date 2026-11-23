@@ -1796,7 +1796,7 @@ SQL
     # settle_refund_increment owns both: it subtracts exactly the increment it
     # settles, adds exactly that to refunded_cents, and moves the status only
     # when nothing is left owed.
-    method _apply_refund_result ($db, $refund, $refund_cents, $reason, $is_increment = 0) {
+    method _apply_refund_result ($db, $refund, $refund_cents, $reason, $is_increment = 0, $key = undef) {
         $db = $db->db if $db isa Registry::DAO;
 
         # A pending refund has not moved money yet and may fail, so it moves
@@ -1824,9 +1824,18 @@ SQL
         # it out of the runbook's queue AND out of _refundable_status, so the
         # outstanding increments can never be paid -- the money is stranded with
         # no operator able to find it.
+        #
+        # A counted refund is remembered by its Stripe id (with the key it went
+        # out under), and the whole write is skipped for an id already there: a
+        # retry under the same Idempotency-Key gets the same refund back, and
+        # adding it again told the ledger more went back than the bank sent.
         $db->query( <<'SQL', encode_json({
             UPDATE payments
-               SET metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb,
+               SET metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb
+                   || CASE WHEN ?::boolean THEN '{}'::jsonb
+                      ELSE jsonb_build_object('recorded_refunds',
+                          COALESCE(metadata->'recorded_refunds', '{}'::jsonb)
+                          || jsonb_build_object(?::text, ?::text)) END,
                    status = CASE
                        WHEN ?::boolean THEN status
                        -- A debt recorded between refund_async's check and this
@@ -1847,12 +1856,14 @@ SQL
                        WHEN refund_owed_cents > 0 THEN refunded_cents
                        ELSE LEAST(amount_cents, refunded_cents + ?::integer) END
              WHERE id = ?
+               AND metadata->'recorded_refunds'->?::text IS NULL
 SQL
             refund_id           => $refund->{id},
             refund_amount_cents => $refund_cents,
             refund_reason       => $reason,
             refund_status       => $refund->{status},
-        }), $hold, $refund_cents, $hold, $refund_cents, $id );
+        }), $hold, $refund->{id}, $key, $hold, $refund_cents, $hold, $refund_cents,
+            $id, $refund->{id} );
 
         # Refresh the in-memory status for the direct path. refund_async gates
         # on this field, and leaving it stale let a second full refund through
@@ -2138,6 +2149,17 @@ SQL
         # silent warn and no refund.
         $db = $db->db if $db isa Registry::DAO;
 
+        # A retry (a drop whose step died after Stripe paid) of a refund already
+        # recorded under this key gets that refund back. The guards below would
+        # refuse it, because the payment already reflects it.
+        if ( my $key = $args->{idempotency_key} ) {
+            my $done = $db->query( q{
+                SELECT r.key AS id, 'succeeded' AS status
+                  FROM payments, jsonb_each_text(metadata->'recorded_refunds') r
+                 WHERE payments.id = ? AND r.value = ?}, $id, $key )->hash;
+            return Mojo::Promise->resolve($done) if $done;
+        }
+
         # Marked, because what an operator needs to know first is whether any
         # money can have moved, and for these it certainly cannot: the request
         # is never dispatched. Classifying on a marker rather than on wording --
@@ -2155,6 +2177,10 @@ SQL
         # With no amount, return what is left, not the whole charge again (005 8a).
         my $refund_cents = $args->{amount_cents} // $amount_cents - $refunded;
         my $reason = $args->{reason} // 'requested_by_customer';
+
+        # Stripe refuses these too, after the request, where it reads as unknown.
+        die REFUND_NOT_SENT . ": Refund of $refund_cents cents on payment $id is not positive\n"
+            unless $refund_cents > 0;
 
         # Stripe would refuse it too, but only after the request went out.
         die REFUND_NOT_SENT . ": Refund of $refund_cents cents would take payment $id "
@@ -2199,7 +2225,7 @@ SQL
             # increment, so refunded_cents never moved and the ledger denied a
             # refund the bank had made.
             $self->_apply_refund_result( $db, $refund, $refund_cents, $reason,
-                $args->{increment} ? 1 : 0 );
+                $args->{increment} ? 1 : 0, $args->{idempotency_key} );
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";

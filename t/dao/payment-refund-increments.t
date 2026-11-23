@@ -436,4 +436,41 @@ subtest 'refund past captured amount is refused before stripe' => sub {
     is $calls[0]{amount}, 7000, 'a refund with no amount returns only what is left';
 };
 
+# A retry under the same Idempotency-Key gets the same refund back from Stripe.
+# Counting it again tells the ledger more went back than the bank sent.
+subtest 'the same stripe refund recorded twice is counted once' => sub {
+    my $p = a_payment(10000);
+
+    $p->_apply_refund_result( $db, { id => 're_replayed', status => 'succeeded' },
+        4000, 'requested_by_customer', 0 );
+    $p->_apply_refund_result( $db, { id => 're_replayed', status => 'succeeded' },
+        4000, 'requested_by_customer', 0 );
+
+    my $r = row_of($p);
+    is $r->{refunded_cents}, 4000, 'refunded_cents moved once';
+    is $r->{status}, 'partially_refunded', 'and the status follows the one refund';
+};
+
+subtest 'a refund of zero or less is refused before stripe' => sub {
+    my $seller = Test::Registry::Fixtures::platform_seller($db);
+    my $p = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'completed',
+        stripe_payment_intent_id => 'pi_non_positive',
+        metadata => { enrollment_items => [], tenant_slug => $seller } });
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ($s, $params) {
+        push @calls, $params;
+        Mojo::Promise->resolve({ id => 're_non_positive', status => 'succeeded' });
+    };
+
+    for my $cents ( 0, -500 ) {
+        my $err = do { local $@; eval { $p->refund_async( $db, { amount_cents => $cents } ) }; $@ };
+        is( Registry::DAO::Payment->classify_refund_failure($err), 'not_sent',
+            "$cents cents is refused as not sent" ) or diag $err;
+    }
+    is scalar @calls, 0, 'Stripe was never called';
+};
+
 done_testing;
