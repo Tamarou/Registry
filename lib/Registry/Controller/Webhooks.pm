@@ -342,6 +342,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $payment = Registry::DAO::Payment->find($db, { id => $payment_id })
             or return undef;
 
+        # Only the intent Registry created settled anything above.
+        return undef unless ( $payment->stripe_payment_intent_id // '' )
+            eq ( $event->{data}{object}{id} // "\0" );
         return undef unless $payment->is_instalment;
         return undef unless $payment->instalment_seq == 1;
         return undef if $payment->stripe_schedule_id;    # already scheduled

@@ -126,6 +126,18 @@ subtest 'a row with no stored intent settles nothing and warns' => sub {
         'logged at warn';
 };
 
+subtest 'a seller-made intent on instalment one queues no schedule' => sub {
+    my $sale = a_sale( stripe_payment_intent_id => 'pi_registry_instalment',
+                       instalment_seq => 1, instalment_count => 3 );
+    my $jobs_before = $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total;
+
+    my ( $tx ) = post_intent( 'pi_seller_instalment', $sale );
+    $tx->status_is(200);
+
+    is $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total, $jobs_before,
+        'no schedule job is enqueued for a payment that did not settle';
+};
+
 subtest 'the intent Registry created still settles' => sub {
     my $sale = a_sale( stripe_payment_intent_id => 'pi_registry_genuine' );
 
