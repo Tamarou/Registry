@@ -11,6 +11,8 @@ use Test::Registry::DB;
 use Test::Registry::Helpers qw( authenticate_as );
 use Registry::DAO::Tenant;
 use Registry::DAO::PlatformSetting;
+use Registry::Command::platform;
+use Test::Registry::PlatformCliAudit;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -94,6 +96,52 @@ subtest 'a platform admin unsets a setting from the screen' => sub {
     $t->get_ok('/platform/settings');
     is row_text( $t, 'inert_tenant_days', 'value' ), '(not set)',
         'and the screen shows (not set)';
+};
+
+# The audit, decided in the issue that added the screen: each subcommand gets
+# an equivalent admin route, or is the deploy-time bootstrap -- the one thing
+# that runs before any admin exists, from deployment configuration alone.
+my %screen_for = (
+    settings => 'platform_settings',
+    set      => 'platform_settings_update',
+    unset    => 'platform_settings_update',
+);
+my @deploy_only = ('bootstrap');
+
+subtest 'every registry platform subcommand has an admin screen or is the deploy-time bootstrap' => sub {
+    my $usage = Registry::Command::platform->new->usage;
+    my @subcommands = $usage =~ /^\s*\*\s+(\S+)/mg;
+    ok scalar @subcommands, 'the usage text lists subcommands to audit';
+
+    is_deeply [ Test::Registry::PlatformCliAudit::unmapped( $usage, \%screen_for, \@deploy_only ) ],
+        [], 'no subcommand is left without a screen';
+
+    # A map naming a route that does not exist would pass the audit and point
+    # at nothing.
+    my $t = signed_in_as(undef);
+    for my $route ( sort values %screen_for ) {
+        ok $t->app->routes->lookup($route), "the $route route exists";
+    }
+};
+
+subtest 'a subcommand with no admin screen fails the audit' => sub {
+    my $usage = <<~'END';
+        usage: registry platform <command> [<args>]
+
+          commands:
+            * settings           - list every platform setting and its value
+            * set <key> <value>  - set one
+            * unset <key>        - return one to its default
+            * purge <key>        - delete one outright
+            * bootstrap          - write deployment configuration
+        END
+
+    is_deeply [ Test::Registry::PlatformCliAudit::unmapped( $usage, \%screen_for, \@deploy_only ) ],
+        ['purge'], 'the subcommand with no screen is reported by name';
+
+    is_deeply [ Test::Registry::PlatformCliAudit::unmapped( $usage, \%screen_for, [] ) ],
+        [ 'purge', 'bootstrap' ],
+        'and bootstrap is reported too once it is not deploy-only';
 };
 
 done_testing;
