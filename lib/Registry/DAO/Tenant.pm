@@ -211,6 +211,15 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             or die "There is no platform tenant (slug 'registry') to bootstrap;"
                  . " deploy the schema first. No tenant was created.\n";
 
+        if ( defined( my $email = $config->{PLATFORM_ADMIN_EMAIL} ) ) {
+            $db->query( q{
+                UPDATE registry.user_profiles up SET email = ?
+                  FROM registry.tenant_users tu
+                 WHERE tu.user_id = up.user_id AND tu.tenant_id = ?
+                   AND tu.is_primary AND tu.role = 'admin'
+            }, $email, $platform->id );
+        }
+
         my $recorded = $platform->stripe_connect_account_id;
         if ( defined $recorded && $recorded ne $account ) {
             return wantarray

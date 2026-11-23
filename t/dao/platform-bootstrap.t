@@ -46,6 +46,19 @@ sub run_command ( $app, @args ) {
     return $out // '';
 }
 
+# The platform tenant's primary member, if that member is admin-role, with the
+# profile email that magic links go to.
+sub platform_primary_admin ($db) {
+    return $db->query(q{
+        SELECT u.id, u.username, up.email, up.xmin::text AS profile_version
+          FROM registry.tenant_users tu
+          JOIN registry.tenants t ON t.id = tu.tenant_id
+          JOIN registry.users u ON u.id = tu.user_id
+          LEFT JOIN registry.user_profiles up ON up.user_id = u.id
+         WHERE t.slug = 'registry' AND tu.is_primary AND tu.role = 'admin'
+    })->hash;
+}
+
 my $configured = {
     PLATFORM_STRIPE_ACCOUNT_ID => 'acct_test_platform',
     PLATFORM_STRIPE_READY      => 1,
@@ -237,6 +250,21 @@ subtest 'the bootstrap command exits non-zero when a value is missing' => sub {
     isnt $status, 0, 'registry platform bootstrap exits non-zero';
     like $out, qr/PLATFORM_STRIPE_ACCOUNT_ID/, 'and names the missing variable';
     is_deeply platform_row( $dao->db ), $before, 'and the row is unchanged';
+};
+
+subtest 'bootstrap gives the platform primary admin the configured email' => sub {
+    my $db = $dao->db;
+    reset_platform($db);
+
+    Registry::DAO::Tenant->bootstrap_platform( $db,
+        { %$configured, PLATFORM_ADMIN_EMAIL => 'alex@tamarou.test' } );
+
+    my $admin = platform_primary_admin($db);
+    ok $admin, 'the platform tenant has a primary admin';
+    is $admin->{email}, 'alex@tamarou.test',
+        "the primary admin's profile email is the configured address";
+    ok Registry::DAO::Tenant->is_platform_admin( $db, $admin->{id} ),
+        'and that user is a platform admin';
 };
 
 subtest 'the connect action mints no second stripe account' => sub {
