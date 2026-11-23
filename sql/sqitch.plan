@@ -88,3 +88,4 @@ waitlist-joined-notification-type [payments-record-platform-fee] 2026-10-08T17:3
 domain-notification-types [waitlist-joined-notification-type] 2026-10-10T14:00:00Z Chris Prather <chris.prather@tamarou.com> # A tenant hears the outcome of domain verification
 send-cap-setting [domain-notification-types] 2026-10-10T19:30:00Z Chris Prather <chris.prather@tamarou.com> # The unverified-tenant send cap is a row Alex can change
 workflow-step-label [send-cap-setting] 2026-10-13T16:10:00Z Chris Prather <chris.prather@tamarou.com> # A workflow step has a name a person can read, beside the note for developers
+collapse-platform-tenant [workflow-step-label] 2026-11-23T12:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform is one tenant row: the all-zeros row, slug registry

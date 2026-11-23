@@ -18,7 +18,7 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor 
         for my $schema (@$tenant_schemas) {
             try {
                 # Set schema search path. Quote the tenant schema so names
-                # containing hyphens (e.g. "registry-platform") stay valid.
+                # containing hyphens (e.g. "my-tenant") stay valid.
                 my $quoted = $db->dbh->quote_identifier($schema);
                 $db->query("SET search_path TO $quoted, registry, public");
                 

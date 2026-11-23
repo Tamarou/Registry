@@ -42,6 +42,16 @@ my $studio = Test::Registry::Fixtures::create_tenant( $db, {
 } );
 $studio->add_user( $db, $morgan, 1 );
 
+subtest 'the platform tenant is the registry row with the all-zeros id' => sub {
+    # collapse-platform-tenant.sql folded the old `registry` row into the
+    # all-zeros row and gave it the slug; the platform is that one row now.
+    my $found = Registry::DAO::Tenant->platform($db);
+    ok $found, 'the platform tenant is found';
+    is $found && $found->slug, 'registry', 'by the slug registry';
+    is $found && $found->id, '00000000-0000-0000-0000-000000000000',
+        'and it is the all-zeros row';
+};
+
 subtest 'the platform tenant has one owner, and the DAO can say who' => sub {
     ok Registry::DAO::Tenant->is_platform_admin( $db, $alex->id ),
         'so he is the platform admin';

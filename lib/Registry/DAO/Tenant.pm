@@ -152,19 +152,19 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
     # Which tenant is the platform itself.
     #
-    # One owner for the question, because "is this Alex" is about to be asked
-    # from more than one place and #294 wants to collapse `registry-platform`
-    # into `registry` -- when that happens, this method changes and nothing else
-    # does.
+    # One owner for the question, because "is this Alex" is asked from more
+    # than one place.
     #
-    # The notion is not new: create-default-pricing-relationships.sql has
-    # treated the all-zeros tenant as the platform since it was written, and
-    # production carries it as slug `registry-platform` with exactly one primary
-    # user. Resolved by slug rather than by that literal uuid, because a slug is
-    # what the rest of the system routes and reasons about.
+    # The platform tenant is `registry`: the all-zeros row that
+    # create-default-pricing-relationships.sql has treated as the platform since
+    # it was written, which collapse-platform-tenant.sql renamed from
+    # `registry-platform` when it folded the old `registry` row into it. It owns
+    # the `registry` schema and has exactly one primary user. Resolved by slug
+    # rather than by that literal uuid, because a slug is what the rest of the
+    # system routes and reasons about.
     sub platform ($class, $db) {
         $db = $db->db if $db isa Registry::DAO;
-        return $class->find( $db, { slug => 'registry-platform' } );
+        return $class->find( $db, { slug => 'registry' } );
     }
 
     # Is this user the platform's owner?
