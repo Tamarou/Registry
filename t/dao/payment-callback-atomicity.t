@@ -71,7 +71,7 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 });
 
 sub fresh_payment () {
-    return Registry::DAO::Payment->create($db, {
+    my $payment = Registry::DAO::Payment->create($db, {
         user_id => $parent->id,
         amount_cents => 10000,
         status => 'pending',
@@ -80,6 +80,10 @@ sub fresh_payment () {
             tenant_slug      => $platform,
         },
     });
+    # The intent Registry created for it, as intent_for names it.
+    $db->update('payments', { stripe_payment_intent_id => 'pi_cb_' . $payment->id },
+        { id => $payment->id });
+    return Registry::DAO::Payment->find($db, { id => $payment->id });
 }
 
 sub run_for ($payment) {
@@ -104,11 +108,9 @@ sub intent_for ($payment) {
         status         => 'succeeded',
         amount         => 10000,
         payment_method => 'pm_cb_test',
-        # _apply_intent only honours an intent that belongs to this row: either
-        # the id stored at creation, or one stamped with our payment_id. These
-        # rows have no stored intent id, so the metadata stamp is what makes the
-        # ownership check pass -- without it the settlement is refused before it
-        # writes anything, and the test grades nothing.
+        # _apply_intent only settles the intent Registry stored for this row
+        # (fresh_payment stores this id) -- without it the settlement is
+        # refused before it writes anything, and the test grades nothing.
         metadata       => { payment_id => $payment->id },
     };
 }
@@ -174,6 +176,8 @@ subtest 'the settlement holds the payment row while it decides' => sub {
                                     child_id   => $probe_child->id } ],
             tenant_slug => $platform },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_cb_' . $payment->id },
+        { id => $payment->id });
     my $run = run_for($payment);
     my ( $payment_locked, $session_locked );
 

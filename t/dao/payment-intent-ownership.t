@@ -61,6 +61,33 @@ subtest 'an intent belonging to another payment cannot settle this one' => sub {
         'no payment method was copied across';
 };
 
+# The seller owns the account the return path retrieves from, so they can mint
+# a succeeded intent stamped with our payment_id at our price. Metadata proves
+# nothing; only the id Registry stored when it created the intent does.
+subtest 'a seller-made intent stamped with our payment_id cannot settle it' => sub {
+    my $stored   = a_payment(200000);
+    my $unstored = a_payment(200000);
+    $db->update('payments', { stripe_payment_intent_id => undef }, { id => $unstored->id });
+    $unstored = Registry::DAO::Payment->find($db, { id => $unstored->id });
+
+    for my $case ( [ 'a row with a stored intent' => $stored ],
+                   [ 'a row with none stored'     => $unstored ] ) {
+        my ( $name, $payment ) = @$case;
+        my $minted = {
+            id       => 'pi_seller_minted',
+            status   => 'succeeded',
+            amount   => 200000,
+            metadata => { payment_id => $payment->id },
+        };
+
+        my $out = $payment->_apply_intent($db, $minted, $minted->{id});
+
+        is $out->{success}, 0, "$name: refused";
+        like $out->{error}, qr/does not belong to this payment/, "$name: and says why";
+        is status_of($payment), 'pending', "$name: the row is not completed";
+    }
+};
+
 # Graded on its own: this intent IS owned, so ownership passes and only the
 # amount comparison can refuse it. Without both subtests, either guard alone
 # would keep the other's mutant alive.

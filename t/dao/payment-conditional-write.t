@@ -168,8 +168,8 @@ subtest '3DS: a row written failed by requires_action still completes' => sub {
     # _apply_intent writes 'failed' for any status it does not recognise, and
     # requires_action is an ordinary 3DS payment mid-authentication.
     my $out = $p->_apply_intent( $db,
-        { id => 'pi_3ds', status => 'requires_action', amount => 10000,
-          metadata => { payment_id => $p->id } }, 'pi_3ds' );
+        { id => $p->stripe_payment_intent_id, status => 'requires_action', amount => 10000,
+          metadata => { payment_id => $p->id } }, $p->stripe_payment_intent_id );
     ok !$out->{success}, 'the intent is not settled yet';
     is status_of($p), 'failed', 'and the row is written failed (pre-existing)';
 
@@ -196,8 +196,8 @@ subtest 'decline then retry: the reused row still completes' => sub {
 subtest 'a retry that goes to processing is not reported against a refused write' => sub {
     my $p = a_payment('failed');
     my $out = $p->_apply_intent( $db,
-        { id => 'pi_proc', status => 'processing', amount => 10000,
-          metadata => { payment_id => $p->id } }, 'pi_proc' );
+        { id => $p->stripe_payment_intent_id, status => 'processing', amount => 10000,
+          metadata => { payment_id => $p->id } }, $p->stripe_payment_intent_id );
 
     is status_of($p), 'processing',
         'the row really moves, so "please wait" is not shown against a dead row';

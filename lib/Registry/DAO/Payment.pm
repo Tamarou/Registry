@@ -687,8 +687,9 @@ field $_stripe_client = undef;
         # Do not mutate status on mismatch: a forged id must not be able to
         # flip a payment to failed either.
         my $intent_id = $intent->{id} // $payment_intent_id;
-        my $owned =
-            ( defined $stripe_payment_intent_id && $intent_id eq $stripe_payment_intent_id )
+        my $stored_intent =
+            defined $stripe_payment_intent_id && $intent_id eq $stripe_payment_intent_id;
+        my $owned = $stored_intent
             || ( ( $intent->{metadata}{payment_id} // '' ) eq $id );
         unless ($owned) {
             return {
@@ -718,6 +719,16 @@ field $_stripe_client = undef;
                 success           => 0,
                 already_completed => 1,
                 error             => "Payment is already settled (status '$status')",
+            };
+        }
+
+        # A stamp may learn the row is settled, as above, but only the intent
+        # Registry created may move it: the seller owns the account the intent
+        # is retrieved from, and can mint one stamped with our payment_id.
+        unless ($stored_intent) {
+            return {
+                success => 0,
+                error   => 'Payment intent does not belong to this payment',
             };
         }
 
