@@ -4,6 +4,7 @@
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
+use utf8;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
@@ -136,6 +137,108 @@ subtest 'dispute and customer events are stored unapplied once' => sub {
     is_deeply payment_row(), $before, 'the payment row is unchanged';
     is_deeply $tdb->query(q{SELECT * FROM users ORDER BY id})->hashes, $users_before,
         'no customer row is added or changed';
+};
+
+subtest 'bad signature stores nothing' => sub {
+    my $event = refund_event( id => "evt_moves_badsig_$$" );
+    Test::Registry::StripeWebhook::post_connect($t, $event, secret => 'whsec_not_ours')
+        ->status_is(400);
+    is scalar @{ stored($event->{id}) }, 0, 'nothing is claimed or stored';
+};
+
+subtest 'unlisted event type is claimed but not stored' => sub {
+    my $event = { id => "evt_moves_product_$$", type => 'product.created', account => $account,
+                  data => { object => { id => "prod_conn_moves_$$" } } };
+    Test::Registry::StripeWebhook::post_connect($t, {%$event})->status_is(200);
+
+    my $rows = stored($event->{id});
+    is scalar @$rows, 1, 'the event is claimed';
+    is $rows->[0]{payload}, undef, 'but its payload is not stored';
+    is $rows->[0]{account}, undef, 'nor its account';
+    ok $rows->[0]{processed_at}, 'and it is done with, not waiting to be applied';
+};
+
+subtest 'stored tenant comes from account not metadata' => sub {
+    my $other_slug = 'conn_moves_b_' . $$;
+    Registry::DAO::Tenant->provision($db, {
+        name  => "Connect Moves Tenant B $$",
+        slug  => $other_slug,
+        users => [ $admin ],
+        stripe_connect_account_id => "acct_conn_moves_b_$$",
+    });
+
+    my $event = refund_event( id => "evt_moves_metadata_$$" );
+    $event->{data}{object}{metadata}{tenant_slug} = $other_slug;
+    Test::Registry::StripeWebhook::post_connect($t, {%$event})->status_is(200);
+
+    my $rows = stored($event->{id});
+    is scalar @$rows, 1, 'stored once';
+    is $rows->[0]{tenant_id}, $tenant->id, "against the account's tenant, not the one metadata names";
+};
+
+subtest 'partial and pending refunds are stored unapplied' => sub {
+    my $before = payment_row();
+
+    my $partial = refund_event( id => "evt_moves_partial_$$" );
+    $partial->{data}{object}{amount_refunded} = 5000;
+    $partial->{data}{object}{refunded}        = Mojo::JSON::false;
+
+    my $pending = { id => "evt_moves_pending_$$", type => 'refund.created', account => $account,
+                    data => { object => { id => "re_conn_moves_$$", object => 'refund',
+                                          amount => 15000, status => 'pending',
+                                          charge => "ch_conn_moves_$$",
+                                          payment_intent => "pi_conn_moves_$$" } } };
+
+    for my $event ( $partial, $pending ) {
+        Test::Registry::StripeWebhook::post_connect($t, {%$event})->status_is(200);
+        my $rows = stored($event->{id});
+        is scalar @$rows, 1, "$event->{id} is stored";
+        is $rows->[0]{processed_at}, undef, 'and left unapplied';
+    }
+
+    my $after = payment_row();
+    is_deeply $after, $before, 'the payment row is unchanged';
+    is $after->{status}, 'completed', 'and the payment is not marked refunded';
+    is $after->{refunded_cents}, 0, 'with nothing counted as refunded';
+};
+
+subtest 'nested and non ascii payload is stored unchanged' => sub {
+    my $event = { id => "evt_moves_unicode_$$", type => 'customer.updated', account => $account,
+                  data => { object => {
+                      id       => "cus_conn_moves_u_$$",
+                      name     => 'Zoë Ñúñez 李小龍',
+                      address  => { line1 => 'Straße 5', city => 'Zürich' },
+                      metadata => { note => '日本語 — “quoted”' },
+                      tax_ids  => [ [ 'eu_vat', [ 'DE123', 'ÄÖÜ' ] ], { codes => [ 1, [ 2, [3] ] ] } ],
+                  } } };
+    Test::Registry::StripeWebhook::post_connect($t, {%$event})->status_is(200);
+
+    my $rows = stored($event->{id});
+    is scalar @$rows, 1, 'stored once';
+    is_deeply $rows->[0]{payload}, $event, 'equal to what was sent';
+};
+
+subtest 'refund event for unknown account has no tenant' => sub {
+    my $event = refund_event( id => "evt_moves_unknown_$$", account => "acct_nobody_moves_$$" );
+    Test::Registry::StripeWebhook::post_connect($t, {%$event})->status_is(200);
+
+    ok !scalar( grep { defined $_->{tenant_id} } @{ stored($event->{id}) } ),
+        'no tenant is attributed the event';
+};
+
+subtest 'storage failure rolls back claim and answers 500' => sub {
+    # Postgres refuses a \u0000 escape in jsonb, so the payload cannot be
+    # stored after the claim has been taken.
+    my $event = refund_event( id => "evt_moves_nul_$$" );
+    $event->{data}{object}{description} = "refund\x{0}";
+
+    Test::Registry::StripeWebhook::post_connect($t, {%$event})->status_is(500);
+    is scalar @{ stored($event->{id}) }, 0, 'the claim is rolled back';
+
+    delete $event->{data}{object}{description};
+    Test::Registry::StripeWebhook::post_connect($t, {%$event})
+        ->status_is(200)->content_is('OK', 'a redelivery is stored, not dropped as a duplicate');
+    is scalar @{ stored($event->{id}) }, 1, 'once';
 };
 
 done_testing;
