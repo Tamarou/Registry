@@ -136,8 +136,8 @@ class Registry::Service::Stripe {
         return $self->_request_async('POST', 'payment_intents', \%p, $ik);
     }
     
-    method retrieve_payment_intent_async($intent_id) {
-        return $self->_request_async('GET', "payment_intents/$intent_id");
+    method retrieve_payment_intent_async($intent_id, $params = {}) {
+        return $self->_request_async('GET', "payment_intents/$intent_id", $params);
     }
     
     method confirm_payment_intent_async($intent_id, $params = {}) {
@@ -275,6 +275,10 @@ class Registry::Service::Stripe {
         my %p  = %$params;
         my $ik = delete $p{_idempotency_key};
         return $self->_request_async('POST', "application_fees/$fee_id/refunds", \%p, $ik);
+    }
+
+    method retrieve_application_fee_async($fee_id) {
+        return $self->_request_async('GET', "application_fees/$fee_id");
     }
     
     # Prices API (for subscriptions)

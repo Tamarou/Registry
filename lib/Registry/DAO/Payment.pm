@@ -2245,6 +2245,38 @@ SQL
             die "Refund failed: $error";
         });
     }
+
+    # Returning the platform's fee: the exception to keeping it on a refund
+    # (005), applied by the platform tenant's admin. The charge is the seller's,
+    # so its fee id is read through the seller-bound client; the fee is the
+    # platform's, so it is read and refunded on an unbound one. Nothing is
+    # written here: what was returned is recorded from application_fee.refunded.
+    method refund_platform_fee_async ($db, $args = {}) {
+        die REFUND_NOT_SENT . ": No Stripe payment intent ID\n"
+            unless $stripe_payment_intent_id;
+        die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
+            unless ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
+
+        my $platform = Registry::Service::Stripe->from_env;
+
+        return $self->stripe_client->retrieve_payment_intent_async(
+            $stripe_payment_intent_id, { 'expand[]' => 'latest_charge' }
+        )->then(sub ($intent) {
+            my $charge = $intent->{latest_charge};
+            my $fee_id = ref $charge eq 'HASH' ? $charge->{application_fee} : undef;
+            die REFUND_NOT_SENT . ": the charge for payment $id took no application fee\n"
+                unless $fee_id;
+            return $platform->retrieve_application_fee_async($fee_id);
+        })->then(sub ($fee) {
+            my $left   = $fee->{amount} - $fee->{amount_refunded};
+            my $amount = $args->{amount_cents} // $left;
+            return $platform->create_application_fee_refund_async( $fee->{id}, {
+                amount => $amount,
+                $args->{idempotency_key}
+                    ? ( _idempotency_key => $args->{idempotency_key} ) : (),
+            } );
+        });
+    }
 }
 
 1;
