@@ -1234,14 +1234,11 @@ class Registry :isa(Mojolicious) {
     # registry.templates has an updated_at that differs from its created_at.
     #
     # The platform has its own storefront instead.
-    # Membership of the all-zeros platform tenant. That is how
-    # create-default-pricing-relationships and the tier seed both identify a
-    # platform admin, and production carries exactly one such row.
-    method _PLATFORM_TENANT_ID { '00000000-0000-0000-0000-000000000000' }
-
     # The tenant an authenticated user is permitted to act as, or undef.
-    # A member may act as their own tenant; a platform admin -- a platform
-    # membership with the admin role (ruling 4) -- may act as any.
+    # A member may act as their own tenant. Acting as any other is the operator
+    # right (spec, "Decided with perigrin"): an admin-role member of a tenant
+    # that holds `operator`, asked of the one read seam -- never the platform's
+    # slug or id. Either way the tenant must exist.
     method _acting_tenant_for ($c, $requested) {
         return undef unless defined $requested && length $requested;
         # Same shape the caller enforces; checked here too so a malformed value
@@ -1253,14 +1250,14 @@ class Registry :isa(Mojolicious) {
         return undef unless $user_id;
 
         my $permitted = eval {
-            $c->dao('registry')->db->query( <<~'SQL', $user_id, $requested, $self->_PLATFORM_TENANT_ID )->array;
-                SELECT 1
-                  FROM registry.tenant_users tu
-                 WHERE tu.user_id = ?
-                   AND ( tu.tenant_id = (SELECT id FROM registry.tenants WHERE slug = ?)
-                         OR ( tu.tenant_id = ?::uuid AND tu.role = 'admin' ) )
-                 LIMIT 1
-                SQL
+            require Registry::DAO::Tenant;
+            my $db = $c->dao('registry')->db;
+            my $tenant_id = $db->query(
+                'SELECT id FROM registry.tenants WHERE slug = ?', $requested )->array;
+            $tenant_id
+              && ( $db->query( 'SELECT 1 FROM registry.tenant_users WHERE user_id = ? AND tenant_id = ?',
+                       $user_id, $tenant_id->[0] )->rows
+                || Registry::DAO::Tenant->admin_of_holder( $db, $user_id, 'operator' ) );
         };
         if ($@) {
             $c->app->log->warn("Tenant membership check failed: $@");
