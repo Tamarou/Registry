@@ -1781,8 +1781,11 @@ SQL
             ? 1 : 0;
     }
 
+    # partially_refunded, so a second drop from one cart can be refunded (005
+    # 8a); refund_async's past-captured guard caps it at what remains.
     sub _refundable_status ($class, $status) {
-        return ( $status // '' ) =~ /\A (?: completed | refund_pending ) \z/x ? 1 : 0;
+        return ( $status // '' )
+            =~ /\A (?: completed | refund_pending | partially_refunded ) \z/x ? 1 : 0;
     }
 
     # The bookkeeping the refund path applies once Stripe confirms.

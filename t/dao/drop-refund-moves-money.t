@@ -311,6 +311,71 @@ subtest 'a drop refund retried after a partial failure reaches processed without
     is refunded_cents_of($payment), 5000, 'and the money is counted once';
 };
 
+# One partial refund leaves the payment partially_refunded; ruling 8a expects
+# further refunds of what remains, so a second drop from the same cart must
+# still be refunded for its own share.
+subtest 'a second drop from the same cart is refunded after a first partial refund' => sub {
+    my ( $payment, $first, $second ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => [ $first->id, $second->id ] } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    run_step( enrollment_id => $first->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+    is $db->select( payments => ['status'], { id => $payment->id } )->hash->{status},
+        'partially_refunded', 'the first drop leaves the payment partially refunded';
+
+    my $result = run_step( enrollment_id => $second->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is $result->{refund_processed}, 1, 'the second drop is refunded' or diag explain $result;
+    is scalar @calls, 2, 'Stripe was asked once per drop';
+    is $calls[1]{amount}, 5000, 'for the second child\'s own share';
+    is refund_status_of($second), 'processed', 'the second enrollment says processed';
+    is refunded_cents_of($payment), 10000, 'both shares are counted';
+    is $db->select( payments => ['status'], { id => $payment->id } )->hash->{status},
+        'refunded', 'and the payment now reads fully refunded';
+};
+
+subtest 'a refund past what remains on a partially refunded payment is refused' => sub {
+    my ( $payment ) = a_paid_cart();
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    settle( $payment->refund_async( $db, { amount_cents => 5000 } ) );
+    is $payment->status, 'partially_refunded', 'one seat is back';
+
+    my $error;
+    eval { settle( $payment->refund_async( $db, { amount_cents => 5001 } ) ); 1 }
+        or $error = $@;
+    like $error, qr/REFUND_NOT_SENT: Refund of 5001 cents .* past its 10000 captured cents/,
+        'the past-captured guard refuses it';
+    is scalar @calls, 1, 'before anything reaches Stripe';
+    is refunded_cents_of($payment), 5000, 'and nothing more is counted';
+};
+
+subtest 'a fully refunded payment is still refused' => sub {
+    my ( $payment ) = a_paid_cart();
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    settle( $payment->refund_async( $db, {} ) );
+    is $payment->status, 'refunded', 'the whole cart is back';
+
+    my $error;
+    eval { settle( $payment->refund_async( $db, { amount_cents => 1 } ) ); 1 }
+        or $error = $@;
+    like $error, qr/REFUND_NOT_SENT: Cannot refund a payment with status 'refunded'/,
+        'the status guard refuses it';
+    is scalar @calls, 1, 'before anything reaches Stripe';
+};
+
 subtest 'the refund settles inside a running IOLoop' => sub {
     # The workflow runs in a web request, so the step has to defer rather than
     # block. See #284: a blocking Stripe call there can never settle.
