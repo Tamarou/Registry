@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers;
+use Test::Registry::Helpers qw(join_tenant);
 use Test::Registry::Helpers qw(authenticate_as);
 use Registry::DAO::Family;
 use Registry::DAO::Enrollment;
@@ -116,6 +117,7 @@ my $admin = $dao->create(User => {
     user_type => 'admin',
     password  => 'x',
 });
+join_tenant( $dao, $admin );
 authenticate_as($t, $admin);
 
 # --- Assertions ------------------------------------------------------------

@@ -15,6 +15,7 @@ defer { done_testing };
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::Payment;
 
 my $t_db = Test::Registry::DB->new;
@@ -26,6 +27,7 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper( dao => sub { $dao } );
 
 my $admin = $dao->create( User => { username => 'instal_admin', user_type => 'admin' } );
+join_tenant( $dao, $admin );
 authenticate_as( $t, $admin );
 
 my $parent = $dao->create( User => {

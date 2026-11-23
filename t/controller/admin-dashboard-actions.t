@@ -9,6 +9,7 @@ use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -23,6 +24,7 @@ my $admin = $dao->create(User => {
     user_type => 'admin',
     password  => 'x',
 });
+join_tenant( $dao, $admin );
 authenticate_as($t, $admin);
 
 # These actions were declared `method foo ($c)`, which dies under Mojolicious

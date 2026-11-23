@@ -81,7 +81,7 @@
                                     <label class="sr-only" for="role-<%= $person->id %>">Role</label>
                                     <select name="user_type" id="role-<%= $person->id %>">
                                         % for my $role (qw( parent student staff admin )) {
-                                            % next if $role eq 'admin' && ($me->{user_type} // '') ne 'admin';
+                                            % next if $role eq 'admin' && ($me->{role} // '') ne 'admin';
                                             <option value="<%= $role %>"
                                                 <%= $role eq $person->user_type ? 'selected' : '' %>><%= ucfirst $role %></option>
                                         % }

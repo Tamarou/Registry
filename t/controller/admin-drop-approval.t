@@ -18,6 +18,7 @@ use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
 );
+use Test::Registry::Helpers qw(join_tenant);
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::User;
@@ -93,6 +94,7 @@ my $admin = $dao->create(User => {
 # admin-drop-approval settles somebody else's drop request, so the route asks
 # for the role. The admin exists here already; nothing had ever signed in as
 # them, and the suite passed anyway.
+join_tenant( $dao, $admin );
 authenticate_as( $t, $admin );
 
 # Create a pending drop request

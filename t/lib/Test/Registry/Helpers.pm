@@ -14,6 +14,7 @@ package Test::Registry::Helpers {
             birth_date_for_age   => __PACKAGE__->can('birth_date_for_age'),
             days_from_now        => __PACKAGE__->can('days_from_now'),
             import_all_workflows             => __PACKAGE__->can('import_all_workflows'),
+            join_tenant          => __PACKAGE__->can('join_tenant'),
             process_workflow                 => __PACKAGE__->can('process_workflow'),
             platform_revenue_share_plan_id =>
               __PACKAGE__->can('platform_revenue_share_plan_id'),
@@ -126,6 +127,22 @@ package Test::Registry::Helpers {
         }
     }
 
+    # Make $user a member of the tenant $slug -- the platform tenant, whose
+    # host an unpinned request uses, by default -- with $role, which
+    # Tenant::add_user defaults to the user's user_type. Authority in a tenant
+    # is the membership's role (ADR 005, ruling 4), so a fixture acting as an
+    # admin or staff member somewhere has to be one there. Idempotent: an
+    # existing membership is left as it is.
+    sub join_tenant ( $db, $user, $role = undef, $slug = 'registry' ) {
+        require Registry::DAO::Tenant;
+        $db = $db->db if $db isa Registry::DAO;
+        my $tenant = Registry::DAO::Tenant->find( $db, { slug => $slug } )
+          or die "join_tenant: no tenant '$slug'";
+        return if $db->select( 'registry.tenant_users', 'user_id',
+            { tenant_id => $tenant->id, user_id => $user->id } )->rows;
+        $tenant->add_user( $db, $user, 0, $role );
+    }
+
     # NOTE: This registers a permanent before_dispatch hook. Calling
     # authenticate_as multiple times accumulates hooks, but the guards
     # (unless session/stash already set) ensure only the first takes
@@ -142,14 +159,17 @@ package Test::Registry::Helpers {
             # see the user on this request (the app's own before_dispatch
             # hook already ran and found no session).
             unless ($c->stash('current_user')) {
-                $c->stash(current_user => {
+                my $stashed = {
                     id        => $user->id,
                     username  => $user->username,
                     name      => $user->name,
                     email     => $user->email,
                     user_type => $user->user_type,
-                    role      => $user->user_type,
-                });
+                };
+                $c->stash(current_user => $stashed);
+                # As production fills it: the role in this request's tenant,
+                # from the membership, never the global user_type.
+                $stashed->{role} = $c->tenant_role // '';
             }
         });
     }

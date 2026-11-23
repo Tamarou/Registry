@@ -13,6 +13,7 @@ defer { done_testing };
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows);
+use Test::Registry::Helpers qw(join_tenant);
 
 my $test_db = Test::Registry::DB->new;
 my $dao = $test_db->db;
@@ -28,6 +29,7 @@ my $admin = $dao->create(User => { username => 'nav_admin', user_type => 'admin'
 my $staff = $dao->create(User => { username => 'nav_teacher', user_type => 'staff', name => 'Teacher User', email => 'teacher@test.com' });
 
 subtest 'admin sees full navigation on dashboard' => sub {
+    join_tenant( $dao, $admin );
     authenticate_as($t, $admin);
 
     $t->get_ok('/admin/dashboard')
@@ -41,6 +43,7 @@ subtest 'admin sees full navigation on dashboard' => sub {
 };
 
 subtest 'teacher sees limited navigation on teacher dashboard' => sub {
+    join_tenant( $dao, $staff );
     authenticate_as($t, $staff);
 
     $t->get_ok('/teacher/')
@@ -51,6 +54,7 @@ subtest 'teacher sees limited navigation on teacher dashboard' => sub {
 };
 
 subtest 'navigation shows current user context' => sub {
+    join_tenant( $dao, $admin );
     authenticate_as($t, $admin);
 
     $t->get_ok('/admin/dashboard')

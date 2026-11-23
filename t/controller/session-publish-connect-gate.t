@@ -12,6 +12,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::PricingPlan;
 
 my $test_db = Test::Registry::DB->new;
@@ -22,6 +23,7 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper( dao => sub { $dao } );
 
 my $admin = $dao->create( User => { username => 'publish_admin', user_type => 'admin' } );
+join_tenant( $dao, $admin );
 authenticate_as( $t, $admin );
 
 my $program = $dao->create( Project => {

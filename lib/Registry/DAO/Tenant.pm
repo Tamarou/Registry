@@ -314,6 +314,41 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         } )->array->[0] ? 1 : 0;
     }
 
+    # What role does $user_id have in the tenant whose slug is $slug?
+    #
+    # The membership's role for that tenant (ADR 005, ruling 4), never the
+    # global users.user_type: an admin of one tenant is whatever their
+    # membership says in another, and nothing at all where they have none.
+    #
+    # One exception, because it cannot hold a membership: an account that
+    # exists only in the tenant's own schema -- a parent who registered at the
+    # tenant's storefront, staff the tenant created -- has no registry.users row
+    # for tenant_users.user_id to reference. That row is the tenant's own record
+    # of them, per tenant by construction, so its user_type is their role there
+    # and nowhere else.
+    sub role_in ($class, $db, $slug, $user_id) {
+        $db = $db->db if $db isa Registry::DAO;
+        return undef unless defined $user_id && !ref $user_id && length $user_id;
+        return undef unless defined $slug && $slug =~ /\A[a-z][a-z0-9_]{0,62}\z/;
+
+        my $membership = $db->query( <<~'SQL', $slug, $user_id )->hash;
+            SELECT tu.role
+              FROM registry.tenant_users tu
+              JOIN registry.tenants t ON t.id = tu.tenant_id
+             WHERE t.slug = ? AND tu.user_id = ?
+            SQL
+        return $membership->{role} if $membership;
+
+        return undef if $db->select( 'registry.users', 'COUNT(*)', { id => $user_id } )
+                           ->array->[0];
+
+        my $schema = $db->dbh->quote_identifier($slug);
+        my $local  = eval {
+            $db->query( "SELECT user_type FROM $schema.users WHERE id = ?", $user_id )->hash;
+        };
+        return $local ? $local->{user_type} : undef;
+    }
+
     # Does tenant $tenant_id hold resource $resource?
     #
     # The one seam every caller asks, about the resource and never a plan or a

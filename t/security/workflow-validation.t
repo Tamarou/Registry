@@ -17,6 +17,7 @@ use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
 );
+use Test::Registry::Helpers qw(join_tenant);
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::WorkflowStep;
@@ -47,6 +48,7 @@ my $acting_admin = $dao->create( User => {
     email     => 'validation_admin@test.local',
     user_type => 'admin',
 } );
+join_tenant( $dao, $acting_admin );
 authenticate_as( $t, $acting_admin );
 
 my ($workflow) = $dao->find(Workflow => { slug => 'session-creation' });

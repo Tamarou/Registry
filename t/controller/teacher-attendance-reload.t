@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers;
+use Test::Registry::Helpers qw(join_tenant);
 
 use Registry::DAO;
 use Registry::DAO::Attendance;
@@ -45,6 +46,7 @@ my $teacher = $dao->create( User => {
     username => 'ms_okoye', name => 'Ms Okoye',
     user_type => 'staff', email => 'okoye@test.com',
 } );
+join_tenant( $dao, $teacher );
 
 my $parent = $dao->create( User => {
     username => 'reg_parent', name => 'Reg Parent',

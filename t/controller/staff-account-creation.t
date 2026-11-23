@@ -14,6 +14,7 @@ use Registry::DAO qw(User);
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows);
+use Test::Registry::Helpers qw(join_tenant);
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -32,6 +33,7 @@ my $admin = $dao->create(
         email     => 'morgan@test.com',
     }
 );
+join_tenant( $dao, $admin );
 authenticate_as( $t, $admin );
 
 # Walk the workflow the way the browser does: start it, fill the info step,
@@ -117,6 +119,7 @@ subtest 'a staff member cannot create an administrator' => sub {
 
     my $st = Test::Registry::Mojo->new('Registry');
     $st->app->helper( dao => sub { $dao } );
+    join_tenant( $dao, $staffer );
     authenticate_as( $st, $staffer );
 
     # The option is not even offered to them.
@@ -172,6 +175,7 @@ subtest 'a forged caller identity does not satisfy the gate' => sub {
 
     my $st = Test::Registry::Mojo->new('Registry');
     $st->app->helper( dao => sub { $dao } );
+    join_tenant( $dao, $staffer );
     authenticate_as( $st, $staffer );
 
     # Claim to be an admin in the same POST that asks for an admin account.

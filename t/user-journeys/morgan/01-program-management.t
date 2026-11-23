@@ -17,6 +17,7 @@ use Test::Registry::Helpers qw(
   workflow_run_step_url
   workflow_process_step_url
 );
+use Test::Registry::Helpers qw(join_tenant);
 use YAML::XS qw(Load);
 
 my $test_db = Test::Registry::DB->new();
@@ -46,6 +47,7 @@ my $acting_user = $dao->create(
 
 {    # Journey: Create a new educational program via the project-creation workflow
     my $t = Test::Registry::Mojo->new('Registry');
+    join_tenant( $dao, $acting_user );
     authenticate_as( $t, $acting_user );
 
     my ($workflow) =

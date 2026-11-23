@@ -13,6 +13,7 @@ defer { done_testing };
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows days_from_now);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO;
 use Registry::DAO::User;
 use Registry::DAO::Family;
@@ -103,6 +104,7 @@ $dao->db->insert('enrollments', {
 });
 
 # Authenticate as Jordan
+join_tenant( $dao, $jordan );
 authenticate_as($t, $jordan);
 
 # === Jordan's Dashboard Journey ===

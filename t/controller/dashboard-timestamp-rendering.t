@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::Family;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Waitlist;
@@ -99,6 +100,7 @@ my $admin = $dao->create(User => {
     user_type => 'admin',
     password  => 'x',
 });
+join_tenant( $dao, $admin );
 authenticate_as($t, $admin);
 
 subtest 'admin waitlist_management renders an offered entry (expires_at)' => sub {
@@ -110,6 +112,7 @@ subtest 'admin waitlist_management renders an offered entry (expires_at)' => sub
 
 # --- Parent assertions -----------------------------------------------------
 
+join_tenant( $dao, $parent );
 authenticate_as($tp, $parent);
 
 subtest 'parent dashboard renders recent message (sent_at)' => sub {

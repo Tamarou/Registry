@@ -430,12 +430,21 @@ class Registry :isa(Mojolicious) {
                 username  => $user->username,
                 name      => $user->name,
                 email     => $user->email,
+                # The account's own kind, global. Never authority in a tenant:
+                # that is 'role', below.
                 user_type => $user->user_type,
-                # Provide a 'role' alias for backward compatibility with
-                # controllers that check $user->{role}
-                role      => $user->user_type,
                 %extra,
             };
+        };
+
+        # 'role' is the user's role in the tenant this request acts on -- the
+        # membership's (ADR 005, ruling 4), '' where they have none -- so that
+        # everything reading $user->{role} reads the per-tenant answer.
+        # Filled after the stash is set because tenant_role asks it.
+        my $stash_user = sub ($c, $stashed) {
+            $c->stash( current_user => $stashed );
+            $stashed->{role} = $c->tenant_role // '';
+            return $stashed;
         };
 
         $self->hook(
@@ -465,7 +474,7 @@ class Registry :isa(Mojolicious) {
                             if ($user) {
                                 $api_key->touch($dao->db);
                                 my $stashed = $user_to_stash->($user, api_key => $api_key);
-                                $c->stash( current_user => $stashed ) if $stashed;
+                                $stash_user->( $c, $stashed ) if $stashed;
                                 return;  # Skip session check
                             }
                         }
@@ -507,7 +516,7 @@ class Registry :isa(Mojolicious) {
                     if ($user) {
                         my $stashed = $user_to_stash->($user);
                         if ($stashed) {
-                            $c->stash( current_user => $stashed );
+                            $stash_user->( $c, $stashed );
                         }
                         else {
                             # Deactivated while signed in. Clear the session too, so
@@ -638,15 +647,30 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Helper: the signed-in user's role in the current tenant, or undef.
+        # Asked of the data on every call rather than read from the session,
+        # which carries the global user_type. See
+        # Registry::DAO::Tenant::role_in.
+        $self->helper(
+            tenant_role => sub ($c) {
+                my $user = $c->stash('current_user');
+                return undef unless ref $user;
+                require Registry::DAO::Tenant;
+                return Registry::DAO::Tenant->role_in(
+                    $c->dao('registry')->db, $c->tenant, $user->{id} );
+            }
+        );
+
         # Helper: require an authenticated session AND one of the given roles.
-        # Calls require_auth first, then checks user_type against allowed roles.
+        # Calls require_auth first, then checks the user's role in the current
+        # tenant -- their membership's, not the global user_type (ADR 005,
+        # ruling 4) -- against allowed roles.
         # Sends 403 to wrong-role browser requests; 403 JSON to API clients.
         $self->helper(
             require_role => sub ( $c, @allowed_roles ) {
                 return 0 unless $c->require_auth;
 
-                my $user      = $c->stash('current_user');
-                my $user_role = $user->{user_type} // '';
+                my $user_role = $c->tenant_role // '';
 
                 for my $allowed (@allowed_roles) {
                     return 1 if $user_role eq $allowed;

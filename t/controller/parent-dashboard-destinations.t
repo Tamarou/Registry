@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows days_from_now);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::Family;
 use Registry::DAO::Enrollment;
 use Mojolicious::Routes::Match;
@@ -56,6 +57,7 @@ my $child = Registry::DAO::Family->add_child($dao->db, $parent->id, {
     medical_info => {}, emergency_contact => { name => 'P', phone => '555' },
 });
 
+join_tenant( $dao, $parent );
 authenticate_as($t, $parent);
 
 # The links under test are rendered by the templates, so the test follows what

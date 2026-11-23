@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(workflow_process_step_url);
+use Test::Registry::Helpers qw(join_tenant);
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Template;
@@ -50,6 +51,7 @@ my $admin = Registry::DAO::User->create($dao->db, {
     username => 'tmpl_admin', name => 'Template Admin',
     user_type => 'admin', email => 'tmpl_admin@test.com',
 });
+join_tenant( $dao, $admin );
 
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });

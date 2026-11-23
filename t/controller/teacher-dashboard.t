@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Helpers;
+use Test::Registry::Helpers qw(join_tenant);
 use Test::Registry::Fixtures;
 
 use Registry::DAO qw(Workflow);
@@ -54,6 +55,7 @@ my $teacher = $dao->create(User => {
     username => 'ms_rivera', name => 'Ms Rivera',
     user_type => 'staff', email => 'rivera@test.com',
 });
+join_tenant( $dao, $teacher );
 
 my $session = $dao->create(Session => {
     name => 'Teacher Week 1', start_date => days_from_now(-2), end_date => days_from_now(2),

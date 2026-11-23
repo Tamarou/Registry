@@ -41,7 +41,8 @@ class Registry::DAO::WorkflowSteps::CreateUser :isa(Registry::DAO::WorkflowStep)
             && any { $_ eq $data->{user_type} } qw(parent student staff admin) )
         {
             my $caller = $data->{user} // {};
-            my $caller_type = $caller->{user_type} // $caller->{role} // '';
+            # The caller's role in this tenant, not their global user_type.
+            my $caller_type = $caller->{role} // '';
 
             if ( $data->{user_type} eq 'admin' && $caller_type ne 'admin' ) {
                 return {

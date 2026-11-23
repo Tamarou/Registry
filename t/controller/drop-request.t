@@ -18,6 +18,7 @@ use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
 );
+use Test::Registry::Helpers qw(join_tenant);
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::User;
@@ -87,6 +88,7 @@ my $enrollment = Registry::DAO::Enrollment->create($dao->db, {
 my ($workflow) = $dao->find(Workflow => { slug => 'parent-drop-request' });
 ok $workflow, 'parent-drop-request workflow exists';
 
+join_tenant( $dao, $parent );
 authenticate_as($t, $parent);
 
 # A run the way a parent gets one: the dashboard's Drop link, followed while

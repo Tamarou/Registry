@@ -13,6 +13,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw(join_tenant);
 
 use Registry::DAO::User;
 use Registry::DAO::MagicLinkToken;
@@ -53,6 +54,8 @@ my $nancy = Registry::DAO::User->create( $db->db, {
     email     => 'nancy.comms@family.example',
     user_type => 'parent',
 } );
+# A parent member of the platform tenant, whose host these requests use.
+join_tenant( $db, $nancy );
 
 subtest 'Nancy starts with no unread messages' => sub {
     my $count = Registry::DAO::Message->get_unread_count( $db->db, $nancy->id );

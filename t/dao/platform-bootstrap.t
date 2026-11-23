@@ -9,6 +9,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw(authenticate_as);
+use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::Tenant;
 use Registry::Command::platform;
 
@@ -174,6 +175,7 @@ subtest 'the billing page shows the platform tenant as ready' => sub {
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper( dao => sub { $dao } );
     my $admin = $dao->create( User => { username => 'platform_billing_admin', user_type => 'admin' } );
+    join_tenant( $dao, $admin );
     authenticate_as( $t, $admin );
 
     $t->get_ok('/admin/billing')
@@ -549,6 +551,7 @@ subtest 'the connect action mints no second stripe account' => sub {
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper( dao => sub { $dao } );
     my $admin = $dao->create( User => { username => 'platform_connect_admin', user_type => 'admin' } );
+    join_tenant( $dao, $admin );
     authenticate_as( $t, $admin );
 
     $t->post_ok('/admin/billing/connect')

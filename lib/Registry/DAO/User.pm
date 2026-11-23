@@ -340,14 +340,16 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
         return __CLASS__->new(%$row);
     }
 
-    # The acting user's role read from the row, not from the session. A session
+    # The acting user's role read from the data, not from the session. A session
     # carries whatever it was given; the privilege gate has to turn on what the
-    # database says the caller is.
+    # database says the caller is -- in the tenant this handle is scoped to,
+    # which is their membership's role there (ADR 005, ruling 4), not their
+    # global user_type.
     method _role_of ( $db, $acting_id ) {
         return undef unless defined $acting_id;
-        my $row = $db->query(
-            'SELECT user_type FROM users WHERE id = ?', $acting_id )->hash;
-        return $row && $row->{user_type};
+        require Registry::DAO::Tenant;
+        my $tenant = $db->query('SELECT current_schema()')->array->[0];
+        return Registry::DAO::Tenant->role_in( $db, $tenant, $acting_id );
     }
 
     # Clears the invite_pending flag, once an invitation has actually been sent.

@@ -38,6 +38,11 @@ my $staff_user = Registry::DAO::User->create($dao->db, {
     user_type => 'staff',
 });
 
+# Members of the tenant these requests are pinned to, each with their type as
+# their role there: authority in a tenant is the membership's role.
+$tenant->add_user( $dao->db, $admin_user, 1 );
+$tenant->add_user( $dao->db, $staff_user );
+
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
 
