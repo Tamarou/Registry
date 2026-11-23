@@ -167,6 +167,29 @@ subtest 'no tenant_id column still holds the deleted row id' => sub {
           ->hash->{tenant_id}, PLATFORM_UUID, 'the subscription event now names the platform row';
 };
 
+# tenant_domains.domain is UNIQUE across tenants, so the two rows can never
+# share a domain. What can collide is idx_tenant_domains_primary -- one primary
+# domain per tenant -- when both rows have one.
+subtest 'a primary domain on both rows leaves the kept row primary' => sub {
+    my ( $uri, $db ) = fresh_db();
+    my $deleted = registry_id($db);
+
+    $db->query( q{INSERT INTO registry.tenant_domains (tenant_id, domain, status, is_primary)
+                  VALUES (?, 'kept.example.test', 'verified', true)}, PLATFORM_UUID );
+    $db->query( q{INSERT INTO registry.tenant_domains (tenant_id, domain, status, is_primary)
+                  VALUES (?, 'moved.example.test', 'verified', true)}, $deleted );
+
+    lives_ok { deploy($uri) } 'the change deploys';
+
+    my $domains = $db->query(
+        q{SELECT domain, is_primary FROM registry.tenant_domains WHERE tenant_id = ? ORDER BY domain},
+        PLATFORM_UUID )->hashes;
+    is_deeply $domains,
+        [ { domain => 'kept.example.test', is_primary => 1 },
+          { domain => 'moved.example.test', is_primary => 0 } ],
+        "both domains now belong to the kept row, and only the kept row's primary is primary";
+};
+
 subtest 'the deploy succeeds with no dependants on the deleted row' => sub {
     my ( $uri, $db ) = fresh_db();
     my $deleted = registry_id($db);
