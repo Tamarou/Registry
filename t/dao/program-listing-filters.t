@@ -268,4 +268,20 @@ subtest 'the platform storefront listing is titled with its name' => sub {
         "page_title is the registry row's name";
 };
 
+subtest 'a tenant storefront listing is never titled with the platform name' => sub {
+    my $admin = $dao->create(User => {
+        username => 'storefront_title_admin', user_type => 'admin',
+        email => 'storefront-title@example.com', name => 'Title Admin',
+    });
+    my $tenant = Registry::DAO::Tenant->provision($dao->db, {
+        name => 'Title Studio', slug => 'title_studio', users => [$admin],
+    });
+    my $platform = Registry::DAO::Tenant->platform($dao->db);
+
+    my $tenant_db = $dao->connect_schema($tenant->slug)->db;
+    my $data = $step->prepare_template_data($tenant_db, $run, {});
+    is $data->{page_title}, 'Title Studio', "page_title is the tenant's name";
+    isnt $data->{page_title}, $platform->name, "page_title is not the platform's name";
+};
+
 done_testing;

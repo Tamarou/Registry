@@ -17,8 +17,10 @@ use Registry::DAO::Session;
 use Registry::DAO::Enrollment;
 use Registry::DAO::Event;
 use Registry::DAO::UserPreference;
+use Registry::DAO::Tenant;
 use Registry::DAO::WorkflowSteps::AttendanceCheck::TenantProcessor;
 use Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor;
+use Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -44,11 +46,19 @@ Registry::DAO::WorkflowStep->create($db, {
     description => 'Missing attendance processor',
 });
 
+Registry::DAO::WorkflowStep->create($db, {
+    workflow_id => $workflow->id,
+    slug        => 'upcoming',
+    class       => 'Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor',
+    description => 'Upcoming event processor',
+});
+
 $workflow->update($db, { first_step => 'tenants' }, { id => $workflow->id });
 
 # Plant, in the schema $sdb is connected to, an event that started ten minutes
 # ago with an active enrollment, taught by a teacher who wants in-app
-# attendance notifications. With recorded => 1 the event's attendance is taken.
+# attendance notifications only (it has no email address to send to). With
+# recorded => 1 the event's attendance is taken.
 my $planted = 0;
 sub plant_event ($sdb, %opt) {
     my $n = ++$planted;
@@ -57,6 +67,9 @@ sub plant_event ($sdb, %opt) {
     });
     Registry::DAO::UserPreference->set_preference(
         $sdb, $teacher->id, 'attendance_missing', 'in_app', 1
+    );
+    Registry::DAO::UserPreference->set_preference(
+        $sdb, $teacher->id, 'attendance_missing', 'email', 0
     );
     my $student = Registry::DAO::User->create($sdb, {
         username => "platform_student_$n", passhash => 'x',
@@ -127,6 +140,53 @@ subtest 'the attendance check covers events in the registry schema' => sub {
         'the registry schema was processed' );
     ok( scalar( grep { $_ eq $event_id } @{ notified_event_ids('registry') } ),
         'the registry event missing attendance was counted' );
+};
+
+subtest 'registry appears once in the tenant schemas' => sub {
+    my $data = run_check();
+    is( scalar( grep { $_ eq 'registry' } @{ $data->{tenant_schemas} } ), 1,
+        'registry is listed exactly once' );
+};
+
+subtest 'processing registry never counts another tenant event' => sub {
+    my $admin = Registry::DAO::User->create($db, {
+        username => 'other_tenant_admin', passhash => 'x', user_type => 'admin',
+    });
+    my $tenant = Registry::DAO::Tenant->provision($db, {
+        name => 'Other Studio', slug => 'other_studio', users => [$admin],
+    });
+    my $tenant_event_id = plant_event($dao->connect_schema($tenant->slug)->db);
+
+    my $data = run_check('registry');
+
+    is( $data->{missing_attendance_processed}, 1, 'only registry was processed' );
+    ok( !scalar( grep { $_ eq $tenant_event_id }
+            @{ notified_event_ids('registry') }, @{ notified_event_ids($tenant->slug) } ),
+        "the other tenant's event was not counted" );
+};
+
+subtest 'a recorded platform event is not reported missing' => sub {
+    my $event_id = plant_event($registry_db, recorded => 1);
+
+    run_check();
+
+    ok( !scalar( grep { $_ eq $event_id } @{ notified_event_ids('registry') } ),
+        'the registry event with attendance recorded was not counted' );
+};
+
+# Each processor points the search_path at every tenant schema in turn. A
+# provisioned tenant's schema has its own workflow_runs table, so a search_path
+# left on it hides this run from the step's closing update_data.
+subtest 'the upcoming-event check records its result after a tenant schema' => sub {
+    my $run = $workflow->new_run($db);
+    $workflow->get_step($db, { slug => 'tenants' })->process($db, {}, $run);
+    $workflow->get_step($db, { slug => 'upcoming' })->process($db, {}, $run);
+
+    my $data = $workflow->latest_run($db)->data;
+    cmp_ok( scalar @{ $data->{tenant_schemas} }, '>', 1,
+        'a provisioned tenant is listed alongside registry' );
+    is( $data->{upcoming_events_processed}, scalar @{ $data->{tenant_schemas} },
+        'every schema was processed and the result recorded on the run' );
 };
 
 done_testing;

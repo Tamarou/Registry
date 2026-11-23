@@ -14,6 +14,11 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor :isa
         
         my $processed_count = 0;
         my $notifications_sent = 0;
+
+        # The loop points the search_path at each tenant schema in turn; a
+        # tenant schema has its own workflow_runs, so restore the caller's
+        # search_path before recording the result on this run.
+        my $search_path = $db->query('SHOW search_path')->array->[0];
         
         for my $schema (@$tenant_schemas) {
             try {
@@ -30,6 +35,8 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor :isa
                 warn "Error processing upcoming events for tenant $schema: $e";
             }
         }
+
+        $db->query("SET search_path TO $search_path");
         
         $run->update_data($db, {
             upcoming_events_processed => $processed_count,
