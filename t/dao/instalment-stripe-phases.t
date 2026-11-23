@@ -219,18 +219,20 @@ subtest 'no transfer data anywhere in schedule params' => sub {
         'no transfer_data key in default_settings or any phase';
 };
 
-subtest 'fee percent has at most four decimals and zero is omitted' => sub {
+# Two places because Stripe refuses a third (t/stripe-live/schedule-fee-precision.t).
+subtest 'fee percent has at most two decimals and zero is omitted' => sub {
     my $fee = sub ( $pct ) { params_with_pct($pct)->{'default_settings[application_fee_percent]'} };
 
-    is $fee->(1.23456), '1.2346', 'a long fraction is rounded to four places';
-    is $fee->(0.0001),  '0.0001', 'a tiny one is written out, not as 1e-04';
+    is $fee->(1.23456), '1.23', 'a long fraction is rounded to two places';
+    is $fee->(2.875),   '2.88', 'a three-place plan rate is rounded, not refused by Stripe';
+    is $fee->(0.01),    '0.01', 'a tiny one is written out, not as 1e-02';
     is $fee->( 0.029 * 100 ), '2.9', 'float noise does not reach Stripe';
     is $fee->(2.5), '2.5', 'and a plain one is sent as it is';
     is $fee->(10),  '10',  'and a whole one keeps its own zeros';
-    like $fee->( $plan_pct ), qr/\A\d+(?:\.\d{1,4})?\z/,
+    like $fee->( $plan_pct ), qr/\A\d+(?:\.\d{1,2})?\z/,
         'the seeded plan rate fits the same shape';
 
-    for my $zero ( 0, 0.0, '0.0', 0.00001 ) {
+    for my $zero ( 0, 0.0, '0.0', 0.004 ) {
         ok !exists params_with_pct($zero)->{'default_settings[application_fee_percent]'},
             "a percent of $zero is omitted";
     }

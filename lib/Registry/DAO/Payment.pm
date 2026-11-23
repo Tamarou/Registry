@@ -143,9 +143,10 @@ field $_stripe_client = undef;
         # Omitted rather than sent as zero. A tenant on the Free plan owes no
         # revenue share, and an explicit 0 is a value Stripe has no reason to
         # accept on a schedule that takes no fee.
-        # Fixed to four places and trimmed: Stripe takes at most four decimals,
-        # and Perl would write a small rate as 1e-04 and float noise in full.
-        ( my $pct = sprintf '%.4f', $args->{revenue_share_pct} // 0 ) =~ s/\.?0+\z//;
+        # Fixed to two places and trimmed: Stripe refuses a third decimal here
+        # (t/stripe-live/schedule-fee-precision.t), so a 2.875% plan is sent as
+        # 2.88; and Perl would write a small rate as 1e-02 and float noise in full.
+        ( my $pct = sprintf '%.2f', $args->{revenue_share_pct} // 0 ) =~ s/\.?0+\z//;
         $params{'default_settings[application_fee_percent]'} = $pct if $pct > 0;
 
         for my $i ( 0 .. $#$phases ) {
