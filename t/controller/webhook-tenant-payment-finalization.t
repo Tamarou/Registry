@@ -15,11 +15,11 @@ use Registry::DAO::Payment;
 use Registry::Controller::Webhooks;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
-use Digest::SHA qw(hmac_sha256_hex);
-use Mojo::JSON qw(encode_json);
+use Test::Registry::StripeWebhook;
 
 local $ENV{STRIPE_SECRET_KEY}     = 'sk_test_webhook_tenant_test';
 local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_test_webhook_tenant_test';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_webhook_tenant_connect';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -139,24 +139,13 @@ $mock_app->mock('log', sub { $mock_log });
 my $wh = Registry::Controller::Webhooks->new;
 $wh->{app} = $mock_app;
 
-# Tenant routing lives in stripe(), not in the handlers: stripe() resolves the
-# slug, validates it against registry.tenants, and sets a transaction-local
-# search_path that the handlers inherit. So the routing subtest has to go
-# through the real action -- calling a handler directly would hand it a
-# pre-scoped handle and assert nothing about which schema it picked.
+# Tenant routing lives in the Connect action, not in the handlers: it resolves
+# the tenant from event.account and sets a transaction-local search_path that
+# the handlers inherit. So the routing subtest has to go through the real
+# action -- calling a handler directly would hand it a pre-scoped handle and
+# assert nothing about which schema it picked.
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
-
-sub post_webhook ($event) {
-    my $payload   = encode_json($event);
-    my $timestamp = time();
-    my $sig       = hmac_sha256_hex("$timestamp.$payload", $ENV{STRIPE_WEBHOOK_SECRET});
-    my $tx = $t->ua->post('/webhooks/stripe' => {
-        'stripe-signature' => "t=$timestamp,v1=$sig",
-        'Content-Type'     => 'application/json',
-    } => $payload);
-    return $t->tx($tx);
-}
 
 # ---------------------------------------------------------------------------
 # Helper: count enrollments and notifications for a given payment (in tenant).
@@ -176,11 +165,12 @@ sub tenant_confirmation_count {
 # created there, NOT visible in registry.
 # ---------------------------------------------------------------------------
 
-subtest 'tenant payment finalized in tenant schema' => sub {
+subtest 'connect succeeded event finalizes enrollment in account tenant' => sub {
     my $evt = {
-        id   => 'evt_tenant_test_1',
-        type => 'payment_intent.succeeded',
-        data => { object => {
+        id      => 'evt_tenant_test_1',
+        type    => 'payment_intent.succeeded',
+        account => 'acct_wh_test',
+        data    => { object => {
             id       => 'pi_tenant_test_1',
             metadata => {
                 payment_id  => $tenant_payment->id,
@@ -189,11 +179,11 @@ subtest 'tenant payment finalized in tenant schema' => sub {
         } },
     };
 
-    # Driven through the real action: stripe() resolves the slug against
+    # Driven through the real action: it resolves event.account against
     # registry.tenants, opens one transaction, and sets a transaction-local
     # search_path, so the whole settlement -- payment lookup, completed write,
     # enrollment, notification -- lands in the tenant schema on one connection.
-    post_webhook($evt)->status_is(200);
+    Test::Registry::StripeWebhook::post_connect($t, $evt)->status_is(200);
 
     is tenant_enrollment_count(), 1, 'enrollment created in tenant schema';
     is tenant_confirmation_count(), 1, 'confirmation queued in tenant schema';

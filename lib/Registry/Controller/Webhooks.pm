@@ -162,6 +162,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
         my $slug = $tenant->{slug};
 
+        # A sale's completion settles through the same code as the platform
+        # endpoint, in the schema the account names.
+        if ( $event->{type} eq 'payment_intent.succeeded' ) {
+            $self->render_later;
+            return $self->_settle_event( $self->app->dao, $db, $event, $event_id, $slug, undef );
+        }
+
         my $tx = $db->begin;
         return unless $self->_claim_event( $db, $event );
 
