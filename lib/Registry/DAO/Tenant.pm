@@ -408,13 +408,16 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             "$schema.$table" )->hash->{ok} ? 1 : 0;
     }
 
+    # A new membership takes the user's user_type as its role, as add_user's
+    # does; an existing one keeps the role it has.
     method set_primary_user ( $db, $user ) {
         $db->insert(
             'tenant_users',
             {
                 tenant_id  => $id,
                 user_id    => $user->id,
-                is_primary => 1
+                is_primary => 1,
+                role       => $user->user_type,
             },
             {
                 on_conflict => [
