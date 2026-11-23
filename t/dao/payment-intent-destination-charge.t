@@ -138,7 +138,7 @@ subtest 'tenant intent is a direct charge on its own account' => sub {
         "application_fee_amount is the plan's rate on 10000 cents ($expected_fee_2pct)";
 };
 
-# ---- (a2) tenant with NULL plan link -> Free 0% fee, destination still set ------
+# ---- (a2) tenant with NULL plan link -> Free 0% fee, still its own account -----
 subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => sub {
     # A second connect-ready tenant with no linked plan: the resolver falls back
     # to the platform Free plan (0%), so the application fee is 0 while the

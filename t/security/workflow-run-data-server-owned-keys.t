@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Proves a client cannot write the server-owned workflow run-data keys __tenant_slug and user_id.
-# ABOUTME: __tenant_slug alone selects the Stripe destination account, on_behalf_of, and the fee rate.
+# ABOUTME: __tenant_slug alone selects the seller Stripe account a charge is made on and the fee rate.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;

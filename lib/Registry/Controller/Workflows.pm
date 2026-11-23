@@ -59,8 +59,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     # Request params are merged into a run's data verbatim, on every step, so
     # any key the server owns has to be re-derived from the request rather than
-    # trusted. __tenant_slug alone selects the Stripe destination account,
-    # on_behalf_of, and the revenue-share rate; user_id decides whose enrollment
+    # trusted. __tenant_slug alone selects the seller's Stripe account the
+    # charge is made on, and the revenue-share rate; user_id decides whose enrollment
     # and whose charge this is, and user names the same person for the steps
     # that read the acting user off the run. All are dropped when there is
     # nothing to derive -- an absent session is not a licence to invent a user.

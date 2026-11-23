@@ -240,7 +240,7 @@ $db->query(q{
     ) WHERE slug = ?
 }, $slug);
 
-my $captured_params;
+my ($captured_params, $captured_account);
 my $captured_stripe_called = 0;
 
 my $run  = make_e2e_run();
@@ -254,7 +254,8 @@ my $result;
     local *Registry::Service::Stripe::create_payment_intent_async = sub {
         my ($self_stripe, $params) = @_;
         $captured_stripe_called++;
-        $captured_params = $params;
+        $captured_params  = $params;
+        $captured_account = $self_stripe->stripe_account;
         return Mojo::Promise->resolve({ id => 'pi_e2e', client_secret => 'cs_e2e' });
     };
 
@@ -277,14 +278,16 @@ subtest 'ready tenant: payment step passes gate and creates payment' => sub {
     ok !$reg_pay, 'payment row NOT present in registry schema';
 };
 
-subtest 'Stripe params carry correct destination-charge and metadata keys' => sub {
-    ok $captured_params, 'captured Stripe params are present';
+subtest 'paid enrollment is a direct charge on the tenant account' => sub {
+    is $captured_account, 'acct_e2e',
+        'the intent is created by a client bound to the tenant account';
+    ok !exists $captured_params->{'transfer_data[destination]'},
+        'no transfer_data[destination]';
+    ok !exists $captured_params->{'on_behalf_of'}, 'no on_behalf_of';
+};
 
-    # Connect routing
-    is $captured_params->{'transfer_data[destination]'}, 'acct_e2e',
-        'transfer_data[destination] is the tenant account id';
-    is $captured_params->{'on_behalf_of'}, 'acct_e2e',
-        'on_behalf_of is the tenant account id';
+subtest 'Stripe params carry the platform fee and metadata keys' => sub {
+    ok $captured_params, 'captured Stripe params are present';
 
     # Both operands read rather than restated: the amount from the fixture, the
     # rate through the same resolver the charge path calls. A hardcoded rate here
