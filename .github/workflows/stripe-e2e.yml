@@ -73,6 +73,10 @@ jobs:
         # Unsetting it was not enough (Makefile.PL found the toolcache
         # OpenSSL anyway), so name the system one.
         export OPENSSL_PREFIX=/usr
+        # actions-setup-perl restores a cached ./local, built against its own
+        # OpenSSL, so carton found nothing to build and none of this applied.
+        # Build ./local fresh.
+        rm -rf local
         carton install --deployment
         # Prove it: load the database client first, then TLS -- the order that
         # broke -- and show which libssl Net::SSLeay links.

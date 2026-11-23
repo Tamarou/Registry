@@ -68,6 +68,10 @@ jobs:
         # Unsetting it was not enough (Makefile.PL found the toolcache
         # OpenSSL anyway), so name the system one.
         export OPENSSL_PREFIX=/usr
+        # actions-setup-perl restores a cached ./local, built against its own
+        # OpenSSL, so carton found nothing to build and none of this applied.
+        # Build ./local fresh.
+        rm -rf local
         carton install --deployment || {
           for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
@@ -316,11 +320,9 @@ jobs:
         curl -L https://cpanmin.us | perl - App::cpanminus
         cpanm --notest Carton
 
-    # No cache step here. actions-setup-perl already restores local/ -- PERL5LIB
-    # names it before carton runs -- so `carton install --deployment` completes in
-    # about a tenth of a second. The test job's ~/perl5 cache was pointed at the
-    # wrong directory for the same reason (carton installs into ./local) and has
-    # been removed.
+    # No cache step here. actions-setup-perl restores a cached local/ of its
+    # own, built against the toolcache OpenSSL; the install step below deletes
+    # it and builds fresh (see the comment there).
     - name: Install Perl dependencies
       run: |
         export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"
@@ -334,6 +336,10 @@ jobs:
         # Unsetting it was not enough (Makefile.PL found the toolcache
         # OpenSSL anyway), so name the system one.
         export OPENSSL_PREFIX=/usr
+        # actions-setup-perl restores a cached ./local, built against its own
+        # OpenSSL, so carton found nothing to build and none of this applied.
+        # Build ./local fresh.
+        rm -rf local
         carton install --deployment || {
           for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
@@ -419,6 +425,10 @@ jobs:
         # Unsetting it was not enough (Makefile.PL found the toolcache
         # OpenSSL anyway), so name the system one.
         export OPENSSL_PREFIX=/usr
+        # actions-setup-perl restores a cached ./local, built against its own
+        # OpenSSL, so carton found nothing to build and none of this applied.
+        # Build ./local fresh.
+        rm -rf local
         carton install --deployment || {
           for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
