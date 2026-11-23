@@ -48,11 +48,10 @@ subtest 'a single charge is a single phase' => sub {
 
 # The whole request, as it goes to Stripe. This is the shape that decides where
 # the money lands, so it is asserted rather than trusted.
-subtest 'the schedule routes the money to the tenant and our fee to us' => sub {
+subtest 'the schedule bills the customer and takes our fee' => sub {
     my $params = Registry::DAO::Payment::instalment_schedule_params( {
         customer           => 'cus_probe',
         payment_method     => 'pm_probe',
-        connect_account    => 'acct_probe',
         revenue_share_pct  => 2.5,
         currency           => 'usd',
         description        => 'Summer Camp',
@@ -67,11 +66,10 @@ subtest 'the schedule routes the money to the tenant and our fee to us' => sub {
     is $params->{end_behavior}, 'cancel',
         'and it stops when the instalments are done, rather than renewing forever';
 
-    # Destination charges, the same model the one-off path uses: the tenant is
-    # the merchant and our share is the application fee. A schedule that omitted
-    # these would settle every instalment into the PLATFORM's balance.
-    is $params->{'default_settings[transfer_data][destination]'}, 'acct_probe',
-        'each charge settles in the tenant account';
+    # Direct charges: the schedule is made on the seller's own account, so the
+    # money is already theirs. A transfer destination would send it nowhere new.
+    ok !exists $params->{'default_settings[transfer_data][destination]'},
+        'no transfer destination -- the charge is already on the seller account';
     is $params->{'default_settings[application_fee_percent]'}, 2.5,
         'with the revenue share taken as the application fee';
     is $params->{'default_settings[collection_method]'}, 'charge_automatically',
@@ -103,7 +101,6 @@ subtest 'a tenant with no revenue share still gets its money' => sub {
     my $params = Registry::DAO::Payment::instalment_schedule_params( {
         customer          => 'cus_probe',
         payment_method    => 'pm_probe',
-        connect_account   => 'acct_probe',
         revenue_share_pct => 0,
         currency          => 'usd',
         description       => 'Free Ride',
@@ -111,8 +108,8 @@ subtest 'a tenant with no revenue share still gets its money' => sub {
         instalments       => [ { amount_cents => 100, due_date => '2026-07-01' } ],
     } );
 
-    is $params->{'default_settings[transfer_data][destination]'}, 'acct_probe',
-        'still a destination charge';
+    ok !exists $params->{'default_settings[transfer_data][destination]'},
+        'no transfer destination';
     ok !exists $params->{'default_settings[application_fee_percent]'},
         'and no application fee key at all, rather than a zero Stripe may reject';
 };

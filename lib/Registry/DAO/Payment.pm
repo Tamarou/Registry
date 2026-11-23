@@ -135,11 +135,9 @@ field $_stripe_client = undef;
             'default_settings[collection_method]'     => 'charge_automatically',
             'default_settings[default_payment_method]' => $args->{payment_method},
 
-            # Destination charges, as the one-off path does in _connect_params:
-            # the tenant is the merchant of record and our share is the
-            # application fee. Without these every instalment would settle into
-            # the PLATFORM's balance and the tenant would be paid nothing.
-            'default_settings[transfer_data][destination]' => $args->{connect_account},
+            # No transfer_data: the schedule is made on the seller's own account
+            # (a direct charge, as the one-off path is), so the money is
+            # already theirs and our share is the application fee.
         );
 
         # Omitted rather than sent as zero. A tenant on the Free plan owes no
@@ -229,7 +227,6 @@ field $_stripe_client = undef;
             instalment_schedule_params( {
                 customer          => $customer,
                 payment_method    => $card,
-                connect_account   => $acct,
                 revenue_share_pct => $pct,
                 currency          => lc $currency,
                 description       => $description,
