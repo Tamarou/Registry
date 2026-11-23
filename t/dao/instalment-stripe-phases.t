@@ -273,6 +273,102 @@ subtest 'rerun creates no second schedule' => sub {
         $payment->id )->array->[0], 2, 'and one row per remaining instalment';
 };
 
+# Stripe as it treats an Idempotency-Key: a key it has seen returns what the
+# first request made, and a request without one makes a new object every time.
+# Persists across runs, as Stripe's memory does across a crashed job.
+my %stripe_by_key;
+my $stripe_serial = 0;
+sub with_keyed_stripe ( $code, %on ) {
+    my @made;
+    my $make = sub ( $kind, $p ) {
+        my $key = $p->{_idempotency_key};
+        return $stripe_by_key{$key} if defined $key && $stripe_by_key{$key};
+        my $obj = { id => $kind . '_' . ++$stripe_serial };
+        push @made, [ $kind, $obj->{id} ];
+        $stripe_by_key{$key} = $obj if defined $key;
+        return $obj;
+    };
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
+        return { id => $pi, customer => 'cus_one', payment_method => 'pm_one' };
+    };
+    local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
+        return $make->( prod => $p );
+    };
+    local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
+        my $schedule = $make->( sub_sched => $p );
+        # Once: the hook may itself schedule, and must not fire inside itself.
+        if ( my $hook = delete $on{schedule_made} ) { $hook->() }
+        return $schedule;
+    };
+    $code->();
+    return [ grep { $_->[0] eq 'sub_sched' } @made ];
+}
+
+sub scheduled_rows ( $payment ) {
+    return $db->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
+        $payment->id )->array->[0];
+}
+
+subtest 'a retried job after create-then-crash makes one schedule' => sub {
+    my $payment = first_instalment();
+
+    # Stripe makes the schedule; the job dies before its COMMIT, as a worker
+    # killed mid-request or a lost response would leave it.
+    my $crashed;
+    my $made = with_keyed_stripe(
+        sub {
+            eval { $payment->schedule_remaining_instalments($db); 1 } or $crashed = $@;
+        },
+        schedule_made => sub { die "worker lost\n" },
+    );
+    is $crashed, "worker lost\n", 'the first run died after Stripe made the schedule';
+    is scalar @$made, 1, 'leaving one schedule at Stripe';
+    is scheduled_rows($payment), 0, 'and nothing recorded here';
+
+    require Registry::Job::InstalmentSchedule;
+    my $retried = with_keyed_stripe( sub {
+        Registry::Job::InstalmentSchedule->new->create_for( $db,
+            Registry::DAO::Payment->find( $db, { id => $payment->id } ) );
+    } );
+    is_deeply $retried, [], 'the retry makes no second schedule at Stripe';
+
+    my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+    is $row->stripe_schedule_id, $made->[0][1], 'and records the one the first run made';
+    is scheduled_rows($payment), 2, 'with one row per remaining instalment';
+};
+
+subtest 'two jobs for one payment make one schedule' => sub {
+    my $payment = first_instalment();
+
+    # Both jobs load the row before either has scheduled, as two jobs queued by
+    # near-simultaneous success events do.
+    my $db2   = $t_db->db->db;
+    my $other = Registry::DAO::Payment->find( $db2, { id => $payment->id } );
+
+    # The second job starts while the first is mid-flight at Stripe. It must
+    # wait for the first rather than race it; a short lock_timeout turns that
+    # wait into an error this test can see.
+    my $second;
+    my $made = with_keyed_stripe(
+        sub { $payment->schedule_remaining_instalments($db) },
+        schedule_made => sub {
+            $db2->query(q{SET lock_timeout = '200ms'});
+            eval { $other->schedule_remaining_instalments($db2); 1 } or $second = $@;
+            $db2->query('RESET lock_timeout');
+        },
+    );
+    like $second, qr/lock timeout/, 'the second job waited on the first';
+    is scalar @$made, 1, 'one schedule while both ran';
+
+    # Once the first has committed, the second -- still holding the row it
+    # loaded before -- finds the schedule rather than making another.
+    my $again = with_keyed_stripe( sub { $other->schedule_remaining_instalments($db2) } );
+    is_deeply $again, [], 'the second job makes no schedule afterwards';
+    is $other->stripe_schedule_id, $made->[0][1], 'and reports the first one';
+    is scheduled_rows($payment), 2, 'and adds no rows';
+};
+
 subtest 'schedule uses the account instalment one was charged on' => sub {
     my $payment = first_instalment();
     $db->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_moved'

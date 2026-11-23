@@ -305,8 +305,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # One job per payment: a second event for it finds the first still
         # waiting and adds nothing. Keyed by a note named for the payment,
         # because Minion filters notes by key.
-        # shortcut: check-then-enqueue, so two events settling at the same
-        # instant can still queue two; make it a guarded insert if that is seen.
+        # Check-then-enqueue, so two events settling at the same instant can
+        # still queue two. That is harmless: the job serialises runs for one
+        # payment and the second finds the first's schedule
+        # (Payment::schedule_remaining_instalments).
         if ($schedule_for) {
             my $minion = $self->app->minion;
             my $queued = $minion->jobs( {

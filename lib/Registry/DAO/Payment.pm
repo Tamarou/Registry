@@ -182,9 +182,16 @@ field $_stripe_client = undef;
     # webhook's transaction is the shape of #284 -- the work belongs after the
     # COMMIT, where a failure can be retried without holding a lock.
     #
-    # Idempotent by the schedule id: a retried job finds one already recorded and
-    # returns it rather than creating a second schedule that would double-bill
-    # the family.
+    # Idempotent three ways, because a second schedule bills the family twice.
+    # A run that finds a schedule recorded returns it. Runs for one payment are
+    # serialised by an advisory lock, and the check is repeated under it, so a
+    # second job (two success events can queue two) waits for the first and
+    # then finds its schedule. And the product and schedule creates carry
+    # Idempotency-Keys named for the payment, so a retry after Stripe made the
+    # schedule but before our COMMIT gets that same schedule back.
+    # shortcut: Stripe keeps a key for 24 hours, so a retry later than that
+    # after such a crash makes a second schedule; reconcile against Stripe's
+    # schedules for the customer if retries ever run that late.
     method schedule_remaining_instalments ($db) {
         my $raw = ($db isa Registry::DAO) ? $db->db : $db;
 
@@ -208,6 +215,16 @@ field $_stripe_client = undef;
         # and card live; dies, before any Stripe call, when there is none.
         my $client = $self->stripe_client;
 
+        # Open across the Stripe calls for the lock alone: it holds no row lock
+        # until the writes at the end, so nothing waits on Stripe but another
+        # run for this payment. Released by COMMIT, or by rollback on any death.
+        my $txn = $raw->begin;
+        $raw->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+            "instalment_schedule:$id" );
+        my $done = $raw->select( 'payments', ['stripe_schedule_id'], { id => $id } )
+            ->hash->{stripe_schedule_id};
+        return $stripe_schedule_id = $done if $done;
+
         # The customer the first charge was made against, and the card it saved.
         my $intent = $client->retrieve_payment_intent($stripe_payment_intent_id);
         my $customer = $intent->{customer}
@@ -219,10 +236,11 @@ field $_stripe_client = undef;
         my $product = $client->create_product({
             name                  => $description,
             'metadata[payment_id]' => $id,
+            _idempotency_key       => "instalment_schedule:$id:product",
         });
 
-        my $schedule = $client->create_subscription_schedule(
-            instalment_schedule_params( {
+        my $schedule = $client->create_subscription_schedule( {
+            %{ instalment_schedule_params( {
                 customer          => $customer,
                 payment_method    => $card,
                 revenue_share_pct => $pct,
@@ -230,12 +248,13 @@ field $_stripe_client = undef;
                 description       => $description,
                 product           => $product->{id},
                 instalments       => \@remaining,
-            } ) );
+            } ) },
+            _idempotency_key => "instalment_schedule:$id:schedule",
+        } );
 
-        # Recorded in one transaction with the rows it bills, so a crash between
-        # them cannot leave a schedule at Stripe that Registry has no record of.
-        my $txn = $raw->begin;
-
+        # Recorded in one transaction with the rows it bills. A crash before the
+        # COMMIT leaves a schedule at Stripe with no record here; the retry's
+        # Idempotency-Key gets that same schedule back, so it is recorded once.
         $raw->update( 'payments', { stripe_schedule_id => $schedule->{id} },
             { id => $id } );
 

@@ -233,7 +233,9 @@ class Registry::Service::Stripe {
     # 33.33 / 33.33 / 33.34, and the odd cent has to land somewhere, so the last
     # charge differs from the others. Phases are what let it.
     method create_subscription_schedule_async($params) {
-        return $self->_request_async('POST', 'subscription_schedules', $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'subscription_schedules', \%p, $ik);
     }
 
     method retrieve_subscription_schedule_async($schedule_id) {
@@ -279,7 +281,9 @@ class Registry::Service::Stripe {
     
     # Products API
     method create_product_async($params) {
-        return $self->_request_async('POST', 'products', $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'products', \%p, $ik);
     }
     
     method retrieve_product_async($product_id) {
@@ -356,6 +360,10 @@ class Registry::Service::Stripe {
 
     method retrieve_subscription_schedule($schedule_id) {
         return $self->_await($self->retrieve_subscription_schedule_async($schedule_id));
+    }
+
+    method create_product($params) {
+        return $self->_await($self->create_product_async($params));
     }
 
     method cancel_subscription_schedule($schedule_id, $params = {}) {
