@@ -63,6 +63,8 @@ my $payment = Registry::DAO::Payment->create($db, {
         tenant_slug      => undef,
     },
 });
+# The intent Registry created for it, stored as create_payment_intent stores it.
+$db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment->id }, { id => $payment->id });
 
 sub pi_event ($event_id) {
     return {
@@ -138,6 +140,8 @@ subtest 'amount mismatch fails loudly and does not finalize (Leg W1)' => sub {
             tenant_slug      => undef,
         },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment2->id },
+        { id => $payment2->id });
 
     my sub pi2_event ($event_id, $amount) {
         return {
@@ -189,6 +193,8 @@ subtest 'a die mid-finalization leaves no partial enrollment and no claim (Leg 0
             tenant_slug      => undef,
         },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment3->id },
+        { id => $payment3->id });
 
     my sub pi3_event ($event_id) {
         return {
@@ -256,6 +262,8 @@ subtest 'webhook settlement stamps completed_at and preserves metadata (Leg 0 Ta
             tenant_slug      => undef,
         },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment4->id },
+        { id => $payment4->id });
 
     my $before = $db->select('payments', ['completed_at'], { id => $payment4->id })->hash;
     is $before->{completed_at}, undef, 'completed_at starts NULL';
@@ -397,12 +405,16 @@ sub a_sale ($seller, %extra) {
     my $child = Registry::DAO::Family->add_child($tdb, $seller->{parent}->id, {
         child_name => 'PI Conn Kid ' . ++$kids, birth_date => '2018-01-01', grade => '3',
         medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
-    return Registry::DAO::Payment->create($tdb, {
+    my $sale = Registry::DAO::Payment->create($tdb, {
         user_id => $seller->{parent}->id, amount_cents => 10000, status => 'pending',
         %extra,
         metadata => {
             enrollment_items => [ { session_id => $seller->{session}->id, child_id => $child->id } ],
             tenant_slug      => $seller->{slug} } });
+    # The intent Registry created for it, as settle_on names it.
+    $tdb->update('payments', { stripe_payment_intent_id => 'pi_conn_' . $sale->id },
+        { id => $sale->id });
+    return $sale;
 }
 
 # Everything a settlement could write in a seller's schema, as one comparable value.
@@ -530,7 +542,7 @@ subtest 'settlement failure leaves event unclaimed and nothing behind' => sub {
         type    => 'payment_intent.succeeded',
         account => $seller_a->{account},
         data    => { object => {
-            id => 'pi_conn_fail', amount => 10000, application_fee_amount => 300,
+            id => 'pi_conn_' . $sale->id, amount => 10000, application_fee_amount => 300,
             metadata => { payment_id => $sale->id },
         } },
     })->status_is(500);

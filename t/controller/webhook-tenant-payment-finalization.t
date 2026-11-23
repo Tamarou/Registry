@@ -110,6 +110,7 @@ my $tenant_payment = Registry::DAO::Payment->create($tdb, {
     user_id  => $parent->id,
     amount_cents => 15000,
     status   => 'pending',
+    stripe_payment_intent_id => 'pi_tenant_test_1',    # the intent Registry created
     metadata => {
         enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
         tenant_slug      => $slug,
@@ -361,6 +362,7 @@ subtest 'registry-schema payment without tenant_slug finalizes on registry conne
         user_id  => $reg_parent->id,
         amount_cents => 7500,
         status   => 'pending',
+        stripe_payment_intent_id => 'pi_reg_schema_wh_1',    # the intent Registry created
         metadata => {
             enrollment_items => [ { session_id => $reg_session->id, child_id => $reg_child->id } ],
             tenant_slug      => undef,

@@ -142,6 +142,7 @@ subtest 'stripe webhook integration settles through connect endpoint' => sub {
 
     my $payment = Registry::DAO::Payment->create($tdb, {
         user_id => $parent->id, amount_cents => 12000, status => 'pending',
+        stripe_payment_intent_id => "pi_int_conn_$$",    # the intent Registry created
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
             tenant_slug      => $slug } });

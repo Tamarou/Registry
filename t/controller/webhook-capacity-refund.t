@@ -91,6 +91,8 @@ sub a_doomed_payment (%extra) {
     $tdb->insert('payment_items', {
         payment_id => $p->id, description => 'seat', amount_cents => 15000,
         metadata => { -json => { child_id => $child->id, session_id => $session->id } } });
+    # The intent Registry created for it, as post_settlement names it.
+    $tdb->update('payments', { stripe_payment_intent_id => 'pi_cr_' . $p->id }, { id => $p->id });
     return Registry::DAO::Payment->find($tdb, { id => $p->id });
 }
 
@@ -162,7 +164,7 @@ subtest 'two increments are refunded separately, never as one accumulated total'
     # never acquire an intent id and refund_async would die on that instead,
     # invisibly, because the always-2xx catch swallows it. In production the
     # first delivery completes the payment before any debt exists.
-    $tdb->update('payments', { stripe_payment_intent_id => 'pi_multi_' . $payment->id },
+    $tdb->update('payments', { stripe_payment_intent_id => 'pi_cr_' . $payment->id },
         { id => $payment->id });
     tenant_payment($payment)->record_capacity_obligation( $tdb, 4000, ['earlier-kid'] );
 
@@ -276,6 +278,7 @@ subtest 'a settlement that fits refunds nothing' => sub {
         metadata => {
             enrollment_items => [ { session_id => $roomy->id, child_id => $child->id } ],
             tenant_slug      => $slug } });
+    $tdb->update('payments', { stripe_payment_intent_id => 'pi_cr_' . $p->id }, { id => $p->id });
     my $payment = Registry::DAO::Payment->find($tdb, { id => $p->id });
 
     my @refunds;

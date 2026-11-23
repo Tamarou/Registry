@@ -189,8 +189,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # Stripe is the source of truth: the account wins over whatever
             # tenant our own metadata names.
             my $named = $event->{data}{object}{metadata}{tenant_slug};
-            $self->app->log->warn( "Connect webhook event $event_id names tenant '$named' "
-                  . "in metadata but account $account is tenant '$slug'; settling in '$slug'" )
+            # The seller wrote $named, so it cannot forge lines in our log.
+            $self->app->log->warn( "Connect webhook event $event_id names tenant '"
+                  . ( $named =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                  . "' in metadata but account $account is tenant '$slug'; settling in '$slug'" )
                 if defined $named && !ref $named && $named ne $slug;
 
             $self->render_later;
@@ -565,9 +567,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # A charge Registry did not make -- a seller's own Terminal or counter
         # sale -- or one this schema has no row for. A retry cannot change
         # that, so it is acknowledged rather than refused.
-        my sub ignore ($why) {
+        my sub ignore ($why, $level = 'info') {
             my $pi = $intent->{id} // 'an intent with no id';
-            $self->app->log->info("payment_intent.succeeded for $pi ignored: $why");
+            $self->app->log->$level("payment_intent.succeeded for $pi ignored: $why");
             return undef;
         }
         return ignore('no payment_id in metadata') unless $payment_id;
@@ -581,7 +583,20 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # key and would not be on a filter that matches more than one row.
         my $payment = Registry::DAO::Payment->find($db, { id => $payment_id },
             { for => 'update' });
-        return ignore("payment $payment_id not found") unless $payment;
+        # A tenant's payment_id reaching a schema without it -- the platform
+        # endpoint, say -- is not a counter sale, so it is worth a warn.
+        return ignore( "payment $payment_id not found",
+            defined $intent->{metadata}{tenant_slug} ? 'warn' : 'info' )
+            unless $payment;
+
+        # Only the intent Registry created settles. The seller owns the Connect
+        # account, so they can mint their own succeeded intent carrying our
+        # payment_id, our amount and no application fee; metadata proves
+        # nothing. Registry stored the id when it created the intent.
+        my $stored = $payment->stripe_payment_intent_id;
+        return ignore( "payment $payment_id was created with intent "
+              . ( $stored // 'none stored' ) . ', not this one', 'warn' )
+            unless defined $stored && defined $intent->{id} && $intent->{id} eq $stored;
 
         # The intent's captured amount must match the payment row before the
         # enrollment snapshot is granted: a stale intent completing after a
