@@ -119,9 +119,11 @@ Set these environment variables in your Render dashboard:
 deploy, which writes the Stripe values onto the `registry` tenant and gives the
 `registry` tenant's primary admin the configured email address (creating that
 admin if the platform tenant has no admin-role member). With `MOJO_MODE=production`
-a missing or malformed value stops the boot; elsewhere it is a warning. If the
-`registry` tenant already records a different Stripe account (one an admin set
-since), bootstrap keeps it, changes nothing, and prints a warning naming both.
+a missing or malformed value stops the boot; elsewhere it is a warning. So does
+a `PLATFORM_ADMIN_EMAIL` that already belongs to another user (a studio's, say):
+bootstrap reports it as in use and writes nothing. If the `registry` tenant
+already records a different Stripe account (one an admin set since), bootstrap
+keeps it and its readiness as they are, and prints a warning naming both.
 
 **Email Configuration:**
 - `EMAIL_FROM` - Default: `noreply@registry-demo.onrender.com`

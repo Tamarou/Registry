@@ -122,9 +122,11 @@ Registry is production-ready with the following features implemented:
 #### Production Checklist
 - [ ] Set environment variables: `DATABASE_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`,
       and the platform's own Stripe account: `PLATFORM_STRIPE_ACCOUNT_ID`
-      (`acct_...`) and `PLATFORM_STRIPE_READY` (`true`/`false`). The
-      entrypoint's `./registry platform bootstrap` writes these onto the
-      `registry` tenant and refuses a production boot without them (see
+      (`acct_...`) and `PLATFORM_STRIPE_READY` (`true`/`false`), and
+      `PLATFORM_ADMIN_EMAIL`, the address of the platform tenant's first
+      admin, who signs in by magic link to it. The entrypoint's
+      `./registry platform bootstrap` writes these onto the `registry`
+      tenant and its admin and refuses a production boot without them (see
       DEPLOYMENT.md).
 - [ ] Configure email delivery: set `POSTMARK_SERVER_TOKEN` in the
       Render dashboard (sync: false in render.yaml). Notifications route
