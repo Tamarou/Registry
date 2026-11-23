@@ -416,20 +416,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # magic_link_tokens table holds no consumed row has never been entered.
     # Registering a passkey needs an authenticated session, so it cannot be the
     # first way in and cannot hide a login from this.
-    # The platform's own rows. They are not tenants anybody can reclaim, bill or
-    # chase, and there are TWO of them: `registry`, which has a schema, and
-    # `registry-platform`, the zero-uuid row with none. That is the shape #294
-    # collapses, and where #265's repeating sweep errors come from.
-    #
-    # Every per-tenant reader has to exclude both. Excluding only `registry` is
-    # how the platform's own row turned up in an operator's reclaim report as an
-    # abandoned tenant -- it surfaced when a regenerated sql/test-schema.sql
-    # aged past the ten-day window the test uses, eleven days after the dump was
-    # taken, so it had been wrong for as long as the second row has existed.
-    #
-    # A slug list is the identity-check shape #427 is about, and it stays only
-    # until #294 makes the root tenant one row.
-    sub platform_slugs { return [ 'registry', 'registry-platform' ] }
+    # The platform tenant is judged by the same rule: it is one row now, slug
+    # registry, and an exemption by slug is the identity check #427 removes.
 
     sub inert ( $class, $db, %opt ) {
         $db = $db->db if $db isa Registry::DAO;
@@ -750,14 +738,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
         # Payments live in the tenant's schema, so this is one query per tenant
         # rather than a join -- see platform_revenue above for why.
-        my $tenants = $db->query( <<~'SQL', $class->platform_slugs )->hashes->to_array;
+        my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
             SELECT t.slug, t.name,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
                    ) AS schema_present
               FROM registry.tenants t
-             WHERE NOT ( t.slug = ANY($1) )
              ORDER BY t.name
             SQL
 
