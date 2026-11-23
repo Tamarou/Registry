@@ -13,6 +13,7 @@ use Test::Registry::Helpers;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::ProgramType;
+use Registry::DAO::Tenant;
 use Registry::DAO::WorkflowSteps::ProgramListing;
 use Mojo::Home;
 use YAML::XS qw(Load);
@@ -255,6 +256,16 @@ subtest 'filter options provided for template' => sub {
 
     my @types = @{$data->{filter_program_types}};
     ok @types >= 2, 'At least 2 program types available';
+};
+
+subtest 'the platform storefront listing is titled with its name' => sub {
+    my $registry_db = $dao->connect_schema('registry')->db;
+    my $platform    = Registry::DAO::Tenant->platform($registry_db);
+    ok $platform, 'the registry row exists';
+
+    my $data = $step->prepare_template_data($registry_db, $run, {});
+    is $data->{page_title}, $platform->name,
+        "page_title is the registry row's name";
 };
 
 done_testing;
