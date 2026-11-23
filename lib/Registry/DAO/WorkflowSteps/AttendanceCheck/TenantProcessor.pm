@@ -10,7 +10,7 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::TenantProcessor :isa(Regist
         my $tenants = Registry::DAO::Tenant->get_all_tenant_schemas($db);
         
         # Store tenant list in run data for other steps to process
-        my $tenant_slugs = [ map { $_->{slug} } grep { $_->{slug} ne 'registry' } @$tenants ];
+        my $tenant_slugs = [ map { $_->{slug} } @$tenants ];
         
         $run->update_data($db, {
             tenant_schemas => $tenant_slugs,
