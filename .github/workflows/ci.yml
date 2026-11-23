@@ -65,11 +65,17 @@ jobs:
         # owns libssl.so.3 in the process, and a process that touched the
         # database first then failed "version `OPENSSL_3.2.0' not found" --
         # Mojo reports that as "IO::Socket::SSL 2.009+ required for TLS support".
-        unset OPENSSL_PREFIX
+        # Unsetting it was not enough (Makefile.PL found the toolcache
+        # OpenSSL anyway), so name the system one.
+        export OPENSSL_PREFIX=/usr
         carton install --deployment || {
           for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
         }
+        # Prove it: load the database client first, then TLS -- the order that
+        # broke -- and show which libssl Net::SSLeay links.
+        ldd local/lib/perl5/x86_64-linux/auto/Net/SSLeay/SSLeay.so | grep libssl
+        carton exec perl -MDBD::Pg -MIO::Socket::SSL -e 'print "IO::Socket::SSL $IO::Socket::SSL::VERSION loads after libpq\n"'
 
     - name: Setup test database
       run: |
@@ -325,11 +331,17 @@ jobs:
         # owns libssl.so.3 in the process, and a process that touched the
         # database first then failed "version `OPENSSL_3.2.0' not found" --
         # Mojo reports that as "IO::Socket::SSL 2.009+ required for TLS support".
-        unset OPENSSL_PREFIX
+        # Unsetting it was not enough (Makefile.PL found the toolcache
+        # OpenSSL anyway), so name the system one.
+        export OPENSSL_PREFIX=/usr
         carton install --deployment || {
           for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
         }
+        # Prove it: load the database client first, then TLS -- the order that
+        # broke -- and show which libssl Net::SSLeay links.
+        ldd local/lib/perl5/x86_64-linux/auto/Net/SSLeay/SSLeay.so | grep libssl
+        carton exec perl -MDBD::Pg -MIO::Socket::SSL -e 'print "IO::Socket::SSL $IO::Socket::SSL::VERSION loads after libpq\n"'
 
     - name: Test database migration
       run: |
@@ -404,11 +416,17 @@ jobs:
         # owns libssl.so.3 in the process, and a process that touched the
         # database first then failed "version `OPENSSL_3.2.0' not found" --
         # Mojo reports that as "IO::Socket::SSL 2.009+ required for TLS support".
-        unset OPENSSL_PREFIX
+        # Unsetting it was not enough (Makefile.PL found the toolcache
+        # OpenSSL anyway), so name the system one.
+        export OPENSSL_PREFIX=/usr
         carton install --deployment || {
           for f in ~/.cpanm/work/*/build.log; do echo "::group::failed builds in $f"; awk '/^Entering /{n=0} {s[++n]=$0} /-> FAIL/{for(i=1;i<=n;i++) if(i<=30||i>n-70) print s[i]; else if(i==31) print "... (" n-100 " lines omitted)"; print "----"; n=0}' "$f"; echo "::endgroup::"; done
           exit 1
         }
+        # Prove it: load the database client first, then TLS -- the order that
+        # broke -- and show which libssl Net::SSLeay links.
+        ldd local/lib/perl5/x86_64-linux/auto/Net/SSLeay/SSLeay.so | grep libssl
+        carton exec perl -MDBD::Pg -MIO::Socket::SSL -e 'print "IO::Socket::SSL $IO::Socket::SSL::VERSION loads after libpq\n"'
 
     - name: Check dependencies
       run: |
