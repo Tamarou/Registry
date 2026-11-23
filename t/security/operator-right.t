@@ -136,13 +136,17 @@ subtest 'without the operator right a minion action that changes a job is refuse
     my $minion = $t->app->minion;
     my $id = $minion->enqueue( 'operator_right_probe', [], { queue => 'operator_right_probe' } );
 
+    # From the app's own origin, as the dashboard's form is, so the CSRF hook
+    # lets each request through and the refusals below are the operator guard's.
+    my $own = { Origin => $t->ua->server->url->path('')->to_string =~ s{/\z}{}r };
+
     $db->delete( 'registry.tenant_resources',
         { tenant_id => $platform->id, resource => 'operator' } );
 
-    $t->patch_ok( '/platform/jobs/jobs', form => { id => $id, do => 'remove' } )
+    $t->patch_ok( '/platform/jobs/jobs', $own, form => { id => $id, do => 'remove' } )
       ->status_is( 403, 'removing a job is refused' );
     ok $minion->job($id), 'and the job is still there';
-    $t->patch_ok( '/platform/jobs/jobs', form => { id => $id, do => 'retry' } )
+    $t->patch_ok( '/platform/jobs/jobs', $own, form => { id => $id, do => 'retry' } )
       ->status_is( 403, 'retrying a job is refused' );
     is $minion->job($id)->info->{retries}, 0, 'and it was not retried';
 
@@ -151,7 +155,7 @@ subtest 'without the operator right a minion action that changes a job is refuse
 
     # The control: the same request is one the dashboard accepts once the right
     # is back, so the refusal above was the guard and not the request's shape.
-    $t->patch_ok( '/platform/jobs/jobs', form => { id => $id, do => 'remove' } )
+    $t->patch_ok( '/platform/jobs/jobs', $own, form => { id => $id, do => 'remove' } )
       ->status_is( 302, 'with the right the same request is handled' );
     ok !$minion->job($id), 'and removes the job';
 };

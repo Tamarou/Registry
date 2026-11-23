@@ -789,7 +789,7 @@ class Registry :isa(Mojolicious) {
                 my $method = $c->req->method;
 
                 # Only validate state-changing HTTP methods
-                return unless $method eq 'POST' || $method eq 'PUT' || $method eq 'DELETE';
+                return unless $method =~ /\A(?:POST|PUT|PATCH|DELETE)\z/;
 
                 # Webhook endpoints use their own authentication scheme
                 return if $c->req->url->path =~ m{^/webhooks/};
@@ -800,6 +800,22 @@ class Registry :isa(Mojolicious) {
 
                 # WebAuthn endpoints have built-in origin validation via the protocol
                 return if $c->req->url->path =~ m{^/auth/webauthn/};
+
+                # Minion's dashboard is Minion's own templates, and its job
+                # form (retry, stop, remove) carries no CSRF token. Its posts are
+                # held to the other standard defence instead: they must come from
+                # this app's own origin, by Origin or else Referer. A request
+                # with neither is refused, as a cross-site one is.
+                if ( $c->req->url->path =~ m{^/platform/jobs/} ) {
+                    my $own  = $c->req->url->to_abs;
+                    my $from = $c->req->headers->origin
+                        || $c->req->headers->referrer || '';
+                    my $src  = Mojo::URL->new($from);
+                    return if length $from
+                        && lc( $src->host // '' ) eq lc( $own->host // '' )
+                        && ( $src->port // '' ) eq ( $own->port // '' )
+                        && ( $src->scheme // '' ) eq ( $own->scheme // '' );
+                }
 
                 my $expected = $c->csrf_token;
 
