@@ -225,10 +225,12 @@ my $admin_user = $dao->create( User => {
 });
 
 # Link admin to tenant
+# The membership role is what grants admin (ruling 4), not user_type.
 $db->insert('tenant_users', {
     tenant_id  => $tenant->id,
     user_id    => $admin_user->id,
     is_primary => 1,
+    role       => 'admin',
 });
 
 my (undef, $admin_token) = Registry::DAO::MagicLinkToken->generate($db, {

@@ -72,10 +72,12 @@ my $existing_admin_link = $db->select('tenant_users', '*', {
     user_id   => $admin_user->id,
 })->hash;
 unless ($existing_admin_link) {
+    # The membership role is what grants admin (ruling 4), not user_type.
     $db->insert('tenant_users', {
         tenant_id  => $tenant->id,
         user_id    => $admin_user->id,
         is_primary => 1,
+        role       => 'admin',
     });
 }
 
@@ -102,6 +104,7 @@ unless ($existing_staff_link) {
         tenant_id  => $tenant->id,
         user_id    => $staff_user->id,
         is_primary => 0,
+        role       => 'staff',
     });
 }
 
