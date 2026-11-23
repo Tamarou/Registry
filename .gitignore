@@ -34,3 +34,6 @@ t/playwright/.shared-db-*
 
 # stale pixel-snapshot baselines (pixel snapshots dropped)
 t/playwright/*-snapshots/
+
+# crochet preflight: machine-specific record of installed plugins
+.claude/crochet/capabilities.json
