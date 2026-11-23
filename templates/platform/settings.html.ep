@@ -22,6 +22,7 @@
                         <th>Value</th>
                         <th>What it does</th>
                         <th>When not set</th>
+                        <th>Change</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -31,6 +32,27 @@
                             <td class="setting-value"><%= defined $s->value ? $s->value : '(not set)' %></td>
                             <td class="setting-description"><%= $s->description %></td>
                             <td class="setting-default text-secondary"><%= $s->default_note %></td>
+                            <td class="setting-change">
+                                %# The same PlatformSetting->set the CLI's `set`
+                                %# and `unset` call, with the acting user recorded.
+                                <form method="post" action="/platform/settings/<%= $s->key %>">
+                                    <div class="form-group">
+                                        <label for="value-<%= $s->key %>" class="form-label">New value</label>
+                                        <input type="text" id="value-<%= $s->key %>" name="value"
+                                               class="form-input" required
+                                               value="<%= $s->value // '' %>">
+                                    </div>
+                                    <div class="form-actions">
+                                        <button type="submit" class="btn btn-primary btn-sm">Set</button>
+                                    </div>
+                                </form>
+                                % if (defined $s->value) {
+                                    <form method="post" action="/platform/settings/<%= $s->key %>">
+                                        <input type="hidden" name="unset" value="1">
+                                        <button type="submit" class="btn btn-outline btn-sm">Unset</button>
+                                    </form>
+                                % }
+                            </td>
                         </tr>
                     % }
                 </tbody>

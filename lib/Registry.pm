@@ -1139,6 +1139,18 @@ class Registry :isa(Mojolicious) {
             );
         } )->name('platform_settings');
 
+        # `registry platform set` and `unset` as one screen action: `unset=1`
+        # returns the key to NULL, otherwise `value` is stored. The acting
+        # user is passed as the actor, so updated_by records who changed it.
+        $platform->post('/settings/:key')->to( cb => sub ($c) {
+            require Registry::DAO::PlatformSetting;
+            my $user  = $c->stash('current_user');
+            my $value = $c->param('unset') ? undef : $c->param('value');
+            Registry::DAO::PlatformSetting->set( $c->dao->db,
+                $c->stash('key'), $value, $user->{id} );
+            $c->redirect_to('/platform/settings');
+        } )->name('platform_settings_update');
+
         # Domain management routes: admin-only (staff cannot access)
         # This is a separate under() group from $admin so that staff cannot reach
         # these routes even though staff can reach other /admin/* routes.

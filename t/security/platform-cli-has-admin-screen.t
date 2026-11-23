@@ -58,4 +58,42 @@ subtest 'a platform admin sees every platform setting on the settings screen' =>
         'a key with a value shows it';
 };
 
+subtest 'a platform admin sets a setting from the screen and the change is recorded as theirs' => sub {
+    Registry::DAO::PlatformSetting->set( $db, 'inert_tenant_days', undef );
+
+    my $t = signed_in_as($alex);
+    $t->get_ok('/platform/settings')->status_is(200);
+    ok $t->tx->res->dom->at('form[action="/platform/settings/inert_tenant_days"]'),
+        'the screen has a form for the setting';
+
+    # Test::Registry::Mojo carries the page's CSRF token on the POST.
+    $t->post_ok( '/platform/settings/inert_tenant_days', form => { value => '45' } )
+      ->status_is(302)->header_is( Location => '/platform/settings' );
+
+    is Registry::DAO::PlatformSetting->get( $db, 'inert_tenant_days' ), '45',
+        'the new value is stored';
+    is $db->select( 'registry.platform_settings', ['updated_by'],
+        { key => 'inert_tenant_days' } )->hash->{updated_by}, $alex->id,
+        'and updated_by records who changed it';
+
+    $t->get_ok('/platform/settings');
+    is row_text( $t, 'inert_tenant_days', 'value' ), '45', 'and the screen shows it';
+};
+
+subtest 'a platform admin unsets a setting from the screen' => sub {
+    Registry::DAO::PlatformSetting->set( $db, 'inert_tenant_days', '30' );
+
+    my $t = signed_in_as($alex);
+    $t->get_ok('/platform/settings')->status_is(200);
+    $t->post_ok( '/platform/settings/inert_tenant_days', form => { unset => 1 } )
+      ->status_is(302);
+
+    is Registry::DAO::PlatformSetting->get( $db, 'inert_tenant_days' ), undef,
+        'the key is back to NULL';
+
+    $t->get_ok('/platform/settings');
+    is row_text( $t, 'inert_tenant_days', 'value' ), '(not set)',
+        'and the screen shows (not set)';
+};
+
 done_testing;
