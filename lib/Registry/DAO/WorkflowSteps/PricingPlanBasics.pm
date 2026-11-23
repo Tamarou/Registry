@@ -58,7 +58,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
         my $data = $run->data || {};
 
         # Check if we have tenant context
-        if ($data->{__tenant_slug} && $data->{__tenant_slug} ne 'registry') {
+        if ($data->{__tenant_slug}) {
             require Registry::DAO::Tenant;
             my $tenant = Registry::DAO::Tenant->find($db, { slug => $data->{__tenant_slug} });
             return $tenant->id if $tenant;
