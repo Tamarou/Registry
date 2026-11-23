@@ -1,5 +1,5 @@
-# ABOUTME: Tests that create_payment_intent produces Stripe Connect destination-charge params
-# ABOUTME: when a tenant_slug in metadata resolves to an account with stripe_connect_account_id.
+# ABOUTME: Tests that create_payment_intent makes a direct charge on the seller's own Stripe
+# ABOUTME: account: a client bound to it, the platform fee, and no transfer_data or on_behalf_of.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -100,8 +100,8 @@ subtest 'application_fee_cents unit tests' => sub {
 ok !Registry::DAO::Payment->can('REVENUE_SHARE_PERCENT'),
     'REVENUE_SHARE_PERCENT constant removed from Payment';
 
-# ---- (a) tenant payment: connect params present --------------------------------
-subtest 'tenant payment with connect account -> destination charge params' => sub {
+# ---- (a) tenant payment: a direct charge on the tenant's account ---------------
+subtest 'tenant intent is a direct charge on its own account' => sub {
     my $payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
         amount_cents => 10000,
@@ -111,12 +111,13 @@ subtest 'tenant payment with connect account -> destination charge params' => su
         },
     });
 
-    my $captured;
+    my ($captured, $account);
     {
         no warnings 'redefine';
         local *Registry::Service::Stripe::create_payment_intent = sub {
             my ($self, $params) = @_;
             $captured = $params;
+            $account  = $self->stripe_account;
             return { id => 'pi_dest_123', client_secret => 'cs_dest_123' };
         };
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
@@ -127,10 +128,12 @@ subtest 'tenant payment with connect account -> destination charge params' => su
     }
 
     ok $captured, 'stripe client received params';
-    is $captured->{'transfer_data[destination]'}, 'acct_test123',
-        'transfer_data[destination] is the tenant connect account';
-    is $captured->{'on_behalf_of'}, 'acct_test123',
-        'on_behalf_of is the tenant connect account';
+    is $account, 'acct_test123',
+        'the creating client is bound to the tenant connect account';
+    ok !exists $captured->{'transfer_data[destination]'},
+        'no transfer_data[destination]: the charge is already on the tenant account';
+    ok !exists $captured->{'on_behalf_of'},
+        'no on_behalf_of: the tenant is the merchant by being the account charged';
     is $captured->{'application_fee_amount'}, $expected_fee_2pct,
         "application_fee_amount is the plan's rate on 10000 cents ($expected_fee_2pct)";
 };
@@ -139,7 +142,7 @@ subtest 'tenant payment with connect account -> destination charge params' => su
 subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => sub {
     # A second connect-ready tenant with no linked plan: the resolver falls back
     # to the platform Free plan (0%), so the application fee is 0 while the
-    # destination-charge routing params are still present.
+    # charge is still made on the tenant's own account.
     my $free_slug  = 'free_charge_' . $$;
     my $free_admin = Registry::DAO::User->create($db, {
         username  => "free_admin_$$",
@@ -175,12 +178,13 @@ subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => 
         },
     });
 
-    my $captured;
+    my ($captured, $account);
     {
         no warnings 'redefine';
         local *Registry::Service::Stripe::create_payment_intent = sub {
             my ($self, $params) = @_;
             $captured = $params;
+            $account  = $self->stripe_account;
             return { id => 'pi_free_123', client_secret => 'cs_free_123' };
         };
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
@@ -190,54 +194,18 @@ subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => 
     }
 
     ok $captured, 'stripe client received params';
-    is $captured->{'transfer_data[destination]'}, 'acct_free123',
-        'transfer_data[destination] still set for NULL-plan tenant';
-    is $captured->{'on_behalf_of'}, 'acct_free123',
-        'on_behalf_of still set for NULL-plan tenant';
+    is $account, 'acct_free123',
+        'NULL-plan tenant is still charged on its own account';
+    ok !exists $captured->{'transfer_data[destination]'},
+        'no transfer_data[destination] for NULL-plan tenant';
+    ok !exists $captured->{'on_behalf_of'},
+        'no on_behalf_of for NULL-plan tenant';
     ok !exists $captured->{'application_fee_amount'},
         'no application_fee_amount (Free plan, 0 fee) for NULL-plan tenant';
 };
 
-# ---- (b) platform payment (no tenant_slug): no connect params ------------------
-subtest 'platform payment without tenant_slug -> no connect params' => sub {
-    my $platform_user = Registry::DAO::User->create($db, {
-        username  => "dc_platform_$$",
-        email     => "dc_platform_$$\@test.example",
-        name      => 'DC Platform User',
-        user_type => 'admin',
-    });
-
-    my $payment = Registry::DAO::Payment->create($db, {
-        user_id  => $platform_user->id,
-        amount_cents => 5000,
-        metadata => { some_key => 'some_value' },
-    });
-
-    my $captured;
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub {
-            my ($self, $params) = @_;
-            $captured = $params;
-            return { id => 'pi_platform_123', client_secret => 'cs_platform_123' };
-        };
-        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
-        $payment->create_payment_intent($db, {
-            description => 'Platform charge (no connect)',
-        });
-    }
-
-    ok $captured, 'stripe client received params';
-    ok !exists $captured->{'transfer_data[destination]'},
-        'no transfer_data[destination] for platform payment';
-    ok !exists $captured->{'on_behalf_of'},
-        'no on_behalf_of for platform payment';
-    ok !exists $captured->{'application_fee_amount'},
-        'no application_fee_amount for platform payment';
-};
-
 # ---- (c) retry path: handle_payment_callback failure re-issues same connect params ----
-subtest 'retry intent carries same connect params as original' => sub {
+subtest 'retry intent is a direct charge on the same account' => sub {
     # Build a real Payment with tenant_slug in metadata. Leave
     # Registry::DAO::Payment::find REAL so the payment (and its metadata) is
     # reloaded from the DB and round-trips through the jsonb -> ADJUST decode
@@ -277,7 +245,7 @@ subtest 'retry intent carries same connect params as original' => sub {
 
     my $step = $workflow->get_step($tenant_db, { slug => 'payment' });
 
-    my $retry_captured;
+    my ($retry_captured, $retry_account);
     {
         no warnings qw(redefine once);
         # Leave Registry::DAO::Payment::find REAL so the payment (and its
@@ -303,6 +271,7 @@ subtest 'retry intent carries same connect params as original' => sub {
         local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self, $params) = @_;
             $retry_captured = $params;
+            $retry_account  = $self->stripe_account;
             return Mojo::Promise->resolve(
                 { id => 'pi_dc_retry', client_secret => 'cs_dc_retry' });
         };
@@ -313,16 +282,18 @@ subtest 'retry intent carries same connect params as original' => sub {
     }
 
     ok $retry_captured, 'retry intent was requested';
-    is $retry_captured->{'transfer_data[destination]'}, 'acct_test123',
-        'retry intent carries same destination account';
-    is $retry_captured->{'on_behalf_of'}, 'acct_test123',
-        'retry intent carries same on_behalf_of';
+    is $retry_account, 'acct_test123',
+        'retry intent is created on the same tenant account';
+    ok !exists $retry_captured->{'transfer_data[destination]'},
+        'retry intent carries no transfer_data[destination]';
+    ok !exists $retry_captured->{'on_behalf_of'},
+        'retry intent carries no on_behalf_of';
     is $retry_captured->{'application_fee_amount'}, $expected_fee_2pct,
         'retry intent carries same application_fee_amount';
 };
 
 # ---- (d) async parity: create_payment_intent_async also carries connect params -----
-subtest 'async create_payment_intent_async carries connect params for tenant payment' => sub {
+subtest 'async create_payment_intent_async is a direct charge on the tenant account' => sub {
     my $payment = Registry::DAO::Payment->create($tenant_db, {
         user_id  => $parent->id,
         amount_cents => 10000,
@@ -332,12 +303,13 @@ subtest 'async create_payment_intent_async carries connect params for tenant pay
         },
     });
 
-    my $async_captured;
+    my ($async_captured, $async_account);
     {
         no warnings 'redefine';
         local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self, $params) = @_;
             $async_captured = $params;
+            $async_account  = $self->stripe_account;
             return Mojo::Promise->resolve({ id => 'pi_async_dest', client_secret => 'cs_async_dest' });
         };
         local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
@@ -345,10 +317,12 @@ subtest 'async create_payment_intent_async carries connect params for tenant pay
     }
 
     ok $async_captured, 'async stripe client received params';
-    is $async_captured->{'transfer_data[destination]'}, 'acct_test123',
-        'async: transfer_data[destination] is the tenant connect account';
-    is $async_captured->{'on_behalf_of'}, 'acct_test123',
-        'async: on_behalf_of is the tenant connect account';
+    is $async_account, 'acct_test123',
+        'async: the creating client is bound to the tenant connect account';
+    ok !exists $async_captured->{'transfer_data[destination]'},
+        'async: no transfer_data[destination]';
+    ok !exists $async_captured->{'on_behalf_of'},
+        'async: no on_behalf_of';
     is $async_captured->{'application_fee_amount'}, $expected_fee_2pct,
         "async: application_fee_amount is $expected_fee_2pct cents";
 };
