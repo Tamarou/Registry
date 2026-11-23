@@ -2144,6 +2144,10 @@ SQL
               . "cents of capacity debt is outstanding on payment $id\n" if $owed;
         }
 
+        # stripe_client refuses too, but unmarked; this says no money moved.
+        die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
+            unless ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
+
         return $self->stripe_client->create_refund_async({
             payment_intent => $stripe_payment_intent_id,
             amount         => $refund_cents,

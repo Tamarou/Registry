@@ -8,7 +8,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
-use Test::Registry::PricingProbe qw(solo_linked_tenant);
+use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;  # load package before glob replacement
 use Mojo::Promise;
@@ -91,6 +91,78 @@ subtest 'platform seller refund is sent on its account without fee or transfer f
     is scalar @calls, 1, 'one refund request';
     is $calls[0]{_account}, 'acct_platform_test', 'sent by a client bound to the platform seller account';
     no_fee_or_transfer_flags( $calls[0], 'platform seller refund' );
+};
+
+subtest 'inert plan refund flag is not read' => sub {
+    # The seeded plans still carry refund_application_fee: true, and plan rows
+    # are immutable; nothing may read it any more.
+    with_tenant_plan( $db, $tenant_slug,
+        { pricing_configuration => { percentage => '0.02', refund_application_fee => \1 } },
+        sub {
+            my $payment = a_payment($tenant_slug);
+            my @calls;
+            {
+                no warnings 'redefine';
+                local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+                settle( $payment->refund_async($db) );
+            }
+            is scalar @calls, 1, 'one refund request';
+            no_fee_or_transfer_flags( $calls[0], 'plan says refund the fee' );
+        } );
+};
+
+subtest 'partial refund keeps the fee and sends no flags' => sub {
+    my $payment = a_payment($tenant_slug);
+    my @calls;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+        settle( $payment->refund_async( $db, { amount_cents => 2500 } ) );
+    }
+
+    is scalar @calls, 1, 'one refund request';
+    is $calls[0]{amount}, 2500, 'for the partial amount';
+    is $calls[0]{_account}, 'acct_refund_tenant', 'on the tenant account';
+    no_fee_or_transfer_flags( $calls[0], 'partial refund' );
+};
+
+subtest 'refund for seller without connect account is not sent' => sub {
+    $db->query( q{INSERT INTO registry.tenants (name, slug) VALUES ('No Account', 'refund_no_acct')} );
+    my $payment = a_payment('refund_no_acct');
+    ok !$payment->metadata->{stripe_account_id}, 'the payment has no seller account';
+
+    my @calls;
+    my $err;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+        $err = $@ unless eval { settle( $payment->refund_async($db) ); 1 };
+    }
+
+    like $err, qr/REFUND_NOT_SENT/, 'refused as not sent';
+    is( Registry::DAO::Payment->classify_refund_failure($err), 'not_sent',
+        'classified as certainly not sent' );
+    is scalar @calls, 0, 'no refund request was made through any client';
+};
+
+subtest 'retried refund reuses idempotency key and account' => sub {
+    my $payment = a_payment($tenant_slug);
+    my $key     = 'refund:retry:' . $payment->id;
+    my @calls;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async =
+            capturing_stripe( \@calls, 'connection reset' );
+        ok !eval { settle( $payment->refund_async( $db, { idempotency_key => $key } ) ); 1 },
+            'the first attempt fails in transport';
+        settle( $payment->refund_async( $db, { idempotency_key => $key } ) );
+    }
+
+    is scalar @calls, 2, 'the refund was retried';
+    is $calls[1]{_idempotency_key}, $calls[0]{_idempotency_key}, 'with the same idempotency key';
+    is $calls[0]{_idempotency_key}, $key, 'the key the caller supplied';
+    is $calls[1]{_account}, $calls[0]{_account}, 'on the same account';
+    is $calls[1]{_account}, 'acct_refund_tenant', 'the tenant account';
 };
 
 done_testing;
