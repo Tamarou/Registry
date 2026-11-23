@@ -189,6 +189,11 @@ $db->insert('tenant_users', {
     is_primary => 0,
 });
 
+# Her family lives in the registry schema and the specs sign her in on the
+# platform host, where authority is the membership role (ADR 005, ruling 4):
+# she is a parent of the platform tenant too.
+Registry::DAO::Tenant->platform($db)->add_user( $db, $returning_parent, 0, 'parent' );
+
 my $child = Registry::DAO::FamilyMember->create($db, {
     family_id    => $returning_parent->id,
     child_name   => 'Emma Johnson',
