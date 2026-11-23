@@ -1,5 +1,5 @@
-# ABOUTME: Platform-owner CLI: see and change the configuration Alex owns.
-# ABOUTME: The first piece of PriceOps Pillar 5 tooling -- changes through a tool, not psql (#427).
+# ABOUTME: Shell front end to the platform settings the platform tenant's admins change at /platform/settings.
+# ABOUTME: Same PlatformSetting DAO, no CLI-only path; `bootstrap` alone is CLI-only, as the deploy-time root.
 use 5.42.0;
 use utf8;
 use Object::Pad;
