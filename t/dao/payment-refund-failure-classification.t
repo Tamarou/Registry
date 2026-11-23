@@ -7,7 +7,9 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Async qw( settle );
+use Test::Registry::Fixtures;
 use Registry::DAO::Payment;
+use Registry::Service::Stripe;
 use Mojo::Promise;
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_refund_classification';
@@ -88,6 +90,31 @@ subtest 'the payment records its last refund failure' => sub {
     is $stamped->{classification}, 'not_sent', 'carrying the classification';
     like $stamped->{message}, qr/payment intent/i, 'and the reason';
     ok $stamped->{at}, 'and when';
+};
+
+
+# Stripe answers some refunds 'pending' (bank-backed methods, some cards): the
+# money has not moved yet and may never, so the row must not say it has.
+subtest 'pending refund is not recorded as completed' => sub {
+    my $seller = Test::Registry::Fixtures::platform_seller($db);
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 15000, status => 'completed',
+        stripe_payment_intent_id => 'pi_rfc_pending',
+        metadata => { enrollment_items => [], tenant_slug => $seller } });
+
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $params) {
+            Mojo::Promise->resolve({ id => 're_pending', status => 'pending' });
+        };
+        settle( $payment->refund_async($db) );
+    }
+
+    my $row = $db->select('payments', '*', { id => $payment->id })->expand->hash;
+    is $row->{status}, 'completed', 'the payment is not marked refunded';
+    is $row->{refunded_cents}, 0, 'nothing is recorded as returned';
+    is $row->{metadata}{refund_id}, 're_pending', 'the refund is on record';
+    is $row->{metadata}{refund_status}, 'pending', 'as pending';
 };
 
 done_testing;

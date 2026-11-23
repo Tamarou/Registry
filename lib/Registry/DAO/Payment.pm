@@ -1779,6 +1779,11 @@ SQL
     method _apply_refund_result ($db, $refund, $refund_cents, $reason, $is_increment = 0) {
         $db = $db->db if $db isa Registry::DAO;
 
+        # A pending refund has not moved money yet and may fail, so it moves
+        # neither status nor refunded_cents.
+        # shortcut: nothing settles it later (no refund.updated handler); add one when async refunds are offered.
+        my $hold = $is_increment || ( $refund->{status} // '' ) =~ /\A(?:pending|requires_action)\z/ ? 1 : 0;
+
         # A targeted jsonb merge, not save(). save() would write six columns
         # from an object loaded before the Stripe round trip, over a row
         # settle_refund_increment may have moved in the meantime.
@@ -1826,8 +1831,8 @@ SQL
             refund_id           => $refund->{id},
             refund_amount_cents => $refund_cents,
             refund_reason       => $reason,
-        }), $is_increment ? 1 : 0, $refund_cents,
-            $is_increment ? 1 : 0, $refund_cents, $id );
+            refund_status       => $refund->{status},
+        }), $hold, $refund_cents, $hold, $refund_cents, $id );
 
         # Refresh the in-memory status for the direct path. refund_async gates
         # on this field, and leaving it stale let a second full refund through
@@ -2123,8 +2128,18 @@ SQL
         die REFUND_NOT_SENT . ": No Stripe payment intent ID"
             unless $stripe_payment_intent_id;
 
-        my $refund_cents = $args->{amount_cents} // $amount_cents;
+        # Read fresh: the object may predate a settled increment.
+        my $refunded = $db->query(
+            'SELECT refunded_cents FROM payments WHERE id = ?', $id
+        )->hash->{refunded_cents} // 0;
+        # With no amount, return what is left, not the whole charge again (005 8a).
+        my $refund_cents = $args->{amount_cents} // $amount_cents - $refunded;
         my $reason = $args->{reason} // 'requested_by_customer';
+
+        # Stripe would refuse it too, but only after the request went out.
+        die REFUND_NOT_SENT . ": Refund of $refund_cents cents would take payment $id "
+          . "past its $amount_cents captured cents ($refunded already refunded)\n"
+            if $refunded + $refund_cents > $amount_cents;
 
         # Refused BEFORE the money moves. An earlier version of this guard sat
         # in _apply_refund_result, which runs inside create_refund_async's
