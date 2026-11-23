@@ -8,33 +8,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use Mojo::Promise;
 
     method stripe() {
-        # Verify webhook signature -- STRIPE_WEBHOOK_SECRET is mandatory.
-        # Without it, anyone can forge payment confirmations.
-        my $payload = $self->req->body;
-        my $endpoint_secret = $ENV{STRIPE_WEBHOOK_SECRET};
+        my $event = $self->_verified_event('STRIPE_WEBHOOK_SECRET') or return;
 
-        unless ($endpoint_secret) {
-            $self->app->log->error("STRIPE_WEBHOOK_SECRET not configured -- rejecting webhook");
-            $self->render(status => 500, text => 'Webhook verification not configured');
-            return;
-        }
-
-        my $sig_header = $self->req->headers->header('stripe-signature');
-        unless ($sig_header && $self->_verify_stripe_signature($payload, $sig_header, $endpoint_secret)) {
-            $self->render(status => 400, text => 'Invalid signature');
-            return;
-        }
-        
-        # Parse webhook event
-        my $event;
-        try {
-            $event = decode_json($payload);
-        }
-        catch ($e) {
-            $self->render(status => 400, text => 'Invalid JSON');
-            return;
-        }
-        
         # Process the event
         my $dao = $self->app->dao;
 
@@ -111,6 +86,100 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
           } );
     }
 
+    # The event a delivery carries, once its signature verifies against the
+    # secret named by $secret_var. Renders the refusal and returns undef
+    # otherwise. Each endpoint has its own secret, so a delivery signed for one
+    # never verifies at the other.
+    method _verified_event ($secret_var) {
+        # The secret is mandatory. Without it, anyone can forge payment
+        # confirmations.
+        my $payload = $self->req->body;
+        my $endpoint_secret = $ENV{$secret_var};
+
+        unless ($endpoint_secret) {
+            $self->app->log->error("$secret_var not configured -- rejecting webhook");
+            $self->render(status => 500, text => 'Webhook verification not configured');
+            return undef;
+        }
+
+        my $sig_header = $self->req->headers->header('stripe-signature');
+        unless ($sig_header && $self->_verify_stripe_signature($payload, $sig_header, $endpoint_secret)) {
+            $self->render(status => 400, text => 'Invalid signature');
+            return undef;
+        }
+
+        my $event;
+        try {
+            $event = decode_json($payload);
+        }
+        catch ($e) {
+            $self->render(status => 400, text => 'Invalid JSON');
+            return undef;
+        }
+        return $event;
+    }
+
+    # Take the dedup claim on $db, inside the caller's transaction. False, with
+    # the duplicate answered, when another delivery already holds it.
+    method _claim_event ($db, $event) {
+        my $claimed = $db->query(
+            q{INSERT INTO registry.webhook_events (stripe_event_id, event_type)
+              VALUES (?, ?) ON CONFLICT (stripe_event_id) DO NOTHING},
+            $event->{id}, $event->{type}
+        )->rows;
+
+        unless ($claimed) {
+            $self->app->log->info("Duplicate Stripe webhook event $event->{id} ignored");
+            $self->render(status => 200, text => 'OK (duplicate)');
+        }
+        return $claimed;
+    }
+
+    # Events that happened on a connected account. Stripe names that account
+    # in the top-level `account`, and that -- not our own metadata -- is what
+    # finds the tenant.
+    method stripe_connect() {
+        my $event = $self->_verified_event('STRIPE_CONNECT_WEBHOOK_SECRET') or return;
+
+        my $db       = $self->app->dao->db;
+        my $event_id = $event->{id};
+        my $account  = $event->{account};
+
+        # An exact, bound match: an id that only resembles a tenant's names none.
+        my $tenant = defined $account && !ref $account
+            ? $db->select( 'registry.tenants', ['slug'],
+                { stripe_connect_account_id => $account } )->hash
+            : undef;
+
+        # No tenant to settle into, and a redelivery cannot create one, so
+        # Stripe is told to stop rather than asked to retry. Nothing is claimed
+        # and no schema is chosen -- in particular not registry.
+        unless ($tenant) {
+            $self->app->log->warn( "Connect webhook event $event_id names no tenant's account"
+                  . ( defined $account && !ref $account ? " '$account'" : '' ) );
+            $self->render( status => 200, text => 'OK (no tenant)' );
+            return;
+        }
+        my $slug = $tenant->{slug};
+
+        my $tx = $db->begin;
+        return unless $self->_claim_event( $db, $event );
+
+        # Transaction-local, as in _settle_event.
+        $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" );
+
+        $self->app->log->info(
+            "Connect webhook event $event_id ($event->{type}) for tenant $slug not handled");
+
+        $db->query(
+            q{UPDATE registry.webhook_events SET processed_at = now()
+              WHERE stripe_event_id = ?}, $event_id
+        );
+        $tx->commit;
+
+        $self->render( status => 200, text => 'OK' );
+    }
+
     # The settlement itself: claim, work, commit. Called with the subscription
     # already in hand, so nothing here reaches the network.
     method _settle_event ($dao, $db, $event, $event_id, $slug, $subscription) {
@@ -121,17 +190,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # once the transaction is aborted.
         my $tx = $db->begin;
 
-        my $claimed = $db->query(
-            q{INSERT INTO registry.webhook_events (stripe_event_id, event_type)
-              VALUES (?, ?) ON CONFLICT (stripe_event_id) DO NOTHING},
-            $event_id, $event->{type}
-        )->rows;
-
-        unless ($claimed) {
-            $self->app->log->info("Duplicate Stripe webhook event $event_id ignored");
-            $self->render(status => 200, text => 'OK (duplicate)');
-            return;
-        }
+        return unless $self->_claim_event( $db, $event );
 
         # Set inside the transaction, acted on after it: the id of a payment the
         # capacity gate demoted and now owes a refund.

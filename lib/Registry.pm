@@ -971,6 +971,8 @@ class Registry :isa(Mojolicious) {
         # Webhook routes (no auth required)
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
+        $self->routes->post('/webhooks/stripe/connect')->to('webhooks#stripe_connect')
+          ->name('webhook_stripe_connect');
 
         # Root route dispatches to whichever storefront belongs to the
         # requester -- see storefront_workflow. It deliberately names no
