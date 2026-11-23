@@ -196,3 +196,101 @@ subtest 'schedule is made on the tenant account with fee percent and no transfer
         'our share is the application fee percent';
     ok !( grep { /transfer_data/ } keys %$params ), 'and nothing is transferred';
 };
+
+sub params_with_pct ( $pct ) {
+    return Registry::DAO::Payment::instalment_schedule_params( {
+        customer          => 'cus_probe',
+        payment_method    => 'pm_probe',
+        revenue_share_pct => $pct,
+        currency          => 'usd',
+        product           => 'prod_probe',
+        instalments       => [
+            { amount_cents => 3333, due_date => '2026-07-01' },
+            { amount_cents => 3334, due_date => '2026-08-01' },
+        ],
+    } );
+}
+
+subtest 'no transfer data anywhere in schedule params' => sub {
+    my $params = params_with_pct(2.5);
+    ok exists $params->{'phases[1][items][0][price_data][unit_amount]'},
+        'the params carry more than one phase';
+    is_deeply [ grep { /transfer_data/ } keys %$params ], [],
+        'no transfer_data key in default_settings or any phase';
+};
+
+subtest 'fee percent has at most four decimals and zero is omitted' => sub {
+    my $fee = sub ( $pct ) { params_with_pct($pct)->{'default_settings[application_fee_percent]'} };
+
+    is $fee->(1.23456), '1.2346', 'a long fraction is rounded to four places';
+    is $fee->(0.0001),  '0.0001', 'a tiny one is written out, not as 1e-04';
+    is $fee->( 0.029 * 100 ), '2.9', 'float noise does not reach Stripe';
+    is $fee->(2.5), '2.5', 'and a plain one is sent as it is';
+    is $fee->(10),  '10',  'and a whole one keeps its own zeros';
+    like $fee->( $plan_pct ), qr/\A\d+(?:\.\d{1,4})?\z/,
+        'the seeded plan rate fits the same shape';
+
+    for my $zero ( 0, 0.0, '0.0', 0.00001 ) {
+        ok !exists params_with_pct($zero)->{'default_settings[application_fee_percent]'},
+            "a percent of $zero is omitted";
+    }
+};
+
+subtest 'seller without connect account gets no schedule' => sub {
+    $db->query( 'UPDATE registry.tenants SET stripe_connect_account_id = NULL WHERE slug = ?',
+        $seller );
+    my $payment = first_instalment();
+    Test::Registry::Fixtures::platform_seller($db);
+
+    require Registry::Job::InstalmentSchedule;
+    my $died;
+    my $calls = with_stripe_calls( sub {
+        eval { Registry::Job::InstalmentSchedule->new->create_for( $db, $payment ); 1 }
+            or $died = $@;
+    } );
+
+    like $died, qr/no seller Stripe account/, 'the job fails, so Minion retries it';
+    is_deeply $calls, [], 'no intent lookup, product or schedule on any account';
+
+    my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+    ok !$row->stripe_schedule_id, 'no schedule is recorded';
+    is $db->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
+        $payment->id )->array->[0], 0, 'and the remaining instalments are not marked scheduled';
+};
+
+subtest 'rerun creates no second schedule' => sub {
+    my $payment = first_instalment();
+    my $calls = with_stripe_calls( sub {
+        $payment->schedule_remaining_instalments($db);
+        # A retried job loads the row afresh rather than reusing the object.
+        Registry::DAO::Payment->find( $db, { id => $payment->id } )
+            ->schedule_remaining_instalments($db);
+    } );
+
+    is scalar( grep { $_->[0] eq 'create_subscription_schedule' } @$calls ), 1,
+        'one schedule at Stripe';
+    is $db->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
+        $payment->id )->array->[0], 2, 'and one row per remaining instalment';
+};
+
+subtest 'schedule uses the account instalment one was charged on' => sub {
+    my $payment = first_instalment();
+    $db->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_moved'
+                   WHERE slug = ?}, $seller );
+
+    my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
+    Test::Registry::Fixtures::platform_seller($db);
+
+    is scalar @$calls, 3, 'the intent, the product and the schedule';
+    is_deeply [ map { $_->[1] } @$calls ], [ ('acct_platform_test') x 3 ],
+        'all on the account the customer was charged on, not the new one';
+
+    # A later refund of instalment two goes through that row's own client, so
+    # the row must carry the account too or it dies with no account to refund on.
+    my $later = $db->query( q{
+        SELECT metadata->>'stripe_account_id' FROM payments
+         WHERE metadata->>'instalment_of' = ? ORDER BY instalment_seq
+    }, $payment->id )->arrays->flatten->to_array;
+    is_deeply $later, [ ('acct_platform_test') x 2 ],
+        'and the later instalment rows carry that same account';
+};

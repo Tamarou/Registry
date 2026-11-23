@@ -143,8 +143,10 @@ field $_stripe_client = undef;
         # Omitted rather than sent as zero. A tenant on the Free plan owes no
         # revenue share, and an explicit 0 is a value Stripe has no reason to
         # accept on a schedule that takes no fee.
-        $params{'default_settings[application_fee_percent]'} = $args->{revenue_share_pct}
-            if $args->{revenue_share_pct};
+        # Fixed to four places and trimmed: Stripe takes at most four decimals,
+        # and Perl would write a small rate as 1e-04 and float noise in full.
+        ( my $pct = sprintf '%.4f', $args->{revenue_share_pct} // 0 ) =~ s/\.?0+\z//;
+        $params{'default_settings[application_fee_percent]'} = $pct if $pct > 0;
 
         for my $i ( 0 .. $#$phases ) {
             my $p = $phases->[$i];
@@ -250,8 +252,11 @@ field $_stripe_client = undef;
                 due_date           => $part->{due_date},
                 stripe_schedule_id => $schedule->{id},
                 metadata           => { -json => {
-                    instalment_of => $id,
-                    tenant_slug   => $slug,
+                    instalment_of     => $id,
+                    tenant_slug       => $slug,
+                    # The account this set is charged on, so a refund of this
+                    # row goes where its money went.
+                    stripe_account_id => $meta->{stripe_account_id},
                     description   => $description,
                 } },
             } );
