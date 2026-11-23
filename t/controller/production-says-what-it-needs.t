@@ -61,6 +61,7 @@ subtest 'it states the configuration it is actually running with' => sub {
         BASE_URL              => 'https://example.test',
         STRIPE_SECRET_KEY     => 'sk_test_boot',
         STRIPE_WEBHOOK_SECRET => 'whsec_boot',
+        STRIPE_CONNECT_WEBHOOK_SECRET => 'whsec_connect_boot',
         POSTMARK_SERVER_TOKEN => 'pm-boot',
     );
 
@@ -78,6 +79,7 @@ subtest 'a secret is reported as present, never echoed' => sub {
         BASE_URL              => 'https://example.test',
         STRIPE_SECRET_KEY     => 'sk_test_do_not_echo_me',
         STRIPE_WEBHOOK_SECRET => 'whsec_boot',
+        STRIPE_CONNECT_WEBHOOK_SECRET => 'whsec_connect_boot',
         POSTMARK_SERVER_TOKEN => 'pm-boot',
     );
 
@@ -120,11 +122,43 @@ subtest 'a fully configured production says nothing is missing' => sub {
         BASE_URL              => 'https://example.test',
         STRIPE_SECRET_KEY     => 'sk_test_boot',
         STRIPE_WEBHOOK_SECRET => 'whsec_boot',
+        STRIPE_CONNECT_WEBHOOK_SECRET => 'whsec_connect_boot',
         POSTMARK_SERVER_TOKEN => 'pm-boot',
     );
 
     my @errors = grep { ( $_->{level} // '' ) eq 'error' } @$lines;
     is scalar @errors, 0, 'nothing is reported absent when nothing is';
+};
+
+subtest 'production names the connect webhook secret' => sub {
+    my $lines = boot_lines(
+        LOG_LEVEL                     => 'debug',
+        BASE_URL                      => 'https://example.test',
+        STRIPE_SECRET_KEY             => 'sk_test_boot',
+        STRIPE_WEBHOOK_SECRET         => 'whsec_boot',
+        STRIPE_CONNECT_WEBHOOK_SECRET => undef,
+        POSTMARK_SERVER_TOKEN         => 'pm-boot',
+    );
+
+    my @errors = map { $_->{message} // '' } grep { ( $_->{level} // '' ) eq 'error' } @$lines;
+    is scalar @errors, 1, 'one thing is missing';
+    like $errors[0], qr/STRIPE_CONNECT_WEBHOOK_SECRET.*(settle|webhook)/is,
+        'the connect secret, named with what it costs';
+};
+
+subtest 'production output never contains the connect secret value' => sub {
+    my $lines = boot_lines(
+        LOG_LEVEL                     => 'debug',
+        BASE_URL                      => 'https://example.test',
+        STRIPE_SECRET_KEY             => 'sk_test_boot',
+        STRIPE_WEBHOOK_SECRET         => 'whsec_boot',
+        STRIPE_CONNECT_WEBHOOK_SECRET => 'whsec_connect_do_not_echo_me',
+        POSTMARK_SERVER_TOKEN         => 'pm-boot',
+    );
+
+    my $all = join "\n", map { $_->{message} // '' } @$lines;
+    unlike $all, qr/whsec_connect_do_not_echo_me/, 'the secret itself is not in the log';
+    like $all, qr/STRIPE_CONNECT_WEBHOOK_SECRET=set/, 'only that it is set';
 };
 
 done_testing;
