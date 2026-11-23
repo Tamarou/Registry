@@ -87,4 +87,118 @@ subtest 'payment page initialises stripe with the intent account' => sub {
                      'Stripe.js is initialised on the account the intent was created on');
 };
 
+subtest 'account from request is ignored' => sub {
+    my $run = run_awaiting_card('ta',
+        stripe_account      => 'acct_evil_run',
+        stripeAccount       => 'acct_evil_run',
+        payment_retry_state => {
+            payment_id       => 'ignored',
+            client_secret    => 'pi_x_secret_y',
+            show_stripe_form => 1,
+            stripe_account   => 'acct_evil_retry',
+        },
+    );
+
+    $t->get_ok(payment_url($run) . '?stripe_account=acct_evil_query&stripeAccount=acct_evil_query'
+               => { Host => 'ta.localhost' })
+      ->status_is(200)
+      ->content_like(qr/stripeAccount: 'acct_x'/, 'the intent account is rendered')
+      ->content_unlike(qr/acct_evil/, 'no query-string or run-data account is rendered');
+
+    # A form body lands in run data; the page rendered afterwards still names
+    # only the intent's account.
+    $t->post_ok(payment_url($run) => { Host => 'ta.localhost' }
+                => form => { stripe_account => 'acct_evil_body', stripeAccount => 'acct_evil_body' })
+      ->content_unlike(qr/acct_evil/, 'the posted account is not rendered');
+    $run->update_data($dao->connect_schema('ta')->db, { payment_retry_state => {
+        client_secret => 'pi_x_secret_y', show_stripe_form => 1,
+    } });
+    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+      ->status_is(200)
+      ->content_like(qr/stripeAccount: 'acct_x'/, 'the intent account is rendered after a post')
+      ->content_unlike(qr/acct_evil/, 'the posted account was not kept for a later render');
+
+    # Run data naming another run's payment does not borrow that payment's account.
+    my $db    = $dao->connect_schema('ta')->db;
+    my $other = Registry::DAO::Payment->find($db, { id => run_awaiting_card('ta')->data->{payment_id} });
+    $db->query(q{UPDATE payments SET metadata = jsonb_set(metadata, '{stripe_account_id}', '"acct_evil_other"')
+                 WHERE id = ?}, $other->id);
+    my $borrower = run_awaiting_card('ta', payment_id => $other->id);
+    $t->get_ok(payment_url($borrower) => { Host => 'ta.localhost' })
+      ->status_is(200)
+      ->content_unlike(qr/acct_evil/, "another run's payment account is not rendered");
+};
+
+subtest 'no account renders stripe key alone' => sub {
+    # Card form showing, but the run has no payment row behind it.
+    my $run = run_awaiting_card('ta');
+    $run->update_data($dao->connect_schema('ta')->db, { payment_id => undef });
+
+    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+      ->status_is(200)
+      ->content_like(qr/Stripe\('pk_test_page'\);/, 'Stripe.js gets the publishable key alone')
+      ->content_unlike(qr/stripeAccount/, 'no stripeAccount option at all, empty, null or undefined');
+};
+
+subtest 'hostile account value is escaped' => sub {
+    my $hostile = q{acct_x'</script><script>alert(1)//};
+    # Rendered straight from the template: the step itself only ever supplies
+    # an account its Stripe client accepted, which cannot hold a quote.
+    my $html = $t->app->build_controller->render_to_string(
+        template  => 'summer-camp-registration/payment',
+        workflow  => 'summer-camp-registration',
+        run       => run_awaiting_card('ta'),
+        step_data => {
+            show_stripe_form       => 1,
+            stripe_publishable_key => 'pk_test_page',
+            client_secret          => 'pi_x_secret_y',
+            stripe_account         => $hostile,
+        },
+    );
+
+    unlike $html, qr/\Q$hostile\E/, 'the raw value is not in the page';
+    unlike $html, qr/<script>alert/, 'no script element is injected';
+    like $html, qr/stripeAccount: 'acct_x&#39;&lt;\/script&gt;&lt;script&gt;alert\(1\)\/\/'/,
+        'the value is rendered escaped inside its JS string';
+};
+
+subtest 'tenant a page never renders tenant b account' => sub {
+    my $run_a = run_awaiting_card('ta');
+    my $run_b = run_awaiting_card('tb');
+
+    $t->get_ok(payment_url($run_a) => { Host => 'ta.localhost' })
+      ->status_is(200)
+      ->content_like(qr/stripeAccount: 'acct_x'/, "tenant a's page names its own account")
+      ->content_unlike(qr/acct_tb/, "and never tenant b's");
+
+    $t->get_ok(payment_url($run_b) => { Host => 'tb.localhost' })
+      ->status_is(200)
+      ->content_like(qr/stripeAccount: 'acct_tb'/, "tenant b's page names its own account")
+      ->content_unlike(qr/acct_x/, "and never tenant a's");
+};
+
+subtest 'rendered account is the intent account after row change' => sub {
+    my $run = run_awaiting_card('ta');
+    $dao->db->query(q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_moved'
+                      WHERE slug = 'ta'});
+
+    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+      ->status_is(200)
+      ->content_like(qr/stripeAccount: 'acct_x'/, 'the account the intent was created on')
+      ->content_unlike(qr/acct_moved/, "not the tenant row's new account");
+
+    $dao->db->query(q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_x'
+                      WHERE slug = 'ta'});
+};
+
+subtest 'page never contains a secret key' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_never_on_the_page';
+    my $run = run_awaiting_card('ta');
+
+    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+      ->status_is(200)
+      ->content_like(qr/stripeAccount: 'acct_x'/, 'the card form is rendered')
+      ->content_unlike(qr/sk_(?:test|live)_/, 'no Stripe secret key is in the page');
+};
+
 done_testing();
