@@ -128,6 +128,62 @@ subtest 'end of occurrence refused without an occurrence' => sub {
     ok !$run->data->{expiry_policy}, 'and the run records no expiry policy';
     ok $result->{publish}{errors}, 'and publish refuses the run';
     is published_count(), $before, 'nothing is published';
+
+    # The occurrence goes after offer-basics chose its resource: detached,
+    # since the foreign key refuses removing an events row a resource names.
+    my $seats    = occurrence_seats();
+    my $workflow = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } );
+    my ($run2) = walk( 'offer-basics' => { resource_id => $seats->id }, 'expiry-policy' => undef, 'publish' => undef );
+    $tdb->query( 'UPDATE resources SET event_id = NULL WHERE id = ?', $seats->id );
+    $tdb->query( 'DELETE FROM events WHERE id = ?', $seats->event_id );
+    my $expiry = $run2->process( $tdb, $workflow->get_step( $tdb, { slug => 'expiry-policy' } ),
+        { expiry => 'end_of_occurrence' } );
+    ok $expiry->{errors}, 'end of occurrence on a resource whose occurrence was removed stays with an error';
+    my $publish = $run2->process( $tdb, $workflow->get_step( $tdb, { slug => 'publish' } ),
+        { action => 'publish', refund => 'none' } );
+    ok $publish->{errors}, 'and publish refuses the run';
+    is published_count(), $before, 'nothing is published';
+};
+
+subtest 'occurrence bound offer cannot choose never' => sub {
+    my $before = published_count();
+    my @cases = (
+        [ 'an occurrence-bound seats resource' => ( 'offer-basics' => { resource_id => occurrence_seats()->id } ) ],
+        [ 'a class offer' => ( class => class_in() ) ],
+    );
+    for my $case (@cases) {
+        my ( $label, %override ) = @$case;
+        my ( $run, $result ) = walk( %override, 'expiry-policy' => { expiry => 'never' } );
+        ok $result->{'expiry-policy'}{errors}, "never on $label stays with an error";
+        ok !$run->data->{expiry_policy}, 'and the run records no expiry policy';
+        ok $result->{publish}{errors}, 'and publish refuses the run';
+    }
+    is published_count(), $before, 'nothing is published';
+};
+
+subtest 'unknown or empty expiry value stays with an error' => sub {
+    my $before = published_count();
+    for my $value ( 'after_30_days', 'NEVER', '', undef, ['never'] ) {
+        my $label = ref $value ? 'a list value' : !defined $value ? 'a missing value'
+            : $value eq '' ? 'an empty value' : "'$value'";
+        my ( $run, $result ) = walk( 'expiry-policy' => { expiry => $value } );
+        ok $result->{'expiry-policy'}{errors}, "$label stays with an error";
+        ok $result->{publish}{errors}, 'and publish refuses the run';
+    }
+    is published_count(), $before, 'nothing is published';
+};
+
+subtest 'expiry value resubmitted at publish is ignored' => sub {
+    for my $value (qw( end_of_occurrence after_30_days )) {
+        my ( $run, $result ) = walk(
+            'expiry-policy' => { expiry => 'never' },
+            'publish'       => { expiry => $value, expiry_policy => { expiry => $value } },
+        );
+        my $version = published_version($run);
+        ok $version && $version->is_published, "publish with expiry '$value' in its form still publishes";
+        is_deeply $version && $version->policies->{expiry}, { kind => 'never' },
+            'with the expiry policy the expiry-policy step recorded';
+    }
 };
 
 subtest 'skipped expiry choice publishes nothing' => sub {
