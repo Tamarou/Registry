@@ -76,7 +76,24 @@ and terms are offer versions, and paying is step 5's accept-and-pay.
 | payment | direct charge on the studio's account | `payments` stamped with `offer_version_id` and `platform_offer_version_id` (2, 5) |
 | platform fee | Solo's 2.5% | SACP's `registry.entitlements` row, read by `PriceOps::PlatformTerms` (3) |
 | Stripe-reported moves | full refund, partial refund, lost dispute | applied to the entitlement (5, `01a20416-6f62`, `01a20416-6f8d`) |
-| right to run in-studio | SACP may run the four workflows | a run entitlement from the platform, accepted (6) |
+| right to run in-studio | SACP may run the five workflows (`in-studio-class-setup`, `in-studio-schedule`, `in-studio-booking`, `in-studio-day-view`, `entitlement-change`) | a run entitlement from the platform, accepted (6) |
+
+### Minimum shapes exercised
+
+Every minimum shape the model's "Settled details" lists for day one is
+exercised by in-studio, except the percentage-of-sales plan, which only SACP's
+Solo entitlement uses:
+
+| minimum shape | where in-studio uses it |
+|---|---|
+| finite seats, offers of N seats, per-booking cap | occurrence resource; the class's offers; `per_booking_cap` |
+| one-time payment plan | every booking offer and the change fee |
+| refund none / full until cutoff / keep fee with exception | booking offers use `none`; Solo carries the exception |
+| change window, fee, same-offer targets | `entitlement-change` on a booking |
+| time-limited hold | booking and change both hold seats first |
+| expiry at end of occurrence | every booking entitlement |
+| use as optional attendance | the day view records attendance, never required |
+| Stripe-reported full refund, partial refund, lost dispute | applied to the booking entitlement (step 5) |
 
 A class's offers cover every occurrence of the class, current and later
 (`OfferVersion->covered_resources`), so generating occurrences publishes no new
@@ -115,8 +132,10 @@ only. `PublishOfferVersion` also refuses a non-admin (step 4).
 
 ### Schedule (`in-studio-schedule`, admin)
 
-One form: class, location, weekdays, local start time, duration (minutes),
-first and last date. The `GenerateOccurrences` step creates, for each slot, an
+One form: class, location, teacher, weekdays, local start time, duration
+(minutes), first and last date. The teacher is a required choice among the
+tenant's staff and admins, because `events.teacher_id` is `NOT NULL`; like
+today's `GenerateEvents`, the step refuses without one rather than guessing. The `GenerateOccurrences` step creates, for each slot, an
 `events` row (`status = 'published'`, `capacity` from the class's
 `seats_per_occurrence`) and its occurrence resource. Local times are read in
 the location's time zone (below). An existing occurrence at the same
@@ -158,7 +177,8 @@ The workflow carries the public mark in its role data. No extras are offered.
 ### Change (`entitlement-change`, step 5)
 
 Bookings reuse step 5's workflow unchanged: choose target → hold target → pay
-fee → complete. Step 7 changes only how the window is measured (in the
+fee → complete. The change fee is a one-time payment that carries the revenue share, like any
+other charge. Step 7 changes only how the window is measured (in the
 location's time zone, below). See "Change workflow for a booking".
 
 ### Day view (`in-studio-day-view`, admin and staff)
@@ -217,8 +237,9 @@ location's.
 
 ### Default time zone for existing rows
 
-The migration sets existing rows to `America/New_York`: SACP's one location is
-in Orlando, FL (`sql/seed/sacp-tenant.sql`), and every other row is test or
+The migration sets existing rows to `America/New_York`: SACP's two seeded
+locations (`sacp_studio`, `dr_phillips_elementary`) are both in Orlando, FL
+(`sql/seed/sacp-tenant.sql`), and every other row is test or
 development data. New rows get no default; the column is `NOT NULL` and
 location creation asks for it, because a silent UTC default would mis-time
 every class (absence is not zero). The location-creation and
@@ -303,7 +324,7 @@ G1).
 ### Day view as route or workflow
 
 A workflow, `in-studio-day-view`. Step 6's gate then applies as it does to the
-other three: roles as data (`admin`, `staff`) and the run entitlement, so a
+other in-studio workflows: roles as data (`admin`, `staff`) and the run entitlement, so a
 tenant that has not accepted in-studio has no day view. A route would need its
 own role and entitlement checks. `admin-dashboard` is the precedent. The cost
 is a run row per visit; acceptable for day one.
@@ -333,9 +354,11 @@ has the money; Registry never contradicts Stripe and never re-charges.
 | C. Hold the money, flag for staff | No automatic action; the customer waits on a person. |
 
 Decided: A. perigrin's answer, recorded verbatim in ADR 005 ruling 7a
-(2026-11-22): "Auto-refund + notify (Recommended)". Re-take the seats under
-lock first if they still fit, and refund only if they do not. The refund
-keeps the platform's fee, like every refund (ADR 003). No step in steps 3–6
+(2026-11-22): "Auto-refund + notify (Recommended)".
+
+Draft's notes (not part of perigrin's answer): re-take the seats under lock
+first if they still fit, and refund only if they do not; the refund keeps the
+platform's fee, like every refund (ADR 003). No step in steps 3–6
 starts this refund (gap G3).
 
 ### Paid amount differs from the quote
@@ -368,7 +391,7 @@ Decided: A. perigrin's answer, recorded verbatim in ADR 005 ruling 7c
 (`Registry::DAO::Payment::application_fee_cents`, integer basis points). The
 fee is computed once at quote time; the displayed fee,
 `application_fee_amount` and the recorded fee are that one number, omitted
-when it is 0.
+when it is 0. A test pins the exact-half cases, as the ruling requires.
 
 ## Gaps
 
@@ -376,8 +399,8 @@ Gaps in steps 3–6 that step 7 needs. Named here, not designed around.
 
 | # | gap | evidence | who closes it |
 |---|---|---|---|
-| G1 | An offer version buys one resource (`offer_versions` has `resource_id` or `class_project_id`, `CHECK num_nonnulls = 1`). ADR 004 ruling (a) needs a Solo version that lists a set of workflow run rights. No step 3–6 issue relaxes it. | `sql/deploy/priceops-occurrence-resources.sql`; ADR 004 "Consequences" | new issue before `01a20415-6c2f` |
-| G2 | No step turns a paid booking hold into an entitlement. `OneTimePayment` "creates no entitlement itself"; `CompleteChange` is change-only; the signup accept is platform-only. `Hold->convert` exists (`01a20416-6e1b`) but nothing calls it for a booking. | `01a20416-6df2`, `01a20416-6e51`, `01a20416-6d40` | `01a20415-6b96` adds `CompleteBooking` |
+| G1 | An offer version buys one resource (`offer_versions` has `resource_id` or `class_project_id`, `CHECK num_nonnulls = 1`). ADR 004 ruling (a) needs a Solo version that lists a set of workflow run rights. No step 3–6 issue relaxes it. | `sql/deploy/priceops-occurrence-resources.sql`; ADR 004 "Consequences" | new issue before `01a20415-69c6` (step 6) and `01a20415-6c2f` |
+| G2 | No step turns a paid booking hold into an entitlement. `OneTimePayment` "creates no entitlement itself"; `CompleteChange` is change-only; the signup accept is platform-only. `Hold->convert` is planned in the pending `01a20416-6e1b` (today `Hold.pm` has only `place` and `release`), and nothing is planned to call it for a booking. | `01a20416-6df2`, `01a20416-6e51`, `01a20416-6d40` | `01a20415-6b96` adds `CompleteBooking` |
 | G3 | No system-started refund for a booking payment. ADR 003 names `SupersededRefund` as "the one refund Registry starts on its own"; rulings 7a and 7b would add two more. | ADR 003, ADR 005 7a/7b | `01a20415-6b96`, after perigrin's answers above |
 | G4 | `OfferVersion->covered_resources` and `buys` ignore `events.status` and `events.time`, so a grant into a closed or past occurrence is accepted. | `lib/Registry/DAO/OfferVersion.pm`; note on `01a20415-6b4a` | `01a20415-6b4a` (its note AC) |
 | G5 | `Resource->for_occurrence` copies `events.capacity`, and fails `resources_capacity_matches_kind` when it is NULL. | `lib/Registry/DAO/Resource.pm`; note on `01a20415-6b12` | `01a20415-6b12` sets `capacity` from `seats_per_occurrence` |
@@ -428,13 +451,16 @@ section before it starts.
 | 9 | `01a20415-6b96` direct charge | adds `CompleteBooking` (G2); the money rules once perigrin answers (G3) |
 | 10 | `01a20415-6bae` change window | wall-clock rule; inclusive boundary (G7); no new workflow |
 | 11 | `01a20415-6bf2` day view | workflow `in-studio-day-view` |
-| 12 | `01a20415-6c2f` offer the in-studio workflows | admin run of `offer-publishing` on `registry`; needs G1 |
+| 12 | `01a20415-6c2f` offer the in-studio workflows | admin run of `offer-publishing` on `registry`; the offered set is all five workflows, `entitlement-change` included; needs G1 |
 | 13 | `01a20415-6d02` `t/priceops/day-one.t` | as above |
+
+The guide for studio admins and staff, `[S7-docs]` `01a20423-1285`, follows
+the code issues above.
 
 Issues to add or split, for the orchestrator:
 
 - **Add** `[S6] Let an offer version buy a set of resources` (G1), blocking
-  `01a20415-6c2f`.
+  `01a20415-69c6` (ADR 004: before step 6) and `01a20415-6c2f`.
 - **Split** `01a20415-6ae1` into `[S7] Serve /terms with a marked DRAFT
   placeholder and refuse production checkout while it stands` and `[S7]
   Replace the /terms placeholder with perigrin's text` (`gate:perigrin`).
