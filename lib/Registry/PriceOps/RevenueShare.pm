@@ -17,11 +17,7 @@ use Registry::PriceOps::PlatformTerms qw(platform_terms_for_tenant platform_defa
 # All table references are fully qualified (registry.*) so this works correctly
 # regardless of the calling connection's search_path.
 #
-# Resolution order:
-#   1. tenant.platform_pricing_plan_id is set  -> use that plan's percentage
-#   2. FK is NULL or tenant row absent          -> use the platform Free plan (0.00)
-#   3. Free plan missing                        -> die (deployment bug)
-#   4. Resolved percentage absent or non-numeric -> die (data bug)
+# Delegates to PlatformTerms::platform_terms_for_tenant for resolution and validation.
 sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     return ( revenue_share_plan_for_tenant( $db, $tenant_slug ) )[0];
 }
