@@ -117,4 +117,40 @@ subtest 'pending refund is not recorded as completed' => sub {
     is $row->{metadata}{refund_status}, 'pending', 'as pending';
 };
 
+# Stripe can answer a refund already failed or canceled. No money went back,
+# so nothing may count it, and a retry under the same key must not be told the
+# refund succeeded.
+subtest 'a refund Stripe returns failed or canceled is not counted' => sub {
+    my $seller = Test::Registry::Fixtures::platform_seller($db);
+    for my $answer (qw( failed canceled )) {
+        my $payment = Registry::DAO::Payment->create($db, {
+            user_id => $parent->id, amount_cents => 15000, status => 'completed',
+            stripe_payment_intent_id => "pi_rfc_$answer",
+            metadata => { enrollment_items => [], tenant_slug => $seller } });
+
+        my $calls = 0;
+        my $err;
+        {
+            no warnings 'redefine';
+            local *Registry::Service::Stripe::create_refund_async = sub ($s, $params) {
+                $calls++;
+                Mojo::Promise->resolve({ id => "re_$answer", status => $answer });
+            };
+            for (1, 2) {
+                undef $err;
+                settle( $payment->refund_async( $db,
+                    { amount_cents => 5000, idempotency_key => "key_rfc_$answer" } )
+                    ->catch( sub { $err = shift } ) );
+            }
+        }
+
+        my $row = $db->select('payments', '*', { id => $payment->id })->expand->hash;
+        is $row->{status}, 'completed', "$answer: the payment is not marked refunded";
+        is $row->{refunded_cents}, 0, "$answer: nothing is recorded as returned";
+        is $row->{metadata}{refund_status}, $answer, "$answer: the refund is recorded as $answer";
+        like $err // '', qr/\Q$answer\E/, "$answer: the caller is told the refund did not go through";
+        is $calls, 2, "$answer: a retry under the same key is not answered as succeeded";
+    }
+};
+
 done_testing;

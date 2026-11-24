@@ -233,7 +233,7 @@ subtest 'a direct refund records itself, and a second one adds to the first' => 
     my $p = a_payment(10000);
 
     my $apply = sub ($cents) {
-        $p->_apply_refund_result( $db, { id => "re_direct_$cents" }, $cents, 'requested_by_customer', 0 );
+        $p->_apply_refund_result( $db, { id => "re_direct_$cents", status => 'succeeded' }, $cents, 'requested_by_customer', 0 );
     };
 
     $apply->(2000);
@@ -261,7 +261,7 @@ subtest 'a direct refund on a payment that once had an increment is still record
     $p->settle_refund_increment( $db, 1, { id => 're_inc' } );
     is row_of($p)->{refunded_cents}, 2000, 'the increment is settled';
 
-    $p->_apply_refund_result( $db, { id => 're_after' }, 3000, 'requested_by_customer', 0 );
+    $p->_apply_refund_result( $db, { id => 're_after', status => 'succeeded' }, 3000, 'requested_by_customer', 0 );
 
     is row_of($p)->{refunded_cents}, 5000,
         'a later direct refund is still recorded, not swallowed by a latched guard';

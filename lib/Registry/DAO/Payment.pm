@@ -1882,10 +1882,11 @@ SQL
     method _apply_refund_result ($db, $refund, $refund_cents, $reason, $is_increment = 0, $key = undef) {
         $db = $db->db if $db isa Registry::DAO;
 
-        # A pending refund has not moved money yet and may fail, so it moves
-        # neither status nor refunded_cents.
+        # Only a succeeded refund has moved money. A pending one may still fail
+        # and a failed or canceled one never will, so none of them moves status
+        # or refunded_cents, or is remembered as counted.
         # shortcut: nothing settles it later (no refund.updated handler); add one when async refunds are offered.
-        my $pending = ( $refund->{status} // '' ) =~ /\A(?:pending|requires_action)\z/ ? 1 : 0;
+        my $pending = ( $refund->{status} // '' ) eq 'succeeded' ? 0 : 1;
         my $hold    = $is_increment || $pending ? 1 : 0;
 
         # A targeted jsonb merge, not save(). save() would write six columns
@@ -2241,7 +2242,8 @@ SQL
 
         # A retry (a drop whose step died after Stripe paid) of a refund already
         # recorded under this key gets that refund back. The guards below would
-        # refuse it, because the payment already reflects it.
+        # refuse it, because the payment already reflects it. Only a succeeded
+        # refund is ever recorded there, so 'succeeded' is what was recorded.
         if ( my $key = $args->{idempotency_key} ) {
             my $done = $db->query( q{
                 SELECT r.key AS id, 'succeeded' AS status
@@ -2321,6 +2323,9 @@ SQL
             # refund the bank had made.
             $self->_apply_refund_result( $db, $refund, $refund_cents, $reason,
                 $args->{increment} ? 1 : 0, $args->{idempotency_key} );
+            # Recorded as such above; the caller's failure branch keeps it owed.
+            die "Stripe refund $refund->{id} on payment $id is $refund->{status}\n"
+                if ( $refund->{status} // '' ) =~ /\A(?:failed|canceled)\z/;
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";
