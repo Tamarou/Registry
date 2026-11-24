@@ -103,12 +103,14 @@ subtest 'a platform admin unsets a setting from the screen' => sub {
 # The audit, decided in the issue that added the screen: each subcommand gets
 # an equivalent admin route, or is the deploy-time bootstrap -- the one thing
 # that runs before any admin exists, from deployment configuration alone.
+# `check` is bootstrap's own validation, run earlier in the same boot, before
+# the migrations: it writes nothing and an admin has no use for it.
 my %screen_for = (
     settings => 'platform_settings',
     set      => 'platform_settings_update',
     unset    => 'platform_settings_update',
 );
-my @deploy_only = ('bootstrap');
+my @deploy_only = qw( bootstrap check );
 
 subtest 'every registry platform subcommand has an admin screen or is the deploy-time bootstrap' => sub {
     my $usage = Registry::Command::platform->new->usage;

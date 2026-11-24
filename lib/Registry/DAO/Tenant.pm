@@ -202,9 +202,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
     my $UNCHANGED = " -- the platform tenant and its admin were left as they are\n";
 
-    sub bootstrap_platform ( $class, $db, $config ) {
-        $db = $db->db if $db isa Registry::DAO;
-
+    # The values bootstrap_platform is given, judged on their own: the checks
+    # that need no database. Dies naming the first problem; returns the
+    # account id, readiness (1 or 0) and admin email. The entrypoint runs it,
+    # through `registry platform check`, before migrating, so a configuration
+    # bootstrap would refuse stops the boot while the schema still matches the
+    # code already serving.
+    sub check_platform_config ( $class, $config ) {
         my @missing = grep { !defined $config->{$_} }
             qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY PLATFORM_ADMIN_EMAIL );
         die 'Not set: ' . join( ', ', @missing ) . $UNCHANGED
@@ -230,6 +234,14 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             ( my $shown = $email ) =~ s/([[:cntrl:]])/sprintf '\\x%02x', ord $1/ge;
             die "PLATFORM_ADMIN_EMAIL '$shown' is not a single email address" . $UNCHANGED;
         }
+
+        return ( $account, $ready, $email );
+    }
+
+    sub bootstrap_platform ( $class, $db, $config ) {
+        $db = $db->db if $db isa Registry::DAO;
+
+        my ( $account, $ready, $email ) = $class->check_platform_config($config);
 
         my $platform = $class->platform($db)
             or die "There is no platform tenant (slug 'registry') to bootstrap;"

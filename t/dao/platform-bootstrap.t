@@ -301,6 +301,72 @@ subtest 'the bootstrap command exits non-zero when a value is missing' => sub {
     is_deeply platform_row( $dao->db ), $before, 'and the row is unchanged';
 };
 
+# The entrypoint runs `platform check` before sqitch deploy, so a configuration
+# bootstrap would refuse stops the boot while the database still matches the
+# code already serving. It judges the values alone: no database handle.
+subtest 'the platform configuration is checked without a database' => sub {
+    my %good = (
+        PLATFORM_STRIPE_ACCOUNT_ID => 'acct_123',
+        PLATFORM_STRIPE_READY      => 'TRUE',
+        PLATFORM_ADMIN_EMAIL       => 'alex@tamarou.test',
+    );
+
+    is_deeply [ Registry::DAO::Tenant->check_platform_config( {%good} ) ],
+        [ 'acct_123', 1, 'alex@tamarou.test' ],
+        'a good configuration comes back as account, readiness and email';
+
+    for my $case (
+        [ 'a missing variable',     { %good, PLATFORM_ADMIN_EMAIL => undef },   qr/Not set: PLATFORM_ADMIN_EMAIL/ ],
+        [ 'a malformed account id', { %good, PLATFORM_STRIPE_ACCOUNT_ID => 'x' }, qr/PLATFORM_STRIPE_ACCOUNT_ID 'x'/ ],
+        [ 'an unknown readiness',   { %good, PLATFORM_STRIPE_READY => 'maybe' }, qr/PLATFORM_STRIPE_READY 'maybe'/ ],
+        [ 'a two-address email',    { %good, PLATFORM_ADMIN_EMAIL => "a\@b.test\nBcc: c\@d.test" }, qr/PLATFORM_ADMIN_EMAIL/ ],
+      )
+    {
+        my ( $name, $config, $why ) = @$case;
+        ok !eval { Registry::DAO::Tenant->check_platform_config($config); 1 },
+            "$name is refused";
+        like $@, $why, '  by name';
+    }
+};
+
+subtest 'the check command exits non-zero naming a missing value and writes nothing' => sub {
+    reset_platform( $dao->db );
+    my $before = platform_row( $dao->db );
+
+    my $out = do {
+        local %ENV = %ENV;
+        delete $ENV{PLATFORM_ADMIN_EMAIL};
+        $ENV{PLATFORM_STRIPE_ACCOUNT_ID} = 'acct_123';
+        $ENV{PLATFORM_STRIPE_READY}      = 'true';
+        $ENV{DB_URL}                     = $test_db->uri;
+        qx{"$^X" ./registry platform check 2>&1};
+    };
+    my $status = $? >> 8;
+
+    isnt $status, 0, 'registry platform check exits non-zero';
+    like $out, qr/PLATFORM_ADMIN_EMAIL/, 'and names the missing variable';
+    is_deeply platform_row( $dao->db ), $before, 'and the row is unchanged';
+};
+
+subtest 'the check command passes a complete configuration and writes nothing' => sub {
+    reset_platform( $dao->db );
+    my $before = platform_row( $dao->db );
+
+    my $out = do {
+        local %ENV = %ENV;
+        $ENV{PLATFORM_STRIPE_ACCOUNT_ID} = 'acct_123';
+        $ENV{PLATFORM_STRIPE_READY}      = 'true';
+        $ENV{PLATFORM_ADMIN_EMAIL}       = 'alex@tamarou.test';
+        $ENV{DB_URL}                     = $test_db->uri;
+        qx{"$^X" ./registry platform check 2>&1};
+    };
+    my $status = $? >> 8;
+
+    is $status, 0, 'registry platform check exits zero'
+        or diag $out;
+    is_deeply platform_row( $dao->db ), $before, 'and the row is unchanged';
+};
+
 subtest 'bootstrap gives the platform primary admin the configured email' => sub {
     my $db = $dao->db;
     reset_platform($db);
