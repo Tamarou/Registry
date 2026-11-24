@@ -15,6 +15,7 @@ use Test::More;
 use experimental 'signatures';
 
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO;
@@ -50,6 +51,7 @@ my $tenant = Test::Registry::Fixtures::create_tenant( $db, {
 $db->query(
     'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE id = ?',
     'acct_drop_refund', $tenant->id );
+state_platform_terms( $db, 'refunding_studio', { rate => 0 } );
 
 my $n = 0;
 sub a_child () {

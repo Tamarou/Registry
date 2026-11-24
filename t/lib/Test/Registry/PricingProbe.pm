@@ -6,9 +6,10 @@ use warnings;
 package Test::Registry::PricingProbe;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( with_tenant_plan give_tenant_terms without_rate_check solo_linked_tenant );
+our @EXPORT_OK = qw( with_tenant_plan give_tenant_terms state_platform_terms without_rate_check solo_linked_tenant );
 
 use Mojo::JSON qw( encode_json );
+use Test::More ();
 use Registry::PriceOps::PlatformTerms ();
 
 # with_tenant_plan($db, $slug, \%overrides, $cb)
@@ -82,6 +83,26 @@ sub give_tenant_terms ( $db, $slug, $terms ) {
     $db->query(
         'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
         $made, $slug );
+    return;
+}
+
+# state_platform_terms($db, $slug_or_slugs, { rate => 0, ... })
+#
+# The `platform terms are stated` subtest a charging test opens with: gives each
+# tenant the terms through give_tenant_terms and asserts the resolver answers
+# them, so the test no longer rides on the Free fallback without saying so.
+sub state_platform_terms ( $db, $slugs, $terms ) {
+    $db = $db->db if $db isa Registry::DAO;
+    Test::More::subtest 'platform terms are stated' => sub {
+        for my $slug ( ref $slugs ? @$slugs : $slugs ) {
+            give_tenant_terms( $db, $slug, $terms );
+            my $got = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $slug );
+            Test::More::cmp_ok( $got->{fraction}, '==', $terms->{rate},
+                "$slug is charged at the stated rate" );
+            Test::More::is( $got->{amount_cents}, $terms->{amount_cents} // 0,
+                "$slug holds the stated monthly amount" );
+        }
+    };
     return;
 }
 

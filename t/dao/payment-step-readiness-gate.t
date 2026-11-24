@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Registry::DAO;
 use Registry::DAO::Tenant;
 use Registry::DAO::Workflow;
@@ -43,6 +44,7 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
     users => [ $admin ],
 });
 ok $tenant, 'tenant provisioned';
+state_platform_terms( $db, $slug, { rate => 0 } );
 
 # Connect to the tenant schema for all fixture creation.
 my $tenant_dao = Registry::DAO->new(url => $test_db->uri, schema => $slug);

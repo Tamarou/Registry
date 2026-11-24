@@ -86,6 +86,7 @@ my $captured;
 # -----------------------------------------------------------------------
 
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Fixtures;
 use Registry::DAO;
 use Registry::DAO::Payment;
@@ -105,6 +106,7 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;    # Registry::DAO
 my $db      = $dao->db;        # Mojo::Pg::Database
 my $platform = Test::Registry::Fixtures::platform_seller($db);
+state_platform_terms( $db, $platform, { rate => 0 } );
 
 my $b2_user_id = $db->query(q{
     INSERT INTO registry.users (username, passhash)
@@ -231,6 +233,7 @@ Registry::DAO::Tenant->create($db, {
     stripe_details_submitted  => 1,
 });
 $db->query('SELECT clone_schema(?)', $b3_slug);
+state_platform_terms( $db, $b3_slug, { rate => 0 } );
 
 my $b3dao = Registry::DAO->new(url => $test_db->uri, schema => $b3_slug);
 my $b3db  = $b3dao->db;

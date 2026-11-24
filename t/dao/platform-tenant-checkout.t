@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
@@ -24,6 +25,7 @@ use Mojo::Promise;
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;    # the registry schema: the platform tenant's own
+state_platform_terms( $db, 'registry', { rate => 0 } );
 
 my $location = Registry::DAO::Location->create( $db, {
     name         => 'Platform Checkout Location',

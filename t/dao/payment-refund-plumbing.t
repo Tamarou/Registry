@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO::Payment;
@@ -18,6 +19,7 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 my $platform = Test::Registry::Fixtures::platform_seller($db);
+state_platform_terms( $db, $platform, { rate => 0 } );
 
 my $parent = $dao->create(User => {
     username => 'rp_parent', name => 'RP Parent', user_type => 'parent',

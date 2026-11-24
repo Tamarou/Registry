@@ -32,6 +32,7 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::Service::Stripe;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
 
@@ -64,6 +65,7 @@ $db->query(
       WHERE slug = $2',
     'acct_async_test', $slug,
 );
+state_platform_terms( $db, $slug, { rate => 0 } );
 
 my $tdao = Registry::DAO->new( url => $test_db->uri, schema => $slug );
 my $tdb  = $tdao->db;

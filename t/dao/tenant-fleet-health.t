@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use experimental 'signatures';
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Fixtures;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
@@ -53,6 +54,7 @@ my $healthy = Registry::DAO::Tenant->provision( $db, {
     name => 'Healthy Studio', slug => 'healthy_studio',
     users => [ $owner ],
 } );
+state_platform_terms( $db, $healthy->slug, { rate => 0 } );
 
 # And one whose schema was never built: a tenant row with nothing behind it.
 # This is the shape #265 is about -- the sweeps isolate these and nothing
