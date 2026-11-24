@@ -12,6 +12,7 @@ use Mojo::Home;
 use Mojo::JSON qw( encode_json );
 use Test::More ();
 use Registry::DAO;
+use Registry::DAO::Entitlement;
 use Registry::DAO::User;
 use Registry::DAO::Workflow;
 use Test::Registry::Helpers qw( join_tenant publish_offer );
@@ -97,7 +98,12 @@ sub state_platform_terms ( $db, $slugs, $terms ) {
 # percentage plan having a rate at all), in a transaction that is rolled back,
 # so a test can plant a rate the database refuses and prove the application's
 # own guard still stops it.
+# Set while without_rate_check holds its lock: a publishable probe publishes over
+# a second connection, which would wait on that lock forever.
+our $IN_RATE_BYPASS = 0;
+
 sub without_rate_check ( $db, $cb ) {
+    local $IN_RATE_BYPASS = 1;
     my $tx = $db->begin;
     $db->query( 'ALTER TABLE registry.offer_version_payment_plans
                  DROP CONSTRAINT offer_version_payment_plans_fraction_check,
@@ -136,13 +142,13 @@ sub _held ( $db, $slug ) {
 sub _hold ( $db, $slug, $version_id ) {
     $db->query( 'DELETE FROM registry.entitlements WHERE id = ?', $_->{id} ) for @{ _held( $db, $slug ) };
     return unless $version_id;
-    # Not terms: the probe's grant, since nothing yet grants a tenant a chosen platform version.
-    $db->query( q{
-        INSERT INTO registry.entitlements (holder_tenant_id, offer_version_id, payment_plan_id, in_effect)
-        SELECT t.id, p.offer_version_id, p.id, tstzrange(now(), NULL, '[)')
-          FROM registry.tenants t, registry.offer_version_payment_plans p
+    my ( $tenant_id, $plan_id ) = $db->query( q{
+        SELECT t.id, p.id FROM registry.tenants t, registry.offer_version_payment_plans p
          WHERE t.slug = ? AND p.offer_version_id = ? AND p.kind = 'percentage_of_sales'
-    }, $slug, $version_id );
+    }, $slug, $version_id )->array->@*;
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $tenant_id, offer_version_id => $version_id, payment_plan_id => $plan_id,
+        starts_at        => 'now' } );
     return;
 }
 
@@ -156,6 +162,8 @@ sub _probe_version ( $db, $terms ) {
     my $rate   = eval { rate_fraction( $terms->{rate}, 'a probe' ) };
     return _planted_version( $db, $terms, $refund )
         unless defined $rate && keys %$refund == 1 && $PUBLISHABLE_REFUND{ $refund->{kind} // '' };
+    die "a publishable probe can't run inside without_rate_check: it would wait on that lock forever\n"
+        if $IN_RATE_BYPASS;
 
     my $dao = Registry::DAO->new;    # DB_URL's registry schema, where platform offers are published
     # A no-op once stored, so a test that never imported workflows still has it.

@@ -249,4 +249,18 @@ sub platform_version_terms_of ($id) {
     return Registry::PriceOps::PlatformTerms::platform_version_terms( $db, $id, 'revenue_share' );
 }
 
+subtest 'publishable probe inside without rate check refuses instead of hanging' => sub {
+    # The probe publishes over a second connection, which would wait forever on
+    # the ALTER TABLE lock without_rate_check holds on this one.
+    my $err;
+    without_rate_check( $db, sub {
+        # A lock timeout on the probe's own connection turns a hang into an error.
+        local $ENV{PGOPTIONS} = '-c lock_timeout=5s';
+        eval { give_tenant_terms( $db, 'terms_second', { rate => '0.02' } ) };
+        $err = $@;
+    } );
+    unlike $err, qr/lock timeout/i, 'it does not wait on the lock';
+    like $err, qr/without_rate_check/, 'it dies naming the wrapper';
+};
+
 done_testing;
