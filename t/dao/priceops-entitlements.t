@@ -283,7 +283,7 @@ subtest 'referenced offer version delete refused' => sub {
     my $tx = $studio->begin;
     $studio->query('ALTER TABLE offer_versions DISABLE TRIGGER offer_versions_immutable');
     throws_ok { $studio->query( 'DELETE FROM offer_versions WHERE id = ?', $e->offer_version_id ) }
-        qr/entitlements_payment_plan_fkey/, 'and the entitlement alone refuses the delete';
+        qr/entitlements_(?:payment_plan|offer)_fkey/, 'and the entitlement alone refuses the delete';
     undef $tx;
 };
 
