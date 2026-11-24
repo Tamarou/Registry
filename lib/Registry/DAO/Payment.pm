@@ -783,7 +783,7 @@ field $_stripe_client = undef;
             # (#277), on every refund that returns the fee, and wherever
             # Stripe's rounding differs from ours -- so a revenue screen built
             # on derivation reports money that was never taken.
-            $self->_record_platform_fee( $db, $intent );
+            $self->record_platform_fee( $db, $intent );
 
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
@@ -806,6 +806,8 @@ field $_stripe_client = undef;
     }
     
     # Write down the application fee and the plan version it was charged under.
+    # Both settlement paths -- process_payment and the webhook -- call this, so
+    # the missing-fee rule lives here once.
     #
     # Best effort: a failure here must not undo a captured charge. The payment is
     # settled and the enrolment is the point; an unrecorded fee leaves a NULL,
@@ -818,10 +820,14 @@ field $_stripe_client = undef;
     # moving a tenant is a deliberate act (#277), the window is one Stripe round
     # trip, and the alternative is threading the id through the params builder
     # and the webhook's run-less path for a case nobody has hit.
-    method _record_platform_fee ( $db, $intent ) {
+    method record_platform_fee ( $db, $intent ) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $fee = $intent->{application_fee_amount};
+        # Stripe omits a zero application fee rather than sending 0, so a
+        # charge on a seller's account that reports none took nothing. A row
+        # with no seller account sent no Connect params: its fee stays NULL.
+        my $connected = ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
+        my $fee = $intent->{application_fee_amount} // ( $connected ? 0 : undef );
         return unless defined $fee && !ref $fee;
 
         my $slug = ( ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef );

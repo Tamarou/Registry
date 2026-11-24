@@ -658,10 +658,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # The fee Stripe reports is recorded only by the delivery that completes
         # the row, so a redelivery or a later event cannot overwrite it.
         if ( $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} ) ) {
-            # Stripe omits a zero application fee rather than sending 0, so an
-            # intent with none -- an explicit 0% sale -- took nothing.
-            $payment->_record_platform_fee( $db,
-                { %$intent, application_fee_amount => $intent->{application_fee_amount} // 0 } );
+            $payment->record_platform_fee( $db, $intent );
         }
         else {
             $self->app->log->info(
