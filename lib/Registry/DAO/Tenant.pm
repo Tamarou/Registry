@@ -8,6 +8,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Registry::DAO::OutcomeDefinition;
     use Registry::DAO;
     use Registry::DAO::Payment;
+    use Registry::DAO::Entitlement;
     use Registry::PriceOps::PlatformTerms ();
     field $id :param :reader = undef;
     field $name :param :reader;
@@ -371,7 +372,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     #
     # The one seam every caller asks, about the resource and never a plan or a
     # slug: the operator right is held by whichever tenant the data says holds
-    # it, as an entitlement to the resource of that name.
+    # it, as an entitlement to the resource of that name in effect now.
     #
     # Qualified with registry: clone_schema gives every tenant schema its own
     # copy of the PriceOps tables, and an entitlement a tenant records in its
@@ -381,12 +382,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         return 0 unless defined $tenant_id && length $tenant_id
                      && defined $resource  && length $resource;
 
-        return $db->query( q{
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', q{tstzrange(now(), now(), '[]')} );
+        return $db->query( qq{
             SELECT EXISTS (
                 SELECT 1 FROM registry.entitlements e
                   JOIN registry.offer_versions v ON v.id = e.offer_version_id
                   JOIN registry.resources r      ON r.id = v.resource_id
-                 WHERE e.holder_tenant_id = ? AND r.name = ?)
+                 WHERE e.holder_tenant_id = ? AND r.name = ? AND $in_effect)
         }, $tenant_id, $resource )->array->[0] ? 1 : 0;
     }
 

@@ -7,6 +7,9 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Mojo;
+use Test::Registry::Helpers qw( authenticate_as );
+use Test::Registry::OperatorRight qw( revoke_operator restore_operator grant_in_schema );
 use Registry::DAO::Tenant;
 use Registry::DAO::Entitlement;
 
@@ -57,6 +60,54 @@ subtest 'interim operator storage removed' => sub {
         'registry.tenant_resources no longer exists';
     ok !$db->query(q{SELECT to_regclass('operator_entitlement_studio.tenant_resources')})->array->[0],
         'and a newly provisioned tenant gets no copy of it';
+};
+
+subtest 'read method answers from entitlements' => sub {
+    ok Registry::DAO::Tenant->holds( $db, $platform->id, 'operator' ), 'registry holds operator';
+    my $held = revoke_operator($db);
+    ok !Registry::DAO::Tenant->holds( $db, $platform->id, 'operator' ),
+        'without its entitlement it does not';
+    restore_operator( $db, $held );
+    ok Registry::DAO::Tenant->holds( $db, $platform->id, 'operator' ), 'and with it back, it does';
+};
+
+my $alex = $platform->primary_user($db);
+
+sub app_as ($user) {
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->app->helper( dao => sub { $dao } );
+    authenticate_as( $t, $user );
+    return $t;
+}
+
+# Which tenant $user's request asking to act as $slug is served as.
+sub acting_as ( $t, $user, $slug ) {
+    my $c = $t->app->build_controller;
+    $c->session( user_id => $user->id );
+    $c->req->headers->header( 'X-As-Tenant' => $slug );
+    return $c->tenant;
+}
+
+subtest 'ending the entitlement closes operator surfaces' => sub {
+    my $t = app_as($alex);
+    is acting_as( $t, $alex, $studio->slug ), $studio->slug, 'while in effect Alex may act as the studio';
+    $t->get_ok('/platform/jobs')->status_is( 200, 'and is served the job queue' );
+
+    my ($entitlement) = Registry::DAO::Entitlement->find( $db, {
+        id => $db->query( q{
+            SELECT e.id FROM registry.entitlements e
+              JOIN registry.offer_versions v ON v.id = e.offer_version_id
+              JOIN registry.resources r      ON r.id = v.resource_id
+             WHERE r.name = 'operator' AND e.holder_tenant_id = ?
+        }, $platform->id )->array->[0],
+    } );
+    $entitlement->end( $db, 'expired', 'operator right withdrawn' );
+
+    ok !Registry::DAO::Tenant->holds( $db, $platform->id, 'operator' ),
+        'an ended entitlement is not the right';
+    isnt acting_as( $t, $alex, $studio->slug ), $studio->slug, 'Alex may no longer act as the studio';
+    $t->get_ok('/platform/jobs')->status_is( 403, 'the job queue is refused' );
+    $t->get_ok('/platform/revenue')->status_is( 403, 'the revenue view is refused' );
 };
 
 done_testing;
