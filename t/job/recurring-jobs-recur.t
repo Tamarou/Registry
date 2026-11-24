@@ -142,4 +142,22 @@ subtest 'setup during running sweep leaves one next run' => sub {
     is queued('process_waitlist'), 1, 'exactly one next run is queued, not two chains';
 };
 
+subtest 'no workflow_executor job queued' => sub {
+    $minion->reset( { all => 1 } );
+    $mdb->query(q{DELETE FROM registry.workflow_runs WHERE workflow_id IN
+        (SELECT id FROM registry.workflows WHERE slug = 'attendance-check')});
+    $app->setup_recurring_jobs;
+    run_due('attendance_check');
+
+    is jobs_of('workflow_executor')->total, 0, 'nothing enqueued the unregistered workflow_executor';
+    is queued('attendance_check'), 1, 'the next run is an attendance_check job';
+
+    my $runs = $mdb->query(q{SELECT r.data FROM registry.workflow_runs r
+        JOIN registry.workflows w ON w.id = r.workflow_id
+        WHERE w.slug = 'attendance-check'})->expand->hashes;
+    ok $runs->size, 'the attendance-check workflow ran';
+    ok !( grep { exists( ( $_->{data}{workflow_context} // {} )->{app} ) } @$runs ),
+        'no run data holds an app object';
+};
+
 done_testing;

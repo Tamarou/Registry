@@ -39,10 +39,9 @@ class Registry::Job::WorkflowExecutor {
             # Create workflow run with provided context
             my $workflow_run = $workflow->new_run($db, {});
             
-            # Store context and app reference in workflow run data
+            # Store context in workflow run data (JSON: no objects)
             my $initial_data = {
-                workflow_context => { 
-                    app => $job->app,
+                workflow_context => {
                     job_id => $job->id,
                     %$context 
                 }
