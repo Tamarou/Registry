@@ -17,6 +17,7 @@ BEGIN
         SELECT slug::name FROM registry.tenants WHERE slug != 'registry'
     LOOP
         CONTINUE WHEN to_regclass(format('%I.offer_versions', s)) IS NULL;
+        EXECUTE format('DROP TABLE IF EXISTS %I.offer_version_payment_plans', s);
         EXECUTE format($f$
             ALTER TABLE %I.offer_versions
                 DROP COLUMN IF EXISTS price_cents,

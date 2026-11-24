@@ -42,7 +42,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     sub draft ( $class, $db, $offer_id, $terms ) {
         $db = $db->db if $db isa Registry::DAO;
         my $row = _with_offer_locked( $db, $offer_id, sub {
-            $db->query(
+            my $row = $db->query(
                 'INSERT INTO offer_versions (offer_id, version, resource_id,
                         price_cents, units_per_acceptance, per_booking_cap)
                  SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?
@@ -50,8 +50,19 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                  RETURNING *',
                 $offer_id, $terms->@{qw( resource_id price_cents units_per_acceptance per_booking_cap )},
                 $offer_id )->hash;
+            $db->insert( 'offer_version_payment_plans',
+                { offer_version_id => $row->{id}, $_->%{qw( id kind fraction )} } )
+                for ( $terms->{payment_plans} // [] )->@*;
+            $row;
         } );
         return $class->new(%$row);
+    }
+
+    # The plans a customer chooses between, each { id, kind, fraction }.
+    method payment_plans ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->select( 'offer_version_payment_plans', [qw( id kind fraction )],
+            { offer_version_id => $id }, { -asc => 'id' } )->hashes->to_array;
     }
 
     # Publishes this draft and supersedes the offer's current version, in one
