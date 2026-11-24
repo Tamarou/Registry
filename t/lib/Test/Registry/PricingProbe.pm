@@ -89,10 +89,12 @@ sub with_tenant_plan ( $db, $slug, $overrides, $cb ) {
 #
 # Runs $cb with pricing_plans_percentage_rate_check lifted, in a transaction
 # that is rolled back, so a test can plant a rate the database refuses and
-# prove the application's own guard still stops it.
+# prove the application's own guard still stops it. tenants_plan_has_rate is
+# lifted with it, so such a plan can be linked to a tenant.
 sub without_rate_check ( $db, $cb ) {
     my $tx = $db->begin;
     $db->query( 'ALTER TABLE registry.pricing_plans DROP CONSTRAINT pricing_plans_percentage_rate_check' );
+    $db->query( 'ALTER TABLE registry.tenants DISABLE TRIGGER tenants_plan_has_rate' );
     $cb->();
     return;    # $tx goes out of scope uncommitted: the constraint comes back
 }

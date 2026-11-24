@@ -174,8 +174,9 @@ subtest 'fixed-price plan does not have its dollar amount read as a rate' => sub
     # A plan carrying a price and no rate -- the shape of "Registry Standard -
     # $200/month", which is the plan marked default:true and so the one an admin
     # is most likely to pick. Reading its price as a rate would yield a 20000%
-    # application fee that Stripe rejects outright.
-    with_tenant_plan( $db, $seeded_slug,
+    # application fee that Stripe rejects outright. tenants_plan_has_rate
+    # refuses the link now; the guard stays for a link that predates it.
+    without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
         {   pricing_configuration => {},
             amount_cents          => 20000,
             pricing_model_type    => 'fixed',
@@ -187,7 +188,7 @@ subtest 'fixed-price plan does not have its dollar amount read as a rate' => sub
             like $@, qr/percentage|rate/i,
                 'dies pointing at the missing percentage rather than inventing one';
         }
-    );
+    ) } );
 };
 
 subtest 'a rate outside 0..1 dies rather than reaching Stripe' => sub {

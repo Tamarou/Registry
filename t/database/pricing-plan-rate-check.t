@@ -95,4 +95,53 @@ subtest 'a tenant schema refuses a rate of 1.5' => sub {
     }
 };
 
+# RevenueShare dies on a linked plan with no rate, and the rate check above
+# lets a fixed plan have none -- so the link itself is what must be refused.
+subtest 'a tenant cannot be linked to a plan with no rate' => sub {
+    my $fixed = $db->query( q{INSERT INTO registry.pricing_plans (plan_name, plan_type, pricing_model_type)
+                               VALUES ('Flat fee', 'standard', 'fixed') RETURNING id} )->hash->{id};
+    my $rated = $db->query( q{INSERT INTO registry.pricing_plans
+                                (plan_name, plan_type, pricing_model_type, pricing_configuration)
+                              VALUES ('Rated', 'standard', 'percentage', '{"percentage": 0.025}')
+                              RETURNING id} )->hash->{id};
+
+    throws_ok {
+        $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = 'rate_tenant'}, $fixed );
+    } qr/has no rate/, 'linking an existing tenant is refused';
+    throws_ok {
+        $db->query( q{INSERT INTO registry.tenants (name, slug, platform_pricing_plan_id)
+                      VALUES ('Flat', 'flat_tenant', ?)}, $fixed );
+    } qr/has no rate/, 'so is creating a tenant linked to it';
+    lives_ok {
+        $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = 'rate_tenant'}, $rated );
+    } 'a plan with a rate links';
+    lives_ok {
+        $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = 'rate_tenant'} );
+    } 'and no plan at all is still allowed';
+};
+
+subtest 'verify fails against the earlier, weaker rate predicate' => sub {
+    my $verify = sub {
+        my ( undef, undef, $ok ) = capture {
+            eval { App::Sqitch->new->run( 'sqitch', 'verify', '-t', $uri,
+                '--from', 'pricing-plan-rate-check', '--to', 'pricing-plan-rate-check' ); 1 };
+        };
+        $ok;
+    };
+    ok $verify->(), 'the deployed predicate verifies';
+
+    # dae3d63's predicate: no rate required on a percentage or hybrid plan.
+    $db->query( q{ALTER TABLE registry.pricing_plans DROP CONSTRAINT pricing_plans_percentage_rate_check} );
+    $db->query( q{ALTER TABLE registry.pricing_plans ADD CONSTRAINT pricing_plans_percentage_rate_check CHECK (
+                    pricing_configuration->>'percentage' IS NULL OR
+                    CASE WHEN pricing_configuration->>'percentage'
+                              ~ '^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$'
+                         THEN (pricing_configuration->>'percentage')::numeric BETWEEN 0 AND 1
+                          AND (pricing_configuration->>'percentage')::numeric
+                              = round( (pricing_configuration->>'percentage')::numeric, 4 )
+                         ELSE false
+                    END )} );
+    ok !$verify->(), 'a database holding the old predicate fails verify';
+};
+
 done_testing;
