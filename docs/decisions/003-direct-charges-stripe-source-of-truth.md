@@ -94,7 +94,9 @@ that read `refund_application_fee` from plan configuration is gone.
 
 A refund Stripe answers `pending` (or `requires_action`) is held, not counted,
 and settled later from `refund.updated` on the Connect endpoint. A `failed` or
-`canceled` refund is recorded and reported as a failure.
+`canceled` refund is recorded and reported as a failure. The refund of a paid
+superseded intent (below, under the Connect endpoint) keeps the fee the same
+way.
 
 The exception is an explicit call. `Payment->refund_platform_fee_async` reads
 the charge's fee id through the seller-bound client, then refunds the fee on
@@ -118,6 +120,15 @@ when it is missing.
   settles a payment only when the intent id equals the one Registry stored.
   The seller owns the account and could mint an intent carrying our
   `payment_id`; metadata proves nothing.
+- **A paid superseded intent is refunded, not settled.** When the paid intent
+  is one Registry created and later replaced (listed in the payment's
+  `superseded_intent_ids`, e.g. paid from a stale tab), nothing settles, staff
+  are alerted, and after commit the Minion job `superseded_refund`
+  (`Registry::Job::SupersededRefund`, 10 attempts) refunds it in full on the
+  seller's account with `reason => 'duplicate'` under the key
+  `refund:superseded:<intent>`. Like every refund it keeps the fee. The parent
+  is told, and if the job gives up staff are told to refund by hand (ADR 005,
+  ruling 7a). This is the one refund Registry starts on its own.
 - **Instalment invoices** are matched by the schedule behind the invoice's
   subscription (read from Stripe with `expand[]=schedule`, because an invoice
   names only its subscription under API `2024-12-18.acacia`), and only for
