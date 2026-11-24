@@ -27,6 +27,7 @@ use DateTime;
 use Test::Mojo;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::StripeWebhook;
 use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
@@ -55,6 +56,7 @@ use Registry::DAO::Location;
 local $ENV{STRIPE_SECRET_KEY}       = 'sk_test_dummy';
 local $ENV{STRIPE_PUBLISHABLE_KEY}  = 'pk_test_dummy';
 local $ENV{STRIPE_WEBHOOK_SECRET}   = 'whsec_test_journey';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_journey_connect';
 
 # ---------------------------------------------------------------------------
 # Database setup
@@ -395,15 +397,17 @@ subtest 'activate: account row + signed account.updated webhook' => sub {
     ok !$pre->stripe_connect_ready,
         'tenant not ready after account id recorded (booleans still false)';
 
-    # (b) Deliver signed account.updated over HTTP.
+    # (b) Deliver signed account.updated over HTTP, to the Connect endpoint:
+    # it describes the connected account, so Stripe sends it there.
     # The webhook controller uses $self->app->dao (pinned to $tenant_dao).
     # _process_account_updated does: $dao->db->query('UPDATE registry.tenants ...')
     # $tenant_dao->db has search_path = $slug, public -- but registry.tenants is
     # qualified, so the update reaches the right table.  We verify empirically below.
     my $acct_event_id = 'evt_journey_acct_' . $$;
-    post_signed_webhook($t_webhook, {
-        id   => $acct_event_id,
-        type => 'account.updated',
+    Test::Registry::StripeWebhook::post_connect($t_webhook, {
+        id      => $acct_event_id,
+        type    => 'account.updated',
+        account => 'acct_journey',
         data => { object => {
             id                => 'acct_journey',
             charges_enabled   => \1,

@@ -166,4 +166,28 @@ subtest 'already claimed event id is a duplicate' => sub {
     ok !scalar( grep { $_->[1] =~ /for tenant/ } @logs ), 'no handling was attempted';
 };
 
+sub readiness ($acct) {
+    return $db->select('registry.tenants', [qw(stripe_charges_enabled stripe_details_submitted)],
+        { stripe_connect_account_id => $acct })->hash;
+}
+
+sub account_updated ($acct, %object) {
+    return { type => 'account.updated', account => $acct,
+             data => { object => { id => $acct, %object } } };
+}
+
+subtest 'connect account updated mirrors tenant readiness' => sub {
+    $db->update('registry.tenants',
+        { stripe_charges_enabled => 0, stripe_details_submitted => 0 },
+        { stripe_connect_account_id => $account });
+
+    Test::Registry::StripeWebhook::post_connect($t, account_updated($account,
+        charges_enabled => Mojo::JSON::true, details_submitted => Mojo::JSON::true))
+        ->status_is(200)->content_is('OK');
+
+    is_deeply readiness($account),
+        { stripe_charges_enabled => 1, stripe_details_submitted => 1 },
+        "the tenant event.account names is ready";
+};
+
 done_testing;

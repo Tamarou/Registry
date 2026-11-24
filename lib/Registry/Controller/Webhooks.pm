@@ -213,6 +213,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                     && $self->_invoice_is_instalment($db, $event) ) {
                 $self->_process_instalment_invoice($db, $event);
             }
+            # The readiness mirror, for the account that sent it and no other:
+            # the account named inside the event must be the one Stripe
+            # delivered it for, which is the one this tenant row stores.
+            elsif ( $event->{type} eq 'account.updated'
+                    && ( $event->{data}{object}{id} // '' ) eq $account ) {
+                $self->_process_account_updated($db, $event);
+            }
             else {
                 $self->app->log->info(
                     "Connect webhook event $event_id ($event->{type}) for tenant $slug not handled");
@@ -267,11 +274,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             if ($event->{type} eq 'payment_intent.succeeded') {
                 $refund_for = $self->_process_payment_intent_succeeded($db, $event);
                 $schedule_for = $self->_instalment_to_schedule($db, $event);
-            }
-            # Mirror connected account capability changes to the tenant row so
-            # the paid-enrollment readiness gate reflects Stripe's current view.
-            elsif ($event->{type} eq 'account.updated') {
-                $self->_process_account_updated($db, $event);
             }
             else {
                 # Handle tenant billing events (existing logic)
