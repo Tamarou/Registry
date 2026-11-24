@@ -88,6 +88,26 @@ docker run -p 3000:3000 \
 - Performance metric collection
 - Easy backup and migration paths
 
+### Recurring jobs
+Minion has no cron, so each sweep recurs by queueing its own next run.
+The sweeps and their intervals live in one table in
+`lib/Registry/Job/Recurring.pm`: `attendance_check` (60s),
+`domain_verification` (900s), `send_notifications` (300s),
+`instalment_reconcile` (3600s), `waitlist_expiration` (300s) and
+`process_waitlist` (600s).
+
+- `setup_recurring_jobs` only seeds each chain at server start.
+- After every run, whether it finished, failed or died, the job queues its
+  next run with its interval, unless one is already queued. A restart, a
+  second app process or a manual `./registry minion job -e <task>` never
+  starts a second chain.
+- Each run gets one attempt: the next run is the retry.
+- Each sweep covers every tenant, the platform tenant (`registry`) included.
+
+Check a chain with `./registry minion job -t <task> -S inactive`. One queued
+job per sweep is healthy. None means the chain has stopped, and the next
+server start reseeds it.
+
 ## Licensing
 Open-source under Perl 5 licensing terms.
 Contributions welcome via GitHub pull requests.
