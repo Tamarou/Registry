@@ -400,33 +400,129 @@ it. The rate is the `fraction` on that payment plan
 `Registry::PriceOps::PlatformTerms::platform_terms_for_tenant($db,
 $tenant_slug)` resolves the entitlement in effect now. It returns the offer
 version id, the payment plan id and the rate as an exact decimal string
-(`"0.025"`, never a float). A tenant with no entitlement in effect is refused
-by name: there is no fallback to Free or to 0, and no payment row is written.
+(`"0.025"`, never a float). There is no fallback to Free or to 0.
 
-`Registry::DAO::Payment` fixes the rate when the payment is created and keeps
-it in the payment's metadata, so every retry sends the same
-`application_fee_amount` (integer cents, rounded half-up). When the fee is
-recorded, the payment row is stamped with the terms it was charged under:
-`platform_offer_version_id` and `platform_payment_plan_id`.
+For a tenant whose row sets `stripe_connect_account_id`,
+`Registry::DAO::Payment->create` resolves those terms when the payment is
+created and keeps the rate, offer version id and payment plan id in the
+payment's metadata, so every retry sends the same `application_fee_amount`
+(integer cents, rounded half to even). Such a tenant with no entitlement in
+effect is refused by name, and no payment row is written. A tenant with no
+`stripe_connect_account_id` is not resolved at create: its row is written with
+no rate, and its terms are read from the tenant's entitlement in effect only
+when a fee is recorded. When the fee is recorded, the payment row is stamped
+with the terms it was charged under: `platform_offer_version_id` and
+`platform_payment_plan_id`.
 
 ### Refund policy
 
-A refund reads the refund policy of the offer version stamped on the payment,
-not the tenant's current entitlement. The policy is `policies->'refund'` on
-`registry.offer_versions`, read through
-`Registry::DAO::Payment::stamped_platform_terms`.
+An ordinary refund keeps the platform's fee whatever the refund policy says:
+it sends no `refund_application_fee` (section 6, "Refunds").
 
-- An ordinary refund sends no `refund_application_fee`, so the platform keeps
-  its fee.
+Only returning the platform's fee reads the refund policy, and it reads the
+policy of the offer version stamped on the payment, not the tenant's current
+entitlement. The policy is `policies->'refund'` on `registry.offer_versions`,
+read through `Registry::DAO::Payment::stamped_platform_terms`.
+
 - The platform's fee can be returned only when the stamped version's refund
   policy is `keep_fee_with_admin_exception` (Solo v1's).
   `Registry::DAO::Payment::refund_platform_fee_async` does this. It refuses,
   before calling Stripe, any payment with no stamp or under any other policy.
   Nothing in the application calls it yet.
 
+### Refunds
+
+Every refund Registry makes is a refund on the seller's account: the request
+carries `Stripe-Account` naming the account in the payment's
+`metadata.stripe_account_id`, and sends only `payment_intent`, `amount` and
+`reason`, under an Idempotency-Key. It sends no `reverse_transfer` (there is
+no transfer to reverse) and no `refund_application_fee`, so Tamarou keeps its
+fee.
+
+| Refund | Key | `reason` | `amount` |
+|---|---|---|---|
+| capacity increment (payment step or webhook) | `refund:capacity:<payment_id>:<seq>` | `requested_by_customer` | the increment's `cents` |
+| approved drop | `refund:drop:<payment_id>:<enrollment_id>` | `requested_by_customer` | the enrollment's approved `refund_amount_cents` |
+| paid superseded intent (`superseded_refund` job) | `refund:superseded:<pi_...>` | `duplicate` | not sent: the whole charge |
+
+Stripe refuses a reused key whose parameters differ. A refund issued by hand
+under one of these keys must send exactly the same parameters, with the same
+`Stripe-Account`.
+
+**Pending refunds are held.** A refund Stripe answers `pending` or
+`requires_action` is not counted. Registry holds it in the payment's
+`metadata.pending_refunds` (keyed by refund id, with its key, cents and
+reason) and settles it when `refund.updated` for that refund reaches the
+Connect endpoint: `succeeded` counts it, settles its capacity increment or
+marks the dropped enrollment `refund_status = 'processed'`; `failed` or
+`canceled` records it in `metadata.failed_refunds` and
+`metadata.refund_last_failure`, and alerts staff that it is still owed. While a
+refund is held, a retry under its key returns the held refund instead of
+sending again.
+
+**The kept fee is recorded from `application_fee.refunded`.** When any part
+of the platform's fee on a seller's charge is returned, whoever returned it,
+Stripe sends `application_fee.refunded` to the **platform** endpoint. Registry
+finds the tenant by the fee's `account`, reads the charge on that account to
+find its payment intent, and sets the payment's
+`platform_fee_refunded_cents` to the fee's `amount_refunded`. The highest
+amount seen wins, so a late or repeated event never lowers it. What the
+platform kept is `platform_fee_cents - platform_fee_refunded_cents`:
+
+```sql
+SELECT id, platform_fee_cents, COALESCE(platform_fee_refunded_cents, 0) AS fee_returned
+  FROM "<sacp-slug>".payments
+ WHERE stripe_payment_intent_id = '<pi_...>';
+```
+
+### A paid superseded intent
+
+When a parent pays an intent Registry had already replaced (an old browser
+tab), the Connect endpoint settles nothing, alerts staff ("A replaced card
+payment was charged and is being refunded"), and after commit queues the
+`superseded_refund` job (10 attempts). It refunds the whole charge on the
+account the payment names, as in the table above, and emails the parent. This
+is the one refund Registry starts on its own. If Stripe refuses the request or
+the last attempt fails, staff get "Refund failed: refund it by hand".
+
+To refund it by hand:
+
+1. Read the account from the payment:
+
+   ```sql
+   SELECT metadata->>'stripe_account_id' AS account
+     FROM "<sacp-slug>".payments WHERE id = '<payment_id>';
+   ```
+
+2. List refunds for the intent on that account:
+
+   ```bash
+   curl -s https://api.stripe.com/v1/refunds \
+     -u "$STRIPE_SECRET_KEY:" -H "Stripe-Account: acct_XXXX" \
+     -G -d payment_intent=<pi_...>
+   ```
+
+   **Check:** if a `succeeded` or `pending` refund is listed, stop: it is
+   refunded or on its way.
+
+3. Only on an empty list, refund it with the job's own parameters:
+
+   ```bash
+   curl -s https://api.stripe.com/v1/refunds \
+     -u "$STRIPE_SECRET_KEY:" -H "Stripe-Account: acct_XXXX" \
+     -H "Idempotency-Key: refund:superseded:<pi_...>" \
+     -d payment_intent=<pi_...> \
+     -d reason=duplicate
+   ```
+
+   **Check:** the response's `status` is `succeeded` (or `pending`; list again
+   later). Nothing in Registry records this refund: the payment row is not
+   touched by the job either.
+
 ### Clearing a stranded `refund_pending` payment
 
-`refund_pending` means the platform owes a refund it has not yet issued, and
+`refund_pending` means Registry owes a refund, on the seller's account, that it
+has not yet issued, and
 the refund call itself failed after the settlement transaction had already
 committed. Two different things put a row here, and they leave DIFFERENT
 enrollment state behind:
@@ -489,6 +585,8 @@ psql $DATABASE_URL -c \
           jsonb_pretty(refund_increments) AS increments,
           metadata->'refund_manual_review' AS manual_review,
           metadata->'refund_last_failure' AS last_failure,
+          metadata->'pending_refunds' AS pending_refunds,
+          metadata->>'stripe_account_id' AS account,
           stripe_payment_intent_id, completed_at
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
@@ -510,6 +608,16 @@ one refund per increment whose `settled_at` is null, **for that increment's own
 `cents`** -- never for the `refund_owed_cents` total. The increments sum to the
 total by construction, and sending the total is how one debt gets paid twice.
 
+`account` is the seller account the payment was charged on. Every Stripe call
+below goes to that account with `Stripe-Account: <account>`. It is the
+account the payment recorded at creation, which is not necessarily the
+tenant's current `stripe_connect_account_id`.
+
+`pending_refunds` lists refunds Stripe answered `pending` that Registry is
+waiting on. Leave those alone: `refund.updated` on the Connect endpoint
+settles them, and a retry under the same key returns the held refund rather
+than sending a new one.
+
 `metadata.refund_last_failure` is the most recent refund attempt on this
 payment that failed -- a capacity increment (paid from the payment step or the
 webhook) or an approved drop's refund
@@ -521,15 +629,24 @@ webhook) or an approved drop's refund
 | `not_sent` | The request never left Registry. No money moved. | Fix the cause in `message`, then Step 3. Step 2 is still cheap insurance. |
 | `unknown` | Stripe refused it, or the response was lost. Money may have moved. | Step 2 first, always. |
 
+A `message` of the form `Stripe refund re_... on payment ... is failed` (or
+`canceled`) is Stripe's answer for that one refund, either at once or later
+through `refund.updated`. It is classified `unknown`; that refund moved no
+money, but run Step 2 anyway before sending another.
+
 **A drop's refund is not a capacity increment: Steps 3 and 4 do not apply to
 it.** A drop has no increment, its row is usually `completed` rather than
 `refund_pending` (the last predicate above is what lists it), and Step 3's
 `refund:capacity:...` key would not match the drop's own. Run Step 2 first.
 Then retry by resubmitting the drop's refund step, which reuses the key
 `refund:drop:<payment_id>:<enrollment_id>`, so Stripe returns the earlier refund
-rather than sending a second. If you must refund by hand instead, use that same
-key and then set the enrollment's `refund_status = 'processed'`; otherwise a
-later re-approval of the drop refunds the family again.
+rather than sending a second. If you must refund by hand instead, send exactly
+what the drop step sends: `Stripe-Account: <account>`, the key
+`refund:drop:<payment_id>:<enrollment_id>`, `payment_intent`,
+`amount=<the enrollment's refund_amount_cents>` and
+`reason=requested_by_customer`. Then set the enrollment's
+`refund_status = 'processed'`; otherwise a later re-approval of the drop
+refunds the family again.
 
 The field is cleared automatically when a later refund on the same payment
 succeeds, so a row that still carries it has had no successful refund since that
@@ -571,24 +688,23 @@ after Stripe accepted the refund, so the debt can already be discharged:
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
+  -H "Stripe-Account: <account>" \
   -G -d payment_intent=<stripe_payment_intent_id>
 ```
 
-**No `Stripe-Account` header.** These are destination charges made *on the
-platform account* -- `Registry::DAO::Payment` sets
-`transfer_data[destination]` and `on_behalf_of` rather than acting as the
-connected account, and `Registry::Service::Stripe::_request_async` never sends
-`Stripe-Account`. Adding the header queries an account on which the
-PaymentIntent does not exist, so the listing comes back empty and this check --
-whose entire purpose is "has a refund already gone out?" -- silently reports
-"nothing reached Stripe" for a refund that did.
+**The `Stripe-Account` header is required.** These are direct charges on the
+seller's account: `Registry::DAO::Payment` refunds through a client bound to
+`metadata.stripe_account_id`, and `Registry::Service::Stripe::_request_async`
+sends `Stripe-Account` on every request that client makes. Without the header
+the request asks the platform account, where the PaymentIntent does not exist,
+so it can never show a refund that did go out.
 
 Act on what comes back:
 
 | Result | Action |
 |---|---|
 | A `succeeded` Refund for the owed amount | The debt is paid. Settle the row (step 4). Do not re-issue. |
-| A `pending` Refund | Leave it alone. Connect refunds can sit pending; re-issuing duplicates it. Re-check later. |
+| A `pending` Refund | Leave it alone; re-issuing duplicates it. If Registry holds it in `pending_refunds`, `refund.updated` settles it. If not, re-check later and settle the row by hand (step 4) once it is `succeeded`. |
 | A `failed` Refund | See the warning below. Do **not** re-issue blindly and do **not** change the status. |
 | An empty list | Nothing reached Stripe. Only this case justifies issuing the refund. |
 
@@ -607,19 +723,26 @@ the whole point of it.
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
+  -H "Stripe-Account: <account>" \
   -H "Idempotency-Key: refund:capacity:<payment_id>:<seq>" \
   -d payment_intent=<stripe_payment_intent_id> \
   -d amount=<this increment's cents, NOT refund_owed_cents> \
-  -d reason=requested_by_customer \
-  -d reverse_transfer=true \
-  -d refund_application_fee=<true|false>
+  -d reason=requested_by_customer
 ```
 
-`reason` is not optional here. The automated path always sends
-`requested_by_customer`, and Stripe rejects a replay of a used idempotency key
-whose parameters differ rather than folding it — so a hand-issued refund that
-omits it cannot share a key with the automated attempt, and whichever runs
-second is refused.
+**Send exactly these parameters and no others.** The automated refund
+(`Registry::DAO::Payment::refund_async`) sends only `payment_intent`, `amount`
+and `reason=requested_by_customer` under this key, on the seller's account.
+Stripe refuses a reused idempotency key whose parameters differ rather than
+folding it, so a hand-issued refund that adds a parameter (`reverse_transfer`,
+`refund_application_fee`) or omits `reason` cannot share the key with the
+automated attempt, and whichever runs second is refused. No
+`refund_application_fee` means Stripe's default applies: Tamarou keeps its fee.
+
+**Check:** the response's `status` is `succeeded`. A `pending` refund issued
+by hand is not in `pending_refunds`, so Registry will not settle it: list it
+again later and run Step 4 once it is `succeeded`. Its `refund.updated` is
+stored unapplied in `registry.webhook_events`.
 
 **One refund per unsettled increment.** Repeat this call for each element of
 `refund_increments` whose `settled_at` is null, using that element's `seq` in
@@ -627,10 +750,6 @@ the key and that element's `cents` as the amount. Sending `refund_owed_cents`
 under a single key is the shape that caused a double refund: the key moved as
 the debt grew, so Stripe saw a key it had never seen and paid the whole
 accumulated balance again.
-
-`refund_application_fee` and `reverse_transfer` are destination-charge
-parameters. The automated refund sends neither, so the platform keeps its fee
--- see **Refund policy** above.
 
 > **Stripe prunes idempotency keys after 24 hours.** The key protects a retry
 > made minutes later. It does **not** protect one made the next day: the same
