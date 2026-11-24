@@ -174,6 +174,8 @@ subtest 'malformed job args fail before connecting' => sub {
         [ 'non-UUID run',   { tenant => $slug_a, run_id => 'not-a-uuid' }, qr/run_id is not a UUID/ ],
         [ 'unknown tenant', { tenant => 'x; DROP SCHEMA registry', run_id => $run->id },
           qr/tenant is not a registered tenant/ ],
+        [ 'tenant as an SQL operator', { tenant => { '!=' => 'x' }, run_id => $run->id },
+          qr/needs a tenant and a run_id/ ],
     ) {
         my ( $name, $args, $why ) = @$case;
         my $info = run_job($args);

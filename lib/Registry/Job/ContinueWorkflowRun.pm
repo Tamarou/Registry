@@ -17,7 +17,7 @@ class Registry::Job::ContinueWorkflowRun {
     method run ( $job, $args ) {
         my ( $tenant, $run_id ) = ref $args eq 'HASH' ? $args->@{qw(tenant run_id)} : ();
         die "continue_workflow_run needs a tenant and a run_id\n"
-            unless defined $tenant && defined $run_id;
+            unless defined $tenant && defined $run_id && !ref $tenant && !ref $run_id;
         die "continue_workflow_run: run_id is not a UUID\n"
             unless $run_id =~ /\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
         # The slug becomes a search_path, so only a known tenant's is used.
@@ -53,6 +53,9 @@ class Registry::Job::ContinueWorkflowRun {
         $result->then( sub ($v) { $value = $v },
                        sub ($e) { ( $error, $rejected ) = ( $e, 1 ) } )->wait;
         die $error if $rejected;
+        # A promise that never settled (e.g. waited on inside a running loop)
+        # leaves no result; going on would re-run the same step forever.
+        die "continue_workflow_run: step did not settle\n" unless ref $value eq 'HASH';
         return $value;
     }
 }
