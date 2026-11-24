@@ -1505,6 +1505,41 @@ SQL
 
 
 
+    # refund.updated for a refund _apply_refund_result held as pending. A
+    # terminal answer is recorded as _apply_refund_result records any other,
+    # from what the refund was sent as; a succeeded one then discharges its
+    # capacity increment or marks its dropped seat processed. Returns the
+    # status recorded, or nothing when the refund is not held here or is
+    # still in flight. Once: the hold is released by the recording.
+    method settle_pending_refund ($db, $refund) {
+        $db = $db->db if $db isa Registry::DAO;
+        return if __CLASS__->refund_is_pending($refund);
+
+        my $row = $db->query( <<'SQL', $refund->{id}, $id )->expand->hash;
+            SELECT metadata->'pending_refunds'->?::text AS held
+              FROM payments WHERE id = ? FOR UPDATE
+SQL
+        my $held = $row && $row->{held} or return;
+        my $key  = $held->{key} // '';
+        my ($seq)        = $key =~ /\Arefund:capacity:\Q$id\E:(\d+)\z/;
+        my ($enrollment) = $key =~ /\Arefund:drop:\Q$id\E:(.+)\z/;
+
+        $self->_apply_refund_result( $db, $refund, $held->{cents}, $held->{reason},
+            defined $seq ? 1 : 0, $held->{key} );
+
+        if ( ( $refund->{status} // '' ) eq 'succeeded' ) {
+            $self->settle_refund_increment( $db, $seq, $refund ) if defined $seq;
+            $db->update( 'enrollments', { refund_status => 'processed' },
+                { id => $enrollment, payment_id => $id } ) if defined $enrollment;
+        }
+        else {
+            $self->record_refund_failure( $db, "Stripe refund $refund->{id} on payment $id is "
+                . ( $refund->{status} // 'unknown' )
+                . ( defined $refund->{failure_reason} ? " ($refund->{failure_reason})" : '' ) );
+        }
+        return $refund->{status};
+    }
+
     method add_line_item ($db, $args) {
         $db = $db->db if $db isa Registry::DAO;
         
@@ -1885,9 +1920,12 @@ SQL
         # Only a succeeded refund has moved money. A pending one may still fail
         # and a failed or canceled one never will, so none of them moves status
         # or refunded_cents, or is remembered as counted.
-        # shortcut: nothing settles it later (no refund.updated handler); add one when async refunds are offered.
-        my $pending = ( $refund->{status} // '' ) eq 'succeeded' ? 0 : 1;
-        my $hold    = $is_increment || $pending ? 1 : 0;
+        # A pending one is held under pending_refunds with what it was sent
+        # as, so settle_pending_refund can count it when refund.updated says
+        # it succeeded; any other answer releases the hold.
+        my $pending   = ( $refund->{status} // '' ) eq 'succeeded' ? 0 : 1;
+        my $hold      = $is_increment || $pending ? 1 : 0;
+        my $in_flight = __CLASS__->refund_is_pending($refund);
 
         # A targeted jsonb merge, not save(). save() would write six columns
         # from an object loaded before the Stripe round trip, over a row
@@ -1918,15 +1956,20 @@ SQL
         # A refund that has moved money retires record_refund_failure's stamp,
         # which the runbook reads first; a pending one may still fail, so not yet.
         # shortcut: one failure slot per payment, so a sibling drop's success on the same cart clears it too (that drop stays findable by its enrollment's refund_status); key the record by idempotency key if that ever misleads an operator.
-        $db->query( <<'SQL', $pending, encode_json({
+        $db->query( <<'SQL', $pending, $refund->{id}, encode_json({
             UPDATE payments
-               SET metadata = CASE WHEN ?::boolean THEN COALESCE(metadata, '{}'::jsonb)
-                                   ELSE COALESCE(metadata, '{}'::jsonb) - 'refund_last_failure' END
+               SET metadata = ( CASE WHEN ?::boolean THEN COALESCE(metadata, '{}'::jsonb)
+                                     ELSE COALESCE(metadata, '{}'::jsonb) - 'refund_last_failure' END
+                                #- ARRAY['pending_refunds', ?::text] )
                    || ?::jsonb
                    || CASE WHEN ?::boolean THEN '{}'::jsonb
                       ELSE jsonb_build_object('recorded_refunds',
                           COALESCE(metadata->'recorded_refunds', '{}'::jsonb)
-                          || jsonb_build_object(?::text, ?::text)) END,
+                          || jsonb_build_object(?::text, ?::text)) END
+                   || CASE WHEN ?::boolean THEN jsonb_build_object('pending_refunds',
+                          COALESCE(metadata->'pending_refunds', '{}'::jsonb)
+                          || jsonb_build_object(?::text, ?::jsonb))
+                      ELSE '{}'::jsonb END,
                    status = CASE
                        WHEN ?::boolean THEN status
                        -- A debt recorded between refund_async's check and this
@@ -1953,7 +1996,10 @@ SQL
             refund_amount_cents => $refund_cents,
             refund_reason       => $reason,
             refund_status       => $refund->{status},
-        }), $hold, $refund->{id}, $key, $hold, $refund_cents, $hold, $refund_cents,
+        }), $hold, $refund->{id}, $key,
+            $in_flight, $refund->{id},
+            encode_json({ key => $key, cents => $refund_cents, reason => $reason }),
+            $hold, $refund_cents, $hold, $refund_cents,
             $id, $refund->{id} );
 
         # Refresh the in-memory status for the direct path. refund_async gates

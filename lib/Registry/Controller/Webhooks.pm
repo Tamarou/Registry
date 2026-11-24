@@ -191,6 +191,15 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
         my $slug = $tenant->{slug};
 
+        # A refund Registry made that Stripe answered pending is settled, not
+        # stored: that is our own refund finishing, not a move by the seller.
+        # shortcut: a refund.updated that beats _apply_refund_result's hold is
+        # stored unapplied, and charge.refund.updated is never matched; settle
+        # those from the stored events if they turn up.
+        return $self->_settle_connect_event( $db, $event, $slug, undef )
+            if ( $event->{type} // '' ) eq 'refund.updated'
+                && $self->_holds_pending_refund( $db, $slug, $event->{data}{object}{id} );
+
         return $self->_store_stripe_move( $db, $event, $tenant )
             if ( $event->{type} // '' ) =~ STRIPE_MOVES;
 
@@ -293,6 +302,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             elsif ( $event->{type} eq 'account.updated'
                     && ( $event->{data}{object}{id} // '' ) eq $account ) {
                 $self->_process_account_updated($db, $event);
+            }
+            elsif ( $event->{type} eq 'refund.updated' ) {
+                $self->_process_refund_updated($db, $event);
             }
             else {
                 $self->app->log->info(
@@ -417,6 +429,53 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return $self->_settle_owed_refund($dao, $slug, $refund_for) if $refund_for;
 
         $self->render(status => 200, text => 'OK');
+    }
+
+    # Whether a payment in the tenant's schema holds this refund as pending.
+    method _holds_pending_refund ($db, $slug, $refund_id) {
+        return 0 unless defined $refund_id && !ref $refund_id;
+        return $db->query(
+            sprintf( q{SELECT 1 FROM %s.payments WHERE metadata->'pending_refunds'->?::text IS NOT NULL},
+                $db->dbh->quote_identifier($slug) ), $refund_id )->rows;
+    }
+
+    # Settle the held refund it names, in the settlement transaction; a failed
+    # or canceled one alerts staff there too, so the alert commits with it.
+    method _process_refund_updated ($db, $event) {
+        require Registry::DAO::Payment;
+        my $refund = $event->{data}{object};
+        my $row = $db->query(
+            q{SELECT id FROM payments WHERE metadata->'pending_refunds'->?::text IS NOT NULL},
+            $refund->{id} )->hash or return;
+        my $payment = Registry::DAO::Payment->find( $db, { id => $row->{id} } );
+        my $outcome = $payment->settle_pending_refund( $db, $refund ) // return;
+
+        my $what = 'refund ' . _printable( $refund->{id} ) . " on payment $row->{id}";
+        if ( $outcome eq 'succeeded' ) {
+            $self->app->log->info("Connect webhook event $event->{id}: $what succeeded");
+            return;
+        }
+        $self->app->log->error( "Connect webhook event $event->{id}: $what is "
+              . _printable($outcome) . '; it is still owed' );
+        $self->_alert_staff_refund_failed( $db, $row->{id}, $refund );
+    }
+
+    method _alert_staff_refund_failed ($db, $payment_id, $refund) {
+        require Registry::DAO::Notification;
+        my $admins = $db->query(
+            q{SELECT id FROM users WHERE user_type = 'admin' AND deactivated_at IS NULL})->hashes;
+        for my $admin (@$admins) {
+            Registry::DAO::Notification->create( $db, {
+                user_id  => $admin->{id},
+                type     => 'general',
+                channel  => 'email',
+                subject  => 'A refund did not go through',
+                message  => "Stripe refund $refund->{id} for payment $payment_id was "
+                          . "$refund->{status}, so no money went back. The refund is still "
+                          . 'owed; issue it again or settle it with the family.',
+                metadata => { payment_id => $payment_id, refund_id => $refund->{id} },
+            } );
+        }
     }
 
     # Every active admin of the schema in search_path, told by email (the
