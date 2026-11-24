@@ -1,12 +1,93 @@
 # ABOUTME: The one place that answers which platform terms a tenant holds: id, name, rate fraction and monthly amount.
-# ABOUTME: Column-backed today (tenants.platform_pricing_plan_id, Free fallback); the switch to entitlements changes only this file.
+# ABOUTME: Column-backed today (tenants.platform_pricing_plan_id, Free fallback); the switch routes it to the entitlement lookup here.
 use 5.42.0;
 use experimental 'signatures';
 
 package Registry::PriceOps::PlatformTerms;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(platform_terms_for_tenant platform_default_terms);
+our @EXPORT_OK = qw(platform_terms_for_tenant platform_default_terms
+                    platform_entitlement_terms platform_version_terms);
+
+use Mojo::JSON qw( from_json );
+use Registry::DAO::Entitlement;
+
+# The resource a tenant's platform entitlement buys; named, never a plan name.
+my $PAYMENT_PROCESSING = 'payment processing';
+
+# platform_entitlement_terms($db, $tenant_slug, $at = now) -> { id, fraction, refund_policy }
+#
+# The terms of the tenant's platform entitlement to payment processing in
+# effect at $at: the stamped offer version's id, the fraction of the payment
+# plan it accepted, and that version's refund policy. Read from registry only:
+# a tenant schema's cloned entitlements cannot name a real tenant. Dies naming
+# the tenant when none is in effect -- absence is not zero, and there is no
+# Free fallback here.
+#
+# Not called from lib/ yet: the switch routes platform_terms_for_tenant
+# through it in the commit that drops tenants.platform_pricing_plan_id.
+sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
+    $db = $db->db if $db isa Registry::DAO;
+    my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e',
+        q{tstzrange(coalesce(?::timestamptz, now()), coalesce(?::timestamptz, now()), '[]')} );
+
+    # shortcut: takes the latest-starting of several in-effect platform
+    # entitlements; nothing refuses overlapping ones yet, guard it when
+    # tenants can buy their own.
+    my $row = $db->query( qq{
+        SELECT v.id, p.fraction, v.policies->'refund' AS refund_policy
+          FROM registry.entitlements e
+          JOIN registry.tenants t ON t.id = e.holder_tenant_id
+          JOIN registry.offer_versions v ON v.id = e.offer_version_id
+          JOIN registry.resources r ON r.id = v.resource_id
+          JOIN registry.offer_version_payment_plans p
+            ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
+         WHERE t.slug = ? AND r.name = ? AND $in_effect
+         ORDER BY lower(e.in_effect) DESC
+         LIMIT 1
+    }, $tenant_slug, $PAYMENT_PROCESSING, $at, $at )->hash;
+
+    die "Tenant '$tenant_slug' holds no platform entitlement to $PAYMENT_PROCESSING in effect"
+      . ( defined $at ? " at $at" : '' ) . " - there is no fallback to Free or to 0.\n"
+        unless $row;
+
+    return _entitlement_terms( $row, "the platform entitlement of tenant '$tenant_slug'" );
+}
+
+# platform_version_terms($db, $offer_version_id) -> { id, fraction, refund_policy }
+#
+# A payment-processing offer version's own terms, superseded or not: refunds
+# resolve backwards, from the version stamped on the payment.
+sub platform_version_terms ( $db, $offer_version_id ) {
+    $db = $db->db if $db isa Registry::DAO;
+
+    # shortcut: the version's percentage_of_sales plan; a version offering
+    # several needs the stamped plan id passed in too.
+    my $row = $db->query( q{
+        SELECT v.id, p.fraction, v.policies->'refund' AS refund_policy
+          FROM registry.offer_versions v
+          JOIN registry.resources r ON r.id = v.resource_id
+          JOIN registry.offer_version_payment_plans p
+            ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
+         WHERE v.id = ? AND r.name = ?
+         LIMIT 1
+    }, $offer_version_id, $PAYMENT_PROCESSING )->hash;
+
+    die "Offer version '$offer_version_id' is not a $PAYMENT_PROCESSING version "
+      . "with a percentage-of-sales plan.\n"
+        unless $row;
+
+    return _entitlement_terms( $row, "offer version '$offer_version_id'" );
+}
+
+sub _entitlement_terms ( $row, $context ) {
+    return {
+        id            => $row->{id},
+        fraction      => _coerce_pct( $row->{fraction}, $context ),
+        refund_policy => from_json( $row->{refund_policy} // 'null' )
+            // die "No refund policy on $context.\n",
+    };
+}
 
 # platform_terms_for_tenant($db, $tenant_slug) -> { id, name, fraction, amount_cents }
 #
