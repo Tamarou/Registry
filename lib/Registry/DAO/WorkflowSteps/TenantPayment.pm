@@ -178,9 +178,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # step and nothing after it. This puts the same refusal on the path where
     # the money actually moves.
     #
-    # Returns undef when no plan was selected, and also when a selected one no
-    # longer resolves. Both then take the Solo/Free default below: a stale or
-    # shelved selection charges nothing rather than charging the wrong thing.
+    # When no plan was selected, or a selected one no longer resolves, returns
+    # the platform's launch plan from _launch_plan instead (undef if that is not
+    # on offer): a stale or shelved selection is never the plan charged.
     # Refusing the run outright would be stronger still, but get_subscription_config
     # is also called to RENDER the payment page, where an error has nowhere to
     # go -- see #347 for the restructuring that would allow it.
