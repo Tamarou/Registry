@@ -1018,6 +1018,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # $data must contain: name (required), slug (optional), users (arrayref of
     # Registry::DAO::User objects or hashrefs with {id}).
     sub provision($class, $db, $data) {
+        $db = $db->db if $db isa Registry::DAO;    # its transaction check needs the database handle
         my $users    = delete $data->{users} // [];
 
         # Normalised here as well as in create, because the value is used for
