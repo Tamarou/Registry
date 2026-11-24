@@ -177,37 +177,38 @@ from test to live keys.
 
 ### Revenue share rate
 
-The application fee charged on each destination charge is calculated from the
-tenant's linked pricing plan. The relevant field is
-`pricing_configuration->>'percentage'` on the `registry.pricing_plans` row
-linked to the tenant via `platform_pricing_plan_id`. The platform free plan
-(scope `platform`, `metadata->>'default'='true'`) is the fallback when no plan
-is linked. At launch the single percentage plan carries a 2% rate.
+The tenant's platform entitlement is the source of its rate. Each tenant holds
+an entitlement in `registry.entitlements` to an offer version for the resource
+"payment processing", with one of that version's payment plans. Signup grants
+it. The rate is the `fraction` on that payment plan
+(`registry.offer_version_payment_plans`). Solo v1 carries `0.025` (2.5%).
 
-Rate resolution is performed by
-`Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant`, which
-returns the fraction (e.g. `0.02` for 2%) used by `_connect_params` to compute
-`application_fee_amount` in integer cents, rounded half-up.
+`Registry::PriceOps::PlatformTerms::platform_terms_for_tenant($db,
+$tenant_slug)` resolves the entitlement in effect now. It returns the offer
+version id, the payment plan id and the rate as an exact decimal string
+(`"0.025"`, never a float). A tenant with no entitlement in effect is refused
+by name: there is no fallback to Free or to 0, and no payment row is written.
 
-### Refund policy config
+`Registry::DAO::Payment` fixes the rate when the payment is created and keeps
+it in the payment's metadata, so every retry sends the same
+`application_fee_amount` (integer cents, rounded half-up). When the fee is
+recorded, the payment row is stamped with the terms it was charged under:
+`platform_offer_version_id` and `platform_payment_plan_id`.
 
-Whether the platform returns its application fee when a tenant payment is
-refunded is controlled by `pricing_configuration.refund_application_fee` on
-the tenant's linked pricing plan. This is a JSON boolean stored in the plan's
-`pricing_configuration` jsonb column; the default is `true` (the platform
-refunds its fee). The `reverse_transfer` flag is always sent for
-destination-charge refunds regardless of this setting.
+### Refund policy
 
-Seeded at deploy time by the `refund-application-fee-config` sqitch change:
-both the platform default plan and all tenant percentage plans receive
-`refund_application_fee: true` explicitly, making the policy visible even
-though an absent or null key also defaults to `true`.
+A refund reads the refund policy of the offer version stamped on the payment,
+not the tenant's current entitlement. The policy is `policies->'refund'` on
+`registry.offer_versions`, read through
+`Registry::DAO::Payment::stamped_platform_terms`.
 
-Resolved at refund time by
-`Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db,
-$tenant_slug)`, which returns `1` (refund the fee) or `0` (keep the fee).
-`Registry::DAO::Payment::_refund_connect_params` maps those to the string
-booleans `'true'`/`'false'` required by Stripe's form-encoded API.
+- An ordinary refund sends no `refund_application_fee`, so the platform keeps
+  its fee.
+- The platform's fee can be returned only when the stamped version's refund
+  policy is `keep_fee_with_admin_exception` (Solo v1's).
+  `Registry::DAO::Payment::refund_platform_fee_async` does this. It refuses,
+  before calling Stripe, any payment with no stamp or under any other policy.
+  Nothing in the application calls it yet.
 
 ### Clearing a stranded `refund_pending` payment
 
@@ -413,9 +414,9 @@ under a single key is the shape that caused a double refund: the key moved as
 the debt grew, so Stripe saw a key it had never seen and paid the whole
 accumulated balance again.
 
-`refund_application_fee` follows the tenant's plan config -- see **Refund
-policy config** above; `reverse_transfer` is always `true` for
-destination-charge refunds.
+`refund_application_fee` and `reverse_transfer` are destination-charge
+parameters. The automated refund sends neither, so the platform keeps its fee
+-- see **Refund policy** above.
 
 > **Stripe prunes idempotency keys after 24 hours.** The key protects a retry
 > made minutes later. It does **not** protect one made the next day: the same
