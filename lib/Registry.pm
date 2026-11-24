@@ -7,6 +7,7 @@ use Registry::Utility::BaseDomain ();
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::DomainVerification;
+use Registry::Job::InstalmentReconcile;
 use Registry::Job::InstalmentSchedule;
 use Registry::Job::SendNotifications;
 use Registry::Job::SupersededRefund;
@@ -158,6 +159,7 @@ class Registry :isa(Mojolicious) {
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
         Registry::Job::DomainVerification->register($self);
+        Registry::Job::InstalmentReconcile->register($self);
         Registry::Job::InstalmentSchedule->register($self);
         Registry::Job::SendNotifications->register($self);
         Registry::Job::SupersededRefund->register($self);
@@ -1538,6 +1540,23 @@ class Registry :isa(Mojolicious) {
             });
 
             $self->log->info("Scheduled recurring notification sending job");
+        }
+
+        # Settle instalment invoices Stripe collected but no webhook recorded.
+        # Ops can also run it at once: ./registry minion job -e instalment_reconcile
+        my $existing_reconcile = $self->minion->jobs({
+            tasks => ['instalment_reconcile'],
+            states => ['inactive', 'active']
+        })->total;
+
+        unless ($existing_reconcile) {
+            $self->minion->enqueue('instalment_reconcile', [], {
+                delay => 3600,
+                attempts => 3,
+                priority => 5
+            });
+
+            $self->log->info("Scheduled recurring instalment reconcile job");
         }
 
         # Schedule waitlist expiration check to run every 5 minutes
