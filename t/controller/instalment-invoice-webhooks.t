@@ -33,6 +33,11 @@ $ENV{DB_URL} = $t_db->uri;
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper( dao => sub { $dao } );
 
+my @logs;
+$t->app->log->unsubscribe('message');
+$t->app->log->level('info');
+$t->app->log->on( message => sub ( $log, $level, @lines ) { push @logs, [ $level, "@lines" ] } );
+
 # A tenant whose Stripe account the schedules live on: the Connect endpoint
 # finds it from event.account, and its instalment rows live in its own schema.
 sub tenant ( $name ) {
@@ -305,8 +310,9 @@ subtest 'month two failed then month three paid completes month three only' => s
 # their account. Only what the schedule itself billed is an instalment.
 subtest 'an invoice the schedule did not bill changes no instalment' => sub {
     build_set();
+    @logs = ();
 
-    for my $reason (qw( manual subscription_update )) {
+    for my $reason (qw( manual subscription_threshold )) {
         deliver( 'invoice.paid', invoice( "in_$reason", "pi_$reason",
             billing_reason => $reason, amount_paid => 3333, status => 'paid' ) );
         deliver( 'invoice.payment_failed', invoice( "in_${reason}_failed", "pi_${reason}_failed",
@@ -314,8 +320,26 @@ subtest 'an invoice the schedule did not bill changes no instalment' => sub {
         is_deeply statuses(), [qw( completed pending pending )], "$reason marks no instalment";
     }
 
+    # The seller sets billing_reason by how they raise the invoice; what they
+    # put in it cannot forge a line in our log.
+    deliver( 'invoice.paid', invoice( 'in_forged', 'pi_forged', billing_reason => "manual\nERROR forged" ) );
+    my @warned = grep { $_->[0] eq 'warn' && $_->[1] =~ /billing_reason/ } @logs;
+    is scalar @warned, 5, 'each dropped invoice is logged at warn';
+    like $warned[0][1], qr/'manual'/, 'naming its billing_reason';
+    like $warned[-1][1], qr/manual\\x\{a\}ERROR forged/, 'escaped';
+
     deliver( 'invoice.paid', invoice( 'in_create', 'pi_create', billing_reason => 'subscription_create' ) );
     is_deeply statuses(), [qw( completed completed pending )], 'subscription_create does';
+};
+
+# The final instalment can be its own schedule phase (3333/3333/3334), and the
+# invoice at a phase change may say subscription_update. It is still billed by
+# the schedule, so it still settles the month it is for.
+subtest 'a subscription_update invoice on the schedule completes the owed row' => sub {
+    build_set();
+
+    deliver( 'invoice.paid', invoice( 'in_update', 'pi_update', billing_reason => 'subscription_update' ) );
+    is_deeply statuses(), [qw( completed completed pending )], 'the owed row is completed';
 };
 
 # Stripe's invoice at 2024-12-18.acacia: `subscription`, and no schedule field.

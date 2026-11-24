@@ -209,10 +209,21 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Connect endpoint's API version moves past acacia, read the new spelling.
         # Only an invoice the schedule billed is an instalment: a seller's own
         # invoice against the subscription (billing_reason manual, ...) is not.
+        # subscription_update is the schedule too: the invoice at a phase
+        # change, such as the final instalment's own amount.
         my $sub_id = $event->{data}{object}{subscription};
-        if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/ && $sub_id && !ref $sub_id
-                && ( $event->{data}{object}{billing_reason} // '' )
-                    =~ /\Asubscription_(?:create|cycle)\z/ ) {
+        my $reason = $event->{data}{object}{billing_reason} // '';
+        if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/ && $sub_id && !ref $sub_id ) {
+            unless ( $reason =~ /\Asubscription_(?:create|cycle|update)\z/ ) {
+                # The seller chose the reason by how they raised the invoice, so
+                # it is escaped before it reaches our log.
+                $self->app->log->warn( "Connect webhook event $event_id: invoice for subscription '"
+                      . ( $sub_id =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                      . "' has billing_reason '"
+                      . ( "$reason" =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                      . "'; not an instalment" );
+                return $self->_settle_connect_event( $db, $event, $slug, undef );
+            }
             $self->render_later;
             return Registry::Service::Stripe->from_env->for_account($account)
                 ->retrieve_subscription_async($sub_id)->then( sub ($subscription) {
