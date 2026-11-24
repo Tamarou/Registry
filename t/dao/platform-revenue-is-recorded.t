@@ -197,4 +197,14 @@ subtest 'platform revenue is net of refunded fees' => sub {
     is $t->{fees_cents}, 150, 'each fee counts less what Stripe reports returned';
 };
 
+subtest 'null refunded fee counts full fee and net is never negative' => sub {
+    my $t = revenue_of( 'null_net_studio', [ 250, undef ] );
+    is $t->{fees_cents}, 250, 'no refunded fee reported counts the whole fee';
+
+    # More reported returned than recorded taken (a fee recorded short, say)
+    # nets that charge to nothing, not to a debt against the other.
+    $t = revenue_of( 'over_net_studio', [ 250, undef ], [ 100, 300 ] );
+    is $t->{fees_cents}, 250, 'a charge never nets below zero';
+};
+
 done_testing;
