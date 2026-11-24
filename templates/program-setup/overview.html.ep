@@ -30,12 +30,14 @@
 
         %# Most items continue the workflow via callcc. Payments is a plain
         %# screen outside it -- the tenant leaves for Stripe and comes back --
-        %# so it links rather than submitting a continuation.
+        %# so it links rather than submitting a continuation. An item whose
+        %# workflow refuses this user's role keeps its count but gets no button.
         % if ($item->{href}) {
           <a href="<%= $item->{href} %>" class="btn btn-primary">
             <%= $item->{status} eq 'done' ? "Manage $item->{label}" : "Set up $item->{label}" %>
           </a>
-        % } else {
+        % } elsif (do { my $roles = app->workflow_roles($item->{callcc_target});
+        %               !$roles || grep { $_ eq $user_role } @$roles }) {
           <form method="POST"
                 action="<%= url_for('workflow_callcc', workflow => 'program-setup', run => $run->id, target => $item->{callcc_target}) %>">
             <button type="submit">
