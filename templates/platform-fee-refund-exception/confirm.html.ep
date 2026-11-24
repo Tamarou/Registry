@@ -1,0 +1,42 @@
+%# ABOUTME: platform-fee-refund-exception's reason screen: the payment, the fee left to return, and why it comes back.
+%# ABOUTME: Recording is once per payment; a second application keeps the first reason and amount.
+% extends 'layouts/workflow';
+% title 'Why the fee comes back';
+% stash description => 'The reason is recorded on the payment with the amount to return.';
+% my $found = stash('fee_refund_payment') // {};
+% my $money = sub { sprintf '$%.2f', ( shift // 0 ) / 100 };
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<section class="card">
+  <h2><%= $found->{tenant_name} %></h2>
+  <dl>
+    <dt>Payment</dt>
+    <dd><%= $found->{payment_id} %>, <%= $money->( $found->{amount_cents} ) %>, refunded</dd>
+    <dt>Platform terms</dt>
+    <dd><%= $found->{terms_name} %></dd>
+    <dt>Platform fee taken</dt>
+    <dd><%= $money->( $found->{fee_cents} ) %></dd>
+    <dt>Fee to return</dt>
+    <dd><%= $money->( $found->{remaining_cents} ) %></dd>
+  </dl>
+</section>
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-group">
+    <label class="form-label" for="reason">Why the platform returns its fee</label>
+    <textarea class="form-textarea" id="reason" name="reason" rows="3" required></textarea>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Record the exception</button>
+  </div>
+</form>

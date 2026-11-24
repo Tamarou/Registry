@@ -1,0 +1,27 @@
+%# ABOUTME: platform-fee-refund-exception's return screen: sends the recorded fee refund to Stripe on the platform account.
+%# ABOUTME: Sent under the payment's idempotency key, so pressing again after a failure cannot return the fee twice.
+% extends 'layouts/workflow';
+% title 'Return the fee';
+% stash description => 'Stripe refunds the application fee to the tenant; Registry records it when Stripe reports it.';
+% my $found = stash('fee_refund_payment') // {};
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<section class="card">
+  <h2><%= $found->{tenant_name} %></h2>
+  <p>The exception is recorded on payment <%= $found->{payment_id} %>.</p>
+</section>
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Return the fee</button>
+  </div>
+</form>

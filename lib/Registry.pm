@@ -1436,6 +1436,11 @@ class Registry :isa(Mojolicious) {
             # programs, not set what the tenant sells them for.
             'offer-publishing' => ['admin'],
 
+            # Returns the platform's fee on another tenant's payment: an admin
+            # only, and its steps also ask for the operator right, so an admin
+            # of any tenant but the one holding it gets no further.
+            'platform-fee-refund-exception' => ['admin'],
+
             # A parent acts on their own enrollment; staff and admins reach the
             # same flows on a family's behalf.
             ( map { $_ => [ 'parent', 'admin', 'staff' ] } qw(

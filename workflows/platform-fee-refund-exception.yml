@@ -1,0 +1,31 @@
+# ABOUTME: Solo's fee-refund exception: the platform tenant's admin returns the platform fee on a tenant's refunded payment.
+# ABOUTME: Crosses tenants, so every step asks for the operator right; the request is recorded once, then sent to Stripe.
+
+name: Platform Fee Refund Exception
+description: Return the platform fee on a tenant's refunded payment when the fault was the platform's
+slug: platform-fee-refund-exception
+
+steps:
+  - slug: find-payment
+    label: Payment
+    description: Name the tenant and its refunded payment
+    template: platform-fee-refund-exception/find-payment
+    class: Registry::DAO::WorkflowSteps::FindTenantPayment
+
+  - slug: confirm
+    label: Reason
+    description: Record why the platform returns its fee
+    template: platform-fee-refund-exception/confirm
+    class: Registry::DAO::WorkflowSteps::RecordFeeRefundException
+
+  - slug: apply
+    label: Return
+    description: Return the fee through Stripe
+    template: platform-fee-refund-exception/apply
+    class: Registry::DAO::WorkflowSteps::ApplyFeeRefundException
+
+  - slug: complete
+    label: Done
+    description: Stripe has the fee refund
+    template: platform-fee-refund-exception/complete
+    class: Registry::DAO::WorkflowStep

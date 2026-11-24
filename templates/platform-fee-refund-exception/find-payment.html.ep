@@ -1,0 +1,31 @@
+%# ABOUTME: platform-fee-refund-exception's first screen: the platform admin names a tenant and one of its refunded payments.
+%# ABOUTME: The step refuses anyone without the operator right, an unknown tenant, and a payment whose fee may not come back.
+% extends 'layouts/workflow';
+% title 'Return the platform fee';
+% stash description => 'Solo keeps the platform fee on a refund. Return it only when the fault was the platform\'s.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-group">
+    <label class="form-label" for="payment_tenant">Tenant slug</label>
+    <input class="form-input" type="text" id="payment_tenant" name="payment_tenant" required>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="payment_id">Payment id</label>
+    <input class="form-input" type="text" id="payment_id" name="payment_id" required>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Find the payment</button>
+  </div>
+</form>

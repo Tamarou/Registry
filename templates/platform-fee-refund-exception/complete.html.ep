@@ -1,0 +1,11 @@
+%# ABOUTME: platform-fee-refund-exception's last screen: Stripe has the application-fee refund.
+%# ABOUTME: The kept-fee figure changes when Stripe reports application_fee.refunded, not here.
+% extends 'layouts/workflow';
+% title 'Fee returned';
+% my $found = stash('fee_refund_payment') // {};
+% my $refund = stash('fee_refund') // {};
+
+<section class="card">
+  <h2>The platform fee is on its way back to <%= $found->{tenant_name} %></h2>
+  <p>Stripe fee refund <%= $refund->{id} %> for <%= sprintf '$%.2f', ( $refund->{amount_cents} // 0 ) / 100 %>.</p>
+</section>
