@@ -168,7 +168,8 @@ Publish can also refuse with:
 | Message | Cause | What to do |
 |---|---|---|
 | "A newer version of this offer was published since this run began; start again" | Someone published a version of the same offer after this run read its current one | Start a new run |
-| "The offer could not be published, and nothing was saved. Please try again." | Any other failure, including the [platform-offer guard](#the-platform-offer-guard) | See the server log for the cause |
+| "Publishing this would leave signup with no platform offer to tenants, so nothing was saved" | The [platform-offer guard](#the-platform-offer-guard) refused it | Keep the version on "payment processing" with a percentage-of-sales plan |
+| "The offer could not be published, and nothing was saved. Please try again." | Any other failure | See the server log for the cause |
 
 ## 4. Worked example: SACP's seats (Morgan)
 
@@ -229,9 +230,11 @@ version on "payment processing" with a percentage-of-sales plan
 (`sql/deploy/platform-offer-to-tenants-guard.sql`). The database refuses any
 publish that would retire the last one, for example a new Solo version that
 declines the percentage-of-sales plan or moves to another resource. The old
-version then stays current, and the publish screen shows the general "could
-not be published" message; the server log names the guard. The guard applies
-to `registry` only; a tenant's own offers are not affected.
+version then stays current, and the publish screen says the version would
+leave signup with no platform offer to tenants. The database also refuses
+renaming the "payment processing" resource while a current platform offer
+uses it (`sql/deploy/platform-offer-resource-keeps-name.sql`). Both guards
+apply to `registry` only; a tenant's own offers and resources are not affected.
 
 ## 6. Published versions are immutable
 

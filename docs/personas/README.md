@@ -38,7 +38,7 @@
 
 
 * Role: Students
-* [profile](kylie-and-rob.md)
+* [profile](kylie_and_rob.md)
 
 ## Rosa
 
