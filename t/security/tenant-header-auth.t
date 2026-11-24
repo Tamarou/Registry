@@ -13,6 +13,7 @@ use Test::Registry::DB;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Tenant;
+use Test::Registry::OperatorRight qw( revoke_operator restore_operator grant_in_schema );
 use Mojo::Home;
 use YAML::XS qw(Load);
 
@@ -35,7 +36,7 @@ eval {
 };
 
 # The platform tenant is the all-zeros row, slug registry, and it holds the
-# operator right because registry.tenant_resources says so.
+# operator right because its entitlement in registry says so.
 sub platform_member ( $username, $role ) {
     my $user = Registry::DAO::User->create( $dao->db, {
         name => $username, username => $username,
@@ -209,12 +210,10 @@ subtest 'without the operator right a platform admin cannot act as another tenan
     my $user = Registry::DAO::User->find( $dao->db, { username => 'platform_admin_hdr' } );
     # Deleted for real: the app asks through its own connection, which would
     # not see a delete inside this test's open transaction.
-    my $held = $dao->db->query(
-        q{DELETE FROM registry.tenant_resources WHERE resource = 'operator' RETURNING tenant_id} )->hashes;
+    my $held = revoke_operator( $dao->db );
     isnt acting_as( $user, 'target_tenant' ), 'target_tenant',
         'platform membership alone is not the right';
-    $dao->db->insert( 'registry.tenant_resources', { tenant_id => $_->{tenant_id}, resource => 'operator' } )
-        for @$held;
+    restore_operator( $dao->db, $held );
     is acting_as( $user, 'target_tenant' ), 'target_tenant', 'and with it back, the admin may';
 };
 
@@ -262,8 +261,7 @@ subtest 'an operator grant in a tenant own schema copy confers no acting as anot
     $dao->db->query('SELECT clone_schema(?)', 'other_tenant')
         unless $dao->db->query(q{SELECT 1 FROM information_schema.schemata WHERE schema_name = 'other_tenant'})->rows;
     my $other_id = Registry::DAO::Tenant->find( $dao->db, { slug => 'other_tenant' } )->id;
-    $dao->db->query( 'INSERT INTO other_tenant.tenant_resources (tenant_id, resource) VALUES (?, ?)',
-        $other_id, 'operator' );
+    grant_in_schema( $dao, 'other_tenant', $other_id, 'operator' );
 
     my $morgan = Registry::DAO::User->find( $dao->db, { username => 'morgan_act' } );
     isnt acting_as( $morgan, 'target_tenant' ), 'target_tenant', 'a self-written grant grants nothing';

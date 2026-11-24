@@ -10,6 +10,7 @@ use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( authenticate_as );
+use Test::Registry::OperatorRight qw( revoke_operator restore_operator grant_in_schema );
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 
@@ -56,9 +57,8 @@ subtest 'an admin of the operator tenant is served jobs and revenue' => sub {
 subtest 'without the operator right jobs and revenue are refused but tenants and runbook are served' => sub {
     # The test that no code decides "is this the operator" from the slug or the
     # all-zeros id: the platform tenant is still the platform tenant, and Alex
-    # still its admin, but the row saying it holds the right is gone.
-    $db->delete( 'registry.tenant_resources',
-        { tenant_id => $platform->id, resource => 'operator' } );
+    # still its admin, but the entitlement saying it holds the right is gone.
+    my $held = revoke_operator($db);
 
     ok !Registry::DAO::Tenant->holds( $db, $platform->id, 'operator' ),
         'the platform tenant no longer holds the right';
@@ -70,8 +70,7 @@ subtest 'without the operator right jobs and revenue are refused but tenants and
         'the fleet is the platform admin screen, and is still served' );
     $t->get_ok('/platform/runbook')->status_is( 200, 'as is the runbook' );
 
-    $db->insert( 'registry.tenant_resources',
-        { tenant_id => $platform->id, resource => 'operator' } );
+    restore_operator( $db, $held );
 };
 
 subtest 'an admin of another tenant is refused jobs and revenue' => sub {
@@ -99,10 +98,9 @@ subtest 'staff and parent members of the platform tenant are refused the operato
 };
 
 subtest 'an operator grant in a tenant own schema copy grants nothing' => sub {
-    # clone_schema gave the studio its own, empty, copy of the table. A row
-    # there is a tenant writing its own grant, and must be ignored.
-    $db->insert( 'operator_right_studio.tenant_resources',
-        { tenant_id => $studio->id, resource => 'operator' } );
+    # clone_schema gave the studio its own copy of the entitlement tables. A
+    # row there is a tenant writing its own grant, and must be ignored.
+    grant_in_schema( $dao, 'operator_right_studio', $studio->id, 'operator' );
 
     ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ),
         'the read seam answers false through the registry handle';
@@ -113,13 +111,10 @@ subtest 'an operator grant in a tenant own schema copy grants nothing' => sub {
     my $t = app_as($morgan);
     $t->get_ok('/platform/jobs')->status_is( 403, 'the studio admin is refused the job queue' );
     $t->get_ok('/platform/revenue')->status_is( 403, 'and the revenue view' );
-
-    $db->delete( 'operator_right_studio.tenant_resources', { tenant_id => $studio->id } );
 };
 
 subtest 'a differently named resource does not grant the operator right' => sub {
-    $db->insert( 'registry.tenant_resources',
-        { tenant_id => $studio->id, resource => 'operators' } );
+    grant_in_schema( $dao, 'registry', $studio->id, 'operators' );
 
     ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ),
         'holding another resource is not holding operator';
@@ -127,8 +122,6 @@ subtest 'a differently named resource does not grant the operator right' => sub 
     my $t = app_as($morgan);
     $t->get_ok('/platform/jobs')->status_is( 403, 'the studio admin is refused the job queue' );
     $t->get_ok('/platform/revenue')->status_is( 403, 'and the revenue view' );
-
-    $db->delete( 'registry.tenant_resources', { tenant_id => $studio->id } );
 };
 
 subtest 'without the operator right a minion action that changes a job is refused' => sub {
@@ -140,8 +133,7 @@ subtest 'without the operator right a minion action that changes a job is refuse
     # lets each request through and the refusals below are the operator guard's.
     my $own = { Origin => $t->ua->server->url->path('')->to_string =~ s{/\z}{}r };
 
-    $db->delete( 'registry.tenant_resources',
-        { tenant_id => $platform->id, resource => 'operator' } );
+    my $held = revoke_operator($db);
 
     $t->patch_ok( '/platform/jobs/jobs', $own, form => { id => $id, do => 'remove' } )
       ->status_is( 403, 'removing a job is refused' );
@@ -150,8 +142,7 @@ subtest 'without the operator right a minion action that changes a job is refuse
       ->status_is( 403, 'retrying a job is refused' );
     is $minion->job($id)->info->{retries}, 0, 'and it was not retried';
 
-    $db->insert( 'registry.tenant_resources',
-        { tenant_id => $platform->id, resource => 'operator' } );
+    restore_operator( $db, $held );
 
     # The control: the same request is one the dashboard accepts once the right
     # is back, so the refusal above was the guard and not the request's shape.

@@ -106,3 +106,4 @@ priceops-entitlement-units [priceops-entitlement-one-phase] 2026-11-24T07:30:00Z
 priceops-entitlement-lifecycle [priceops-entitlement-units] 2026-11-24T08:00:00Z Chris Prather <chris.prather@tamarou.com> # An entitlement is active or ended once, with when and why, and links to the payment that created it
 bootstrap-platform-offers [priceops-entitlement-lifecycle] 2026-11-24T08:30:00Z Chris Prather <chris.prather@tamarou.com> # The bootstrap seeds Solo v1 and the platform's offers to itself, with registry's entitlements
 priceops-occurrence-resources [bootstrap-platform-offers] 2026-11-24T09:00:00Z Chris Prather <chris.prather@tamarou.com> # An occurrence is its own finite resource, and a class offer covers its class's occurrences
+operator-right-entitlement [priceops-occurrence-resources] 2026-11-24T09:30:00Z Chris Prather <chris.prather@tamarou.com> # The platform holds the operator right as an entitlement, and the interim table goes

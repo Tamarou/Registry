@@ -371,21 +371,23 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     #
     # The one seam every caller asks, about the resource and never a plan or a
     # slug: the operator right is held by whichever tenant the data says holds
-    # it. Reads the interim table operator-right.sql seeds; step 3 re-points
-    # this at its entitlement table, so nothing else reads that table.
+    # it, as an entitlement to the resource of that name.
     #
-    # Qualified with registry: clone_schema gives every tenant schema an empty
-    # copy of the table, and a row a tenant writes into its own copy grants
-    # nothing.
+    # Qualified with registry: clone_schema gives every tenant schema its own
+    # copy of the PriceOps tables, and an entitlement a tenant records in its
+    # own copy grants nothing.
     sub holds ($class, $db, $tenant_id, $resource) {
         $db = $db->db if $db isa Registry::DAO;
         return 0 unless defined $tenant_id && length $tenant_id
                      && defined $resource  && length $resource;
 
-        return $db->select( 'registry.tenant_resources', 'COUNT(*)', {
-            tenant_id => $tenant_id,
-            resource  => $resource,
-        } )->array->[0] ? 1 : 0;
+        return $db->query( q{
+            SELECT EXISTS (
+                SELECT 1 FROM registry.entitlements e
+                  JOIN registry.offer_versions v ON v.id = e.offer_version_id
+                  JOIN registry.resources r      ON r.id = v.resource_id
+                 WHERE e.holder_tenant_id = ? AND r.name = ?)
+        }, $tenant_id, $resource )->array->[0] ? 1 : 0;
     }
 
     # Is $user_id an admin of some tenant that holds $resource?
