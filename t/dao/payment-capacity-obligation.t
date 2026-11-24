@@ -357,7 +357,8 @@ subtest 'discharging an obligation does NOT clear the manual-review flag' => sub
         # job now -- refund_async only records the Stripe reference.
         my ($inc) = @{ $owing->unsettled_refund_increments($db) };
         $owing->refund_async($db, { amount_cents => $inc->{cents},
-                                    idempotency_key => $owing->capacity_refund_key($inc->{seq}) })->wait;
+                                    idempotency_key => $owing->capacity_refund_key($inc->{seq}),
+                                    increment       => 1 })->wait;
         $owing->settle_refund_increment($db, $inc->{seq}, { id => 're_ob' });
     }
 
