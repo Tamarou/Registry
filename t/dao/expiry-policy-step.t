@@ -64,6 +64,8 @@ sub walk (%override) {
         'offer-basics'     => { $class ? () : ( resource_id => $open->id ), offer_name => 'Wheel night' },
         'offer-price'      => { price_cents => 2500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
         'one-time-payment' => { one_time => 'offered' },
+        'refund-policy'    => { refund => 'none' },
+        'change-policy'    => { change => 'none' },
         'use-policy'       => { use => 'none' },
         'expiry-policy'    => { expiry => 'never' },
         'publish'          => { action => 'publish', refund => 'none' },

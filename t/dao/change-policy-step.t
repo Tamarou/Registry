@@ -66,6 +66,7 @@ sub walk (%override) {
         'offer-basics'     => { resource_id => $bound->id, offer_name => 'Wheel night' },
         'offer-price'      => { price_cents => 2500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 2 },
         'one-time-payment' => { one_time => 'offered' },
+        'refund-policy'    => { refund => 'none' },
         'change-policy'    => { change => 'none' },
         'use-policy'       => { use => 'none' },
         'publish'          => { action => 'publish', refund => 'none' },
@@ -77,6 +78,13 @@ sub walk (%override) {
     for ( my $step = $workflow->first_step($tdb) ; $step ; $step = $step->next_step($tdb) ) {
         my $slug = $step->slug;
         next if exists $override{$slug} && !defined $override{$slug};
+        # Expiry fits the offer: end of occurrence when it has one, else never.
+        if ( $slug eq 'expiry-policy' && !exists $override{$slug} ) {
+            my $r = $run->process( $tdb, $step, { expiry => 'end_of_occurrence' } );
+            $r = $run->process( $tdb, $step, { expiry => 'never' } ) if $r->{errors};
+            $result{$slug} = $r;
+            next;
+        }
         $result{$slug} = $run->process( $tdb, $step, { ( $fields{$slug} // {} )->%*, ( $override{$slug} // {} )->%* } );
     }
     return ( $run, \%result );
