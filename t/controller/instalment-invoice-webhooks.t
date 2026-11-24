@@ -219,6 +219,22 @@ subtest 'payment_failed with no payment_intent delivered twice marks no row fail
     is_deeply statuses(), [qw( completed pending pending )], 'no row is failed';
 };
 
+# A failure with no intent still names its month: the invoice is bound to the
+# row it would have charged, so a later month's invoice cannot take that row.
+subtest 'payment_failed with no intent binds its row, and month three paid takes month three' => sub {
+    my @ids = build_set();
+
+    deliver( 'invoice.payment_failed', invoice( 'in_month_two', undef ) );
+    is_deeply statuses(), [qw( completed pending pending )], 'no row is failed';
+
+    deliver( 'invoice.paid', invoice( 'in_month_three', 'pi_month_three' ) );
+    is_deeply statuses(), [qw( completed pending completed )],
+        "month three's invoice completes month three, month two stays owed";
+
+    is $A->{db}->query( q{SELECT metadata->>'stripe_invoice_id' FROM payments WHERE id = ?},
+        $ids[1] )->array->[0], 'in_month_two', "and month two's invoice is bound to its row";
+};
+
 # Each month is its own invoice. A later month paying does not settle an
 # earlier month's debt.
 subtest 'month two failed then month three paid completes month three only' => sub {

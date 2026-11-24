@@ -437,6 +437,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             SELECT id, status FROM payments
              WHERE stripe_schedule_id = ?
                AND status = 'pending'
+               AND metadata->>'stripe_invoice_id' IS NULL
              ORDER BY instalment_seq
              LIMIT 1
              FOR UPDATE
@@ -460,9 +461,20 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
 
         # A failure this invoice already recorded, or one reported after its
-        # retry paid: history, not news. With no payment intent no charge was
-        # attempted, so nothing failed and the row simply stays owed.
-        return unless $row->{status} eq 'pending' && $intent;
+        # retry paid: history, not news.
+        return unless $row->{status} eq 'pending';
+
+        # With no payment intent no charge was attempted, so nothing failed and
+        # the row stays owed -- but it is this invoice's month, so bind it.
+        unless ($intent) {
+            $db->query( q{
+                UPDATE payments
+                   SET metadata = COALESCE(metadata, '{}')
+                       || jsonb_build_object('stripe_invoice_id', ?::text)
+                 WHERE id = ?
+            }, $invoice_id, $row->{id} );
+            return;
+        }
 
         # Failed. The enrolment is NOT touched: a child who has been attending
         # for six weeks does not lose their place over an expired card. The debt
