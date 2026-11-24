@@ -216,11 +216,12 @@ subtest 'refund reads the stamped versions policy' => sub {
     no warnings 'redefine';
     local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $client, @ ) {
         push @calls, 'intent';
-        return Mojo::Promise->resolve( { latest_charge => { application_fee => 'fee_moving' } } );
+        return Mojo::Promise->resolve( { latest_charge => { id => 'ch_moving', application_fee => 'fee_moving' } } );
     };
     local *Registry::Service::Stripe::retrieve_application_fee_async = sub ( $client, $id ) {
         push @calls, 'fee';
-        return Mojo::Promise->resolve( { id => $id, amount => 250, amount_refunded => 0 } );
+        return Mojo::Promise->resolve( { id => $id, charge => 'ch_moving', account => $under_v1->metadata->{stripe_account_id},
+            amount => 250, amount_refunded => 0 } );
     };
     local *Registry::Service::Stripe::create_application_fee_refund_async = sub ( $client, @ ) {
         push @calls, 'refund';

@@ -1,5 +1,5 @@
 # ABOUTME: platform-fee-refund-exception step: sends the recorded fee-refund request to Stripe under its idempotency key.
-# ABOUTME: Safe to press again after a failure; what came back is recorded later from application_fee.refunded.
+# ABOUTME: Safe to press again: a fee already returned finishes the run and nothing more is sent.
 use 5.42.0;
 use utf8;
 
@@ -11,16 +11,16 @@ class Registry::DAO::WorkflowSteps::ApplyFeeRefundException :isa(Registry::DAO::
     use Registry::DAO::WorkflowSteps::FindTenantPayment;
 
     method process ( $db, $form_data, $run = undef ) {
-        my $found = Registry::DAO::WorkflowSteps::FindTenantPayment->located( $db, $form_data, $run );
+        my $found = Registry::DAO::WorkflowSteps::FindTenantPayment->located( $db, $form_data, $run, returned_ok => 1 );
         return { stay => 1, errors => [ $found->{error} ] } if $found->{error};
 
         my $payment = $found->{payment};
         my $request = ( $payment->metadata // {} )->{platform_fee_refund_exception};
         return { stay => 1, errors => ['No fee-refund exception is recorded on that payment'] }
             unless ref $request eq 'HASH';
-        return { stay => 1, errors => ["The recorded $request->{amount_cents} cents is more than the "
-              . "$found->{remaining_cents} cents of the fee not yet returned"] }
-            if $request->{amount_cents} > $found->{remaining_cents};
+        # Stripe reported it returned (an earlier press, or by hand): done.
+        return { fee_refund => { already_returned_cents => $payment->platform_fee_refunded_cents } }
+            unless $found->{remaining_cents} > 0;
 
         # From a resolved promise, so a guard's REFUND_NOT_SENT is a rejection
         # the failure branch reports rather than a 500.
@@ -32,7 +32,9 @@ class Registry::DAO::WorkflowSteps::ApplyFeeRefundException :isa(Registry::DAO::
             } );
         } )->then(
             sub ($fee_refund) {
-                return { fee_refund => { id => $fee_refund->{id}, amount_cents => $fee_refund->{amount} } };
+                return { fee_refund => defined $fee_refund->{already_returned_cents}
+                    ? { already_returned_cents => $fee_refund->{already_returned_cents} }
+                    : { id => $fee_refund->{id}, amount_cents => $fee_refund->{amount} } };
             },
             sub ($error) {
                 my $message = "$error" =~ s/\s+\z//r;

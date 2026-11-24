@@ -28,9 +28,10 @@ class Registry::DAO::WorkflowSteps::FindTenantPayment :isa(Registry::DAO::Workfl
     # The payment $slug's tenant made with id $payment_id, once everything
     # that must hold before its fee can be returned does:
     #   { tenant, payment, terms, remaining_cents } or { error }.
+    # $opt{returned_ok} admits a fee already returned in full (remaining 0).
     # The slug must be a registry.tenants row before any schema is connected,
     # because it becomes a search_path.
-    sub locate ( $class, $db, $data, $slug, $payment_id ) {
+    sub locate ( $class, $db, $data, $slug, $payment_id, %opt ) {
         if ( my $why = $class->operator_refusal( $db, $data ) ) { return { error => $why } }
 
         my $tenant = defined $slug && !ref $slug && length $slug
@@ -50,16 +51,16 @@ class Registry::DAO::WorkflowSteps::FindTenantPayment :isa(Registry::DAO::Workfl
 
         my $remaining = ( $payment->platform_fee_cents // 0 ) - ( $payment->platform_fee_refunded_cents // 0 );
         return { error => 'None of the platform fee on that payment is left to return' }
-            unless $remaining > 0;
+            unless $remaining > 0 || $opt{returned_ok};
 
         return { tenant => $tenant, payment => $payment, terms => $terms, remaining_cents => $remaining };
     }
 
     # The located payment for the run $data belongs to, as the later steps
     # and screens ask it.
-    sub located ( $class, $db, $data, $run ) {
+    sub located ( $class, $db, $data, $run, %opt ) {
         my $found = $run ? $run->data->{fee_refund_payment} // {} : {};
-        return $class->locate( $db, $data, $found->{tenant}, $found->{payment_id} );
+        return $class->locate( $db, $data, $found->{tenant}, $found->{payment_id}, %opt );
     }
 
     method process ( $db, $form_data, $run = undef ) {

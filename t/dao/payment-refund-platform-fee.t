@@ -62,7 +62,8 @@ sub with_stripe ( $calls, $code, %reply ) {
     };
     local *Registry::Service::Stripe::retrieve_application_fee_async = sub ( $client, @args ) {
         $record->( 'fee', $client, @args );
-        return $answer->( $reply{fee} // { id => $args[0], amount => 250, amount_refunded => 0 } );
+        return $answer->( { id => $args[0], charge => 'ch_fee', account => 'acct_fee_tenant',
+            amount => 250, amount_refunded => 0, %{ $reply{fee} // {} } } );
     };
     local *Registry::Service::Stripe::create_application_fee_refund_async = sub ( $client, @args ) {
         $record->( 'refund', $client, @args );
@@ -137,7 +138,7 @@ subtest 'charge without application fee is not sent' => sub {
 };
 
 subtest 'invalid fee refund amount is refused' => sub {
-    for my $amount ( 0, -100, 1.5, '50abc', 201 ) {
+    for my $amount ( 0, -100, 1.5, '50abc', 251 ) {
         my $payment = a_payment();
         my @calls;
         my $err = fee_refund_error( $payment, \@calls, { amount_cents => $amount },
@@ -146,13 +147,6 @@ subtest 'invalid fee refund amount is refused' => sub {
         like $err, qr/REFUND_NOT_SENT/, "amount $amount refused as not sent";
         is scalar @{ calls_of( \@calls, 'refund' ) }, 0, "amount $amount sends no fee refund";
     }
-
-    my $payment = a_payment();
-    my @calls;
-    my $err = fee_refund_error( $payment, \@calls, {},
-        fee => { id => 'fee_abc123', amount => 250, amount_refunded => 250 } );
-    like $err, qr/REFUND_NOT_SENT/, 'a fully refunded fee has nothing left to return';
-    is scalar @{ calls_of( \@calls, 'refund' ) }, 0, 'and sends no fee refund';
 };
 
 subtest 'charge lookup error sends no fee refund' => sub {
@@ -177,6 +171,35 @@ subtest 'method writes no fee column' => sub {
     is scalar @{ calls_of( \@calls, 'refund' ) }, 1, 'the fee refund was requested';
     is_deeply $db->select( 'payments', '*', { id => $payment->id } )->hash, $before,
         'the payment row is unchanged';
+};
+
+# The decision made on the fee Stripe returns, with no Stripe call at all.
+subtest 'fee refund plan' => sub {
+    my $payment = a_payment();
+    my $fee = sub (%over) {
+        { id => 'fee_plan', charge => 'ch_plan', account => 'acct_fee_tenant',
+          amount => 250, amount_refunded => 0, %over };
+    };
+    my $plan = sub ( $f, $charge, $asked ) { $payment->platform_fee_refund_plan( $f, $charge, $asked ) };
+
+    is_deeply $plan->( $fee->(), 'ch_plan', 250 ), { send => 250 }, 'the recorded amount is sent';
+    is_deeply $plan->( $fee->(), 'ch_plan', undef ), { send => 250 }, 'no amount sends what is left';
+    is_deeply $plan->( $fee->( amount_refunded => 250 ), 'ch_plan', 250 ), { returned => 250 },
+        'a fee already returned in full sends nothing';
+    is_deeply $plan->( $fee->( amount_refunded => 200 ), 'ch_plan', 150 ), { send => 50 },
+        'a request above what is left is capped at what is left';
+
+    my %refused = (
+        'more than the whole fee'  => [ $fee->(), 'ch_plan', 251, qr/more than the 250-cent fee/ ],
+        'a fee on another charge'  => [ $fee->(), 'ch_other', 250, qr/charge/ ],
+        'a fee from another account' => [ $fee->( account => 'acct_other' ), 'ch_plan', 250, qr/account/ ],
+    );
+    for my $case ( sort keys %refused ) {
+        my ( $f, $charge, $asked, $why ) = $refused{$case}->@*;
+        ok !eval { $plan->( $f, $charge, $asked ); 1 }, "refused: $case";
+        like $@, qr/REFUND_NOT_SENT/, "as not sent: $case";
+        like $@, $why, "saying why: $case";
+    }
 };
 
 done_testing;

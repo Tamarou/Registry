@@ -2473,9 +2473,11 @@ SQL
     # Returning the platform's fee: the exception to keeping it on a refund
     # (005), applied by the platform tenant's admin. The charge is the seller's,
     # so its fee id is read through the seller-bound client; the fee is the
-    # platform's, so it is read and refunded on an unbound one. Nothing is
-    # written here: what was returned is recorded from application_fee.refunded.
+    # platform's, so it is read and refunded on an unbound one. A fee refund
+    # sent is recorded later, from application_fee.refunded; a fee Stripe shows
+    # already returned in full is recorded here, and nothing is sent.
     method refund_platform_fee_async ($db, $args = {}) {
+        $db = $db->db if $db isa Registry::DAO;
         die REFUND_NOT_SENT . ": No Stripe payment intent ID\n"
             unless $stripe_payment_intent_id;
         die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
@@ -2494,6 +2496,7 @@ SQL
             if defined $asked && !( $asked =~ /\A[0-9]+\z/ && $asked > 0 );
 
         my $platform = Registry::Service::Stripe->from_env;
+        my $charge_id;
 
         return $self->stripe_client->retrieve_payment_intent_async(
             $stripe_payment_intent_id, { 'expand[]' => 'latest_charge' }
@@ -2502,19 +2505,46 @@ SQL
             my $fee_id = ref $charge eq 'HASH' ? $charge->{application_fee} : undef;
             die REFUND_NOT_SENT . ": the charge for payment $id took no application fee\n"
                 unless $fee_id;
+            $charge_id = $charge->{id};
             return $platform->retrieve_application_fee_async($fee_id);
         })->then(sub ($fee) {
-            my $left   = $fee->{amount} - $fee->{amount_refunded};
-            my $amount = $asked // $left;
-            die REFUND_NOT_SENT . ": Fee refund of $amount cents on payment $id is more "
-              . "than the $left cents of its fee not yet returned\n"
-                unless $amount > 0 && $amount <= $left;
+            my $plan = $self->platform_fee_refund_plan( $fee, $charge_id, $asked );
+            if ( defined $plan->{returned} ) {
+                # As application_fee.refunded records it: the highest figure wins.
+                $db->query( q{UPDATE payments
+                     SET platform_fee_refunded_cents = GREATEST(COALESCE(platform_fee_refunded_cents, 0), ?)
+                   WHERE id = ?}, $plan->{returned}, $id );
+                return { already_returned_cents => $plan->{returned} };
+            }
             return $platform->create_application_fee_refund_async( $fee->{id}, {
-                amount => $amount,
+                amount => $plan->{send},
                 $args->{idempotency_key}
                     ? ( _idempotency_key => $args->{idempotency_key} ) : (),
             } );
         });
+    }
+
+    # What returning $asked cents (undef: all that is left) of Stripe's $fee,
+    # read from charge $charge_id, comes to: { send => cents }, or
+    # { returned => cents } when none of it is left -- an earlier press, or a
+    # return outside the workflow, already took it back. A request above what
+    # is left is capped there; one above the whole fee, or a fee that is not
+    # this payment's, is refused.
+    method platform_fee_refund_plan ( $fee, $charge_id, $asked = undef ) {
+        my $account = ref $metadata eq 'HASH' ? $metadata->{stripe_account_id} // '' : '';
+        die REFUND_NOT_SENT . ": fee $fee->{id} is on charge '" . ( $fee->{charge} // '' )
+          . "', not payment $id's charge '" . ( $charge_id // '' ) . "'\n"
+            unless defined $charge_id && ( $fee->{charge} // '' ) eq $charge_id;
+        die REFUND_NOT_SENT . ": fee $fee->{id} came from account '" . ( $fee->{account} // '' )
+          . "', not payment $id's seller account '$account'\n"
+            unless length $account && ( $fee->{account} // '' ) eq $account;
+        die REFUND_NOT_SENT . ": Fee refund of $asked cents on payment $id is more than the "
+          . "$fee->{amount}-cent fee\n"
+            if defined $asked && $asked > $fee->{amount};
+
+        my $left = $fee->{amount} - $fee->{amount_refunded};
+        return { returned => $fee->{amount_refunded} } unless $left > 0;
+        return { send => defined $asked && $asked < $left ? $asked : $left };
     }
 }
 

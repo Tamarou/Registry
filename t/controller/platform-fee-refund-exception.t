@@ -249,11 +249,19 @@ subtest 'fee refund capped at remaining fee' => sub {
     my $none = a_payment( platform_fee_cents => undef );
     like find_refusal( $platform_admin, 'registry', payment_tenant => $studio, payment_id => $none->id ),
         qr/None of the platform fee/, 'a payment that recorded no fee is refused';
+};
 
-    # Returned elsewhere after the request was recorded: apply sends no more than is left.
-    $dao->connect_schema($studio)->db->update( 'payments', { platform_fee_refunded_cents => 200 }, { id => $part->id } );
-    like( ( step_result( 'apply', $platform_admin, 'registry', $part )->{errors} // [] )->[0] // '',
-        qr/more than the 50 cents/, 'apply refuses a recorded amount above what is left' );
+subtest 'apply finishes when the fee is already returned' => sub {
+    my $payment = a_payment();
+    my $t = client($platform_admin);
+    $t->get_ok('/platform-fee-refund-exception')->status_is(200);
+    submit( $t, payment_tenant => $studio, payment_id => $payment->id );
+    like submit( $t, reason => 'Ours' ), qr{/apply\z}, 'the request is recorded';
+
+    # Stripe reported the whole fee returned (an earlier press, or by hand).
+    $dao->connect_schema($studio)->db->update( 'payments', { platform_fee_refunded_cents => 250 }, { id => $payment->id } );
+    like submit($t), qr{/complete\z}, 'apply lands on complete, sending nothing';
+    $t->content_like( qr/\$2\.50 of the fee was already returned/, 'saying the fee was already returned' );
 };
 
 subtest 'unknown tenant slug refused before connecting' => sub {
