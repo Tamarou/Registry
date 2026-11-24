@@ -838,7 +838,8 @@ field $_stripe_client = undef;
     
     # Write down the application fee and the plan version it was charged under.
     # Both settlement paths -- process_payment and the webhook -- call this, so
-    # the missing-fee rule lives here once.
+    # the missing-fee rule lives here once. $intent is whatever Stripe object
+    # reported the fee: the payment intent, or the invoice for instalments 2..N.
     #
     # Best effort: a failure here must not undo a captured charge. The payment is
     # settled and the enrolment is the point; an unrecorded fee leaves a NULL,

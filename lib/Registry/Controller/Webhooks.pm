@@ -476,6 +476,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                            || jsonb_build_object('stripe_invoice_id', ?::text)
                  WHERE id = ?
             }, $intent, $invoice_id, $row->{id} );
+
+            # The fee Stripe took on this instalment, which the invoice reports
+            # as an intent does; recorded once, by the delivery that completed it.
+            require Registry::DAO::Payment;
+            Registry::DAO::Payment->find( $db, { id => $row->{id} } )
+                ->record_platform_fee( $db, $invoice );
             return;
         }
 

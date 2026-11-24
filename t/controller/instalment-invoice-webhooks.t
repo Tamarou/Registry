@@ -78,8 +78,13 @@ local *Registry::Service::Stripe::retrieve_subscription_async = sub ( $s, $id ) 
 };
 use warnings 'redefine';
 
-# The set as schedule_remaining_instalments leaves it: instalment one paid, the
-# rest owed, all sharing one schedule id.
+# The plan instalment one was priced under, snapshotted onto every row.
+my $PLAN = $dao->db->query(
+    q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' LIMIT 1} )->hash->{id};
+
+# The set as schedule_remaining_instalments leaves it: instalment one paid with
+# its fee recorded, the rest owed, all sharing one schedule id and carrying the
+# seller account and plan instalment one was charged under.
 sub build_set ( $tenant = $A ) {
     my $db = $tenant->{db};
     $db->delete( 'payments', { stripe_schedule_id => $SCHED } );
@@ -96,7 +101,11 @@ sub build_set ( $tenant = $A ) {
             instalment_count   => 3,
             due_date           => sprintf( '2026-%02d-01', 5 + $i ),
             stripe_schedule_id => $SCHED,
-            metadata           => { -json => {} },
+            ( $i == 1 ? ( platform_fee_cents => 83, platform_pricing_plan_id => $PLAN ) : () ),
+            metadata           => { -json => {
+                stripe_account_id        => $tenant->{account},
+                platform_pricing_plan_id => $PLAN,
+            } },
         }, { returning => 'id' } )->hash;
         push @ids, $row->{id};
     }
@@ -155,6 +164,49 @@ subtest 'a paid invoice completes the earliest owed instalment' => sub {
     deliver( 'invoice.paid', invoice( 'in_three', 'pi_three', amount_paid => 3334 ) );
 
     is_deeply statuses(), [qw( completed completed completed )], 'and then the third';
+};
+
+sub fee_and_plan ( $id, $tenant = $A ) {
+    return $tenant->{db}->query(
+        'SELECT platform_fee_cents, platform_pricing_plan_id FROM payments WHERE id = ?',
+        $id )->array;
+}
+
+sub revenue_for ( $tenant = $A ) {
+    my ($row) = grep { $_->{slug} eq $tenant->{slug} }
+        @{ Registry::DAO::Tenant->platform_revenue( $dao->db )->{tenants} };
+    return $row;
+}
+
+# Acacia invoices carry the fee Stripe took at the top level.
+subtest 'a paid instalment invoice records its application fee and snapshotted plan' => sub {
+    my @ids = build_set();
+
+    deliver( 'invoice.paid', invoice( 'in_fee', 'pi_fee', application_fee_amount => 83 ) );
+
+    is_deeply fee_and_plan( $ids[1] ), [ 83, $PLAN ],
+        "the invoice's fee and instalment one's plan are on the row";
+    is_deeply fee_and_plan( $ids[2] ), [ undef, undef ], 'the next owed row is untouched';
+};
+
+# Stripe omits a zero application fee; on a seller's account that took nothing.
+subtest 'a paid instalment invoice with no application fee records zero' => sub {
+    my @ids = build_set();
+
+    deliver( 'invoice.paid', invoice( 'in_no_fee', 'pi_no_fee' ) );
+
+    is_deeply fee_and_plan( $ids[1] ), [ 0, $PLAN ], 'zero, under the snapshotted plan';
+};
+
+subtest 'platform_revenue counts a paid instalment as recorded' => sub {
+    build_set();
+
+    deliver( 'invoice.paid', invoice( 'in_rev', 'pi_rev', application_fee_amount => 83 ) );
+
+    my $rev = revenue_for();
+    is $rev->{charges},    2,   'both completed instalments are counted';
+    is $rev->{fees_cents}, 166, 'with both fees';
+    is $rev->{unrecorded}, 0,   'and neither reads as a gap';
 };
 
 # A redelivery is not another instalment. Stripe retries webhooks, and an
