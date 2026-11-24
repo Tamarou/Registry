@@ -210,6 +210,15 @@ subtest 'payment_failed then invoice.paid on the same intent completes the same 
         'the retry completes the row that failed';
 };
 
+# No payment intent means no charge was attempted, so nothing failed: the row
+# stays owed, and redelivering the event marks nothing either.
+subtest 'payment_failed with no payment_intent delivered twice marks no row failed' => sub {
+    build_set();
+
+    deliver( 'invoice.payment_failed', invoice( 'in_no_intent', undef ) ) for 1 .. 2;
+    is_deeply statuses(), [qw( completed pending pending )], 'no row is failed';
+};
+
 # Stripe's invoice at 2024-12-18.acacia: `subscription`, and no schedule field.
 subtest 'an invoice naming only its subscription completes the earliest owed row' => sub {
     build_set();

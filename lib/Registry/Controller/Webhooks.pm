@@ -454,8 +454,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
 
         # A failure this invoice already recorded, or one reported after its
-        # retry paid: history, not news.
-        return unless $row->{status} eq 'pending';
+        # retry paid: history, not news. With no payment intent no charge was
+        # attempted, so nothing failed and the row simply stays owed.
+        return unless $row->{status} eq 'pending' && $intent;
 
         # Failed. The enrolment is NOT touched: a child who has been attending
         # for six weeks does not lose their place over an expired card. The debt
