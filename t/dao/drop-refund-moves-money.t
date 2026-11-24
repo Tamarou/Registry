@@ -318,6 +318,38 @@ subtest 'a drop refund refused before sending stops the run on the refund step a
     is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
 };
 
+# `error` (singular) is not a stop signal to _persist_step_result, so these two
+# used to advance the run to the waitlist and notifications with the refund
+# still owed and nothing on the admin's screen.
+subtest 'a drop refund with no approved amount stops the run on the refund step' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments', { refund_status => 'pending' }, { id => $dropped->id } );
+
+    my ( $result, $latest ) = drive_run( enrollment_id => $dropped->id, refund_requested => 1 );
+
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/no refund amount/,
+        'the admin is shown why' ) or diag explain $result;
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
+};
+
+subtest 'a drop refund for an enrollment with no payment stops the run on the refund step' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000, payment_id => undef },
+        { id => $dropped->id } );
+
+    my ( $result, $latest ) = drive_run( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/no payment/,
+        'the admin is shown why' ) or diag explain $result;
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
+};
+
 subtest 'a refund already processed is not refunded again' => sub {
     my ( $payment, $dropped ) = a_paid_cart();
     $db->update( 'enrollments',

@@ -47,7 +47,7 @@ class Registry::DAO::WorkflowSteps::ProcessDropRefund :isa(Registry::DAO::Workfl
             return {
                 refund_processed => 0,
                 refund_status    => $enrollment->refund_status,
-                error            => 'no refund amount was approved',
+                errors           => ['no refund amount was approved'],
                 message          => 'Refund requested with no amount; left pending',
             };
         }
@@ -59,7 +59,7 @@ class Registry::DAO::WorkflowSteps::ProcessDropRefund :isa(Registry::DAO::Workfl
             return {
                 refund_processed => 0,
                 refund_status    => $enrollment->refund_status,
-                error            => 'enrollment has no payment to refund',
+                errors           => ['enrollment has no payment to refund'],
                 message          => 'Nothing to refund against; left pending',
             };
         }
