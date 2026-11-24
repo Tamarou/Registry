@@ -8,6 +8,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::WorkflowStep) {
     use Carp qw( croak );
+    use Registry::DAO::PricingPlan;
 
     method process ($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
