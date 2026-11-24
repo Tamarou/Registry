@@ -213,13 +213,16 @@ publishes later versions through the same workflow on the `registry` host.
 |---|---|
 | What the offer sells | Use one of my existing resources |
 | Name your offer | payment processing; A new version of Solo |
-| Price your offer | Price 0 (pre-filled); Currency USD; Units per acceptance 1; Per-booking cap 1 |
+| Price your offer | Price 0; Currency USD; Units per acceptance 1; Per-booking cap 1 |
 | How it is paid for | Not offered |
 | A percentage of each sale | Offered; Rate 2.4 |
 | Refunds | Keep the fee, unless an administrator makes an exception |
 | Changes | None |
 | How it is used | None |
 | When it expires | Never |
+
+Every screen after "Name your offer" starts from Solo's current version; the
+table lists what Alex submits.
 
 "Keep the fee" is accepted only because the offer carries a percentage-of-sales
 plan. "At the end of the occurrence" is refused: payment processing is not an
