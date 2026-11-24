@@ -655,6 +655,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
              FOR UPDATE
         }, $schedule, $invoice_id )->hash;
 
+        # Each status write carries its legality in the WHERE, as Payment's own
+        # writers do: a completed or refunded row is history to every invoice.
+        require Registry::DAO::Payment;
+        my $to_failed    = Registry::DAO::Payment->_legal_predecessors('failed');
+        my $to_completed = Registry::DAO::Payment->_legal_predecessors('completed');
+
         # Stripe will not charge a voided or uncollectible invoice, so its
         # month stays owed: flagged, where a quiet pending row would hide it.
         # Only the row this invoice already bound; a paid one is history.
@@ -662,10 +668,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # (its row stays pending, still on the dashboard); bind on
         # invoice.finalized if that gap shows up in the reconciliation.
         if ( my ($closed) = $event->{type} =~ /^invoice\.(voided|marked_uncollectible)$/ ) {
-            return unless $row && $row->{status} ne 'completed';
-            $db->query( q{UPDATE payments SET status = 'failed', error_message = ? WHERE id = ?},
+            return unless $row;
+            $db->query( q{UPDATE payments SET status = 'failed', error_message = ? WHERE id = ? AND status = ANY(?)},
                 $closed eq 'voided' ? 'The invoice was voided.' : 'The invoice was marked uncollectible.',
-                $row->{id} );
+                $row->{id}, $to_failed );
             return;
         }
 
@@ -684,19 +690,18 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         };
 
         if ($paid) {
-            return if $row->{status} eq 'completed';    # a redelivery
+            # Zero rows: a redelivery, or a row already refunded.
             $db->query( q{
                 UPDATE payments
                    SET status = 'completed', completed_at = now(),
                        stripe_payment_intent_id = ?, error_message = NULL,
                        metadata = COALESCE(metadata, '{}')
                            || jsonb_build_object('stripe_invoice_id', ?::text)
-                 WHERE id = ?
-            }, $intent, $invoice_id, $row->{id} );
+                 WHERE id = ? AND status = ANY(?)
+            }, $intent, $invoice_id, $row->{id}, $to_completed )->rows or return;
 
             # The fee Stripe took on this instalment, which the invoice reports
             # as an intent does; recorded once, by the delivery that completed it.
-            require Registry::DAO::Payment;
             Registry::DAO::Payment->find( $db, { id => $row->{id} } )
                 ->record_platform_fee( $db, $invoice );
             return;
@@ -731,8 +736,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                    stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
                    metadata = COALESCE(metadata, '{}')
                        || jsonb_build_object('stripe_invoice_id', ?::text)
-             WHERE id = ?
-        }, $why, $intent, $invoice_id, $row->{id} );
+             WHERE id = ? AND status = ANY(?)
+        }, $why, $intent, $invoice_id, $row->{id}, $to_failed );
     }
 
     # Refund what the capacity gate demoted, after its transaction committed.

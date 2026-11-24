@@ -597,6 +597,23 @@ subtest 'failed after paid never reverts a completed instalment' => sub {
         'the paid instalment stays completed and the next is not failed';
 };
 
+# Money already on its way back is past every invoice event: a late or
+# redelivered paid, failed or voided invoice must not walk the row back.
+subtest 'a refunded or refund_pending instalment is not moved by an invoice event' => sub {
+    my @ids = build_set();
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two' ) );
+    deliver( 'invoice.paid', invoice( 'in_three', 'pi_three' ) );
+
+    for my $type (qw( invoice.paid invoice.payment_failed invoice.voided )) {
+        $A->{db}->query( q{UPDATE payments SET status = 'refunded', refunded_cents = amount_cents WHERE id = ?},
+            $ids[1] );
+        $A->{db}->query( q{UPDATE payments SET status = 'refund_pending', refund_owed_cents = amount_cents WHERE id = ?},
+            $ids[2] );
+        deliver( $type, invoice( $_, "pi_$_" ) ) for qw( in_two in_three );
+        is_deeply statuses(), [qw( completed refunded refund_pending )], "$type moves neither row";
+    }
+};
+
 # Instalment invoices come from the seller's account now. One reaching the
 # platform endpoint is the platform's own billing, never a family's instalment.
 subtest 'platform endpoint no longer marks instalments' => sub {
