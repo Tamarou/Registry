@@ -5,6 +5,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Exception;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Mojo;
@@ -128,26 +129,28 @@ subtest 'cloned table entitlement grants nothing' => sub {
         'and through a handle searching the studio schema first';
 };
 
-subtest 'future dated operator entitlement grants nothing' => sub {
-    Registry::DAO::Entitlement->create( $db, {
-        holder_tenant_id => $studio->id,
-        offer_version_id => version_buying('operator'),
-        payment_plan_id  => 'one_time',
-        starts_at        => '2999-01-01T00:00:00Z',
-    } );
+subtest 'future dated operator entitlement refused' => sub {
+    throws_ok {
+        Registry::DAO::Entitlement->create( $db, {
+            holder_tenant_id => $studio->id,
+            offer_version_id => version_buying('operator'),
+            payment_plan_id  => 'one_time',
+            starts_at        => '2999-01-01T00:00:00Z',
+        } );
+    } qr/holder_is_offerer/, 'a tenant cannot hold the operator right, even from the future';
     ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ),
-        'an operator entitlement starting in the future is not the right now';
+        'and so does not hold it now';
 };
 
 subtest 'other resource does not grant operator' => sub {
     Registry::DAO::Entitlement->create( $db, {
         holder_tenant_id => $studio->id,
-        offer_version_id => version_buying('email sending'),
-        payment_plan_id  => 'one_time',
+        offer_version_id => '00000000-0000-0000-0003-000000000001',    # Solo v1
+        payment_plan_id  => 'revenue_share',
         starts_at        => 'now',
     } );
-    ok Registry::DAO::Tenant->holds( $db, $studio->id, 'email sending' ),
-        'the studio holds email sending in effect';
+    ok Registry::DAO::Tenant->holds( $db, $studio->id, 'payment processing' ),
+        'the studio holds payment processing (Solo) in effect';
     ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ), 'which is not operator';
 };
 
