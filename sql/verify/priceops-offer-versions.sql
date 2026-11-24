@@ -26,6 +26,14 @@ BEGIN
         IF to_regclass(format('%I.offer_versions', s)) IS NULL THEN
             RAISE EXCEPTION 'offer_versions missing in schema %', s;
         END IF;
+        -- The trigger is the enforcement; without it published terms are editable.
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger
+             WHERE tgrelid = format('%I.offer_versions', s)::regclass
+               AND tgname = 'offer_versions_immutable'
+        ) THEN
+            RAISE EXCEPTION 'offer_versions_immutable trigger missing in schema %', s;
+        END IF;
     END LOOP;
 END $$;
 

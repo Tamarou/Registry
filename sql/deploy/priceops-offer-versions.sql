@@ -8,6 +8,26 @@ BEGIN;
 
 SET client_min_messages = 'warning';
 
+-- Immutability enforced here, not in the DAO, as pricing_plan_terms_immutable
+-- does: psql and fixtures are held to it too. The allowed change is a
+-- subtraction, so a column added later is protected automatically. A draft
+-- (published_at NULL) is editable; once published only superseded_at may move.
+-- One shared function; each schema's table gets its own trigger.
+CREATE OR REPLACE FUNCTION registry.offer_version_immutable() RETURNS trigger AS $t$
+BEGIN
+    IF OLD.published_at IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF ( to_jsonb(NEW) - 'superseded_at' ) IS DISTINCT FROM ( to_jsonb(OLD) - 'superseded_at' ) THEN
+        RAISE EXCEPTION
+            'offer_versions rows are immutable once published (offer % version %): '
+            'publish a new version instead. Only superseded_at may change.',
+            OLD.offer_id, OLD.version;
+    END IF;
+    RETURN NEW;
+END;
+$t$ LANGUAGE plpgsql;
+
 -- One DDL template run for registry first and then every tenant schema, so the
 -- copies cannot drift. Foreign keys name the same schema as the table: no
 -- foreign key crosses schemas.
@@ -73,6 +93,14 @@ BEGIN
             CREATE UNIQUE INDEX IF NOT EXISTS offer_versions_one_current_per_offer
                 ON %1$I.offer_versions (offer_id)
              WHERE published_at IS NOT NULL AND superseded_at IS NULL
+        $f$, s);
+
+        EXECUTE format(
+            'DROP TRIGGER IF EXISTS offer_versions_immutable ON %I.offer_versions', s);
+        EXECUTE format($f$
+            CREATE TRIGGER offer_versions_immutable
+                BEFORE UPDATE ON %I.offer_versions
+                FOR EACH ROW EXECUTE FUNCTION registry.offer_version_immutable()
         $f$, s);
     END LOOP;
 END $$;

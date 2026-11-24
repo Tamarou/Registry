@@ -24,4 +24,7 @@ BEGIN
     END LOOP;
 END $$;
 
+-- Last, after every table whose trigger used it is gone.
+DROP FUNCTION IF EXISTS registry.offer_version_immutable();
+
 COMMIT;

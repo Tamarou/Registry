@@ -71,4 +71,48 @@ subtest 'publishing appends a version and supersedes the last' => sub {
     is $current, 1, 'exactly one published version is current';
 };
 
+# An offer whose version 1 is published; returns the offer and that version.
+sub published_offer ( $name, $handle = $db ) {
+    my $offer = Registry::DAO::Offer->create( $handle, { name => $name } );
+    return ( $offer, $offer->draft( $handle, { resource_id => $seat->id } )->publish($handle) );
+}
+
+subtest 'published version terms refused by the database' => sub {
+    my ( $offer, $v1 ) = published_offer('Six-week course');
+    my $names = qr/offer \Q@{[ $offer->id ]}\E version 1/;
+
+    throws_ok {
+        $db->query( 'UPDATE offer_versions SET resource_id = ? WHERE id = ?', $clay->id, $v1->id )
+    } $names, 'changing the resource of a published version is refused, naming offer and version';
+    throws_ok {
+        $db->query( 'UPDATE offer_versions SET version = 7 WHERE id = ?', $v1->id )
+    } $names, 'renumbering a published version is refused';
+    throws_ok {
+        $db->query( 'UPDATE offer_versions SET created_at = now() - interval \'1 day\' WHERE id = ?', $v1->id )
+    } $names, 'every column but the superseded marker is protected';
+
+    lives_ok {
+        $db->query( 'UPDATE offer_versions SET superseded_at = now() WHERE id = ?', $v1->id )
+    } 'setting only the superseded marker is allowed';
+
+    my $draft = $offer->draft( $db, { resource_id => $seat->id } );
+    lives_ok {
+        $db->query( 'UPDATE offer_versions SET resource_id = ? WHERE id = ?', $clay->id, $draft->id )
+    } 'a draft stays editable by raw SQL';
+};
+
+subtest 'added column is protected without trigger change' => sub {
+    my ( $offer, $v1 ) = published_offer('Couples night');
+    my $draft = $offer->draft( $db, { resource_id => $seat->id } );
+
+    my $tx = $db->begin;    # rolled back on scope exit: the column is the test's own
+    $db->query('ALTER TABLE offer_versions ADD COLUMN test_note text');
+    lives_ok {
+        $db->query( q{UPDATE offer_versions SET test_note = 'x' WHERE id = ?}, $draft->id )
+    } 'the new column is editable on a draft';
+    throws_ok {
+        $db->query( q{UPDATE offer_versions SET test_note = 'x' WHERE id = ?}, $v1->id )
+    } qr/offer \Q@{[ $offer->id ]}\E version 1/, 'and refused on a published version';
+};
+
 done_testing;
