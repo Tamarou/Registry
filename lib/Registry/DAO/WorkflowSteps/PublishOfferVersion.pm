@@ -47,6 +47,9 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my $use = ( ref $data->{use_policy} eq 'HASH' ? $data->{use_policy} : {} )->{use};
         return { stay => 1, errors => ['Choose a use policy before publishing'] }
             unless defined $use && !ref $use;
+        my $expiry = ( ref $data->{expiry_policy} eq 'HASH' ? $data->{expiry_policy} : {} )->{expiry};
+        return { stay => 1, errors => ['Choose an expiry policy before publishing'] }
+            unless defined $expiry && !ref $expiry;
 
         # Every plan a payment step declared; refused, never defaulted, when
         # none did: absence is not zero.
@@ -73,7 +76,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 $basic->%{qw( resource_id class_project_id )},    # one or the other
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
-                policies => { refund => $refund, change => $change, use => { kind => $use } },
+                policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry } },
             } )->publish($db);
         };
         unless ($version) {

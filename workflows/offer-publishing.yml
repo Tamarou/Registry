@@ -55,6 +55,12 @@ steps:
     template: offer-publishing/use-policy
     class: Registry::DAO::WorkflowSteps::UsePolicy
 
+  - slug: expiry-policy
+    label: Expiry
+    description: Choose when the offer's entitlement expires
+    template: offer-publishing/expiry-policy
+    class: Registry::DAO::WorkflowSteps::ExpiryPolicy
+
   - slug: publish
     label: Publish
     description: Review and publish an immutable offer version
