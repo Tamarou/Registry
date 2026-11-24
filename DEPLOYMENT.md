@@ -128,6 +128,8 @@ a `PLATFORM_ADMIN_EMAIL` that already belongs to another user (a studio's, say):
 bootstrap reports it as in use and writes nothing. If the `registry` tenant
 already records a different Stripe account (one an admin set since), bootstrap
 keeps it and its readiness as they are, and prints a warning naming both.
+See [the platform tenant bootstrap runbook](docs/operations/platform-tenant-bootstrap.md)
+for the pre-deploy checks, running the bootstrap by hand and verifying it.
 
 **Email Configuration:**
 - `EMAIL_FROM` - Default: `noreply@registry-demo.onrender.com`
