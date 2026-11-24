@@ -14,6 +14,37 @@ CREATE TABLE public.removed_free_platform_plan AS
 SELECT * FROM registry.pricing_plans
  WHERE plan_scope = 'platform' AND metadata->>'default' = 'true';
 
+-- A charge, sale or entitlement still naming the row keeps it: refuse, and the
+-- transaction deletes nothing. pricing_plans ids also live in columns with no
+-- foreign key, in registry and in every tenant schema.
+DO $$
+DECLARE
+    c record;
+    hit uuid;
+BEGIN
+    FOR c IN
+        SELECT table_schema, table_name, column_name
+          FROM information_schema.columns
+         WHERE (table_name, column_name) IN (('payments', 'platform_offer_version_id'),
+                                             ('payments', 'offer_version_id'),
+                                             ('payment_items', 'pricing_plan_id'),
+                                             ('offer_versions', 'id'),
+                                             ('entitlements', 'offer_version_id'),
+                                             ('pricing_relationships', 'pricing_plan_id'))
+           AND table_schema IN (SELECT 'registry' UNION ALL SELECT slug FROM registry.tenants)
+         ORDER BY 1, 2, 3
+    LOOP
+        EXECUTE format('SELECT %3$I FROM %1$I.%2$I
+                         WHERE %3$I IN (SELECT id FROM public.removed_free_platform_plan) LIMIT 1',
+                       c.table_schema, c.table_name, c.column_name) INTO hit;
+        IF hit IS NOT NULL THEN
+            RAISE EXCEPTION 'remove-free-platform-plan refused: %.%.% references the Free plan (%). '
+                            'Resolve what is held or sold under it before deploying.',
+                            c.table_schema, c.table_name, c.column_name, hit;
+        END IF;
+    END LOOP;
+END $$;
+
 DELETE FROM registry.pricing_plans
  WHERE id IN (SELECT id FROM public.removed_free_platform_plan);
 
