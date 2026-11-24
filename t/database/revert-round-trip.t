@@ -38,6 +38,7 @@ my @CHANGES = qw(
     priceops-entitlement-one-phase
     priceops-entitlement-units
     priceops-entitlement-lifecycle
+    bootstrap-platform-offers
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
@@ -98,6 +99,7 @@ my $sqitch = App::Sqitch->new();
 # succeeds and pg_dump renders it "default".enrollments, so the quoted assertion
 # below matches.
 my @SLUGS = qw( order user group default table check select where having limit offset );
+my @SLUGS = qw( order user group default table check select where having limit fetch );
 @CHANGES <= @SLUGS
     or die sprintf 'revert-round-trip needs one reserved-word slug per change: %d changes, %d slugs',
         scalar @CHANGES, scalar @SLUGS;

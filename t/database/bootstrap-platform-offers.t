@@ -124,4 +124,44 @@ subtest 'self offers carry holder is offerer and solo does not' => sub {
         for @$held;
 };
 
+my @SEEDED = qw( resources offers offer_versions entitlements );
+
+# The ids of every row of @SEEDED, by table.
+sub ids_by_table () {
+    return { map { $_ => $db->query("SELECT id FROM registry.$_ ORDER BY id")->arrays->flatten->to_array } @SEEDED };
+}
+
+subtest 'seed reverts and redeploys by its own rows' => sub {
+    is $db->query( q{
+        SELECT count(*) FROM registry.offer_versions v
+          JOIN registry.pricing_plans pp ON pp.id IN (v.id, v.offer_id, v.resource_id)
+    } )->array->[0], 0, 'no offer version reuses a pricing_plans id';
+    is $db->query( q{
+        SELECT count(*) FROM pg_constraint
+         WHERE conrelid = 'registry.offer_versions'::regclass
+           AND confrelid = 'registry.pricing_plans'::regclass
+    } )->array->[0], 0, 'and none references pricing_plans';
+
+    # A row the seed did not create, which the revert must leave alone.
+    my $resource = $db->query( q{INSERT INTO registry.resources (name, kind)
+                                 VALUES ('planted', 'unbounded') RETURNING id} )->hash->{id};
+    my $offer = $db->query( q{INSERT INTO registry.offers (name) VALUES ('Planted') RETURNING id} )
+        ->hash->{id};
+    $db->query( q{INSERT INTO registry.offer_versions
+                      (offer_id, version, resource_id, price_cents, units_per_acceptance, per_booking_cap)
+                  VALUES (?, 1, ?, 0, 1, 1)}, $offer, $resource );
+
+    my $deployed = ids_by_table();
+    lives_ok { $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', CHANGE . '^', '-y' ) }
+        'the seed reverts';
+    my $reverted = ids_by_table();
+    is_deeply $reverted->{resources}, [$resource], 'only the planted resource is left';
+    is_deeply $reverted->{offers},    [$offer],    'only the planted offer is left';
+    is scalar $reverted->{offer_versions}->@*, 1, 'only the planted version is left';
+    is_deeply $reverted->{entitlements}, [], 'no entitlement is left';
+
+    lives_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', CHANGE ) } 'the seed redeploys';
+    is_deeply ids_by_table(), $deployed, 'redeploying recreates the same rows';
+};
+
 done_testing;
