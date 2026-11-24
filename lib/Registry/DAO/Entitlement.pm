@@ -85,14 +85,13 @@ active and the period covers T (in_effect_sql).
     }
 
     # Pillar 4: does $holder_id hold a unit of $resource_id in effect now?
-    # shortcut: reads the period alone, as no state exists yet; 01a20448-1177
-    # rewires this to the one in-effect predicate.
     sub holds_unit_of ( $class, $db, $holder_id, $resource_id ) {
         $db = $db->db if $db isa Registry::DAO;
-        return $db->query( q{
+        my $in_effect = $class->in_effect_sql( 'e', q{tstzrange(now(), now(), '[]')} );
+        return $db->query( qq{
             SELECT EXISTS (
                 SELECT 1 FROM entitlement_units u JOIN entitlements e ON e.id = u.entitlement_id
-                 WHERE u.resource_id = ? AND e.in_effect @> now()
+                 WHERE u.resource_id = ? AND $in_effect
                    AND ? IN (e.holder_user_id, e.holder_family_member_id, e.holder_tenant_id))
         }, $resource_id, $holder_id )->array->[0];
     }
@@ -144,11 +143,11 @@ active and the period covers T (in_effect_sql).
         return scalar Registry::DAO::OfferVersion->find( $db, { id => $offer_version_id } );
     }
 
-    # Entitlements whose period covers $t, narrowed by $filter.
-    # shortcut: reads the period alone, as no state exists yet; 01a20448-1177
-    # rewires this to the one in-effect predicate (period and active state).
+    # Entitlements in effect at $t, narrowed by $filter.
     sub in_effect_at ( $class, $db, $t, $filter = {} ) {
-        return $class->find( $db, { %$filter, in_effect => \[ '@> ?::timestamptz', $t ] } );
+        my $in_effect = $class->in_effect_sql( 'entitlements',
+            q{tstzrange(?::timestamptz, ?::timestamptz, '[]')} );
+        return $class->find( $db, { %$filter, -and => [ \[ $in_effect, $t, $t ] ] } );
     }
 
     my @HOLDER = qw( holder_user_id holder_family_member_id holder_tenant_id );

@@ -15,6 +15,7 @@ use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Entitlement;
 use Registry::DAO::Tenant;
+use Registry::PriceOps::Hold;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -150,6 +151,88 @@ subtest 'ended entitlement frees its units' => sub {
     $skewed->end( $studio, 'dispute_lost', 'dp_units_1', $SOON );
     is $resource->free_units($studio), 4, 'one ended at a time still ahead frees its unit now';
     ok granted( $version, 4 ), 'so all four can be granted again';
+};
+
+# Is $e among the entitlements in effect at $t by the class lookup?
+sub listed_at ( $e, $t ) {
+    return scalar grep { $_->id eq $e->id } Registry::DAO::Entitlement->in_effect_at( $studio, $t );
+}
+
+my $INSIDE = '2021-06-01T00:00:00Z';    # inside every period that starts at $PAST
+
+subtest 'in effect iff period covers now and state active' => sub {
+    my ( $resource, $version ) = seats(10);
+    my $active = granted( $version, 1 );
+    my $over   = granted( $version, 1, ends_at => '2021-01-01T00:00:00Z' );
+    my $later  = granted( $version, 1, starts_at => '2099-01-01T00:00:00Z' );
+    my $ended  = granted( $version, 1 );
+    $ended = $ended->end( $studio, 'dispute_lost', 'dp_pred_1', $SOON );
+
+    ok $active->is_in_effect($studio), 'active and covering now: in effect';
+    ok !$over->is_in_effect($studio),  'active but its period is over: not';
+    ok !$later->is_in_effect($studio), 'active but not yet begun: not';
+    ok !$ended->is_in_effect($studio), 'covering now but ended: not';
+
+    ok listed_at( $active, $INSIDE ) && !listed_at( $ended, $INSIDE ),
+        'the in-effect lookup answers by the same rule';
+    my %holds = map { $_ => Registry::DAO::Entitlement->holds_unit_of( $studio, $_->holder_user_id,
+        $resource->id ) } $active, $ended;
+    ok $holds{$active}, 'the holder check finds the active holder';
+    ok !$holds{$ended}, 'and not the ended one';
+};
+
+subtest 'refunded entitlement not in effect inside its period' => sub {
+    my $e = entitlement();
+    ok listed_at( $e, $INSIDE ), 'an open entitlement is in effect inside its period';
+    $e->end( $studio, 'refunded', 're_inside_1' );
+    ok !listed_at( $e, $INSIDE ), 'refunded, it is not in effect at a time inside that period';
+    ok !reread($e)->is_in_effect( $studio, $INSIDE ), 'by either form of the predicate';
+};
+
+subtest 'ending sets state and closes period together' => sub {
+    my $period = sub ($e) {
+        $studio->query( q{SELECT isempty(in_effect) AS empty, upper(in_effect) = ended_at AS closed,
+                                 upper(in_effect) AS upper FROM entitlements WHERE id = ?}, $e->id )->hash;
+    };
+    my $open = entitlement()->end( $studio, 'expired', 'occurrence ended' );
+    ok $period->($open)->{closed}, 'ending an open period closes it at the ending time';
+
+    my $future = entitlement( undef, starts_at => '2099-01-01T00:00:00Z' )
+        ->end( $studio, 'refunded', 're_close_1' );
+    ok $period->($future)->{empty}, 'ending one before it began leaves an empty period';
+
+    my $over = entitlement( undef, ends_at => '2021-01-01T00:00:00Z' )
+        ->end( $studio, 'refunded', 're_close_2' );
+    like $period->($over)->{upper}, qr/^2021-01-01/, 'one whose period was already over keeps its end';
+
+    my $raw = entitlement();
+    throws_ok {
+        $studio->query( q{UPDATE entitlements SET state = 'refunded', ended_at = now(),
+                          ended_reason = 're_raw' WHERE id = ?}, $raw->id )
+    } qr/entitlements_ending_check/, 'ending without closing the period is refused';
+    throws_ok {
+        $studio->query( q{UPDATE entitlements SET in_effect = 'empty' WHERE id = ?}, $raw->id )
+    } qr/entitlements_in_effect_check/, 'and so is emptying an active period';
+    is reread($raw)->state, 'active', 'leaving it active';
+};
+
+subtest 'capacity counts active and held units never ended' => sub {
+    my ( $resource, $version ) = seats(10);
+    granted( $version, 2 );
+    granted( $version, 1, starts_at => '2099-01-01T00:00:00Z' );
+    granted( $version, 3 )->end( $studio, 'refunded', 're_cap_1' );
+    granted( $version, 1, ends_at => '2021-01-01T00:00:00Z' );
+    my $workflow = $studio->insert( 'workflows', { slug => 'cap-run', name => 'Cap run' },
+        { returning => 'id' } )->hash->{id};
+    Registry::PriceOps::Hold->place( $studio, {
+        resource_id     => $resource->id,
+        units           => 2,
+        workflow_run_id => $studio->insert( 'workflow_runs', { workflow_id => $workflow },
+            { returning => 'id' } )->hash->{id},
+        expires_at      => \"now() + interval '10 minutes'",
+    } );
+    is $resource->free_units($studio), 5,
+        'two active, one future-dated and two held count; three ended and one over do not';
 };
 
 done_testing;
