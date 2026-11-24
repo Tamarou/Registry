@@ -1032,7 +1032,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             billing_status trial_ends_at subscription_started_at
             magic_link_expiry_hours
             stripe_connect_account_id stripe_charges_enabled stripe_details_submitted
-            platform_pricing_plan_id created_from_ip
+            created_from_ip
         );
         my %tenant_data = map { $_ => $data->{$_} }
                           grep { exists $TENANT_COLUMNS{$_} } keys %$data;
@@ -1043,6 +1043,19 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         my $tx = $db->begin;
 
         my $tenant = $class->create($db, \%tenant_data);
+
+        # $data->{platform_entitlement} names { offer_version_id,
+        # payment_plan_id }: the tenant holds it in registry from now on, or
+        # the tenant is not created.
+        if ( my $grant = $data->{platform_entitlement} ) {
+            require Registry::DAO::Entitlement;
+            Registry::DAO::Entitlement->create( $db, {
+                %$grant,
+                holder_tenant_id => $tenant->id,
+                starts_at        => 'now',
+            } );
+        }
+
         $db->query('SELECT clone_schema(?)', $tenant->slug);
 
         # clone_schema changes the connection's search_path to the new schema

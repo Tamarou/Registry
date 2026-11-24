@@ -187,10 +187,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         # Nothing chosen, or what was chosen is no longer on offer. Signup no
         # longer asks which plan -- everyone starts on the one the platform
         # sells -- so this is the ordinary path, not the exceptional one.
-        # Returning undef here instead would leave platform_pricing_plan_id
-        # NULL, and revenue_share_fraction_for_tenant reads a NULL link as the
-        # Free plan's 0%: every tenant onboarded free of revenue share, with
-        # nothing in the flow to notice.
         return $self->_launch_plan($db);
     }
 
@@ -642,13 +638,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             if $data->{__remote_address};
         $provision_data{slug} = $slug if $slug;
 
-        # Persist the tenant -> platform plan link when a plan was selected, so
-        # the charge-time revenue-share resolver reads the chosen rate.
-        # The plan the charge resolved to, not the one run data remembers -- the
-        # tenants row is the charge-time rate authority, so linking a different
-        # plan than was billed is the divergence this guards against.
-        my $resolved_plan = $self->resolve_selected_plan( $db, $run );
-        $provision_data{platform_pricing_plan_id} = $resolved_plan->id if $resolved_plan;
+        # The new tenant holds the platform's offer to tenants from the moment
+        # it exists; Tenant->provision grants it in the same transaction.
+        $provision_data{platform_entitlement} = $self->_platform_offer_to_tenants($db);
 
         if ($subscription_data->{stripe_subscription_id}) {
             $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
@@ -700,6 +692,25 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         $run->update_data($db, $result);
 
         return $result;
+    }
+
+    # The platform's current published offer to tenants and its
+    # percentage-of-sales plan, as { offer_version_id, payment_plan_id }: a
+    # payment-processing version without the holder_is_offerer condition,
+    # which marks the platform's offers to itself.
+    # shortcut: grants the one offer without asking; 01a20416-6d40 replaces
+    # this with the tenant's own choice through the accept primitive.
+    method _platform_offer_to_tenants ($db) {
+        return $db->query( q{
+            SELECT v.id AS offer_version_id, p.id AS payment_plan_id
+              FROM registry.offer_versions v
+              JOIN registry.resources r ON r.id = v.resource_id
+              JOIN registry.offer_version_payment_plans p
+                ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
+             WHERE r.name = 'payment processing'
+               AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+               AND NOT v.conditions @> '[{"kind": "holder_is_offerer"}]'
+        } )->hash;
     }
 
     method template { 'tenant-signup/payment' }
