@@ -167,7 +167,7 @@ subtest 'admin cannot edit another tenants session' => sub {
 my $pla = Registry::DAO::Workflow->from_yaml( $dao,
     path('workflows/program-location-assignment.yml')->slurp );
 
-sub assign_with_override ( $user, $role, $forged = {} ) {
+sub assign_with_override ( $user, $role, $forged = {}, $finisher = undef ) {
     $n++;
     my $loc = Registry::DAO::Location->create( $db, {
         name => "PLA Loc $n", slug => "pla_loc_$n", address_info => {}, metadata => {} } );
@@ -186,6 +186,11 @@ sub assign_with_override ( $user, $role, $forged = {} ) {
         "location_configs[@{[ $loc->id ]}][schedule][monday]" => '15:00',
         "location_configs[@{[ $loc->id ]}][pricing_override]" => '25.00',
     } );
+    if ($finisher) {
+        # Another user finishes the run: the controller re-seeds `user` per request.
+        $run->data->{user} = { id => $finisher->id, user_type => $finisher->user_type, role => 'admin' };
+        $run->save($db);
+    }
     $run->process( $db, $step->('generate-events'), {
         confirm_generation                => 1,
         # A week of its own: Schedule::check_conflicts dies on a teacher who
@@ -223,6 +228,13 @@ subtest 'forged admin user creates no override price' => sub {
     ok $sid, 'the session was generated';
     is scalar plan_rows($sid)->@*, 0,
         'a user claiming admin in the submitted form prices nothing';
+};
+
+subtest 'staff override is not priced when an admin finishes the run' => sub {
+    my $sid = assign_with_override( $staff, 'staff', {}, $admin );
+    ok $sid, 'the admin finished the run and generated the session';
+    is scalar plan_rows($sid)->@*, 0,
+        'the override staff entered at configure-location prices nothing';
 };
 
 done_testing;
