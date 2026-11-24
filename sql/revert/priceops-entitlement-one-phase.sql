@@ -1,4 +1,4 @@
--- ABOUTME: Drop the one-schedule-phase exclusion and the entitlement's offer from every schema.
+-- ABOUTME: Drop the one-schedule-phase exclusion and the entitlement's offer and plan kind everywhere.
 -- ABOUTME: Restores the stamp trigger function that froze only the offer version and plan.
 
 -- Revert registry:priceops-entitlement-one-phase from pg
@@ -42,10 +42,20 @@ BEGIN
     LOOP
         CONTINUE WHEN to_regclass(format('%I.entitlements', s)) IS NULL;
 
-        -- Columns before the function: the trigger must not see a stale row type.
-        EXECUTE format('ALTER TABLE %I.entitlements DROP COLUMN offer_id', s);
+        -- Columns before the function, so the trigger never sees a row type
+        -- without them; dropping them drops the exclusion and both new keys.
+        EXECUTE format($f$
+            ALTER TABLE %1$I.entitlements
+                DROP COLUMN offer_id,
+                DROP COLUMN plan_kind,
+                ADD CONSTRAINT entitlements_payment_plan_fkey
+                    FOREIGN KEY (offer_version_id, payment_plan_id)
+                    REFERENCES %1$I.offer_version_payment_plans (offer_version_id, id)
+        $f$, s);
         EXECUTE format(
-            'ALTER TABLE %I.offer_versions DROP CONSTRAINT offer_versions_id_offer_key', s);
+            'ALTER TABLE %I.offer_versions DROP CONSTRAINT offer_versions_id_offer_id_key', s);
+        EXECUTE format(
+            'ALTER TABLE %I.offer_version_payment_plans DROP CONSTRAINT offer_version_payment_plans_offer_version_id_id_kind_key', s);
 
         IF s != 'registry' AND to_regprocedure(format('%I.entitlement_stamp()', s)) IS NOT NULL THEN
             EXECUTE replace(pg_get_functiondef('registry.entitlement_stamp()'::regprocedure),

@@ -63,8 +63,64 @@ subtest 'overlapping schedule phases refused' => sub {
     hold( $db, $v1, $DEC, $JAN, %clay );
 
     throws_ok { hold( $db, $v2, $DEC15, undef, %clay ) }
-        qr/entitlements_one_schedule_phase/,
+        qr/entitlements_coalesce_offer_id_in_effect_excl/,
         'a newer version of the same offer starting inside the first phase is refused';
+};
+
+subtest 'adjacent schedule phases accepted' => sub {
+    my %clay = tenant('clay_two');
+    my $v1   = new_offer( $db, 'Solo adjacent' );
+    my $v2   = next_version( $db, $v1 );
+    hold( $db, $v1, $DEC, $DEC15, %clay );
+
+    lives_ok { hold( $db, $v2, $DEC15, undef, %clay ) }
+        'a newer version starting where the first phase ends is accepted';
+};
+
+subtest 'schedule phases of different offers accepted' => sub {
+    my %clay = tenant('clay_three');
+    hold( $db, new_offer( $db, 'Solo A' ), $DEC, undef, %clay );
+
+    lives_ok { hold( $db, new_offer( $db, 'Solo B' ), $DEC, undef, %clay ) }
+        'the same holder holds a second offer over the same period';
+};
+
+# A person in $handle's schema, as a holder.
+sub person ( $handle, $name ) {
+    return ( holder_user_id => $handle->insert( 'users', { username => $name }, { returning => 'id' } )->hash->{id} );
+}
+
+# A tenant provisioned the way signup provisions one: the row, then its schema.
+sub new_tenant ($slug) {
+    Registry::DAO::Tenant->create( $db, { name => "Studio $slug", slug => $slug } );
+    $db->query( 'SELECT clone_schema(dest_schema => ?)', $slug );
+    return Registry::DAO->new( url => $dao->url, schema => $slug )->db;
+}
+
+my $studio = new_tenant('wheel_room');
+
+subtest 'discrete entitlements are not excluded by the schedule-phase constraint' => sub {
+    my %sam  = person( $studio, 'sam' );
+    my $seat = new_offer( $studio, 'Wheel class', 'discrete' );
+    hold( $studio, $seat, $DEC, $JAN, %sam );
+
+    lives_ok { hold( $studio, $seat, $DEC15, undef, %sam ) }
+        'a second one-time entitlement to the same offer over an overlapping period is accepted';
+};
+
+subtest 'constraint present in a new tenant schema' => sub {
+    my $fresh = new_tenant('glaze_room');
+    ok $fresh->query( q{
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = 'glaze_room.entitlements'::regclass
+           AND conname = 'entitlements_coalesce_offer_id_in_effect_excl' AND contype = 'x'
+    } )->rows, 'the new schema has the exclusion constraint';
+
+    my %pat     = person( $fresh, 'pat' );
+    my $members = new_offer( $fresh, 'Membership' );
+    hold( $fresh, $members, $DEC, undef, %pat );
+    throws_ok { hold( $fresh, next_version( $fresh, $members ), $DEC15, undef, %pat ) }
+        qr/entitlements_coalesce_offer_id_in_effect_excl/, 'and refuses an overlapping phase there';
 };
 
 done_testing;
