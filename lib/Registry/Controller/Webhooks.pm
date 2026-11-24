@@ -80,8 +80,19 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     method _settle_fee_refunded ( $db, $event, $seen ) {
         my $fee     = $event->{data}{object} // {};
         my $account = $fee->{account};
-        my $tenant  = $db->select( 'registry.tenants', ['slug'],
-            { stripe_connect_account_id => $account } )->hash;
+        # An exact, bound match, as at stripe_connect.
+        my $tenant  = defined $account && !ref $account
+            ? $db->select( 'registry.tenants', ['slug'],
+                { stripe_connect_account_id => $account } )->hash
+            : undef;
+
+        # No tenant to record into, and a redelivery cannot create one.
+        unless ($tenant) {
+            $self->app->log->warn( "Webhook event $event->{id} (application_fee.refunded) "
+                  . "names no tenant's account '" . _printable( $account // '' ) . "'" );
+            $self->render( status => 200, text => 'OK (no tenant)' );
+            return;
+        }
 
         $self->render_later;
         return (
@@ -97,12 +108,15 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 $db->query( q{SELECT set_config('search_path', ?, true)}, "$tenant->{slug}, public" );
                 # The highest amount reported wins: a redelivery, or an older
                 # event arriving late, never lowers what was recorded.
-                $db->query(
-                    q{UPDATE payments
-                         SET platform_fee_refunded_cents =
-                             GREATEST(COALESCE(platform_fee_refunded_cents, 0), ?)
-                       WHERE stripe_payment_intent_id = ?},
-                    $fee->{amount_refunded}, $charge->{payment_intent} );
+                $self->app->log->info( "Webhook event $event->{id}: charge "
+                      . _printable( $fee->{charge} // '' )
+                      . " matched no payment in tenant $tenant->{slug}" )
+                    unless $db->query(
+                        q{UPDATE payments
+                             SET platform_fee_refunded_cents =
+                                 GREATEST(COALESCE(platform_fee_refunded_cents, 0), ?)
+                           WHERE stripe_payment_intent_id = ?},
+                        $fee->{amount_refunded}, $charge->{payment_intent} )->rows;
                 $db->query(
                     q{UPDATE registry.webhook_events SET processed_at = now()
                       WHERE stripe_event_id = ?}, $event->{id} );
