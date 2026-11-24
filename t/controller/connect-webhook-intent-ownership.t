@@ -255,6 +255,25 @@ subtest 'a superseded Registry intent that succeeds is refunded and staff alerte
         'and the platform log says so at error';
 };
 
+subtest 'the paying parent is told the duplicate charge was refunded' => sub {
+    my $sale = a_superseded_sale('pi_parent_told');
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            Mojo::Promise->resolve({ id => 're_parent_told', status => 'succeeded' });
+        };
+        my ( $tx ) = post_intent( 'pi_parent_told', $sale, amount => 1999 );
+        $tx->status_is(200);
+        is run_refund_job('pi_parent_told')->{state}, 'finished', 'the refund is made';
+    }
+
+    my @told = grep { $_->{message} =~ /\$19\.99/ }
+        @{ notices_titled( $parent->id, '%refund%' ) };
+    is scalar @told, 1, 'the parent who paid is notified once';
+    like $told[0]{message}, qr/charged twice|duplicate/i, 'that it was a duplicate charge';
+    like $told[0]{message}, qr/refunded/i, 'and that it was refunded';
+};
+
 subtest 'a superseded refund that fails its last attempt tells staff to refund by hand, with amount and payment' => sub {
     my $sale = a_superseded_sale('pi_refund_fails');
 

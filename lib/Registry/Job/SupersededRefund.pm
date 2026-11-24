@@ -1,10 +1,11 @@
 # ABOUTME: Minion job that refunds, in full, a superseded intent a stale tab paid (ruling 7a).
-# ABOUTME: Retried on its attempts; when the last one fails, staff are told to refund it by hand.
+# ABOUTME: Retried on its attempts; tells the parent when it is made, and staff when the last attempt fails.
 use 5.42.0;
 use Object::Pad;
 
 class Registry::Job::SupersededRefund {
     use Registry::DAO::Notification;
+    use Registry::DAO::Payment;
     use Registry::Service::Stripe;
 
     sub register ($class, $app) {
@@ -36,6 +37,7 @@ class Registry::Job::SupersededRefund {
         }
 
         $job->app->log->info("superseded intent $intent refunded ($refund->{id})");
+        $self->_tell_parent( $db, $cents, $payment_id );
         return $job->finish("superseded intent $intent refunded as $refund->{id}");
     }
 
@@ -49,6 +51,23 @@ class Registry::Job::SupersededRefund {
             { payment_id => $payment_id, payment_intent_id => $intent } );
         $job->app->log->error( "refund of superseded intent $intent ($sum, payment "
               . "$payment_id) failed on its last attempt; refund it by hand: $err" );
+    }
+
+    # Whoever the payment row says paid, as ruling 7a asks. A row that has gone
+    # leaves nobody to tell; the refund stands.
+    method _tell_parent ( $db, $cents, $payment_id ) {
+        my $payment = Registry::DAO::Payment->find( $db, { id => $payment_id } ) or return;
+        Registry::DAO::Notification->create( $db, {
+            user_id  => $payment->user_id,
+            type     => 'general',
+            channel  => 'email',
+            subject  => 'Your duplicate payment was refunded',
+            message  => 'An earlier attempt at your payment went through after it had '
+                      . 'been replaced, so you were charged twice. We have refunded '
+                      . _sum($cents) . ' in full; it can take 5-10 business days to '
+                      . 'show on your statement. Nothing else changes.',
+            metadata => { payment_id => $payment_id },
+        } );
     }
 
     sub _sum ($cents) { defined $cents ? sprintf( '$%.2f', $cents / 100 ) : 'the full charge' }
