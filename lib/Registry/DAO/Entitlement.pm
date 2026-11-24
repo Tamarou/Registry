@@ -9,6 +9,7 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $id :param :reader;
     field $holder_user_id :param :reader = undef;             # a person
     field $holder_family_member_id :param :reader = undef;    # a child, held for by a payer
+    field $holder_tenant_id :param :reader = undef;           # a tenant, in registry
     field $payer_user_id :param :reader = undef;              # set only when not the holder
     field $offer_version_id :param :reader;
     field $payment_plan_id :param :reader;    # the plan's id within its offer version
@@ -16,7 +17,7 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
 
     sub table { 'entitlements' }
 
-    my @HOLDER = qw( holder_user_id holder_family_member_id );
+    my @HOLDER = qw( holder_user_id holder_family_member_id holder_tenant_id );
 
     # Entitlements held by $holder_id, whichever kind of holder it is.
     sub held_by ( $class, $db, $holder_id ) {

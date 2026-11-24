@@ -87,4 +87,50 @@ subtest 'child holder with separate payer found by either' => sub {
         'the parent paid but holds nothing';
 };
 
+subtest 'tenant holds a platform offer version' => sub {
+    my $tenant  = Registry::DAO::Tenant->create( $db, { name => 'Clay Co', slug => 'clay_co' } );
+    my $version = published_version( $db, 'Solo' );
+
+    my $e = Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $tenant->id,
+        offer_version_id => $version->id,
+        payment_plan_id  => 'pay',
+    } );
+
+    is_deeply [ map { $_->id } Registry::DAO::Entitlement->held_by( $db, $tenant->id ) ], [ $e->id ],
+        'the platform finds the entitlement by its tenant holder';
+    is Registry::DAO::Entitlement->find( $db, { id => $e->id } )->holder_tenant_id, $tenant->id,
+        'and records the tenant as its holder';
+};
+
+subtest 'holder kind and payment plan integrity enforced' => sub {
+    my $sam     = person( $studio, 'sam2' );
+    my $kid     = child( $studio, $sam, 'Kai' );
+    my $version = published_version( $studio, 'Glaze night' );
+    {
+        my $resource = Registry::DAO::Resource->create( $studio,
+            { name => 'Glaze seats', kind => 'finite', capacity => 4 } );
+        Registry::DAO::Offer->create( $studio, { name => 'Monthly glaze' } )->draft( $studio,
+            offer_terms( $resource->id, payment_plans => [ { id => 'monthly', kind => 'one_time' } ] ) )
+            ->publish($studio);
+    }
+    my %stamp = ( offer_version_id => $version->id, payment_plan_id => 'pay' );
+
+    throws_ok { Registry::DAO::Entitlement->create( $studio, {%stamp} ) }
+        qr/entitlements_one_holder/, 'an entitlement with no holder is refused';
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio,
+            { %stamp, holder_user_id => $sam, holder_family_member_id => $kid } )
+    } qr/entitlements_one_holder/, 'an entitlement with two holders is refused';
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio,
+            { holder_user_id => $sam, offer_version_id => $version->id, payment_plan_id => 'monthly' } )
+    } qr/entitlements_payment_plan_fkey/,
+        "another offer version's plan is refused";
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio,
+            { holder_user_id => $sam, offer_version_id => $version->id, payment_plan_id => 'nope' } )
+    } qr/entitlements_payment_plan_fkey/, 'a plan that does not exist is refused';
+};
+
 done_testing;
