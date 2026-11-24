@@ -538,4 +538,66 @@ subtest 'a demoted child is not re-adjudicated when a seat frees up' => sub {
         'and sends no enrollment confirmation for a seat that was not created';
 };
 
+sub refund_failure_of ($payment) { reload($payment)->metadata->{refund_last_failure} }
+
+# One unpaid increment on a one-child cart, as a failed capacity refund leaves it.
+sub owing_cart () {
+    my $child   = a_child();
+    my $payment = a_paid_cart({ session => a_session(1), child => $child });
+    reload($payment)->record_capacity_obligation( $db, 10000, [ $child->id ] );
+    return reload($payment);
+}
+
+sub refund_increment ($payment) {
+    my ($inc) = @{ $payment->unsettled_refund_increments($db) };
+    $payment->refund_async($db, { amount_cents => $inc->{cents},
+                                  idempotency_key => $payment->capacity_refund_key($inc->{seq}),
+                                  increment       => 1 })->wait;
+}
+
+# The runbook reads refund_last_failure first; once an increment has been paid,
+# a record left behind says money is still owed when it is not.
+subtest 'a paid capacity increment clears the recorded failure' => sub {
+    my $owing = owing_cart();
+    $owing->record_refund_failure( $db, "card_declined\n" );
+    ok refund_failure_of($owing), 'the failed attempt is recorded';
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async =
+        sub { Mojo::Promise->resolve({ id => 're_ob_clear', status => 'succeeded' }) };
+    refund_increment($owing);
+
+    is refund_failure_of($owing), undef, 'and the failure record is gone';
+};
+
+# refund_async's early return answers a replayed key from recorded_refunds,
+# which holds only succeeded non-increment refunds (drops); the success that
+# recorded it already cleared the slot. A failure there now is a sibling's on
+# the same cart, still owed, and a replay that moved no money must not erase it.
+subtest 'a replayed drop refund leaves a sibling increment failure in place' => sub {
+    my ( $a, $b ) = ( a_child(), a_child() );
+    my $session = a_session(1);
+    my $payment = a_paid_cart({ session => $session, child => $a },
+                               { session => $session, child => $b });
+    reload($payment)->record_capacity_obligation( $db, 10000, [ $a->id ] );
+    my $owing = reload($payment);
+    my $calls = 0;
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub {
+        $calls++;
+        Mojo::Promise->resolve({ id => 're_ob_drop', status => 'succeeded' });
+    };
+    my $drop = sub {
+        $owing->refund_async($db, { amount_cents => 5000,
+            idempotency_key => $owing->drop_refund_key('drop-b') })->wait;
+    };
+    $drop->();
+    $owing->record_refund_failure( $db, "card_declined\n" );
+    $drop->();
+
+    is $calls, 1, 'the replay is answered from the record, not Stripe';
+    ok refund_failure_of($owing), 'and the sibling failure is still there';
+};
+
 done_testing;

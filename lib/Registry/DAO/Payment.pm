@@ -2315,6 +2315,9 @@ SQL
         # recorded under this key gets that refund back. The guards below would
         # refuse it, because the payment already reflects it. Only a succeeded
         # refund is ever recorded there, so 'succeeded' is what was recorded.
+        # refund_last_failure is left alone: only a non-increment (drop) refund
+        # is recorded, and recording it cleared the slot, so a failure here now
+        # is a sibling's on the same cart -- still owed, and this moved no money.
         if ( my $key = $args->{idempotency_key} ) {
             my $done = $db->query( q{
                 SELECT r.key AS id, 'succeeded' AS status
