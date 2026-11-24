@@ -213,8 +213,8 @@ class Registry::Service::Stripe {
         return $self->_request_async('POST', 'subscriptions', $params);
     }
     
-    method retrieve_subscription_async($subscription_id) {
-        return $self->_request_async('GET', "subscriptions/$subscription_id");
+    method retrieve_subscription_async($subscription_id, $params = {}) {
+        return $self->_request_async('GET', "subscriptions/$subscription_id", $params);
     }
     
     method update_subscription_async($subscription_id, $params) {

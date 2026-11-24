@@ -62,16 +62,18 @@ my $SUB   = 'sub_inst_probe';
 # An invoice names its subscription, and the subscription names the schedule
 # that made it (Stripe sets that field; the seller cannot). The lookup is
 # answered here, recorded with the account it was asked on, and never sent to
-# Stripe. A subscription not listed is one Stripe could not return.
+# Stripe. A subscription not listed is one Stripe could not return. The
+# schedule is expanded, as the webhook asks for it.
 my %SUBSCRIPTIONS = (
-    $SUB                   => { id => $SUB,                     schedule => $SCHED },
-    sub_studio_own         => { id => 'sub_studio_own',         schedule => 'sub_sched_studio_own' },
+    $SUB                   => { id => $SUB, schedule => { id => $SCHED, metadata => {} } },
+    sub_studio_own         => { id => 'sub_studio_own',
+        schedule => { id => 'sub_sched_studio_own', metadata => {} } },
     sub_studio_unscheduled => { id => 'sub_studio_unscheduled', schedule => undef },
 );
 my @lookups;
 no warnings 'redefine';
-local *Registry::Service::Stripe::retrieve_subscription_async = sub ( $s, $id ) {
-    push @lookups, [ $s->stripe_account, $id ];
+local *Registry::Service::Stripe::retrieve_subscription_async = sub ( $s, $id, $params = {} ) {
+    push @lookups, [ $s->stripe_account, $id, $params ];
     my $sub = $SUBSCRIPTIONS{$id}
         or return Mojo::Promise->reject("Stripe invalid_request_error: No such subscription: '$id'");
     return Mojo::Promise->resolve($sub);
@@ -450,8 +452,8 @@ subtest 'an invoice naming only its subscription completes the earliest owed row
 
     is_deeply statuses(), [qw( completed completed pending )],
         'the schedule the subscription names marks the earliest owed row';
-    is_deeply \@lookups, [ [ $A->{account}, $SUB ] ],
-        "and the subscription was read on the tenant's own account";
+    is_deeply \@lookups, [ [ $A->{account}, $SUB, { 'expand[]' => 'schedule' } ] ],
+        "and the subscription was read, with its schedule, on the tenant's own account";
 };
 
 subtest 'a subscription with no schedule, or another schedule, changes nothing' => sub {
@@ -464,6 +466,44 @@ subtest 'a subscription with no schedule, or another schedule, changes nothing' 
             ->status_is(200)->content_is('OK');
         is_deeply statuses(), [qw( completed pending pending )], "$sub marks no instalment";
     }
+};
+
+# schedule_remaining_instalments records the rows only after Stripe made the
+# schedule, and a past due date bills at once. That invoice is Registry's --
+# the schedule names instalment one, still awaiting its schedule -- so it is
+# retried until the rows are there. A schedule naming no such payment is the
+# studio's own, and is ignored as before.
+subtest 'an invoice from a schedule not yet recorded asks for a retry' => sub {
+    $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
+    my $first = $A->{db}->insert( 'payments', {
+        user_id => $A->{user}->id, amount_cents => 3333, currency => 'USD',
+        status  => 'completed', instalment_seq => 1, instalment_count => 3,
+    }, { returning => 'id' } )->hash->{id};
+    local $SUBSCRIPTIONS{sub_early} = { id => 'sub_early',
+        schedule => { id => $SCHED, metadata => { payment_id => $first } } };
+    local $SUBSCRIPTIONS{sub_forged} = { id => 'sub_forged',
+        schedule => { id => 'sub_sched_forged', metadata => { payment_id => "not-a-uuid'" } } };
+
+    my $event = { type => 'invoice.paid', account => $A->{account},
+        data => { object => invoice( 'in_early', 'pi_early', subscription => 'sub_early' ) } };
+    Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(500);
+    is $dao->db->select( 'registry.webhook_events', ['id'],
+        { stripe_event_id => $event->{id} } )->rows, 0, 'the event is not claimed';
+
+    # The job commits: instalment one gets the schedule, the rest are owed.
+    $A->{db}->delete( 'payments', { id => $first } );
+    build_set();
+    Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(200);
+    is_deeply statuses(), [qw( completed completed pending )], "Stripe's retry marks the instalment";
+
+    # A schedule naming a payment that has its schedule, or no payment, is not ours.
+    local $SUBSCRIPTIONS{sub_early}{schedule}{id} = 'sub_sched_studio_twin';
+    for my $sub (qw( sub_early sub_forged )) {
+        Test::Registry::StripeWebhook::post_connect( $t, { type => 'invoice.paid', account => $A->{account},
+            data => { object => invoice( "in_$sub", "pi_$sub", subscription => $sub ) } } )
+            ->status_is(200)->content_is('OK');
+    }
+    is_deeply statuses(), [qw( completed completed pending )], 'and neither marks anything';
 };
 
 # Unreadable now is not "not ours": the claim is not taken and Stripe retries.

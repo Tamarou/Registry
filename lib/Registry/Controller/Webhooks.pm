@@ -237,7 +237,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             }
             $self->render_later;
             return Registry::Service::Stripe->from_env->for_account($account)
-                ->retrieve_subscription_async($sub_id)->then( sub ($subscription) {
+                ->retrieve_subscription_async( $sub_id, { 'expand[]' => 'schedule' } )
+                ->then( sub ($subscription) {
                     $self->_settle_connect_event( $db, $event, $slug, $subscription->{schedule} );
                 } )->catch( sub ($err) {
                     $self->app->log->error(
@@ -249,11 +250,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return $self->_settle_connect_event( $db, $event, $slug, undef );
     }
 
-    # Claim, work, commit for a Connect event in the tenant's schema. $schedule
-    # is the schedule Stripe says an invoice's subscription belongs to, if any.
-    method _settle_connect_event ($db, $event, $slug, $schedule) {
+    # Claim, work, commit for a Connect event in the tenant's schema. $sched
+    # is the schedule object Stripe says an invoice's subscription belongs to,
+    # if any; its id is Stripe's, its metadata the seller's.
+    method _settle_connect_event ($db, $event, $slug, $sched) {
         my $event_id = $event->{id};
         my $account  = $event->{account};
+        my $schedule = ref $sched eq 'HASH' ? $sched->{id} : undef;
 
         my $tx = $db->begin;
         return unless $self->_claim_event( $db, $event );
@@ -268,6 +271,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             if ( $event->{type} =~ INSTALMENT_INVOICE
                     && $self->_invoice_is_instalment($db, $schedule) ) {
                 $self->_process_instalment_invoice($db, $event, $schedule);
+            }
+            # Ours, but billed before schedule_remaining_instalments committed
+            # its rows: unclaimed, so Stripe retries once they are there.
+            elsif ( $event->{type} =~ INSTALMENT_INVOICE
+                    && $self->_schedule_not_recorded($db, $sched) ) {
+                die "instalment schedule $schedule is not recorded yet\n";
             }
             # The readiness mirror, for the account that sent it and no other:
             # the account named inside the event must be the one Stripe
@@ -482,6 +491,24 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             'SELECT 1 FROM payments WHERE stripe_schedule_id = ? LIMIT 1',
             $schedule )->hash;
         return $row ? 1 : 0;
+    }
+
+    # Does this schedule name instalment one of a set still awaiting its
+    # schedule? Its metadata is the seller's to edit, so it decides only retry
+    # against ignore, never which row is marked; and it must name a real
+    # payment in this tenant, so a seller's own schedule cannot keep Stripe
+    # retrying forever.
+    # shortcut: a schedule Stripe made whose job never commits retries until
+    # Stripe gives up (3 days); reconcile against Stripe if that ever happens.
+    method _schedule_not_recorded ($db, $sched) {
+        my $payment_id = ref $sched eq 'HASH' ? $sched->{metadata}{payment_id} : undef;
+        return 0 unless defined $payment_id && !ref $payment_id;
+
+        # Compared as text: the seller's value need not be a uuid.
+        return $db->query( q{
+            SELECT 1 FROM payments
+             WHERE id::text = ? AND instalment_seq = 1 AND stripe_schedule_id IS NULL
+        }, $payment_id )->rows ? 1 : 0;
     }
 
     # Mark one instalment of this set paid, or failed.
