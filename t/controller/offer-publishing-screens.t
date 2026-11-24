@@ -96,7 +96,7 @@ subtest 'admin completes offer publishing over http' => sub {
     $t->content_like(qr/Life drawing/)->content_like(qr/\$40/);
     my %reviewed = map { $_->text => $_->next->all_text } $t->tx->res->dom->find('#workflow-content dt')->each;
     is_deeply [ @reviewed{ 'Refund policy', 'Change policy', 'Use policy', 'Expiry policy' } ],
-        [ 'none', 'none', 'optional_attendance', 'never' ], 'the review shows every chosen policy before publishing';
+        [ 'None', 'None', 'Optional attendance', 'Never' ], 'the review shows every chosen policy by name before publishing';
 
     like submit_step( $t, 'publish', action => 'publish' ), qr{/complete\z},
         'publishing lands on the complete page';
@@ -108,6 +108,33 @@ subtest 'admin completes offer publishing over http' => sub {
          WHERE o.name = 'Life drawing' AND v.resource_id = ? AND v.published_at IS NOT NULL
     }, $seats->id )->array->[0];
     is $published, 1, 'one offer version is published for the resource';
+};
+
+subtest 'the review shows the percentage plan, policy names and the change fee in plain words' => sub {
+    my $class = $db->insert( 'projects', { name => 'Figure class', slug => 'figure-class' }, { returning => 'id' } )->hash->{id};
+    my $t = client($admin);
+    $t->get_ok('/offer-publishing')->status_is(200);
+    submit_step( $t, 'resource', resource_mode => 'class', class_project_id => $class );
+    submit_step( $t, 'offer-basics', offer_name => 'Figure nights' );
+    submit_step( $t, 'offer-price', %PRICE );
+    submit_step( $t, 'one-time-payment', one_time => 'declined' );
+    submit_step( $t, 'percentage-of-sales-payment', percentage_of_sales => 'offered', rate_percent => '2.5' );
+    submit_step( $t, 'refund-policy', refund => 'keep_fee_with_admin_exception' );
+    submit_step( $t, 'change-policy', change => 'window', window_hours => 24, fee_cents => 1550, targets => 'same_offer' );
+    submit_step( $t, 'use-policy', use => 'none' );
+    like submit_step( $t, 'expiry-policy', expiry => 'end_of_occurrence' ), qr{/publish\z}, 'on to the review';
+    check_screen( $t, 'publish' );
+    my %reviewed = map { $_->text => $_->next->all_text } $t->tx->res->dom->find('#workflow-content dt')->each;
+    is_deeply {
+        %reviewed{ 'One-time payment', 'Percentage of sales', 'Refund policy', 'Change policy', 'Use policy', 'Expiry policy' }
+    }, {
+        'One-time payment'    => 'Not offered',
+        'Percentage of sales' => 'Offered, at 2.5% of each sale',
+        'Refund policy'       => 'Keep the fee, unless an administrator makes an exception',
+        'Change policy'       => 'A change window, up to 24 hours before the start, for a fee of $15.50',
+        'Use policy'          => 'None',
+        'Expiry policy'       => 'At the end of the occurrence',
+    }, 'every term in plain words';
 };
 
 subtest 'offer name is escaped' => sub {

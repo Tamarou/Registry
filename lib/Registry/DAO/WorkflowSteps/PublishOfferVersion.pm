@@ -142,6 +142,11 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
             resource      => $id ? Registry::DAO::Resource->find( $db, { id => $id } ) : undef,
             class         => $class_id ? Registry::DAO::Project->find( $db, { id => $class_id } ) : undef,
             price_display => format_price( $price->{price_cents}, $price->{currency} ),
+            change_fee_display => defined( ( $data->{change_policy} // {} )->{fee_cents} )
+                ? format_price( $data->{change_policy}{fee_cents}, $price->{currency} ) : undef,
+            # The exact 4-place fraction as a percent; whole basis points, so 2 places hold it.
+            rate_display => defined( ( $data->{percentage_of_sales_payment} // {} )->{fraction} )
+                ? ( 0 + sprintf '%.2f', $data->{percentage_of_sales_payment}{fraction} * 100 ) . '%' : undef,
         };
     }
 }

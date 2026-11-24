@@ -8,6 +8,16 @@
 % my $resource = stash('resource');
 % my $refund = stash('refund_policy') // {};
 % my $change = stash('change_policy') // {};
+% my $percentage = stash('percentage_of_sales_payment') // {};
+% # Each answer by the name its step's screen gives it; an unknown one as stored.
+% my %named = (
+%     offered => 'Offered', declined => 'Not offered', none => 'None',
+%     full_until_cutoff => 'Full refund until a cutoff',
+%     keep_fee_with_admin_exception => 'Keep the fee, unless an administrator makes an exception',
+%     window => 'A change window', optional_attendance => 'Optional attendance',
+%     end_of_occurrence => 'At the end of the occurrence', never => 'Never',
+% );
+% my $name = sub { my $kind = shift; defined $kind ? $named{$kind} // $kind : '' };
 
 % if (my @errors = @{ stash('errors') // [] }) {
 <div class="alert alert-error" role="alert">
@@ -31,15 +41,17 @@
     <dt>Per-booking cap</dt>
     <dd><%= $price->{per_booking_cap} %></dd>
     <dt>One-time payment</dt>
-    <dd><%= ( stash('one_time_payment') // {} )->{one_time} // '' %></dd>
+    <dd><%= $name->( ( stash('one_time_payment') // {} )->{one_time} ) %></dd>
+    <dt>Percentage of sales</dt>
+    <dd><%= $name->( $percentage->{percentage_of_sales} ) %><%= stash('rate_display') ? ', at ' . stash('rate_display') . ' of each sale' : '' %></dd>
     <dt>Refund policy</dt>
-    <dd><%= $refund->{kind} // '' %><%= defined $refund->{cutoff_hours} ? ", until $refund->{cutoff_hours} hours before the start" : '' %></dd>
+    <dd><%= $name->( $refund->{kind} ) %><%= defined $refund->{cutoff_hours} ? ", until $refund->{cutoff_hours} hours before the start" : '' %></dd>
     <dt>Change policy</dt>
-    <dd><%= $change->{kind} // '' %><%= defined $change->{window_hours} ? ", up to $change->{window_hours} hours before the start, for a fee of $change->{fee_cents} cents" : '' %></dd>
+    <dd><%= $name->( $change->{kind} ) %><%= defined $change->{window_hours} ? ", up to $change->{window_hours} hours before the start, for a fee of " . stash('change_fee_display') : '' %></dd>
     <dt>Use policy</dt>
-    <dd><%= ( stash('use_policy') // {} )->{use} // '' %></dd>
+    <dd><%= $name->( ( stash('use_policy') // {} )->{use} ) %></dd>
     <dt>Expiry policy</dt>
-    <dd><%= ( stash('expiry_policy') // {} )->{expiry} // '' %></dd>
+    <dd><%= $name->( ( stash('expiry_policy') // {} )->{expiry} ) %></dd>
   </dl>
 </section>
 
