@@ -10,6 +10,7 @@ use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::StripeWebhook;
 
 use Registry::DAO;
 use Registry::DAO::Tenant;
@@ -124,6 +125,82 @@ subtest 'one time payment stamped and built as direct charge' => sub {
     ok !grep( { /\Atransfer_data/ } keys %$params ), 'and no transfer_data';
     ok !exists $params->{on_behalf_of}, 'nor on_behalf_of';
     like $params->{_idempotency_key}, qr/\Api-create:/, 'under the payment\'s idempotency key';
+};
+
+my $minion = $t->app->minion;
+
+# The continue_workflow_run jobs queued for $run.
+sub continuations ($run) {
+    my $jobs = $minion->jobs( { tasks => ['continue_workflow_run'] } );
+    my @mine;
+    while ( my $job = $jobs->next ) {
+        push @mine, $job if ( $job->{args}[0]{run_id} // '' ) eq $run->id;
+    }
+    return @mine;
+}
+
+# A payment started for $run, with the intent Stripe answered recorded on it.
+sub started_payment ( $s, $run, $intent_id ) {
+    my $payment = pay_step($s)->owed_payment( $s->{db}, $run )->{payment};
+    $payment->_record_intent( $s->{db}, { id => $intent_id, client_secret => "${intent_id}_secret" } );
+    return $payment;
+}
+
+# Sign and post a Connect event for $intent_id on $account.
+sub connect_event ( $type, $account, $intent_id, $payment_id, %opt ) {
+    my $event = {
+        ( $opt{id} ? ( id => $opt{id} ) : () ),
+        type    => $type,
+        account => $account,
+        data    => { object => {
+            id                     => $intent_id,
+            amount                 => 1060,
+            application_fee_amount => 26,
+            metadata               => { payment_id => $payment_id },
+        } },
+    };
+    return Test::Registry::StripeWebhook::post_connect( $t, $event );
+}
+
+sub status_of ( $s, $payment ) {
+    Registry::DAO::Payment->find( $s->{db}, { id => $payment->id } )->status;
+}
+
+sub step_of ( $s, $run ) {
+    Registry::DAO::WorkflowRun->find( $s->{db}, { id => $run->id } )->latest_step( $s->{db} )->slug;
+}
+
+subtest 'succeeded payment continues run unattended' => sub {
+    my $run     = owed_run($studio);
+    my $payment = started_payment( $studio, $run, "pi_otp_ok_$$" );
+
+    connect_event( 'payment_intent.succeeded', $studio->{account}, "pi_otp_ok_$$",
+        $payment->id, id => "evt_otp_ok_$$" )->status_is(200);
+
+    my $paid = Registry::DAO::Payment->find( $studio->{db}, { id => $payment->id } );
+    is $paid->status, 'completed', 'the payment is completed';
+    is $paid->platform_fee_cents, 26, 'with the fee Stripe reported';
+    is $paid->platform_offer_version_id,
+        platform_terms_for_tenant( $db, $studio->{slug} )->{id},
+        'stamped with the platform offer version it was taken under';
+
+    my @queued = continuations($run);
+    is scalar @queued, 1, 'one continue_workflow_run is queued for the run';
+    is_deeply $queued[0]{args}, [ { tenant => $studio->{slug}, run_id => $run->id } ],
+        "naming the run and the seller's schema";
+
+    connect_event( 'payment_intent.succeeded', $studio->{account}, "pi_otp_ok_$$",
+        $payment->id, id => "evt_otp_ok_$$" )->status_is(200);
+    connect_event( 'payment_intent.succeeded', $studio->{account}, "pi_otp_ok_$$",
+        $payment->id, id => "evt_otp_ok_again_$$" )->status_is(200);
+    is scalar continuations($run), 1, 'posting it again, or redelivered, queues no second';
+
+    $minion->perform_jobs( { id => $queued[0]{id} } );
+    my $info = $minion->job( $queued[0]{id} )->info;
+    is $info->{state}, 'finished', 'the job finished' or diag explain $info->{result};
+    is_deeply $info->{result}, { run_id => $run->id, stopped_at => 'after', reason => 'completed' },
+        'the run went on past the payment with nobody present';
+    is step_of( $studio, $run ), 'after', 'and is complete';
 };
 
 done_testing;

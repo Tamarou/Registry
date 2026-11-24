@@ -418,6 +418,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Set when a superseded intent was paid: the refund owed, after COMMIT.
         my $superseded;
 
+        # Set when an offer payment completed: the run to continue, after COMMIT.
+        my $continue_run;
+
         try {
             # Transaction-local, so it reverts at COMMIT and cannot ride back
             # into the connection pool the way a session-level setting would.
@@ -429,7 +432,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # One-time program payment finalized by Stripe (e.g. 3DS/redirect
             # cards confirmed off-site). Idempotent with the parent-return path.
             if ($event->{type} eq 'payment_intent.succeeded') {
-                $refund_for = $self->_process_payment_intent_succeeded($db, $event, \$superseded);
+                $refund_for = $self->_process_payment_intent_succeeded($db, $event,
+                    \$superseded, \$continue_run);
                 $schedule_for = $self->_instalment_to_schedule($db, $event);
             }
             else {
@@ -494,6 +498,19 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             }, 'instalment_schedule', "payment $schedule_for",
                "Schedule the remaining instalments of payment $schedule_for by hand in Stripe.",
                { payment_id => $schedule_for } );
+        }
+
+        # The run an offer payment was taken for goes on whether or not anyone
+        # is there to come back: a job drives it from where it was parked
+        # (Job::ContinueWorkflowRun). Queued once, by the delivery that
+        # completed the payment.
+        if ($continue_run) {
+            $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
+                $minion->enqueue( continue_workflow_run =>
+                    [ { tenant => $slug // 'registry', run_id => $continue_run } ] );
+            }, 'continue_workflow_run', "run $continue_run",
+               "Workflow run $continue_run was paid for but not continued: continue it by hand.",
+               { workflow_run_id => $continue_run } );
         }
 
         # The refund of a paid superseded intent, in a job for the attempts a
@@ -887,7 +904,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # $db arrives inside the caller's transaction with search_path already
     # pointing at the tenant, so every unqualified name below resolves there.
     # $superseded, if given, is set when the intent is one this row replaced.
-    method _process_payment_intent_succeeded ($db, $event, $superseded = \my $unused) {
+    # $continue_run, if given, is set to the workflow run an offer payment was
+    # taken for, when this delivery completed it.
+    method _process_payment_intent_succeeded ($db, $event, $superseded = \my $unused,
+                                              $continue_run = \my $unused_run) {
         my $intent     = $event->{data}{object} // {};
         my $payment_id = $intent->{metadata}{payment_id};
 
@@ -982,6 +1002,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # the row, so a redelivery or a later event cannot overwrite it.
         if ( $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} ) ) {
             $payment->record_platform_fee( $db, $intent );
+            # Only a payment sold under an offer version: a cart's run is
+            # finished by the parent, and its enrollment just below.
+            $$continue_run = $meta->{workflow_run_id}
+                if $payment->offer_version_id && $meta->{workflow_run_id};
         }
         else {
             $self->app->log->info(
