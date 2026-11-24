@@ -138,6 +138,22 @@ active and the period covers T (in_effect_sql).
         return scalar Registry::DAO::Payment->find( $db, { id => $payment_id } );
     }
 
+    # Records a partial refund Stripe reported: $refund names amount_cents and
+    # stripe_refund_id. It stays in effect. The same refund id records once.
+    method record_refund ( $db, $refund ) {
+        $db = $db->db if $db isa Registry::DAO;
+        $db->insert( 'entitlement_refunds', { %$refund, entitlement_id => $id },
+            { on_conflict => undef } );
+        return $self;
+    }
+
+    # Cents refunded against it so far by partial refunds.
+    method refunded_cents ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( 'SELECT coalesce(sum(amount_cents), 0) FROM entitlement_refunds
+                             WHERE entitlement_id = ?', $id )->array->[0];
+    }
+
     # The version it was sold under, superseded or not.
     method offer_version ($db) {
         return scalar Registry::DAO::OfferVersion->find( $db, { id => $offer_version_id } );

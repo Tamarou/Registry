@@ -1,5 +1,5 @@
 -- ABOUTME: An entitlement's lifecycle state: active, or ended once (expired, refunded, lost to a dispute) with when and why.
--- ABOUTME: Ending closes the period and never changes; each links, from insert, to the payment that created it.
+-- ABOUTME: Ending closes the period and never changes; each links to the payment that created it and its partial refunds.
 
 -- Deploy registry:priceops-entitlement-lifecycle to pg
 -- requires: priceops-entitlement-units
@@ -104,6 +104,20 @@ BEGIN
                               AND NOT upper_inc(in_effect)
                     END
                 )
+        $f$, s);
+
+        -- One record per Stripe refund against an entitlement: a partial
+        -- refund leaves it in effect. The refund id makes a redelivered
+        -- webhook record nothing new.
+        EXECUTE format($f$
+            CREATE TABLE IF NOT EXISTS %1$I.entitlement_refunds (
+                id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                entitlement_id   uuid NOT NULL REFERENCES %1$I.entitlements (id),
+                amount_cents     integer NOT NULL
+                    CONSTRAINT entitlement_refunds_amount_cents_check CHECK (amount_cents > 0),
+                stripe_refund_id text NOT NULL UNIQUE,
+                recorded_at      timestamp with time zone NOT NULL DEFAULT now()
+            )
         $f$, s);
     END LOOP;
 END $$;

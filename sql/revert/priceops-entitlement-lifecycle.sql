@@ -1,4 +1,4 @@
--- ABOUTME: Drop entitlement lifecycle state, ending, payment link and the relaxed period check everywhere.
+-- ABOUTME: Drop entitlement lifecycle state, ending, payment link, partial refunds and the relaxed period check everywhere.
 -- ABOUTME: Restores the stamp trigger function that froze only the stamp, and the period check with no empty ranges.
 
 -- Revert registry:priceops-entitlement-lifecycle from pg
@@ -17,6 +17,8 @@ BEGIN
         SELECT slug::name FROM registry.tenants WHERE slug != 'registry'
     LOOP
         CONTINUE WHEN to_regclass(format('%I.entitlements', s)) IS NULL;
+
+        EXECUTE format('DROP TABLE IF EXISTS %I.entitlement_refunds', s);
 
         -- Dropping state drops both checks that read it.
         EXECUTE format($f$

@@ -235,4 +235,19 @@ subtest 'capacity counts active and held units never ended' => sub {
         'two active, one future-dated and two held count; three ended and one over do not';
 };
 
+subtest 'partial refund recorded and entitlement stays in effect' => sub {
+    my $e = entitlement( undef, payment_id => payment(2000), payment_share_cents => 2000 );
+    is $e->refunded_cents($studio), 0, 'nothing is refunded yet';
+
+    $e->record_refund( $studio, { amount_cents => 500, stripe_refund_id => 're_part_1' } );
+    is $e->refunded_cents($studio), 500, 'a partial refund of 500 cents reads 500';
+    ok reread($e)->is_in_effect($studio), 'and the entitlement stays in effect';
+    is reread($e)->state, 'active', 'still active';
+
+    $e->record_refund( $studio, { amount_cents => 300, stripe_refund_id => 're_part_2' } );
+    is $e->refunded_cents($studio), 800, 'a second refund adds to it';
+    is $studio->query( 'SELECT count(*) FROM entitlement_refunds WHERE entitlement_id = ?', $e->id )
+        ->array->[0], 2, 'one record per Stripe refund';
+};
+
 done_testing;
