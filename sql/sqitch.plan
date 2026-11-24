@@ -121,3 +121,4 @@ platform-offer-resource-keeps-name [platform-offer-to-tenants-guard] 2026-11-24T
 payments-offer-version-stamp [platform-offer-resource-keeps-name] 2026-11-24T21:00:00Z Chris Prather <chris.prather@tamarou.com> # A payment is stamped with the offer version it was sold under, fixed once set
 drop-pricing-relationships [payments-offer-version-stamp] 2026-11-24T22:00:00Z Chris Prather <chris.prather@tamarou.com> # Drop pricing_relationships, its event log and view, and billing_periods from registry and every tenant schema
 remove-free-platform-plan [drop-pricing-relationships] 2026-11-24T23:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform Free plan goes: absence is not zero, so no tenant falls back to 0%
+entitlement-uses [remove-free-platform-plan] 2026-11-25T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Marking attendance records one use of the entitlement held for that occurrence, with who and when

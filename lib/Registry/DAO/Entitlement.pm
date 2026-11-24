@@ -174,6 +174,27 @@ active and the period covers T (in_effect_sql).
         return __PACKAGE__->new(%$row);
     }
 
+    # Records that it was used at occurrence $occurrence_id, marked by
+    # $recorded_by. Use is optional attendance: nothing requires a use, and
+    # recording one changes no state, units, period or money. Throws
+    # Registry::DAO::Entitlement::Refused, recording nothing, unless it is in
+    # effect now, its stamped use policy is optional attendance, and it holds
+    # units of that occurrence. A second record of the pair keeps the first.
+    method record_use ( $db, $occurrence_id, $recorded_by = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $refuse = sub ($why) { Registry::DAO::Entitlement::Refused->throw("$why\n") };
+        $refuse->('This booking is not in effect: it has ended or been refunded.')
+            unless $self->is_in_effect($db);
+        $refuse->("This booking's offer does not record attendance.")
+            unless ( ( $self->offer_version($db)->policies->{use} // {} )->{kind} // '' ) eq 'optional_attendance';
+        $refuse->('This booking holds no place in that occurrence.')
+            unless $self->units( $db, $occurrence_id )->@*;
+        $db->insert( 'entitlement_uses',
+            { entitlement_id => $id, occurrence_id => $occurrence_id, recorded_by => $recorded_by },
+            { on_conflict => undef } );
+        return $self;
+    }
+
     # Entitlements $payment_id created: what its refunds and disputes match.
     sub created_by_payment ( $class, $db, $payment_id ) {
         return $class->find( $db, { payment_id => $payment_id } );
