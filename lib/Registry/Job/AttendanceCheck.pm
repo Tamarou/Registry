@@ -4,11 +4,12 @@ use utf8;
 use Object::Pad;
 
 class Registry::Job::AttendanceCheck {
+    use Registry::Job::Recurring;
     use Registry::Job::WorkflowExecutor;
     
     # Register this job with Minion
     sub register ($class, $app) {
-        $app->minion->add_task(attendance_check => sub ($job, @args) {
+        Registry::Job::Recurring->add_task( $app, attendance_check => sub ($job, @args) {
             $class->new->run($job, @args);
         });
     }

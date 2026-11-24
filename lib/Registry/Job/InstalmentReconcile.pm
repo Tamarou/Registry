@@ -4,11 +4,12 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::Job::InstalmentReconcile {
+    use Registry::Job::Recurring;
     use Registry::Controller::Webhooks;
     use Registry::Service::Stripe;
 
     sub register ($class, $app) {
-        $app->minion->add_task( instalment_reconcile => sub ($job, @args) {
+        Registry::Job::Recurring->add_task( $app, instalment_reconcile => sub ($job, @args) {
             $class->new->run( $job, @args );
         } );
     }

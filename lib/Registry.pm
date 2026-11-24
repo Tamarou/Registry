@@ -11,6 +11,7 @@ use Registry::Job::InstalmentReconcile;
 use Registry::Job::InstalmentSchedule;
 use Registry::Job::SendNotifications;
 use Registry::Job::SupersededRefund;
+use Registry::Job::Recurring;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -1492,113 +1493,12 @@ class Registry :isa(Mojolicious) {
         }
     }
 
+    # Seeds each sweep's chain; from then on every run queues its own next
+    # run (Registry::Job::Recurring), so a sweep recurs between deploys.
     method setup_recurring_jobs {
-        # Schedule attendance check to run every minute
-        # Only schedule if not already scheduled
-        my $existing_attendance = $self->minion->jobs({
-            tasks => ['attendance_check'],
-            states => ['inactive', 'active']
-        })->total;
-
-        unless ($existing_attendance) {
-            # Schedule to run every minute
-            $self->minion->enqueue('attendance_check', [], {
-                delay => 60, # Start after 1 minute
-                attempts => 3,
-                priority => 5
-            });
-
-            $self->log->info("Scheduled recurring attendance check job");
-        }
-
-        # Schedule domain verification to run every 15 minutes
-        my $existing_domain_verification = $self->minion->jobs({
-            tasks => ['domain_verification'],
-            states => ['inactive', 'active']
-        })->total;
-
-        unless ($existing_domain_verification) {
-            $self->minion->enqueue('domain_verification', [], {
-                delay => 900, # Start after 15 minutes
-                attempts => 3,
-                priority => 5
-            });
-
-            $self->log->info("Scheduled recurring domain verification job");
-        }
-
-        # Drain the notification queue every 5 minutes.
-        #
-        # Notification->create writes a row and nothing sent it: no ->send on
-        # the enrollment path, no sweep, no task. Every enrollment confirmation
-        # ever queued was still sitting unsent (#421), which is why this is a
-        # drainer and not just a new message type.
-        my $existing_notifications = $self->minion->jobs({
-            tasks => ['send_notifications'],
-            states => ['inactive', 'active']
-        })->total;
-
-        unless ($existing_notifications) {
-            $self->minion->enqueue('send_notifications', [], {
-                delay => 300,
-                attempts => 3,
-                # Above the sweeps: a parent waiting on a confirmation notices
-                # sooner than a waitlist offer expiring.
-                priority => 7
-            });
-
-            $self->log->info("Scheduled recurring notification sending job");
-        }
-
-        # Settle instalment invoices Stripe collected but no webhook recorded.
-        # Ops can also run it at once: ./registry minion job -e instalment_reconcile
-        my $existing_reconcile = $self->minion->jobs({
-            tasks => ['instalment_reconcile'],
-            states => ['inactive', 'active']
-        })->total;
-
-        unless ($existing_reconcile) {
-            $self->minion->enqueue('instalment_reconcile', [], {
-                delay => 3600,
-                attempts => 3,
-                priority => 5
-            });
-
-            $self->log->info("Scheduled recurring instalment reconcile job");
-        }
-
-        # Schedule waitlist expiration check to run every 5 minutes
-        my $existing_expiration = $self->minion->jobs({
-            tasks => ['waitlist_expiration'],
-            states => ['inactive', 'active']
-        })->total;
-
-        unless ($existing_expiration) {
-            # Schedule to run every 5 minutes
-            $self->minion->enqueue('waitlist_expiration', [], {
-                delay => 300, # Start after 5 minutes
-                attempts => 3,
-                priority => 6
-            });
-
-            $self->log->info("Scheduled recurring waitlist expiration job");
-        }
-
-        # Schedule waitlist processing to run every 10 minutes
-        my $existing_processing = $self->minion->jobs({
-            tasks => ['process_waitlist'],
-            states => ['inactive', 'active']
-        })->total;
-
-        unless ($existing_processing) {
-            # Schedule to run every 10 minutes
-            $self->minion->enqueue('process_waitlist', [], {
-                delay => 600, # Start after 10 minutes
-                attempts => 3,
-                priority => 6
-            });
-
-            $self->log->info("Scheduled recurring waitlist processing job");
+        for my $task ( Registry::Job::Recurring->tasks ) {
+            Registry::Job::Recurring->enqueue_next( $self, $task )
+                and $self->log->info("Scheduled recurring $task job");
         }
     }
 

@@ -4,12 +4,13 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::Job::DomainVerification {
+    use Registry::Job::Recurring;
     use Registry::DAO::TenantDomain;
     use Registry::Service::Render;
 
     # Register this job with Minion
     sub register ($class, $app) {
-        $app->minion->add_task(domain_verification => sub ($job, @args) {
+        Registry::Job::Recurring->add_task( $app, domain_verification => sub ($job, @args) {
             $class->new->run($job, @args);
         });
     }

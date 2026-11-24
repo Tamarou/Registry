@@ -4,10 +4,11 @@ use utf8;
 use Object::Pad;
 
 class Registry::Job::WaitlistExpiration {
+    use Registry::Job::Recurring;
     
     # Register the job with Minion
     sub register ($class, $app) {
-        $app->minion->add_task(waitlist_expiration => sub ($job, @args) {
+        Registry::Job::Recurring->add_task( $app, waitlist_expiration => sub ($job, @args) {
             $class->perform($job, @args);
         });
     }
