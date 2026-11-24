@@ -18,6 +18,7 @@ While we strive to keep documentation up-to-date, the source code is the ultimat
 
 - `/architecture` - System architecture documents and design decisions
 - `/deployment` - Instructions and configurations for deploying Registry
+- `/guides` - Task guides, such as [publishing offers](guides/publishing-offers.md) as a tenant admin
 - `/operations` - Operator runbooks, such as [bootstrapping the platform tenant](operations/platform-tenant-bootstrap.md)
 - `/personas` - User personas and scenarios that drive development
 - `MISSION.md` - Core mission and vision statements
