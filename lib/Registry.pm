@@ -9,6 +9,7 @@ use Registry::Job::AttendanceCheck;
 use Registry::Job::DomainVerification;
 use Registry::Job::InstalmentSchedule;
 use Registry::Job::SendNotifications;
+use Registry::Job::SupersededRefund;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -159,6 +160,7 @@ class Registry :isa(Mojolicious) {
         Registry::Job::DomainVerification->register($self);
         Registry::Job::InstalmentSchedule->register($self);
         Registry::Job::SendNotifications->register($self);
+        Registry::Job::SupersededRefund->register($self);
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 

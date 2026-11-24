@@ -22,7 +22,9 @@ my $dao     = $test_db->db;
 my $db      = $dao->db;
 
 my $t = Test::Registry::Mojo->new('Registry');
-$t->app->helper(dao => sub { $dao });
+# The controller asks for no tenant; the refund job asks for its own by slug.
+$t->app->helper(dao => sub ($c, $tenant = undef) {
+    defined $tenant ? Registry::DAO->new( url => $test_db->uri, schema => $tenant ) : $dao });
 
 my @logs;
 $t->app->log->unsubscribe('message');
@@ -177,19 +179,41 @@ subtest 'platform endpoint warns on a slug-bearing payment_id with no row' => su
     is settlement($sale)->{payment}{status}, 'pending', 'and nothing settled';
 };
 
-subtest 'a superseded Registry intent that succeeds is refunded and staff alerted, nothing settles' => sub {
-    my $sale = a_sale( stripe_payment_intent_id => 'pi_superseded_first' );
+# A sale whose first intent, $first, a decline retry replaced: the row stores
+# "${first}_retry" and lists $first as superseded.
+sub a_superseded_sale ($first) {
+    my $sale = a_sale( stripe_payment_intent_id => $first );
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
+        Mojo::Promise->resolve({ id => "${first}_retry", client_secret => 'cs' });
+    };
+    $sale->create_payment_intent_async($tdb)->wait;
+    return $sale;
+}
 
-    # The decline path's retry: a fresh intent replaces the first on the row.
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
-            Mojo::Promise->resolve({ id => 'pi_superseded_retry', client_secret => 'cs' });
-        };
-        $sale->create_payment_intent_async($tdb)->wait;
-    }
+sub notices_titled ($user_id, $like) {
+    $tdb->query( q{SELECT subject, message FROM notifications
+                    WHERE user_id = ? AND subject ILIKE ?},
+        $user_id, $like )->hashes->to_array;
+}
+
+# The superseded refund job for $intent, run to its end by Minion's own worker,
+# retrying at once rather than after the backoff.
+sub run_refund_job ($intent) {
+    my $minion = $t->app->minion;
+    my $job = $minion->jobs({ tasks => ['superseded_refund'], notes => [$intent] })->next
+        or return undef;
+    my $backoff = $minion->backoff;
+    $minion->backoff( sub ($retries) { 0 } );
+    $minion->perform_jobs_in_foreground({ id => $job->{id} });
+    $minion->backoff($backoff);
+    return $minion->job( $job->{id} )->info;
+}
+
+subtest 'a superseded Registry intent that succeeds is refunded and staff alerted, nothing settles' => sub {
+    my $sale = a_superseded_sale('pi_superseded_first');
     my $row = Registry::DAO::Payment->find($tdb, { id => $sale->id });
-    is $row->stripe_payment_intent_id, 'pi_superseded_retry', 'the retry is the stored intent';
+    is $row->stripe_payment_intent_id, 'pi_superseded_first_retry', 'the retry is the stored intent';
     is_deeply $row->metadata->{superseded_intent_ids}, ['pi_superseded_first'],
         'and the first is recorded as superseded';
 
@@ -201,7 +225,7 @@ subtest 'a superseded Registry intent that succeeds is refunded and staff alerte
     };
     my $alerts_before = $alerts->();
 
-    my @refunds;
+    my ( @refunds, $info );
     @logs = ();
     {
         no warnings 'redefine';
@@ -212,8 +236,13 @@ subtest 'a superseded Registry intent that succeeds is refunded and staff alerte
         my ( $tx, $event_id ) = post_intent( 'pi_superseded_first', $sale );
         $tx->status_is(200, 'acknowledged');
         ok processed($event_id), 'the event is claimed and marked processed';
+        is scalar @refunds, 0, 'the webhook itself calls Stripe for nothing';
+        $info = run_refund_job('pi_superseded_first');
     }
 
+    ok $info, 'the refund is queued as a job';
+    is $info->{attempts}, 10, 'with ten attempts';
+    is $info->{state}, 'finished', 'which finishes';
     is scalar @refunds, 1, 'one refund is sent to Stripe';
     is $refunds[0][0], $account, 'on the seller account the charge was made on';
     is $refunds[0][1]{payment_intent}, 'pi_superseded_first', 'for the superseded intent';
@@ -223,6 +252,36 @@ subtest 'a superseded Registry intent that succeeds is refunded and staff alerte
     is_deeply settlement($sale), $before, 'no completion, no enrollment, no fee';
     is $alerts->(), $alerts_before + 1, 'the tenant admin is alerted';
     ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /pi_superseded_first/ } @logs ),
+        'and the platform log says so at error';
+};
+
+subtest 'a superseded refund that fails its last attempt tells staff to refund by hand, with amount and payment' => sub {
+    my $sale = a_superseded_sale('pi_refund_fails');
+
+    my ( $tries, $info ) = (0);
+    @logs = ();
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            $tries++;
+            Mojo::Promise->reject("Stripe api_error: try later\n");
+        };
+        my ( $tx ) = post_intent( 'pi_refund_fails', $sale, amount => 4250 );
+        $tx->status_is(200, 'acknowledged; the refund is the job\'s to make');
+        $info = run_refund_job('pi_refund_fails');
+    }
+
+    is $info->{state}, 'failed', 'the job ends failed';
+    is $tries, 10, 'after ten tries at Stripe';
+
+    my $by_hand = notices_titled( $admin->id, '%refund failed%' );
+    my @this = grep { $_->{message} =~ /pi_refund_fails/ } @$by_hand;
+    is scalar @this, 1, 'staff are told once, at the last attempt';
+    like $this[0]{subject}, qr/refund failed/i, 'that the refund failed';
+    like $this[0]{message}, qr/\$42\.50/, 'with the amount';
+    like $this[0]{message}, qr/\Q${\ $sale->id }\E/, 'and the payment';
+    ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /pi_refund_fails/
+                      && $_->[1] =~ /by hand/ } @logs ),
         'and the platform log says so at error';
 };
 

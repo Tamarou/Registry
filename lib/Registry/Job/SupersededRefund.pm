@@ -1,0 +1,55 @@
+# ABOUTME: Minion job that refunds, in full, a superseded intent a stale tab paid (ruling 7a).
+# ABOUTME: Retried on its attempts; when the last one fails, staff are told to refund it by hand.
+use 5.42.0;
+use Object::Pad;
+
+class Registry::Job::SupersededRefund {
+    use Registry::DAO::Notification;
+    use Registry::Service::Stripe;
+
+    sub register ($class, $app) {
+        $app->minion->add_task( superseded_refund => sub ($job, @args) {
+            $class->new->run( $job, @args );
+        } );
+    }
+
+    # $intent was charged $cents on the seller account $account, for payment
+    # $payment_id in tenant schema $slug, after a newer intent replaced it.
+    method run ( $job, $intent, $account, $cents, $payment_id, $slug ) {
+        my $db = $job->app->dao($slug)->db;
+
+        my $refund;
+        try {
+            $refund = Registry::Service::Stripe->from_env->for_account($account)->create_refund({
+                payment_intent   => $intent,
+                reason           => 'duplicate',
+                _idempotency_key => "refund:superseded:$intent",
+            });
+        }
+        catch ($err) {
+            # Failing retries the job while it has attempts left; only the last
+            # one is worth a person's time. Minion counts attempts down on each
+            # retry, so the last run is the one with one left.
+            $self->_tell_staff( $job, $db, $intent, $cents, $payment_id, $err )
+                if $job->info->{attempts} <= 1;
+            return $job->fail("refund of superseded intent $intent failed: $err");
+        }
+
+        $job->app->log->info("superseded intent $intent refunded ($refund->{id})");
+        return $job->finish("superseded intent $intent refunded as $refund->{id}");
+    }
+
+    method _tell_staff ( $job, $db, $intent, $cents, $payment_id, $err ) {
+        my $sum = _sum($cents);
+        Registry::DAO::Notification->alert_admins( $db,
+            'Refund failed: refund it by hand',
+            "Registry could not refund $sum charged on Stripe intent $intent for "
+          . "payment $payment_id, a replaced attempt a stale tab paid. "
+          . 'Refund it by hand in Stripe.',
+            { payment_id => $payment_id, payment_intent_id => $intent } );
+        $job->app->log->error( "refund of superseded intent $intent ($sum, payment "
+              . "$payment_id) failed on its last attempt; refund it by hand: $err" );
+    }
+
+    sub _sum ($cents) { defined $cents ? sprintf( '$%.2f', $cents / 100 ) : 'the full charge' }
+}
