@@ -115,6 +115,11 @@ subtest 'invalid finite capacity refused' => sub {
     for my $case (
         [ 'a capacity of zero' => 0 ],
         [ 'a missing capacity' => undef ],
+        [ 'a negative capacity' => -3 ],
+        [ 'a non-integer capacity' => '2.5' ],
+        [ 'a capacity that is not a number' => 'ten' ],
+        [ 'an absurdly large capacity' => '1000000000000' ],
+        [ 'a capacity past the integer column' => '2147483648' ],
     ) {
         my ( $label, $capacity ) = @$case;
         my ( $run, $result ) = resource_step( $admin, {
@@ -150,6 +155,103 @@ subtest 'admin publishes a class offer covering its occurrences' => sub {
     is $version->resource_id, undef, 'and no resource';
     is_deeply [ sort map { $_->id } $version->covered_resources($tdb)->@* ], [ sort @in_c ],
         'it covers the class\'s two occurrences and not the other class\'s';
+};
+
+my $staff = Test::Registry::Fixtures::create_user( $dao,
+    { username => 'clay_staff', name => 'Clay Staff', email => 'staff@clay.test', user_type => 'staff' } );
+join_tenant( $dao, $staff, 'staff', 'clay_studio' );
+
+my %NEW_SEATS = ( resource_mode => 'create', resource_name => 'Staff seats', resource_kind => 'finite', capacity => 5 );
+
+subtest 'staff run creates no resource' => sub {
+    my $before = resource_count();
+    my ( $run, $result ) = resource_step( $staff, {%NEW_SEATS} );
+    ok $result->{errors}, 'the resource step stays with an error for a staff run';
+    ok !$run->data->{resource_choice}, 'and the run holds no choice';
+
+    # Staff hold workflow-creation, so they can compose the allowlisted step
+    # into a workflow of their own.
+    my $own = Registry::DAO::Workflow->create( $tdb,
+        { slug => 'staff-own-resource', name => 'Staff own resource', description => 'composed by staff' } );
+    $own->add_step( $tdb, { slug => 'resource', description => 'resource',
+        class => 'Registry::DAO::WorkflowSteps::CreateResource' } );
+    my $composed = $own->new_run( $tdb, { data => { user => { id => $staff->id } } } );
+    my $out = $composed->process( $tdb, $own->first_step($tdb), {%NEW_SEATS} );
+    ok $out->{errors}, 'a staff-composed workflow\'s resource step stays with an error';
+
+    my ( undef, $forged ) = resource_step( $staff, { %NEW_SEATS, user => { id => $admin->id } } );
+    ok $forged->{errors}, 'form data claiming an admin does not get a staff run past it';
+    is resource_count(), $before, 'and no resource is created';
+};
+
+Test::Registry::Fixtures::create_tenant( $dao, { name => 'Glass Studio', slug => 'glass_studio' } );
+my $glass_db = Registry::DAO->new( url => $test_db->uri, schema => 'glass_studio' )->db;
+
+subtest 'foreign or missing occurrence binding refused' => sub {
+    my $foreign = event_of( class_in($glass_db), $glass_db );
+    my $bound   = event_of( class_in() );
+    Registry::DAO::Resource->for_occurrence( $tdb, $bound );
+    my $before = resource_count();
+    for my $case (
+        [ 'another tenant\'s occurrence'        => $foreign ],
+        [ 'an occurrence that does not exist'   => '00000000-0000-0000-0000-00000000abcd' ],
+        [ 'an id that is not a uuid'            => 'abc' ],
+        [ 'an occurrence that has its resource' => $bound ],
+    ) {
+        my ( $label, $event ) = @$case;
+        my ( $run, $result ) = resource_step( $admin, { %NEW_SEATS, event_id => $event } );
+        ok $result->{errors}, "$label stays with an error";
+        ok !$run->data->{resource_choice}, 'and the run holds no choice';
+    }
+    is resource_count(), $before, 'nothing is created';
+    is resource_count($glass_db), 0, 'nor in the other tenant';
+};
+
+subtest 'unbounded resource stores no capacity' => sub {
+    my $event = event_of( class_in() );
+    my ( undef, $result ) = resource_step( $admin, {
+        resource_mode => 'create', resource_name => 'Studio wifi', resource_kind => 'unbounded',
+        capacity      => 40,       event_id      => $event,
+    } );
+    ok !$result->{errors}, 'an unbounded resource with a stray capacity is accepted' or diag explain $result;
+    my $row = $tdb->query( 'SELECT * FROM resources WHERE name = ?', 'Studio wifi' )->hash;
+    is $row->{capacity}, undef, 'and stores no capacity';
+    is $row->{event_id}, undef, 'nor an occurrence';
+};
+
+subtest 'empty name or unknown kind refused' => sub {
+    my $before = resource_count();
+    for my $case (
+        [ 'an empty name'             => { resource_name => '' } ],
+        [ 'a whitespace-only name'    => { resource_name => " \t " } ],
+        [ 'an unknown resource kind'  => { resource_kind => 'infinite' } ],
+        [ 'a missing resource kind'   => { resource_kind => undef } ],
+        [ 'an unknown resource mode'  => { resource_mode => 'borrow' } ],
+        [ 'a missing resource mode'   => { resource_mode => undef } ],
+        [ 'an unknown class'          => { resource_mode => 'class', class_project_id => '00000000-0000-0000-0000-00000000abcd' } ],
+        [ 'another tenant\'s class'   => { resource_mode => 'class', class_project_id => class_in($glass_db) } ],
+    ) {
+        my ( $label, $fields ) = @$case;
+        my ( $run, $result ) = resource_step( $admin, { %NEW_SEATS, %$fields } );
+        ok $result->{errors}, "$label stays with an error";
+        ok !$run->data->{resource_choice}, 'and the run holds no choice';
+    }
+    is resource_count(), $before, 'nothing is created';
+};
+
+subtest 'resubmitted resource step leaves one resource' => sub {
+    my $before = resource_count();
+    my ( $run, $first ) = resource_step( $admin, { %NEW_SEATS, resource_name => 'Once seats' } );
+    my $step   = workflow()->get_step( $tdb, { slug => 'resource' } );
+    my $second = $run->process( $tdb, $step, { %NEW_SEATS, resource_name => 'Once seats' } );
+    ok !$second->{errors}, 'the second submission is accepted' or diag explain $second;
+    is resource_count(), $before + 1, 'and one resource is created, not two';
+    is $run->data->{resource_choice}{resource_id}, $first->{resource_choice}{resource_id},
+        'the run keeps the first one';
+
+    $run->process( $tdb, $step, { resource_mode => 'existing' } );
+    $run->process( $tdb, $step, { %NEW_SEATS, resource_name => 'Once seats' } );
+    is resource_count(), $before + 1, 'switching away and back creates none either';
 };
 
 done_testing;
