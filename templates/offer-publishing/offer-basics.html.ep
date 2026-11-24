@@ -21,7 +21,7 @@
     % }
     % for my $resource (@$resources) {
     <div>
-      <input type="radio" id="resource-<%= $resource->id %>" name="resource_id" value="<%= $resource->id %>" required>
+      <input type="radio" id="resource-<%= $resource->id %>" name="resource_id" value="<%= $resource->id %>" required<%= $resource->id eq ( stash('selected_resource_id') // '' ) ? ' checked' : '' %>>
       <label for="resource-<%= $resource->id %>">
         <%= $resource->name %>
         (<%= $resource->kind eq 'finite' ? $resource->capacity . ' available' : 'unbounded' %>)

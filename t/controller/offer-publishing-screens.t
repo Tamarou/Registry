@@ -69,7 +69,10 @@ my %PRICE  = ( price_cents => 4000, currency => 'USD', units_per_acceptance => 1
 
 subtest 'admin completes offer publishing over http' => sub {
     my $t = client($admin);
-    $t->get_ok('/offer-publishing')->status_is(200)->content_like(qr/Studio seats/);
+    $t->get_ok('/offer-publishing')->status_is(200);
+    check_screen( $t, 'resource' );
+    like submit_step( $t, 'resource', resource_mode => 'existing' ), qr{/offer-basics\z}, 'on to the offer';
+    $t->content_like(qr/Studio seats/);
     check_screen( $t, 'offer-basics' );
 
     like submit_step( $t, 'offer-basics', %BASICS ), qr{/offer-price\z}, 'on to the price';
@@ -102,6 +105,7 @@ subtest 'offer name is escaped' => sub {
     my $t    = client($admin);
     my $name = '<script>alert("offer")</script>';
     $t->get_ok('/offer-publishing')->status_is(200);
+    submit_step( $t, 'resource', resource_mode => 'existing' );
     submit_step( $t, 'offer-basics', %BASICS, offer_name => $name );
     submit_step( $t, 'offer-price', %PRICE );
     submit_step( $t, 'one-time-payment', one_time => 'offered' );
@@ -115,6 +119,7 @@ subtest 'offer name is escaped' => sub {
 subtest 'staff post to an admins offer run refused' => sub {
     my $t = client($admin);
     $t->get_ok('/offer-publishing')->status_is(200);
+    submit_step( $t, 'resource', resource_mode => 'existing' );
     my $price_url = submit_step( $t, 'offer-basics', %BASICS );
     my ($run_id)  = $price_url =~ m{/offer-publishing/([^/]+)/offer-price};
     my $before    = $db->query( 'SELECT data, latest_step_id FROM workflow_runs WHERE id = ?', $run_id )->hash;

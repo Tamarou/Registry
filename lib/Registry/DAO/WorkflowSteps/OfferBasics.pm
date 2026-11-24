@@ -28,7 +28,10 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
     }
 
     method prepare_template_data ( $db, $run, $params = {} ) {
-        return { resources => [ Registry::DAO::Resource->find( $db, {}, { -asc => 'name' } ) ] };
+        return {
+            resources            => [ Registry::DAO::Resource->find( $db, {}, { -asc => 'name' } ) ],
+            selected_resource_id => ( $run->data->{resource_choice} // {} )->{resource_id},
+        };
     }
 }
 

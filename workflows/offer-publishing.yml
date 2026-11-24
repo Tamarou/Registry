@@ -7,6 +7,12 @@ slug: offer-publishing
 
 # Policy and other payment-plan steps go before publish, each its own step.
 steps:
+  - slug: resource
+    label: Resource
+    description: Use an existing resource, create one, or cover a class
+    template: offer-publishing/resource
+    class: Registry::DAO::WorkflowSteps::CreateResource
+
   - slug: offer-basics
     label: Offer
     description: Choose one of this tenant's resources and name the offer
