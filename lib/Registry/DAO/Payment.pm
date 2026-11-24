@@ -2257,6 +2257,10 @@ SQL
         die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
             unless ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
 
+        my $asked = $args->{amount_cents};
+        die REFUND_NOT_SENT . ": Fee refund of '$asked' cents on payment $id is not a positive whole number\n"
+            if defined $asked && !( $asked =~ /\A[0-9]+\z/ && $asked > 0 );
+
         my $platform = Registry::Service::Stripe->from_env;
 
         return $self->stripe_client->retrieve_payment_intent_async(
@@ -2269,7 +2273,10 @@ SQL
             return $platform->retrieve_application_fee_async($fee_id);
         })->then(sub ($fee) {
             my $left   = $fee->{amount} - $fee->{amount_refunded};
-            my $amount = $args->{amount_cents} // $left;
+            my $amount = $asked // $left;
+            die REFUND_NOT_SENT . ": Fee refund of $amount cents on payment $id is more "
+              . "than the $left cents of its fee not yet returned\n"
+                unless $amount > 0 && $amount <= $left;
             return $platform->create_application_fee_refund_async( $fee->{id}, {
                 amount => $amount,
                 $args->{idempotency_key}

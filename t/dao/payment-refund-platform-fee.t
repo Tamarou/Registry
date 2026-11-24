@@ -105,4 +105,78 @@ subtest 'without an amount the whole remaining fee is refunded' => sub {
     is $refunds->[0]{args}[1]{amount}, 200, 'for what is left of the fee';
 };
 
+# Runs the fee refund and returns its error, or undef.
+sub fee_refund_error ( $payment, $calls, $args = {}, %reply ) {
+    my $err;
+    with_stripe( $calls, sub {
+        $err = $@ unless eval { settle( $payment->refund_platform_fee_async( $db, $args ) ); 1 };
+    }, %reply );
+    return $err;
+}
+
+subtest 'payment without intent is not sent' => sub {
+    my $payment = a_payment( stripe_payment_intent_id => undef );
+    my @calls;
+    my $err = fee_refund_error( $payment, \@calls );
+
+    like $err, qr/REFUND_NOT_SENT/, 'refused as not sent';
+    is( Registry::DAO::Payment->classify_refund_failure($err), 'not_sent',
+        'classified as certainly not sent' );
+    is scalar @calls, 0, 'no request of any kind';
+};
+
+subtest 'charge without application fee is not sent' => sub {
+    my $payment = a_payment();
+    my @calls;
+    my $err = fee_refund_error( $payment, \@calls, {},
+        charge => { id => 'ch_zero', application_fee => undef, application_fee_amount => undef } );
+
+    like $err, qr/REFUND_NOT_SENT/, 'refused as not sent';
+    like $err, qr/no application fee/, 'saying the charge took no fee';
+    is scalar @{ calls_of( \@calls, 'refund' ) }, 0, 'no fee refund request';
+};
+
+subtest 'invalid fee refund amount is refused' => sub {
+    for my $amount ( 0, -100, 1.5, '50abc', 201 ) {
+        my $payment = a_payment();
+        my @calls;
+        my $err = fee_refund_error( $payment, \@calls, { amount_cents => $amount },
+            fee => { id => 'fee_abc123', amount => 250, amount_refunded => 50 } );
+
+        like $err, qr/REFUND_NOT_SENT/, "amount $amount refused as not sent";
+        is scalar @{ calls_of( \@calls, 'refund' ) }, 0, "amount $amount sends no fee refund";
+    }
+
+    my $payment = a_payment();
+    my @calls;
+    my $err = fee_refund_error( $payment, \@calls, {},
+        fee => { id => 'fee_abc123', amount => 250, amount_refunded => 250 } );
+    like $err, qr/REFUND_NOT_SENT/, 'a fully refunded fee has nothing left to return';
+    is scalar @{ calls_of( \@calls, 'refund' ) }, 0, 'and sends no fee refund';
+};
+
+subtest 'charge lookup error sends no fee refund' => sub {
+    my $payment = a_payment();
+    my @calls;
+    my $err = fee_refund_error( $payment, \@calls, {},
+        intent => 'Stripe api_error: No such payment_intent' );
+
+    like $err, qr/No such payment_intent/, 'the Stripe error surfaces';
+    is scalar @{ calls_of( \@calls, 'intent' ) }, 1, 'the charge was looked up';
+    is scalar @{ calls_of( \@calls, 'refund' ) }, 0, 'no fee refund request';
+};
+
+subtest 'method writes no fee column' => sub {
+    my $payment = a_payment();
+    $db->update( 'payments', { platform_fee_cents => 250 }, { id => $payment->id } );
+    my $before = $db->select( 'payments', '*', { id => $payment->id } )->hash;
+
+    my @calls;
+    with_stripe( \@calls, sub { settle( $payment->refund_platform_fee_async($db) ) } );
+
+    is scalar @{ calls_of( \@calls, 'refund' ) }, 1, 'the fee refund was requested';
+    is_deeply $db->select( 'payments', '*', { id => $payment->id } )->hash, $before,
+        'the payment row is unchanged';
+};
+
 done_testing;
