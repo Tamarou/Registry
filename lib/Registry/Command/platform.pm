@@ -1,5 +1,5 @@
 # ABOUTME: Shell front end to the platform settings the platform tenant's admins change at /platform/settings.
-# ABOUTME: Same PlatformSetting DAO, no CLI-only path; `bootstrap` alone is CLI-only, as the deploy-time root.
+# ABOUTME: Same PlatformSetting DAO, no CLI-only path; only `bootstrap` and its `check` are CLI-only, as the deploy-time root.
 use 5.42.0;
 use utf8;
 use Object::Pad;
@@ -19,10 +19,23 @@ class Registry::Command::platform :isa(Mojolicious::Command) {
             * bootstrap          - write PLATFORM_STRIPE_ACCOUNT_ID and
                                    PLATFORM_STRIPE_READY onto the platform tenant,
                                    and PLATFORM_ADMIN_EMAIL onto its first admin
+            * check              - judge those three values without the database
 
         END
 
     method run ( $cmd = '', @args ) {
+        # Run by docker-entrypoint.sh before sqitch deploy, so it reads only
+        # the environment: the schema may not match this code yet. A problem
+        # dies, so ./registry exits non-zero and the boot stops unmigrated.
+        if ( $cmd eq 'check' ) {
+            Registry::DAO::Tenant->check_platform_config( {
+                map { $_ => $ENV{$_} }
+                    qw( PLATFORM_STRIPE_ACCOUNT_ID PLATFORM_STRIPE_READY PLATFORM_ADMIN_EMAIL )
+            } );
+            say 'Platform configuration is complete';
+            return;
+        }
+
         my $dao = $self->app->dao;
 
         if ( $cmd eq 'settings' ) {
