@@ -15,7 +15,7 @@ use Test::Registry::PricingProbe qw( solo_linked_tenant );
 use Registry;
 use Registry::DAO;
 use Registry::DAO::Payment;
-use Registry::DAO::WorkflowSteps::TenantPayment;
+use Registry::PriceOps::PlatformTerms ();
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
 my $test_db = Test::Registry::DB->new;
@@ -116,11 +116,8 @@ subtest 'alex publishes a later solo version' => sub {
 
 subtest 'signup resolves one platform offer after alex publishes' => sub {
     my ($current) = solo_current()->@*;
-    my $signup = Registry::DAO::WorkflowSteps::TenantPayment->new(
-        id => $current->{id}, slug => 'payment', workflow_id => $current->{id}, description => '',
-        class => 'Registry::DAO::WorkflowSteps::TenantPayment' );
-    is $signup->_platform_offer_to_tenants($db)->{offer_version_id}, $current->{id},
-        'signup finds exactly one platform offer to tenants: the new Solo version';
+    is_deeply [ map { $_->{id} } Registry::PriceOps::PlatformTerms::platform_offers_to_tenants($db)->@* ],
+        [ $current->{id} ], 'signup lists exactly one platform offer to tenants: the new Solo version';
 };
 
 subtest 'bootstrap solo holder keeps its rate' => sub {

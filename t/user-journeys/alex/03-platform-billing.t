@@ -77,10 +77,9 @@ $t->app->helper(dao => sub { $dao });
 #                 whatever it receives); 'admin_user_type' must be 'admin' to
 #                 avoid the invite-pending warning path in _provision_tenant.
 #   review      — 'terms_accepted' required by the controller (Workflows.pm:337-
-#                 358) BEFORE calling step->process; the step itself accepts
-#                 empty body but the controller gate refuses without it. This
-#                 POST also provisions: no plan is chosen and nothing is
-#                 charged, so review is the commit point.
+#                 358) BEFORE calling step->process; 'offer_version', the
+#                 preselected Solo, is required by the step. This POST also
+#                 provisions: nothing is charged, so review is the commit point.
 # ---------------------------------------------------------------------------
 
 # -- Step: land (starts the run) -------------------------------------------
@@ -138,7 +137,10 @@ like $review_page, qr/Solo/,
 # that is how "Registry Revenue Share - 2%" survived a move to 2.5%, and the
 # name is not a place the rate is allowed to live.
 my ($displayed_rate_str) =
-    $review_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+the\s+payments/i;
+    $review_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+each\s+payment/i;
+
+# The plan the review page preselects, which is what the applicant submits.
+my $preselected = $t->tx->res->dom->at('input[name="offer_version"][checked]');
 
 # -- Step: review (POST) --------------------------------------------------
 # The controller (Workflows.pm:337-358) validates terms_accepted and checks
@@ -147,6 +149,7 @@ my ($displayed_rate_str) =
 # all other required data must have been collected in earlier steps.
 $t->post_ok($review_url => form => {
     terms_accepted => 1,    # required by controller review-step validation
+    offer_version  => $preselected && $preselected->attr('value'),
 })->status_is(302);
 
 my $complete_url = $t->tx->res->headers->location;
@@ -164,11 +167,11 @@ ok $run, 'workflow run exists after funnel walk';
 my $run_data = $run->data;
 
 # ---------------------------------------------------------------------------
-# Assertion 1a: nothing is stashed about a choice nobody was offered
+# Assertion 1a: the run carries the preselected Solo version as the choice
 # ---------------------------------------------------------------------------
-subtest 'run data carries no plan selection' => sub {
-    ok !$run_data->{selected_pricing_plan},
-        'no selected_pricing_plan: the applicant was never asked';
+subtest 'run data carries the chosen offer version' => sub {
+    is $run_data->{selected_offer_version}, $SOLO_V1,
+        'the preselected Solo v1 is the choice carried';
 };
 
 # ---------------------------------------------------------------------------

@@ -193,38 +193,30 @@ subtest 'a bracketed variant cannot smuggle a structure into a server-owned key'
         '__tenant_slug is not a client-built structure';
 };
 
-subtest 'selected_pricing_plan cannot be planted by a client' => sub {
+subtest 'selected_offer_version cannot be planted by a client' => sub {
     my $run = run_on_second_step();
 
     # Same shape as the user_id bracket bypass above, on a different key. Only
-    # the pricing step may write this: it rebuilds the blob from the plan row it
-    # just validated, which is where the coming-soon refusal lives. A client-
-    # authored blob skips that refusal, and both of its consumers trust it --
-    # get_subscription_config bills amount_cents and _provision_tenant links the
-    # id as the charge-time rate authority.
-    #
-    # The damage runs the wrong way from the obvious guess: forcing the most
-    # expensive tier buys its LOWEST revenue share, so the platform cuts its own
-    # take, and an attacker-chosen amount_cents bills nothing for the privilege.
+    # signup's review step may write this, after checking the posted version
+    # is a current published platform offer to tenants; provisioning grants
+    # the version it names, so a planted one picks the terms the tenant gets.
     $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
-        'selected_pricing_plan[id]'           => '00000000-0000-0000-0000-0000000000ff',
-        'selected_pricing_plan[amount_cents]' => 0,
-        'selected_pricing_plan[plan_name]'    => 'Empire',
+        'selected_offer_version[id]' => '00000000-0000-0000-0003-000000000002',
     })->status_is(201);
 
-    ok !exists data_for($run->id)->{selected_pricing_plan},
-        'a posted selected_pricing_plan is not stored';
+    ok !exists data_for($run->id)->{selected_offer_version},
+        'a posted selected_offer_version is not stored';
 
     # The flat form too. The strip matches (?:\[|\z), and the \z branch is
     # load-bearing only for this key -- user_id and __tenant_slug are re-derived
     # immediately below it, so a bare posted value would be overwritten anyway.
     $run = run_on_second_step();
     $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
-        selected_pricing_plan => 'Empire',
+        selected_offer_version => '00000000-0000-0000-0003-000000000002',
     })->status_is(201);
 
-    ok !exists data_for($run->id)->{selected_pricing_plan},
-        'a posted selected_pricing_plan is not stored';
+    ok !exists data_for($run->id)->{selected_offer_version},
+        'a posted selected_offer_version is not stored';
 };
 
 subtest 'submitted seller account or tenant slug is ignored' => sub {
@@ -311,7 +303,10 @@ subtest 'a posted tenant id is ignored and signup provisions a new tenant' => su
         admin_username => 'planted_admin', admin_user_type => 'admin', tenant => $existing,
     } )->status_is(302);
     $url = $t->tx->res->headers->location;
-    $t->post_ok( $url => form => { terms_accepted => 1, tenant => $existing } )->status_is(302);
+    $t->post_ok( $url => form => {
+        terms_accepted => 1, tenant => $existing,
+        offer_version  => '00000000-0000-0000-0003-000000000001',
+    } )->status_is(302);
 
     my ($run_id) = $url =~ m{/tenant-signup/([^/]+)/};
     my $tenant = data_for($run_id)->{tenant};

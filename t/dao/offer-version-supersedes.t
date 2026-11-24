@@ -16,7 +16,7 @@ use Registry::DAO::Entitlement;
 use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Workflow;
-use Registry::DAO::WorkflowSteps::TenantPayment;
+use Registry::PriceOps::PlatformTerms ();
 use Registry::Utility::WorkflowProcessor;
 
 my $test_db = Test::Registry::DB->new;
@@ -228,11 +228,8 @@ subtest 'signup resolves one platform offer after a new solo version' => sub {
         'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '0' } } );
     is_deeply $own->conditions, [ { kind => 'holder_is_offerer' } ], 'a new version keeps its conditions';
 
-    my $signup = Registry::DAO::WorkflowSteps::TenantPayment->new(
-        id => $solo->id, slug => 'payment', workflow_id => $solo->id, description => '',
-        class => 'Registry::DAO::WorkflowSteps::TenantPayment' );
-    is $signup->_platform_offer_to_tenants($rdb)->{offer_version_id}, $solo->id,
-        'signup finds exactly one platform offer to tenants: the new Solo version';
+    is_deeply [ map { $_->{id} } Registry::PriceOps::PlatformTerms::platform_offers_to_tenants($rdb)->@* ],
+        [ $solo->id ], 'signup lists exactly one platform offer to tenants: the new Solo version';
 };
 
 # Solo is the one platform offer to tenants: a version that stops being one

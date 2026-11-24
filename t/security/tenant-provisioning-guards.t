@@ -15,6 +15,8 @@ use Test::Registry::DB;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Tenant;
+use Registry::DAO::Offer;
+use Test::Registry::Offers qw( offer_terms );
 use Mojo::Home;
 use YAML::XS qw(Load);
 
@@ -35,31 +37,16 @@ my $step = Registry::DAO::WorkflowStep->find( $db,
     { workflow_id => $workflow->id, slug => 'review' } );
 ok $step, 'the signup commit step exists' or BAIL_OUT 'no review step';
 
-# A plan with a monthly base, offered by the platform. Nothing seeded is both:
-# Studio and Empire carry one but are coming_soon, and the two legacy monthly
-# plans have suspended relationships -- all three are refused by
-# offered_platform_plan. Without this fixture the paid branch below cannot be
-# reached at all, and the subtests that exercise its guards would pass by
-# never running the code they name.
-my $PLATFORM_UUID = '00000000-0000-0000-0000-000000000000';
-my $paid_plan_id  = $db->query( q{
-    INSERT INTO registry.pricing_plans
-        (plan_scope, plan_name, plan_type, pricing_model_type, currency,
-         amount_cents, requirements, pricing_configuration, metadata)
-    VALUES ('tenant', 'Guard Test Monthly', 'standard', 'fixed', 'USD',
-            19900, '{}'::jsonb, '{"percentage": 0.02}'::jsonb, '{}'::jsonb)
-    RETURNING id
-} )->hash->{id};
-# consumer_id is a real users FK, so borrow whichever consumer the seeded
-# platform relationships already use rather than inventing one.
-my $consumer_id = $db->query(
-    'SELECT consumer_id FROM registry.pricing_relationships WHERE provider_id = ? LIMIT 1',
-    $PLATFORM_UUID )->hash->{consumer_id};
-$db->query( q{
-    INSERT INTO registry.pricing_relationships
-        (provider_id, consumer_id, pricing_plan_id, status)
-    VALUES (?, ?, ?, 'active')
-}, $PLATFORM_UUID, $consumer_id, $paid_plan_id );
+# A platform offer to tenants with a monthly base. Solo has none, so without
+# this fixture the paid branch below cannot be reached at all, and the
+# subtests that exercise its guards would pass by never running the code they
+# name.
+my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+my $paid_offer = Registry::DAO::Offer->create( $db, { name => 'Guard Test Monthly' } );
+my $paid_version_id = $paid_offer->draft( $db, offer_terms( '00000000-0000-0000-0001-000000000001',
+    price_cents   => 19900,
+    payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
+) )->publish($db)->id;
 
 # Enough run data that _provision_tenant would succeed if it were reached --
 # otherwise these tests could pass because provisioning failed for an unrelated
@@ -75,9 +62,9 @@ sub new_run_with_profile ( $slug, %opt ) {
             billing_email     => "admin\@$slug.example",
         },
         users => [ { username => "admin\@$slug.example", user_type => 'admin' } ],
-        # Put the run on a plan with a monthly base, so the step takes the
+        # Put the run on an offer with a monthly base, so the step takes the
         # branch that collects a card instead of the free-plan commit.
-        $opt{paid} ? ( selected_pricing_plan => { id => $paid_plan_id } ) : (),
+        $opt{paid} ? ( selected_offer_version => $paid_version_id ) : (),
     } );
     return $run;
 }
@@ -98,7 +85,7 @@ subtest 'without Stripe keys, production refuses to provision' => sub {
     delete local $ENV{STRIPE_PUBLISHABLE_KEY};
 
     my $run    = new_run_with_profile('guard_prod');
-    my $result = $step->process( $db, { collect_payment_method => 1 }, $run );
+    my $result = $step->process( $db, { collect_payment_method => 1, offer_version => $SOLO_V1 }, $run );
 
     ok !$result->{tenant_created}, 'no tenant is reported as created';
     ok !tenant_exists('guard_prod'), 'and none exists in the database';
@@ -115,7 +102,7 @@ subtest 'the production guard covers the free-plan commit too' => sub {
     delete local $ENV{STRIPE_PUBLISHABLE_KEY};
 
     my $run    = new_run_with_profile('guard_prod_free');
-    my $result = $step->process( $db, { terms_accepted => 1 }, $run );
+    my $result = $step->process( $db, { terms_accepted => 1, offer_version => $SOLO_V1 }, $run );
 
     ok !$result->{tenant_created}, 'no tenant is reported as created';
     ok !tenant_exists('guard_prod_free'), 'and none exists in the database';

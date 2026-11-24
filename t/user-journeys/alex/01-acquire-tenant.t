@@ -85,10 +85,10 @@ $t->app->helper(dao => sub { $dao });
 #                 _provision_tenant (pristine-output hazard noted in spec).
 #                 Team kept admin-only here to preserve pristine output.
 #   review      — 'terms_accepted' required by the controller (Workflows.pm)
-#                 BEFORE calling step->process; the step itself accepts empty
-#                 body but the controller gate refuses without it.  This POST
-#                 is also what provisions: there is no plan to choose and
-#                 nothing to charge, so review is the commit point.
+#                 BEFORE calling step->process; 'offer_version', the plan the
+#                 page preselects, is required by the step.  This POST is also
+#                 what provisions: nothing is charged, so review is the commit
+#                 point.
 # ---------------------------------------------------------------------------
 
 # Realistic identity: Portland-Art-Collective-style, $$-suffixed for uniqueness.
@@ -167,11 +167,12 @@ $t->get_ok($review_url)
       'review page names the plan the tenant is about to be put on');
 
 # -- Step: review (POST) -- accept terms ----------------------------------
-# The controller validates terms_accepted before calling step->process.
-# No other field is required at this step; all accumulation happened earlier.
+# The controller validates terms_accepted before calling step->process; the
+# step takes the plan the page preselected. All else accumulated earlier.
 # Expected: 302 -> /tenant-signup/<run-id>/complete
 $t->post_ok($review_url => form => {
     terms_accepted => 1,
+    offer_version  => $t->tx->res->dom->at('input[name="offer_version"][checked]')->attr('value'),
 })->status_is(302)
   ->header_like(Location => qr{/tenant-signup/[^/]+/complete$},
                 'review POST provisions and redirects to complete -- no payment page in between');

@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# ABOUTME: Signup provisioning grants the new tenant, in registry, an in-effect entitlement to the platform's one published offer to tenants.
+# ABOUTME: Signup provisioning grants the new tenant, in registry, an in-effect entitlement to the platform offer to tenants it chose.
 # ABOUTME: A bridge test: 01a20416-6d40 replaces the grant with the accept primitive and deletes this file.
 use 5.42.0;
 use warnings;
@@ -58,20 +58,20 @@ sub held ($slug) {
 
 subtest 'signup grants an entitlement to the published platform offer' => sub {
     my $slug = 'granted_studio';
-    signup_run($slug)->process( $db, $review, {} );
+    signup_run($slug)->process( $db, $review, { offer_version => $SOLO_V1 } );
 
     ok tenant_id($slug), 'the tenant was provisioned';
     my $held = held($slug);
     is scalar @$held, 1, 'it holds one entitlement in registry';
     my $e = $held->[0];
-    is $e->offer_version_id, $SOLO_V1, 'to Solo v1, the one offer to tenants';
+    is $e->offer_version_id, $SOLO_V1, 'to Solo v1, the offer to tenants it chose';
     is $e->payment_plan_id, 'revenue_share', 'under its percentage-of-sales plan';
     ok $e->is_in_effect($db), 'in effect now';
 };
 
 subtest 'the platform self-offer is never the one granted' => sub {
     my $slug = 'not_self_studio';
-    signup_run($slug)->process( $db, $review, {} );
+    signup_run($slug)->process( $db, $review, { offer_version => $SOLO_V1 } );
     my ($e) = held($slug)->@*;
     ok $e, 'an entitlement was granted';
     is_deeply $e && $e->offer_version($db)->conditions, [],
@@ -81,8 +81,8 @@ subtest 'the platform self-offer is never the one granted' => sub {
 subtest 'provisioning the same run twice leaves one tenant and one entitlement' => sub {
     my $slug = 'twice_studio';
     my $run  = signup_run($slug);
-    $run->process( $db, $review, {} );
-    my $again = eval { $run->process( $db, $review, {} ) };
+    $run->process( $db, $review, { offer_version => $SOLO_V1 } );
+    my $again = eval { $run->process( $db, $review, { offer_version => $SOLO_V1 } ) };
     is $@, '', 'the second press does not die';
     is $again && $again->{tenant}, tenant_id($slug), 'and answers with the same tenant';
     is $db->query( 'SELECT count(*) FROM registry.tenants WHERE slug LIKE ?', "$slug%" )->array->[0],
@@ -93,18 +93,16 @@ subtest 'provisioning the same run twice leaves one tenant and one entitlement' 
 # Nothing in registry but the grants above and the platform's own.
 sub entitlement_count { $db->query('SELECT count(*) FROM registry.entitlements')->array->[0] }
 
-subtest 'two published platform offers create no tenant' => sub {
+subtest 'with two published platform offers the chosen one is granted' => sub {
     my $offer = Registry::DAO::Offer->create( $db, { name => 'Studio' } );
-    $offer->draft( $db, offer_terms( $PAYMENT_PROCESSING,
+    my $studio = $offer->draft( $db, offer_terms( $PAYMENT_PROCESSING,
         price_cents   => 0,
         payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
     ) )->publish($db);
 
-    my $before = entitlement_count();
-    eval { signup_run('two_offer_studio')->process( $db, $review, {} ) };
-    like $@, qr/exactly one/, 'provisioning refuses';
-    ok !tenant_id('two_offer_studio'), 'no tenant';
-    is entitlement_count(), $before, 'no entitlement';
+    signup_run('two_offer_studio')->process( $db, $review, { offer_version => $studio->id } );
+    my ($e) = held('two_offer_studio')->@*;
+    is $e && $e->offer_version_id, $studio->id, 'the tenant holds the offer it chose';
 };
 
 subtest 'no published platform offer creates no tenant' => sub {
@@ -116,33 +114,14 @@ subtest 'no published platform offer creates no tenant' => sub {
                      AND NOT conditions @> '[{"kind": "holder_is_offerer"}]'} );
 
     my $before = entitlement_count();
-    eval { signup_run('no_offer_studio')->process( $db, $review, {} ) };
-    like $@, qr/exactly one/, 'provisioning refuses, rather than granting the self-offer';
+    my $result = signup_run('no_offer_studio')->process( $db, $review, { offer_version => $SOLO_V1 } );
+    like "@{ $result->{errors} // [] }", qr/unavailable/, 'signup refuses, rather than granting the self-offer';
     ok !tenant_id('no_offer_studio'), 'no tenant';
     is entitlement_count(), $before, 'no entitlement';
 };
 
 # Runs after the subtest above has superseded every offer to tenants.
 subtest 'with no published platform offer no user is created and Stripe is not called' => sub {
-    # A plan with a monthly base, so the paid run takes the card-collection
-    # branch that calls Stripe (fixture as in t/security/tenant-provisioning-guards.t).
-    my $PLATFORM_UUID = '00000000-0000-0000-0000-000000000000';
-    my $paid_plan_id  = $db->query( q{
-        INSERT INTO registry.pricing_plans
-            (plan_scope, plan_name, plan_type, pricing_model_type, currency,
-             amount_cents, requirements, pricing_configuration, metadata)
-        VALUES ('tenant', 'Offerless Monthly', 'standard', 'fixed', 'USD',
-                19900, '{}'::jsonb, '{"percentage": 0.02}'::jsonb, '{}'::jsonb)
-        RETURNING id
-    } )->hash->{id};
-    my $consumer_id = $db->query(
-        'SELECT consumer_id FROM registry.pricing_relationships WHERE provider_id = ? LIMIT 1',
-        $PLATFORM_UUID )->hash->{consumer_id};
-    $db->query( q{
-        INSERT INTO registry.pricing_relationships (provider_id, consumer_id, pricing_plan_id, status)
-        VALUES (?, ?, ?, 'active')
-    }, $PLATFORM_UUID, $consumer_id, $paid_plan_id );
-
     my @stripe;
     no warnings 'redefine';
     local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
@@ -151,18 +130,11 @@ subtest 'with no published platform offer no user is created and Stripe is not c
         return Mojo::Promise->new;
     };
 
-    my $paid = signup_run('offerless_paid');
-    $paid->update_data( $db, {
-        selected_pricing_plan => { id => $paid_plan_id },
-        billing_email         => 'offerless_paid@test.example',
-    } );
-    eval { $paid->process( $db, $review, { collect_payment_method => 1 } ) };
-    is_deeply \@stripe, [], 'the paid signup makes no Stripe call';
-
-    eval { signup_run('offerless_free')->process( $db, $review, {} ) };
-    like $@, qr/exactly one/, 'the free signup refuses';
-    ok !Registry::DAO::User->find( $db, { username => 'offerless_free_admin' } ),
-        'and creates no user';
+    my $result = signup_run('offerless')->process( $db, $review,
+        { offer_version => $SOLO_V1, collect_payment_method => 1 } );
+    like "@{ $result->{errors} // [] }", qr/unavailable/, 'signup refuses';
+    is_deeply \@stripe, [], 'and makes no Stripe call';
+    ok !Registry::DAO::User->find( $db, { username => 'offerless_admin' } ), 'and creates no user';
 };
 
 $test_db->cleanup_test_database;

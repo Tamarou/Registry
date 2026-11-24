@@ -11,11 +11,6 @@ use Test::More import => [qw( done_testing is note ok )];
 defer { done_testing };
 
 use Registry::DAO;
-# Explicitly, rather than relying on the incidental load it used to get: the
-# tenant-signup workflow no longer has a PricingPlanSelection step, and that
-# step class is what pulled PricingRelationship in.
-use Registry::DAO::PricingRelationship;
-use Registry::DAO::PricingPlan;
 use Registry::DAO::User;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows process_workflow);
@@ -26,25 +21,6 @@ my $dao = $test_db->db;
 import_all_workflows($dao);
 
 $ENV{DB_URL} = $dao->url;
-
-# Set up a pricing relationship for the test to use
-# Create a test user for the pricing relationship (required as consumer)
-my $test_user = Registry::DAO::User->find_or_create($dao->db, {
-    username => 'test_relationship_user',
-    passhash => '$2b$12$DummyHashForTesting'
-});
-
-# Get the Registry Standard pricing plan and create pricing relationship for the test
-my $standard_plan = Registry::DAO::PricingPlan->find($dao->db, { plan_name => 'Registry Standard - $200/month' });
-if ($standard_plan) {
-    # Create pricing relationship between platform tenant and standard plan
-    Registry::DAO::PricingRelationship->create($dao->db, {
-        provider_id => '00000000-0000-0000-0000-000000000000',  # Platform tenant UUID
-        consumer_id => $test_user->id,
-        pricing_plan_id => $standard_plan->id,
-        status => 'active'
-    });
-}
 
 my $t = Test::Mojo->new('Registry');
 
@@ -68,6 +44,7 @@ END {
             admin_email      => 'alice@example.com',
             admin_username   => 'Alice',
             terms_accepted   => '1',
+            offer_version    => platform_solo_offer_version_id($dao),
         }
     );
     

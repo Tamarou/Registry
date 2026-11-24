@@ -22,6 +22,7 @@
         </div>
     % }
 
+    <form id="review-form" action="<%= url_for 'workflow_process_step' %>" method="post">
     <div class="review-sections">
         <!-- Organization Information -->
         <div class="review-section">
@@ -124,7 +125,7 @@
                         <legend>Choose your plan</legend>
                         % for my $offer (@$offers) {
                             <div class="plan-terms">
-                                <input type="radio" form="review-form" name="offer_version"
+                                <input type="radio" name="offer_version"
                                        id="offer-<%= $offer->{offer_version_id} %>"
                                        value="<%= $offer->{offer_version_id} %>" required
                                        <%== $offer->{offer_version_id} eq ($plan->{offer_version_id} // '') ? 'checked' : '' %>>
@@ -206,7 +207,6 @@
 
     <!-- Terms, Confirmation, and Action Buttons -->
     % unless ($unavailable) {
-    <form id="review-form" action="<%= url_for 'workflow_process_step' %>" method="post">
         <div class="confirmation-section">
             <div class="terms-acceptance">
                 <label class="checkbox-container">
@@ -238,8 +238,8 @@
                 <span class="spinner"></span> Processing...
             </div>
         </div>
-    </form>
     % }
+    </form>
 </div>
 
 <style>
@@ -315,15 +315,6 @@
     background: #3182ce;
     text-decoration: none;
     color: white;
-}
-
-.pricing-badge {
-    background: #48bb78;
-    color: white;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    font-weight: 600;
-    font-size: 0.9rem;
 }
 
 .section-content {

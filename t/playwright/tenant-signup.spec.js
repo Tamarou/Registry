@@ -76,9 +76,9 @@ test.describe('Tenant signup workflow', () => {
   });
 
   // ===========================================================================
-  // 3. The plan reaches the applicant without being chosen
+  // 3. The review page lists the published plan, preselected
   // ===========================================================================
-  test('review step quotes the plan nobody was asked to pick', async ({ registryPage, testDB }) => {
+  test('review step lists the published plan, preselected', async ({ registryPage, testDB }) => {
     // Start workflow and advance through profile
     await registryPage.goto('/tenant-signup');
     await registryPage.click('button[type="submit"]');
@@ -99,14 +99,15 @@ test.describe('Tenant signup workflow', () => {
       await registryPage.waitForLoadState('networkidle');
     }
 
-    // Straight to review. Nothing asks which plan, and nothing asks for a card,
-    // so the terms the applicant is agreeing to have to be on this page.
+    // Straight to review, which lists the published plans with Solo
+    // preselected and asks for no card, so the terms are on this page.
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
     expect(registryPage.url()).toContain('/review');
 
     const bodyText = await registryPage.locator('body').textContent();
     expect(bodyText).toMatch(/solo/i);
-    expect(bodyText).toMatch(/% of the payments/i);
+    expect(bodyText).toMatch(/% of each payment/i);
+    await expect(registryPage.locator('input[name="offer_version"]:checked')).toHaveCount(1);
     // The page must not promise a trial: Solo is free and stays free.
     expect(bodyText).not.toMatch(/free trial/i);
   });
