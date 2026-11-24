@@ -185,4 +185,53 @@ subtest 'probe states terms the resolver returns' => sub {
         'stating terms again replaces them, for the rest of the test';
 };
 
+subtest 'probe refuses an over precise or out of range rate' => sub {
+    my $plans  = sub { $db->query('SELECT count(*) FROM registry.pricing_plans')->array->[0] };
+    my $before = platform_terms_for_tenant( $db, 'terms_stated' );
+    my $count  = $plans->();
+    for my $bad ( [ '0.00125', qr/4 decimal/ ], [ 2, qr/between 0 and 1/ ], [ -0.01, qr/between 0 and 1/ ] ) {
+        my ( $rate, $why ) = @$bad;
+        ok !eval { give_tenant_terms( $db, 'terms_stated', { rate => $rate } ); 1 },
+            "a rate of $rate is refused";
+        like $@, qr/give_tenant_terms/, "by the probe itself, not the database";
+        like $@, $why,                  "naming what is wrong with $rate";
+    }
+    is $plans->(), $count, 'no plan was written';
+    is_deeply platform_terms_for_tenant( $db, 'terms_stated' ), $before,
+        'and the tenant keeps the terms it held';
+};
+
+subtest 'probe leaves other tenants terms unchanged' => sub {
+    my %before = map { $_ => platform_terms_for_tenant( $db, $_ ) } $linked, 'terms_unlinked';
+    give_tenant_terms( $db, 'terms_stated', { rate => '0.0421', name => 'Only Mine' } );
+    is_deeply platform_terms_for_tenant( $db, $_ ), $before{$_}, "$_ holds the terms it held"
+        for sort keys %before;
+};
+
+subtest 'scoped probe restores terms after a die' => sub {
+    my $before = platform_terms_for_tenant( $db, $linked );
+    ok !eval {
+        with_tenant_plan( $db, $linked, { pricing_configuration => { percentage => '0.0999' } },
+            sub { die "block failed\n" } );
+        1;
+    }, 'the block dies';
+    is $@, "block failed\n", 'and its error propagates';
+    is_deeply platform_terms_for_tenant( $db, $linked ), $before, 'the prior terms are back';
+};
+
+subtest 'probe never edits an existing plan' => sub {
+    my $all  = sub { $db->query('SELECT * FROM registry.pricing_plans ORDER BY id')->hashes->to_array };
+    my $solo = sub { $db->query(q{SELECT * FROM registry.pricing_plans
+                                   WHERE plan_name = 'Solo' AND superseded_at IS NULL})->hash };
+    my ( $plans, $solo_before ) = ( $all->(), $solo->() );
+    ok $solo_before, 'the seeded Solo plan is there';
+
+    give_tenant_terms( $db, 'terms_stated', { rate => '0.0999', amount_cents => 7 } );
+
+    is_deeply $solo->(), $solo_before, "the Solo plan's terms are unchanged";
+    my %was = map { $_->{id} => $_ } @$plans;
+    is_deeply [ grep { $was{ $_->{id} } } @{ $all->() } ], $plans,
+        'as is every plan that existed before';
+};
+
 done_testing;

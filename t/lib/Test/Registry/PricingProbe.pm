@@ -9,6 +9,7 @@ use Exporter 'import';
 our @EXPORT_OK = qw( with_tenant_plan give_tenant_terms without_rate_check solo_linked_tenant );
 
 use Mojo::JSON qw( encode_json );
+use Registry::PriceOps::PlatformTerms ();
 
 # with_tenant_plan($db, $slug, \%overrides, $cb)
 #
@@ -68,6 +69,10 @@ sub with_tenant_plan ( $db, $slug, $overrides, $cb ) {
 #
 # Column-backed today; the switch to entitlements re-implements only this.
 sub give_tenant_terms ( $db, $slug, $terms ) {
+    # The resolver's own rule, so the probe refuses exactly what it would read.
+    Registry::PriceOps::PlatformTerms::_coerce_pct( $terms->{rate},
+        "give_tenant_terms for tenant '$slug'" );
+
     my $made = _probe_plan( $db, _solo_plan_id($db), {
         plan_name             => $terms->{name} // 'Stated terms',
         amount_cents          => $terms->{amount_cents} // 0,
