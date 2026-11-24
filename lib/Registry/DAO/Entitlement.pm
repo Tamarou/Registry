@@ -19,8 +19,21 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $payment_plan_id :param :reader;    # the plan's id within its offer version
     field $in_effect :param :reader;          # tstzrange, half-open [start, end)
     field $created_at :param :reader;
+    field $state :param :reader;                 # see LIFECYCLE
+    field $ended_at :param :reader = undef;      # set once, by end()
+    field $ended_reason :param :reader = undef;  # the Stripe refund or dispute id where there is one
 
     sub table { 'entitlements' }
+
+=head1 LIFECYCLE
+
+C<state> is C<active> until end() moves it, once, to one ended state:
+C<expired> (its occurrence ended), C<refunded> (a full refund reported by
+Stripe) or C<dispute_lost> (a lost dispute). Ending records C<ended_at> and
+C<ended_reason> and closes the period at C<ended_at>. In effect at T means
+active and the period covers T (in_effect_sql).
+
+=cut
 
     # $data names the holder, payer, stamp, and starts_at with an optional
     # ends_at; the period is stored half-open.
@@ -79,6 +92,35 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
                  WHERE u.resource_id = ? AND e.in_effect @> now()
                    AND ? IN (e.holder_user_id, e.holder_family_member_id, e.holder_tenant_id))
         }, $resource_id, $holder_id )->array->[0];
+    }
+
+    # The one in-effect rule, as SQL over entitlement row $e (an alias or table
+    # name): it is active and its period meets $when, a tstzrange expression.
+    # A point T is tstzrange(T, T, '[]').
+    sub in_effect_sql ( $class, $e, $when ) {
+        return "($e.state = 'active' AND $e.in_effect && $when)";
+    }
+
+    # Is it in effect at $t (default now)?
+    method is_in_effect ( $db, $t = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $sql = __PACKAGE__->in_effect_sql( 'e',
+            q{tstzrange(coalesce(?::timestamptz, now()), coalesce(?::timestamptz, now()), '[]')} );
+        return $db->query( "SELECT $sql FROM entitlements e WHERE e.id = ?", $t, $t, $id )->array->[0];
+    }
+
+    # The one lifecycle move: ends it as $to_state for $reason at $at (default
+    # now), closing its period there in the same UPDATE. The database refuses
+    # any move out of an ended state.
+    method end ( $db, $to_state, $reason, $at = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->query( q{
+            UPDATE entitlements
+               SET state = ?, ended_reason = ?, ended_at = coalesce(?::timestamptz, now()),
+                   in_effect = in_effect * tstzrange(NULL, coalesce(?::timestamptz, now()))
+             WHERE id = ? RETURNING *
+        }, $to_state, $reason, $at, $at, $id )->expand->hash;
+        return __PACKAGE__->new(%$row);
     }
 
     # The version it was sold under, superseded or not.
