@@ -110,4 +110,52 @@ subtest 'ending the entitlement closes operator surfaces' => sub {
     $t->get_ok('/platform/revenue')->status_is( 403, 'the revenue view is refused' );
 };
 
+# The published version in registry that buys resource $name.
+sub version_buying ($name) {
+    return $db->query( q{
+        SELECT v.id FROM registry.offer_versions v JOIN registry.resources r ON r.id = v.resource_id
+         WHERE r.name = ? AND v.published_at IS NOT NULL
+    }, $name )->array->[0];
+}
+
+subtest 'cloned table entitlement grants nothing' => sub {
+    my $own = grant_in_schema( $dao, $studio->slug, $studio->id, 'operator' );
+    ok $own->is_in_effect( $dao->connect_schema( $studio->slug )->db ),
+        "the studio's own copy records an in-effect operator entitlement";
+    ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ),
+        'the read method answers false through the registry handle';
+    ok !Registry::DAO::Tenant->holds( $dao->connect_schema( $studio->slug )->db, $studio->id, 'operator' ),
+        'and through a handle searching the studio schema first';
+};
+
+subtest 'future dated operator entitlement grants nothing' => sub {
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $studio->id,
+        offer_version_id => version_buying('operator'),
+        payment_plan_id  => 'one_time',
+        starts_at        => '2999-01-01T00:00:00Z',
+    } );
+    ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ),
+        'an operator entitlement starting in the future is not the right now';
+};
+
+subtest 'other resource does not grant operator' => sub {
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $studio->id,
+        offer_version_id => version_buying('email sending'),
+        payment_plan_id  => 'one_time',
+        starts_at        => 'now',
+    } );
+    ok Registry::DAO::Tenant->holds( $db, $studio->id, 'email sending' ),
+        'the studio holds email sending in effect';
+    ok !Registry::DAO::Tenant->holds( $db, $studio->id, 'operator' ), 'which is not operator';
+};
+
+subtest 'ordinary tenant does not hold operator' => sub {
+    my $plain = Test::Registry::Fixtures::create_tenant( $db, {
+        name => 'Plain Studio', slug => 'plain_operator_studio',
+    } );
+    ok !Registry::DAO::Tenant->holds( $db, $plain->id, 'operator' ), 'a provisioned tenant does not';
+};
+
 done_testing;
