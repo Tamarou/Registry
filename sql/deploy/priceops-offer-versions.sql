@@ -11,17 +11,26 @@ SET client_min_messages = 'warning';
 -- Immutability enforced here, not in the DAO, as pricing_plan_terms_immutable
 -- does: psql and fixtures are held to it too. The allowed change is a
 -- subtraction, so a column added later is protected automatically. A draft
--- (published_at NULL) is editable; once published only superseded_at may move.
+-- (published_at NULL) is editable or discardable; once published a version is
+-- never deleted, and only superseded_at may move, once, from NULL to a time.
 -- One shared function; each schema's table gets its own trigger.
 CREATE OR REPLACE FUNCTION registry.offer_version_immutable() RETURNS trigger AS $t$
 BEGIN
     IF OLD.published_at IS NULL THEN
-        RETURN NEW;
+        RETURN CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END;
     END IF;
-    IF ( to_jsonb(NEW) - 'superseded_at' ) IS DISTINCT FROM ( to_jsonb(OLD) - 'superseded_at' ) THEN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'offer_versions rows are append-only once published (offer % version %): '
+            'a published version cannot be deleted.',
+            OLD.offer_id, OLD.version;
+    END IF;
+    IF ( to_jsonb(NEW) - 'superseded_at' ) IS DISTINCT FROM ( to_jsonb(OLD) - 'superseded_at' )
+       OR ( OLD.superseded_at IS NOT NULL AND NEW.superseded_at IS DISTINCT FROM OLD.superseded_at )
+    THEN
         RAISE EXCEPTION
             'offer_versions rows are immutable once published (offer % version %): '
-            'publish a new version instead. Only superseded_at may change.',
+            'publish a new version instead. Only superseded_at may change, and only once.',
             OLD.offer_id, OLD.version;
     END IF;
     RETURN NEW;
@@ -99,7 +108,7 @@ BEGIN
             'DROP TRIGGER IF EXISTS offer_versions_immutable ON %I.offer_versions', s);
         EXECUTE format($f$
             CREATE TRIGGER offer_versions_immutable
-                BEFORE UPDATE ON %I.offer_versions
+                BEFORE UPDATE OR DELETE ON %I.offer_versions
                 FOR EACH ROW EXECUTE FUNCTION registry.offer_version_immutable()
         $f$, s);
     END LOOP;

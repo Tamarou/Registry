@@ -21,15 +21,31 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
 
     method is_published { defined $published_at }
 
+    # Drafting and publishing both read the offer's versions and then write
+    # one, so two writers to the same offer take turns on the offer row. Without
+    # it the second computes the same next number, or retires a version the
+    # first is replacing, and the database refuses it instead of queueing it.
+    # Joins the caller's transaction when there is one, so a workflow step can
+    # publish inside its own.
+    sub _with_offer_locked ( $db, $offer_id, $code ) {
+        my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+        $db->query( 'SELECT 1 FROM offers WHERE id = ? FOR UPDATE', $offer_id );
+        my $result = $code->();
+        $tx->commit if $tx;
+        return $result;
+    }
+
     # Appends the offer's next version number as a draft.
     sub draft ( $class, $db, $offer_id, $terms ) {
         $db = $db->db if $db isa Registry::DAO;
-        my $row = $db->query(
-            'INSERT INTO offer_versions (offer_id, version, resource_id)
-             SELECT ?, coalesce(max(version), 0) + 1, ?
-               FROM offer_versions WHERE offer_id = ?
-             RETURNING *',
-            $offer_id, $terms->{resource_id}, $offer_id )->hash;
+        my $row = _with_offer_locked( $db, $offer_id, sub {
+            $db->query(
+                'INSERT INTO offer_versions (offer_id, version, resource_id)
+                 SELECT ?, coalesce(max(version), 0) + 1, ?
+                   FROM offer_versions WHERE offer_id = ?
+                 RETURNING *',
+                $offer_id, $terms->{resource_id}, $offer_id )->hash;
+        } );
         return $class->new(%$row);
     }
 
@@ -38,23 +54,21 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     # database, and one with none would sell nothing.
     method publish ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        my $tx = $db->begin;
+        my $row = _with_offer_locked( $db, $offer_id, sub {
+            # Retired first, or the one-current index refuses the publish. Only
+            # an older version is retired, so publishing a stale draft over a
+            # newer current version is refused by that index.
+            $db->query(
+                'UPDATE offer_versions SET superseded_at = now()
+                  WHERE offer_id = ? AND version < ?
+                    AND published_at IS NOT NULL AND superseded_at IS NULL',
+                $offer_id, $version );
 
-        # Retired first, or the one-current index refuses the publish. Only an
-        # older version is retired, so publishing a stale draft over a newer
-        # current version is refused by that index rather than rolling back.
-        $db->query(
-            'UPDATE offer_versions SET superseded_at = now()
-              WHERE offer_id = ? AND version < ?
-                AND published_at IS NOT NULL AND superseded_at IS NULL',
-            $offer_id, $version );
-
-        my $row = $db->query(
-            'UPDATE offer_versions SET published_at = now()
-              WHERE id = ? AND published_at IS NULL RETURNING *', $id )->hash
-            or croak "offer $offer_id version $version is already published";
-
-        $tx->commit;
+            $db->query(
+                'UPDATE offer_versions SET published_at = now()
+                  WHERE id = ? AND published_at IS NULL RETURNING *', $id )->hash
+                or croak "offer $offer_id version $version is already published";
+        } );
         return blessed($self)->new(%$row);
     }
 }

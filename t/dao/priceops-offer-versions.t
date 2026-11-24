@@ -9,6 +9,8 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;
 use Test::Registry::DB;
+use Mojo::Pg;
+use POSIX ();
 use Registry::DAO::Resource;
 use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
@@ -156,6 +158,121 @@ subtest 'new tenant schema has offer tables and triggers' => sub {
          WHERE c.contype = 'f' AND t.relname = 'offer_versions' AND n.nspname = 'clay_corner'
     })->array->[0];
     is $fks, 2, 'and the tenant copy keeps both of its own foreign keys';
+};
+
+subtest 'published version delete refused' => sub {
+    my ( $offer, $v1 ) = published_offer('Glaze night');
+    throws_ok {
+        $db->query( 'DELETE FROM offer_versions WHERE id = ?', $v1->id )
+    } qr/offer \Q@{[ $offer->id ]}\E version 1/, 'deleting a published version is refused';
+    ok Registry::DAO::OfferVersion->find( $db, { id => $v1->id } ), 'and the version is still there';
+
+    my $draft = $offer->draft( $db, { resource_id => $seat->id } );
+    lives_ok { $db->query( 'DELETE FROM offer_versions WHERE id = ?', $draft->id ) }
+        'a draft, never sold under, can still be discarded';
+};
+
+subtest 'unpublishing refused by the database' => sub {
+    my ( $offer, $v1 ) = published_offer('Kids clay');
+    my $names = qr/offer \Q@{[ $offer->id ]}\E version 1/;
+    throws_ok {
+        $db->query( 'UPDATE offer_versions SET published_at = NULL WHERE id = ?', $v1->id )
+    } $names, 'setting a published version back to draft is refused';
+
+    $offer->draft( $db, { resource_id => $seat->id } )->publish($db);
+    throws_ok {
+        $db->query( 'UPDATE offer_versions SET superseded_at = NULL WHERE id = ?', $v1->id )
+    } $names, 'clearing the superseded marker while its successor is current is refused';
+    throws_ok {
+        $db->query( q{UPDATE offer_versions SET superseded_at = now() + interval '1 day' WHERE id = ?}, $v1->id )
+    } $names, 'and so is moving it: once superseded is final';
+};
+
+subtest 'duplicate version number refused' => sub {
+    my ( $offer, $v1 ) = published_offer('Raku firing');
+    throws_ok {
+        $db->query( 'INSERT INTO offer_versions (offer_id, version, resource_id) VALUES (?, 1, ?)',
+            $offer->id, $seat->id )
+    } qr/offer_versions_offer_version_key/, 'a second version 1 for the same offer is refused';
+};
+
+subtest 'invalid resource capacity refused' => sub {
+    for my $case (
+        [ { name => 'r', kind => 'finite' },                        'a finite resource with no capacity' ],
+        [ { name => 'r', kind => 'finite', capacity => -1 },        'a finite resource with a negative capacity' ],
+        [ { name => 'r', kind => 'unbounded', capacity => 5 },      'an unbounded resource given a capacity' ],
+        [ { name => 'r', kind => 'sometimes' },                     'an unknown kind' ],
+    ) {
+        throws_ok { $db->insert( 'resources', $case->[0] ) } qr/violates check constraint/,
+            "$case->[1] is refused";
+    }
+};
+
+subtest 'concurrent publishes leave one current version' => sub {
+    my ( $offer, $v1 ) = published_offer('Wheel throwing');
+    my $uri = $test_db->uri;
+
+    # Two real connections and a fork: one connection cannot interleave with
+    # itself. A holds its publish open; B starts its own and must wait for it.
+    pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
+    my $pid = fork() // die "fork: $!";
+    unless ($pid) {
+        close $parent_writes;
+        readline $child_reads;
+        my $pg  = Mojo::Pg->new($uri)->search_path( [ 'registry', 'public' ] );
+        my $bdb = $pg->db;
+        my $ok  = eval {
+            Registry::DAO::OfferVersion->draft( $bdb, $offer->id, { resource_id => $seat->id } )
+                ->publish($bdb);
+            1;
+        };
+        print STDERR "child publish failed: $@" unless $ok;
+        POSIX::_exit( $ok ? 0 : 1 );
+    }
+
+    close $child_reads;
+    my $pg  = Mojo::Pg->new($uri)->search_path( [ 'registry', 'public' ] );
+    my $adb = $pg->db;
+    my $tx  = $adb->begin;
+    Registry::DAO::OfferVersion->draft( $adb, $offer->id, { resource_id => $seat->id } )->publish($adb);
+    print $parent_writes "go\n";
+    $parent_writes->flush;
+    sleep 1;    # let B reach the offer and block behind A
+    $tx->commit;
+    waitpid $pid, 0;
+
+    is $? >> 8, 0, 'the second publish waits for the first and then succeeds';
+    is_deeply [ map { $_->version } $offer->versions($db)->@* ], [ 1, 2, 3 ],
+        'each publish got its own version number';
+    my $current = $db->query(
+        'SELECT array_agg(version) FROM offer_versions
+          WHERE offer_id = ? AND published_at IS NOT NULL AND superseded_at IS NULL',
+        $offer->id )->array->[0];
+    is_deeply $current, [3], 'and exactly one version, the last, is current';
+};
+
+subtest 'cross schema resource reference refused' => sub {
+    my $adb = new_tenant('studio_a');
+    my $bdb = new_tenant('studio_b');
+    my $b_only = Registry::DAO::Resource->create( $bdb, { name => 'B wheel', kind => 'finite', capacity => 2 } );
+    my $offer  = Registry::DAO::Offer->create( $adb, { name => 'A taster' } );
+
+    throws_ok { $offer->draft( $adb, { resource_id => $b_only->id } ) }
+        qr/offer_versions_resource_id_fkey/,
+        "tenant A's offer version cannot name a resource that only tenant B has";
+};
+
+subtest 'tenant connection never reads another tenants offers' => sub {
+    my $adb = new_tenant('studio_c');
+    my $bdb = new_tenant('studio_d');
+    my $res = Registry::DAO::Resource->create( $adb, { name => 'C wheel', kind => 'finite', capacity => 2 } );
+    my $offer = Registry::DAO::Offer->create( $adb, { name => 'C taster' } );
+    my $v1 = $offer->draft( $adb, { resource_id => $res->id } )->publish($adb);
+
+    ok !Registry::DAO::Offer->find( $bdb, { id => $offer->id } ), "B cannot find A's offer by id";
+    ok !Registry::DAO::OfferVersion->find( $bdb, { id => $v1->id } ), "nor A's offer version";
+    is_deeply [ Registry::DAO::Offer->find($bdb) ], [], 'B lists no offers at all';
+    ok !Registry::DAO::Offer->find( $db, { id => $offer->id } ), 'nor does the registry schema';
 };
 
 done_testing;
