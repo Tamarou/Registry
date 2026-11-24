@@ -171,4 +171,140 @@ subtest 'in effect lookup keeps the sold under version' => sub {
     isnt $v2->price_cents, 2000, 'not the new version\'s';
 };
 
+# A person in $handle's schema holding version 1 of a new offer from $START.
+sub held_entitlement ( $handle, $name, %extra ) {
+    my $holder  = person( $handle, $name );
+    my $version = published_version( $handle, "$name offer" );
+    return Registry::DAO::Entitlement->create( $handle, {
+        holder_user_id   => $holder,
+        offer_version_id => $version->id,
+        payment_plan_id  => 'pay',
+        starts_at        => $START,
+        %extra,
+    } );
+}
+
+subtest 'entitlement to a draft version refused' => sub {
+    my $sam      = person( $studio, 'sam4' );
+    my $resource = Registry::DAO::Resource->create( $studio,
+        { name => 'Draft seats', kind => 'finite', capacity => 4 } );
+    my $draft = Registry::DAO::Offer->create( $studio, { name => 'Not yet' } )
+        ->draft( $studio, offer_terms( $resource->id ) );
+
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio, {
+            holder_user_id   => $sam,
+            offer_version_id => $draft->id,
+            payment_plan_id  => 'pay',
+            starts_at        => $START,
+        } )
+    } qr/is a draft/, 'an entitlement to an unpublished version is refused';
+};
+
+subtest 'foreign holder or payer refused' => sub {
+    my $other    = new_tenant('kiln_room');
+    my $parent   = person( $other, 'otto' );
+    my $far_kid  = child( $other, $parent, 'Ola' );
+    my $sam      = person( $studio, 'sam5' );
+    my $version  = published_version( $studio, 'Open studio' );
+    my $nobody   = $db->query('SELECT gen_random_uuid()')->array->[0];
+    my $platform = Registry::DAO::Tenant->create( $db, { name => 'Elsewhere', slug => 'elsewhere' } );
+    my %stamp    = ( offer_version_id => $version->id, payment_plan_id => 'pay', starts_at => $START );
+
+    throws_ok { Registry::DAO::Entitlement->create( $studio, { %stamp, holder_user_id => $nobody } ) }
+        qr/entitlements_holder_user_id_fkey/, 'a holder who does not exist is refused';
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio,
+            { %stamp, holder_user_id => $sam, payer_user_id => $nobody } )
+    } qr/entitlements_payer_user_id_fkey/, 'a payer who does not exist is refused';
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio,
+            { %stamp, holder_family_member_id => $far_kid, payer_user_id => $sam } )
+    } qr/entitlements_holder_family_member_id_fkey/, "another tenant's child is refused";
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio,
+            { %stamp, holder_user_id => $sam, payer_user_id => $parent } )
+    } qr/entitlements_payer_user_id_fkey/, "another tenant's person as payer is refused";
+    throws_ok {
+        Registry::DAO::Entitlement->create( $studio, { %stamp, holder_tenant_id => $platform->id } )
+    } qr/entitlements_holder_tenant_id_fkey/, 'a tenant held in a studio schema is refused';
+};
+
+subtest 'empty in effect period refused' => sub {
+    throws_ok { held_entitlement( $studio, 'sam6', ends_at => '2026-11-30T00:00:00Z' ) }
+        qr/range lower bound must be less than or equal to range upper bound/,
+        'a period ending before it starts is refused';
+    throws_ok { held_entitlement( $studio, 'sam7', ends_at => $START ) }
+        qr/entitlements_in_effect_check/, 'a period ending as it starts is refused';
+    throws_ok { held_entitlement( $studio, 'sam8', starts_at => undef ) }
+        qr/entitlements_in_effect_check/, 'a period with no start is refused';
+};
+
+subtest 'in effect lookup is half open' => sub {
+    my $end = '2026-12-08T00:00:00Z';
+    my $e   = held_entitlement( $studio, 'sam9', ends_at => $end );
+    my $at  = sub ($t) {
+        scalar grep { $_->id eq $e->id } Registry::DAO::Entitlement->in_effect_at( $studio, $t );
+    };
+    ok $at->($START), 'in effect at the instant it starts';
+    ok !$at->($end),  'not in effect at the instant it ends';
+
+    throws_ok {
+        $studio->query( 'UPDATE entitlements SET in_effect = tstzrange(?, ?, ?) WHERE id = ?',
+            $START, $end, '[]', $e->id )
+    } qr/entitlements_in_effect_check/, 'a period that includes its end is refused';
+};
+
+subtest 'restamping by update refused' => sub {
+    my $resource = Registry::DAO::Resource->create( $studio,
+        { name => 'Two plan seats', kind => 'finite', capacity => 4 } );
+    my $version = Registry::DAO::Offer->create( $studio, { name => 'Two plans' } )->draft( $studio,
+        offer_terms( $resource->id,
+            payment_plans => [ { id => 'pay', kind => 'one_time' }, { id => 'card', kind => 'one_time' } ] ) )
+        ->publish($studio);
+    my $e     = held_entitlement( $studio, 'sam10', offer_version_id => $version->id );
+    my $other = published_version( $studio, 'Elsewhere offer' );
+
+    throws_ok { $e->update( $studio, { offer_version_id => $other->id } ) }
+        qr/stamp/, 'pointing it at another offer version is refused';
+    throws_ok { $e->update( $studio, { payment_plan_id => 'card' } ) }
+        qr/stamp/, 'pointing it at another of its version\'s plans is refused';
+    my $read = Registry::DAO::Entitlement->find( $studio, { id => $e->id } );
+    is_deeply [ $read->offer_version_id, $read->payment_plan_id ], [ $version->id, 'pay' ],
+        'the stamp is unchanged';
+};
+
+subtest 'referenced offer version delete refused' => sub {
+    my $e = held_entitlement( $studio, 'sam11' );
+    throws_ok { $studio->query( 'DELETE FROM offer_versions WHERE id = ?', $e->offer_version_id ) }
+        qr/cannot be deleted/, 'the published version it names cannot be deleted';
+
+    # The foreign key holds without the immutability trigger too.
+    my $tx = $studio->begin;
+    $studio->query('ALTER TABLE offer_versions DISABLE TRIGGER offer_versions_immutable');
+    throws_ok { $studio->query( 'DELETE FROM offer_versions WHERE id = ?', $e->offer_version_id ) }
+        qr/entitlements_payment_plan_fkey/, 'and the entitlement alone refuses the delete';
+    undef $tx;
+};
+
+subtest 'entitlements isolated by tenant' => sub {
+    my $adb    = new_tenant('studio_one');
+    my $bdb    = new_tenant('studio_two');
+    my $parent = person( $adb, 'ann' );
+    my $kid    = child( $adb, $parent, 'Abe' );
+    my $e = Registry::DAO::Entitlement->create( $adb, {
+        holder_family_member_id => $kid,
+        payer_user_id           => $parent,
+        offer_version_id        => published_version( $adb, 'A class' )->id,
+        payment_plan_id         => 'pay',
+        starts_at               => $START,
+    } );
+
+    is_deeply [ map { $_->id } Registry::DAO::Entitlement->held_by( $adb, $kid ) ], [ $e->id ],
+        'tenant A finds its own entitlement';
+    is_deeply [ Registry::DAO::Entitlement->held_by( $bdb, $kid ) ],    [], 'tenant B finds none by holder';
+    is_deeply [ Registry::DAO::Entitlement->paid_by( $bdb, $parent ) ], [], 'nor by payer';
+    is_deeply [ Registry::DAO::Entitlement->held_by( $db, $kid ) ],     [], 'nor does registry';
+};
+
 done_testing;

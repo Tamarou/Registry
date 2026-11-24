@@ -20,4 +20,16 @@ BEGIN
     END LOOP;
 END $$;
 
+-- clone_schema copies registry's functions too, so a tenant provisioned after
+-- deploy has its own copy; tables first, so no trigger still uses one.
+DO $$
+DECLARE
+    s name;
+BEGIN
+    FOR s IN SELECT slug::name FROM registry.tenants WHERE slug != 'registry' LOOP
+        EXECUTE format('DROP FUNCTION IF EXISTS %I.entitlement_stamp()', s);
+    END LOOP;
+END $$;
+DROP FUNCTION IF EXISTS registry.entitlement_stamp();
+
 COMMIT;

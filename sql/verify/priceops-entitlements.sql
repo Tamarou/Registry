@@ -17,6 +17,14 @@ BEGIN
         CONTINUE WHEN to_regclass(format('%I.offer_versions', s)) IS NULL;
         EXECUTE format(
             'SELECT id, holder_user_id, holder_family_member_id, holder_tenant_id, payer_user_id, offer_version_id, payment_plan_id, in_effect FROM %I.entitlements WHERE false', s);
+        -- The trigger is the enforcement; without it a stamp can be re-pointed.
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger
+             WHERE tgrelid = format('%I.entitlements', s)::regclass
+               AND tgname = 'entitlements_stamp'
+        ) THEN
+            RAISE EXCEPTION 'entitlements_stamp trigger missing in schema %', s;
+        END IF;
     END LOOP;
 END $$;
 
