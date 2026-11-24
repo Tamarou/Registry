@@ -158,7 +158,7 @@ subtest 'new tenant schema has offer tables and triggers' => sub {
           JOIN pg_namespace n ON n.oid = t.relnamespace
          WHERE c.contype = 'f' AND t.relname = 'offer_versions' AND n.nspname = 'clay_corner'
     })->array->[0];
-    is $fks, 2, 'and the tenant copy keeps both of its own foreign keys';
+    is $fks, 3, 'and the tenant copy keeps its own foreign keys: offer, resource and class';
 };
 
 subtest 'published version delete refused' => sub {

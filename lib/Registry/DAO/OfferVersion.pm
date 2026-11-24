@@ -9,11 +9,13 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Scalar::Util qw( blessed );
     use Mojo::JSON qw( to_json );
+    use Registry::DAO::Resource;
 
     field $id :param :reader;
     field $offer_id :param :reader;
     field $version :param :reader;
-    field $resource_id :param :reader;
+    field $resource_id :param :reader = undef;         # the one resource it buys, or
+    field $class_project_id :param :reader = undef;    # the class whose occurrences it covers
     field $price_cents :param :reader;             # whole smallest currency units
     field $currency :param :reader;                # lowercase ISO 4217, as Stripe takes it
     field $units_per_acceptance :param :reader;    # e.g. 2 seats for a couple
@@ -28,9 +30,23 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
 
     method is_published { defined $published_at }
 
-    # Whether accepting this version buys units of $resource. The one place
-    # that answers it: 01a20447-8f10 widens it to a class offer's coverage.
-    method buys ($resource) { $resource eq $resource_id }
+    # The resources accepting this version buys units of: its one resource,
+    # or every occurrence-resource of its class, including ones made after it
+    # was published, in occurrence order. The one coverage rule.
+    method covered_resources ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( q{
+            SELECT r.* FROM resources r LEFT JOIN events e ON e.id = r.event_id
+             WHERE r.id = ? OR e.project_id = ?
+             ORDER BY e.time, r.id
+        }, $resource_id, $class_project_id )->hashes
+            ->map( sub { Registry::DAO::Resource->new(%$_) } )->to_array;
+    }
+
+    # Whether accepting this version buys units of $resource_id.
+    method buys ( $db, $resource_id ) {
+        return !!grep { $_->id eq $resource_id } $self->covered_resources($db)->@*;
+    }
 
     # Drafting and publishing both read the offer's versions and then write
     # one, so two writers to the same offer take turns on the offer row. Without
@@ -126,12 +142,13 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         _check_conditions($conditions);
         my $row = _with_offer_locked( $db, $offer_id, sub {
             my $row = $db->query(
-                'INSERT INTO offer_versions (offer_id, version, resource_id, price_cents, currency,
-                        units_per_acceptance, per_booking_cap, policies, conditions)
-                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb
+                'INSERT INTO offer_versions (offer_id, version, resource_id, class_project_id,
+                        price_cents, currency, units_per_acceptance, per_booking_cap, policies, conditions)
+                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb
                    FROM offer_versions WHERE offer_id = ?
                  RETURNING *',
-                $offer_id, $terms->@{qw( resource_id price_cents )}, $terms->{currency} // 'usd',
+                $offer_id, $terms->@{qw( resource_id class_project_id price_cents )},
+                $terms->{currency} // 'usd',
                 $terms->@{qw( units_per_acceptance per_booking_cap )},
                 to_json($policies), to_json($conditions), $offer_id )->expand->hash;
             $db->insert( 'offer_version_payment_plans',

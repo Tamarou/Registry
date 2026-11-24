@@ -9,7 +9,11 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;
 use Test::Registry::DB;
+use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO::Resource;
+use Registry::DAO::Offer;
+use Registry::DAO::OfferVersion;
+use Registry::DAO::Project;
 use Registry::DAO::Tenant;
 
 my $test_db = Test::Registry::DB->new;
@@ -65,6 +69,34 @@ subtest 'an occurrence is its own finite resource' => sub {
     my ( $starts, $ends ) = $resource->occurrence_window($studio);
     ok same_instant( $starts, '2099-03-01T10:00:00Z' ), "starts at the event's time";
     ok same_instant( $ends,   '2099-03-01T11:30:00Z' ), 'ends duration minutes later';
+};
+
+# The published class offer version for $class, with day-one terms.
+sub class_offer ( $class, %more ) {
+    return Registry::DAO::Offer->create( $studio, { name => 'Wheel class ' . ++$made } )
+        ->draft( $studio, offer_terms( undef, class_project_id => $class, %more ) )->publish($studio);
+}
+
+# Occurrence-resource ids, sorted, for comparing sets.
+sub ids (@resources) { [ sort map { $_->id } @resources ] }
+
+subtest 'class offer covers current and later occurrences' => sub {
+    my $c = class_in( $studio, seats_per_occurrence => 12 );
+    is( Registry::DAO::Project->find( $studio, { id => $c } )->seats_per_occurrence, 12,
+        'the class record holds its default seats per occurrence' );
+
+    my @now   = map { Registry::DAO::Resource->for_occurrence( $studio, event_of($c) ) } 1 .. 2;
+    my $other = Registry::DAO::Resource->for_occurrence( $studio, event_of( class_in() ) );
+    my $offer = class_offer($c);
+    is $offer->resource_id, undef, 'a class offer names no single resource';
+
+    my $later = Registry::DAO::Resource->for_occurrence( $studio, event_of($c) );
+    is_deeply ids( $offer->covered_resources($studio)->@* ), ids( @now, $later ),
+        "covers the class's occurrences, the later one too";
+    ok $offer->buys( $studio, $_->id ), 'buys ' . $_->name for @now, $later;
+    ok !$offer->buys( $studio, $other->id ), 'not an occurrence of another class';
+    is( Registry::DAO::OfferVersion->find( $studio, { offer_id => $offer->offer_id } )->version, 1,
+        'with no new version' );
 };
 
 done_testing;

@@ -1,4 +1,4 @@
--- ABOUTME: An occurrence (an events row) is its own finite resource, bound by a same-schema foreign key.
+-- ABOUTME: An occurrence (an events row) is its own finite resource; a class offer version covers its class's.
 -- ABOUTME: Built in registry and every tenant schema; clone_schema gives new tenants the same.
 
 -- Deploy registry:priceops-occurrence-resources to pg
@@ -26,6 +26,25 @@ BEGIN
                 ADD COLUMN event_id uuid UNIQUE REFERENCES %1$I.events (id),
                 ADD CONSTRAINT resources_occurrence_is_finite
                     CHECK (event_id IS NULL OR kind = 'finite')
+        $f$, s);
+
+        -- The class record: a class's occurrences are its events, and new ones
+        -- get this many seats unless the occurrence says otherwise.
+        EXECUTE format($f$
+            ALTER TABLE %1$I.projects
+                ADD COLUMN seats_per_occurrence integer CHECK (seats_per_occurrence >= 0)
+        $f$, s);
+
+        -- A version buys one named resource, or is a class offer covering
+        -- every occurrence-resource of its class, now and later: a rule over
+        -- the key, not a stored list, so offer_version_immutable freezes it
+        -- with the rest of a published version.
+        EXECUTE format($f$
+            ALTER TABLE %1$I.offer_versions
+                ALTER COLUMN resource_id DROP NOT NULL,
+                ADD COLUMN class_project_id uuid REFERENCES %1$I.projects (id),
+                ADD CONSTRAINT offer_versions_buys_resource_or_class
+                    CHECK (num_nonnulls(resource_id, class_project_id) = 1)
         $f$, s);
     END LOOP;
 END $$;

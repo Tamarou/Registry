@@ -59,7 +59,7 @@ active and the period covers T (in_effect_sql).
         my $resource = Registry::DAO::Resource->locked( $db, $resource_id );
         my $version  = Registry::DAO::OfferVersion->find( $db, { id => $row{offer_version_id} } );
         croak "offer version $row{offer_version_id} does not buy resource $resource_id"
-            unless $version && $version->buys($resource_id);
+            unless $version && $version->buys( $db, $resource_id );
         $resource->claim( $db, $numbers ? scalar @$numbers : $count );
 
         my %held = map { $_ => 1 } $resource->held_units($db)->@*;
