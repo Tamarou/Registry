@@ -8,6 +8,12 @@ BEGIN;
 DO $$
 DECLARE rateless_count INT;
 BEGIN
+    -- Vacuous once drop-pricing-relationships has run: every verify runs
+    -- again against the final schema, where the table is gone.
+    IF to_regclass('registry.pricing_relationships') IS NULL THEN
+        RETURN;
+    END IF;
+
     SELECT COUNT(*) INTO rateless_count
       FROM registry.pricing_relationships pr
       JOIN registry.pricing_plans p ON p.id = pr.pricing_plan_id
