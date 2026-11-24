@@ -19,6 +19,9 @@ use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
 use Registry::Service::Stripe;
 use Mojo::Promise;
+use Mojo::Pg;
+use POSIX ();
+use Registry::Controller::Webhooks;
 
 local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_local_platform_instalments';
 local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_local_connect_instalments';
@@ -233,6 +236,56 @@ subtest 'payment_failed with no intent binds its row, and month three paid takes
 
     is $A->{db}->query( q{SELECT metadata->>'stripe_invoice_id' FROM payments WHERE id = ?},
         $ids[1] )->array->[0], 'in_month_two', "and month two's invoice is bound to its row";
+};
+
+# Stripe delivers the failure and the paid retry of one invoice concurrently.
+# Neither has tagged a row when both look, so without serialising on the
+# schedule both fall back to the earliest owed row: paid completes row two and
+# the failure, re-checking after paid commits, moves on and fails row three.
+#
+# Two real connections and a fork: one process cannot produce the interleaving.
+# The child runs the paid invoice through the real handler in a transaction it
+# holds open until the failed delivery is seen waiting on it, then commits.
+subtest 'concurrent payment_failed and invoice.paid for one invoice mark one row' => sub {
+    build_set();
+
+    pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
+    my $pid = fork() // die "fork: $!";
+    unless ($pid) {
+        close $parent_reads;
+        my $ok = eval {
+            # The Mojo::Pg must outlive the handle -- ->db holds a weak reference.
+            my $pg  = Mojo::Pg->new( $t_db->uri )->search_path( [ $A->{slug}, 'public' ] );
+            my $cdb = $pg->db;
+            my $tx  = $cdb->begin;
+            Registry::Controller::Webhooks->new( app => $t->app )->_process_instalment_invoice(
+                $cdb, { type => 'invoice.paid', data => { object => invoice( 'in_race', 'pi_race' ) } },
+                $SCHED );
+            print $child_writes "locked\n";
+            $child_writes->flush;
+
+            # Commit only once the failed delivery is blocked behind us.
+            my $me = $cdb->query('SELECT pg_backend_pid()')->array->[0];
+            my $waited;
+            for ( 1 .. 100 ) {
+                last if $waited = $pg->db->query(
+                    'SELECT 1 FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))', $me )->rows;
+                select undef, undef, undef, 0.1;
+            }
+            $tx->commit;
+            $waited;
+        };
+        POSIX::_exit( $ok ? 0 : 1 );
+    }
+
+    close $child_writes;
+    readline $parent_reads;
+    deliver( 'invoice.payment_failed', invoice( 'in_race', 'pi_race' ) );
+    waitpid $pid, 0;
+
+    is $? >> 8, 0, 'the failed delivery waited on the paid transaction';
+    is_deeply statuses(), [qw( completed completed pending )],
+        'the invoice completes one row and fails none';
 };
 
 # Each month is its own invoice. A later month paying does not settle an

@@ -428,6 +428,14 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        # One invoice at a time per schedule. Two deliveries of one invoice
+        # (failed and paid) would otherwise both miss its tag and both take the
+        # earliest owed row; waiting here, the second sees the first's tag.
+        $db->query( q{
+            SELECT 1 FROM payments WHERE stripe_schedule_id = ?
+             ORDER BY instalment_seq FOR UPDATE
+        }, $schedule );
+
         my $row = $db->query( q{
             SELECT id, status FROM payments
              WHERE stripe_schedule_id = ?
