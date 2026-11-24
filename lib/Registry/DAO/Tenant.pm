@@ -1052,20 +1052,17 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # Begin the transaction before any writes so that tenant row creation,
         # schema cloning, and all subsequent copies are atomic.  Postgres allows
         # CREATE SCHEMA (issued inside clone_schema) within a transaction.
-        my $tx = $db->begin;
+        # Joins the caller's, so signup writes its users in the same one.
+        my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
 
         my $tenant = $class->create($db, \%tenant_data);
 
         # $data->{platform_entitlement} names { offer_version_id,
-        # payment_plan_id }: the tenant holds it in registry from now on, or
-        # the tenant is not created.
+        # payment_plan_id }: the tenant accepts it in registry from now on, or
+        # the tenant is not created (a refusal throws, rolling it all back).
         if ( my $grant = $data->{platform_entitlement} ) {
             require Registry::DAO::Entitlement;
-            Registry::DAO::Entitlement->create( $db, {
-                %$grant,
-                holder_tenant_id => $tenant->id,
-                starts_at        => 'now',
-            } );
+            Registry::DAO::Entitlement->accept( $db, { %$grant, holder_tenant_id => $tenant->id } );
         }
 
         $db->query('SELECT clone_schema(?)', $tenant->slug);
@@ -1182,7 +1179,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
              WHERE name = 'tenant-storefront/program-listing'
         });
 
-        $tx->commit;
+        $tx->commit if $tx;
 
         return $tenant;
     }

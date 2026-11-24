@@ -47,6 +47,55 @@ active and the period covers T (in_effect_sql).
         return $class->SUPER::create( $db, \%row );
     }
 
+    # Accepts offer version $data->{offer_version_id} under its payment plan
+    # $data->{payment_plan_id} for the one holder $data names, in effect from
+    # starts_at (default now): the one way a schedule-type offer is accepted.
+    # Throws Registry::DAO::Entitlement::Refused, creating nothing, when the
+    # version is not published and current at this moment, does not offer the
+    # plan, the plan is one-time (an entitlement follows its payment, not an
+    # accept), or the holder already has this offer in effect. Joins the
+    # caller's transaction.
+    sub accept ( $class, $db, $data ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my %row = ( starts_at => 'now', %$data );
+        my ( $version_id, $plan_id ) = @row{qw( offer_version_id payment_plan_id )};
+        my $refuse = sub ($why) { Registry::DAO::Entitlement::Refused->throw("$why\n") };
+        my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+
+        # Locked: a supersede waits for this accept to commit, or this accept
+        # waits for the supersede and then reads the version as retired.
+        my ($offer_id) = @{ $db->query( q{
+            SELECT offer_id FROM offer_versions
+             WHERE id::text = ? AND published_at IS NOT NULL AND superseded_at IS NULL FOR SHARE
+        }, $version_id // '' )->array // [] };
+        $refuse->("Offer version $version_id is not on offer: it is unpublished or has been replaced.")
+            unless $offer_id;
+
+        my $kind = $db->select( 'offer_version_payment_plans', 'kind',
+            { offer_version_id => $version_id, id => $plan_id // '' } )->array;
+        $refuse->( sprintf "Offer version %s does not offer payment plan '%s'.", $version_id, $plan_id // '' )
+            unless $kind;
+        $refuse->("Payment plan '$plan_id' is one-time: it is accepted by paying for it.")
+            if $kind->[0] eq 'one_time';
+
+        # One phase of a schedule offer per holder at a time, as the exclusion
+        # constraint has it; two accepts for one holder and offer take turns,
+        # so the second reads the first and is refused here, not by it.
+        my $holder = $row{holder_user_id} // $row{holder_family_member_id} // $row{holder_tenant_id};
+        $db->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', "accept:$holder:$offer_id" );
+        $refuse->('This holder already holds this offer in effect.')
+            if $db->query( q{
+                SELECT EXISTS (SELECT 1 FROM entitlements
+                    WHERE coalesce(holder_user_id, holder_family_member_id, holder_tenant_id) = ?
+                      AND offer_id = ? AND plan_kind <> 'one_time'
+                      AND in_effect && tstzrange(?::timestamptz, ?::timestamptz, '[)'))
+            }, $holder, $offer_id, @row{qw( starts_at ends_at )} )->array->[0];
+
+        my $entitlement = $class->create( $db, \%row );
+        $tx->commit if $tx;
+        return $entitlement;
+    }
+
     # Grants $data's entitlement holding units of $data->{resource_id}: either
     # `units` (a count, lowest free numbers first) or `unit_numbers` (named).
     # All or nothing, under the resource's lock.
@@ -191,5 +240,8 @@ active and the period covers T (in_effect_sql).
         ] } );
     }
 }
+
+# What accept refuses with: a message for the person accepting, never a database error.
+package Registry::DAO::Entitlement::Refused { use Mojo::Base 'Mojo::Exception' }
 
 1;

@@ -201,8 +201,8 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
                 croak "Username is too long (maximum 255 characters)";
             }
             
-            # Start transaction for atomic insert
-            my $tx = $db->begin;
+            # Atomic insert, joining the caller's transaction (signup's) if any
+            my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
             
             # Insert into users table (potentially schema-qualified)
             my $result = $db->insert( $users_table, \%user_data, { returning => '*' } );
@@ -216,7 +216,7 @@ class Registry::DAO::User :isa(Registry::DAO::Object) {
                 $profile = $db->insert( $profiles_table, \%profile_data, { returning => '*' } )->hash;
             }
             
-            $tx->commit;
+            $tx->commit if $tx;
             
             # Combine the data for the object
             my %combined_data = ( $user->%*, $profile->%* );

@@ -111,8 +111,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         # waiting for a tier with a monthly base to go on sale.
         my $config = $self->get_subscription_config( $db, $run );
         unless ( $config->{monthly_amount} ) {
-            my $result = $self->_provision_tenant( $db, $run );
-            return { next_step => 'complete', tenant_created => 1, %$result };
+            return $self->_provision_tenant( $db, $run );
         }
 
         # Handle setup intent completion
@@ -143,8 +142,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
                 $run->update_data($db, { subscription => $mock_subscription });
 
-                my $result = $self->_provision_tenant($db, $run);
-                return { next_step => 'complete', tenant_created => 1, %$result };
+                return $self->_provision_tenant($db, $run);
             }
             
             return $self->create_setup_intent($db, $run, $form_data);
@@ -512,20 +510,33 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                     # Outside every catch above, deliberately: a provisioning
                     # failure is not a payment failure and must not be reported
                     # as one.
-                    my $result = $self->_provision_tenant($db, $run);
-                    return { next_step => 'complete', tenant_created => 1, %$result };
+                    return $self->_provision_tenant($db, $run);
                 });
             });
     }
 
     # _provision_tenant: builds the user list from run data, calls Tenant->provision,
-    # marks team members invite_pending for the admin to invite later, stores
-    # tenant info in run data, and returns a result hash with
-    # tenant/organization_name/subdomain/admin_email keys.  This is the single
-    # provisioning path for all completion scenarios (no-Stripe mock, real-Stripe).
+    # which accepts the run's chosen platform offer for the new tenant, marks
+    # team members invite_pending for the admin to invite later, stores tenant
+    # info in run data, and returns the step result: complete, with
+    # tenant/organization_name/subdomain/admin_email keys, or the review page
+    # again re-quoting the offer when the choice is no longer on offer. Users,
+    # tenant, schema and entitlement are written in one transaction.  This is
+    # the single provisioning path for all completion scenarios (no-Stripe
+    # mock, real-Stripe).
     method _provision_tenant($db, $run) {
-        if ( my $done = $self->_provisioned( $db, $run ) ) { return $done }
+        if ( my $done = $self->_provisioned( $db, $run ) ) {
+            return { next_step => 'complete', tenant_created => 1, %$done };
+        }
         my $data = $run->data;
+
+        # Re-read before any write: only a platform offer to tenants, never its
+        # offer to itself or another tenant's; the accept re-checks it is
+        # still current under a lock. Its plan is the version's, never the form's.
+        my ($offer) = grep { $_->{id} eq ( $data->{selected_offer_version} // '' ) }
+            platform_offers_to_tenants($db)->@*;
+        return $self->_requote( $db, $run ) unless $offer;
+        my $tx = $db->begin;
         my $profile = $data->{profile} || {};
         my $subscription_data = $data->{subscription} || {};
 
@@ -591,9 +602,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             if $data->{__remote_address};
         $provision_data{slug} = $slug if $slug;
 
-        # The new tenant holds the platform's offer to tenants from the moment
-        # it exists; Tenant->provision grants it in the same transaction.
-        $provision_data{platform_entitlement} = $self->_platform_offer_to_tenants( $db, $run );
+        # The new tenant accepts its chosen offer from the moment it exists.
+        $provision_data{platform_entitlement} =
+            { offer_version_id => $offer->{id}, payment_plan_id => $offer->{plan_id} };
 
         if ($subscription_data->{stripe_subscription_id}) {
             $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
@@ -617,7 +628,13 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             $provision_data{subscription_started_at} = DateTime->now->iso8601();
         }
 
-        my $tenant = Registry::DAO::Tenant->provision($db, \%provision_data);
+        my $tenant;
+        try { $tenant = Registry::DAO::Tenant->provision( $db, \%provision_data ) }
+        catch ($e) {
+            die $e unless $e isa Registry::DAO::Entitlement::Refused;
+            undef $tx;    # rolls back the users and tenant
+            return $self->_requote( $db, $run );
+        }
 
         # Deliberately NOT sending the invitations here.
         #
@@ -643,20 +660,27 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         };
 
         $run->update_data($db, $result);
+        $tx->commit;
 
-        return $result;
+        return { next_step => 'complete', tenant_created => 1, %$result };
     }
 
-    # The run's chosen platform offer to tenants, re-read as still published,
-    # and its percentage-of-sales plan, as { offer_version_id, payment_plan_id }.
-    # shortcut: grants it directly and dies when it is no longer on offer;
-    # 01a20416-6d40 replaces this with the accept primitive, which re-quotes.
-    method _platform_offer_to_tenants ( $db, $run ) {
-        my $carried = $run->data->{selected_offer_version} // '';
-        my ($offer) = grep { $_->{id} eq $carried } platform_offers_to_tenants($db)->@*;
-        die "Signup's chosen offer '$carried' is not a published platform offer to tenants.\n"
-            unless $offer;
-        return { offer_version_id => $offer->{id}, payment_plan_id => $offer->{plan_id} };
+    # The review page again, when the run's choice is no longer on offer: the
+    # run now carries its offer's current version, if it has one, so the page
+    # quotes those terms for the person to accept again.
+    method _requote ( $db, $run ) {
+        my $current = $db->query( q{
+            SELECT n.id FROM registry.offer_versions o
+              JOIN registry.offer_versions n ON n.offer_id = o.offer_id
+             WHERE o.id::text = ? AND n.published_at IS NOT NULL AND n.superseded_at IS NULL
+        }, $run->data->{selected_offer_version} // '' )->array;
+        $run->update_data( $db, { selected_offer_version => $current && $current->[0] } );
+        return {
+            next_step => $self->id,
+            errors    => [ 'The plan you chose has changed or is no longer offered. '
+                         . 'Please review the current terms and accept again.' ],
+            data      => $self->prepare_payment_data( $db, $run ),
+        };
     }
 
     # The result _provision_tenant stored for $run, when the tenant it names
