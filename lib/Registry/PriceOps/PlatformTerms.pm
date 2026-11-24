@@ -1,5 +1,5 @@
-# ABOUTME: The one place that answers which platform terms a tenant holds: id, name, rate fraction and monthly amount.
-# ABOUTME: Column-backed today (tenants.platform_pricing_plan_id, Free fallback); the switch routes it to the entitlement lookup here.
+# ABOUTME: The one place that answers which platform terms a tenant holds: its in-effect platform entitlement's version, plan, rate and refund policy.
+# ABOUTME: No Free fallback: a tenant with no platform entitlement in effect is refused, naming the tenant.
 use 5.42.0;
 use experimental 'signatures';
 
@@ -7,7 +7,7 @@ package Registry::PriceOps::PlatformTerms;
 
 use Exporter 'import';
 our @EXPORT_OK = qw(platform_terms_for_tenant platform_default_terms
-                    platform_entitlement_terms platform_version_terms);
+                    platform_entitlement_terms platform_version_terms rate_fraction);
 
 use Mojo::JSON qw( from_json );
 use Registry::DAO::Entitlement;
@@ -15,17 +15,29 @@ use Registry::DAO::Entitlement;
 # The resource a tenant's platform entitlement buys; named, never a plan name.
 my $PAYMENT_PROCESSING = 'payment processing';
 
-# platform_entitlement_terms($db, $tenant_slug, $at = now) -> { id, fraction, refund_policy }
+# What every terms lookup returns about an offer version and one of its plans.
+my $TERMS_COLUMNS = q{
+    v.id, p.id AS plan_id, o.name, v.price_cents, p.fraction,
+    v.policies->'refund' AS refund_policy
+};
+
+# platform_terms_for_tenant($db, $tenant_slug) -> terms
+#
+# The tenant's platform terms now: platform_entitlement_terms at now(). The
+# single source for the charge-time rate and every reader that shows it.
+sub platform_terms_for_tenant ( $db, $tenant_slug ) {
+    return platform_entitlement_terms( $db, $tenant_slug );
+}
+
+# platform_entitlement_terms($db, $tenant_slug, $at = now)
+#   -> { id, plan_id, name, amount_cents, fraction, refund_policy }
 #
 # The terms of the tenant's platform entitlement to payment processing in
-# effect at $at: the stamped offer version's id, the fraction of the payment
-# plan it accepted, and that version's refund policy. Read from registry only:
-# a tenant schema's cloned entitlements cannot name a real tenant. Dies naming
-# the tenant when none is in effect -- absence is not zero, and there is no
-# Free fallback here.
-#
-# Not called from lib/ yet: the switch routes platform_terms_for_tenant
-# through it in the commit that drops tenants.platform_pricing_plan_id.
+# effect at $at: the stamped offer version's id and accepted payment plan's
+# id, the offer's name, the version's price, the plan's fraction and the
+# version's refund policy. Read from registry only: a tenant schema's cloned
+# entitlements cannot name a real tenant. Dies naming the tenant when none is
+# in effect -- absence is not zero, and there is no fallback to Free or to 0.
 sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
     $db = $db->db if $db isa Registry::DAO;
     my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e',
@@ -34,15 +46,16 @@ sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
     # At most one row: the database refuses overlapping active platform
     # entitlements to payment processing (platform-entitlement-one-in-effect).
     my $row = $db->query( qq{
-        SELECT v.id, p.fraction, v.policies->'refund' AS refund_policy
+        SELECT $TERMS_COLUMNS
           FROM registry.entitlements e
           JOIN registry.tenants t ON t.id = e.holder_tenant_id
           JOIN registry.offer_versions v ON v.id = e.offer_version_id
+          JOIN registry.offers o ON o.id = v.offer_id
           JOIN registry.resources r ON r.id = v.resource_id
           JOIN registry.offer_version_payment_plans p
             ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
          WHERE t.slug = ? AND r.name = ? AND $in_effect
-    },$tenant_slug, $PAYMENT_PROCESSING, $at, $at )->hash;
+    }, $tenant_slug, $PAYMENT_PROCESSING, $at, $at )->hash;
 
     die "Tenant '$tenant_slug' holds no platform entitlement to $PAYMENT_PROCESSING in effect"
       . ( defined $at ? " at $at" : '' ) . " - there is no fallback to Free or to 0.\n"
@@ -51,27 +64,26 @@ sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
     return _entitlement_terms( $row, "the platform entitlement of tenant '$tenant_slug'" );
 }
 
-# platform_version_terms($db, $offer_version_id) -> { id, fraction, refund_policy }
+# platform_version_terms($db, $offer_version_id, $payment_plan_id)
+#   -> { id, plan_id, name, amount_cents, fraction, refund_policy }
 #
-# A payment-processing offer version's own terms, superseded or not: refunds
-# resolve backwards, from the version stamped on the payment.
-sub platform_version_terms ( $db, $offer_version_id ) {
+# The terms of a payment-processing offer version and one of its payment
+# plans, superseded or not: a payment stamps both, and its refund resolves
+# backwards from them.
+sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
     $db = $db->db if $db isa Registry::DAO;
 
-    # shortcut: the version's percentage_of_sales plan; a version offering
-    # several needs the stamped plan id passed in too.
-    my $row = $db->query( q{
-        SELECT v.id, p.fraction, v.policies->'refund' AS refund_policy
+    my $row = $db->query( qq{
+        SELECT $TERMS_COLUMNS
           FROM registry.offer_versions v
+          JOIN registry.offers o ON o.id = v.offer_id
           JOIN registry.resources r ON r.id = v.resource_id
-          JOIN registry.offer_version_payment_plans p
-            ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
-         WHERE v.id = ? AND r.name = ?
-         LIMIT 1
-    }, $offer_version_id, $PAYMENT_PROCESSING )->hash;
+          JOIN registry.offer_version_payment_plans p ON p.offer_version_id = v.id
+         WHERE v.id = ? AND p.id = ? AND r.name = ?
+    }, $offer_version_id, $payment_plan_id, $PAYMENT_PROCESSING )->hash;
 
-    die "Offer version '$offer_version_id' is not a $PAYMENT_PROCESSING version "
-      . "with a percentage-of-sales plan.\n"
+    die "Offer version '$offer_version_id' with payment plan '$payment_plan_id' is not "
+      . "a $PAYMENT_PROCESSING version and plan.\n"
         unless $row;
 
     return _entitlement_terms( $row, "offer version '$offer_version_id'" );
@@ -80,52 +92,21 @@ sub platform_version_terms ( $db, $offer_version_id ) {
 sub _entitlement_terms ( $row, $context ) {
     return {
         id            => $row->{id},
-        fraction      => _coerce_pct( $row->{fraction}, $context ),
+        plan_id       => $row->{plan_id},
+        name          => $row->{name},
+        amount_cents  => $row->{price_cents},
+        fraction      => rate_fraction( $row->{fraction}, $context ),
         refund_policy => from_json( $row->{refund_policy} // 'null' )
             // die "No refund policy on $context.\n",
     };
 }
 
-# platform_terms_for_tenant($db, $tenant_slug) -> { id, name, fraction, amount_cents }
-#
-# id is the identifier of the terms (today the plan id; after the switch, the
-# offer version id). Every table is qualified with registry, so the answer is
-# the same on a tenant-schema connection as on the registry one.
-#
-# Resolution order:
-#   1. tenant.platform_pricing_plan_id is set  -> that plan
-#   2. FK is NULL or tenant row absent          -> the platform Free plan
-#   3. Free plan missing                        -> die (deployment bug)
-#   4. Resolved percentage absent or malformed  -> die (data bug)
-#
-# No refund flag: refunds keep the platform fee for every seller (ADR 003,
-# ruling 8a); the spec moves that rule onto the Solo offer's refund policy.
-sub platform_terms_for_tenant ($db, $tenant_slug) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    # Deliberately NOT filtered on superseded_at. This is a lookup BY ID: the
-    # tenant's link points at a specific plan VERSION, and it keeps pointing there
-    # after that version is retired. Revising a plan must not silently re-price
-    # the tenants already on it (#277).
-    my $row = $db->query(q{
-        SELECT p.id, p.plan_name, p.amount_cents,
-               p.pricing_configuration->>'percentage' AS pct
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p
-            ON p.id = t.platform_pricing_plan_id
-         WHERE t.slug = ?
-    }, $tenant_slug)->hash;
-
-    return _terms( $row, "linked plan for tenant '$tenant_slug'" ) if $row;
-
-    return platform_default_terms($db);
-}
-
 # platform_default_terms($db) -> { id, name, fraction, amount_cents }
 #
-# The platform's default ("Free") plan -- the fallback when a tenant has no
-# linked plan. Current versions only: this is a SEARCH by mark, and a retired
-# version still carries the mark.
+# The platform's default ("Free") pricing plan. No charge reads it: only the
+# signup page's quoted rate, which the Free-plan removal takes away. Current
+# versions only: this is a SEARCH by mark, and a retired version still
+# carries the mark.
 sub platform_default_terms ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
@@ -144,23 +125,22 @@ sub platform_default_terms ($db) {
       . "This is a deployment bug - run the seed-free-platform-plan migration."
         unless $row;
 
-    return _terms( $row, "platform default (Free) plan" );
-}
-
-sub _terms ($row, $context) {
     return {
         id           => $row->{id},
         name         => $row->{plan_name},
-        fraction     => _coerce_pct( $row->{pct}, $context ),
+        fraction     => rate_fraction( $row->{pct}, "platform default (Free) plan" ),
         amount_cents => $row->{amount_cents},
     };
 }
 
-# _coerce_pct($raw, $context) -> number
-# Validates and coerces a raw percentage string to a number. Dies on malformed input.
-sub _coerce_pct ($raw, $context) {
+# rate_fraction($raw, $context) -> decimal string
+#
+# The one rate rule: a fraction from 0 to 1 in whole basis points. Dies naming
+# $context on anything else. Returned as an exact decimal string ("0.025"),
+# never a float, so a snapshot of it is the rate itself.
+sub rate_fraction ($raw, $context) {
     die "Revenue-share percentage is undefined for $context - the plan carries no "
-      . "'percentage' in pricing_configuration, so it has no revenue-share rate."
+      . "rate, so it has no revenue share to charge."
         unless defined $raw;
 
     die "Revenue-share percentage '$raw' is not numeric for $context - check pricing_configuration."
@@ -180,7 +160,7 @@ sub _coerce_pct ($raw, $context) {
       . "- a rate is whole basis points (0.0125 means 1.25%)."
         unless abs( $raw * 10_000 - sprintf '%.0f', $raw * 10_000 ) < 1e-6;
 
-    return $raw + 0;
+    return sprintf( '%.4f', $raw ) =~ s/\.?0+\z//r;
 }
 
 1;

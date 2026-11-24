@@ -8,7 +8,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
-use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
+use Test::Registry::PricingProbe qw(solo_linked_tenant);
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;  # load package before glob replacement
 use Mojo::Promise;
@@ -18,7 +18,7 @@ my $db      = $test_db->db->db;     # Mojo::Pg::Database
 
 local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_refund_tests';
 
-# A tenant linked to the revenue-share plan, with a Connect account of its own.
+# A tenant holding Solo v1, with a Connect account of its own.
 my $tenant_slug = solo_linked_tenant($db);
 $db->query( 'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
     'acct_refund_tenant', $tenant_slug );
@@ -94,21 +94,23 @@ subtest 'platform seller refund is sent on its account without fee or transfer f
 };
 
 subtest 'inert plan refund flag is not read' => sub {
-    # The seeded plans still carry refund_application_fee: true, and plan rows
-    # are immutable; nothing may read it any more.
-    with_tenant_plan( $db, $tenant_slug,
-        { pricing_configuration => { percentage => '0.02', refund_application_fee => \1 } },
-        sub {
-            my $payment = a_payment($tenant_slug);
-            my @calls;
-            {
-                no warnings 'redefine';
-                local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
-                settle( $payment->refund_async($db) );
-            }
-            is scalar @calls, 1, 'one refund request';
-            no_fee_or_transfer_flags( $calls[0], 'plan says refund the fee' );
-        } );
+    # The seeded pricing plans still carry refund_application_fee: true, and
+    # plan rows are immutable; nothing may read it any more. The fee follows
+    # the refund policy of the platform offer version stamped on the payment.
+    ok $db->query( q{SELECT 1 FROM registry.pricing_plans WHERE plan_name = 'Solo'
+                      AND pricing_configuration->>'refund_application_fee' = 'true'} )->rows,
+        'the Solo pricing plan still says refund the fee';
+    my $payment = a_payment($tenant_slug);
+    is $payment->stamped_platform_terms($db)->{refund_policy}{kind}, 'keep_fee_with_admin_exception',
+        'while the stamped Solo v1 keeps it';
+    my @calls;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+        settle( $payment->refund_async($db) );
+    }
+    is scalar @calls, 1, 'one refund request';
+    no_fee_or_transfer_flags( $calls[0], 'plan says refund the fee' );
 };
 
 subtest 'partial refund keeps the fee and sends no flags' => sub {

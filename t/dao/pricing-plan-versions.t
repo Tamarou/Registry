@@ -311,7 +311,7 @@ subtest 'a plan rate is saved to at most 4 decimals as a fraction' => sub {
 };
 
 subtest 'a percentage, hybrid or revenue_share plan with no rate is refused' => sub {
-    # Saved without a rate, it dies in _coerce_pct at checkout for every
+    # Saved without a rate, it dies in rate_fraction at checkout for every
     # tenant linked to it, so it is refused when it is written instead.
     for my $type (qw( percentage hybrid revenue_share )) {
         eval { Registry::DAO::PricingPlan->create($db, {

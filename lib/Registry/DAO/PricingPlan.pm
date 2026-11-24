@@ -50,7 +50,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
     # A rate is a fraction to at most 4 decimals (2 as a percent), so neither
     # the one-off fee (whole basis points) nor the instalment schedule ('%.2f'
     # percent) has to round it, and the two paths charge the same rate.
-    # A rate-charging plan saved with no rate dies in _coerce_pct at checkout.
+    # A rate-charging plan saved with no rate dies in rate_fraction at checkout.
     sub _check_rate ($type, $config) {
         $config = $config->{-json} if ref $config eq 'HASH' && $config->{-json};
         my $pct = ref $config eq 'HASH' ? $config->{percentage} : undef;

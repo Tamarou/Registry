@@ -80,9 +80,8 @@ local *Registry::Service::Stripe::retrieve_subscription_async = sub ( $s, $id, $
 };
 use warnings 'redefine';
 
-# The plan instalment one was priced under, snapshotted onto every row.
-my $PLAN = $dao->db->query(
-    q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' LIMIT 1} )->hash->{id};
+# The platform offer version instalment one was priced under (Solo v1), snapshotted onto every row.
+my $PLAN = '00000000-0000-0000-0003-000000000001';
 
 # The set as schedule_remaining_instalments leaves it: instalment one paid with
 # its fee recorded, the rest owed, all sharing one schedule id and carrying the
@@ -103,10 +102,11 @@ sub build_set ( $tenant = $A ) {
             instalment_count   => 3,
             due_date           => sprintf( '2026-%02d-01', 5 + $i ),
             stripe_schedule_id => $SCHED,
-            ( $i == 1 ? ( platform_fee_cents => 83, platform_pricing_plan_id => $PLAN ) : () ),
+            ( $i == 1 ? ( platform_fee_cents => 83, platform_offer_version_id => $PLAN ) : () ),
             metadata           => { -json => {
-                stripe_account_id        => $tenant->{account},
-                platform_pricing_plan_id => $PLAN,
+                stripe_account_id         => $tenant->{account},
+                platform_offer_version_id => $PLAN,
+                platform_payment_plan_id  => 'revenue_share',
             } },
         }, { returning => 'id' } )->hash;
         push @ids, $row->{id};
@@ -170,7 +170,7 @@ subtest 'a paid invoice completes the earliest owed instalment' => sub {
 
 sub fee_and_plan ( $id, $tenant = $A ) {
     return $tenant->{db}->query(
-        'SELECT platform_fee_cents, platform_pricing_plan_id FROM payments WHERE id = ?',
+        'SELECT platform_fee_cents, platform_offer_version_id FROM payments WHERE id = ?',
         $id )->array;
 }
 

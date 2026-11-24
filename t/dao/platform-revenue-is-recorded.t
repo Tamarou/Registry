@@ -11,7 +11,7 @@ use experimental 'signatures';
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::PricingProbe qw( give_tenant_terms with_tenant_plan without_rate_check );
-use Registry::PriceOps::PlatformTerms qw( platform_terms_for_tenant platform_default_terms );
+use Registry::PriceOps::PlatformTerms qw( platform_terms_for_tenant );
 use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
@@ -65,8 +65,9 @@ subtest 'the fee Stripe reported is what gets recorded' => sub {
     is $payment->status, 'completed', 'the payment settled';
     is $payment->platform_fee_cents, 250,
         'and the platform fee is on the row';
-    is $payment->platform_pricing_plan_id, $solo->{id},
-        'with the plan version it was charged under (#427)';
+    is $payment->platform_offer_version_id, $solo->{id},
+        'with the platform offer version it was charged under (#427)';
+    is $payment->platform_payment_plan_id, $solo->{plan_id}, 'and its payment plan';
 };
 
 subtest 'a payment with no seller account records no fee, rather than a guess' => sub {
@@ -80,10 +81,10 @@ subtest 'a payment with no seller account records no fee, rather than a guess' =
 };
 
 subtest 'a non-seller-account payment on a bad-rate plan still settles' => sub {
-    # The fee record is best-effort: a malformed linked rate must not fail
+    # The fee record is best-effort: a malformed held rate must not fail
     # settlement (a webhook 500 Stripe retries forever).
     without_rate_check( $db, sub { with_tenant_plan( $db, 'revenue_studio',
-        { pricing_configuration => { percentage => '0.00125' } },
+        { rate => '0.00125' },
         sub {
             my @warnings;
             local $SIG{__WARN__} = sub { push @warnings, @_ };
@@ -91,9 +92,9 @@ subtest 'a non-seller-account payment on a bad-rate plan still settles' => sub {
 
             ok $payment, 'settling did not die' or diag $@;
             is $payment && $payment->status, 'completed', 'the payment settled';
-            is $payment && $payment->platform_pricing_plan_id, undef,
-                'with no plan id recorded';
-            like "@warnings", qr/could not resolve platform plan/,
+            is $payment && $payment->platform_offer_version_id, undef,
+                'with no offer version recorded';
+            like "@warnings", qr/could not resolve platform terms/,
                 'and the bad rate is warned about';
         } ) } );
 };
@@ -128,7 +129,7 @@ subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub
     my $row = Registry::DAO::Payment->find( $tdb, { id => $p->id } );
     is $row->status, 'completed', 'the charge settled';
     is $row->platform_fee_cents, 0, 'and the fee is recorded as 0';
-    is $row->platform_pricing_plan_id, $free->{id}, 'under the plan it was charged on';
+    is $row->platform_offer_version_id, $free->{id}, 'under the terms it was charged on';
 
     my ($t) = grep { $_->{slug} eq 'free_studio' }
         @{ Registry::DAO::Tenant->platform_revenue($db)->{tenants} };
@@ -139,7 +140,7 @@ subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub
 subtest 'the plan that priced the fee is recorded, not the plan at settle' => sub {
     # The rate is fixed at create (ruling 7c); the plan id recorded with the
     # fee must be the one that rate came from, even if the tenant moves first.
-    my $caller_value = platform_default_terms($db)->{id};
+    my $caller_value = '00000000-0000-0000-0003-000000000002';    # the platform's 0% to itself
     $db->query( q{UPDATE registry.tenants
                   SET stripe_connect_account_id = 'acct_revenue_studio' WHERE id = ?},
         $tenant->id );
@@ -147,7 +148,7 @@ subtest 'the plan that priced the fee is recorded, not the plan at settle' => su
     my $p = Registry::DAO::Payment->create( $db, {
         user_id => $parent->id, amount_cents => 10000, status => 'pending',
         metadata => { tenant_slug => 'revenue_studio', enrollment_items => [],
-                      platform_pricing_plan_id => $caller_value },
+                      platform_offer_version_id => $caller_value },
     } );
     $db->update( 'payments',
         { stripe_payment_intent_id => 'pi_snap_' . $p->id }, { id => $p->id } );
@@ -159,7 +160,7 @@ subtest 'the plan that priced the fee is recorded, not the plan at settle' => su
 
     my $row = Registry::DAO::Payment->find( $db, { id => $p->id } );
     is $row->platform_fee_cents, 250, 'the fee is recorded';
-    is $row->platform_pricing_plan_id, $solo->{id},
+    is $row->platform_offer_version_id, $solo->{id},
         'under plan A, the one it was created on -- not B, and not a caller value';
 
     $db->query( q{UPDATE registry.tenants
@@ -176,7 +177,7 @@ subtest 'a rate change afterwards does not rewrite history' => sub {
 
     my $after = Registry::DAO::Payment->find( $db, { id => $payment->id } );
     is $after->platform_fee_cents, 500, 'the recorded fee is unchanged';
-    is $after->platform_pricing_plan_id, $charged_under,
+    is $after->platform_offer_version_id, $charged_under,
         'and still names the plan it was actually charged under';
 };
 

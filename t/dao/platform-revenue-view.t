@@ -66,7 +66,7 @@ sub a_charge ( $slug, $amount, $fee ) {
     } );
     $tenant_db->update( 'payments',
         { defined $fee ? ( platform_fee_cents => $fee,
-                           platform_pricing_plan_id => $earning_terms->{id} ) : () ,
+                           platform_offer_version_id => $earning_terms->{id} ) : () ,
           completed_at => \'NOW()' },
         { id => $p->id } );
     return $p;
@@ -140,7 +140,7 @@ subtest 'a charge written where production writes it is counted' => sub {
     } );
     $tenant_db->update( 'payments',
         { platform_fee_cents       => 1000,
-          platform_pricing_plan_id => $earning_terms->{id},
+          platform_offer_version_id => $earning_terms->{id},
           completed_at             => \'NOW()' },
         { id => $real->id } );
 

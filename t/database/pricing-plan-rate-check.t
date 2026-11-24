@@ -32,8 +32,12 @@ sub plan_with_rate ( $pct, $schema = 'registry' ) {
         qq({"percentage": $pct}) );
 }
 
+# On a connection of its own: one held across a deploy that drops a tenants
+# column (platform-entitlement-replaces-plan-link) has DBD::Pg crash on its
+# cached statements.
 sub tenant ($slug) {
-    Test::Registry::Fixtures::create_tenant( $db, { name => $slug, slug => $slug } );
+    my $fresh = Mojo::Pg->new($uri)->search_path( [ 'registry', 'public' ] );
+    Test::Registry::Fixtures::create_tenant( $fresh->db, { name => $slug, slug => $slug } );
 }
 
 lives_ok { deploy('pricing-plan-rate-check^') } 'deploy to the parent change succeeds';
@@ -95,29 +99,13 @@ subtest 'a tenant schema refuses a rate of 1.5' => sub {
     }
 };
 
-# RevenueShare dies on a linked plan with no rate, and the rate check above
-# lets a fixed plan have none -- so the link itself is what must be refused.
-subtest 'a tenant cannot be linked to a plan with no rate' => sub {
-    my $fixed = $db->query( q{INSERT INTO registry.pricing_plans (plan_name, plan_type, pricing_model_type)
-                               VALUES ('Flat fee', 'standard', 'fixed') RETURNING id} )->hash->{id};
-    my $rated = $db->query( q{INSERT INTO registry.pricing_plans
-                                (plan_name, plan_type, pricing_model_type, pricing_configuration)
-                              VALUES ('Rated', 'standard', 'percentage', '{"percentage": 0.025}')
-                              RETURNING id} )->hash->{id};
-
-    throws_ok {
-        $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = 'rate_tenant'}, $fixed );
-    } qr/has no rate/, 'linking an existing tenant is refused';
-    throws_ok {
-        $db->query( q{INSERT INTO registry.tenants (name, slug, platform_pricing_plan_id)
-                      VALUES ('Flat', 'flat_tenant', ?)}, $fixed );
-    } qr/has no rate/, 'so is creating a tenant linked to it';
-    lives_ok {
-        $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = 'rate_tenant'}, $rated );
-    } 'a plan with a rate links';
-    lives_ok {
-        $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = 'rate_tenant'} );
-    } 'and no plan at all is still allowed';
+# The tenant's link to a plan, and tenant-plan-has-rate's trigger guarding it,
+# went with platform-entitlement-replaces-plan-link: a tenant's rate is now its
+# platform entitlement's payment plan, whose fraction priceops-offer-policies
+# requires.
+subtest 'a tenant holds its rate through an entitlement, not a plan link' => sub {
+    ok !$db->query( q{SELECT 1 FROM pg_trigger WHERE tgname = 'tenants_plan_has_rate'} )->rows,
+        'there is no plan link left to guard';
 };
 
 subtest 'verify fails against the earlier, weaker rate predicate' => sub {

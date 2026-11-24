@@ -7,6 +7,7 @@ use Test::More;
 use experimental 'signatures';
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Registry::DAO::Payment;
 use Registry::DAO::User;
 use Registry::Service::Stripe;
@@ -18,18 +19,14 @@ my $parent = Registry::DAO::User->create( $db, {
     username => 'fee_zero_parent', name => 'Fee Zero Parent',
     user_type => 'parent', email => 'fee_zero@test.local' } );
 
-sub plan_id ($name) {
-    $db->query( 'SELECT id FROM registry.pricing_plans WHERE plan_name = ? LIMIT 1', $name )
-        ->hash->{id};
-}
-
-# A connect-ready tenant explicitly linked to the named plan.
-sub tenant_on ( $slug, $plan_name ) {
+# A connect-ready tenant holding platform terms at the given rate.
+sub tenant_on ( $slug, $rate ) {
     Test::Registry::Fixtures::create_tenant( $db, { name => $slug, slug => $slug } );
     $db->query( q{UPDATE registry.tenants
                      SET stripe_connect_account_id = ?, stripe_charges_enabled = TRUE,
-                         stripe_details_submitted = TRUE, platform_pricing_plan_id = ?
-                   WHERE slug = ?}, "acct_$slug", plan_id($plan_name), $slug );
+                         stripe_details_submitted = TRUE
+                   WHERE slug = ?}, "acct_$slug", $slug );
+    give_tenant_terms( $db, $slug, { rate => $rate } );
     return $slug;
 }
 
@@ -49,8 +46,8 @@ sub params_for ( $slug, $amount_cents ) {
     return $captured;
 }
 
-my $free = tenant_on( 'fee_zero_free', 'Registry Free' );    # explicit 0%
-my $solo = tenant_on( 'fee_zero_solo', 'Solo' );             # 2.5%
+my $free = tenant_on( 'fee_zero_free', 0 );          # explicit 0%
+my $solo = tenant_on( 'fee_zero_solo', '0.025' );    # 2.5%
 
 subtest 'zero fee omits application fee amount while nonzero fee is sent' => sub {
     my $zero = params_for( $free, 10000 );

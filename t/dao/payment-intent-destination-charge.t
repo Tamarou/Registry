@@ -44,8 +44,7 @@ $db->query(
 );
 
 # State the platform terms the tenant charges under. A tenant provisioned
-# directly like this holds none, so the resolver would otherwise fall back to
-# the Free 0% plan. The rate is this test's own, not the launch decision's, so
+# directly like this holds none, so the charge would otherwise be refused. The rate is this test's own, not the launch decision's, so
 # the expected fee follows from what the test stated.
 my $stated_rate = '0.0137';
 give_tenant_terms( $db, $slug, { rate => $stated_rate } );
@@ -132,70 +131,56 @@ subtest 'tenant intent is a direct charge on its own account' => sub {
         "application_fee_amount is the stated rate on 10000 cents ($expected_fee)";
 };
 
-# ---- (a2) tenant with NULL plan link -> Free 0% fee, still its own account -----
-subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => sub {
-    # A second connect-ready tenant with no linked plan: the resolver falls back
-    # to the platform Free plan (0%), so the application fee is 0 while the
-    # charge is still made on the tenant's own account.
-    my $free_slug  = 'free_charge_' . $$;
-    my $free_admin = Registry::DAO::User->create($db, {
-        username  => "free_admin_$$",
-        email     => "free_admin_$$\@test.example",
-        name      => 'Free Admin',
+# ---- (a2) tenant with no platform entitlement -> refused, never a 0 fee -------
+subtest 'tenant with no platform entitlement is refused before stripe' => sub {
+    # A second connect-ready tenant holding no platform entitlement. Absence is
+    # not zero: there is no Free plan to fall back to, so the charge is refused
+    # naming the tenant before any row is written or Stripe is asked.
+    my $bare_slug  = 'bare_charge_' . $$;
+    my $bare_admin = Registry::DAO::User->create($db, {
+        username  => "bare_admin_$$",
+        email     => "bare_admin_$$\@test.example",
+        name      => 'Bare Admin',
         user_type => 'admin',
     });
-    my $free_tenant = Registry::DAO::Tenant->provision($db, {
-        name  => "Free Test $$",
-        slug  => $free_slug,
-        users => [ $free_admin ],
+    Registry::DAO::Tenant->provision($db, {
+        name  => "Bare Test $$",
+        slug  => $bare_slug,
+        users => [ $bare_admin ],
     });
     $db->query(
         'UPDATE registry.tenants SET stripe_connect_account_id = $1, stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE WHERE slug = $2',
-        'acct_free123', $free_slug,
+        'acct_bare123', $bare_slug,
     );
 
-    my $free_dao = Registry::DAO->new(url => $test_db->uri, schema => $free_slug);
-    my $free_db  = $free_dao->db;
-    my $free_parent = Registry::DAO::User->create($free_db, {
-        username  => "free_parent_$$",
-        email     => "free_parent_$$\@test.example",
-        name      => 'Free Parent',
+    my $bare_db = Registry::DAO->new(url => $test_db->uri, schema => $bare_slug)->db;
+    my $bare_parent = Registry::DAO::User->create($bare_db, {
+        username  => "bare_parent_$$",
+        email     => "bare_parent_$$\@test.example",
+        name      => 'Bare Parent',
         user_type => 'parent',
     });
 
-    my $payment = Registry::DAO::Payment->create($free_db, {
-        user_id  => $free_parent->id,
-        amount_cents => 10000,
-        metadata => {
-            tenant_slug      => $free_slug,
-            enrollment_items => [],
-        },
-    });
+    my $requests = 0;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::_request_async = sub {
+        $requests++;
+        return Mojo::Promise->resolve({ id => 'pi_never', client_secret => 'cs_never' });
+    };
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
 
-    my ($captured, $account);
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_payment_intent = sub {
-            my ($self, $params) = @_;
-            $captured = $params;
-            $account  = $self->stripe_account;
-            return { id => 'pi_free_123', client_secret => 'cs_free_123' };
-        };
-        local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
-        $payment->create_payment_intent($free_db, {
-            description => 'Free-plan destination charge',
-        });
-    }
-
-    ok $captured, 'stripe client received params';
-    is $account, 'acct_free123',
-        'NULL-plan tenant is still charged on its own account';
-    ok !exists $captured->{'transfer_data[destination]'},
-        'no transfer_data[destination] for NULL-plan tenant';
-    ok !exists $captured->{'on_behalf_of'},
-        'no on_behalf_of for NULL-plan tenant';
-    ok !exists $captured->{'application_fee_amount'},
-        'no application_fee_amount (Free plan, 0 fee) for NULL-plan tenant';
+    my $ok = eval {
+        Registry::DAO::Payment->create($bare_db, {
+            user_id      => $bare_parent->id,
+            amount_cents => 10000,
+            metadata     => { tenant_slug => $bare_slug, enrollment_items => [] },
+        })->create_payment_intent($bare_db, { description => 'No terms' });
+        1;
+    };
+    ok !$ok, 'the charge is refused';
+    like $@, qr/'\Q$bare_slug\E' holds no platform entitlement/, 'naming the tenant';
+    is $bare_db->query('SELECT count(*) FROM payments')->array->[0], 0, 'no payment row is written';
+    is $requests, 0, 'and no request reached Stripe';
 };
 
 # ---- (c) retry path: handle_payment_callback failure re-issues same connect params ----
@@ -357,7 +342,7 @@ subtest 'registry seller is charged directly on its own account' => sub {
         'an explicit 0% plan sends no application_fee_amount';
 };
 
-# A tenant with its own schema, a parent resident there, and the given account.
+# A tenant with its own schema, the stated terms, a parent resident there, and the given account.
 my $seller_n = 0;
 sub seller_with_account ($account) {
     my $s = 'seller_' . ++$seller_n . "_$$";
@@ -368,6 +353,7 @@ sub seller_with_account ($account) {
     Registry::DAO::Tenant->provision($db, { name => "Seller $s", slug => $s, users => [ $a ] });
     $db->query('UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
         $account, $s);
+    give_tenant_terms( $db, $s, { rate => $stated_rate } );
     my $sdb = Registry::DAO->new(url => $test_db->uri, schema => $s)->db;
     my $p = Registry::DAO::User->create($sdb, {
         username => "${s}_parent", email => "${s}_parent\@test.example",

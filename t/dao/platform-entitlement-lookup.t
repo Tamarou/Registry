@@ -57,7 +57,7 @@ subtest 'platform resolves exactly zero' => sub {
 };
 
 subtest 'version id resolves its own terms' => sub {
-    my $terms = platform_version_terms( $db, $SOLO_V1 );
+    my $terms = platform_version_terms( $db, $SOLO_V1, 'revenue_share' );
     is $terms->{id}, $SOLO_V1, 'the version asked for';
     cmp_ok $terms->{fraction}, '==', 0.025, 'its fraction';
     is $terms->{refund_policy}{kind}, 'keep_fee_with_admin_exception', 'its refund policy';
@@ -132,7 +132,7 @@ subtest 'superseded version still resolves its refund policy' => sub {
 
     is platform_entitlement_terms( $db, 'moving_studio' )->{id}, $v2->id, 'the tenant now holds v2';
     my $v1 = {};
-    lives_ok { $v1 = platform_version_terms( $db, $SOLO_V1 ) } 'superseded v1 still resolves by id';
+    lives_ok { $v1 = platform_version_terms( $db, $SOLO_V1, 'revenue_share' ) } 'superseded v1 still resolves by id';
     is $v1->{refund_policy}{kind}, 'keep_fee_with_admin_exception', 'v1 by id keeps its own refund policy';
     cmp_ok $v1->{fraction}, '==', 0.025, 'and its own fraction';
 };

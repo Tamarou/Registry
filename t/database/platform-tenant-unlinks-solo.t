@@ -60,9 +60,12 @@ subtest 'the migration changes no other tenant link' => sub {
     is link_of($solo_tenant), $solo_id, 'the Solo tenant still names Solo';
     is link_of($unlinked_tenant), undef, 'the unlinked tenant is still unlinked';
 
-    require Registry::PriceOps::RevenueShare;
-    cmp_ok Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, 'solo_studio' ), '==', 0.025,
-        'and the Solo tenant still resolves the Solo rate';
+    # Read through the link as the resolver of this point in history did;
+    # today's resolver reads entitlements, which do not exist yet here.
+    cmp_ok $db->query( q{SELECT (p.pricing_configuration->>'percentage')::numeric FROM registry.tenants t
+                          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
+                         WHERE t.slug = 'solo_studio'} )->array->[0], '==', 0.025,
+        'and the Solo tenant still links the Solo rate';
 };
 
 subtest 'the solo plan row is unchanged by clearing the link' => sub {

@@ -121,20 +121,17 @@ subtest 'a tenant with no revenue share still gets its money' => sub {
 
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe ();
+use Registry::PriceOps::PlatformTerms ();
 
 my $t_db = Test::Registry::DB->new;
 my $dao  = $t_db->db;
 my $db   = $dao->db;
 
 my $seller = Test::Registry::Fixtures::platform_seller($db);
-my $plan_id = $db->query(q{
-    SELECT id FROM registry.pricing_plans
-     WHERE plan_scope = 'tenant' AND pricing_model_type = 'percentage'
-       AND metadata->>'default' IS DISTINCT FROM 'true'
-     ORDER BY created_at LIMIT 1
-})->hash->{id};
-$db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
-    $plan_id, $seller );
+# The seller charges under Solo's 2.5%, as a tenant would.
+Test::Registry::PricingProbe::give_tenant_terms( $db, $seller, { rate => '0.025', name => 'Solo' } );
+my $plan_id = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $seller )->{id};
 my $plan_pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
     $db, $seller ) * 100;
 
@@ -483,13 +480,13 @@ subtest 'schedule uses the account instalment one was charged on' => sub {
 # must name the plan that priced the schedule -- not whatever the tenant is on.
 subtest 'later instalment rows carry the plan snapshotted on instalment one' => sub {
     my $payment = first_instalment();
-    is $payment->metadata->{platform_pricing_plan_id}, $plan_id,
-        'instalment one snapshotted the plan';
+    is $payment->metadata->{platform_offer_version_id}, $plan_id,
+        'instalment one snapshotted the platform offer version';
 
     with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
 
     my $later = $db->query( q{
-        SELECT metadata->>'platform_pricing_plan_id' FROM payments
+        SELECT metadata->>'platform_offer_version_id' FROM payments
          WHERE metadata->>'instalment_of' = ? ORDER BY instalment_seq
     }, $payment->id )->arrays->flatten->to_array;
     is_deeply $later, [ ($plan_id) x 2 ], 'and so does each later row';
@@ -500,15 +497,12 @@ subtest 'later instalment rows carry the plan snapshotted on instalment one' => 
 # after a plan change and Stripe would answer with an idempotency error.
 subtest 'the instalment schedule uses the rate snapshotted on instalment one' => sub {
     my $payment = first_instalment();
-    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id =
-                    (SELECT id FROM registry.pricing_plans WHERE plan_name = 'Registry Free' LIMIT 1)
-                   WHERE slug = ?}, $seller );
-    is Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, $seller ), 0,
-        'the seller has since moved to a plan with no revenue share';
-
-    my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
-    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
-        $plan_id, $seller );
+    my $calls;
+    Test::Registry::PricingProbe::with_tenant_plan( $db, $seller, { rate => 0 }, sub {
+        is Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, $seller ), 0,
+            'the seller has since moved to terms with no revenue share';
+        $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
+    } );
 
     is $calls->[3][2]{'default_settings[application_fee_percent]'}, $plan_pct,
         'the schedule still takes the rate instalment one was quoted at';
