@@ -7,6 +7,20 @@ set -e
 
 # Function to deploy database schema (only for web service)
 deploy_schema() {
+    # The platform variables are checked before anything migrates. A boot
+    # refused after sqitch deploy leaves the database ahead of the code still
+    # serving, and that code cannot then restart: its sqitch finds changes its
+    # plan does not list, so the site goes down instead of staying on the old
+    # release. Only what can be judged without the database is checked here;
+    # `platform bootstrap` below still refuses an email another user holds.
+    if [ "${MOJO_MODE:-}" = "production" ]; then
+        echo "Checking the platform configuration..."
+        if ! ./registry platform check; then
+            echo "FATAL: platform configuration is incomplete -- refusing to start before migrating"
+            return 1
+        fi
+    fi
+
     echo "Deploying database schema..."
     # Use SQITCH_TARGET if set, otherwise derive from DB_URL.
     # Sqitch requires db:pg:// URIs, not postgresql:// — convert if needed.
