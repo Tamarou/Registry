@@ -45,6 +45,8 @@ defaults. An idempotent `./registry platform bootstrap`, run by
 `PLATFORM_STRIPE_ACCOUNT_ID`, `PLATFORM_STRIPE_READY` and
 `PLATFORM_ADMIN_EMAIL`. It never overwrites a value an admin has since changed,
 and a missing variable leaves the default and logs a warning.
+What shipped, and how an operator runs and verifies it, is in
+[the platform tenant bootstrap runbook](../operations/platform-tenant-bootstrap.md).
 
 ## Running workflows (steps 5 and 6)
 
