@@ -244,6 +244,21 @@ subtest 'a failed instalment is recorded, and the child keeps their place' => su
     is $enrolments, 0, 'no enrolment was cancelled by the failure';
 };
 
+# Stripe retries a failed invoice and reports each attempt. Morgan reads the
+# latest reason, not the first.
+subtest 'a second failure of one invoice keeps the latest reason' => sub {
+    my @ids = build_set();
+
+    deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two',
+        last_finalization_error => { message => 'Your card was declined.' } ) );
+    deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two',
+        last_finalization_error => { message => 'Your card has expired.' } ) );
+
+    is_deeply statuses(), [qw( completed failed pending )], 'the row stays failed';
+    like( Registry::DAO::Payment->find( $A->{db}, { id => $ids[1] } )->error_message,
+        qr/expired/, "with the second attempt's reason" );
+};
+
 subtest 'a retry after a failure completes the same instalment' => sub {
     build_set();
 

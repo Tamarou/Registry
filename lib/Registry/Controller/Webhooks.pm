@@ -544,9 +544,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
-        # A failure this invoice already recorded, or one reported after its
-        # retry paid: history, not news.
-        return unless $row->{status} eq 'pending';
+        # A failure reported after its retry paid: history, not news. A repeat
+        # failure is Stripe's next attempt, so its reason replaces the last.
+        return if $row->{status} eq 'completed';
 
         # With no payment intent no charge was attempted, so nothing failed and
         # the row stays owed -- but it is this invoice's month, so bind it.
