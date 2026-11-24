@@ -68,7 +68,7 @@ subtest 'day one policy shapes stored as data' => sub {
     my %day_one = (
         change => { kind => 'window', window_hours => 48, fee_cents => 1000, targets => 'same_offer' },
         use    => { kind => 'optional_attendance' },
-        expiry => { kind => 'occurrence_end' },
+        expiry => { kind => 'end_of_occurrence' },
     );
     for my $refund (
         { kind => 'none' },
@@ -82,6 +82,9 @@ subtest 'day one policy shapes stored as data' => sub {
     }
     is_deeply drafted( 'No changes', policies => { change => { kind => 'none' } } )->policies,
         { change => { kind => 'none' } }, 'a change policy can allow no change';
+    my $open = { use => { kind => 'none' }, expiry => { kind => 'never' } };
+    is_deeply drafted( 'Open-ended', policies => $open )->policies, $open,
+        'use none and expiry never round-trip';
 };
 
 subtest 'refund policy vocabulary is pinned' => sub {
@@ -244,7 +247,7 @@ subtest 'published child data insert or delete refused' => sub {
         $db->query( 'DELETE FROM offer_version_payment_plans WHERE offer_version_id = ?', $v->id )
     } $refused, 'removing one is refused';
     throws_ok {
-        $db->query( q{UPDATE offer_versions SET policies = policies || '{"expiry": {"kind": "occurrence_end"}}' WHERE id = ?}, $v->id )
+        $db->query( q{UPDATE offer_versions SET policies = policies || '{"expiry": {"kind": "end_of_occurrence"}}' WHERE id = ?}, $v->id )
     } $refused, 'adding a policy is refused';
     throws_ok {
         $db->query( q{UPDATE offer_versions SET policies = policies - 'refund' WHERE id = ?}, $v->id )

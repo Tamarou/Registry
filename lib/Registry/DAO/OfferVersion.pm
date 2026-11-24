@@ -66,8 +66,8 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 targets => sub ($v) { ( $v // '' ) eq 'same_offer' },
             } ],
         },
-        use    => { optional_attendance => [ {} ] },
-        expiry => { occurrence_end      => [ {} ] },
+        use    => { optional_attendance => [ {} ], none  => [ {} ] },
+        expiry => { end_of_occurrence   => [ {} ], never => [ {} ] },
     );
 
     # True when $data, less its kind, has exactly $shape's fields, each passing.
