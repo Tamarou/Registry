@@ -22,6 +22,8 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $state :param :reader;                 # see LIFECYCLE
     field $ended_at :param :reader = undef;      # set once, by end()
     field $ended_reason :param :reader = undef;  # the Stripe refund or dispute id where there is one
+    field $payment_id :param :reader = undef;           # the payment that created it, set at insert
+    field $payment_share_cents :param :reader = undef;  # its share of that payment
 
     sub table { 'entitlements' }
 
@@ -36,7 +38,8 @@ active and the period covers T (in_effect_sql).
 =cut
 
     # $data names the holder, payer, stamp, and starts_at with an optional
-    # ends_at; the period is stored half-open.
+    # ends_at; the period is stored half-open. A paid entitlement also names
+    # payment_id and payment_share_cents, which nothing changes afterwards.
     sub create ( $class, $db, $data ) {
         my %row = %$data;
         my ( $starts_at, $ends_at ) = delete @row{qw( starts_at ends_at )};
@@ -121,6 +124,19 @@ active and the period covers T (in_effect_sql).
              WHERE id = ? RETURNING *
         }, $to_state, $reason, $at, $at, $id )->expand->hash;
         return __PACKAGE__->new(%$row);
+    }
+
+    # Entitlements $payment_id created: what its refunds and disputes match.
+    sub created_by_payment ( $class, $db, $payment_id ) {
+        return $class->find( $db, { payment_id => $payment_id } );
+    }
+
+    # The payment that created it (its share is payment_share_cents); undef
+    # when none did.
+    method payment ($db) {
+        return undef unless $payment_id;
+        require Registry::DAO::Payment;
+        return scalar Registry::DAO::Payment->find( $db, { id => $payment_id } );
     }
 
     # The version it was sold under, superseded or not.

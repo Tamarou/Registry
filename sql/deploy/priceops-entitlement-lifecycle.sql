@@ -1,5 +1,5 @@
 -- ABOUTME: An entitlement's lifecycle state: active, or ended once (expired, refunded, lost to a dispute) with when and why.
--- ABOUTME: Ending closes the period; an ended entitlement never changes again. Built in registry and every tenant schema.
+-- ABOUTME: Ending closes the period and never changes; each links, from insert, to the payment that created it.
 
 -- Deploy registry:priceops-entitlement-lifecycle to pg
 -- requires: priceops-entitlement-units
@@ -8,7 +8,7 @@ BEGIN;
 
 SET client_min_messages = 'warning';
 
--- The stamp stays frozen, and an ended entitlement keeps its first ending:
+-- The stamp and the payment link stay as inserted, and an ended entitlement keeps its first ending:
 -- it never returns to active, never moves to another ended state, and its
 -- closed period never reopens.
 CREATE OR REPLACE FUNCTION registry.entitlement_stamp() RETURNS trigger AS $t$
@@ -22,6 +22,13 @@ BEGIN
             RAISE EXCEPTION
                 'entitlement % keeps the stamp it was sold under: its offer, '
                 'offer version, payment plan and its kind cannot change.', OLD.id;
+        END IF;
+        IF (NEW.payment_id, NEW.payment_share_cents)
+           IS DISTINCT FROM (OLD.payment_id, OLD.payment_share_cents)
+        THEN
+            RAISE EXCEPTION
+                'entitlement % keeps the payment that created it and its share: '
+                'the payment link is set only at insert.', OLD.id;
         END IF;
         IF OLD.state <> 'active'
            AND (NEW.state, NEW.ended_at, NEW.ended_reason, NEW.in_effect)
@@ -76,6 +83,14 @@ BEGIN
                     CHECK (state IN ('active', 'expired', 'refunded', 'dispute_lost')),
                 ADD COLUMN ended_at timestamp with time zone,
                 ADD COLUMN ended_reason text,
+                -- The payment that created it and its share of that payment
+                -- (one cart may create several); empty when no payment did.
+                ADD COLUMN payment_id uuid REFERENCES %1$I.payments (id),
+                ADD COLUMN payment_share_cents integer,
+                ADD CONSTRAINT entitlements_payment_share_check CHECK (
+                    (payment_id IS NULL) = (payment_share_cents IS NULL)
+                    AND coalesce(payment_share_cents, 0) >= 0
+                ),
                 ADD CONSTRAINT entitlements_ending_check CHECK (
                     CASE WHEN state = 'active' THEN ended_at IS NULL AND ended_reason IS NULL
                          ELSE ended_at IS NOT NULL AND ended_reason IS NOT NULL

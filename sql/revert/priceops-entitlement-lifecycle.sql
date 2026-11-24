@@ -1,4 +1,4 @@
--- ABOUTME: Drop entitlement lifecycle state, ending and the relaxed period check everywhere.
+-- ABOUTME: Drop entitlement lifecycle state, ending, payment link and the relaxed period check everywhere.
 -- ABOUTME: Restores the stamp trigger function that froze only the stamp, and the period check with no empty ranges.
 
 -- Revert registry:priceops-entitlement-lifecycle from pg
@@ -24,6 +24,8 @@ BEGIN
                 DROP COLUMN state,
                 DROP COLUMN ended_at,
                 DROP COLUMN ended_reason,
+                DROP COLUMN payment_id,
+                DROP COLUMN payment_share_cents,
                 ADD CONSTRAINT entitlements_in_effect_check CHECK (
                     NOT isempty(in_effect) AND NOT lower_inf(in_effect)
                     AND lower_inc(in_effect) AND NOT upper_inc(in_effect)

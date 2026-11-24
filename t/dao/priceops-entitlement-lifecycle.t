@@ -46,7 +46,8 @@ sub seats ( $capacity = 10, $handle = $studio ) {
 }
 
 # An entitlement to $version held by a new person, in effect from $PAST.
-sub entitlement ( $version = ( seats() )[1], %more ) {
+sub entitlement ( $version = undef, %more ) {
+    $version //= ( seats() )[1];
     return Registry::DAO::Entitlement->create( $studio, {
         holder_user_id   => person(),
         offer_version_id => $version->id,
@@ -77,6 +78,43 @@ subtest 'ending moves record state reason and time' => sub {
         ok defined $read->ended_at, '... and when it ended';
         ok !$read->is_in_effect($studio), '... and it is no longer in effect';
     }
+};
+
+# A completed payment of $cents in $handle's schema; returns its id.
+sub payment ( $cents, $handle = $studio ) {
+    return $handle->insert( 'payments',
+        { user_id => person($handle), amount_cents => $cents, status => 'completed' },
+        { returning => 'id' } )->hash->{id};
+}
+
+subtest 'entitlement records its payment and share' => sub {
+    my $paid = payment(5000);
+    my $e    = entitlement( undef, payment_id => $paid, payment_share_cents => 2000 );
+    is $e->payment_id,          $paid, 'it records the payment that created it';
+    is $e->payment_share_cents, 2000,  'and its share of that payment';
+    is $e->payment($studio)->id, $paid, 'and reads that payment back';
+
+    my $tenant = Registry::DAO::Tenant->create( $db, { name => 'Solo Studio', slug => 'solo_studio' } );
+    my ( undef, $solo ) = seats( 1, $db );
+    my $free = Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $tenant->id,
+        offer_version_id => $solo->id,
+        payment_plan_id  => 'pay',
+        starts_at        => $PAST,
+    } );
+    ok !defined $free->payment_id && !defined $free->payment_share_cents,
+        'a percentage-of-sales Solo entitlement no payment created has an empty link';
+    ok !defined $free->payment($db), 'and reads no payment';
+};
+
+subtest 'payment finds the entitlements it created' => sub {
+    my ( undef, $version ) = seats();
+    my $cart  = payment(4000);
+    my @made  = map { entitlement( $version, payment_id => $cart, payment_share_cents => 2000 ) } 1 .. 2;
+    entitlement( $version, payment_id => payment(2000), payment_share_cents => 2000 );
+
+    is_deeply [ sort map { $_->id } Registry::DAO::Entitlement->created_by_payment( $studio, $cart ) ],
+        [ sort map { $_->id } @made ], 'a payment that created two entitlements finds both and no other';
 };
 
 done_testing;
