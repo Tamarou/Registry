@@ -14,6 +14,7 @@ use Registry::DAO::Resource;
 use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Project;
+use Registry::DAO::Entitlement;
 use Registry::DAO::Tenant;
 
 my $test_db = Test::Registry::DB->new;
@@ -97,6 +98,60 @@ subtest 'class offer covers current and later occurrences' => sub {
     ok !$offer->buys( $studio, $other->id ), 'not an occurrence of another class';
     is( Registry::DAO::OfferVersion->find( $studio, { offer_id => $offer->offer_id } )->version, 1,
         'with no new version' );
+};
+
+sub person () {
+    return $studio->insert( 'users', { username => 'holder-' . ++$made }, { returning => 'id' } )
+        ->hash->{id};
+}
+
+# A class, its published class offer and $n occurrence-resources of it.
+sub class_with_occurrences ( $n = 3 ) {
+    my $c     = class_in();
+    my @occ   = map { Registry::DAO::Resource->for_occurrence( $studio, event_of($c) ) } 1 .. $n;
+    my $offer = class_offer( $c, units_per_acceptance => 2 );
+    return ( $offer, @occ );
+}
+
+# A grant of $units seats of $resource under $offer to $holder.
+sub seat_sale ( $offer, $resource, $holder, $units = 2 ) {
+    return {
+        holder_user_id   => $holder,
+        offer_version_id => $offer->id,
+        payment_plan_id  => 'pay',
+        resource_id      => $resource->id,
+        units            => $units,
+        starts_at        => '2020-01-01T00:00:00Z',
+    };
+}
+
+subtest 'entitlement holds units of one covered occurrence' => sub {
+    my ( $offer, $a, $b ) = class_with_occurrences(2);
+    my $holder = person();
+    my $e      = Registry::DAO::Entitlement->grant( $studio, seat_sale( $offer, $a, $holder ) );
+    is_deeply $e->units( $studio, $a->id ), [ 1, 2 ], 'a couple holds two seats of the occurrence';
+    is_deeply $e->units( $studio, $b->id ), [], 'and none of another';
+    ok Registry::DAO::Entitlement->holds_unit_of( $studio, $holder, $a->id ), 'holds a seat in it';
+    ok !Registry::DAO::Entitlement->holds_unit_of( $studio, $holder, $b->id ), 'not in the other';
+    is $b->free_units($studio), 10, "the other occurrence's seats are untouched";
+};
+
+subtest 'one holder holds seats in two occurrences of one class offer' => sub {
+    my ( $offer, $a, $b ) = class_with_occurrences(2);
+    my $holder = person();
+    my @e = map { Registry::DAO::Entitlement->grant( $studio, seat_sale( $offer, $_, $holder ) ) } $a, $b;
+    isnt $e[0]->id, $e[1]->id, 'two entitlements';
+    is $e[0]->offer_version_id, $e[1]->offer_version_id, 'under one class offer version';
+    ok Registry::DAO::Entitlement->holds_unit_of( $studio, $holder, $_->id ), 'holds a seat in ' . $_->name
+        for $a, $b;
+};
+
+subtest 'change targets are the other covered occurrences' => sub {
+    my ( $offer, @occ ) = class_with_occurrences(3);
+    Registry::DAO::Resource->for_occurrence( $studio, event_of( class_in() ) );    # another class's
+    my $e = Registry::DAO::Entitlement->grant( $studio, seat_sale( $offer, $occ[1], person() ) );
+    is_deeply ids( $e->change_targets($studio)->@* ), ids( @occ[ 0, 2 ] ),
+        'the other occurrences its stamped version covers, not its own';
 };
 
 done_testing;

@@ -159,6 +159,15 @@ active and the period covers T (in_effect_sql).
         return scalar Registry::DAO::OfferVersion->find( $db, { id => $offer_version_id } );
     }
 
+    # Where a change may move it: the occurrences its stamped version covers,
+    # less the one it holds. 01a20416-6e27 filters these by time and room.
+    method change_targets ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my %own = map { $_ => 1 } $db->select( 'entitlement_units', 'resource_id',
+            { entitlement_id => $id } )->arrays->flatten->each;
+        return [ grep { !$own{ $_->id } } $self->offer_version($db)->covered_resources($db)->@* ];
+    }
+
     # Entitlements in effect at $t, narrowed by $filter.
     sub in_effect_at ( $class, $db, $t, $filter = {} ) {
         my $in_effect = $class->in_effect_sql( 'entitlements',
