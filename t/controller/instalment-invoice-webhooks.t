@@ -360,6 +360,38 @@ subtest 'concurrent payment_failed and invoice.paid for one invoice mark one row
         'the invoice completes one row and fails none';
 };
 
+# An invoice that will never be charged leaves its month owed. Left pending,
+# the debt goes quiet; failed, it heads Morgan's dashboard with the reason.
+subtest 'a voided or uncollectible instalment invoice is flagged on the dashboard' => sub {
+    my @ids = build_set();
+
+    # Bound by no-intent failures, as a schedule's unchargeable invoice is.
+    deliver( 'invoice.payment_failed', invoice( 'in_void', undef ) );
+    deliver( 'invoice.payment_failed', invoice( 'in_uncollectible', undef ) );
+    is_deeply statuses(), [qw( completed pending pending )], 'both bound, both still pending';
+
+    deliver( 'invoice.voided', invoice( 'in_void', undef, status => 'void' ) );
+    deliver( 'invoice.marked_uncollectible', invoice( 'in_uncollectible', undef, status => 'uncollectible' ) );
+    is_deeply statuses(), [qw( completed failed failed )], 'each marks its own row failed';
+
+    my %owed = map { $_->{id} => $_ }
+        @{ Registry::DAO::Payment->outstanding_instalments( $A->{db} ) };
+    is $owed{ $ids[1] }{status}, 'failed', 'the voided month is on the dashboard as failed';
+    like $owed{ $ids[1] }{error_message}, qr/voided/, 'with why';
+    like $owed{ $ids[2] }{error_message}, qr/uncollectible/, 'and so is the uncollectible one';
+};
+
+subtest 'a void names only its own invoice, and never a paid one' => sub {
+    build_set();
+
+    deliver( 'invoice.voided', invoice( 'in_never_seen', undef, status => 'void' ) );
+    is_deeply statuses(), [qw( completed pending pending )], 'an unseen invoice takes no row';
+
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two' ) );
+    deliver( 'invoice.voided', invoice( 'in_two', 'pi_two', status => 'void' ) );
+    is_deeply statuses(), [qw( completed completed pending )], 'a completed row stays completed';
+};
+
 # Each month is its own invoice. A later month paying does not settle an
 # earlier month's debt.
 subtest 'month two failed then month three paid completes month three only' => sub {

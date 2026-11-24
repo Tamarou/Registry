@@ -126,6 +126,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # A seller- or Stripe-written value, made safe to put in our log.
     sub _printable ($v) { "$v" =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger }
 
+    # The invoice events that can settle or flag a family's instalment.
+    use constant INSTALMENT_INVOICE =>
+        qr/\Ainvoice\.(?:paid|payment_failed|voided|marked_uncollectible)\z/;
+
     # Claim a Stripe move and store it with its account, tenant and payload,
     # left unprocessed. Nothing it names is changed here. A failure to store
     # rolls the claim back and answers 500, so Stripe's redelivery is not
@@ -216,10 +220,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Only an invoice the schedule billed is an instalment: a seller's own
         # invoice against the subscription (billing_reason manual, ...) is not.
         # subscription_update is the schedule too: the invoice at a phase
-        # change, such as the final instalment's own amount.
+        # change, such as the final instalment's own amount. A voided or
+        # uncollectible invoice keeps the reason it was billed under.
         my $sub_id = $event->{data}{object}{subscription};
         my $reason = $event->{data}{object}{billing_reason} // '';
-        if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/ && $sub_id && !ref $sub_id ) {
+        if ( $event->{type} =~ INSTALMENT_INVOICE && $sub_id && !ref $sub_id ) {
             unless ( $reason =~ /\Asubscription_(?:create|cycle|update)\z/ ) {
                 # The seller chose the reason by how they raised the invoice, so
                 # it is escaped before it reaches our log.
@@ -260,7 +265,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # A family's instalment, billed by the schedule Registry made on
             # this account, so matched in this tenant's schema only. Never
             # tenant billing: that is the platform's own subscriptions.
-            if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/
+            if ( $event->{type} =~ INSTALMENT_INVOICE
                     && $self->_invoice_is_instalment($db, $schedule) ) {
                 $self->_process_instalment_invoice($db, $event, $schedule);
             }
@@ -511,7 +516,23 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
              WHERE stripe_schedule_id = ?
                AND metadata->>'stripe_invoice_id' = ?
              FOR UPDATE
-        }, $schedule, $invoice_id )->hash // $db->query( q{
+        }, $schedule, $invoice_id )->hash;
+
+        # Stripe will not charge a voided or uncollectible invoice, so its
+        # month stays owed: flagged, where a quiet pending row would hide it.
+        # Only the row this invoice already bound; a paid one is history.
+        # shortcut: an invoice voided before any event bound it flags nothing
+        # (its row stays pending, still on the dashboard); bind on
+        # invoice.finalized if that gap shows up in the reconciliation.
+        if ( my ($closed) = $event->{type} =~ /^invoice\.(voided|marked_uncollectible)$/ ) {
+            return unless $row && $row->{status} ne 'completed';
+            $db->query( q{UPDATE payments SET status = 'failed', error_message = ? WHERE id = ?},
+                $closed eq 'voided' ? 'The invoice was voided.' : 'The invoice was marked uncollectible.',
+                $row->{id} );
+            return;
+        }
+
+        $row //= $db->query( q{
             SELECT id, status FROM payments
              WHERE stripe_schedule_id = ?
                AND status = 'pending'
