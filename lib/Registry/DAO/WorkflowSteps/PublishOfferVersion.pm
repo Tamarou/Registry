@@ -32,6 +32,11 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         return { stay => 1, errors => ['Choose a refund policy'] }
             unless ( $form_data->{refund} // '' ) eq 'none';
 
+        # From the run, as the use-policy step recorded it, never this form.
+        my $use = ( ref $data->{use_policy} eq 'HASH' ? $data->{use_policy} : {} )->{use};
+        return { stay => 1, errors => ['Choose a use policy before publishing'] }
+            unless defined $use && !ref $use;
+
         # One version per run: the run's row is locked while this reads whether
         # it has published, so a repeated or concurrent submission waits and
         # then finds the first one's version instead of publishing another.
@@ -57,7 +62,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 resource_id => $basic->{resource_id},
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
-                policies => { refund => { kind => 'none' } },
+                policies => { refund => { kind => 'none' }, use => { kind => $use } },
             } )->publish($db);
         };
         unless ($version) {

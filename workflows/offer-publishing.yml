@@ -31,6 +31,12 @@ steps:
     template: offer-publishing/percentage-of-sales-payment
     class: Registry::DAO::WorkflowSteps::PercentageOfSalesPaymentPlan
 
+  - slug: use-policy
+    label: Use
+    description: Choose what counts as using the offer
+    template: offer-publishing/use-policy
+    class: Registry::DAO::WorkflowSteps::UsePolicy
+
   - slug: publish
     label: Publish
     description: Review and publish an immutable offer version
