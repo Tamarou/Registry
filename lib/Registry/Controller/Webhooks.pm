@@ -273,10 +273,19 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 $self->_process_instalment_invoice($db, $event, $schedule);
             }
             # Ours, but billed before schedule_remaining_instalments committed
-            # its rows: unclaimed, so Stripe retries once they are there.
+            # its rows: unclaimed, so Stripe retries once they are there. Only
+            # while the signed event is a day old or less: a seller can name
+            # a payment whose schedule never comes, and that is not retried.
             elsif ( $event->{type} =~ INSTALMENT_INVOICE
                     && $self->_schedule_not_recorded($db, $sched) ) {
-                die "instalment schedule $schedule is not recorded yet\n";
+                my $created = $event->{created};
+                die "instalment schedule $schedule is not recorded yet\n"
+                    if defined $created && !ref $created && $created =~ /\A\d+\z/
+                    && time - $created < 24 * 60 * 60;
+                $self->app->log->warn( "Connect webhook event $event_id: instalment schedule "
+                      . _printable($schedule) . " for payment "
+                      . _printable( $sched->{metadata}{payment_id} )
+                      . " is still not recorded after a day; not retried" );
             }
             # The readiness mirror, for the account that sent it and no other:
             # the account named inside the event must be the one Stripe
@@ -493,13 +502,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return $row ? 1 : 0;
     }
 
-    # Does this schedule name instalment one of a set still awaiting its
+    # Does this schedule name a paid instalment one still awaiting its
     # schedule? Its metadata is the seller's to edit, so it decides only retry
-    # against ignore, never which row is marked; and it must name a real
-    # payment in this tenant, so a seller's own schedule cannot keep Stripe
-    # retrying forever.
-    # shortcut: a schedule Stripe made whose job never commits retries until
-    # Stripe gives up (3 days); reconcile against Stripe if that ever happens.
+    # against ignore, never which row is marked. The job runs only once
+    # instalment one is paid, so an unpaid one never gets a schedule; a paid
+    # one whose job failed for good never does either, which is why the
+    # caller retries only while the event is young.
     method _schedule_not_recorded ($db, $sched) {
         my $payment_id = ref $sched eq 'HASH' ? $sched->{metadata}{payment_id} : undef;
         return 0 unless defined $payment_id && !ref $payment_id;
@@ -507,7 +515,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Compared as text: the seller's value need not be a uuid.
         return $db->query( q{
             SELECT 1 FROM payments
-             WHERE id::text = ? AND instalment_seq = 1 AND stripe_schedule_id IS NULL
+             WHERE id::text = ? AND instalment_seq = 1 AND status = 'completed'
+               AND stripe_schedule_id IS NULL
         }, $payment_id )->rows ? 1 : 0;
     }
 

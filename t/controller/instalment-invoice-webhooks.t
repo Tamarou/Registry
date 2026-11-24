@@ -484,7 +484,7 @@ subtest 'an invoice from a schedule not yet recorded asks for a retry' => sub {
     local $SUBSCRIPTIONS{sub_forged} = { id => 'sub_forged',
         schedule => { id => 'sub_sched_forged', metadata => { payment_id => "not-a-uuid'" } } };
 
-    my $event = { type => 'invoice.paid', account => $A->{account},
+    my $event = { type => 'invoice.paid', account => $A->{account}, created => time,
         data => { object => invoice( 'in_early', 'pi_early', subscription => 'sub_early' ) } };
     Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(500);
     is $dao->db->select( 'registry.webhook_events', ['id'],
@@ -504,6 +504,42 @@ subtest 'an invoice from a schedule not yet recorded asks for a retry' => sub {
             ->status_is(200)->content_is('OK');
     }
     is_deeply statuses(), [qw( completed completed pending )], 'and neither marks anything';
+};
+
+# A seller can name any payment whose schedule never comes (an abandoned
+# checkout, a job that failed for good): retrying that is only worth it while
+# the job could still commit.
+subtest 'an old not-yet-recorded schedule invoice answers 200 and warns' => sub {
+    $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
+    my $first = $A->{db}->insert( 'payments', {
+        user_id => $A->{user}->id, amount_cents => 3333, currency => 'USD',
+        status  => 'completed', instalment_seq => 1, instalment_count => 3,
+    }, { returning => 'id' } )->hash->{id};
+    local $SUBSCRIPTIONS{sub_stale} = { id => 'sub_stale',
+        schedule => { id => $SCHED, metadata => { payment_id => $first } } };
+
+    @logs = ();
+    my $event = { type => 'invoice.paid', account => $A->{account}, created => time - 25 * 3600,
+        data => { object => invoice( 'in_stale', 'pi_stale', subscription => 'sub_stale' ) } };
+    Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(200);
+    ok( ( grep { $_->[0] eq 'warn' && $_->[1] =~ /\Q$event->{id}\E.*not recorded/ } @logs ),
+        'and warns that the schedule was never recorded' );
+    $A->{db}->delete( 'payments', { id => $first } );
+};
+
+subtest 'a not-yet-recorded schedule invoice naming a pending instalment one answers 200' => sub {
+    $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
+    my $first = $A->{db}->insert( 'payments', {
+        user_id => $A->{user}->id, amount_cents => 3333, currency => 'USD',
+        status  => 'pending', instalment_seq => 1, instalment_count => 3,
+    }, { returning => 'id' } )->hash->{id};
+    local $SUBSCRIPTIONS{sub_unpaid} = { id => 'sub_unpaid',
+        schedule => { id => $SCHED, metadata => { payment_id => $first } } };
+
+    Test::Registry::StripeWebhook::post_connect( $t, { type => 'invoice.paid', account => $A->{account},
+        created => time, data => { object => invoice( 'in_unpaid', 'pi_unpaid', subscription => 'sub_unpaid' ) } } )
+        ->status_is(200)->content_is('OK');
+    $A->{db}->delete( 'payments', { id => $first } );
 };
 
 # Unreadable now is not "not ours": the claim is not taken and Stripe retries.
