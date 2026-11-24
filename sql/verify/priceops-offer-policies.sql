@@ -27,6 +27,13 @@ BEGIN
         ) THEN
             RAISE EXCEPTION 'offer_version_payment_plans_immutable trigger missing in schema %', s;
         END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger
+             WHERE tgrelid = format('%I.offer_versions', s)::regclass
+               AND tgname = 'offer_versions_require_payment_plan'
+        ) THEN
+            RAISE EXCEPTION 'offer_versions_require_payment_plan trigger missing in schema %', s;
+        END IF;
     END LOOP;
 END $$;
 

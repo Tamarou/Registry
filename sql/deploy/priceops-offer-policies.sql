@@ -39,6 +39,25 @@ BEGIN
 END;
 $t$ LANGUAGE plpgsql;
 
+-- Absence is not zero: a version is published only with a payment plan, by
+-- whatever path publishes it. Run at commit, so plans and publish can be
+-- written in either order within one transaction.
+CREATE OR REPLACE FUNCTION registry.offer_version_requires_payment_plan() RETURNS trigger AS $t$
+DECLARE
+    has_plan boolean;
+BEGIN
+    IF NEW.published_at IS NULL THEN RETURN NULL; END IF;
+    EXECUTE format(
+        'SELECT EXISTS (SELECT 1 FROM %I.offer_version_payment_plans WHERE offer_version_id = $1)',
+        TG_TABLE_SCHEMA) INTO has_plan USING NEW.id;
+    IF NOT has_plan THEN
+        RAISE EXCEPTION 'offer % version % has no payment plan and cannot be published',
+            NEW.offer_id, NEW.version;
+    END IF;
+    RETURN NULL;
+END;
+$t$ LANGUAGE plpgsql;
+
 DO $$
 DECLARE
     s name;
@@ -110,6 +129,15 @@ BEGIN
             CREATE TRIGGER offer_version_payment_plans_immutable
                 BEFORE INSERT OR UPDATE OR DELETE ON %I.offer_version_payment_plans
                 FOR EACH ROW EXECUTE FUNCTION registry.offer_version_payment_plan_immutable()
+        $f$, s);
+
+        EXECUTE format(
+            'DROP TRIGGER IF EXISTS offer_versions_require_payment_plan ON %I.offer_versions', s);
+        EXECUTE format($f$
+            CREATE CONSTRAINT TRIGGER offer_versions_require_payment_plan
+                AFTER UPDATE OF published_at ON %I.offer_versions
+                DEFERRABLE INITIALLY DEFERRED
+                FOR EACH ROW EXECUTE FUNCTION registry.offer_version_requires_payment_plan()
         $f$, s);
     END LOOP;
 END $$;

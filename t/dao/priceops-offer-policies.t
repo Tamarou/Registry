@@ -157,6 +157,9 @@ subtest 'publish without payment plan refused' => sub {
     my $offer = new_offer('Planless');
     my $draft = $offer->draft( $db, offer_terms( $seat->id, payment_plans => [] ) );
     throws_ok { $draft->publish($db) } qr/no payment plan/, 'a version offering no payment plan is not published';
+    throws_ok {
+        $db->query( 'UPDATE offer_versions SET published_at = now() WHERE id = ?', $draft->id )
+    } qr/no payment plan/, 'publishing it by raw SQL is refused too';
     ok !Registry::DAO::OfferVersion->find( $db, { id => $draft->id } )->is_published, 'it stays a draft';
 };
 

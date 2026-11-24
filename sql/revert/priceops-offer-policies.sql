@@ -18,6 +18,7 @@ BEGIN
     LOOP
         CONTINUE WHEN to_regclass(format('%I.offer_versions', s)) IS NULL;
         EXECUTE format('DROP TABLE IF EXISTS %I.offer_version_payment_plans', s);
+        EXECUTE format('DROP TRIGGER IF EXISTS offer_versions_require_payment_plan ON %I.offer_versions', s);
         EXECUTE format($f$
             ALTER TABLE %I.offer_versions
                 DROP COLUMN IF EXISTS price_cents,
@@ -37,8 +38,10 @@ DECLARE
 BEGIN
     FOR s IN SELECT slug::name FROM registry.tenants WHERE slug != 'registry' LOOP
         EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_payment_plan_immutable()', s);
+        EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_requires_payment_plan()', s);
     END LOOP;
 END $$;
 DROP FUNCTION IF EXISTS registry.offer_version_payment_plan_immutable();
+DROP FUNCTION IF EXISTS registry.offer_version_requires_payment_plan();
 
 COMMIT;
