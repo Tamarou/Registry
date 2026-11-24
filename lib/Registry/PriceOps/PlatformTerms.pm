@@ -143,8 +143,17 @@ sub rate_fraction ($raw, $context) {
       . "rate, so it has no revenue share to charge."
         unless defined $raw;
 
+    # An exponent of nine digits at most keeps every count below an integer.
     die "Revenue-share percentage '$raw' is not numeric for $context - check pricing_configuration."
-        unless $raw =~ /\A[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\z/;
+        unless $raw =~ /\A([-+]?)(?=\.?\d)(\d*)\.?(\d*)(?:[eE]([-+]?\d{1,9}))?\z/;
+
+    # Decimal digits and integer counts, never a float: the rate is 0.$digits
+    # x 10^$point, with $digits stripped to its significant ones.
+    my ( $negative, $digits, $point ) = ( $1 eq '-', $2 . $3, length($2) + ( $4 // 0 ) );
+    $point -= length $1 if $digits =~ s/\A(0*)//;
+    $digits =~ s/0+\z//;
+    my $significant = length $digits;
+    return '0' unless $significant;
 
     # The rate is a fraction, not a percent: 0.02 is 2%. A value outside [0,1]
     # is a unit mix-up (a bare "2" meaning 2%, or a dollar amount), and Stripe
@@ -152,15 +161,16 @@ sub rate_fraction ($raw, $context) {
     # where the message names the plan, rather than at the charge.
     die "Revenue-share percentage '$raw' is not a fraction between 0 and 1 for $context "
       . "- express the rate as a fraction (0.02 means 2%)."
-        unless $raw >= 0 && $raw <= 1;
+        if ( $negative || $point > 1 || $point == 1 && $digits ne '1' );
 
     # Whole basis points, as the database and PricingPlan hold it: a finer rate
     # dies in application_fee_cents mid-checkout, so refuse it here by name.
     die "Revenue-share percentage '$raw' has more than 4 decimal places for $context "
       . "- a rate is whole basis points (0.0125 means 1.25%)."
-        unless abs( $raw * 10_000 - sprintf '%.0f', $raw * 10_000 ) < 1e-6;
+        if $significant > $point + 4;
 
-    return sprintf( '%.4f', $raw ) =~ s/\.?0+\z//r;
+    return '1' if $point == 1;
+    return '0.' . '0' x -$point . $digits;
 }
 
 1;
