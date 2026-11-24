@@ -6,7 +6,7 @@ use experimental 'signatures';
 package Registry::PriceOps::PlatformTerms;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(platform_terms_for_tenant platform_default_terms
+our @EXPORT_OK = qw(platform_terms_for_tenant
                     platform_entitlement_terms platform_version_terms rate_fraction
                     platform_offers_to_tenants);
 
@@ -125,38 +125,6 @@ sub _entitlement_terms ( $row, $context ) {
         fraction      => rate_fraction( $row->{fraction}, $context ),
         refund_policy => from_json( $row->{refund_policy} // 'null' )
             // die "No refund policy on $context.\n",
-    };
-}
-
-# platform_default_terms($db) -> { id, name, fraction, amount_cents }
-#
-# The platform's default ("Free") pricing plan. No charge reads it: only the
-# signup page's quoted rate, which the Free-plan removal takes away. Current
-# versions only: this is a SEARCH by mark, and a retired version still
-# carries the mark.
-sub platform_default_terms ($db) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    my $row = $db->query(q{
-        SELECT id, plan_name, amount_cents,
-               pricing_configuration->>'percentage' AS pct
-          FROM registry.pricing_plans
-         WHERE plan_scope = 'platform'
-           AND metadata->>'default' = 'true'
-           AND superseded_at IS NULL
-         LIMIT 1
-    })->hash;
-
-    die "No platform default (Free) plan found in registry.pricing_plans "
-      . "(plan_scope='platform', metadata->>'default'='true'). "
-      . "This is a deployment bug - run the seed-free-platform-plan migration."
-        unless $row;
-
-    return {
-        id           => $row->{id},
-        name         => $row->{plan_name},
-        fraction     => rate_fraction( $row->{pct}, "platform default (Free) plan" ),
-        amount_cents => $row->{amount_cents},
     };
 }
 

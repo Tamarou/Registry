@@ -49,9 +49,7 @@ subtest 'a Solo holder is charged its entitlement rate' => sub {
 # The launch rate is a decision, and a decision belongs in one named place.
 # revenue_share_fraction_for_tenant answers "what is THIS tenant charged";
 # platform_launch_fraction answers "what does the platform sell", which is what
-# the marketing copy quotes. platform_default_fraction is neither -- reading
-# the launch rate off it returns the Free plan's zero, which is how the copy
-# came to promise a rate nothing charged.
+# the marketing copy quotes.
 subtest 'the launch rate has one named source' => sub {
     # Only one assertion here, deliberately. platform_launch_fraction dies on
     # zero marked plans, on more than one, and on a rate that is undefined,

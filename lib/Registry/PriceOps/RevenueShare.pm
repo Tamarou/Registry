@@ -6,10 +6,10 @@ use experimental 'signatures';
 package Registry::PriceOps::RevenueShare;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id);
+our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_launch_fraction platform_launch_plan_id);
 
 use Registry::DAO;
-use Registry::PriceOps::PlatformTerms qw(platform_terms_for_tenant platform_default_terms rate_fraction);
+use Registry::PriceOps::PlatformTerms qw(platform_terms_for_tenant rate_fraction);
 
 # revenue_share_fraction_for_tenant($db, $tenant_slug) -> decimal string
 #
@@ -21,29 +21,11 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     return platform_terms_for_tenant( $db, $tenant_slug )->{fraction};
 }
 
-# platform_default_fraction($db) -> number
-#
-# The platform's default ("Free") pricing plan's rate. No charge reads it: it
-# is the single source the signup display reads when no launch plan resolves,
-# until the Free-plan removal takes it away. Dies (deployment bug) if the
-# seeded platform default plan is missing, never a silent 0%.
-sub platform_default_fraction ($db) {
-    return platform_default_terms($db)->{fraction};
-}
-
 # platform_launch_fraction($db) -> number
 #
 # The rate the platform SELLS -- what the signup copy quotes and what a tenant
-# who takes the offered plan will be charged. Three functions here answer three
-# different questions and are not interchangeable:
-#
-#   revenue_share_fraction_for_tenant  what THIS tenant is charged
-#   platform_launch_fraction           what the platform advertises
-#   platform_default_fraction          the Free plan's 0%, for the signup display
-#
-# Reading the launch rate off platform_default_fraction returns the Free plan's
-# zero, and that is exactly how the copy once came to promise 2.5% while the
-# platform charged 0% and 2% -- three rates live at once.
+# who takes the offered plan will be charged. Not interchangeable with
+# revenue_share_fraction_for_tenant, which answers what THIS tenant is charged.
 #
 # Found by an explicit mark rather than by shape or ordering. "The newest
 # tenant-scope percentage plan" is a coincidence that stops being true the
