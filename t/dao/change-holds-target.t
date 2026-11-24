@@ -17,6 +17,9 @@ use Registry::DAO::Tenant;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::PriceOps::Hold;
+use POSIX ();
+use Mojo::JSON ();
+use Registry::DAO::WorkflowRun;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -181,6 +184,183 @@ subtest 'fee comes from stamped offer version' => sub {
     is $data->{change}{fee_cents}, 1000, 'the fee is the one the entitlement was sold under, not 2500';
     is $data->{change}{offer_version_id}, $version->id, 'and the version named is the stamped one';
     isnt $current->id, $version->id, 'though a newer version is current';
+};
+
+# Two real connections. A opens a transaction and runs $first, which takes a
+# lock; B (a child process, its own connection) runs $second, which must wait
+# on that lock. Once pg_blocking_pids shows B waiting, A commits. Returns
+# whether B waited and what $second returned, as JSON.
+sub race ( $first, $second ) {
+    my $uri = $test_db->uri;
+    pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
+    my $adb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
+    my $tx  = $adb->begin;
+    $first->($adb);
+    my $holder = $adb->query('SELECT pg_backend_pid()')->array->[0];
+    my $pid    = fork() // die "fork: $!";
+    unless ($pid) {
+        close $parent_reads;
+        my $bdb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
+        my $out = eval { Mojo::JSON::to_json( $second->($bdb) ) } // Mojo::JSON::to_json( { died => "$@" } );
+        print $child_writes $out;
+        close $child_writes;
+        POSIX::_exit(0);
+    }
+    close $child_writes;
+    my ( $blocked, $deadline ) = ( 0, time + 30 );
+    until ( $blocked || waitpid( $pid, POSIX::WNOHANG() ) || time > $deadline ) {
+        select undef, undef, undef, 0.05;
+        $blocked = $studio->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))',
+            $holder )->array->[0];
+    }
+    $tx->commit;
+    waitpid $pid, 0;
+    return ( $blocked, Mojo::JSON::from_json( do { local $/; readline $parent_reads } ) );
+}
+
+subtest 'own occurrence refused as target' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my $e = booking( $version, $held );
+    my ($run) = chosen($e);
+    ok hold_target( $run, $held )->{errors}, "the entitlement's own occurrence is refused";
+    is_deeply live_holds($run), [], 'no hold is placed';
+    is $held->free_units($studio), 3, 'its occurrence has only its own seat taken';
+};
+
+subtest 'started target refused' => sub {
+    my ( $version, $held, $started, $ended ) = occurrences( \%WINDOW, 72, -1, -48 );
+    my $e = booking( $version, $held );
+    my ( $run, $chose ) = chosen($e);
+    is_deeply $chose->{change_targets}, [], 'an occurrence under way or over is not listed';
+    for ( [ $started, 'under way' ], [ $ended, 'over' ] ) {
+        my ( $target, $what ) = @$_;
+        ok hold_target( $run, $target )->{errors}, "a target $what is refused";
+    }
+    is_deeply live_holds($run), [], 'no hold is placed';
+};
+
+subtest 'other offer target refused' => sub {
+    my ( $version, $held ) = occurrences( \%WINDOW, 72 );
+    my ( undef, $elsewhere ) = occurrences( \%WINDOW, 96 );
+    my $e = booking( $version, $held );
+    my ($run) = chosen($e);
+    ok hold_target( $run, $elsewhere )->{errors}, "another offer's occurrence posted directly is refused";
+    ok $run->process( $studio, $hold_step, { target_occurrence_id => 'not-a-uuid' } )->{errors},
+        'and so is something that is no occurrence';
+    is_deeply live_holds($run), [], 'no hold is placed';
+    is $elsewhere->free_units($studio), 4, 'the other offer keeps every seat';
+};
+
+subtest 'ended entitlement refused change' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my $expired = booking( $version, $held );
+    $expired->end( $studio, 'expired', 'occurrence ended' );
+    my $over = booking( $version, $held, 1, ends_at => '2021-01-01T00:00:00Z' );
+    for ( [ $expired, 'an expired' ], [ $over, 'an active one whose period ended' ] ) {
+        my ( $e, $what ) = @$_;
+        my ( $run, $chose ) = chosen($e);
+        like "@{ $chose->{errors} // [] }", qr/ended/, "$what entitlement is refused a change";
+        $run->update_data( $studio, { change_entitlement_id => $e->id } );    # as if chosen while current
+        ok hold_target( $run, $target )->{errors}, 'and refused a hold';
+        is_deeply live_holds($run), [], 'no hold is placed';
+    }
+};
+
+subtest 'window closing between steps refused' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my $e = booking( $version, $held );
+    my ( $run, $chose ) = chosen($e);
+    ok !$chose->{errors}, 'the change is allowed when chosen';
+    $studio->query( q{UPDATE events SET time = now() + interval '47 hours 59 minutes'
+                       WHERE id = ?}, $held->event_id );
+    like "@{ hold_target( $run, $target )->{errors} // [] }", qr/48 hours/,
+        'once the window closes the hold step refuses';
+    is_deeply live_holds($run), [], 'no hold is left behind';
+    is $target->free_units($studio), 4, 'the target keeps every seat';
+};
+
+subtest 'client change data ignored' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my ( $other, $elsewhere ) = occurrences( \%WINDOW, 96 );
+    my $e = booking( $version, $held );
+    my $stranger = booking( $other, $elsewhere );
+    my ($run) = chosen($e);
+    my $data = hold_target( $run, $target,
+        fee_cents => 1, hold_id => 'forged', offer_version_id => $other->id, entitlement_id => $stranger->id,
+        change    => { fee_cents => 1, hold_id => 'forged', offer_version_id => $other->id } );
+    my $holds = live_holds($run);
+    is_deeply $data->{change}, {
+        entitlement_id       => $e->id,
+        target_occurrence_id => $target->id,
+        hold_id              => $holds->[0]{id},
+        fee_cents            => 1000,
+        offer_version_id     => $version->id,
+    }, 'the change comes from the stamped policy and the placed hold only';
+    is_deeply Registry::DAO::WorkflowRun->find( $studio, { id => $run->id } )->data->{change}, $data->{change},
+        'and that is what the run stores';
+};
+
+subtest 'double hold submit leaves one hold' => sub {
+    my ( $version, $held, $first, $second ) = occurrences( \%WINDOW, 72, 96, 120 );
+    my $e = booking( $version, $held, 2 );
+    my ($run) = chosen($e);
+    hold_target( $run, $first );
+    my $data = hold_target( $run, $first );
+    my $holds = live_holds($run);
+    is scalar @$holds, 1, 'submitting the same target twice leaves one live hold';
+    is $data->{change}{hold_id}, $holds->[0]{id}, 'and the run names it';
+    is $first->free_units($studio), 2, 'holding two seats, not four';
+
+    $data  = hold_target( $run, $second );
+    $holds = live_holds($run);
+    is scalar @$holds, 1, 'choosing another target leaves one live hold';
+    is $holds->[0]{resource_id}, $second->id, 'on the new target';
+    is $first->free_units($studio), 4, 'the first target gets its seats back';
+
+    my ( $waited, $result ) = race(
+        sub ($adb) { $run->process( $adb, $hold_step, { target_occurrence_id => $first->id } ) },
+        sub ($bdb) { $run->process( $bdb, $hold_step, { target_occurrence_id => $first->id } ) },
+    );
+    ok $waited, 'a concurrent submit for the same run waits for the first';
+    ok !$result->{errors} && !$result->{died}, 'then goes through' or diag explain $result;
+    $holds = live_holds($run);
+    is scalar @$holds, 1, 'leaving one live hold';
+    is $result->{change}{hold_id}, $holds->[0]{id}, 'the one the second submit names';
+    is Registry::DAO::WorkflowRun->find( $studio, { id => $run->id } )->data->{change}{hold_id}, $holds->[0]{id},
+        'and the one the run stores';
+    is $first->free_units($studio) + $second->free_units($studio), 6, 'two seats held in all';
+};
+
+subtest 'last seat taken while holding refused' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96, { capacity => 1 } );
+    my $e = booking( $version, $held );
+    my ($run) = chosen($e);
+    my $other_run = $workflow->new_run($studio);
+    my ( $waited, $result ) = race(
+        sub ($adb) {
+            Registry::PriceOps::Hold->place( $adb, { resource_id => $target->id, units => 1,
+                workflow_run_id => $other_run->id, expires_at => \"now() + interval '15 minutes'" } );
+        },
+        sub ($bdb) { $run->process( $bdb, $hold_step, { target_occurrence_id => $target->id } ) },
+    );
+    ok $waited, 'the hold step waits on the target another transaction is holding';
+    like "@{ $result->{errors} // [] }", qr/room/, 'then refuses: the seat is gone'
+        or diag explain $result;
+    is_deeply live_holds($run), [], 'no hold is left behind';
+};
+
+subtest '2-seat entitlement moves to the held target in one transaction' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my $e = booking( $version, $held, 2 );
+    my ($run) = chosen($e);
+    my $hold = Registry::PriceOps::Hold->find( $studio,
+        { id => hold_target( $run, $target )->{change}{hold_id} }, 'id' );
+    my $tx = $studio->begin;
+    $hold->convert( $studio, $e );
+    $tx->commit;
+    is_deeply $e->units( $studio, $target->id ), [ 1, 2 ], 'both seats move to the target';
+    is_deeply $e->units( $studio, $held->id ), [], 'and leave the old occurrence';
+    is $held->free_units($studio), 4, 'which is free again';
 };
 
 done_testing;

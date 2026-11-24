@@ -28,6 +28,9 @@ class Registry::DAO::WorkflowSteps::ChooseChangeTarget :isa(Registry::DAO::Workf
     # boundary is inclusive (ADR 005 8b): exactly window_hours before its
     # occurrence starts, a change is still allowed.
     sub refusal ( $class, $db, $entitlement ) {
+        my $current = Registry::DAO::Entitlement->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );
+        return 'This booking has ended and cannot be changed'
+            unless $db->query( "SELECT $current FROM entitlements e WHERE e.id = ?", $entitlement->id )->array->[0];
         my $policy = $entitlement->offer_version($db)->policies->{change} // {};
         return "This booking's offer says it cannot be changed" unless ( $policy->{kind} // '' ) eq 'window';
         my ($resource_id) = $db->select( 'entitlement_units', 'resource_id',
