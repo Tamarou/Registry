@@ -30,7 +30,17 @@ BEGIN
                 ADD COLUMN units_per_acceptance integer NOT NULL
                     CONSTRAINT offer_versions_units_per_acceptance_check CHECK (units_per_acceptance > 0),
                 ADD COLUMN per_booking_cap integer NOT NULL
-                    CONSTRAINT offer_versions_per_booking_cap_check CHECK (per_booking_cap > 0)
+                    CONSTRAINT offer_versions_per_booking_cap_check CHECK (per_booking_cap > 0),
+                -- { refund, change, use, expiry }, each { kind, ...its fields },
+                -- validated by OfferVersion. The refund vocabulary is pinned
+                -- here too, because the refund and publishing steps match on it.
+                ADD COLUMN policies jsonb NOT NULL DEFAULT '{}'
+                    CONSTRAINT offer_versions_policies_object CHECK (jsonb_typeof(policies) = 'object'),
+                ADD CONSTRAINT offer_versions_refund_kind_check CHECK (
+                    NOT policies ? 'refund'
+                    OR coalesce(policies #>> '{refund,kind}', '') IN
+                       ('none', 'full_until_cutoff', 'keep_fee_with_admin_exception')
+                )
         $f$, s);
 
         -- The plans a customer chooses between. The id is the publisher's,

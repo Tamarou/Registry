@@ -57,4 +57,44 @@ subtest 'version offers one time and percentage plans by id' => sub {
     }
 };
 
+# A draft of a new offer with %terms over the defaults, read back from the database.
+sub drafted ( $name, %terms ) {
+    my $draft = new_offer($name)->draft( $db, offer_terms( $seat->id, %terms ) );
+    return Registry::DAO::OfferVersion->find( $db, { id => $draft->id } );
+}
+
+subtest 'day one policy shapes stored as data' => sub {
+    my %day_one = (
+        change => { kind => 'window', window_hours => 48, fee_cents => 1000, targets => 'same_offer' },
+        use    => { kind => 'optional_attendance' },
+        expiry => { kind => 'occurrence_end' },
+    );
+    for my $refund (
+        { kind => 'none' },
+        { kind => 'full_until_cutoff', cutoff_hours => 24 },
+        { kind => 'full_until_cutoff', cutoff_at => '2027-01-15T00:00:00Z' },
+        { kind => 'keep_fee_with_admin_exception' },
+    ) {
+        my $policies = { %day_one, refund => $refund };
+        my $v = drafted( "Refund $refund->{kind}", policies => $policies );
+        is_deeply $v->policies, $policies, "refund $refund->{kind} round-trips with change, use and expiry";
+    }
+    is_deeply drafted( 'No changes', policies => { change => { kind => 'none' } } )->policies,
+        { change => { kind => 'none' } }, 'a change policy can allow no change';
+};
+
+subtest 'refund policy vocabulary is pinned' => sub {
+    for my $kind (qw( full_until keep_fee refund_all )) {
+        throws_ok { drafted( "Refund $kind", policies => { refund => { kind => $kind } } ) }
+            qr/unknown refund policy kind '$kind'/, "refund policy '$kind' is refused";
+    }
+    throws_ok { drafted( 'Transfer', policies => { transfer => { kind => 'none' } } ) }
+        qr/unknown policy 'transfer'/, 'an unknown kind of policy is refused';
+
+    my $v = drafted( 'Raw SQL', policies => { refund => { kind => 'none' } } );
+    throws_ok {
+        $db->query( q{UPDATE offer_versions SET policies = '{"refund": {"kind": "keep_fee"}}' WHERE id = ?}, $v->id )
+    } qr/offer_versions_refund_kind_check/, 'and the database refuses it from raw SQL too';
+};
+
 done_testing;

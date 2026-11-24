@@ -8,6 +8,7 @@ use Object::Pad;
 class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Scalar::Util qw( blessed );
+    use Mojo::JSON qw( to_json );
 
     field $id :param :reader;
     field $offer_id :param :reader;
@@ -16,6 +17,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     field $price_cents :param :reader;             # whole smallest currency units
     field $units_per_acceptance :param :reader;    # e.g. 2 seats for a couple
     field $per_booking_cap :param :reader;         # acceptances one booking may take
+    field $policies :param :reader = {};           # { refund, change, use, expiry }
     field $published_at :param :reader = undef;
     field $superseded_at :param :reader = undef;
     field $created_at :param :reader;
@@ -38,18 +40,67 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         return $result;
     }
 
+    # The declared policy shapes: policy => kind => the field sets that kind
+    # may carry, each field with its check. A policy must match one field set
+    # exactly; anything else is refused, never guessed at. A new kind arrives
+    # as a new entry here and the workflow step that applies it.
+    my $whole   = sub ($v) { defined $v && !ref $v && $v =~ /\A[0-9]+\z/ };
+    my $instant = sub ($v) {
+        defined $v && !ref $v
+            && $v =~ /\A\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?(?:Z|[+-]\d\d:\d\d)\z/;
+    };
+    my %POLICY = (
+        refund => {
+            none                          => [ {} ],
+            full_until_cutoff             => [ { cutoff_hours => $whole }, { cutoff_at => $instant } ],
+            keep_fee_with_admin_exception => [ {} ],
+        },
+        change => {
+            none   => [ {} ],
+            window => [ {
+                window_hours => $whole,
+                fee_cents    => $whole,
+                # shortcut: only the same offer's occurrences, the day-one rule;
+                # other targets are a new value here when a product needs them.
+                targets => sub ($v) { ( $v // '' ) eq 'same_offer' },
+            } ],
+        },
+        use    => { optional_attendance => [ {} ] },
+        expiry => { occurrence_end      => [ {} ] },
+    );
+
+    sub _check_policies ($policies) {
+        croak 'policies must be an object' unless ref $policies eq 'HASH';
+        for my $name ( sort keys %$policies ) {
+            my $kinds  = $POLICY{$name} or croak "unknown policy '$name'";
+            my $policy = $policies->{$name};
+            croak "$name policy must be an object" unless ref $policy eq 'HASH';
+            my $kind   = $policy->{kind} // '';
+            my $shapes = $kinds->{$kind} or croak "unknown $name policy kind '$kind'";
+            my %fields = %$policy;
+            delete $fields{kind};
+            my $fits = sub ($shape) {
+                keys %fields == keys %$shape
+                    && !grep { !$shape->{$_} || !$shape->{$_}->( $fields{$_} ) } keys %fields;
+            };
+            grep( { $fits->($_) } @$shapes ) or croak "malformed $name policy '$kind'";
+        }
+    }
+
     # Appends the offer's next version number as a draft.
     sub draft ( $class, $db, $offer_id, $terms ) {
         $db = $db->db if $db isa Registry::DAO;
+        my $policies = $terms->{policies} // {};
+        _check_policies($policies);
         my $row = _with_offer_locked( $db, $offer_id, sub {
             my $row = $db->query(
                 'INSERT INTO offer_versions (offer_id, version, resource_id,
-                        price_cents, units_per_acceptance, per_booking_cap)
-                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?
+                        price_cents, units_per_acceptance, per_booking_cap, policies)
+                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?::jsonb
                    FROM offer_versions WHERE offer_id = ?
                  RETURNING *',
                 $offer_id, $terms->@{qw( resource_id price_cents units_per_acceptance per_booking_cap )},
-                $offer_id )->hash;
+                to_json($policies), $offer_id )->expand->hash;
             $db->insert( 'offer_version_payment_plans',
                 { offer_version_id => $row->{id}, $_->%{qw( id kind fraction )} } )
                 for ( $terms->{payment_plans} // [] )->@*;
@@ -82,7 +133,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
 
             $db->query(
                 'UPDATE offer_versions SET published_at = now()
-                  WHERE id = ? AND published_at IS NULL RETURNING *', $id )->hash
+                  WHERE id = ? AND published_at IS NULL RETURNING *', $id )->expand->hash
                 or croak "offer $offer_id version $version is already published";
         } );
         return blessed($self)->new(%$row);
