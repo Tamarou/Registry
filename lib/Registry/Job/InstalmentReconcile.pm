@@ -16,7 +16,7 @@ class Registry::Job::InstalmentReconcile {
     # An invoice billed before its schedule was recorded is dropped by the
     # webhook after a day (_settle_connect_event), so the family shows as owing
     # what Stripe collected. Stripe's list is the record: every paid invoice on
-    # a schedule with an owed row that no row is bound to is settled here.
+    # a schedule with an owed row is settled here, on its bound row or the next owed one.
     method run ($job) {
         my $app = $job->app;
         my $tenants = $app->dao('registry')->db->query( q{
@@ -68,10 +68,9 @@ class Registry::Job::InstalmentReconcile {
             # Only what the schedule billed, as the webhook decides.
             next unless ( $invoice->{billing_reason} // '' )
                 =~ /\Asubscription_(?:create|cycle|update)\z/;
-            # shortcut: an invoice bound to a failed row whose paid event was
-            # dropped is left failed; settle bound non-completed rows if that shows up.
-            next if $self->_bound( $db, $schedule, $invoice_id );
 
+            # Bound invoices too: payment_failed binds a row before the retry
+            # pays, and settling is idempotent (a completed row is not touched).
             my $tx = $db->begin;
             Registry::Controller::Webhooks->new( app => $app )->_process_instalment_invoice(
                 $db, { type => 'invoice.paid', data => { object => $invoice } }, $schedule );

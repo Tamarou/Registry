@@ -1,5 +1,5 @@
 # ABOUTME: The instalment_reconcile job settles paid instalment invoices whose webhook was dropped, run by Minion's own worker.
-# ABOUTME: It marks the earliest owed row and records its fee once; a bound invoice and a second run change nothing.
+# ABOUTME: It marks the earliest owed row (or the row the invoice is bound to) and records its fee once; a second run changes nothing.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -118,12 +118,33 @@ subtest 'a dropped invoice is reconciled onto the earliest owed row with its fee
     is_deeply rows('sub_sched_ir_dropped'), $before, 'a second run changes nothing';
 };
 
-subtest 'an invoice already bound to a row is left alone' => sub {
-    build_set( 'sub_sched_ir_bound', 2 => 'in_ir_bound' );
-    my $before = rows('sub_sched_ir_bound');
-    run_job( { sub_sched_ir_bound => 'sub_ir_bound' },
-        { sub_ir_bound => [ paid_invoice( 'in_ir_bound', 1_700_000_000 ) ] } );
-    is_deeply rows('sub_sched_ir_bound'), $before, 'no row changed';
+# A row is bound before payment by invoice.payment_failed: pending with no
+# intent, failed with one. If the retry's invoice.paid is then lost, the job
+# settles that row.
+for my $status (qw(pending failed)) {
+    subtest "a bound $status row whose paid event was dropped ends completed with its fee" => sub {
+        my $sched = "sub_sched_ir_bound_$status";
+        build_set( $sched, 2 => "in_ir_bound_$status" );
+        $tdb->query( q{UPDATE payments SET status = ? WHERE stripe_schedule_id = ? AND instalment_seq = 2},
+            $status, $sched );
+        run_job( { $sched => "sub_ir_bound_$status" },
+            { "sub_ir_bound_$status" => [ paid_invoice( "in_ir_bound_$status", 1_700_000_000 ) ] } );
+        my $rows = rows($sched);
+        is $rows->[1]{status}, 'completed', 'instalment two is paid';
+        is $rows->[1]{stripe_payment_intent_id}, "pi_in_ir_bound_$status", 'with its payment intent';
+        is $rows->[1]{platform_fee_cents}, 83, 'and its fee recorded';
+        is $rows->[2]{status}, 'pending', 'instalment three is still owed';
+    };
+}
+
+subtest 'a bound completed row is left as it is, with no second fee' => sub {
+    build_set( 'sub_sched_ir_bound_done', 2 => 'in_ir_bound_done' );
+    $tdb->query( q{UPDATE payments SET status = 'completed', platform_fee_cents = 50
+                   WHERE stripe_schedule_id = ? AND instalment_seq = 2}, 'sub_sched_ir_bound_done' );
+    my $before = rows('sub_sched_ir_bound_done');
+    run_job( { sub_sched_ir_bound_done => 'sub_ir_bound_done' },
+        { sub_ir_bound_done => [ paid_invoice( 'in_ir_bound_done', 1_700_000_000 ) ] } );
+    is_deeply rows('sub_sched_ir_bound_done'), $before, 'no row changed';
 };
 
 subtest 'a paid invoice that matches no owed row is flagged for ops' => sub {
