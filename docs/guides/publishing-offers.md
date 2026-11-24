@@ -58,8 +58,10 @@ run.
 | 10 | `publish` | Review and publish | Every answer, then **Publish** |
 | 11 | `complete` | Offer published | Confirmation |
 
-Every screen is shown on every run. No answer has a default: each choice must
-be made.
+Every screen is shown on every run. The payment-plan and policy screens have
+no default: each of those choices must be made. Elsewhere a few fields start
+filled in: the offer choice starts on "A new offer", the currency on USD, and
+units per acceptance and the per-booking cap on 1.
 
 ### What the offer sells
 
@@ -121,7 +123,7 @@ refused unless at least one is offered ("Offer at least one payment plan").
 | Plan | Screen | When offered |
 |---|---|---|
 | One-time payment | How it is paid for | Paid in full at acceptance. Studio offers such as SACP's use this. |
-| Percentage of sales | A percentage of each sale | A percentage of each of the holder's sales, never invoiced. **Rate, in percent** from 0 to 100, at most 2 decimal places (2.5 means 2.5%). It is refused, never rounded. Solo uses this. |
+| Percentage of sales | A percentage of each sale | A percentage of each of the holder's sales, never invoiced. **Rate, in percent (when offered)** from 0 to 100, at most 2 decimal places (2.5 means 2.5%). It is refused, never rounded. Solo uses this. |
 
 A customer chooses among the plans an offer version carries; the entitlement
 they get records which plan they took.
@@ -225,9 +227,9 @@ keep stamping version 1. Signup grants new tenants version 2.
 
 ### The platform-offer guard
 
-Registry always keeps one current published platform offer to tenants: a
-version on "payment processing" with a percentage-of-sales plan
-(`sql/deploy/platform-offer-to-tenants-guard.sql`). The database refuses any
+Registry always keeps at least one current published platform offer to
+tenants: a version on "payment processing" with a percentage-of-sales plan and
+without the `holder_is_offerer` condition (`sql/deploy/platform-offer-to-tenants-guard.sql`). The database refuses any
 publish that would retire the last one, for example a new Solo version that
 declines the percentage-of-sales plan or moves to another resource. The old
 version then stays current, and the publish screen says the version would
