@@ -12,6 +12,7 @@ use Test::Registry::DB;
 use Registry::DAO::Resource;
 use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
+use Registry::DAO::Tenant;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -113,6 +114,48 @@ subtest 'added column is protected without trigger change' => sub {
     throws_ok {
         $db->query( q{UPDATE offer_versions SET test_note = 'x' WHERE id = ?}, $v1->id )
     } qr/offer \Q@{[ $offer->id ]}\E version 1/, 'and refused on a published version';
+};
+
+# A tenant provisioned the way signup provisions one: the row, then its schema.
+sub new_tenant ($slug) {
+    my $tenant = Registry::DAO::Tenant->create( $db, { name => "Studio $slug", slug => $slug } );
+    $db->query( 'SELECT clone_schema(dest_schema => ?)', $slug );
+    return $tenant->dao($dao)->db;
+}
+
+subtest 'new tenant schema has offer tables and triggers' => sub {
+    my $tdb = new_tenant('clay_corner');
+    is $tdb->query('SHOW search_path')->array->[0], 'clay_corner, public',
+        'the tenant connection is scoped to its own schema';
+
+    my $res = Registry::DAO::Resource->create( $tdb,
+        { name => 'Wheel', kind => 'finite', capacity => 4 } );
+    my $offer = Registry::DAO::Offer->create( $tdb, { name => 'Taster' } );
+    my $v1 = $offer->draft( $tdb, { resource_id => $res->id } )->publish($tdb);
+    ok $v1->is_published, 'an offer is published in the tenant schema';
+
+    throws_ok {
+        $tdb->query( 'UPDATE offer_versions SET version = 9 WHERE id = ?', $v1->id )
+    } qr/offer \Q@{[ $offer->id ]}\E version 1/, 'and its published terms are refused there too';
+
+    my $crossing = $db->query(q{
+        SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_class r ON r.oid = c.confrelid
+         WHERE c.contype = 'f'
+           AND t.relname IN ('resources', 'offers', 'offer_versions')
+           AND t.relnamespace <> r.relnamespace
+    })->arrays->map( sub { $_->[0] } )->to_array;
+    is_deeply $crossing, [], 'no foreign key on these tables names another schema';
+
+    my $fks = $db->query(q{
+        SELECT count(*) FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE c.contype = 'f' AND t.relname = 'offer_versions' AND n.nspname = 'clay_corner'
+    })->array->[0];
+    is $fks, 2, 'and the tenant copy keeps both of its own foreign keys';
 };
 
 done_testing;
