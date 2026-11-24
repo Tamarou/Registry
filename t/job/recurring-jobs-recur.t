@@ -86,4 +86,60 @@ subtest 'task without interval dies' => sub {
     is jobs_of('no_such_sweep')->total, 0, 'nothing was enqueued with a default delay';
 };
 
+# Real failures, not stand-ins: the table a sweep reads is renamed away for
+# the length of one run.
+sub with_table_gone ( $table, $code ) {
+    $mdb->query("ALTER TABLE registry.$table RENAME TO ${table}_gone");
+    $code->();
+    $mdb->query("ALTER TABLE registry.${table}_gone RENAME TO $table");
+}
+
+subtest 'failed sweep schedules next run without duplicate chain' => sub {
+    $minion->reset( { all => 1 } );
+    $app->setup_recurring_jobs;
+    my $first = next_job('waitlist_expiration')->{id};
+
+    # WaitlistExpiration catches its own error and calls $job->fail.
+    with_table_gone( tenants => sub { run_due('waitlist_expiration') } );
+    is $minion->job($first)->info->{state}, 'failed', 'the sweep failed';
+    is queued('waitlist_expiration'), 1, 'and still queued its next run';
+
+    $app->setup_recurring_jobs;
+    is queued('waitlist_expiration'), 1, 'setup_recurring_jobs again adds no second chain';
+};
+
+subtest 'dying sweep leaves exactly one next run' => sub {
+    $minion->reset( { all => 1 } );
+    $app->setup_recurring_jobs;
+    my $first = next_job('domain_verification')->{id};
+
+    # DomainVerification lets the query's exception escape the task.
+    with_table_gone( tenant_domains => sub { run_due('domain_verification') } );
+    my $info = $minion->job($first)->info;
+    is $info->{state}, 'failed', 'the sweep died';
+    like $info->{result}, qr/tenant_domains/, 'with the real error';
+    is $info->{retries}, 0, 'and was not retried';
+    is queued('domain_verification'), 1, 'exactly one next run is queued';
+    isnt next_job('domain_verification')->{id}, $first, 'and it is a new job, not a retry';
+};
+
+subtest 'setup during running sweep leaves one next run' => sub {
+    $minion->reset( { all => 1 } );
+    $app->setup_recurring_jobs;
+    $mdb->query(q{UPDATE minion_jobs SET delayed = now() WHERE task = 'process_waitlist'});
+
+    my $worker = $minion->worker->register;
+    my $job    = $worker->dequeue( 0, { tasks => ['process_waitlist'] } );
+    is $job->info->{state}, 'active', 'the sweep is running';
+
+    $app->setup_recurring_jobs;    # a second app process booting mid-sweep
+
+    my $err = $job->execute;
+    defined $err ? $job->fail($err) : $job->finish;
+    $worker->unregister;
+
+    is $job->info->{state}, 'finished', 'the sweep finished';
+    is queued('process_waitlist'), 1, 'exactly one next run is queued, not two chains';
+};
+
 done_testing;
