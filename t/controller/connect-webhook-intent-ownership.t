@@ -304,6 +304,105 @@ subtest 'a superseded refund that fails its last attempt tells staff to refund b
         'and the platform log says so at error';
 };
 
+# Minion refusing the job after the settlement COMMIT. The event is already
+# claimed, so Stripe's retry would be ignored: a person has to hear of it.
+sub post_with_enqueue_dying ($intent_id, $sale) {
+    no warnings qw( redefine once );
+    local *Minion::enqueue = sub { die "minion is down\n" };
+    return post_intent( $intent_id, $sale );
+}
+
+subtest 'a superseded refund that cannot be queued after commit is logged at error and admins alerted' => sub {
+    my $sale = a_superseded_sale('pi_enqueue_dies');
+
+    @logs = ();
+    my ( $tx, $event_id ) = post_with_enqueue_dying( 'pi_enqueue_dies', $sale );
+    $tx->status_is(200, 'acknowledged: a retry of a claimed event does nothing');
+    ok processed($event_id), 'the event is claimed and marked processed';
+    ok !run_refund_job('pi_enqueue_dies'), 'no refund job exists';
+
+    my @told = grep { $_->{message} =~ /pi_enqueue_dies/ }
+        @{ notices_titled( $admin->id, '%not queued%' ) };
+    is scalar @told, 1, 'the admin is alerted once';
+    like $told[0]{message}, qr/by hand/, 'to do it by hand';
+    ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /superseded_refund/
+                      && $_->[1] =~ /pi_enqueue_dies/ && $_->[1] =~ /minion is down/ } @logs ),
+        'and the platform log says so at error';
+};
+
+subtest 'an instalment schedule that cannot be queued after commit is logged at error and admins alerted' => sub {
+    my $sale = a_sale( stripe_payment_intent_id => 'pi_schedule_enqueue_dies',
+                       instalment_seq => 1, instalment_count => 3 );
+
+    @logs = ();
+    my ( $tx, $event_id ) = post_with_enqueue_dying( 'pi_schedule_enqueue_dies', $sale );
+    $tx->status_is(200, 'acknowledged: a retry of a claimed event does nothing');
+    is settlement($sale)->{payment}{status}, 'completed', 'instalment one settled';
+
+    my $id = $sale->id;
+    my @told = grep { $_->{message} =~ /\Q$id\E/ }
+        @{ notices_titled( $admin->id, '%not queued%' ) };
+    is scalar @told, 1, 'the admin is alerted once';
+    ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /instalment_schedule/
+                      && $_->[1] =~ /\Q$id\E/ && $_->[1] =~ /minion is down/ } @logs ),
+        'and the platform log says so at error';
+};
+
+# Stripe answering a refund with an invalid_request_error will answer it the
+# same way on every retry: retrying only delays the person who has to act.
+subtest 'a refund create answering charge_already_refunded finishes on the first run and notifies the parent' => sub {
+    my $sale = a_superseded_sale('pi_already_refunded');
+
+    my ( $tries, $info ) = (0);
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            $tries++;
+            Mojo::Promise->reject( "Stripe invalid_request_error: Charge ch_x has "
+                . "already been refunded. (charge_already_refunded)\n" );
+        };
+        my ( $tx ) = post_intent( 'pi_already_refunded', $sale, amount => 3100 );
+        $tx->status_is(200);
+        $info = run_refund_job('pi_already_refunded');
+    }
+
+    is $info->{state}, 'finished', 'the job finishes';
+    is $tries, 1, 'on its first run';
+    my @told = grep { $_->{message} =~ /\$31\.00/ }
+        @{ notices_titled( $parent->id, '%refund%' ) };
+    is scalar @told, 1, 'the parent is told it was refunded';
+    is scalar( grep { $_->{message} =~ /pi_already_refunded/ }
+        @{ notices_titled( $admin->id, '%refund failed%' ) } ), 0,
+        'and staff are not told to refund it again';
+};
+
+subtest 'a refund create answering another invalid_request_error finishes at once and tells staff to refund by hand' => sub {
+    my $sale = a_superseded_sale('pi_refund_invalid');
+
+    my ( $tries, $info ) = (0);
+    @logs = ();
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            $tries++;
+            Mojo::Promise->reject( "Stripe invalid_request_error: No such "
+                . "payment_intent: 'pi_refund_invalid'\n (resource_missing)\n" );
+        };
+        my ( $tx ) = post_intent( 'pi_refund_invalid', $sale, amount => 1200 );
+        $tx->status_is(200);
+        $info = run_refund_job('pi_refund_invalid');
+    }
+
+    is $info->{state}, 'finished', 'the job finishes';
+    is $tries, 1, 'on its first run';
+    my @told = grep { $_->{message} =~ /pi_refund_invalid/ }
+        @{ notices_titled( $admin->id, '%refund failed%' ) };
+    is scalar @told, 1, 'staff are told to refund by hand';
+    my @errors = grep { $_->[0] eq 'error' && $_->[1] =~ /pi_refund_invalid/ } @logs;
+    ok scalar @errors, 'the platform log says so at error';
+    unlike join( '', map { $_->[1] } @errors ), qr/'\n/, 'with Stripe\'s text escaped';
+};
+
 # A-B-A: a decline retry stores B and lists A, then a second tab's resubmit
 # replays A and stores it again. The stored intent is the live one.
 subtest 'a row whose stored intent is also listed superseded settles on success, no refund' => sub {

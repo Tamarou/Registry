@@ -28,6 +28,20 @@ class Registry::Job::SupersededRefund {
             });
         }
         catch ($err) {
+            # An invalid_request_error is Stripe refusing the request itself, and
+            # it refuses it again on every retry -- bar the codes Stripe uses for load
+            # and contention, which do clear.
+            if ( $err =~ /\AStripe invalid_request_error:/
+                 && $err !~ /\((?:rate_limit|lock_timeout|idempotency_key_in_use)\)/ ) {
+                if ( $err =~ /\(charge_already_refunded\)/ ) {
+                    $job->app->log->info("superseded intent $intent was already refunded");
+                    $self->_tell_parent( $db, $cents, $payment_id );
+                    return $job->finish("superseded intent $intent was already refunded");
+                }
+                $self->_tell_staff( $job, $db, $intent, $cents, $payment_id, $err );
+                return $job->finish("refund of superseded intent $intent refused, not retried: $err");
+            }
+
             # Failing retries the job while it has attempts left; only the last
             # one is worth a person's time. Minion counts attempts down on each
             # retry, so the last run is the one with one left.
@@ -49,8 +63,10 @@ class Registry::Job::SupersededRefund {
           . "payment $payment_id, a replaced attempt a stale tab paid. "
           . 'Refund it by hand in Stripe.',
             { payment_id => $payment_id, payment_intent_id => $intent } );
+        # Stripe's text is not ours: escaped, so it cannot forge a log line.
+        my $why = "$err" =~ s/\s+\z//r =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger;
         $job->app->log->error( "refund of superseded intent $intent ($sum, payment "
-              . "$payment_id) failed on its last attempt; refund it by hand: $err" );
+              . "$payment_id) failed; refund it by hand: $why" );
     }
 
     # Whoever the payment row says paid, as ruling 7a asks. A row that has gone

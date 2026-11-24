@@ -481,31 +481,56 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # payment and the second finds the first's schedule
         # (Payment::schedule_remaining_instalments).
         if ($schedule_for) {
-            my $minion = $self->app->minion;
-            my $queued = $minion->jobs( {
-                tasks  => ['instalment_schedule'],
-                notes  => [$schedule_for],
-                states => [ 'inactive', 'active' ],
-            } )->total;
-            $minion->enqueue(
-                instalment_schedule => [ $schedule_for, $slug // 'registry' ],
-                { attempts => 10, notes => { $schedule_for => 1 } } )
-                unless $queued;
+            $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
+                my $queued = $minion->jobs( {
+                    tasks  => ['instalment_schedule'],
+                    notes  => [$schedule_for],
+                    states => [ 'inactive', 'active' ],
+                } )->total;
+                $minion->enqueue(
+                    instalment_schedule => [ $schedule_for, $slug // 'registry' ],
+                    { attempts => 10, notes => { $schedule_for => 1 } } )
+                    unless $queued;
+            }, 'instalment_schedule', "payment $schedule_for",
+               "Schedule the remaining instalments of payment $schedule_for by hand in Stripe.",
+               { payment_id => $schedule_for } );
         }
 
         # The refund of a paid superseded intent, in a job for the attempts a
         # Stripe call needs (Job::SupersededRefund). One per intent, as the
         # event that queues it is claimed once.
         if ($superseded) {
-            $self->app->minion->enqueue(
-                superseded_refund => [ $superseded->@{qw( intent account amount payment )},
-                    $slug // 'registry' ],
-                { attempts => 10, notes => { $superseded->{intent} => 1 } } );
+            my ( $intent, $payment ) = $superseded->@{qw( intent payment )};
+            $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
+                $minion->enqueue(
+                    superseded_refund => [ $superseded->@{qw( intent account amount payment )},
+                        $slug // 'registry' ],
+                    { attempts => 10, notes => { $intent => 1 } } );
+            }, 'superseded_refund', "intent $intent on payment $payment",
+               "Registry is NOT refunding Stripe intent $intent for payment $payment "
+             . 'after all: refund it by hand in Stripe.',
+               { payment_id => $payment, payment_intent_id => $intent } );
             return $self->render(status => 200, text => 'OK');
         }
         return $self->_settle_owed_refund($dao, $slug, $refund_for) if $refund_for;
 
         $self->render(status => 200, text => 'OK');
+    }
+
+    # After the COMMIT the event is claimed, so a 500 would make Stripe retry
+    # into nothing: a job Minion refuses is logged and put in front of a person.
+    method _enqueue_after_commit ($dao, $slug, $enqueue, $task, $what, $todo, $metadata) {
+        try { $enqueue->( $self->app->minion ) }
+        catch ($e) {
+            $self->app->log->error( "Webhook: could not queue $task for "
+                  . _printable($what) . ' after commit: ' . _printable( $e =~ s/\s+\z//r ) );
+            require Registry::DAO::Notification;
+            my $tdao = ( $slug && $slug ne 'registry' ) ? $dao->connect_schema($slug) : $dao;
+            Registry::DAO::Notification->alert_admins( $tdao->db,
+                'A Stripe follow-up was not queued: do it by hand',
+                "Registry settled a Stripe event but could not queue its follow-up "
+              . "($task). $todo", $metadata );
+        }
     }
 
     # Whether a payment in the tenant's schema holds this refund as pending.
@@ -539,20 +564,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
     method _alert_staff_refund_failed ($db, $payment_id, $refund) {
         require Registry::DAO::Notification;
-        my $admins = $db->query(
-            q{SELECT id FROM users WHERE user_type = 'admin' AND deactivated_at IS NULL})->hashes;
-        for my $admin (@$admins) {
-            Registry::DAO::Notification->create( $db, {
-                user_id  => $admin->{id},
-                type     => 'general',
-                channel  => 'email',
-                subject  => 'A refund did not go through',
-                message  => "Stripe refund $refund->{id} for payment $payment_id was "
-                          . "$refund->{status}, so no money went back. The refund is still "
-                          . 'owed; issue it again or settle it with the family.',
-                metadata => { payment_id => $payment_id, refund_id => $refund->{id} },
-            } );
-        }
+        Registry::DAO::Notification->alert_admins( $db,
+            'A refund did not go through',
+            "Stripe refund $refund->{id} for payment $payment_id was "
+          . "$refund->{status}, so no money went back. The refund is still "
+          . 'owed; issue it again or settle it with the family.',
+            { payment_id => $payment_id, refund_id => $refund->{id} } );
     }
 
     # In the settlement transaction, so the alert commits with the claim or
