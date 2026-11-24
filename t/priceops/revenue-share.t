@@ -157,8 +157,9 @@ subtest 'missing Free fallback plan causes die' => sub {
 subtest 'linked plan with no percentage key dies rather than guessing' => sub {
     # pricing_configuration->>'percentage' is the only rate source. A plan that
     # declares no rate has no rate; there is nothing else on the row to read --
-    # amount_cents holds money, never a rate.
-    with_tenant_plan( $db, $seeded_slug,
+    # amount_cents holds money, never a rate. The database refuses such a plan
+    # now; the guard stays for a row that predates the check.
+    without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
         { pricing_configuration => {}, amount_cents => 3 },
         sub {
             my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
@@ -166,7 +167,7 @@ subtest 'linked plan with no percentage key dies rather than guessing' => sub {
                 or diag "returned $fraction -- the money column was read as a rate";
             like $@, qr/percentage/i, 'dies naming the missing percentage';
         }
-    );
+    ) } );
 };
 
 subtest 'fixed-price plan does not have its dollar amount read as a rate' => sub {

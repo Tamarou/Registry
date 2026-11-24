@@ -54,7 +54,19 @@ subtest 'a plan rate outside 0..1 or with more than 4 decimals is rejected' => s
     lives_ok {
         $db->query( q{INSERT INTO registry.pricing_plans (plan_name, plan_type, pricing_model_type)
                       VALUES ('No rate', 'standard', 'fixed')} );
-    } 'a plan with no rate is not constrained';
+    } 'a fixed plan with no rate is not constrained';
+};
+
+subtest 'a percentage or hybrid plan with no rate is rejected' => sub {
+    for my $type (qw( percentage hybrid )) {
+        for my $config ( '{}', '{"percentage": null}' ) {
+            throws_ok {
+                $db->query( q{INSERT INTO registry.pricing_plans
+                                (plan_name, plan_type, pricing_model_type, pricing_configuration)
+                              VALUES ('No rate', 'standard', ?, ?::jsonb)}, $type, $config );
+            } qr/pricing_plans_percentage_rate_check/, "a $type plan with $config is refused";
+        }
+    }
 };
 
 done_testing;
