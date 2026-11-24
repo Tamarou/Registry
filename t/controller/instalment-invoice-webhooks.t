@@ -189,4 +189,49 @@ subtest 'unmatched connect invoice changes nothing and skips billing' => sub {
     }
 };
 
+# The account picks the schema, so a schedule id that only another tenant
+# holds is nobody's here -- whichever studio's invoice carries it.
+subtest 'invoice matching only another tenant changes neither' => sub {
+    state $B = tenant('b');
+    $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
+    build_set($B);
+
+    deliver( 'invoice.paid', { schedule => $SCHED, payment_intent => 'pi_cross_tenant' } );
+
+    is_deeply statuses($B), [qw( completed pending pending )], 'the other tenant is untouched';
+    is_deeply statuses($A), [], 'and the tenant the account names has nothing to mark';
+};
+
+# Stripe does not promise delivery order. A failed attempt reported after the
+# retry that paid is history, not news.
+subtest 'failed after paid never reverts a completed instalment' => sub {
+    build_set();
+
+    deliver( 'invoice.paid', {
+        id => 'in_two', schedule => $SCHED, payment_intent => 'pi_two_late' } );
+    deliver( 'invoice.payment_failed', {
+        id => 'in_two', schedule => $SCHED, payment_intent => 'pi_two_late' } );
+
+    is_deeply statuses(), [qw( completed completed pending )],
+        'the paid instalment stays completed and the next is not failed';
+};
+
+# Instalment invoices come from the seller's account now. One reaching the
+# platform endpoint is the platform's own billing, never a family's instalment.
+subtest 'platform endpoint no longer marks instalments' => sub {
+    build_set();
+    my $parent = $dao->create( User => { username => "inst_registry_parent_$$", user_type => 'parent' } );
+    my $reg = { db => $dao->db, user => $parent };
+    build_set($reg);
+
+    Test::Registry::StripeWebhook::post_connect( $t, {
+        type => 'invoice.paid',
+        data => { object => { schedule => $SCHED, payment_intent => 'pi_platform_inst' } } },
+        path => '/webhooks/stripe', secret => $ENV{STRIPE_WEBHOOK_SECRET} )->status_is(200);
+
+    is_deeply statuses($reg), [qw( completed pending pending )], 'no registry instalment is marked';
+    is_deeply statuses(),     [qw( completed pending pending )], 'nor any tenant instalment';
+    $dao->db->delete( 'payments', { stripe_schedule_id => $SCHED } );
+};
+
 $t_db->cleanup_test_database;
