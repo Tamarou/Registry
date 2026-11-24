@@ -528,13 +528,29 @@ field $_stripe_client = undef;
           } );
     }
 
+    # The email and name are snapshotted on first use: a retry under the same
+    # key must send the same body, or Stripe answers idempotency_error when the
+    # parent edited their profile in between.
     method _customer_params ($raw) {
-        require Registry::DAO::User;
-        my $user = Registry::DAO::User->find( $raw, { id => $user_id } );
+        my $details = $metadata->{stripe_customer_details};
+        unless ( ref $details eq 'HASH' ) {
+            require Registry::DAO::User;
+            my $user = Registry::DAO::User->find( $raw, { id => $user_id } );
+            $details = {
+                ( $user && $user->email ? ( email => $user->email ) : () ),
+                ( $user && $user->name  ? ( name  => $user->name )  : () ),
+            };
+            $raw->query( q{
+                UPDATE payments
+                   SET metadata = COALESCE(metadata, '{}'::jsonb)
+                                  || jsonb_build_object('stripe_customer_details', ?::jsonb)
+                 WHERE id = ?
+            }, { json => $details }, $id );
+            $metadata->{stripe_customer_details} = $details;
+        }
 
         return {
-            ( $user && $user->email ? ( email => $user->email ) : () ),
-            ( $user && $user->name  ? ( name  => $user->name )  : () ),
+            %$details,
             'metadata[registry_user_id]' => $user_id // '',
             # One customer per payment: a create whose response was lost is
             # retried under this key and Stripe returns the customer it made.

@@ -40,12 +40,19 @@ $db->query( q{UPDATE registry.tenants
 
 # Stripe as the wire sees it: every request the service would send, with its
 # Idempotency-Key. A keyed request Stripe has seen returns what it first made.
-my ( @sent, @made, %made_by_key, $serial );
+# A reused key with a different body is refused, as Stripe answers
+# idempotency_error.
+my ( @sent, @made, %made_by_key, %body_by_key, $serial );
 sub with_wire ( $code, %fail ) {
     no warnings 'redefine';
     local *Registry::Service::Stripe::_request_async =
       sub ( $self, $method, $endpoint, $data = {}, $ik = undef, @ ) {
         push @sent, { endpoint => $endpoint, data => {%$data}, key => $ik };
+        if ( defined $ik ) {
+            my $body = join '&', map { "$_=" . ( $data->{$_} // '' ) } sort keys %$data;
+            return Mojo::Promise->reject("idempotency_error\n")
+                if ( $body_by_key{$ik} //= $body ) ne $body;
+        }
         my $obj = ( defined $ik && $made_by_key{$ik} ) || do {
             my $new = { id => "${endpoint}_" . ++$serial, client_secret => 'cs' };
             push @made, [ $endpoint, $new->{id} ];
@@ -109,6 +116,39 @@ subtest 'a retried customer create uses an idempotency key and makes one custome
     is scalar @customers, 1, 'so Stripe made one customer';
     is Registry::DAO::Payment->find( $db, { id => $payment->id } )->metadata->{stripe_customer_id},
         $customers[0][1], 'and the payment remembers it';
+};
+
+subtest 'a retry after a profile edit ends with one customer stored on the payment' => sub {
+    my $payment = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 3333, status => 'pending',
+        instalment_seq => 1, instalment_count => 3,
+        metadata => { tenant_slug => $slug, enrollment_items => [] } } );
+
+    @sent = @made = ();
+    with_wire( sub {
+        eval { $payment->create_payment_intent( $db, {} ); 1 };
+    }, customers => 1 );
+
+    # The parent edits their profile before the retry.
+    $db->query( 'UPDATE user_profiles SET email = ?, name = ? WHERE user_id = ?',
+        'fee_snap_new@test.local', 'Renamed Parent', $parent->id );
+
+    my $ok = with_wire( sub {
+        eval {
+            Registry::DAO::Payment->find( $db, { id => $payment->id } )
+                ->create_payment_intent( $db, {} );
+            1;
+        };
+    } );
+    ok $ok, 'the retry succeeds';
+
+    my @creates = grep { $_->{endpoint} eq 'customers' } @sent;
+    is_deeply $creates[1]{data}, $creates[0]{data}, 'with the body the first create sent';
+
+    my @customers = grep { $_->[0] eq 'customers' } @made;
+    is scalar @customers, 1, 'so Stripe made one customer';
+    is Registry::DAO::Payment->find( $db, { id => $payment->id } )->metadata->{stripe_customer_id},
+        $customers[0][1], 'and the payment stores it';
 };
 
 $test_db->cleanup_test_database;
