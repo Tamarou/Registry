@@ -18,6 +18,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     field $units_per_acceptance :param :reader;    # e.g. 2 seats for a couple
     field $per_booking_cap :param :reader;         # acceptances one booking may take
     field $policies :param :reader = {};           # { refund, change, use, expiry }
+    field $conditions :param :reader = [];         # checked at acceptance (later)
     field $published_at :param :reader = undef;
     field $superseded_at :param :reader = undef;
     field $created_at :param :reader;
@@ -69,6 +70,33 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         expiry => { occurrence_end      => [ {} ] },
     );
 
+    # True when $data, less its kind, has exactly $shape's fields, each passing.
+    my $fits = sub ( $data, $shape ) {
+        my %fields = %$data;
+        delete $fields{kind};
+        keys %fields == keys %$shape
+            && !grep { !$shape->{$_} || !$shape->{$_}->( $fields{$_} ) } keys %fields;
+    };
+
+    # Conditions are declared the same way: kind => its fields' checks.
+    my $uuid = sub ($v) {
+        defined $v && !ref $v && $v =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
+    };
+    my %CONDITION = (
+        # The sibling rate: the holder's family holds an entitlement to offer_id.
+        family_holds_entitlement => { offer_id => $uuid },
+    );
+
+    sub _check_conditions ($conditions) {
+        croak 'conditions must be a list' unless ref $conditions eq 'ARRAY';
+        for my $condition (@$conditions) {
+            croak 'a condition must be an object' unless ref $condition eq 'HASH';
+            my $kind  = $condition->{kind} // '';
+            my $shape = $CONDITION{$kind} or croak "unknown condition kind '$kind'";
+            $fits->( $condition, $shape ) or croak "malformed condition '$kind'";
+        }
+    }
+
     sub _check_policies ($policies) {
         croak 'policies must be an object' unless ref $policies eq 'HASH';
         for my $name ( sort keys %$policies ) {
@@ -77,13 +105,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
             croak "$name policy must be an object" unless ref $policy eq 'HASH';
             my $kind   = $policy->{kind} // '';
             my $shapes = $kinds->{$kind} or croak "unknown $name policy kind '$kind'";
-            my %fields = %$policy;
-            delete $fields{kind};
-            my $fits = sub ($shape) {
-                keys %fields == keys %$shape
-                    && !grep { !$shape->{$_} || !$shape->{$_}->( $fields{$_} ) } keys %fields;
-            };
-            grep( { $fits->($_) } @$shapes ) or croak "malformed $name policy '$kind'";
+            grep( { $fits->( $policy, $_ ) } @$shapes ) or croak "malformed $name policy '$kind'";
         }
     }
 
@@ -92,15 +114,17 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
         my $policies = $terms->{policies} // {};
         _check_policies($policies);
+        my $conditions = $terms->{conditions} // [];
+        _check_conditions($conditions);
         my $row = _with_offer_locked( $db, $offer_id, sub {
             my $row = $db->query(
                 'INSERT INTO offer_versions (offer_id, version, resource_id,
-                        price_cents, units_per_acceptance, per_booking_cap, policies)
-                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?::jsonb
+                        price_cents, units_per_acceptance, per_booking_cap, policies, conditions)
+                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?::jsonb, ?::jsonb
                    FROM offer_versions WHERE offer_id = ?
                  RETURNING *',
                 $offer_id, $terms->@{qw( resource_id price_cents units_per_acceptance per_booking_cap )},
-                to_json($policies), $offer_id )->expand->hash;
+                to_json($policies), to_json($conditions), $offer_id )->expand->hash;
             $db->insert( 'offer_version_payment_plans',
                 { offer_version_id => $row->{id}, $_->%{qw( id kind fraction )} } )
                 for ( $terms->{payment_plans} // [] )->@*;

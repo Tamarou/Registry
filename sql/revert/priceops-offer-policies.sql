@@ -23,9 +23,22 @@ BEGIN
                 DROP COLUMN IF EXISTS price_cents,
                 DROP COLUMN IF EXISTS units_per_acceptance,
                 DROP COLUMN IF EXISTS per_booking_cap,
-                DROP COLUMN IF EXISTS policies
+                DROP COLUMN IF EXISTS policies,
+                DROP COLUMN IF EXISTS conditions
         $f$, s);
     END LOOP;
 END $$;
+
+-- clone_schema copies registry's functions too, so a tenant provisioned after
+-- deploy has its own copy; tables first, so no trigger still uses one.
+DO $$
+DECLARE
+    s name;
+BEGIN
+    FOR s IN SELECT slug::name FROM registry.tenants WHERE slug != 'registry' LOOP
+        EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_payment_plan_immutable()', s);
+    END LOOP;
+END $$;
+DROP FUNCTION IF EXISTS registry.offer_version_payment_plan_immutable();
 
 COMMIT;

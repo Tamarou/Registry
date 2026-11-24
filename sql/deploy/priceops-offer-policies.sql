@@ -8,6 +8,34 @@ BEGIN;
 
 SET client_min_messages = 'warning';
 
+-- A published version's payment plans are part of its terms, but live in
+-- their own rows, out of reach of offer_versions_immutable. This holds them
+-- to the same rule: a plan whose version (before or after the change) is
+-- published is never changed. A draft's plans stay editable, and discarding a
+-- draft cascades to them because the parent row is already gone.
+-- One shared function; each schema's table gets its own trigger.
+CREATE OR REPLACE FUNCTION registry.offer_version_payment_plan_immutable() RETURNS trigger AS $t$
+DECLARE
+    old_version uuid;
+    new_version uuid;
+    v record;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN old_version := OLD.offer_version_id; END IF;
+    IF TG_OP <> 'DELETE' THEN new_version := NEW.offer_version_id; END IF;
+    FOR v IN EXECUTE format(
+        'SELECT offer_id, version FROM %I.offer_versions
+          WHERE id IN ($1, $2) AND published_at IS NOT NULL', TG_TABLE_SCHEMA)
+        USING old_version, new_version
+    LOOP
+        RAISE EXCEPTION
+            'offer % version % is published: its payment plans cannot be '
+            'added, changed or removed. Publish a new version instead.',
+            v.offer_id, v.version;
+    END LOOP;
+    RETURN CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END;
+END;
+$t$ LANGUAGE plpgsql;
+
 DO $$
 DECLARE
     s name;
@@ -36,6 +64,11 @@ BEGIN
                 -- here too, because the refund and publishing steps match on it.
                 ADD COLUMN policies jsonb NOT NULL DEFAULT '{}'
                     CONSTRAINT offer_versions_policies_object CHECK (jsonb_typeof(policies) = 'object'),
+                -- Requirements checked at acceptance, e.g. the sibling rate's
+                -- { kind: family_holds_entitlement, offer_id }. Stored, not yet
+                -- evaluated.
+                ADD COLUMN conditions jsonb NOT NULL DEFAULT '[]'
+                    CONSTRAINT offer_versions_conditions_array CHECK (jsonb_typeof(conditions) = 'array'),
                 ADD CONSTRAINT offer_versions_refund_kind_check CHECK (
                     NOT policies ? 'refund'
                     OR coalesce(policies #>> '{refund,kind}', '') IN
@@ -61,6 +94,14 @@ BEGIN
                 CONSTRAINT offer_version_payment_plans_fraction_matches_kind
                     CHECK ((kind = 'percentage_of_sales') = (fraction IS NOT NULL))
             )
+        $f$, s);
+
+        EXECUTE format(
+            'DROP TRIGGER IF EXISTS offer_version_payment_plans_immutable ON %I.offer_version_payment_plans', s);
+        EXECUTE format($f$
+            CREATE TRIGGER offer_version_payment_plans_immutable
+                BEFORE UPDATE ON %I.offer_version_payment_plans
+                FOR EACH ROW EXECUTE FUNCTION registry.offer_version_payment_plan_immutable()
         $f$, s);
     END LOOP;
 END $$;

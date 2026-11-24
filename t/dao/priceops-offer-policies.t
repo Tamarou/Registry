@@ -97,4 +97,38 @@ subtest 'refund policy vocabulary is pinned' => sub {
     } qr/offer_versions_refund_kind_check/, 'and the database refuses it from raw SQL too';
 };
 
+subtest 'sibling condition declared as data' => sub {
+    my $program = new_offer('After-school pottery');
+    my $sibling = { kind => 'family_holds_entitlement', offer_id => $program->id };
+    my $v = drafted( 'Sibling rate', conditions => [$sibling] );
+    is_deeply $v->conditions, [$sibling],
+        "the condition 'holder's family holds an entitlement to the program' round-trips";
+    is_deeply drafted('No conditions')->conditions, [], 'a version without conditions has none';
+};
+
+subtest 'published policies and plans are immutable' => sub {
+    my $program = new_offer('Camp week');
+    my $offer   = new_offer('Camp sibling rate');
+    my $v = $offer->draft( $db, offer_terms( $seat->id,
+        payment_plans => [ { id => 'share', kind => 'percentage_of_sales', fraction => 0.025 } ],
+        policies      => { refund => { kind => 'none' } },
+        conditions    => [ { kind => 'family_holds_entitlement', offer_id => $program->id } ],
+    ) )->publish($db);
+    my $refused = qr/offer \Q@{[ $offer->id ]}\E version 1/;
+
+    throws_ok {
+        $db->query( q{UPDATE offer_versions SET policies = '{"refund": {"kind": "keep_fee_with_admin_exception"}}' WHERE id = ?}, $v->id )
+    } $refused, 'changing a published refund policy is refused';
+    throws_ok {
+        $db->query( q{UPDATE offer_versions SET conditions = '[]' WHERE id = ?}, $v->id )
+    } $refused, 'changing a published condition is refused';
+    throws_ok {
+        $db->query( 'UPDATE offer_versions SET price_cents = 1 WHERE id = ?', $v->id )
+    } $refused, 'changing a published price is refused';
+    throws_ok {
+        $db->query( 'UPDATE offer_version_payment_plans SET fraction = 0.03 WHERE offer_version_id = ?', $v->id )
+    } $refused, 'changing a published payment plan is refused';
+    is $v->payment_plans($db)->[0]{fraction}, '0.025', 'and the plan is unchanged';
+};
+
 done_testing;
