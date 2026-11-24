@@ -226,6 +226,37 @@ subtest 'a superseded Registry intent that succeeds is refunded and staff alerte
         'and the platform log says so at error';
 };
 
+# A-B-A: a decline retry stores B and lists A, then a second tab's resubmit
+# replays A and stores it again. The stored intent is the live one.
+subtest 'a row whose stored intent is also listed superseded settles on success, no refund' => sub {
+    my $sale = a_sale( stripe_payment_intent_id => 'pi_aba' );
+    $tdb->query( q{UPDATE payments SET metadata = jsonb_set(metadata,
+                     '{superseded_intent_ids}', '["pi_aba"]') WHERE id = ?}, $sale->id );
+
+    my $alerts = sub {
+        $tdb->query( q{SELECT count(*) FROM notifications
+                        WHERE type = 'general' AND message LIKE '%pi_aba%'} )->array->[0];
+    };
+    my $alerts_before = $alerts->();
+
+    my @refunds;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_aba', status => 'succeeded' });
+        };
+        my ( $tx ) = post_intent( 'pi_aba', $sale );
+        $tx->status_is(200);
+    }
+
+    my $after = settlement($sale);
+    is $after->{payment}{status}, 'completed', 'the payment completes';
+    is $after->{enrollments}, 1, 'and the enrollment is created';
+    is scalar @refunds, 0, 'no refund is sent to Stripe';
+    is $alerts->(), $alerts_before, 'and staff are not alerted';
+};
+
 # A seller-written payment_id goes into WHERE id = ?: a non-UUID was a database
 # error and a 500, and a hash an SQL::Abstract operator.
 for my $case (

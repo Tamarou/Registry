@@ -231,6 +231,16 @@ subtest 'a successful write leaves the object agreeing with the row' => sub {
     is $t->stripe_payment_intent_id, 'pi_stamped', 'as does the intent stamp';
 };
 
+subtest 're-storing a superseded intent drops it from the superseded list' => sub {
+    my $p = a_payment('pending');
+    my $first = $p->stripe_payment_intent_id;
+    $p->_record_intent_id( $db, 'pi_aba_b' );
+    $p->_record_intent_id( $db, $first );
+    my $meta = Registry::DAO::Payment->find($db, { id => $p->id })->metadata;
+    is_deeply $meta->{superseded_intent_ids}, ['pi_aba_b'],
+        'the stored intent is not listed; the one it replaced is';
+};
+
 # A refused write must NOT refresh the object -- that is how a caller comes to
 # believe a transition happened that the database rejected.
 subtest 'a refused write leaves the object alone' => sub {

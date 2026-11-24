@@ -799,8 +799,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # best-effort cancel failed and a stale tab paid it. The money is taken
         # but buys nothing, so nothing settles; staff are told inside this
         # transaction and the caller refunds it after the COMMIT (ruling 7a).
+        # The stored intent is never superseded, even if listed: an A-B-A
+        # resubmit re-stores A, and the return page settles it.
         my $meta = ref $payment->metadata eq 'HASH' ? $payment->metadata : {};
         if ( defined $intent->{id} && !ref $intent->{id}
+                && !( defined $stored && $intent->{id} eq $stored )
                 && grep { $_ eq $intent->{id} } @{ $meta->{superseded_intent_ids} // [] } ) {
             $self->_alert_staff_superseded_paid( $db, $payment_id, $intent->{id} );
             $$superseded = { intent => $intent->{id}, account => $meta->{stripe_account_id} };

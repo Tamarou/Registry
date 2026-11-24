@@ -1589,15 +1589,16 @@ SQL
         # The intent it replaces is kept: a decline's cancel is best-effort, and
         # if it failed a stale tab can still pay the old one. The webhook
         # refunds a superseded intent that succeeds; it settles nothing.
-        # SET reads the row as it was, so the old id is the one appended.
-        my $moved = $db->query( <<'SQL', $intent_id, $intent_id, $id, __CLASS__->_settled_statuses )->rows;
+        # SET reads the row as it was, so the old id is the one appended. The
+        # new id leaves the list: an A-B-A resubmit re-stores a superseded one.
+        my $moved = $db->query( <<'SQL', $intent_id, $intent_id, $intent_id, $id, __CLASS__->_settled_statuses )->rows;
             UPDATE payments
                SET metadata = CASE
                        WHEN stripe_payment_intent_id IS NULL
                          OR stripe_payment_intent_id = ? THEN metadata
                        ELSE jsonb_set( COALESCE(metadata, '{}'::jsonb), '{superseded_intent_ids}',
-                                COALESCE(metadata->'superseded_intent_ids', '[]'::jsonb)
-                                || to_jsonb(stripe_payment_intent_id) )
+                                ( COALESCE(metadata->'superseded_intent_ids', '[]'::jsonb)
+                                  || to_jsonb(stripe_payment_intent_id) ) - ?::text )
                    END,
                    stripe_payment_intent_id = ?
              WHERE id = ? AND NOT (status = ANY(?))
