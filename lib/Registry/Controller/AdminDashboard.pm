@@ -290,6 +290,7 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
             session  => $session,
             enrolled => Registry::DAO::Enrollment->count_for_session( $dao->db, $session->id ),
             price_cents => $current ? $current->amount_cents : undef,
+            can_set_price => ( $self->tenant_role // '' ) eq 'admin',
         );
     }
 
@@ -299,17 +300,23 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
 
         my $session =
           Registry::DAO::Session->find( $dao->db, { id => $self->stash('id') } );
-        unless ($session) {
-            $self->flash( error => 'That session no longer exists.' );
-            return $self->redirect_to('admin_dashboard');
-        }
+        # A 404, not a redirect: an id from another tenant's schema is simply
+        # not a session here, and saying so is all a write to it should get.
+        return $self->reply->not_found unless $session;
 
         # Only fields actually submitted are passed through, so apply_settings
         # leaves the rest alone. An empty string means "not given" for capacity
         # and price; the waitlist checkbox is absent when unticked, which is
         # what makes it a real toggle rather than a one-way switch.
+        #
+        # Staff run a session (capacity, the waitlist) but only a tenant admin
+        # publishes its price, so a staff price is dropped rather than applied.
+        my $can_set_price = ( $self->tenant_role // '' ) eq 'admin';
+        my $price_refused =
+          !$can_set_price && defined $self->param('price_cents');
+
         my %changes;
-        for my $field (qw( capacity price_cents )) {
+        for my $field ( 'capacity', $can_set_price ? 'price_cents' : () ) {
             my $value = $self->param($field);
             $changes{$field} = $value if defined $value && $value ne '';
         }
@@ -317,7 +324,8 @@ class Registry::Controller::AdminDashboard :isa(Registry::Controller) {
 
         try {
             $session->apply_settings( $dao->db, \%changes );
-            $self->flash( success => sprintf( '%s updated.', $session->name ) );
+            $self->flash( success => sprintf( '%s updated.', $session->name )
+                  . ( $price_refused ? ' Prices are set by admins, so the price was not changed.' : '' ) );
         }
         catch ($e) {
             # Shown verbatim: the capacity refusal names the enrolled count,
