@@ -26,6 +26,9 @@ use Test::Registry::StripeConnect;
 use Test::Registry::PricingProbe qw( give_tenant_terms );
 use JSON::PP qw(encode_json);
 
+# PricingProbe loads Test::More, whose notes go to STDOUT; keep STDOUT for the JSON.
+Test::Builder->new->output( \*STDERR );
+
 # Session dates are derived from the day the suite runs, never written down.
 # The storefront lists a session only while end_date >= CURRENT_DATE, so a
 # pinned date silently empties every screen built on this seed once it passes.
