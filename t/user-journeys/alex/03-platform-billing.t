@@ -23,10 +23,9 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(platform_revenue_share_plan_id);
 
 use Registry::DAO;
-use Registry::PriceOps::RevenueShare;
+use Registry::PriceOps::PlatformTerms qw( platform_entitlement_terms );
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 
@@ -54,9 +53,8 @@ $dao->import_workflows(['workflows/tenant-signup.yml']);
 my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema';
 
-# The migration seeds the platform pricing relationship; fetch the plan id to select. See #268.
-my $plan_id = platform_revenue_share_plan_id($dao)
-    or BAIL_OUT('platform_revenue_share_plan_id failed -- cannot walk pricing step');
+# The bootstrap seeds Solo v1, the platform's one published offer to tenants. See #268.
+my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow
@@ -204,15 +202,14 @@ subtest 'provisioned tenant row carries billing fields' => sub {
 # provider or consumer.  _provision_tenant writes billing fields onto the
 # tenant row but also does not create a pricing_relationship.
 #
-# With #267 landed, the tenant<->plan link is persisted as the
-# tenants.platform_pricing_plan_id FK (Option A), NOT as a pricing_relationships
-# row -- those tables are for plan selection/discovery, not the charge-time
-# authority.  So two things must hold: (a) the persisted FK link equals the plan
-# the tenant selected, and (b) no pricing_relationships row was created with the
-# new tenant as provider or consumer (a spurious one would mean the rate could
-# be read from the wrong place).
+# The tenant's platform terms are an entitlement it holds in registry to the
+# platform's published offer, NOT a pricing_relationships row.  So two things
+# must hold: (a) the tenant holds an entitlement to the offer on sale, and (b)
+# no pricing_relationships row was created with the new tenant as provider or
+# consumer (a spurious one would mean the rate could be read from the wrong
+# place).
 # ---------------------------------------------------------------------------
-subtest '#267: tenant->plan link persisted on the tenant row' => sub {
+subtest '#267: tenant holds an entitlement to the published platform offer' => sub {
     my $slug = $run_data->{subdomain};
     ok $slug, "tenant slug available ($slug)";
 
@@ -224,12 +221,9 @@ subtest '#267: tenant->plan link persisted on the tenant row' => sub {
 
     my $tenant_id = $tenant_row->{id};
 
-    # (a) The persisted FK link equals the plan the tenant selected at signup.
-    my $link = $db->query(
-        q{SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?}, $slug
-    )->hash->{platform_pricing_plan_id};
-    is $link, $plan_id,
-        'tenants.platform_pricing_plan_id equals the plan on sale (#267 persisted link)';
+    # (a) The tenant holds an entitlement to the offer on sale.
+    is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V1,
+        'the tenant holds an entitlement to Solo v1, the offer on sale';
 
     # (b) Assert zero pricing_relationships rows where the new tenant is either
     # provider or consumer -- those are the two roles a tenant could occupy in
@@ -255,22 +249,19 @@ subtest '#267: tenant->plan link persisted on the tenant row' => sub {
 # Assertion 3 (#267): rate-consistency -- displayed rate equals charged rate.
 #
 # The review page advertises a rate, rendered from the plan's own
-# pricing_configuration.  The CHARGED rate is what the
-# Stripe application fee is computed from: Registry::DAO::Payment::_connect_params
-# derives it via Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant
-# for the provisioned tenant.  This subtest resolves the rate through that same
-# charge-path function (not a direct plan read) and asserts it equals the
-# displayed rate -- the definition of done for #267: one source, no drift.
+# pricing_configuration.  The CHARGED rate is the fraction of the payment plan
+# the tenant's platform entitlement accepted, read through
+# platform_entitlement_terms -- the lookup the revenue-share switch
+# (01a20437-469f) routes the charge path through.  Until that switch the
+# column-backed resolver still falls back to Free for a fresh signup, so this
+# reads the entitlement directly and asserts it equals the displayed rate.
 # ---------------------------------------------------------------------------
 subtest 'rate-consistency: displayed rate equals charged rate' => sub {
     my $slug = $run_data->{subdomain};
     ok $slug, "provisioned tenant slug available ($slug)";
 
-    # Charged rate via the real charge-path resolver, as a percent.
-    my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
-        $db, $slug
-    );
-    my $charged_rate = $fraction * 100;
+    # Charged rate from the tenant's platform entitlement, as a percent.
+    my $charged_rate = platform_entitlement_terms( $db, $slug )->{fraction} * 100;
 
     ok defined($displayed_rate_str),
         'extracted a numeric rate from the review page HTML';
@@ -279,10 +270,10 @@ subtest 'rate-consistency: displayed rate equals charged rate' => sub {
 
     # Both values printed as diagnostics so any drift is visible in prove -v output.
     note "displayed_rate (from review page HTML): ${\( $displayed_rate // 'undef' )}%";
-    note "charged rate (via revenue_share_fraction_for_tenant): ${charged_rate}%";
+    note "charged rate (via platform_entitlement_terms): ${charged_rate}%";
 
     is $displayed_rate, $charged_rate,
-        'displayed plan rate matches the charged rate (both plan-driven, #267)';
+        'displayed plan rate matches the entitlement rate (#267)';
 };
 
 $test_db->cleanup_test_database;
