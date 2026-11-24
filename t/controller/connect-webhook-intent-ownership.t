@@ -1,5 +1,5 @@
 # ABOUTME: Only the intent Registry created settles a payment; a seller's own intent naming our payment_id does not.
-# ABOUTME: Also covers the escaped metadata-mismatch warning and the warn for a slug-bearing payment_id with no row.
+# ABOUTME: Also covers escaped warnings, the warn for a payment_id with no row, and malformed payment_ids.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -176,5 +176,52 @@ subtest 'platform endpoint warns on a slug-bearing payment_id with no row' => su
         'logged at warn, not info';
     is settlement($sale)->{payment}{status}, 'pending', 'and nothing settled';
 };
+
+# A seller-written payment_id goes into WHERE id = ?: a non-UUID was a database
+# error and a 500, and a hash an SQL::Abstract operator.
+for my $case (
+    [ 'a non-UUID',  "not-a-uuid\nERROR forged line" ],
+    [ 'a hash',      { '!=' => '00000000-0000-0000-0000-000000000000' } ],
+    [ 'an array',    [ '00000000-0000-0000-0000-000000000000' ] ],
+) {
+    my ( $what, $value ) = @$case;
+
+    subtest "connect endpoint: $what metadata.payment_id answers 200, settles nothing, warns escaped" => sub {
+        my $sale   = a_sale( stripe_payment_intent_id => 'pi_malformed_connect' );
+        my $before = settlement($sale);
+
+        @logs = ();
+        my $event = {
+            type    => 'payment_intent.succeeded',
+            account => $account,
+            data    => { object => { id => 'pi_malformed_connect', amount => 10000,
+                                     metadata => { payment_id => $value } } },
+        };
+        my $tx = Test::Registry::StripeWebhook::post_connect($t, $event);
+        $tx->status_is(200);
+
+        is_deeply settlement($sale), $before, 'nothing settles';
+        ok processed($event->{id}), 'the event is acknowledged';
+        my @warned = grep { $_->[0] eq 'warn' && $_->[1] =~ /not a UUID/ } @logs;
+        is scalar @warned, 1, 'warned once';
+        unlike $warned[0][1] // '', qr/\n/, 'with no raw newline from the seller';
+        ok !( grep { $_->[0] eq 'error' } @logs ), 'and nothing at error';
+    };
+
+    subtest "platform endpoint: $what metadata.payment_id answers 200, settles nothing, warns escaped" => sub {
+        my $sale   = a_sale( stripe_payment_intent_id => 'pi_malformed_platform' );
+        my $before = settlement($sale);
+
+        @logs = ();
+        Test::Registry::StripeWebhook::post_succeeded( $t, $value, $slug, 'pi_malformed_platform' )
+            ->status_is(200);
+
+        is_deeply settlement($sale), $before, 'nothing settles';
+        my @warned = grep { $_->[0] eq 'warn' && $_->[1] =~ /not a UUID/ } @logs;
+        is scalar @warned, 1, 'warned once';
+        unlike $warned[0][1] // '', qr/\n/, 'with no raw newline';
+        ok !( grep { $_->[0] eq 'error' } @logs ), 'and nothing at error';
+    };
+}
 
 done_testing;

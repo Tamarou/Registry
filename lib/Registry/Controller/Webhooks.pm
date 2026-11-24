@@ -120,6 +120,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use constant STRIPE_MOVES => qr/\A(?:charge\.refunded|charge\.refund\.updated
         |refund\.[\w.]+|charge\.dispute\.[\w.]+|customer\.[\w.]+)\z/x;
 
+    # A payment id, as _intent_account (WorkflowSteps/Payment.pm) accepts one.
+    use constant UUID => qr/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
+
+    # A seller- or Stripe-written value, made safe to put in our log.
+    sub _printable ($v) { "$v" =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger }
+
     # Claim a Stripe move and store it with its account, tenant and payload,
     # left unprocessed. Nothing it names is changed here. A failure to store
     # rolls the claim back and answers 500, so Stripe's redelivery is not
@@ -394,6 +400,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # a charge that did not complete has no card to schedule against.
     method _instalment_to_schedule ($db, $event) {
         my $payment_id = $event->{data}{object}{metadata}{payment_id} or return undef;
+        return undef unless !ref $payment_id && $payment_id =~ UUID;
 
         require Registry::DAO::Payment;
         my $payment = Registry::DAO::Payment->find($db, { id => $payment_id })
@@ -659,6 +666,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
         return ignore('no payment_id in metadata') unless $payment_id;
 
+        # The seller writes metadata on a Connect account, and this is bound
+        # into WHERE id = ?: a non-UUID is a database error, so a 500 Stripe
+        # redelivers until the shared endpoint is disabled; a hash or array is
+        # an SQL::Abstract operator.
+        return ignore( "payment_id '" . _printable($payment_id) . "' is not a UUID", 'warn' )
+            unless !ref $payment_id && $payment_id =~ UUID;
+
         require Registry::DAO::Payment;
         # FOR UPDATE: this path carries its own copy of the amount and completed
         # checks rather than calling _apply_intent, so it needs its own lock --
@@ -670,7 +684,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             { for => 'update' });
         # A tenant's payment_id reaching a schema without it -- the platform
         # endpoint, say -- is not a counter sale, so it is worth a warn.
-        return ignore( "payment $payment_id not found",
+        return ignore( 'payment ' . _printable($payment_id) . ' not found',
             defined $intent->{metadata}{tenant_slug} ? 'warn' : 'info' )
             unless $payment;
 
