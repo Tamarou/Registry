@@ -197,6 +197,15 @@ subtest 'schedule is made on the tenant account with fee percent and no transfer
     ok !( grep { /transfer_data/ } keys %$params ), 'and nothing is transferred';
 };
 
+# Lets the Connect webhook tell an invoice from a schedule it has not recorded
+# yet (retry) from one on the studio's own schedule (ignore).
+subtest 'the schedule names the payment it bills for' => sub {
+    my $payment = first_instalment();
+    my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
+
+    is $calls->[2][2]{'metadata[payment_id]'}, $payment->id, "instalment one's id";
+};
+
 sub params_with_pct ( $pct ) {
     return Registry::DAO::Payment::instalment_schedule_params( {
         customer          => 'cus_probe',

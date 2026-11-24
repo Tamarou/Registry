@@ -261,6 +261,9 @@ field $_stripe_client = undef;
                 product           => $product->{id},
                 instalments       => \@remaining,
             } ) },
+            # So an invoice that beats the COMMIT below is retried, not
+            # ignored (Webhooks::_schedule_not_recorded).
+            'metadata[payment_id]' => $id,
             _idempotency_key => "instalment_schedule:$id:schedule",
         } );
 
