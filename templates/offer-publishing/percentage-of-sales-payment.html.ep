@@ -1,0 +1,38 @@
+% extends 'layouts/workflow';
+% title 'A percentage of each sale';
+% stash description => 'Say whether the offer may be paid for by a percentage of each of the holder\'s sales.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Percentage of each sale</legend>
+    <div>
+      <input type="radio" id="percentage_of_sales-offered" name="percentage_of_sales" value="offered" required>
+      <label for="percentage_of_sales-offered">Offered: a percentage of each of the holder's sales, never invoiced</label>
+    </div>
+    <div>
+      <input type="radio" id="percentage_of_sales-declined" name="percentage_of_sales" value="declined" required>
+      <label for="percentage_of_sales-declined">Not offered</label>
+    </div>
+  </fieldset>
+
+  <div class="form-group">
+    <label for="rate_percent" class="form-label">Rate, in percent (when offered)</label>
+    <input type="text" id="rate_percent" name="rate_percent" inputmode="decimal"
+           pattern="[0-9]{1,3}(\.[0-9]{1,2})?" aria-describedby="rate_percent-help">
+    <p id="rate_percent-help">From 0 to 100, at most 2 decimal places: 2.5 means 2.5% of each sale.</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

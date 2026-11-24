@@ -35,6 +35,17 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         # One version per run: the run's row is locked while this reads whether
         # it has published, so a repeated or concurrent submission waits and
         # then finds the first one's version instead of publishing another.
+        # Every plan a payment step declared; refused, never defaulted, when
+        # none did: absence is not zero.
+        my $percentage = $data->{percentage_of_sales_payment} // {};
+        my @plans = (
+            ( ( $data->{one_time_payment} // {} )->{one_time} // '' ) eq 'offered'
+                ? { id => 'one_time', kind => 'one_time' } : (),
+            ( $percentage->{percentage_of_sales} // '' ) eq 'offered'
+                ? { id => 'percentage_of_sales', kind => 'percentage_of_sales', fraction => $percentage->{fraction} } : (),
+        );
+        return { stay => 1, errors => ['Offer at least one payment plan'] } unless @plans;
+
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $published = $db->query( q{
             SELECT data->>'published_offer_version_id' FROM workflow_runs WHERE id = ? FOR UPDATE
@@ -45,10 +56,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
             Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } )->draft( $db, {
                 resource_id => $basic->{resource_id},
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
-                payment_plans => [
-                    ( ( $data->{one_time_payment} // {} )->{one_time} // '' ) eq 'offered'
-                        ? { id => 'one_time', kind => 'one_time' } : ()
-                ],
+                payment_plans => \@plans,
                 policies => { refund => { kind => 'none' } },
             } )->publish($db);
         };

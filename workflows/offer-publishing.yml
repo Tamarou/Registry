@@ -25,6 +25,12 @@ steps:
     template: offer-publishing/one-time-payment
     class: Registry::DAO::WorkflowSteps::OneTimePaymentPlan
 
+  - slug: percentage-of-sales-payment
+    label: Share of sales
+    description: Offer a percentage-of-sales payment plan
+    template: offer-publishing/percentage-of-sales-payment
+    class: Registry::DAO::WorkflowSteps::PercentageOfSalesPaymentPlan
+
   - slug: publish
     label: Publish
     description: Review and publish an immutable offer version
