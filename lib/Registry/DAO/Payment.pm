@@ -897,8 +897,16 @@ field $_stripe_client = undef;
             $plan_id = $metadata->{platform_pricing_plan_id};
         }
         elsif ( defined $slug && !ref $slug && length $slug ) {
-            $plan_id = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant(
-                $db, $slug )->{id};
+            # Best-effort like the write below: a malformed rate must not fail settlement.
+            eval {
+                $plan_id = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant(
+                    $db, $slug )->{id};
+                1;
+            } or do {
+                my $err = $@ || 'unknown error';
+                $err =~ s/\s+/ /g;
+                warn "could not resolve platform plan for payment $id: $err\n";
+            };
         }
 
         eval {

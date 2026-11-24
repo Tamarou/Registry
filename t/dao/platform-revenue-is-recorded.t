@@ -10,6 +10,7 @@ use Test::More;
 use experimental 'signatures';
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check);
 use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
@@ -80,6 +81,25 @@ subtest 'a payment with no seller account records no fee, rather than a guess' =
     is $payment->status, 'completed', 'it still settles';
     is $payment->platform_fee_cents, undef,
         'and the fee is NULL -- not recorded, not zero';
+};
+
+subtest 'a non-seller-account payment on a bad-rate plan still settles' => sub {
+    # The fee record is best-effort: a malformed linked rate must not fail
+    # settlement (a webhook 500 Stripe retries forever).
+    without_rate_check( $db, sub { with_tenant_plan( $db, 'revenue_studio',
+        { pricing_configuration => { percentage => '0.00125' } },
+        sub {
+            my @warnings;
+            local $SIG{__WARN__} = sub { push @warnings, @_ };
+            my $payment = eval { a_completed_payment( amount => 10000, fee => 250 ) };
+
+            ok $payment, 'settling did not die' or diag $@;
+            is $payment && $payment->status, 'completed', 'the payment settled';
+            is $payment && $payment->platform_pricing_plan_id, undef,
+                'with no plan id recorded';
+            like "@warnings", qr/could not resolve platform plan/,
+                'and the bad rate is warned about';
+        } ) } );
 };
 
 subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub {
