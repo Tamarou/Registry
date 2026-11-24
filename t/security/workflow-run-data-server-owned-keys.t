@@ -10,6 +10,7 @@ use utf8;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Fixtures;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw( authenticate_as );
@@ -39,6 +40,7 @@ Test::Registry::Fixtures::create_tenant($dao->db, {
     slug => 'hosttenant',
 });
 $dao->db->query('SELECT clone_schema(?)', 'hosttenant');
+state_platform_terms( $dao->db, 'hosttenant', { rate => 0 } );
 
 # Two passthrough steps: no outcome definition, so validate() is a no-op and
 # whatever the client posts is merged into the run's data.

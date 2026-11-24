@@ -7,6 +7,7 @@ use Test::More;
 use Registry::DAO;
 use Registry::Controller::Webhooks;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
 use Registry::DAO::Tenant;
@@ -106,19 +107,22 @@ subtest 'Integration with subscription DAO' => sub {
     is($logged_event->{processing_status}, 'processed', 'Event logged with correct status');
 };
 
+# The Connect seller, at file scope so its platform terms are stated before it sells.
+my $slug    = "int_conn_$$";
+my $account = "acct_int_conn_$$";
+my $admin = Registry::DAO::User->create($db, { username => "int_conn_admin_$$",
+    email => "int_conn_admin_$$\@test.example", name => 'A', user_type => 'admin' });
+Registry::DAO::Tenant->provision($db, { name => "Int Conn $$", slug => $slug,
+    users => [$admin], stripe_connect_account_id => $account,
+    stripe_charges_enabled => 1, stripe_details_submitted => 1 });
+state_platform_terms( $db, $slug, { rate => 0 } );
+
 subtest 'stripe webhook integration settles through connect endpoint' => sub {
     local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_integration_connect';
 
     my $t = Test::Registry::Mojo->new('Registry');
     $t->app->helper(dao => sub { $dao });
 
-    my $slug    = "int_conn_$$";
-    my $account = "acct_int_conn_$$";
-    my $admin = Registry::DAO::User->create($db, { username => "int_conn_admin_$$",
-        email => "int_conn_admin_$$\@test.example", name => 'A', user_type => 'admin' });
-    Registry::DAO::Tenant->provision($db, { name => "Int Conn $$", slug => $slug,
-        users => [$admin], stripe_connect_account_id => $account,
-        stripe_charges_enabled => 1, stripe_details_submitted => 1 });
     my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
 
     my $loc = Registry::DAO::Location->create($tdb, { name => 'Int Studio',
