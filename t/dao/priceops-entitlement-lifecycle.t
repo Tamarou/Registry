@@ -250,4 +250,75 @@ subtest 'partial refund recorded and entitlement stays in effect' => sub {
         ->array->[0], 2, 'one record per Stripe refund';
 };
 
+subtest 'ended entitlement cannot return to effect' => sub {
+    my $e = entitlement()->end( $studio, 'refunded', 're_back_1' );
+    throws_ok {
+        $studio->query( q{UPDATE entitlements SET state = 'active', ended_at = NULL,
+                          ended_reason = NULL, in_effect = tstzrange(?, NULL) WHERE id = ?},
+            $PAST, $e->id )
+    } qr/keeps its first ending/, 'moving it back to active is refused';
+    throws_ok {
+        $studio->query( 'UPDATE entitlements SET in_effect = tstzrange(?, NULL) WHERE id = ?',
+            $PAST, $e->id )
+    } qr/keeps its first ending/, 'and so is reopening its period';
+    throws_ok { $e->end( $studio, 'active', 'reinstated' ) }
+        qr/keeps its first ending/, 'through the lifecycle method too';
+    ok !reread($e)->is_in_effect($studio), 'it stays out of effect';
+};
+
+subtest 'ended entitlement keeps its first ending' => sub {
+    my $e = entitlement()->end( $studio, 'refunded', 're_first_1' );
+    throws_ok { $e->end( $studio, 'dispute_lost', 'dp_after_refund' ) }
+        qr/ended as refunded \(re_first_1\): an ended entitlement keeps its first ending/,
+        'a lost dispute after a full refund is refused';
+    my $read = reread($e);
+    is $read->state,        'refunded',   'it keeps the refund';
+    is $read->ended_reason, 're_first_1', 'and its reason';
+    is $read->ended_at,     $e->ended_at, 'and when it ended';
+};
+
+subtest 'unknown state refused' => sub {
+    my $e = entitlement();
+    throws_ok { $e->end( $studio, 'cancelled', 'not a state' ) }
+        qr/entitlements_state_check/, 'ending in a state outside the vocabulary is refused';
+    throws_ok {
+        $studio->query( q{UPDATE entitlements SET state = 'used', ended_at = now(), ended_reason = 'x',
+                          in_effect = in_effect * tstzrange(NULL, now()) WHERE id = ?}, $e->id )
+    } qr/entitlements_state_check/, 'and so is writing one directly, however complete';
+    is reread($e)->state, 'active', 'leaving it active';
+};
+
+subtest 'foreign or missing payment link refused' => sub {
+    my $elsewhere = payment( 2000, $db );
+    throws_ok { entitlement( undef, payment_id => $elsewhere, payment_share_cents => 2000 ) }
+        qr/entitlements_payment_id_fkey/, "another schema's payment is refused";
+    throws_ok {
+        entitlement( undef, payment_id => '00000000-0000-0000-0000-00000000dead',
+            payment_share_cents => 2000 )
+    } qr/entitlements_payment_id_fkey/, 'a payment that does not exist is refused';
+    throws_ok { entitlement( undef, payment_id => payment(2000) ) }
+        qr/entitlements_payment_share_check/, 'a payment link with no share is refused';
+};
+
+subtest 'payment link cannot be repointed' => sub {
+    my ( $first, $second ) = ( payment(2000), payment(2000) );
+    my $e = entitlement( undef, payment_id => $first, payment_share_cents => 2000 );
+    throws_ok { $e->update( $studio, { payment_id => $second } ) }
+        qr/payment link is set only at insert/, 'pointing it at another payment is refused';
+    throws_ok { $e->update( $studio, { payment_share_cents => 1000 } ) }
+        qr/payment link is set only at insert/, 'and so is changing its share';
+    my $free = entitlement();
+    throws_ok { $free->update( $studio, { payment_id => $first, payment_share_cents => 2000 } ) }
+        qr/payment link is set only at insert/, 'and linking one no payment created';
+    is reread($e)->payment_id, $first, 'it keeps the payment that created it';
+};
+
+subtest 'same stripe refund recorded once' => sub {
+    my $e = entitlement( undef, payment_id => payment(2000), payment_share_cents => 2000 );
+    $e->record_refund( $studio, { amount_cents => 500, stripe_refund_id => 're_once_1' } ) for 1 .. 2;
+    is $studio->query( 'SELECT count(*) FROM entitlement_refunds WHERE stripe_refund_id = ?',
+        're_once_1' )->array->[0], 1, 'recording the same refund twice leaves one record';
+    is $e->refunded_cents($studio), 500, 'and counts it once';
+};
+
 done_testing;
