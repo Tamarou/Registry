@@ -20,6 +20,11 @@ class Registry::Job::ContinueWorkflowRun {
         while ( !$run->completed($db) ) {
             my $step   = $run->next_step($db) or last;
             my $result = $run->process( $db, $step, $run->data );
+
+            # A step that did not advance the run is waiting on a person.
+            return $job->finish( {
+                run_id => $run_id, stopped_at => $step->slug, reason => 'needs_person' } )
+                if $result->{stay} || $result->{errors} || $result->{_validation_errors};
         }
 
         return $job->finish( {

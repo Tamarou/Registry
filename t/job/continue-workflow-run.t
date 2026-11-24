@@ -93,4 +93,19 @@ subtest 'continues parked run from latest step' => sub {
     is run_count($adb), $before, 'no new run was created';
 };
 
+subtest 'a step waiting for input leaves the run parked there' => sub {
+    my $wf = workflow( $adb,
+        ['ask'], ['pass-on'], [ 'wait', undef, requiring( $adb, 'answer' ) ], ['after'] );
+    my $run = parked_run( $adb, $wf, { given => 1 } );
+
+    my $info = run_job( { tenant => $slug_a, run_id => $run->id } );
+
+    is $info->{state}, 'finished', 'job finished' or diag explain $info->{result};
+    is_deeply $info->{result},
+        { run_id => $run->id, stopped_at => 'wait', reason => 'needs_person' },
+        'job reports the step that needs a person';
+    is reload( $adb, $run )->latest_step($adb)->slug, 'pass-on',
+        'the run stays parked before the waiting step';
+};
+
 done_testing;
