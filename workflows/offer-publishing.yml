@@ -37,6 +37,12 @@ steps:
     template: offer-publishing/percentage-of-sales-payment
     class: Registry::DAO::WorkflowSteps::PercentageOfSalesPaymentPlan
 
+  - slug: refund-policy
+    label: Refund
+    description: Choose whether money comes back on a refund
+    template: offer-publishing/refund-policy
+    class: Registry::DAO::WorkflowSteps::RefundPolicy
+
   - slug: use-policy
     label: Use
     description: Choose what counts as using the offer

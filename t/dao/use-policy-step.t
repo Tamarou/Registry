@@ -38,8 +38,9 @@ sub walk (%override) {
         'offer-basics'     => { resource_id => $seats->id, offer_name => 'Wheel night' },
         'offer-price'      => { price_cents => 2500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 2 },
         'one-time-payment' => { one_time => 'offered' },
+        'refund-policy'    => { refund => 'none' },
         'use-policy'       => { use => 'none' },
-        'publish'          => { action => 'publish', refund => 'none' },
+        'publish'          => { action => 'publish' },
     );
     my $workflow = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } );
     my $run      = Registry::WorkflowProcessor->new( dao => $tenant_dao )

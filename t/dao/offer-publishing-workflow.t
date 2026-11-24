@@ -41,7 +41,7 @@ sub walk ( $workflow_dao, $user, %by_step ) {
     my $processor = Registry::WorkflowProcessor->new( dao => $workflow_dao );
     my $run       = $processor->new_run( $workflow, { user => { id => $user->id, name => $user->name } } );
     my %result;
-    for my $slug (qw( offer-basics offer-price one-time-payment use-policy publish )) {
+    for my $slug (qw( offer-basics offer-price one-time-payment refund-policy use-policy publish )) {
         my $step = $workflow->get_step( $workflow_dao->db, { slug => $slug } );
         $result{$slug} = $run->process( $workflow_dao->db, $step, $by_step{$slug} // {} );
     }
@@ -54,8 +54,9 @@ sub terms (%override) {
         'offer-basics'     => { resource_id => $seats->id, offer_name => 'Couples wheel night' },
         'offer-price'      => { price_cents => 2500, currency => 'USD', units_per_acceptance => 2, per_booking_cap => 3 },
         'one-time-payment' => { one_time => 'offered' },
+        'refund-policy'    => { refund => 'none' },
         'use-policy'       => { use => 'none' },
-        'publish'          => { action => 'publish', refund => 'none' },
+        'publish'          => { action => 'publish' },
     );
     for my $slug ( keys %override ) {
         $terms{$slug} = { $terms{$slug}->%*, $override{$slug}->%* };
@@ -176,9 +177,10 @@ subtest 'staff run publishes nothing' => sub {
         offer_basics     => { resource_id => $seats->id, offer_name => 'Staff special' },
         offer_price      => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
         one_time_payment => { one_time => 'offered' },
+        refund_policy    => { kind => 'none' },
         use_policy       => { use => 'none' },
     } } );
-    my $composed = $run->process( $tdb, $own->first_step($tdb), { action => 'publish', refund => 'none' } );
+    my $composed = $run->process( $tdb, $own->first_step($tdb), { action => 'publish' } );
     ok $composed->{errors}, 'a staff-composed workflow\'s publish step stays with an error';
     is published_count(), $before, 'and publishes nothing';
 };
@@ -200,7 +202,7 @@ subtest 'double publish leaves one version' => sub {
 
     my $publish = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } )
         ->get_step( $tdb, { slug => 'publish' } );
-    $run->process( $tdb, $publish, { action => 'publish', refund => 'none' } );
+    $run->process( $tdb, $publish, { action => 'publish' } );
     is published_count(), $before + 1, 'submitting publish again publishes nothing more';
 
     # Two connections and a fork, so the second submission really runs while
@@ -216,7 +218,7 @@ subtest 'double publish leaves one version' => sub {
         my $bdao = Registry::DAO->new( url => $uri, schema => 'clay_studio' );
         my $ok   = eval {
             my $brun = $bdao->find( WorkflowRun => { id => $run->id } );
-            $brun->process( $bdao->db, $publish, { action => 'publish', refund => 'none' } );
+            $brun->process( $bdao->db, $publish, { action => 'publish' } );
             1;
         };
         print STDERR "child publish failed: $@" unless $ok;
@@ -227,7 +229,7 @@ subtest 'double publish leaves one version' => sub {
     my $adb  = $adao->db;
     my $tx   = $adb->begin;
     $adao->find( WorkflowRun => { id => $run->id } )
-        ->process( $adb, $publish, { action => 'publish', refund => 'none' } );
+        ->process( $adb, $publish, { action => 'publish' } );
     print $parent_writes "go\n";
     $parent_writes->flush;
     sleep 1;    # let the second submission reach the run and wait

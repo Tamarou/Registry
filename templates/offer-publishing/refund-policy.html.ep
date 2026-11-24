@@ -1,0 +1,43 @@
+%# ABOUTME: offer-publishing's refund-policy step: the admin chooses whether money comes back, with no default.
+%# ABOUTME: Cutoff hours count back from the held occurrence's start; keeping the fee fits a percentage-of-sales offer.
+% extends 'layouts/workflow';
+% title 'Refunds';
+% stash description => 'Say whether money comes back when a customer asks for a refund.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Refund policy</legend>
+    <div>
+      <input type="radio" id="refund-none" name="refund" value="none" required>
+      <label for="refund-none">None: all sales are final</label>
+    </div>
+    <div>
+      <input type="radio" id="refund-full_until_cutoff" name="refund" value="full_until_cutoff" required>
+      <label for="refund-full_until_cutoff">Full refund until a cutoff before the occurrence starts (an offer for one occurrence or a class)</label>
+    </div>
+    <div>
+      <input type="radio" id="refund-keep_fee_with_admin_exception" name="refund" value="keep_fee_with_admin_exception" required>
+      <label for="refund-keep_fee_with_admin_exception">Keep the fee, unless an administrator makes an exception (an offer with a percentage-of-sales plan)</label>
+    </div>
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="cutoff_hours">Cutoff, in hours before the start</label>
+    <input type="number" id="cutoff_hours" name="cutoff_hours" min="0" step="1">
+    <p>Only for a full refund until a cutoff. A refund asked for exactly at the cutoff is allowed.</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

@@ -10,6 +10,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::Project;
     use Registry::DAO::Resource;
     use Registry::DAO::Tenant;
+    use Registry::DAO::WorkflowSteps::RefundPolicy;
     use Registry::Utility::PriceFormat qw( format_price );
 
     method process ( $db, $form_data, $run = undef ) {
@@ -29,9 +30,13 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         return { stay => 1, errors => ['Complete the offer and price steps before publishing'] }
             unless ref $basic eq 'HASH' && ref $price eq 'HASH';
 
-        # Refused, never defaulted: absence is not a refund policy.
-        return { stay => 1, errors => ['Choose a refund policy'] }
-            unless ( $form_data->{refund} // '' ) eq 'none';
+        # From the run, as the refund-policy step recorded it, never this form;
+        # refused, never defaulted: absence is not a refund policy.
+        my $refund = $data->{refund_policy};
+        return { stay => 1, errors => ['Choose a refund policy before publishing'] }
+            unless ref $refund eq 'HASH' && defined $refund->{kind} && !ref $refund->{kind};
+        my $why = Registry::DAO::WorkflowSteps::RefundPolicy->refusal( $db, $data, $refund );
+        return { stay => 1, errors => [$why] } if $why;
 
         # From the run, as the use-policy step recorded it, never this form.
         my $use = ( ref $data->{use_policy} eq 'HASH' ? $data->{use_policy} : {} )->{use};
@@ -63,7 +68,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 $basic->%{qw( resource_id class_project_id )},    # one or the other
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
-                policies => { refund => { kind => 'none' }, use => { kind => $use } },
+                policies => { refund => $refund, use => { kind => $use } },
             } )->publish($db);
         };
         unless ($version) {

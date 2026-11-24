@@ -28,19 +28,13 @@
     <dd><%= $price->{per_booking_cap} %></dd>
     <dt>One-time payment</dt>
     <dd><%= ( stash('one_time_payment') // {} )->{one_time} // '' %></dd>
+    <dt>Refund policy</dt>
+    <dd><%= ( stash('refund_policy') // {} )->{kind} // '' %><%= defined( ( stash('refund_policy') // {} )->{cutoff_hours} ) ? ', until ' . stash('refund_policy')->{cutoff_hours} . ' hours before the start' : '' %></dd>
   </dl>
 </section>
 
 <form method="POST" action="<%= $action %>">
   <input type="hidden" name="action" value="publish">
-
-  <fieldset>
-    <legend>Refund policy</legend>
-    <div>
-      <input type="radio" id="refund-none" name="refund" value="none" required>
-      <label for="refund-none">No refunds</label>
-    </div>
-  </fieldset>
 
   <div class="form-actions">
     <button type="submit" class="btn btn-primary">Publish</button>
