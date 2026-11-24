@@ -148,7 +148,7 @@ subtest 'admin publishes a class offer covering its occurrences' => sub {
 
     my $version = publish_offer( $dao, 'clay_studio', $admin, {
         offer_name  => 'Wheel class pass', price_cents => 9000, currency => 'usd',
-        units_per_acceptance => 1, per_booking_cap => 1,
+        units_per_acceptance => 1, per_booking_cap => 1, expiry => 'end_of_occurrence',
         resource    => { resource_mode => 'class', class_project_id => $c },
     } );
     is $version->class_project_id, $c, 'the published version names the class';

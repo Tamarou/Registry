@@ -89,7 +89,9 @@ subtest 'admin completes offer publishing over http' => sub {
     check_screen( $t, 'change-policy' );
     like submit_step( $t, 'change-policy', change => 'none' ), qr{/use-policy\z}, 'on to use';
     check_screen( $t, 'use-policy' );
-    like submit_step( $t, 'use-policy', use => 'optional_attendance' ), qr{/publish\z}, 'on to publish';
+    like submit_step( $t, 'use-policy', use => 'optional_attendance' ), qr{/expiry-policy\z}, 'on to expiry';
+    check_screen( $t, 'expiry-policy' );
+    like submit_step( $t, 'expiry-policy', expiry => 'never' ), qr{/publish\z}, 'on to publish';
     check_screen( $t, 'publish' );
     $t->content_like(qr/Life drawing/)->content_like(qr/\$40/);
 
@@ -117,6 +119,7 @@ subtest 'offer name is escaped' => sub {
     submit_step( $t, 'refund-policy', refund => 'none' );
     submit_step( $t, 'change-policy', change => 'none' );
     submit_step( $t, 'use-policy', use => 'none' );
+    submit_step( $t, 'expiry-policy', expiry => 'never' );
     $t->content_unlike(qr/<script>alert/)->content_like(qr/&lt;script&gt;alert/, 'escaped on the publish page');
     submit_step( $t, 'publish', action => 'publish' );
     $t->content_unlike(qr/<script>alert/)->content_like(qr/&lt;script&gt;alert/, 'and on the complete page');

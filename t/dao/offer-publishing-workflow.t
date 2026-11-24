@@ -41,7 +41,7 @@ sub walk ( $workflow_dao, $user, %by_step ) {
     my $processor = Registry::WorkflowProcessor->new( dao => $workflow_dao );
     my $run       = $processor->new_run( $workflow, { user => { id => $user->id, name => $user->name } } );
     my %result;
-    for my $slug (qw( offer-basics offer-price one-time-payment refund-policy change-policy use-policy publish )) {
+    for my $slug (qw( offer-basics offer-price one-time-payment refund-policy change-policy use-policy expiry-policy publish )) {
         my $step = $workflow->get_step( $workflow_dao->db, { slug => $slug } );
         $result{$slug} = $run->process( $workflow_dao->db, $step, $by_step{$slug} // {} );
     }
@@ -57,6 +57,7 @@ sub terms (%override) {
         'refund-policy'    => { refund => 'none' },
         'change-policy'    => { change => 'none' },
         'use-policy'       => { use => 'none' },
+        'expiry-policy'    => { expiry => 'never' },
         'publish'          => { action => 'publish' },
     );
     for my $slug ( keys %override ) {
@@ -83,8 +84,8 @@ subtest 'admin publishes a one time priced offer version' => sub {
     is_deeply $v->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
         'paid for once';
     is_deeply $v->policies,
-        { refund => { kind => 'none' }, change => { kind => 'none' }, use => { kind => 'none' } },
-        'with explicit none refund, change and use policies';
+        { refund => { kind => 'none' }, change => { kind => 'none' }, use => { kind => 'none' }, expiry => { kind => 'never' } },
+        'with explicit none refund, change and use policies and a never expiry';
     is $tdb->query( 'SELECT o.name FROM offers o WHERE o.id = ?', $v->offer_id )->array->[0],
         'Couples wheel night', 'under the offer name given';
 

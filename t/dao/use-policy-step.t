@@ -41,6 +41,7 @@ sub walk (%override) {
         'refund-policy'    => { refund => 'none' },
         'change-policy'    => { change => 'none' },
         'use-policy'       => { use => 'none' },
+        'expiry-policy'    => { expiry => 'never' },
         'publish'          => { action => 'publish' },
     );
     my $workflow = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } );
