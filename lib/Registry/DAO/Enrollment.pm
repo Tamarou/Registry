@@ -119,12 +119,11 @@ class Registry::DAO::Enrollment :isa(Registry::DAO::Object) {
         require Registry::DAO::Notification;
         my $count = 0;
         for my $item (@$items) {
-            my $enrollment = $class->create( $db, {
-                session_id       => $item->{session_id},
-                family_member_id => $item->{child_id},
-                parent_id        => $parent_id,
-                status           => 'active',
-            } );
+            # A settlement run again (a retried run driver) finds the child
+            # already enrolled; only an active enrollment is taken as that.
+            my %seat = ( session_id => $item->{session_id}, family_member_id => $item->{child_id} );
+            my $enrollment = $class->find( $db, { %seat, status => 'active' } )
+                // $class->create( $db, { %seat, parent_id => $parent_id, status => 'active' } );
             Registry::DAO::Notification->ensure_enrollment_confirmation( $db, {
                 user_id       => $parent_id,
                 session_id    => $item->{session_id},

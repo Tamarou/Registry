@@ -1,8 +1,8 @@
 # ABOUTME: The continue_workflow_run job is safe to retry and to run twice at once: one driver per run,
 # ABOUTME: each failure recorded on the run under __driver, and the last failed attempt marks it halted.
-# The paid branch of the Payment step answers to Stripe, so the money-at-Stripe
-# scenarios belong with t/stripe-live/continue-workflow-run.t; here the shipped
-# Payment step settles a $0 cart, which enrolls without the gateway.
+# The paid branch of the Payment step answers to Stripe, so moving money once on
+# a retry is proven in t/stripe-live/continue-workflow-run-retry.t; here the
+# shipped Payment step settles a $0 cart, which enrolls without the gateway.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -11,6 +11,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Mojo::Pg;
 use POSIX ();
 use Registry::DAO;
@@ -231,6 +232,82 @@ subtest 'concurrent drivers move money once' => sub {
         or diag explain $minion->job($_)->info->{result} for $j1, $j2;
     is enrollments() - $before, 1, 'the payment step settled once';
     is at($run), 'step-4', 'and the run completed';
+};
+
+subtest 'retried $0 settlement enrols once' => sub {
+    # A driver that died after the settlement and before the advance runs the
+    # payment step again on the same run.
+    my $kid = Registry::DAO::Family->add_child( $adb, $parent->id, {
+        child_name => 'Second Kid', birth_date => '2017-03-15', grade => '2', medical_info => {},
+        emergency_contact => { name => 'E', phone => '555-0123' } } );
+    my %cart = ( %free_cart, children => [ { id => $kid->id } ],
+                 enrollment_items => [ { session_id => $session->id, child_id => $kid->id } ] );
+    my $wf   = payment_workflow();
+    my $run  = parked_run( $wf, \%cart );
+    my $step = Registry::DAO::WorkflowStep->find( $adb, { workflow_id => $wf->id, slug => 'payment' } );
+
+    my $ok = eval { $step->process( $adb, \%cart, $run ) for 1 .. 2; 1 };
+
+    ok $ok, 'the second settlement succeeds' or diag $@;
+    is $adb->query( q{SELECT count(*) FROM enrollments WHERE family_member_id = ?
+                         AND session_id = ? AND status = 'active'}, $kid->id, $session->id )
+           ->array->[0], 1, 'and the child holds one enrollment';
+};
+
+# --- the charge's idempotency key -------------------------------------------------
+#
+# A money-moving step keys its Stripe call on state it saved before the call,
+# not on a run:<id>:step:<slug> key the driver would hand it: the Payment step
+# links its payment row to the run before creating the intent, and keys the
+# intent on that row's token (pi-create:<token>). A re-run of the step reuses
+# the row and so the key; a cart whose amount changed rotates the token, which
+# a fixed run:step key could not do without Stripe refusing the new amount.
+# Stripe is never reached with a usable key here: the call fails and the step
+# waits for a person, after the row and its token are written. A refused call
+# marks the row failed, so a re-run here mints a new row; that the key holds
+# across a re-run after Stripe ANSWERED, and the money moves once, is proven
+# against real Stripe in t/stripe-live/continue-workflow-run-retry.t.
+
+my $priced = Registry::DAO::Session->create( $adb, {
+    name => 'Paid Session', start_date => '2024-07-02', end_date => '2024-07-09',
+    status => 'published', metadata => {} } );
+$priced->add_events( $adb, $event->id );
+Registry::DAO::PricingPlan->create( $adb, {
+    session_id => $priced->id, plan_name => 'Paid', plan_type => 'standard', amount_cents => 5000 } );
+$dao->db->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_cwrrlocal',
+                   stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE WHERE slug = ?},
+                 $slug );
+give_tenant_terms( $dao->db, $slug, { rate => '0.025' } );
+
+my %paid_cart = (
+    %free_cart,
+    session_selections => { all => $priced->id },
+    enrollment_items   => [ { session_id => $priced->id, child_id => $child->id } ],
+    __tenant_slug      => $slug,
+);
+
+# The keys of the charges a run's payment rows would send, read from the database.
+sub charge_keys ($run) {
+    $adb->query( q{SELECT 'pi-create:' || (metadata->>'idempotency_token') FROM payments
+                    WHERE metadata->>'workflow_run_id' = ? ORDER BY created_at},
+                 $run->id )->arrays->map( sub { $_->[0] } )->to_array;
+}
+
+sub drive ($run) {
+    my $id = enqueue($run);
+    $minion->perform_jobs( { id => $id } );
+    return $minion->job($id)->info;
+}
+
+subtest 'idempotency key differs between runs' => sub {
+    my $wf = payment_workflow();
+    my ( $one, $two ) = map { parked_run( $wf, \%paid_cart ) } 1 .. 2;
+    drive($_) for $one, $two;
+
+    my ( $k1, $k2 ) = map { charge_keys($_)->[0] } $one, $two;
+    like $k1, qr/\Api-create:[0-9a-f-]{36}\z/, 'the first run\'s charge has a key';
+    like $k2, qr/\Api-create:[0-9a-f-]{36}\z/, 'and so does the second\'s';
+    isnt $k1, $k2, 'at the same step slug, the two runs\' keys differ';
 };
 
 # --- the client cannot write __driver -------------------------------------------
