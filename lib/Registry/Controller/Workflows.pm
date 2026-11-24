@@ -92,9 +92,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # payment snapshots; only the server resolves it, from the seller row.
         # tenant is the id signup provisioning writes; a posted one would read
         # as already provisioned and hand the run someone else's tenant.
+        # change_hold, change_entitlement_id and change_targets are what the
+        # change steps decide; the fee charge reads change_hold.fee_cents as the amount owed.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in

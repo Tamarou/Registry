@@ -53,8 +53,9 @@ class Registry::DAO::WorkflowSteps::HoldChangeTarget :isa(Registry::DAO::Workflo
             return { stay => 1, errors => ["That occurrence no longer has room for $seats"] };
         }
         # Written with the hold, under the run's lock: written after commit, an
-        # earlier submit's change could land over a later one's.
-        $run->update_data( $db, { change => {
+        # earlier submit's change_hold could land over a later one's. Not `change`:
+        # offer-publishing's change-policy form posts a field of that name.
+        $run->update_data( $db, { change_hold => {
             entitlement_id       => $entitlement->id,
             target_occurrence_id => $target->id,
             hold_id              => $hold->id,

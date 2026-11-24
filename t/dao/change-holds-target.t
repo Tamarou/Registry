@@ -119,7 +119,7 @@ subtest 'change lists same offer and holds target' => sub {
     is $holds->[0]{units}, 2, "for the entitlement's seat count";
     is $target->free_units($studio), 2, 'so the target has two of four seats free';
     is_deeply $e->units( $studio, $held->id ), [ 1, 2 ], 'the entitlement is not moved yet';
-    is_deeply $data->{change}, {
+    is_deeply $data->{change_hold}, {
         entitlement_id       => $e->id,
         target_occurrence_id => $target->id,
         hold_id              => $holds->[0]{id},
@@ -181,8 +181,8 @@ subtest 'fee comes from stamped offer version' => sub {
 
     my ($run) = chosen($e);
     my $data = hold_target( $run, $target );
-    is $data->{change}{fee_cents}, 1000, 'the fee is the one the entitlement was sold under, not 2500';
-    is $data->{change}{offer_version_id}, $version->id, 'and the version named is the stamped one';
+    is $data->{change_hold}{fee_cents}, 1000, 'the fee is the one the entitlement was sold under, not 2500';
+    is $data->{change_hold}{offer_version_id}, $version->id, 'and the version named is the stamped one';
     isnt $current->id, $version->id, 'though a newer version is current';
 };
 
@@ -289,14 +289,14 @@ subtest 'client change data ignored' => sub {
         fee_cents => 1, hold_id => 'forged', offer_version_id => $other->id, entitlement_id => $stranger->id,
         change    => { fee_cents => 1, hold_id => 'forged', offer_version_id => $other->id } );
     my $holds = live_holds($run);
-    is_deeply $data->{change}, {
+    is_deeply $data->{change_hold}, {
         entitlement_id       => $e->id,
         target_occurrence_id => $target->id,
         hold_id              => $holds->[0]{id},
         fee_cents            => 1000,
         offer_version_id     => $version->id,
     }, 'the change comes from the stamped policy and the placed hold only';
-    is_deeply Registry::DAO::WorkflowRun->find( $studio, { id => $run->id } )->data->{change}, $data->{change},
+    is_deeply Registry::DAO::WorkflowRun->find( $studio, { id => $run->id } )->data->{change_hold}, $data->{change_hold},
         'and that is what the run stores';
 };
 
@@ -308,7 +308,7 @@ subtest 'double hold submit leaves one hold' => sub {
     my $data = hold_target( $run, $first );
     my $holds = live_holds($run);
     is scalar @$holds, 1, 'submitting the same target twice leaves one live hold';
-    is $data->{change}{hold_id}, $holds->[0]{id}, 'and the run names it';
+    is $data->{change_hold}{hold_id}, $holds->[0]{id}, 'and the run names it';
     is $first->free_units($studio), 2, 'holding two seats, not four';
 
     $data  = hold_target( $run, $second );
@@ -325,8 +325,8 @@ subtest 'double hold submit leaves one hold' => sub {
     ok !$result->{errors} && !$result->{died}, 'then goes through' or diag explain $result;
     $holds = live_holds($run);
     is scalar @$holds, 1, 'leaving one live hold';
-    is $result->{change}{hold_id}, $holds->[0]{id}, 'the one the second submit names';
-    is Registry::DAO::WorkflowRun->find( $studio, { id => $run->id } )->data->{change}{hold_id}, $holds->[0]{id},
+    is $result->{change_hold}{hold_id}, $holds->[0]{id}, 'the one the second submit names';
+    is Registry::DAO::WorkflowRun->find( $studio, { id => $run->id } )->data->{change_hold}{hold_id}, $holds->[0]{id},
         'and the one the run stores';
     is $first->free_units($studio) + $second->free_units($studio), 6, 'two seats held in all';
 };
@@ -354,7 +354,7 @@ subtest '2-seat entitlement moves to the held target in one transaction' => sub 
     my $e = booking( $version, $held, 2 );
     my ($run) = chosen($e);
     my $hold = Registry::PriceOps::Hold->find( $studio,
-        { id => hold_target( $run, $target )->{change}{hold_id} }, 'id' );
+        { id => hold_target( $run, $target )->{change_hold}{hold_id} }, 'id' );
     my $tx = $studio->begin;
     $hold->convert( $studio, $e );
     $tx->commit;

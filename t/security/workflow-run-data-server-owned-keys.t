@@ -219,6 +219,23 @@ subtest 'selected_offer_version cannot be planted by a client' => sub {
         'a posted selected_offer_version is not stored';
 };
 
+subtest 'a change and its targets cannot be planted by a client' => sub {
+    # The change steps write these; the fee charge reads change_hold.fee_cents as
+    # the amount owed, so a planted one would set its own price.
+    for my $key (qw( change_hold change_entitlement_id change_targets )) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
+            "${key}[fee_cents]" => 0,
+            "${key}[hold_id]"   => '00000000-0000-0000-0000-000000000099',
+        })->status_is(201);
+        ok !exists data_for($run->id)->{$key}, "a bracketed posted $key is not stored";
+
+        $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => { $key => 'planted' })->status_is(201);
+        ok !exists data_for($run->id)->{$key}, "a flat posted $key is not stored";
+    }
+};
+
 subtest 'submitted seller account or tenant slug is ignored' => sub {
     # The host tenant sells on its own account; the victim's account is what an
     # attacker would like the charge to land on instead.
