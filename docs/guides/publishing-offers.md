@@ -102,8 +102,18 @@ If the tenant already has published offers, an **Offer** choice appears:
   payment plan with its rate, and each policy with its cutoff, window and fee
   are already chosen and filled in. Change only what differs; submitting each
   screen unchanged publishes a version with the same terms. A screen you have
-  already answered in this run shows your answer; choosing the offer again on
-  **Name your offer** starts the later screens from its current terms once more.
+  already answered in this run shows your answer.
+
+When **Name your offer** is answered again later in the run, the terms are
+reset:
+
+- Choosing an offer, the same one or another, replaces every answer on the
+  later screens with that offer's current terms. A screen whose policy that
+  version lacks starts blank.
+- Choosing **A new offer** after a version clears every answer on the later
+  screens: the price screen starts from its defaults, and every payment-plan
+  and policy screen starts blank.
+- Choosing **A new offer** when no version was chosen before keeps your answers.
 
 ### Price your offer
 
