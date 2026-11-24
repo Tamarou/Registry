@@ -77,12 +77,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # SQL::Abstract WHERE values, where a hashref is an OPERATOR rather
         # than a value: family_id => { '!=' => $x } renders `family_id != ?`
         # and matches every other family in the tenant.
-        # selected_pricing_plan joins them: only the pricing step may write it,
-        # because it rebuilds the blob from the plan row it has just validated,
-        # and that validation is where the coming-soon refusal lives. Both
-        # consumers trust the blob verbatim -- one bills its amount_cents, the
-        # other links its id as the charge-time rate authority -- so a client
-        # -authored one is a rate and a price of the client's choosing.
+        # selected_offer_version joins them: only the signup step that lists
+        # the platform's published offers may write it, after checking the
+        # posted version is one of them. Provisioning grants the version it
+        # names, so a client-authored one is an offer of the client's choosing.
         # user is on that list for the same reason: the five parent steps take
         # $user->{id} as the family_id their ownership checks match on, so a
         # user[id]= of a client's choosing picks the family this request acts
@@ -96,7 +94,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # as already provisioned and hand the run someone else's tenant.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address|stripe_account_id|tenant)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in

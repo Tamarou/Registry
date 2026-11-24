@@ -7,7 +7,8 @@ package Registry::PriceOps::PlatformTerms;
 
 use Exporter 'import';
 our @EXPORT_OK = qw(platform_terms_for_tenant platform_default_terms
-                    platform_entitlement_terms platform_version_terms rate_fraction);
+                    platform_entitlement_terms platform_version_terms rate_fraction
+                    platform_offers_to_tenants);
 
 use Mojo::JSON qw( from_json );
 use Registry::DAO::Entitlement;
@@ -87,6 +88,32 @@ sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
         unless $row;
 
     return _entitlement_terms( $row, "offer version '$offer_version_id'" );
+}
+
+# platform_offers_to_tenants($db)
+#   -> [ { id, plan_id, name, amount_cents, currency, fraction, refund_policy } ]
+#
+# The platform's current published offers to tenants, cheapest first: each
+# registry payment-processing version with a percentage-of-sales plan and
+# without the holder_is_offerer condition, which marks the platform's offers
+# to itself. Registry only: a studio's own offers live in its own schema.
+sub platform_offers_to_tenants ($db) {
+    $db = $db->db if $db isa Registry::DAO;
+
+    return $db->query( qq{
+        SELECT $TERMS_COLUMNS, v.currency
+          FROM registry.offer_versions v
+          JOIN registry.offers o ON o.id = v.offer_id
+          JOIN registry.resources r ON r.id = v.resource_id
+          JOIN registry.offer_version_payment_plans p
+            ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
+         WHERE r.name = ?
+           AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+           AND NOT v.conditions \@> '[{"kind": "holder_is_offerer"}]'
+         ORDER BY v.price_cents, p.fraction, o.name
+    }, $PAYMENT_PROCESSING )->hashes->map( sub ($row) {
+        +{ %{ _entitlement_terms( $row, "offer version '$row->{id}'" ) }, currency => $row->{currency} };
+    } )->to_array;
 }
 
 sub _entitlement_terms ( $row, $context ) {

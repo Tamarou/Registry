@@ -18,9 +18,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Carp qw(croak);
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
-    use Registry::PriceOps::RevenueShare ();
+    use Registry::PriceOps::PlatformTerms qw(platform_offers_to_tenants);
     use Registry::Utility::BaseDomain ();
-    use Registry::DAO::PricingPlan;
+
+    use constant SIGNUP_UNAVAILABLE =>
+        'Signup is unavailable right now: the platform has no plan on offer. Please try again later.';
 
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -31,9 +33,18 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             return { next_step => 'complete', tenant_created => 1, %$done };
         }
 
-        # Refuse a signup with no single offer to grant before any user is
-        # written or Stripe is called; _provision_tenant asks again to grant it.
-        $self->_platform_offer_to_tenants($db);
+        # The choice, refused before any user is written or Stripe is called.
+        # The review page posts it; the paid path's later posts come from the
+        # payment page, which does not, so they re-check the one carried.
+        my $offers = platform_offers_to_tenants($db);
+        return { next_step => $self->id, errors => [SIGNUP_UNAVAILABLE] } unless @$offers;
+        my $posted = exists $form_data->{offer_version}
+            ? $form_data->{offer_version}
+            : $run->data->{selected_offer_version};
+        my ($chosen) = grep { $_->{id} eq ( $posted // '' ) } @$offers;
+        return { next_step => $self->id, errors => ['Please choose one of the plans listed.'] }
+            unless $chosen;
+        $run->update_data( $db, { selected_offer_version => $chosen->{id} } );
 
         # Check for rate limiting
         if (my $rate_limit_error = $self->check_rate_limits($db, $run)) {
@@ -167,110 +178,46 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         };
     }
 
+    # The offer version the run carries, re-read so a superseded or withdrawn
+    # one is never quoted or charged; until one is carried, the first listed
+    # (Solo on day one), which the review page preselects. Undef when nothing
+    # is on offer: absence is not zero, so no rate is invented.
     # The run is passed in, never looked up: latest_run is scoped to the
-    # workflow alone, so re-resolving it here would price this visitor's signup
-    # from whichever run on the platform happens to be newest.
-    # The selected plan, re-read and re-checked at the moment it matters.
-    #
-    # validate_plan_selection already refuses a plan that is not a tenant-scoped
-    # plan on active offer from the platform, and refuses a coming_soon tier
-    # outright -- but it lived only at the moment of selection, guarding the
-    # step and nothing after it. This puts the same refusal on the path where
-    # the money actually moves.
-    #
-    # When no plan was selected, or a selected one no longer resolves, returns
-    # the platform's launch plan from _launch_plan instead (undef if that is not
-    # on offer): a stale or shelved selection is never the plan charged.
-    # Refusing the run outright would be stronger still, but get_subscription_config
-    # is also called to RENDER the payment page, where an error has nowhere to
-    # go -- see #347 for the restructuring that would allow it.
-    method resolve_selected_plan ($db, $run) {
-        my $selected = $run && $run->data && $run->data->{selected_pricing_plan};
-
-        if ( ref $selected eq 'HASH' && $selected->{id} && !ref $selected->{id} ) {
-            my $plan = Registry::DAO::PricingPlan->offered_platform_plan(
-                $db, $selected->{id} );
-            return $plan if $plan;
-        }
-
-        # Nothing chosen, or what was chosen is no longer on offer. Signup no
-        # longer asks which plan -- everyone starts on the one the platform
-        # sells -- so this is the ordinary path, not the exceptional one.
-        return $self->_launch_plan($db);
+    # workflow alone and would price this signup from someone else's run.
+    method chosen_offer ( $db, $run ) {
+        my $offers  = platform_offers_to_tenants($db);
+        my $carried = ( $run && $run->data || {} )->{selected_offer_version} // '';
+        my ($chosen) = grep { $_->{id} eq $carried } @$offers;
+        return $chosen // $offers->[0];
     }
 
-    method _launch_plan ($db) {
-        my $id = Registry::PriceOps::RevenueShare::platform_launch_plan_id($db);
-        return Registry::DAO::PricingPlan->offered_platform_plan( $db, $id );
+    # The quoted and charged terms of the chosen offer version, all from the
+    # version's own data; {} when nothing is on offer.
+    method get_subscription_config ( $db, $run ) {
+        my $offer = $self->chosen_offer( $db, $run ) or return {};
+        return $self->_offer_config($offer);
     }
 
-    method get_subscription_config($db, $run) {
-        # Run data carries a plan ID and nothing else worth trusting. The
-        # snapshot stored at selection -- plan_name, amount_cents, currency --
-        # was handed straight to Stripe as items[0][price_data][unit_amount],
-        # so a signup started before a price change and resumed after it charged
-        # the remembered amount while linking the plan whose rate had moved.
-        # Displayed, charged and linked could disagree with nobody doing
-        # anything wrong.
-        my $plan = $self->resolve_selected_plan($db, $run);
-        my $selected_plan = $plan && {
-            id                    => $plan->id,
-            plan_name             => $plan->plan_name,
-            amount_cents          => $plan->amount_cents,
-            currency              => $plan->currency,
-            pricing_configuration => $plan->pricing_configuration,
-            metadata              => $plan->metadata,
-        };
-
-        # Reached only when no plan resolves at all -- the launch plan is
-        # missing its active platform relationship, or is marked coming_soon.
-        # That is a misconfiguration, and the signup page says as little as it
-        # can truthfully say rather than inventing a rate.
-        unless ($selected_plan) {
-            my $revenue_share_percent = $self->_platform_default_revenue_share_percent($db);
-            return {
-                plan_name => 'Solo',
-                monthly_amount => 0,
-                currency => 'usd',
-                trial_days => 0,
-                revenue_share_percent => $revenue_share_percent,
-                description => $revenue_share_percent . '% of processed revenue. No monthly fee.',
-                features => $self->_baseline_features,
-                billing_cycle => 'monthly',
-                formatted_price => 'Free'
-            };
-        }
-
-        # Use selected plan configuration.
-        #
-        # A plan declares its own trial length; silence means no trial. The old
-        # default of 30 handed a free plan a free trial -- Solo costs $0 and
-        # always will, so "your trial ends March 4th" was both meaningless and
-        # alarming, and the copy that quoted it ran all the way to the
-        # confirmation page.
-        my $config = $selected_plan->{pricing_configuration} || {};
-        my $amount = $selected_plan->{amount_cents};
+    method _offer_config ($offer) {
+        my $amount  = $offer->{amount_cents};
+        my $percent = $offer->{fraction} * 100;
         return {
-            plan_name => $selected_plan->{plan_name},
-            monthly_amount => $amount,
-            currency => lc($selected_plan->{currency} || 'usd'),
-            trial_days => $config->{trial_days} // 0,
-            revenue_share_percent => ( $config->{percentage} // 0 ) * 100,
-            description => $config->{description} || $selected_plan->{plan_name},
-            features => $config->{features} || $self->_baseline_features,
-            billing_cycle => $config->{billing_cycle} || 'monthly',
-            formatted_price => $amount
-                ? format_price($amount, $selected_plan->{currency}, suffix => '/month')
-                : 'Free'
+            offer_version_id      => $offer->{id},
+            plan_name             => $offer->{name},
+            monthly_amount        => $amount,
+            currency              => lc $offer->{currency},
+            trial_days            => 0,
+            revenue_share_percent => $percent,
+            description           => format_price( $amount, $offer->{currency} )
+                . " a month, $percent% of each payment you take",
+            features              => $self->_baseline_features,
+            billing_cycle         => 'monthly',
+            formatted_price       => $amount
+                ? format_price( $amount, $offer->{currency}, suffix => '/month' )
+                : 'Free',
         };
     }
 
-    # _platform_default_revenue_share_percent: the no-plan ("Free") revenue-share
-    # rate as a percent number (e.g. 0 for the Free 0% plan). Delegates to
-    # Registry::PriceOps::RevenueShare::platform_default_fraction so the displayed
-    # rate reads the SAME source -- and fails loud the same way -- as the
-    # charge-time path; a missing Free plan can never make display and charge
-    # disagree.
     # Twenty, not five. Five bounds the cost just as well and breaks legitimate
     # bursts: a school district behind one NAT signing up a few sites, or the
     # Playwright suite, which shares one database across a run and provisions a
@@ -348,10 +295,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             'Staff scheduling',
             'Custom reporting'
         ];
-    }
-
-    method _platform_default_revenue_share_percent($db) {
-        return Registry::PriceOps::RevenueShare::platform_default_fraction($db) * 100;
     }
 
     # Price formatting delegated to Registry::Utility::PriceFormat
@@ -650,7 +593,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
 
         # The new tenant holds the platform's offer to tenants from the moment
         # it exists; Tenant->provision grants it in the same transaction.
-        $provision_data{platform_entitlement} = $self->_platform_offer_to_tenants($db);
+        $provision_data{platform_entitlement} = $self->_platform_offer_to_tenants( $db, $run );
 
         if ($subscription_data->{stripe_subscription_id}) {
             $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
@@ -704,27 +647,16 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         return $result;
     }
 
-    # The platform's current published offer to tenants and its
-    # percentage-of-sales plan, as { offer_version_id, payment_plan_id }: a
-    # payment-processing version without the holder_is_offerer condition,
-    # which marks the platform's offers to itself.
-    # shortcut: grants the one offer without asking; 01a20416-6d40 replaces
-    # this with the tenant's own choice through the accept primitive.
-    method _platform_offer_to_tenants ($db) {
-        my $offers = $db->query( q{
-            SELECT v.id AS offer_version_id, p.id AS payment_plan_id
-              FROM registry.offer_versions v
-              JOIN registry.resources r ON r.id = v.resource_id
-              JOIN registry.offer_version_payment_plans p
-                ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
-             WHERE r.name = 'payment processing'
-               AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
-               AND NOT v.conditions @> '[{"kind": "holder_is_offerer"}]'
-        } )->hashes;
-        die sprintf "Signup needs exactly one published platform offer to tenants; found %d.\n",
-            $offers->size
-            unless $offers->size == 1;
-        return $offers->first;
+    # The run's chosen platform offer to tenants, re-read as still published,
+    # and its percentage-of-sales plan, as { offer_version_id, payment_plan_id }.
+    # shortcut: grants it directly and dies when it is no longer on offer;
+    # 01a20416-6d40 replaces this with the accept primitive, which re-quotes.
+    method _platform_offer_to_tenants ( $db, $run ) {
+        my $carried = $run->data->{selected_offer_version} // '';
+        my ($offer) = grep { $_->{id} eq $carried } platform_offers_to_tenants($db)->@*;
+        die "Signup's chosen offer '$carried' is not a published platform offer to tenants.\n"
+            unless $offer;
+        return { offer_version_id => $offer->{id}, payment_plan_id => $offer->{plan_id} };
     }
 
     # The result _provision_tenant stored for $run, when the tenant it names
@@ -746,6 +678,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # both templates read and lets each take its half.
     method prepare_template_data($db, $run, $params = {}) {
         my $raw = $run->data || {};
+        my @offers = map { $self->_offer_config($_) } platform_offers_to_tenants($db)->@*;
 
         return {
             %{ $self->prepare_payment_data($db, $run) },
@@ -771,10 +704,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 },
                 team_members => $raw->{team_members} || [],
             },
-            # The plan nobody was asked to choose, resolved by the same code
-            # that provisions -- so the page states the terms the tenant is
-            # actually about to be put on.
+            # Every offer to choose between, each quoted from its own version,
+            # and the one preselected: what the run carries, else the first.
+            offers      => \@offers,
             plan        => $self->get_subscription_config($db, $run),
+            unavailable => @offers ? undef : SIGNUP_UNAVAILABLE,
             base_domain => Registry::Utility::BaseDomain::primary_base_domain(),
         };
     }

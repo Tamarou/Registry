@@ -7,14 +7,16 @@
 % my $admin = $team->{admin} || {};
 % my $team_members = $team->{team_members} || [];
 % my $plan = stash('plan') || {};
+% my $offers = stash('offers') || [];
+% my $unavailable = stash('unavailable');
 % my $base_domain = stash('base_domain') || 'tinyartempire.com';
 % my $errors = stash('errors') || [];
 
 <div class="review-step">
 
-    % if (@$errors) {
+    % if (@$errors || $unavailable) {
         <div class="alert alert-error" role="alert">
-            % for my $error (@$errors) {
+            % for my $error ($unavailable ? $unavailable : (), grep { !$unavailable || $_ ne $unavailable } @$errors) {
                 <p><%= $error %></p>
             % }
         </div>
@@ -109,35 +111,30 @@
             </div>
         </div>
 
-        <!-- Plan -->
+        % unless ($unavailable) {
+        <!-- Plan: every published platform offer, each quoted from its own version -->
         <div class="review-section">
             <div class="section-header">
                 <h3>Your Plan</h3>
-                % if ($plan->{plan_name}) {
-                    <div class="pricing-badge"><%= $plan->{plan_name} %></div>
-                % }
             </div>
 
             <div class="section-content">
                 <div class="subscription-details">
-                    % if ($plan->{description}) {
-                        <div class="plan-summary">
-                            <p><%= $plan->{description} %></p>
-                        </div>
-                    % }
-
-                    <div class="plan-terms">
-                        <h4><%= $plan->{formatted_price} // 'Free' %> to start</h4>
-                        <p>
-                            % if ($plan->{revenue_share_percent}) {
-                                No card, no monthly fee. We take
-                                <%= $plan->{revenue_share_percent} %>% of the payments you
-                                collect through the platform, and nothing when you collect nothing.
-                            % } else {
-                                No card and no monthly fee.
-                            % }
-                        </p>
-                    </div>
+                    <fieldset class="plan-choices">
+                        <legend>Choose your plan</legend>
+                        % for my $offer (@$offers) {
+                            <div class="plan-terms">
+                                <input type="radio" form="review-form" name="offer_version"
+                                       id="offer-<%= $offer->{offer_version_id} %>"
+                                       value="<%= $offer->{offer_version_id} %>" required
+                                       <%== $offer->{offer_version_id} eq ($plan->{offer_version_id} // '') ? 'checked' : '' %>>
+                                <label for="offer-<%= $offer->{offer_version_id} %>">
+                                    <strong><%= $offer->{plan_name} %></strong>:
+                                    <%= $offer->{description} %>
+                                </label>
+                            </div>
+                        % }
+                    </fieldset>
 
                     % if ($plan->{features} && @{$plan->{features}}) {
                         <div class="features-included">
@@ -161,6 +158,7 @@
                 </div>
             </div>
         </div>
+        % }
 
         <!-- What Happens Next -->
         <div class="review-section next-steps">
@@ -207,7 +205,8 @@
     </div>
 
     <!-- Terms, Confirmation, and Action Buttons -->
-    <form action="<%= url_for 'workflow_process_step' %>" method="post">
+    % unless ($unavailable) {
+    <form id="review-form" action="<%= url_for 'workflow_process_step' %>" method="post">
         <div class="confirmation-section">
             <div class="terms-acceptance">
                 <label class="checkbox-container">
@@ -240,6 +239,7 @@
             </div>
         </div>
     </form>
+    % }
 </div>
 
 <style>
@@ -769,7 +769,8 @@
 document.addEventListener('DOMContentLoaded', function() {
     const termsCheckbox = document.getElementById('terms-accepted');
     const proceedButton = document.getElementById('create-studio');
-    
+    if (!termsCheckbox) return; // signup unavailable: nothing to submit
+
     // Enable/disable button based on terms acceptance
     function updateButtonState() {
         proceedButton.disabled = !termsCheckbox.checked;
