@@ -48,6 +48,7 @@ sub published_version ( $handle, $name ) {
 }
 
 my $studio = new_tenant('wheel_house');
+my $START  = '2026-12-01T00:00:00Z';
 
 subtest 'person held entitlement records its stamp' => sub {
     my $sam     = person( $studio, 'sam' );
@@ -57,6 +58,7 @@ subtest 'person held entitlement records its stamp' => sub {
         holder_user_id   => $sam,
         offer_version_id => $version->id,
         payment_plan_id  => 'pay',
+        starts_at        => $START,
     } );
 
     my $read = Registry::DAO::Entitlement->find( $studio, { id => $e->id } );
@@ -77,6 +79,7 @@ subtest 'child holder with separate payer found by either' => sub {
         payer_user_id           => $parent,
         offer_version_id        => $version->id,
         payment_plan_id         => 'pay',
+        starts_at               => $START,
     } );
 
     is_deeply [ map { $_->id } Registry::DAO::Entitlement->held_by( $studio, $kid ) ], [ $e->id ],
@@ -95,6 +98,7 @@ subtest 'tenant holds a platform offer version' => sub {
         holder_tenant_id => $tenant->id,
         offer_version_id => $version->id,
         payment_plan_id  => 'pay',
+        starts_at        => $START,
     } );
 
     is_deeply [ map { $_->id } Registry::DAO::Entitlement->held_by( $db, $tenant->id ) ], [ $e->id ],
@@ -114,7 +118,7 @@ subtest 'holder kind and payment plan integrity enforced' => sub {
             offer_terms( $resource->id, payment_plans => [ { id => 'monthly', kind => 'one_time' } ] ) )
             ->publish($studio);
     }
-    my %stamp = ( offer_version_id => $version->id, payment_plan_id => 'pay' );
+    my %stamp = ( offer_version_id => $version->id, payment_plan_id => 'pay', starts_at => $START );
 
     throws_ok { Registry::DAO::Entitlement->create( $studio, {%stamp} ) }
         qr/entitlements_one_holder/, 'an entitlement with no holder is refused';
@@ -124,13 +128,47 @@ subtest 'holder kind and payment plan integrity enforced' => sub {
     } qr/entitlements_one_holder/, 'an entitlement with two holders is refused';
     throws_ok {
         Registry::DAO::Entitlement->create( $studio,
-            { holder_user_id => $sam, offer_version_id => $version->id, payment_plan_id => 'monthly' } )
+            { %stamp, holder_user_id => $sam, payment_plan_id => 'monthly' } )
     } qr/entitlements_payment_plan_fkey/,
         "another offer version's plan is refused";
     throws_ok {
         Registry::DAO::Entitlement->create( $studio,
-            { holder_user_id => $sam, offer_version_id => $version->id, payment_plan_id => 'nope' } )
+            { %stamp, holder_user_id => $sam, payment_plan_id => 'nope' } )
     } qr/entitlements_payment_plan_fkey/, 'a plan that does not exist is refused';
+};
+
+subtest 'in effect lookup keeps the sold under version' => sub {
+    my $sam     = person( $studio, 'sam3' );
+    my $v1      = published_version( $studio, 'Winter term' );
+    my $e = Registry::DAO::Entitlement->create( $studio, {
+        holder_user_id   => $sam,
+        offer_version_id => $v1->id,
+        payment_plan_id  => 'pay',
+        starts_at        => '2026-12-01T00:00:00Z',
+        ends_at          => '2027-01-01T00:00:00Z',
+    } );
+
+    ok $studio->query(
+        'SELECT in_effect = tstzrange(?, ?) FROM entitlements WHERE id = ?',
+        '2026-12-01T00:00:00Z', '2027-01-01T00:00:00Z', $e->id )->array->[0],
+        'its in-effect period is recorded';
+
+    my $found = sub ($t) {
+        [ map { $_->id } Registry::DAO::Entitlement->in_effect_at( $studio, $t, { holder_user_id => $sam } ) ];
+    };
+    is_deeply $found->('2026-12-15T12:00:00Z'), [ $e->id ], 'in effect inside its period';
+    is_deeply $found->('2026-11-30T12:00:00Z'), [],         'not before it';
+    is_deeply $found->('2027-01-15T12:00:00Z'), [],         'nor after it';
+
+    my $v2 = Registry::DAO::Offer->find( $studio, { id => $v1->offer_id } )
+        ->draft( $studio, offer_terms( $v1->resource_id, price_cents => 2500 ) )->publish($studio);
+    ok defined Registry::DAO::OfferVersion->find( $studio, { id => $v1->id } )->superseded_at,
+        'its offer version is superseded';
+
+    my $read = Registry::DAO::Entitlement->find( $studio, { id => $e->id } );
+    is $read->offer_version_id, $v1->id, 'the entitlement still names the version it was sold under';
+    is $read->offer_version($studio)->price_cents, 2000, 'and reads that version\'s terms';
+    isnt $v2->price_cents, 2000, 'not the new version\'s';
 };
 
 done_testing;

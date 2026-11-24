@@ -16,7 +16,7 @@ BEGIN
     LOOP
         CONTINUE WHEN to_regclass(format('%I.offer_versions', s)) IS NULL;
         EXECUTE format(
-            'SELECT id, holder_user_id, holder_family_member_id, holder_tenant_id, payer_user_id, offer_version_id, payment_plan_id FROM %I.entitlements WHERE false', s);
+            'SELECT id, holder_user_id, holder_family_member_id, holder_tenant_id, payer_user_id, offer_version_id, payment_plan_id, in_effect FROM %I.entitlements WHERE false', s);
     END LOOP;
 END $$;
 

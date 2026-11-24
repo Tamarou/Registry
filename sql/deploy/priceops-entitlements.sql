@@ -36,6 +36,10 @@ BEGIN
                 payer_user_id           uuid,
                 offer_version_id        uuid NOT NULL,
                 payment_plan_id         text NOT NULL,
+                -- Pillar 2's schedule phase: a start and an optional end,
+                -- half-open, so a phase ending at T and one starting at T
+                -- never overlap.
+                in_effect               tstzrange NOT NULL,
                 created_at              timestamp with time zone NOT NULL DEFAULT now(),
                 CONSTRAINT entitlements_one_holder CHECK (
                     num_nonnulls(holder_user_id, holder_family_member_id, holder_tenant_id) = 1
