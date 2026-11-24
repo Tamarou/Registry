@@ -2,7 +2,7 @@
 -- ABOUTME: Built in registry and every tenant schema; clone_schema gives new tenants the same.
 
 -- Deploy registry:priceops-occurrence-resources to pg
--- requires: priceops-entitlement-lifecycle
+-- requires: bootstrap-platform-offers
 
 BEGIN;
 
