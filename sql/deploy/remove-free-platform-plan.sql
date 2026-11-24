@@ -17,6 +17,9 @@ SELECT * FROM registry.pricing_plans
 -- A charge, sale or entitlement still naming the row keeps it: refuse, and the
 -- transaction deletes nothing. pricing_plans ids also live in columns with no
 -- foreign key, in registry and in every tenant schema.
+-- Not checked: payments.metadata->>'platform_pricing_plan_id', a stamp nothing
+-- reads any more; platform-entitlement-replaces-plan-link already let that column
+-- form go as "not recorded". The revert restores the row with its id.
 DO $$
 DECLARE
     c record;
