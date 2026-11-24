@@ -261,7 +261,9 @@ subtest 'a solo version that is no offer to tenants is refused' => sub {
             1;
         };
         ok !$ok, "a solo version $case->[0] is refused";
-        like $@, qr/\Apublish_offer: publish refused: The offer could not be published/, 'at publish, with an error';
+        like $@, qr/\Apublish_offer: publish refused: Publishing this would leave signup with no platform offer/,
+            'at publish, saying why';
+        unlike $@, qr/[0-9a-f]{8}-[0-9a-f]{4}-/, 'with no id on the screen';
         like "@logged", qr/no current published platform offer to tenants/, 'the database refused it';
         is_deeply current_versions( $solo_id, $rdb ), [ $before->version ], 'the old version stays current';
     }

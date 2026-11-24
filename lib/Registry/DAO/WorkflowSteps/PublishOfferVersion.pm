@@ -105,7 +105,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
         return $release->( { stay => 1, errors => [$why] } ) if $why;
 
-        my $stale;
+        my ( $stale, $at_guard );
         my $version = eval {
             # A new version of an existing offer is published only over the
             # version the run started from, read under the offer's lock: a
@@ -130,18 +130,24 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
             } )->publish($db);
             # The platform-offer guard runs now, so its refusal is this step's error
             # rather than a failed commit; then deferred again, as a caller expects.
+            $at_guard = 1;
             $db->query('SET CONSTRAINTS registry.offer_versions_keep_platform_offer IMMEDIATE');
+            $at_guard = 0;
             $db->query('SET CONSTRAINTS registry.offer_versions_keep_platform_offer DEFERRED');
             $published;
         };
         # The detail can carry ids and driver messages, so it goes to the log
         # and the screen gets a fixed message; the transaction rolls back.
         unless ($version) {
+            # RAISE EXCEPTION's SQLSTATE from that statement, where only the guard runs.
+            my $guard_refused = $at_guard && ( $db->dbh->state // '' ) eq 'P0001';
             $db->query('ROLLBACK TO SAVEPOINT publish_offer_version') unless $tx;
             # A refusal the admin can act on, not an internal error.
             return { stay => 1, errors => ['A newer version of this offer was published since this run began; start again'] }
                 if $stale;
             warn 'offer publish failed for run ' . $run->id . ": $@";
+            return { stay => 1, errors => ['Publishing this would leave signup with no platform offer to tenants, so nothing was saved'] }
+                if $guard_refused;
             return { stay => 1, errors => ['The offer could not be published, and nothing was saved. Please try again.'] };
         }
         $run->update_data( $db, { published_offer_version_id => $version->id } );
