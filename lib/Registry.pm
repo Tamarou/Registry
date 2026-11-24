@@ -1402,7 +1402,6 @@ class Registry :isa(Mojolicious) {
                 location-creation
                 location-management
                 outcome-definition-creation
-                pricing-plan-creation
                 program-creation
                 program-creation-enhanced
                 program-location-assignment
@@ -1416,6 +1415,11 @@ class Registry :isa(Mojolicious) {
                 workflow-creation
                 workflow-step-creation
             ) ),
+
+            # Only a tenant's admins publish its prices (decided with perigrin,
+            # PriceOps spec): staff run programs, but a staff member of
+            # registry must not change what every tenant is charged.
+            'pricing-plan-creation' => ['admin'],
 
             # A parent acts on their own enrollment; staff and admins reach the
             # same flows on a family's behalf.
