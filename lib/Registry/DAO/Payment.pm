@@ -152,8 +152,9 @@ field $_stripe_client = undef;
         # revenue share, and an explicit 0 is a value Stripe has no reason to
         # accept on a schedule that takes no fee.
         # Fixed to two places and trimmed: Stripe refuses a third decimal here
-        # (t/stripe-live/schedule-fee-precision.t), so a 2.875% plan is sent as
-        # 2.88; and Perl would write a small rate as 1e-02 and float noise in full.
+        # (t/stripe-live/schedule-fee-precision.t), and plans are saved to at
+        # most 2 (PricingPlan::_check_rate), so this only trims float noise; and
+        # Perl would write a small rate as 1e-02 and float noise in full.
         ( my $pct = sprintf '%.2f', $args->{revenue_share_pct} // 0 ) =~ s/\.?0+\z//;
         $params{'default_settings[application_fee_percent]'} = $pct if $pct > 0;
 

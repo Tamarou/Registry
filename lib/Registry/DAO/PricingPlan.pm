@@ -47,7 +47,22 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
         
     }
     
+    # A rate is a fraction to at most 4 decimals (2 as a percent), so neither
+    # the one-off fee (whole basis points) nor the instalment schedule ('%.2f'
+    # percent) has to round it, and the two paths charge the same rate.
+    sub _check_rate ($config) {
+        $config = $config->{-json} if ref $config eq 'HASH' && $config->{-json};
+        my $pct = ref $config eq 'HASH' ? $config->{percentage} : undef;
+        return unless defined $pct;
+        my $bp = $pct =~ /\A[0-9.eE+-]+\z/ ? $pct * 10_000 : -1;
+        croak "Plan rate '$pct' must be a fraction from 0 to 1 with at most 4 decimals "
+            . "(at most 2 as a percent)"
+            unless $bp >= 0 && $bp <= 10_000 && abs( $bp - sprintf '%.0f', $bp ) < 1e-6;
+    }
+
     sub create ($class, $db, $data) {
+        _check_rate( $data->{pricing_configuration} );
+
         # Encode JSON fields
         for my $field (qw(requirements pricing_configuration metadata)) {
             if (exists $data->{$field} && ref $data->{$field} eq 'HASH') {
@@ -124,6 +139,7 @@ class Registry::DAO::PricingPlan :isa(Registry::DAO::Object) {
             version        => $version + 1,
         );
 
+        _check_rate( $next{pricing_configuration} );
         for my $field (qw(requirements pricing_configuration metadata)) {
             $next{$field} = { -json => $next{$field} }
                 if ref $next{$field} eq 'HASH';
