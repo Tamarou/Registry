@@ -193,11 +193,16 @@ subtest 'admin publishes the single seat offer over http' => sub {
 
     my $v = current_version('Single seat');
     ok $v, 'the single seat offer has a current published version' or return;
-    is_deeply { $v->%{qw( resource_id units_per_acceptance per_booking_cap )} },
-        { resource_id => $resource_id, units_per_acceptance => 1, per_booking_cap => 4 },
-        'one seat of the same resource, up to 4 a booking';
-    is_deeply $v->{policies}{refund}, { kind => 'full_until_cutoff', cutoff_hours => 48 },
-        'refunded in full until 48 hours before';
+    is_deeply { $v->%{qw( resource_id class_project_id price_cents currency units_per_acceptance per_booking_cap )} },
+        { resource_id => $resource_id, class_project_id => undef, price_cents => 4500, currency => 'usd',
+          units_per_acceptance => 1, per_booking_cap => 4 }, 'one seat of the same resource, up to 4 a booking';
+    is_deeply $v->{plans}, ['one_time'], 'paid once';
+    is_deeply $v->{policies}, {
+        refund => { kind => 'full_until_cutoff', cutoff_hours => 48 },
+        change => { kind => 'window', window_hours => 48, fee_cents => 0, targets => 'same_offer' },
+        use    => { kind => 'optional_attendance' },
+        expiry => { kind => 'end_of_occurrence' },
+    }, 'refunded in full until 48 hours before, with the day-one change, use and expiry';
     is $db->query('SELECT count(*) FROM resources')->array->[0], 1, 'both offers share the one resource';
 };
 
