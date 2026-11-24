@@ -31,7 +31,8 @@ class Registry::Job::InstalmentSchedule {
         # Stripe is reached here, so a failure must be retried rather than
         # swallowed: without the schedule the family pays instalment one and
         # nothing else, which is the defect #425 is about, arrived by a different
-        # road. Minion's own backoff does the retrying.
+        # road. Dying fails the job, and Minion retries it on the attempts the
+        # webhook enqueued it with (Controller::Webhooks).
         my $schedule_id = $self->create_for( $dao->db, $payment );
 
         return $job->finish(

@@ -344,9 +344,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # The Stripe schedule for instalments two onwards. After the COMMIT and
         # in a job, not here: it is a network call, and one made inside the
         # transaction above would hold a row lock across Stripe's latency and
-        # lose its work on any failure -- which is #284's shape. The job retries
-        # on Minion's backoff, and without it the family pays instalment one and
-        # nothing more.
+        # lose its work on any failure -- which is #284's shape. Without the job
+        # the family pays instalment one and nothing more, so it gets ten
+        # attempts on Minion's default backoff (retries**4 + 15 seconds), about
+        # two and a half hours in all: past a Stripe outage or a deploy restart,
+        # and inside the 24 hours Stripe keeps the job's Idempotency-Keys.
         #
         # One job per payment: a second event for it finds the first still
         # waiting and adds nothing. Keyed by a note named for the payment,
@@ -364,7 +366,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             } )->total;
             $minion->enqueue(
                 instalment_schedule => [ $schedule_for, $slug // 'registry' ],
-                { notes => { $schedule_for => 1 } } )
+                { attempts => 10, notes => { $schedule_for => 1 } } )
                 unless $queued;
         }
 
