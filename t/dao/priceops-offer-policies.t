@@ -111,6 +111,14 @@ subtest 'sibling condition declared as data' => sub {
     is_deeply drafted('No conditions')->conditions, [], 'a version without conditions has none';
 };
 
+subtest 'self offer condition declared as data' => sub {
+    my $self = { kind => 'holder_is_offerer' };
+    is_deeply drafted( 'Self right', conditions => [$self] )->conditions, [$self],
+        "the condition 'the holder is the offerer' round-trips";
+    throws_ok { drafted( 'Self right with extras', conditions => [ { %$self, x => 1 } ] ) }
+        qr/malformed condition 'holder_is_offerer'/, 'it takes no fields';
+};
+
 subtest 'published policies and plans are immutable' => sub {
     my $program = new_offer('Camp week');
     my $offer   = new_offer('Camp sibling rate');

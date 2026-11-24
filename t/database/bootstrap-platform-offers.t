@@ -55,6 +55,8 @@ subtest 'bootstrap publishes solo v1 only' => sub {
     is $solo->{price_cents},   0,                    'at $0';
     is $solo->{policies}{refund}{kind}, 'keep_fee_with_admin_exception',
         'refund policy keeps the fee, with an admin exception';
+    is_deeply [ map { $solo->{policies}{$_}{kind} } qw(change use expiry) ], [qw(none none never)],
+        'and states no change, no use and that it never expires';
 
     my $plans = plans_of( $solo->{id} );
     is scalar @$plans, 1, 'one payment plan';

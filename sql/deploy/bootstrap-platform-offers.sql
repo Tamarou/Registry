@@ -2,7 +2,7 @@
 -- ABOUTME: Seeds registry's resources, offer versions and the registry tenant's entitlements, by fixed id.
 
 -- Deploy registry:bootstrap-platform-offers to pg
--- requires: priceops-entitlement-units
+-- requires: priceops-entitlement-lifecycle
 
 BEGIN;
 
@@ -41,7 +41,8 @@ INSERT INTO registry.offer_versions
 VALUES
     ('00000000-0000-0000-0003-000000000001', '00000000-0000-0000-0002-000000000001', 1,
      '00000000-0000-0000-0001-000000000001', 0, 1, 1,
-     '{"refund": {"kind": "keep_fee_with_admin_exception"}}');
+     '{"refund": {"kind": "keep_fee_with_admin_exception"}, "change": {"kind": "none"},
+       "use": {"kind": "none"}, "expiry": {"kind": "never"}}');
 
 -- The platform's offers to itself, each its own offer buying one resource and
 -- restricted by holder_is_offerer to the platform: not offered to tenants.

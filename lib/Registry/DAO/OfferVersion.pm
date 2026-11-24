@@ -90,6 +90,9 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     my %CONDITION = (
         # The sibling rate: the holder's family holds an entitlement to offer_id.
         family_holds_entitlement => { offer_id => $uuid },
+        # The platform's offer to itself: only the offerer may hold it, so it
+        # is not offered to tenants.
+        holder_is_offerer => {},
     );
 
     sub _check_conditions ($conditions) {
