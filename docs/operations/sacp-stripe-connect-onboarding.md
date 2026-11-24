@@ -1,5 +1,11 @@
 # SACP Stripe Connect Onboarding
 
+> **Registry now makes direct charges on the tenant's own account, not
+> destination charges.** See
+> [ADR 003](../decisions/003-direct-charges-stripe-source-of-truth.md) for the
+> decision. Steps below that assume destination charges are out of date until
+> this runbook is rewritten.
+
 Operator runbook for wiring SACP's Stripe Standard connected account into the
 Registry platform so tenant-scoped destination charges work.
 
