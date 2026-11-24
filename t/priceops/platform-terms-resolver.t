@@ -9,6 +9,11 @@ use Test::Registry::DB;
 use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
 use Registry::PriceOps::PlatformTerms qw(platform_terms_for_tenant);
 use Registry::PriceOps::RevenueShare qw(revenue_share_plan_for_tenant);
+use Registry::DAO::Payment;
+use Registry::DAO::Tenant;
+use Registry::DAO::User;
+use Registry::DAO::WorkflowRun;
+use Registry::DAO::WorkflowSteps::RegisterTenant;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -52,6 +57,65 @@ subtest 'resolver answers a tenants platform terms' => sub {
 
     my $absent = platform_terms_for_tenant( $db, 'no_such_tenant' );
     is $absent->{id}, $free->{id}, 'a tenant row that is absent falls back the same way';
+};
+
+my $payer = Registry::DAO::User->create( $db, {
+    username => 'terms_payer', name => 'Terms Payer', user_type => 'parent',
+    email => 'terms_payer@test.local' } );
+
+# The fee stamp on a row with no seller account, which reads the tenant's live
+# terms (a connected row stamps what create snapshotted from RevenueShare).
+sub stamped_terms_id ($slug) {
+    my $p = Registry::DAO::Payment->create( $db, {
+        user_id => $payer->id, amount_cents => 10000, status => 'pending',
+        metadata => { tenant_slug => $slug, enrollment_items => [] },
+    } );
+    $p->record_platform_fee( $db, { application_fee_amount => 0 } );
+    return Registry::DAO::Payment->find( $db, { id => $p->id } )->platform_pricing_plan_id;
+}
+
+sub signup_plan ($slug) {
+    my $tenant_id = $db->select( 'registry.tenants', 'id', { slug => $slug } )->hash->{id};
+    my $step = Registry::DAO::WorkflowSteps::RegisterTenant->new(
+        id => 0, slug => 'complete', workflow_id => 0, description => '',
+        class => 'Registry::DAO::WorkflowSteps::RegisterTenant' );
+    my $run = Registry::DAO::WorkflowRun->new( workflow_id => 0, created_at => 'now', data => { tenant => $tenant_id } );
+    return $step->prepare_completion_data( $db, $run )->{plan};
+}
+
+sub readers_for ($slug) {
+    my ($fleet)   = grep { $_->{slug} eq $slug } @{ Registry::DAO::Tenant->fleet($db) };
+    my ($revenue) = grep { $_->{slug} eq $slug }
+        @{ Registry::DAO::Tenant->platform_revenue($db)->{tenants} };
+    return {
+        stamp   => stamped_terms_id($slug),
+        fleet   => $fleet,
+        revenue => $revenue,
+        signup  => signup_plan($slug),
+    };
+}
+
+sub readers_agree ( $slug, $label ) {
+    my $terms = platform_terms_for_tenant( $db, $slug );
+    my $r     = readers_for($slug);
+    is $r->{stamp}, $terms->{id}, "$label: the fee stamp names the terms";
+    is $r->{fleet}{plan_name},   $terms->{name}, "$label: the fleet row names them";
+    is $r->{revenue}{plan_name}, $terms->{name}, "$label: the revenue row names them";
+    cmp_ok abs( $r->{revenue}{rate_pct} - $terms->{fraction} * 100 ), '<', 1e-9,
+        "$label: at their rate";
+    is_deeply $r->{signup}, {
+        plan_name             => $terms->{name},
+        monthly_amount        => $terms->{amount_cents},
+        revenue_share_percent => $terms->{fraction} * 100,
+    }, "$label: the signup confirmation states them";
+}
+
+subtest 'readers agree with the resolver' => sub {
+    with_tenant_plan( $db, $linked,
+        { pricing_configuration => { percentage => '0.0137' }, amount_cents => 4200 },
+        sub { readers_agree( $linked, 'a tenant on a probe plan' ) } );
+
+    readers_agree( 'terms_unlinked', 'a tenant with no linked plan' );
 };
 
 done_testing;

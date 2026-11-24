@@ -7,6 +7,7 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 
 use Registry::Service::Stripe;
 use Registry::PriceOps::RevenueShare;
+use Registry::PriceOps::PlatformTerms ();
 use Mojo::JSON qw(encode_json from_json);
 use Mojo::Promise ();
 use experimental 'keyword_any';
@@ -896,10 +897,8 @@ field $_stripe_client = undef;
             $plan_id = $metadata->{platform_pricing_plan_id};
         }
         elsif ( defined $slug && !ref $slug && length $slug ) {
-            my $row = $db->query(
-                'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',
-                $slug )->hash;
-            $plan_id = $row && $row->{platform_pricing_plan_id};
+            $plan_id = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant(
+                $db, $slug )->{id};
         }
 
         eval {

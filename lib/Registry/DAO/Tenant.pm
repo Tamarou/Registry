@@ -8,6 +8,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Registry::DAO::OutcomeDefinition;
     use Registry::DAO;
     use Registry::DAO::Payment;
+    use Registry::PriceOps::PlatformTerms ();
     field $id :param :reader = undef;
     field $name :param :reader;
     field $slug :param :reader //= __PACKAGE__->slug_for_name($name);
@@ -687,19 +688,25 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                    t.stripe_connect_account_id,
                    t.stripe_charges_enabled,
                    t.stripe_details_submitted,
-                   p.plan_name,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
                    ) AS schema_present
               FROM registry.tenants t
-              LEFT JOIN registry.pricing_plans p
-                     ON p.id = t.platform_pricing_plan_id
              ORDER BY t.created_at
             SQL
 
         for my $row (@$rows) {
             my @problems;
+
+            # shortcut: one resolver call per tenant, fine for a handful of tenants; batch it when the fleet grows.
+            $row->{plan_name} = eval {
+                Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $row->{slug} )->{name};
+            };
+            if ( my $err = $@ ) {
+                $err =~ s/\s+/ /g;
+                push @problems, "platform terms are unreadable: $err";
+            }
 
             unless ( $row->{schema_present} ) {
                 push @problems, 'schema was never created';
@@ -781,16 +788,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                    t.name,
                    t.billing_status,
                    t.stripe_subscription_id,
-                   p.plan_name,
-                   (p.pricing_configuration->>'percentage')::numeric * 100
-                       AS rate_pct,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
                    ) AS schema_present
               FROM registry.tenants t
-              LEFT JOIN registry.pricing_plans p
-                     ON p.id = t.platform_pricing_plan_id
              ORDER BY t.name
             SQL
 
@@ -798,6 +800,14 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
         for my $row (@$tenants) {
             @{$row}{qw( charges fees_cents unrecorded )} = ( 0, 0, 0 );
+
+            # shortcut: one resolver call per tenant, fine for a handful of tenants; batch it when the fleet grows.
+            # Terms that will not resolve leave the plan blank rather than take the page down.
+            if ( my $terms = eval {
+                Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $row->{slug} ) } )
+            {
+                @{$row}{qw( plan_name rate_pct )} = ( $terms->{name}, $terms->{fraction} * 100 );
+            }
 
             # A tenant with no schema has no payments table to read. That is a
             # provisioning fault, and fleet() is the screen that reports it; here
