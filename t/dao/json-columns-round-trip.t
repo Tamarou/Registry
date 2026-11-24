@@ -23,11 +23,7 @@ use experimental 'signatures';
 use Test::Registry::DB;
 use Registry::DAO;
 use Registry::DAO::User;
-use Registry::DAO::Tenant;
 use Registry::DAO::UserPreference;
-use Registry::DAO::PricingRelationship;
-use Registry::DAO::PricingRelationshipEvent;
-use Registry::DAO::BillingPeriod;
 use Registry::DAO::Payment;
 
 # Payment's constructor reaches for a Stripe client, as its siblings' tests do.
@@ -59,26 +55,6 @@ my $parent = Registry::DAO::User->create( $db, {
     username => 'jrt_parent', name => 'JRT', user_type => 'parent',
     email => 'jrt@test.local' } );
 
-# provider_id references registry.tenants and consumer_id references
-# registry.users -- not two tenants, which is the obvious guess and what the
-# first draft of this test got wrong.
-my $seq = 0;
-sub a_relationship () {
-    $seq++;
-    my $plan = $db->query( q{SELECT id FROM registry.pricing_plans LIMIT 1} )->hash
-        or die 'no pricing plan in the test schema to hang a relationship on';
-    my $provider = Registry::DAO::Tenant->create( $db, {
-        name => "JRT Provider $seq", slug => "jrt_provider_$seq" } );
-    my $consumer = Registry::DAO::User->create( $db, {
-        username => "jrt_consumer_$seq", name => "JRT Consumer $seq",
-        user_type => 'admin', email => "jrt_consumer_$seq\@test.local" } );
-    return Registry::DAO::PricingRelationship->create( $db, {
-        provider_id     => $provider->id,
-        consumer_id     => $consumer->id,
-        pricing_plan_id => $plan->{id},
-    } );
-}
-
 subtest 'user_preferences.preference_value' => sub {
     Registry::DAO::UserPreference->create( $db, {
         user_id => $parent->id, preference_key => 'jrt',
@@ -91,67 +67,6 @@ subtest 'user_preferences.preference_value' => sub {
         { user_id => $parent->id, preference_key => 'jrt' } );
 
     assert_round_trip( 'UserPreference', $stored, $pref->preference_value->{note} );
-};
-
-subtest 'pricing_relationships.metadata, on create and on update' => sub {
-    my $rel = a_relationship();
-    $rel->update( $db, { metadata => { note => $ACCENTED } } );
-
-    my $sql = 'SELECT metadata::text AS t FROM registry.pricing_relationships WHERE id = ?';
-    assert_round_trip( 'PricingRelationship->update',
-        stored_text( $sql, $rel->id ),
-        Registry::DAO::PricingRelationship->find_by_id( $db, $rel->id )->metadata->{note} );
-
-    # create takes the same path and had the same bug.
-    my $direct = a_relationship();
-    $direct->update( $db, { metadata => { note => $ACCENTED } } );
-    my $fresh = Registry::DAO::PricingRelationship->create( $db, {
-        provider_id     => $direct->provider_id,
-        consumer_id     => $direct->consumer_id,
-        pricing_plan_id => $direct->pricing_plan_id,
-        status          => 'cancelled',
-        metadata        => { note => $ACCENTED },
-    } );
-    assert_round_trip( 'PricingRelationship->create',
-        stored_text( $sql, $fresh->id ),
-        Registry::DAO::PricingRelationship->find_by_id( $db, $fresh->id )->metadata->{note} );
-};
-
-subtest 'pricing_relationship_events.event_data' => sub {
-    my $rel = a_relationship();
-
-    my $event = Registry::DAO::PricingRelationshipEvent->create( $db, {
-        relationship_id => $rel->id, event_type => 'created',
-        actor_user_id   => $parent->id,
-        event_data      => { note => $ACCENTED } } );
-
-    my $stored = stored_text(
-        'SELECT event_data::text AS t FROM registry.pricing_relationship_events WHERE id = ?',
-        $event->id );
-    # find() returns a LIST here, not an object -- scalar context gives the
-    # count, which arrives as a confusing "method on package 1".
-    my ($back) = Registry::DAO::PricingRelationshipEvent->find( $db, { id => $event->id } );
-    assert_round_trip( 'PricingRelationshipEvent', $stored, $back->event_data->{note} );
-};
-
-subtest 'billing_periods.metadata, on create and on update' => sub {
-    my $rel = a_relationship();
-
-    my $period = Registry::DAO::BillingPeriod->create( $db, {
-        pricing_relationship_id => $rel->id,
-        period_start => '2026-01-01', period_end => '2026-01-31',
-        calculated_amount => 1000,
-        metadata => { note => $ACCENTED } } );
-
-    my $sql = 'SELECT metadata::text AS t FROM registry.billing_periods WHERE id = ?';
-    assert_round_trip( 'BillingPeriod->create',
-        stored_text( $sql, $period->id ),
-        ( Registry::DAO::BillingPeriod->find( $db, { id => $period->id } ) )[0]->metadata->{note} );
-
-    $period->update( $db, { metadata => { note => $ACCENTED, second => 'pass' } } );
-    assert_round_trip( 'BillingPeriod->update',
-        stored_text( $sql, $period->id ),
-        ( Registry::DAO::BillingPeriod->find( $db, { id => $period->id } ) )[0]->metadata->{note} );
 };
 
 subtest 'payment_items.metadata' => sub {

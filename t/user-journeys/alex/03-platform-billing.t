@@ -198,54 +198,23 @@ subtest 'provisioned tenant row carries billing fields' => sub {
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 2: no tenant<->plan pricing_relationship exists post-signup.
-#
-# PricingPlanSelection only stashes the selected plan in run data; it does not
-# INSERT a registry.pricing_relationships row linking the new tenant as
-# provider or consumer.  _provision_tenant writes billing fields onto the
-# tenant row but also does not create a pricing_relationship.
+# Assertion 2: the tenant's platform terms are an entitlement.
 #
 # The tenant's platform terms are an entitlement it holds in registry to the
-# platform's published offer, NOT a pricing_relationships row.  So two things
-# must hold: (a) the tenant holds an entitlement to the offer on sale, and (b)
-# no pricing_relationships row was created with the new tenant as provider or
-# consumer (a spurious one would mean the rate could be read from the wrong
-# place).
+# platform's published offer -- the one record of what a tenant holds.
 # ---------------------------------------------------------------------------
 subtest '#267: tenant holds an entitlement to the published platform offer' => sub {
     my $slug = $run_data->{subdomain};
     ok $slug, "tenant slug available ($slug)";
 
-    # Look up the provisioned tenant's id.
     my $tenant_row = $db->query(
         q{SELECT id FROM registry.tenants WHERE slug = ?}, $slug
     )->hash;
     ok $tenant_row, 'provisioned tenant row found';
 
-    my $tenant_id = $tenant_row->{id};
-
-    # (a) The tenant holds an entitlement to the offer on sale.
+    # The tenant holds an entitlement to the offer on sale.
     is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V1,
         'the tenant holds an entitlement to Solo v1, the offer on sale';
-
-    # (b) Assert zero pricing_relationships rows where the new tenant is either
-    # provider or consumer -- those are the two roles a tenant could occupy in
-    # a platform-billing relationship.  The only relationship in the table
-    # should be the fixture we inserted above (provider = platform UUID).
-    my $as_provider = $db->query(q{
-        SELECT count(*) AS n FROM registry.pricing_relationships
-        WHERE provider_id = ?
-    }, $tenant_id)->hash->{n};
-
-    my $as_consumer = $db->query(q{
-        SELECT count(*) AS n FROM registry.pricing_relationships
-        WHERE consumer_id = ?
-    }, $tenant_id)->hash->{n};
-
-    is $as_provider + 0, 0,
-        'no pricing_relationships row with the new tenant as provider (#267 dependency)';
-    is $as_consumer + 0, 0,
-        'no pricing_relationships row with the new tenant as consumer (#267 dependency)';
 };
 
 # ---------------------------------------------------------------------------

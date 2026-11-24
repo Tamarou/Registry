@@ -126,7 +126,7 @@ subtest 'a charge written where production writes it is counted' => sub {
     # <tenant>.payments; a reader pointed at registry.payments finds nothing and
     # says zero.
     #
-    # Webhooks.pm:330 and PricingRelationships.pm:228 both already warn about
+    # Webhooks.pm:330 already warns about
     # exactly this: a registry-scoped query "would hit registry.payments, match
     # no rows, and return quietly".
     my $slug = 'earning_studio';
