@@ -590,10 +590,31 @@ Behavior by scenario:
 
 ## 7. Pre-launch Stripe test suite
 
-A gated suite exercises the real Stripe Connect API against a live `sk_test_`
-key. It lives under `t/stripe-live/` and currently includes
-`connect-helper.t` and `helpers.t`. The paid-enrollment end-to-end suite lands
-as Leg C3.
+A gated suite exercises the real Stripe Connect API against a `sk_test_`
+key. It lives under `t/stripe-live/` and proves the direct-charge model, where
+every tenant payment is made on the tenant's own connected account:
+
+- `paid-enrollment.t` -- a paid enrollment is a direct charge on the tenant
+  account (retrieved with `Stripe-Account`), with no `transfer_data` or
+  `on_behalf_of`, carrying the plan's `application_fee_amount`; the charge is
+  not on the platform account; `payment_intent.succeeded` settles once through
+  the Connect endpoint (`/webhooks/stripe/connect`); a full or partial refund
+  is made on the tenant account and leaves `application_fee.amount_refunded`
+  at 0; the same idempotency key returns the same intent; plus the unready
+  gate, a declined card, and the browser return.
+- `instalment-schedule.t` -- the schedule for instalments two onwards is on
+  the tenant account with the fee percent and no transfer destination, and is
+  not found on the platform account.
+- `helpers.t` -- the test helpers confirm and poll on the connected account,
+  and an `sk_live_` key makes the suite refuse to run without sending a
+  request.
+- `connect-helper.t`, `connect-onboarding.t` -- test connected accounts and
+  the onboarding flow.
+- `platform-account-header.t`, `schedule-fee-precision.t`,
+  `service-version.t` -- pinned Stripe behaviours the money path relies on.
+
+Creating connected accounts needs a key with Connect write access; a
+restricted key without it stops at `POST /accounts`.
 
 To run:
 
