@@ -31,9 +31,8 @@ sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
     my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e',
         q{tstzrange(coalesce(?::timestamptz, now()), coalesce(?::timestamptz, now()), '[]')} );
 
-    # shortcut: takes the latest-starting of several in-effect platform
-    # entitlements; nothing refuses overlapping ones yet, guard it when
-    # tenants can buy their own.
+    # At most one row: the database refuses overlapping active platform
+    # entitlements to payment processing (platform-entitlement-one-in-effect).
     my $row = $db->query( qq{
         SELECT v.id, p.fraction, v.policies->'refund' AS refund_policy
           FROM registry.entitlements e
@@ -43,9 +42,7 @@ sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
           JOIN registry.offer_version_payment_plans p
             ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
          WHERE t.slug = ? AND r.name = ? AND $in_effect
-         ORDER BY lower(e.in_effect) DESC
-         LIMIT 1
-    }, $tenant_slug, $PAYMENT_PROCESSING, $at, $at )->hash;
+    },$tenant_slug, $PAYMENT_PROCESSING, $at, $at )->hash;
 
     die "Tenant '$tenant_slug' holds no platform entitlement to $PAYMENT_PROCESSING in effect"
       . ( defined $at ? " at $at" : '' ) . " - there is no fallback to Free or to 0.\n"

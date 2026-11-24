@@ -108,3 +108,4 @@ bootstrap-platform-offers [priceops-entitlement-lifecycle] 2026-11-24T08:30:00Z 
 priceops-occurrence-resources [bootstrap-platform-offers] 2026-11-24T09:00:00Z Chris Prather <chris.prather@tamarou.com> # An occurrence is its own finite resource, and a class offer covers its class's occurrences
 operator-right-entitlement [priceops-occurrence-resources] 2026-11-24T09:30:00Z Chris Prather <chris.prather@tamarou.com> # The platform holds the operator right as an entitlement, and the interim table goes
 self-offer-guard [operator-right-entitlement] 2026-11-24T10:00:00Z Chris Prather <chris.prather@tamarou.com> # Only the platform tenant may hold the platform's offers to itself (holder_is_offerer)
+platform-entitlement-one-in-effect [self-offer-guard] 2026-11-24T11:00:00Z Chris Prather <chris.prather@tamarou.com> # A tenant holds one active platform entitlement to payment processing at a time
