@@ -61,4 +61,50 @@ subtest 'bootstrap publishes solo v1 only' => sub {
     cmp_ok $plans->[0]{fraction}, '==', 0.025, 'at 2.5%';
 };
 
+# Entitlements in effect now, with what they bought and under which plan.
+sub held_now ( $holder = PLATFORM_UUID ) {
+    return $db->query( q{
+        SELECT e.*, v.price_cents, v.conditions, r.name AS resource_name, r.kind AS resource_kind,
+               r.capacity, p.kind AS plan_kind, p.fraction
+          FROM registry.entitlements e
+          JOIN registry.offer_versions v ON v.id = e.offer_version_id
+          JOIN registry.resources r      ON r.id = v.resource_id
+          JOIN registry.offer_version_payment_plans p
+               ON p.offer_version_id = e.offer_version_id AND p.id = e.payment_plan_id
+         WHERE e.holder_tenant_id = ? AND e.in_effect @> now()
+         ORDER BY r.name
+    }, $holder )->expand->hashes->to_array;
+}
+
+sub held_for ($resource) { [ grep { $_->{resource_name} eq $resource } held_now()->@* ] }
+
+subtest 'platform holds its explicit zero percent self offer' => sub {
+    my $held = held_for('payment processing');
+    is scalar @$held, 1, 'registry holds one payment-processing entitlement';
+    is $held->[0]{plan_kind}, 'percentage_of_sales', 'under a percentage-of-sales plan';
+    ok defined $held->[0]{fraction} && $held->[0]{fraction} == 0, 'of exactly 0';
+};
+
+subtest 'platform holds uncapped email sending' => sub {
+    my $held = held_for('email sending');
+    is scalar @$held, 1, 'registry holds one email-sending entitlement';
+    is $held->[0]{resource_kind}, 'unbounded', 'email sending is unbounded';
+    is $held->[0]{capacity}, undef, 'with no capacity';
+};
+
+subtest 'self offers carry holder is offerer and solo does not' => sub {
+    my $solo = $db->query( q{
+        SELECT v.conditions FROM registry.offer_versions v
+          JOIN registry.offers o ON o.id = v.offer_id
+         WHERE o.name = 'Solo' AND v.version = 1
+    } )->expand->hash;
+    is_deeply $solo->{conditions}, [], 'Solo v1 carries no condition';
+
+    my $held = held_now();
+    ok scalar @$held, 'registry holds the platform offers to itself';
+    is_deeply $_->{conditions}, [ { kind => 'holder_is_offerer' } ],
+        "the self offer for $_->{resource_name} is restricted to the platform"
+        for @$held;
+};
+
 done_testing;
