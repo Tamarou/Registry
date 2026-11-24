@@ -26,7 +26,11 @@ BEGIN
         EXECUTE format($f$
             CREATE TABLE IF NOT EXISTS %1$I.entitlements (
                 id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-                holder_user_id   uuid,
+                -- The holder is who it is for; the payer is set only when
+                -- someone else paid, e.g. a parent for a child.
+                holder_user_id          uuid,
+                holder_family_member_id uuid,
+                payer_user_id           uuid,
                 offer_version_id uuid NOT NULL,
                 payment_plan_id  text NOT NULL,
                 created_at       timestamp with time zone NOT NULL DEFAULT now()

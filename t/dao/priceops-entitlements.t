@@ -67,4 +67,24 @@ subtest 'person held entitlement records its stamp' => sub {
         'and lives in the tenant schema, not registry';
 };
 
+subtest 'child holder with separate payer found by either' => sub {
+    my $parent  = person( $studio, 'pat' );
+    my $kid     = child( $studio, $parent, 'Kit' );
+    my $version = published_version( $studio, 'After-school art' );
+
+    my $e = Registry::DAO::Entitlement->create( $studio, {
+        holder_family_member_id => $kid,
+        payer_user_id           => $parent,
+        offer_version_id        => $version->id,
+        payment_plan_id         => 'pay',
+    } );
+
+    is_deeply [ map { $_->id } Registry::DAO::Entitlement->held_by( $studio, $kid ) ], [ $e->id ],
+        'entitlements held for the child find it';
+    is_deeply [ map { $_->id } Registry::DAO::Entitlement->paid_by( $studio, $parent ) ], [ $e->id ],
+        'entitlements paid for by the parent find it';
+    is_deeply [ Registry::DAO::Entitlement->held_by( $studio, $parent ) ], [],
+        'the parent paid but holds nothing';
+};
+
 done_testing;
