@@ -64,6 +64,11 @@ subtest 'subscription events answered 200 and ignored' => sub {
         post_platform($event)->status_is(200);
         ok logged( $event->{id} ), "$event->{type} logged";
         ok !subscription_events( $event->{id} ), "$event->{type} not routed to tenant billing";
+        is $db->query( 'SELECT count(*) FROM registry.webhook_events WHERE stripe_event_id = ? AND processed_at IS NOT NULL',
+            $event->{id} )->array->[0], 1, "$event->{type} is claimed in the ledger as settled";
+        post_platform($event)->status_is( 200, "$event->{type} redelivered is answered 200" );
+        is $db->query( 'SELECT count(*) FROM registry.webhook_events WHERE stripe_event_id = ?', $event->{id} )
+            ->array->[0], 1, 'and claimed once';
     }
     is_deeply tenants(), $before, 'no tenant row changed';
 };
