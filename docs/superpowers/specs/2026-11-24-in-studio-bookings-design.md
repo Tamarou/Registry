@@ -332,12 +332,11 @@ has the money; Registry never contradicts Stripe and never re-charges.
 | B. Grant over capacity | Honours the payment; the class is over capacity and staff sort it out on the day. |
 | C. Hold the money, flag for staff | No automatic action; the customer waits on a person. |
 
-Recommendation: A, as ADR 005 ruling 7a records from the session on
-2026-11-22. Re-take the seats under lock first if they still fit, and refund
-only if they do not. The refund keeps the platform's fee, like every refund
-(ADR 003). No step in steps 3–6 starts this refund (gap G3).
-
-Awaiting perigrin's answer.
+Decided: A. perigrin's answer, recorded verbatim in ADR 005 ruling 7a
+(2026-11-22): "Auto-refund + notify (Recommended)". Re-take the seats under
+lock first if they still fit, and refund only if they do not. The refund
+keeps the platform's fee, like every refund (ADR 003). No step in steps 3–6
+starts this refund (gap G3).
 
 ### Paid amount differs from the quote
 
@@ -349,11 +348,10 @@ A `payment_intent.succeeded` whose amount differs from the hold's quote.
 | B. Grant anyway | Trusts Stripe's amount; a wrong price stands. |
 | C. Flag for staff, no refund | The booker holds nothing and the money sits until a person acts. |
 
-Recommendation: A, as ADR 005 ruling 7b records. A mismatch means the intent
-was altered or the quote changed under it; neither should create an
+Decided: A. perigrin's answer, recorded verbatim in ADR 005 ruling 7b
+(2026-11-22): "Refuse, refund, flag (Recommended)". A mismatch means the
+intent was altered or the quote changed under it; neither should create an
 entitlement. The refund is the same system-started refund as above (gap G3).
-
-Awaiting perigrin's answer.
 
 ### Fee rounding
 
@@ -365,13 +363,12 @@ Rounding of the 2.5% fee to whole cents.
 | B. Half up | 33¢ | 38¢ | the platform |
 | C. Down (truncate) | 32¢ | 37¢ | the studio |
 
-Recommendation: A, as ADR 005 ruling 7c records and as step 2 already
-implements (`Registry::DAO::Payment::application_fee_cents`, integer basis
-points). The fee is computed once at quote time; the displayed fee,
+Decided: A. perigrin's answer, recorded verbatim in ADR 005 ruling 7c
+(2026-11-22): "Half to even (banker's)". Step 2 already implements it
+(`Registry::DAO::Payment::application_fee_cents`, integer basis points). The
+fee is computed once at quote time; the displayed fee,
 `application_fee_amount` and the recorded fee are that one number, omitted
 when it is 0.
-
-Awaiting perigrin's answer.
 
 ## Gaps
 
