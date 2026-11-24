@@ -77,6 +77,9 @@ BEGIN
             ALTER TABLE %1$I.offer_versions
                 ADD COLUMN price_cents integer NOT NULL
                     CONSTRAINT offer_versions_price_cents_check CHECK (price_cents >= 0),
+                -- ISO 4217, lowercase as Stripe takes it.
+                ADD COLUMN currency text NOT NULL DEFAULT 'usd'
+                    CONSTRAINT offer_versions_currency_check CHECK (currency ~ '^[a-z]{3}$'),
                 ADD COLUMN units_per_acceptance integer NOT NULL
                     CONSTRAINT offer_versions_units_per_acceptance_check CHECK (units_per_acceptance > 0),
                 ADD COLUMN per_booking_cap integer NOT NULL

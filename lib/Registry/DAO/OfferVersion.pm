@@ -15,6 +15,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     field $version :param :reader;
     field $resource_id :param :reader;
     field $price_cents :param :reader;             # whole smallest currency units
+    field $currency :param :reader;                # lowercase ISO 4217, as Stripe takes it
     field $units_per_acceptance :param :reader;    # e.g. 2 seats for a couple
     field $per_booking_cap :param :reader;         # acceptances one booking may take
     field $policies :param :reader = {};           # { refund, change, use, expiry }
@@ -118,12 +119,13 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         _check_conditions($conditions);
         my $row = _with_offer_locked( $db, $offer_id, sub {
             my $row = $db->query(
-                'INSERT INTO offer_versions (offer_id, version, resource_id,
-                        price_cents, units_per_acceptance, per_booking_cap, policies, conditions)
-                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?::jsonb, ?::jsonb
+                'INSERT INTO offer_versions (offer_id, version, resource_id, price_cents, currency,
+                        units_per_acceptance, per_booking_cap, policies, conditions)
+                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb
                    FROM offer_versions WHERE offer_id = ?
                  RETURNING *',
-                $offer_id, $terms->@{qw( resource_id price_cents units_per_acceptance per_booking_cap )},
+                $offer_id, $terms->@{qw( resource_id price_cents )}, $terms->{currency} // 'usd',
+                $terms->@{qw( units_per_acceptance per_booking_cap )},
                 to_json($policies), to_json($conditions), $offer_id )->expand->hash;
             $db->insert( 'offer_version_payment_plans',
                 { offer_version_id => $row->{id}, $_->%{qw( id kind fraction )} } )

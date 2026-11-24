@@ -284,6 +284,15 @@ subtest 'published child data insert or delete refused' => sub {
     } qr/offer \Q@{[ $toffer->id ]}\E version 1/, "and so is removing one in a new tenant's schema";
 };
 
+subtest 'version stores its currency' => sub {
+    is drafted( 'Euro night', currency => 'eur' )->currency, 'eur', 'a version round-trips its currency';
+    is drafted('Dollar night')->currency, 'usd', 'and is in usd when none is given';
+    for my $bad (qw( USD us dollars )) {
+        throws_ok { drafted( "Currency $bad", currency => $bad ) }
+            qr/offer_versions_currency_check/, "currency '$bad' is refused, Stripe wants a lowercase ISO code";
+    }
+};
+
 subtest 'plan edit and publish take turns' => sub {
     my $draft = new_offer('Race')->draft( $db, offer_terms( $seat->id ) );
     my $tx = $db->begin;

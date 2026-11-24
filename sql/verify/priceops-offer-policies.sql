@@ -16,7 +16,7 @@ BEGIN
     LOOP
         CONTINUE WHEN to_regclass(format('%I.offer_versions', s)) IS NULL;
         EXECUTE format(
-            'SELECT price_cents, units_per_acceptance, per_booking_cap, policies, conditions FROM %I.offer_versions WHERE false', s);
+            'SELECT price_cents, currency, units_per_acceptance, per_booking_cap, policies, conditions FROM %I.offer_versions WHERE false', s);
         EXECUTE format(
             'SELECT offer_version_id, id, kind, fraction FROM %I.offer_version_payment_plans WHERE false', s);
         -- The trigger is the enforcement; without it published plans are editable.

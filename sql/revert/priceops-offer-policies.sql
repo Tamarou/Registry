@@ -22,6 +22,7 @@ BEGIN
         EXECUTE format($f$
             ALTER TABLE %I.offer_versions
                 DROP COLUMN IF EXISTS price_cents,
+                DROP COLUMN IF EXISTS currency,
                 DROP COLUMN IF EXISTS units_per_acceptance,
                 DROP COLUMN IF EXISTS per_booking_cap,
                 DROP COLUMN IF EXISTS policies,
