@@ -8,13 +8,16 @@ package Test::Registry::Offers;
 use Exporter 'import';
 our @EXPORT_OK = qw( offer_terms );
 
-# offer_terms($resource_id, %overrides): terms OfferVersion->draft accepts.
+# offer_terms($resource_id, %overrides): terms OfferVersion->draft accepts
+# and publish allows: one one-time plan and an explicit refund policy.
 sub offer_terms ( $resource_id, %overrides ) {
     return {
         resource_id          => $resource_id,
         price_cents          => 2000,
         units_per_acceptance => 1,
         per_booking_cap      => 1,
+        payment_plans        => [ { id => 'pay', kind => 'one_time' } ],
+        policies             => { refund => { kind => 'none' } },
         %overrides,
     };
 }

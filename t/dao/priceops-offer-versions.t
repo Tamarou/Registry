@@ -50,7 +50,7 @@ subtest 'publishing appends a version and supersedes the last' => sub {
     ok !$v1->is_published, 'and is a draft';
     ok !$offer->current_version($db), 'an offer with only a draft has no current version';
 
-    $v1 = $v1->update( $db, offer_terms( $seat->id ) );
+    $v1 = $v1->update( $db, { resource_id => $seat->id } );
     is $v1->resource_id, $seat->id, 'a draft can be edited';
 
     $v1 = $v1->publish($db);

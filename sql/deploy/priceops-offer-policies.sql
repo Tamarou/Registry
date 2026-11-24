@@ -69,6 +69,11 @@ BEGIN
                 -- evaluated.
                 ADD COLUMN conditions jsonb NOT NULL DEFAULT '[]'
                     CONSTRAINT offer_versions_conditions_array CHECK (jsonb_typeof(conditions) = 'array'),
+                -- Absence is not "none": a version is published only with
+                -- a refund policy someone chose.
+                ADD CONSTRAINT offer_versions_published_states_refund CHECK (
+                    published_at IS NULL OR policies ? 'refund'
+                ),
                 ADD CONSTRAINT offer_versions_refund_kind_check CHECK (
                     NOT policies ? 'refund'
                     OR coalesce(policies #>> '{refund,kind}', '') IN
@@ -100,7 +105,7 @@ BEGIN
             'DROP TRIGGER IF EXISTS offer_version_payment_plans_immutable ON %I.offer_version_payment_plans', s);
         EXECUTE format($f$
             CREATE TRIGGER offer_version_payment_plans_immutable
-                BEFORE UPDATE ON %I.offer_version_payment_plans
+                BEFORE INSERT OR UPDATE OR DELETE ON %I.offer_version_payment_plans
                 FOR EACH ROW EXECUTE FUNCTION registry.offer_version_payment_plan_immutable()
         $f$, s);
     END LOOP;

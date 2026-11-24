@@ -146,6 +146,16 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     method publish ($db) {
         $db = $db->db if $db isa Registry::DAO;
         my $row = _with_offer_locked( $db, $offer_id, sub {
+            # Absence is not zero: an offer must say how it is paid for and what
+            # a refund is. The database refuses a missing refund policy too.
+            # shortcut: the plan check is here, not in the database, so raw SQL
+            # can publish a planless version; move it to a constraint trigger
+            # if anything but this method ever publishes.
+            croak "offer $offer_id version $version has no payment plan"
+                unless @{ $self->payment_plans($db) };
+            croak "offer $offer_id version $version has no refund policy"
+                unless exists $policies->{refund};
+
             # Retired first, or the one-current index refuses the publish. Only
             # an older version is retired, so publishing a stale draft over a
             # newer current version is refused by that index.
