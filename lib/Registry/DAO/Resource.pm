@@ -13,6 +13,24 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
     field $created_at :param :reader;
 
     sub table { 'resources' }
+
+    # Unit numbers held by entitlements in effect now or later; ended ones
+    # free theirs.
+    # shortcut: reads the period alone, as no state exists yet; 01a20448-1177
+    # rewires this to the one in-effect predicate.
+    method held_units ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( q{
+            SELECT u.unit FROM entitlement_units u JOIN entitlements e ON e.id = u.entitlement_id
+             WHERE u.resource_id = ? AND (upper_inf(e.in_effect) OR upper(e.in_effect) > now())
+             ORDER BY u.unit
+        }, $id )->arrays->flatten->to_array;
+    }
+
+    # How many units are free right now.
+    method free_units ($db) {
+        return $capacity - $self->held_units($db)->@*;
+    }
 }
 
 1;

@@ -7,6 +7,7 @@ use Object::Pad;
 
 class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     use Registry::DAO::OfferVersion;
+    use Registry::DAO::Resource;
 
     field $id :param :reader;
     field $holder_user_id :param :reader = undef;             # a person
@@ -27,6 +28,46 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
         my ( $starts_at, $ends_at ) = delete @row{qw( starts_at ends_at )};
         $row{in_effect} = \[ "tstzrange(?, ?, '[)')", $starts_at, $ends_at ];
         return $class->SUPER::create( $db, \%row );
+    }
+
+    # Grants $data's entitlement holding units of $data->{resource_id}: either
+    # `units` (a count, lowest free numbers first) or `unit_numbers` (named).
+    sub grant ( $class, $db, $data ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my %row = %$data;
+        my ( $resource_id, $count, $numbers ) = delete @row{qw( resource_id units unit_numbers )};
+
+        my $tx       = $db->dbh->{AutoCommit} ? $db->begin : undef;
+        my $resource = Registry::DAO::Resource->find( $db, { id => $resource_id } );
+        my %held     = map { $_ => 1 } $resource->held_units($db)->@*;
+        $numbers //= [ ( grep { !$held{$_} } 1 .. $resource->capacity )[ 0 .. $count - 1 ] ];
+
+        my $entitlement = $class->create( $db, \%row );
+        $db->insert( 'entitlement_units',
+            { entitlement_id => $entitlement->id, resource_id => $resource_id, unit => $_ } )
+            for @$numbers;
+        $tx->commit if $tx;
+        return $entitlement;
+    }
+
+    # The unit numbers this entitlement holds of $resource_id.
+    method units ( $db, $resource_id ) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->select( 'entitlement_units', 'unit',
+            { entitlement_id => $id, resource_id => $resource_id }, 'unit' )->arrays->flatten->to_array;
+    }
+
+    # Pillar 4: does $holder_id hold a unit of $resource_id in effect now?
+    # shortcut: reads the period alone, as no state exists yet; 01a20448-1177
+    # rewires this to the one in-effect predicate.
+    sub holds_unit_of ( $class, $db, $holder_id, $resource_id ) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( q{
+            SELECT EXISTS (
+                SELECT 1 FROM entitlement_units u JOIN entitlements e ON e.id = u.entitlement_id
+                 WHERE u.resource_id = ? AND e.in_effect @> now()
+                   AND ? IN (e.holder_user_id, e.holder_family_member_id, e.holder_tenant_id))
+        }, $resource_id, $holder_id )->array->[0];
     }
 
     # The version it was sold under, superseded or not.
