@@ -354,11 +354,12 @@ field $_stripe_client = undef;
         my $meta = ref $metadata eq 'HASH' ? $metadata : {};
         return () unless $meta->{stripe_account_id};
 
-        # Resolve the revenue-share fraction from the tenant's linked plan
-        # (Free 0% when the tenant has no plan link). $db is already a Mojo::Pg
-        # handle here (coerced at the top of this sub).
-        my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
-            $db, $meta->{tenant_slug} );
+        # The fraction create snapshotted; the tenant's live plan only for a row
+        # made before the snapshot existed. $db is already a Mojo::Pg handle here
+        # (coerced at the top of this sub).
+        my $fraction = $meta->{revenue_share_fraction}
+            // Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+                $db, $meta->{tenant_slug} );
         my $fee = application_fee_cents($amount_cents, $fraction);
 
         # Stripe's rule: a zero application fee is omitted, never sent as 0.
@@ -382,13 +383,21 @@ field $_stripe_client = undef;
         # this payment goes to the account it was first charged on, even if the
         # tenant's account changes later. Server-owned, so a caller's value is
         # never trusted. The platform tenant sells like any other seller.
-        delete $data->{metadata}{stripe_account_id};
+        #
+        # The revenue share is fixed here too, at quote time (ruling 7c): every
+        # intent for this payment shares one Idempotency-Key, and Stripe refuses
+        # a retry under it that carries a different application_fee_amount.
+        delete $data->{metadata}->@{qw( stripe_account_id revenue_share_fraction )};
         if ( my $slug = $data->{metadata}{tenant_slug} ) {
             my $row = $raw_db->query(
                 'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
                 $slug )->hash;
-            $data->{metadata}{stripe_account_id} = $row->{stripe_connect_account_id}
-                if $row && $row->{stripe_connect_account_id};
+            if ( $row && $row->{stripe_connect_account_id} ) {
+                $data->{metadata}{stripe_account_id} = $row->{stripe_connect_account_id};
+                $data->{metadata}{revenue_share_fraction} =
+                    Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+                        $raw_db, $slug );
+            }
         }
         $data->{metadata} = { -json => $data->{metadata} };
 

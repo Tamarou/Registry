@@ -1,0 +1,87 @@
+# ABOUTME: The platform fee is fixed when the payment is quoted and the Stripe customer create is keyed.
+# ABOUTME: A retry reuses the same Idempotency-Key, so it must send the same fee and make no second customer.
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use experimental 'signatures';
+use Mojo::Promise;
+use Test::Registry::DB;
+use Test::Registry::Fixtures;
+use Registry::DAO::Payment;
+use Registry::DAO::User;
+use Registry::Service::Stripe;
+
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fee_snapshot';
+
+my $test_db = Test::Registry::DB->new;
+my $db      = $test_db->db->db;
+
+my $parent = Registry::DAO::User->create( $db, {
+    username => 'fee_snap_parent', name => 'Fee Snap Parent',
+    user_type => 'parent', email => 'fee_snap@test.local' } );
+
+sub plan_id ($name) {
+    $db->query( 'SELECT id FROM registry.pricing_plans WHERE plan_name = ? LIMIT 1', $name )
+        ->hash->{id};
+}
+
+sub move_to_plan ( $slug, $plan_name ) {
+    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
+        plan_id($plan_name), $slug );
+}
+
+my $slug = 'fee_snap';
+Test::Registry::Fixtures::create_tenant( $db, { name => $slug, slug => $slug } );
+$db->query( q{UPDATE registry.tenants
+                 SET stripe_connect_account_id = 'acct_fee_snap', stripe_charges_enabled = TRUE,
+                     stripe_details_submitted = TRUE
+               WHERE slug = ?}, $slug );
+
+# Stripe as the wire sees it: every request the service would send, with its
+# Idempotency-Key. A keyed request Stripe has seen returns what it first made.
+my ( @sent, %made_by_key, $serial );
+sub with_wire ( $code, %fail ) {
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::_request_async =
+      sub ( $self, $method, $endpoint, $data = {}, $ik = undef, @ ) {
+        push @sent, { endpoint => $endpoint, data => {%$data}, key => $ik };
+        my $obj = ( defined $ik && $made_by_key{$ik} ) || do {
+            my $new = { id => "${endpoint}_" . ++$serial, client_secret => 'cs' };
+            $made_by_key{$ik} = $new if defined $ik;
+            $new;
+        };
+        # Stripe made it, but the response never came back.
+        return Mojo::Promise->reject("connection reset\n") if delete $fail{$endpoint};
+        return Mojo::Promise->resolve($obj);
+    };
+    $code->();
+}
+
+subtest 'a retry after a plan change sends the originally computed fee' => sub {
+    move_to_plan( $slug, 'Solo' );    # 2.5%
+    my $payment = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 10000,
+        metadata => { tenant_slug => $slug, enrollment_items => [] } } );
+
+    @sent = ();
+    with_wire( sub {
+        eval { $payment->create_payment_intent( $db, {} ); 1 };
+    }, payment_intents => 1 );
+
+    move_to_plan( $slug, 'Registry Free' );    # 0%: the tenant changed plan
+
+    with_wire( sub {
+        Registry::DAO::Payment->find( $db, { id => $payment->id } )
+            ->create_payment_intent( $db, {} );
+    } );
+
+    is scalar @sent, 2, 'two intent creates went out';
+    is $sent[0]{key}, $sent[1]{key}, 'under one Idempotency-Key';
+    is $sent[0]{data}{application_fee_amount}, 250, 'the first carried the 2.5% fee';
+    is $sent[1]{data}{application_fee_amount}, 250,
+        'and the retry carried the same fee, not the new plan\'s';
+};
+
+$test_db->cleanup_test_database;
+done_testing;
