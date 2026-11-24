@@ -511,6 +511,7 @@ To refund it by hand:
    curl -s https://api.stripe.com/v1/refunds \
      -u "$STRIPE_SECRET_KEY:" -H "Stripe-Account: acct_XXXX" \
      -H "Idempotency-Key: refund:superseded:<pi_...>" \
+     -H "Stripe-Version: 2024-12-18.acacia" \
      -d payment_intent=<pi_...> \
      -d reason=duplicate
    ```
@@ -725,6 +726,7 @@ curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
   -H "Stripe-Account: <account>" \
   -H "Idempotency-Key: refund:capacity:<payment_id>:<seq>" \
+  -H "Stripe-Version: 2024-12-18.acacia" \
   -d payment_intent=<stripe_payment_intent_id> \
   -d amount=<this increment's cents, NOT refund_owed_cents> \
   -d reason=requested_by_customer
