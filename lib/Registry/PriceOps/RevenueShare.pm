@@ -1,5 +1,5 @@
 # ABOUTME: Resolves the platform revenue-share fraction for a given tenant.
-# ABOUTME: Looks up the tenant's linked pricing plan and returns the configured percentage as a fraction (e.g. 0.02 for 2%).
+# ABOUTME: Reads the tenant's platform terms from PlatformTerms and returns the rate as a fraction (e.g. 0.02 for 2%).
 use 5.42.0;
 use experimental 'signatures';
 
@@ -9,6 +9,7 @@ use Exporter 'import';
 our @EXPORT_OK = qw(revenue_share_fraction_for_tenant revenue_share_plan_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id);
 
 use Registry::DAO;
+use Registry::PriceOps::PlatformTerms qw(platform_terms_for_tenant platform_default_terms);
 
 # revenue_share_fraction_for_tenant($db, $tenant_slug) -> number
 #
@@ -31,33 +32,8 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
 # plan's when the tenant has none linked -- so a payment can record which plan
 # priced it.
 sub revenue_share_plan_for_tenant ($db, $tenant_slug) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    # Step 1: look up the tenant's explicitly linked plan rate.
-    # pricing_configuration->>'percentage' is the only source. The money column
-    # holds money, never a rate -- a plan with no rate declared resolves to NULL
-    # and dies in _coerce_pct rather than having one inferred from its price.
-    # Deliberately NOT filtered on superseded_at. This is a lookup BY ID: the
-    # tenant's link points at a specific plan VERSION, and it keeps pointing there
-    # after that version is retired. That is the promise of versioning -- revising
-    # a plan must not silently re-price the tenants already on it -- so reading the
-    # retired version here is correct, not stale. Moving a tenant to a newer
-    # version is a deliberate act (#277).
-    my $row = $db->query(q{
-        SELECT p.id, p.pricing_configuration->>'percentage' AS pct
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p
-            ON p.id = t.platform_pricing_plan_id
-         WHERE t.slug = ?
-    }, $tenant_slug)->hash;
-
-    if ($row) {
-        return ( _coerce_pct($row->{pct}, "linked plan for tenant '$tenant_slug'"), $row->{id} );
-    }
-
-    # Step 2: tenant has no linked plan (NULL FK, or tenant row absent).
-    # Fall back to the seeded platform default (Free) plan.
-    return _platform_default_plan($db);
+    my $terms = platform_terms_for_tenant( $db, $tenant_slug );
+    return ( $terms->{fraction}, $terms->{id} );
 }
 
 # platform_default_fraction($db) -> number
@@ -68,32 +44,7 @@ sub revenue_share_plan_for_tenant ($db, $tenant_slug) {
 # seeded platform default plan is missing -- the same fail-loud behavior as the
 # charge path, never a silent 0%.
 sub platform_default_fraction ($db) {
-    return ( _platform_default_plan($db) )[0];
-}
-
-# _platform_default_plan($db) -> ($fraction, $plan_id)
-sub _platform_default_plan ($db) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    # Current versions only. This is a SEARCH by mark, not a lookup by id: once
-    # plans are versioned, a retired version still carries the mark, so without
-    # this the fallback rate could come from a version that has been replaced --
-    # chosen arbitrarily by LIMIT 1 between the two.
-    my $free_row = $db->query(q{
-        SELECT id, pricing_configuration->>'percentage' AS pct
-          FROM registry.pricing_plans
-         WHERE plan_scope = 'platform'
-           AND metadata->>'default' = 'true'
-           AND superseded_at IS NULL
-         LIMIT 1
-    })->hash;
-
-    die "No platform default (Free) plan found in registry.pricing_plans "
-      . "(plan_scope='platform', metadata->>'default'='true'). "
-      . "This is a deployment bug - run the seed-free-platform-plan migration."
-        unless $free_row;
-
-    return ( _coerce_pct($free_row->{pct}, "platform default (Free) plan"), $free_row->{id} );
+    return platform_default_terms($db)->{fraction};
 }
 
 # platform_launch_fraction($db) -> number
@@ -116,7 +67,7 @@ sub _platform_default_plan ($db) {
 # moment a second one is seeded, and a resolver that picks between candidates
 # is the ambiguity this exists to remove. Dies rather than guess.
 sub platform_launch_fraction ($db) {
-    return _coerce_pct( _launch_plan_row($db)->{pct}, 'platform launch plan' );
+    return Registry::PriceOps::PlatformTerms::_coerce_pct( _launch_plan_row($db)->{pct}, 'platform launch plan' );
 }
 
 # platform_launch_plan_id($db) -> uuid
@@ -157,27 +108,6 @@ sub _launch_plan_row ($db) {
         if $rows->size > 1;
 
     return $rows->first;
-}
-
-# _coerce_pct($raw, $context) -> number
-# Validates and coerces a raw percentage string to a number. Dies on malformed input.
-sub _coerce_pct ($raw, $context) {
-    die "Revenue-share percentage is undefined for $context - the plan carries no "
-      . "'percentage' in pricing_configuration, so it has no revenue-share rate."
-        unless defined $raw;
-
-    die "Revenue-share percentage '$raw' is not numeric for $context - check pricing_configuration."
-        unless $raw =~ /\A[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\z/;
-
-    # The rate is a fraction, not a percent: 0.02 is 2%. A value outside [0,1]
-    # is a unit mix-up (a bare "2" meaning 2%, or a dollar amount), and Stripe
-    # rejects the resulting application_fee_amount at capture time. Refuse here,
-    # where the message names the plan, rather than at the charge.
-    die "Revenue-share percentage '$raw' is not a fraction between 0 and 1 for $context "
-      . "- express the rate as a fraction (0.02 means 2%)."
-        unless $raw >= 0 && $raw <= 1;
-
-    return $raw + 0;
 }
 
 1;
