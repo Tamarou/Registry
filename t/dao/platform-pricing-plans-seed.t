@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Integration test that a fresh deploy publishes exactly one platform offer signup can list.
-# ABOUTME: Guards #268 — fresh deploys must offer a buyable plan; the Free fallback is never offered.
+# ABOUTME: Guards #268 — fresh deploys must offer a buyable plan, and no Free fallback plan exists.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -23,20 +23,13 @@ subtest 'signup offers selectable plans' => sub {
     is $offers->[0]{name}, 'Solo', 'and it is Solo';
 };
 
-subtest 'Free platform fallback plan exists and is not selectable' => sub {
-    my $row = $db->query(q{
-        SELECT plan_name, amount_cents, pricing_model_type,
-               pricing_configuration->>'percentage' AS pct
-          FROM registry.pricing_plans
-         WHERE plan_scope = 'platform'
-           AND metadata->>'default' = 'true'
-    })->hash;
-    ok $row, 'a platform-scope default plan exists';
-    is $row->{pricing_model_type}, 'percentage', 'Free plan is percentage-typed';
-    cmp_ok $row->{pct} + 0, '==', 0, 'Free plan rate is 0';
-    is $row->{amount_cents}, 0, 'Free plan carries no dollar amount';
-
-    ok !( grep { $_->{name} eq $row->{plan_name} } @$offers ), 'Free is not an offer signup lists';
+subtest 'no Free platform fallback plan exists' => sub {
+    # Absence is not zero: a tenant with no platform offer is refused, never
+    # charged a fallback 0%.
+    is $db->query(q{
+        SELECT count(*) FROM registry.pricing_plans
+         WHERE plan_scope = 'platform' AND metadata->>'default' = 'true'
+    })->array->[0], 0, 'no platform-scope plan is marked default';
 };
 
 subtest 'every selectable plan has a usable revenue-share rate' => sub {

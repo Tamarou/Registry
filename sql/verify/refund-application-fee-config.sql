@@ -5,11 +5,16 @@
 
 BEGIN;
 
--- Platform default plan must have the key
-SELECT 1/COUNT(*) FROM registry.pricing_plans
- WHERE plan_scope = 'platform'
-   AND metadata->>'default' = 'true'
-   AND pricing_configuration ? 'refund_application_fee';
+-- Platform default plan must have the key, unless remove-free-platform-plan
+-- has since deleted that plan and kept it in its own table.
+SELECT 1/COUNT(*) FROM (
+    SELECT 1 FROM registry.pricing_plans
+     WHERE plan_scope = 'platform'
+       AND metadata->>'default' = 'true'
+       AND pricing_configuration ? 'refund_application_fee'
+    UNION ALL
+    SELECT 1 WHERE to_regclass('public.removed_free_platform_plan') IS NOT NULL
+) free;
 
 -- No tenant percentage plan may lack the key (zero missing -> COUNT(*) = 0 -> 1/0 would
 -- trigger; invert: assert zero rows missing the key via COUNT(*) = 0 check using a DO block)

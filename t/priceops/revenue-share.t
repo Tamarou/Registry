@@ -78,9 +78,6 @@ subtest 'Registry::DAO coercion - accepts DAO object as well as raw db handle' =
 
 subtest 'a tenant with no platform entitlement dies, with no Free fallback' => sub {
     $db->query(q{INSERT INTO registry.tenants (name, slug) VALUES ('No Terms', 'rs_no_terms')});
-    ok $db->query(q{SELECT 1 FROM registry.pricing_plans
-                     WHERE plan_scope = 'platform' AND metadata->>'default' = 'true'})->rows,
-        'the Free plan is still seeded';
 
     my $fraction = eval { revenue_share_fraction_for_tenant($db, 'rs_no_terms') };
     ok !defined $fraction, 'no fraction: not the Free plan 0';
