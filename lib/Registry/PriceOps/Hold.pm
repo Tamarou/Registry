@@ -20,13 +20,16 @@ class Registry::PriceOps::Hold :isa(Registry::DAO::Object) {
     sub table { 'holds' }
 
     # Holds $data->{units} units of $data->{resource_id} for
-    # $data->{workflow_run_id} until $data->{expires_at}.
+    # $data->{workflow_run_id} until $data->{expires_at}, which must be later
+    # than now: a zero or past lifetime is refused.
     sub place ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
         my $tx       = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $resource = Registry::DAO::Resource->locked( $db, $data->{resource_id} );
         $resource->claim( $db, $data->{units} );
         my $hold = $class->create( $db, $data );
+        croak 'a hold must expire after it is placed'
+            unless $db->query( 'SELECT ?::timestamptz > clock_timestamp()', $hold->expires_at )->array->[0];
         $tx->commit if $tx;
         return $hold;
     }

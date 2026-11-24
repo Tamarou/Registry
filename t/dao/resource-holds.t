@@ -141,7 +141,7 @@ sub race ( $first, $second, $then = sub {} ) {
     $then->($adb);
     $tx->commit;
     waitpid $pid, 0;
-    return ( $blocked, do { local $/; readline $parent_reads } );
+    return ( $blocked, do { local $/; readline $parent_reads } // q{} );
 }
 
 subtest 'hold converts to entitlement units once' => sub {
