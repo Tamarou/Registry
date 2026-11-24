@@ -125,4 +125,45 @@ subtest 'change lists same offer and holds target' => sub {
     }, 'and the run carries the change with the stamped fee';
 };
 
+subtest 'change inside the window refused' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 24, 96 );
+    my $e = booking( $version, $held );
+    my ( $run, $chose ) = chosen($e);
+    like "@{ $chose->{errors} // [] }", qr/48 hours/, 'choosing a target 24h before a 48h window is refused';
+    my $data = hold_target( $run, $target );
+    ok $data->{errors}, 'and so is holding one';
+    is_deeply live_holds($run), [], 'no hold is placed';
+    is $target->free_units($studio), 4, 'the target keeps every seat';
+};
+
+subtest 'policy allowing no change refused' => sub {
+    for my $change ( { kind => 'none' }, undef ) {
+        my ( $version, $held, $target ) = $change ? occurrences( $change, 72, 96 ) : do {
+            my ( $v, @r ) = occurrences( \%WINDOW, 72, 96 );
+            # A version stamped with no change policy at all, as one published before change existed.
+            my $none = Registry::DAO::Offer->create( $studio, { name => 'No change ' . ++$made } )
+                ->draft( $studio, offer_terms( undef, class_project_id => $studio->select(
+                    'offer_versions', 'class_project_id', { id => $v->id } )->array->[0] ) )->publish($studio);
+            ( $none, @r );
+        };
+        my $e = booking( $version, $held );
+        my ( $run, $chose ) = chosen($e);
+        like "@{ $chose->{errors} // [] }", qr/cannot be changed/,
+            'a change under ' . ( $change ? 'a none' : 'no' ) . ' change policy is refused';
+        ok hold_target( $run, $target )->{errors}, 'and so is holding a target';
+        is_deeply live_holds($run), [], 'no hold is placed';
+    }
+};
+
+subtest 'insufficient seats refused with no partial hold' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96, { capacity => 2 } );
+    my $e = booking( $version, $held, 2 );
+    booking( $version, $target, 1 );
+    my ( $run, $chose ) = chosen($e);
+    is_deeply $chose->{change_targets}, [], 'a target with one free seat is not listed for two';
+    ok hold_target( $run, $target )->{errors}, 'and holding it is refused';
+    is_deeply live_holds($run), [], 'no hold, partial or whole, is left behind';
+    is $target->free_units($studio), 1, 'the free seat stays free';
+};
+
 done_testing;

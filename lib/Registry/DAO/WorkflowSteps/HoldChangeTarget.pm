@@ -15,7 +15,13 @@ class Registry::DAO::WorkflowSteps::HoldChangeTarget :isa(Registry::DAO::Workflo
 
     method process ( $db, $form_data, $run = undef ) {
         my $choose      = 'Registry::DAO::WorkflowSteps::ChooseChangeTarget';
-        my $entitlement = Registry::DAO::Entitlement->find( $db, { id => $run->data->{change_entitlement_id} } );
+        my $entitlement_id = $run->data->{change_entitlement_id};
+        my $entitlement    = $entitlement_id && Registry::DAO::Entitlement->find( $db, { id => $entitlement_id } );
+        return { stay => 1, errors => ['Choose a booking to change'] } unless $entitlement;
+        # The window may have closed while the page was open.
+        if ( my $refusal = $choose->refusal( $db, $entitlement ) ) {
+            return { stay => 1, errors => [$refusal] };
+        }
         my $target_id   = $form_data->{target_occurrence_id};
         my ($target) = grep { $_->id eq ( $target_id // '' ) } $choose->targets( $db, $entitlement )->@*;
         return { stay => 1, errors => ['Choose one of the listed occurrences'] } unless $target;
