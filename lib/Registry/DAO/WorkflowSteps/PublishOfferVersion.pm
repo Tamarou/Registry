@@ -12,6 +12,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::Tenant;
     use Registry::DAO::WorkflowSteps::ChangePolicy;
     use Registry::DAO::WorkflowSteps::ExpiryPolicy;
+    use Registry::DAO::WorkflowSteps::OfferPrice;
     use Registry::DAO::WorkflowSteps::RefundPolicy;
     use Registry::Utility::PriceFormat qw( format_price );
 
@@ -31,13 +32,15 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my ( $basic, $price ) = $data->@{qw( offer_basics offer_price )};
         return { stay => 1, errors => ['Complete the offer and price steps before publishing'] }
             unless ref $basic eq 'HASH' && ref $price eq 'HASH';
+        my $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
+        return { stay => 1, errors => [$why] } if $why;
 
         # From the run, as the refund-policy step recorded it, never this form;
         # refused, never defaulted: absence is not a refund policy.
         my $refund = $data->{refund_policy};
         return { stay => 1, errors => ['Choose a refund policy before publishing'] }
             unless ref $refund eq 'HASH' && defined $refund->{kind} && !ref $refund->{kind};
-        my $why = Registry::DAO::WorkflowSteps::RefundPolicy->refusal( $db, $data, $refund );
+        $why = Registry::DAO::WorkflowSteps::RefundPolicy->refusal( $db, $data, $refund );
         return { stay => 1, errors => [$why] } if $why;
 
         # From the run, as the change-policy step recorded it, never this form.
@@ -98,9 +101,11 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry } },
             } )->publish($db);
         };
+        # The detail can carry ids and driver messages, so it goes to the log
+        # and the screen gets a fixed message; the transaction rolls back.
         unless ($version) {
-            my $why = $@ =~ s/ at \S+ line \d+\.?\n?\z//r;
-            return { stay => 1, errors => ["Could not publish: $why"] };
+            warn 'offer publish failed for run ' . $run->id . ": $@";
+            return { stay => 1, errors => ['The offer could not be published, and nothing was saved. Please try again.'] };
         }
         $run->update_data( $db, { published_offer_version_id => $version->id } );
         $tx->commit if $tx;

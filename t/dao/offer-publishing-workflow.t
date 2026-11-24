@@ -14,6 +14,7 @@ use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer p
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::OfferVersion;
+use Registry::DAO::Resource;
 use Registry::Utility::WorkflowProcessor;
 
 my $test_db = Test::Registry::DB->new;
@@ -41,7 +42,7 @@ sub walk ( $workflow_dao, $user, %by_step ) {
     my $processor = Registry::WorkflowProcessor->new( dao => $workflow_dao );
     my $run       = $processor->new_run( $workflow, { user => { id => $user->id, name => $user->name } } );
     my %result;
-    for my $slug (qw( offer-basics offer-price one-time-payment refund-policy change-policy use-policy expiry-policy publish )) {
+    for my $slug ( ( exists $by_step{resource} ? 'resource' : () ), qw( offer-basics offer-price one-time-payment refund-policy change-policy use-policy expiry-policy publish )) {
         my $step = $workflow->get_step( $workflow_dao->db, { slug => $slug } );
         $result{$slug} = $run->process( $workflow_dao->db, $step, $by_step{$slug} // {} );
     }
@@ -61,7 +62,7 @@ sub terms (%override) {
         'publish'          => { action => 'publish' },
     );
     for my $slug ( keys %override ) {
-        $terms{$slug} = { $terms{$slug}->%*, $override{$slug}->%* };
+        $terms{$slug} = { ( $terms{$slug} // {} )->%*, $override{$slug}->%* };
     }
     return %terms;
 }
@@ -69,6 +70,16 @@ sub terms (%override) {
 sub published_count ( $db = $tdb ) {
     return $db->query('SELECT count(*) FROM offer_versions WHERE published_at IS NOT NULL')->array->[0];
 }
+
+# Submits $fields to the $slug step of $run, as answering a step again does.
+sub answer ( $run, $slug, $fields ) {
+    my $step = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => $slug } );
+    return $run->process( $tdb, $step, $fields );
+}
+
+sub errors_of ($result) { join ' ', ( $result->{errors} // [] )->@* }
+
+my $only_admin = qr/Only an administrator of this tenant can publish an offer/;
 
 subtest 'admin publishes a one time priced offer version' => sub {
     walk( $tenant_dao, $admin, terms() );
@@ -166,7 +177,7 @@ join_tenant( $dao, $staff, 'staff', 'clay_studio' );
 subtest 'staff run publishes nothing' => sub {
     my $before = published_count();
     my ( undef, $result ) = walk( $tenant_dao, $staff, terms() );
-    ok $result->{publish}{errors}, 'publish stays with an error for a staff run';
+    like errors_of( $result->{publish} ), $only_admin, 'publish refuses a staff run as not an administrator';
     is published_count(), $before, 'and publishes nothing';
 
     # Staff hold workflow-creation, so they can compose the allowlisted publish
@@ -185,7 +196,7 @@ subtest 'staff run publishes nothing' => sub {
         use_policy       => { use => 'none' },
     } } );
     my $composed = $run->process( $tdb, $own->first_step($tdb), { action => 'publish' } );
-    ok $composed->{errors}, 'a staff-composed workflow\'s publish step stays with an error';
+    like errors_of($composed), $only_admin, 'a staff-composed workflow\'s publish step refuses them too';
     is published_count(), $before, 'and publishes nothing';
 };
 
@@ -195,8 +206,113 @@ subtest 'forged admin user cannot publish' => sub {
         user    => { id => $admin->id, role => 'admin', user_type => 'admin' },
         user_id => $admin->id,
     } ) );
-    ok $result->{publish}{errors}, 'form data claiming an admin does not get a staff run past publish';
+    like errors_of( $result->{publish} ), $only_admin, 'form data claiming an admin does not get a staff run past publish';
     is published_count(), $before, 'and publishes nothing';
+};
+
+subtest 'publish refuses an offer with no payment plan' => sub {
+    my $before = published_count();
+    my ( undef, $result ) = walk( $tenant_dao, $admin, terms( 'one-time-payment' => { one_time => 'declined' } ) );
+    ok !$result->{'one-time-payment'}{errors}, 'declining the one-time plan is a valid answer';
+    like errors_of( $result->{publish} ), qr/Offer at least one payment plan/, 'but publish refuses an offer no one can pay for';
+    is published_count(), $before, 'and publishes nothing';
+};
+
+subtest 'publish refuses another tenant\'s admin and a parent' => sub {
+    my $glass_admin = Test::Registry::Fixtures::create_user( $dao,
+        { username => 'glass_admin', name => 'Glass Admin', email => 'admin@glass.test', user_type => 'admin' } );
+    join_tenant( $dao, $glass_admin, 'admin', 'glass_studio' );
+    my $parent = Test::Registry::Fixtures::create_user( $dao,
+        { username => 'clay_parent', name => 'Clay Parent', email => 'parent@clay.test', user_type => 'parent' } );
+    join_tenant( $dao, $parent, 'parent', 'clay_studio' );
+
+    my $before = published_count();
+    for my $case ( [ 'another tenant\'s admin' => $glass_admin ], [ 'a parent of this tenant' => $parent ] ) {
+        my ( $label, $user ) = @$case;
+        my ( undef, $result ) = walk( $tenant_dao, $user, terms() );
+        like errors_of( $result->{publish} ), $only_admin, "publish refuses $label as not an administrator";
+    }
+    is published_count(), $before, 'and publishes nothing';
+};
+
+subtest 'publish rechecks units against the chosen resource capacity' => sub {
+    my $pair   = Test::Registry::Fixtures::create_resource( $tdb, { name => 'Pair wheel', kind => 'finite', capacity => 1 } );
+    my $before = published_count();
+    # Two units of Wheel seats pass the price step; then offer-basics is
+    # answered again with a resource that holds only one.
+    my ($run) = walk( $tenant_dao, $admin, terms( publish => { action => 'review' } ) );
+    ok !answer( $run, 'offer-basics', { resource_id => $pair->id, offer_name => 'Couples wheel night' } )->{errors},
+        'offer-basics can be answered again after the price step';
+    like errors_of( answer( $run, 'publish', { action => 'publish' } ) ),
+        qr/Units per acceptance cannot exceed Pair wheel's capacity of 1/, 'publish refuses units above the new capacity';
+    is published_count(), $before, 'and publishes nothing';
+};
+
+subtest 'a class offer is held to its smallest occurrence capacity' => sub {
+    my $class   = $tdb->insert( 'projects', { name => 'Wheel class', slug => 'wheel-class' }, { returning => 'id' } )->hash->{id};
+    my $teacher = $tdb->insert( 'users', { username => 'wheel-teacher' }, { returning => 'id' } )->hash->{id};
+    my $room    = $tdb->insert( 'locations', { name => 'Wheel room', slug => 'wheel-room' }, { returning => 'id' } )->hash->{id};
+    my $occurrence = sub ( $time, $capacity ) {
+        my $event = $tdb->insert( 'events', {
+            project_id => $class, location_id => $room, teacher_id => $teacher,
+            time       => $time, duration => 90, capacity => $capacity,
+        }, { returning => 'id' } )->hash->{id};
+        Registry::DAO::Resource->for_occurrence( $tdb, $event );
+    };
+    $occurrence->( '2099-03-01T10:00:00Z', 10 );
+    $occurrence->( '2099-03-08T10:00:00Z', 3 );
+    my %as_class = (
+        resource        => { resource_mode => 'class', class_project_id => $class },
+        'expiry-policy' => { expiry => 'end_of_occurrence' },
+    );
+
+    my $before = published_count();
+    my ( undef, $result ) = walk( $tenant_dao, $admin, terms( %as_class, 'offer-price' => { units_per_acceptance => 4 } ) );
+    like errors_of( $result->{'offer-price'} ), qr/cannot exceed 3, the smallest capacity among Wheel class's occurrences/,
+        'the price step refuses units above the smallest occurrence capacity';
+    ok $result->{publish}{errors}, 'and publish refuses the run';
+    is published_count(), $before, 'publishing nothing';
+
+    my ($run) = walk( $tenant_dao, $admin, terms( %as_class, 'offer-price' => { units_per_acceptance => 3 }, publish => { action => 'review' } ) );
+    $occurrence->( '2099-03-15T10:00:00Z', 2 );
+    like errors_of( answer( $run, 'publish', { action => 'publish' } ) ),
+        qr/cannot exceed 2, the smallest capacity among Wheel class's occurrences/,
+        'publish refuses units above an occurrence added after the price step';
+    is published_count(), $before, 'and publishes nothing';
+};
+
+subtest 'a failed publish shows a fixed message and logs the detail' => sub {
+    # An admin may compose the publish step into a workflow of their own and
+    # hand it run data no step checked: here, a resource that does not exist.
+    my $own = Registry::DAO::Workflow->create( $tdb,
+        { slug => 'admin-own-publish', name => 'Admin own publish', description => 'composed by an admin' } );
+    $own->add_step( $tdb, { slug => 'publish', description => 'publish',
+        class => 'Registry::DAO::WorkflowSteps::PublishOfferVersion' } );
+    my $missing = '00000000-0000-0000-0000-00000000abcd';
+    my $run = $own->new_run( $tdb, { data => {
+        user             => { id => $admin->id },
+        offer_basics     => { resource_id => $missing, offer_name => 'Ghost night' },
+        offer_price      => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
+        one_time_payment => { one_time => 'offered' },
+        refund_policy    => { kind => 'none' },
+        change_policy    => { kind => 'none' },
+        use_policy       => { use => 'none' },
+        expiry_policy    => { expiry => 'never' },
+    } } );
+
+    my $before = published_count();
+    my @logged;
+    my $result = do {
+        local $SIG{__WARN__} = sub { push @logged, @_ };
+        $run->process( $tdb, $own->first_step($tdb), { action => 'publish' } );
+    };
+    is_deeply $result->{errors}, ['The offer could not be published, and nothing was saved. Please try again.'],
+        'the screen shows a fixed message';
+    unlike errors_of($result), qr/abcd|constraint|violat|DBD|line \d/i, 'with no internal text in it';
+    like join( '', @logged ), qr/offer publish failed.*violates foreign key constraint/s, 'the detail is logged';
+    is published_count(), $before, 'and nothing is published';
+    is $tdb->query( 'SELECT count(*) FROM offers WHERE name = ?', 'Ghost night' )->array->[0], 0,
+        'not even an unpublished offer';
 };
 
 subtest 'double publish leaves one version' => sub {
@@ -234,9 +350,17 @@ subtest 'double publish leaves one version' => sub {
     my $tx   = $adb->begin;
     $adao->find( WorkflowRun => { id => $run->id } )
         ->process( $adb, $publish, { action => 'publish' } );
+    my $holder = $adb->query('SELECT pg_backend_pid()')->array->[0];
     print $parent_writes "go\n";
     $parent_writes->flush;
-    sleep 1;    # let the second submission reach the run and wait
+
+    # Commit only once the second submission is blocked behind this
+    # transaction's lock, as Postgres itself reports it, so it cannot finish
+    # first and pass without the lock.
+    my ( $blocked, $deadline ) = ( 0, time + 30 );
+    $blocked = $tdb->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))', $holder )
+        ->array->[0] until $blocked || time > $deadline;
+    ok $blocked, 'the second submission waits on the first one\'s lock';
     $tx->commit;
     waitpid $pid, 0;
     is $? >> 8, 0, 'the concurrent submission completes';
