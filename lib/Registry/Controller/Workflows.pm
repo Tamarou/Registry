@@ -97,9 +97,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # owed_payment is what OneTimePayment charges -- amount, offer version
         # and plan, written by the step before it -- and owed_payment_id the
         # payment it started; a posted one is a price of the client's choosing.
+        # __driver is the run driver's failure record; a planted one could hide
+        # a halted run or fake one.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|owed_payment|owed_payment_id)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|owed_payment|owed_payment_id|__driver)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in
