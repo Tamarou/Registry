@@ -14,6 +14,9 @@
 % }
 
 <form method="POST" action="<%= $action %>">
+  % if (my $class = stash('class')) {
+  <p>This offer covers every occurrence of <%= $class->name %>, current and later.</p>
+  % } else {
   <fieldset>
     <legend>Resource</legend>
     % unless (@$resources) {
@@ -29,6 +32,7 @@
     </div>
     % }
   </fieldset>
+  % }
 
   <div class="form-group">
     <label class="form-label required" for="offer_name">Offer name</label>

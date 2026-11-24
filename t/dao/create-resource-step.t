@@ -9,9 +9,10 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers qw( import_all_workflows join_tenant );
+use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
 use Registry::DAO;
 use Registry::DAO::Workflow;
+use Registry::DAO::Resource;
 use Registry::Utility::WorkflowProcessor;
 
 my $test_db = Test::Registry::DB->new;
@@ -124,6 +125,31 @@ subtest 'invalid finite capacity refused' => sub {
         ok !$run->data->{resource_choice}, 'and the run holds no choice';
     }
     is resource_count(), $before, 'nothing is created';
+};
+
+subtest 'admin publishes a class offer covering its occurrences' => sub {
+    my ( $c, $d ) = ( class_in(), class_in() );
+    my @in_c = map { Registry::DAO::Resource->for_occurrence( $tdb, event_of($c) )->id } 1 .. 2;
+    Registry::DAO::Resource->for_occurrence( $tdb, event_of($d) );
+
+    my ( $run, $result ) = resource_step( $admin, { resource_mode => 'class', class_project_id => $c } );
+    ok !$result->{errors}, 'the step accepts the class' or diag explain $result;
+    is $run->data->{resource_choice}{class_project_id}, $c, 'and writes its class key into the run';
+
+    my $basics = workflow()->get_step( $tdb, { slug => 'offer-basics' } );
+    $run->process( $tdb, $basics, { offer_name => 'Wheel class pass' } );
+    is_deeply $run->data->{offer_basics}, { class_project_id => $c, offer_name => 'Wheel class pass' },
+        'offer-basics takes the class key in place of a resource';
+
+    my $version = publish_offer( $dao, 'clay_studio', $admin, {
+        offer_name  => 'Wheel class pass', price_cents => 9000, currency => 'usd',
+        units_per_acceptance => 1, per_booking_cap => 1,
+        resource    => { resource_mode => 'class', class_project_id => $c },
+    } );
+    is $version->class_project_id, $c, 'the published version names the class';
+    is $version->resource_id, undef, 'and no resource';
+    is_deeply [ sort map { $_->id } $version->covered_resources($tdb)->@* ], [ sort @in_c ],
+        'it covers the class\'s two occurrences and not the other class\'s';
 };
 
 done_testing;

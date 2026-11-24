@@ -24,7 +24,21 @@
       <input type="radio" id="resource_mode-create" name="resource_mode" value="create" required>
       <label for="resource_mode-create">Create a new resource</label>
     </div>
+    <div>
+      <input type="radio" id="resource_mode-class" name="resource_mode" value="class" required>
+      <label for="resource_mode-class">Cover every occurrence of a class</label>
+    </div>
   </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="class_project_id">Class, to cover its occurrences</label>
+    <select id="class_project_id" name="class_project_id">
+      <option value="">None</option>
+      % for my $class (@{ stash('classes') // [] }) {
+      <option value="<%= $class->id %>"><%= $class->name %></option>
+      % }
+    </select>
+  </div>
 
   <fieldset>
     <legend>New resource</legend>

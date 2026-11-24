@@ -7,6 +7,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::WorkflowStep) {
     use Registry::DAO::Offer;
+    use Registry::DAO::Project;
     use Registry::DAO::Resource;
     use Registry::DAO::Tenant;
     use Registry::Utility::PriceFormat qw( format_price );
@@ -59,7 +60,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
 
         my $version = eval {
             Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } )->draft( $db, {
-                resource_id => $basic->{resource_id},
+                $basic->%{qw( resource_id class_project_id )},    # one or the other
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
                 policies => { refund => { kind => 'none' }, use => { kind => $use } },
@@ -78,10 +79,12 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     method prepare_template_data ( $db, $run, $params = {} ) {
         my $data  = $run->data;
         my $price = $data->{offer_price} // {};
-        my $id    = ( $data->{offer_basics} // {} )->{resource_id};
+        my $basic = $data->{offer_basics} // {};
+        my ( $id, $class_id ) = $basic->@{qw( resource_id class_project_id )};
         return {
             %$data,
             resource      => $id ? Registry::DAO::Resource->find( $db, { id => $id } ) : undef,
+            class         => $class_id ? Registry::DAO::Project->find( $db, { id => $class_id } ) : undef,
             price_display => format_price( $price->{price_cents}, $price->{currency} ),
         };
     }

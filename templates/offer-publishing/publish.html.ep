@@ -19,7 +19,7 @@
   <h2><%= $basics->{offer_name} %></h2>
   <dl>
     <dt>Resource</dt>
-    <dd><%= $resource ? $resource->name : '' %></dd>
+    <dd><%= $resource ? $resource->name : stash('class') ? 'Every occurrence of ' . stash('class')->name : '' %></dd>
     <dt>Price</dt>
     <dd><%= stash('price_display') %></dd>
     <dt>Units per acceptance</dt>
