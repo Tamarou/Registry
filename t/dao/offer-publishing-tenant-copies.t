@@ -64,9 +64,12 @@ subtest 'step-4 migrations change only registry' => sub {
     $dao->db->query( q{DELETE FROM kiln.workflow_steps WHERE slug = 'use-policy' AND workflow_id = ?}, $wf );
     my $before = tenant_rows();
 
-    # Deploy as production does: every offer-publishing migration, then the registry import.
-    my @migrations = path('sql/deploy')->list->grep(qr{/offer-publishing-[^/]+\.sql$})->each;
-    ok @migrations, 'found the offer-publishing migrations';
+    # Deploy as production does: every offer-publishing migration, in plan order, then the registry import.
+    my @names = grep { /^offer-publishing-/ } map { /^(\S+)/ ? $1 : () } split /\n/, path('sql/sqitch.plan')->slurp;
+    my @migrations = map { path("sql/deploy/$_.sql") } @names;
+    is scalar @migrations, scalar( path('sql/deploy')->list->grep(qr{/offer-publishing-[^/]+\.sql$})->@* ),
+        'every offer-publishing migration in sql/deploy is in the plan';
+    my ($registry_wf) = $dao->db->query(q{SELECT id FROM registry.workflows WHERE slug = 'offer-publishing'})->array->@*;
     for my $file (@migrations) {
         my $sql = $file->slurp;
         $sql =~ s/^\s*(?:BEGIN|COMMIT);\s*$//mg;
@@ -75,6 +78,8 @@ subtest 'step-4 migrations change only registry' => sub {
     $dao->db->query('SET search_path = registry, public');
     import_all_workflows($dao);
 
+    my ($rebuilt) = $dao->db->query(q{SELECT id FROM registry.workflows WHERE slug = 'offer-publishing'})->array->@*;
+    isnt $rebuilt, $registry_wf, 'the migrations cleared registry, so the import rebuilt it';
     ok( ( grep { $_ eq 'use-policy' } steps('registry')->@* ), 'registry is rebuilt with the new step' );
     is_deeply tenant_rows(), $before, "the tenant's copy is untouched";
 
