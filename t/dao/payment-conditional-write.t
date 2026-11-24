@@ -241,6 +241,17 @@ subtest 're-storing a superseded intent drops it from the superseded list' => su
         'the stored intent is not listed; the one it replaced is';
 };
 
+subtest 'the superseded list keeps only the newest 20 intents' => sub {
+    my $p = a_payment('pending');
+    my $first = $p->stripe_payment_intent_id;
+    $p->_record_intent_id( $db, "pi_cap_$_" ) for 1 .. 25;
+    my $listed = Registry::DAO::Payment->find($db, { id => $p->id })
+        ->metadata->{superseded_intent_ids};
+    is scalar @$listed, 20, 'capped at 20';
+    is_deeply $listed, [ map {"pi_cap_$_"} 5 .. 24 ], 'the newest, oldest first';
+    ok !( grep { $_ eq $first } @$listed ), 'the oldest dropped off';
+};
+
 # A refused write must NOT refresh the object -- that is how a caller comes to
 # believe a transition happened that the database rejected.
 subtest 'a refused write leaves the object alone' => sub {
