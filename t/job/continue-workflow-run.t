@@ -165,4 +165,19 @@ subtest 'a Payment step promise is awaited before the next step runs' => sub {
     is reload( $adb, $run )->latest_step($adb)->slug, 'after', 'the run is complete';
 };
 
+subtest 'continues a run in the registry platform schema' => sub {
+    my $rdb = $dao->db;
+    my $wf  = workflow( $rdb,
+        ['step-1'], ['step-2'], [ 'step-3', undef, requiring( $rdb, 'from_step_1' ) ] );
+    my $run = parked_run( $rdb, $wf, { from_step_1 => 'kept' } );
+
+    my $info = run_job( { tenant => 'registry', run_id => $run->id } );
+
+    is_deeply $info->{result},
+        { run_id => $run->id, stopped_at => 'step-3', reason => 'completed' },
+        'the platform run is continued to its end'
+        or diag explain $info->{result};
+    is reload( $rdb, $run )->latest_step($rdb)->slug, 'step-3', 'on that same run';
+};
+
 done_testing;
