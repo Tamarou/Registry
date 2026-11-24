@@ -16,8 +16,9 @@ package Test::Registry::Helpers {
             import_all_workflows             => __PACKAGE__->can('import_all_workflows'),
             join_tenant          => __PACKAGE__->can('join_tenant'),
             process_workflow                 => __PACKAGE__->can('process_workflow'),
-            platform_revenue_share_plan_id =>
-              __PACKAGE__->can('platform_revenue_share_plan_id'),
+            platform_solo_offer_version_id =>
+              __PACKAGE__->can('platform_solo_offer_version_id'),
+            publish_offer        => __PACKAGE__->can('publish_offer'),
             workflow_process_step_url =>
               __PACKAGE__->can('workflow_process_step_url'),
             workflow_run_step_url => __PACKAGE__->can('workflow_run_step_url'),
@@ -70,37 +71,64 @@ package Test::Registry::Helpers {
         }
     }
 
-    # platform_revenue_share_plan_id($dao) -- issue #268
+    # platform_solo_offer_version_id($dao)
     #
-    # Returns the UUID of the platform 2% revenue-share plan so a signup leg can
-    # POST it as selected_plan_id, and asserts (as a guard) that the
-    # create-default-pricing-relationships migration seeded exactly one active
-    # platform pricing relationship for it. Fails loudly if the migration's seed
-    # is missing (e.g. a stale test-schema dump), instead of silently skipping
-    # the pricing step downstream.
-    sub platform_revenue_share_plan_id ($dao) {
-        my $db = $dao->db;
+    # The platform tenant's current published Solo offer version: what signup
+    # grants a tenant. Dies when there is none, so a stale test-schema dump
+    # fails here rather than somewhere downstream.
+    sub platform_solo_offer_version_id ($dao) {
+        my $db  = $dao isa Registry::DAO ? $dao->db : $dao;
+        my $row = $db->query(q{
+            SELECT v.id FROM registry.offer_versions v
+              JOIN registry.offers o ON o.id = v.offer_id
+             WHERE o.name = 'Solo' AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+        })->array;
+        die "No current published Solo offer version in registry\n" unless $row;
+        return $row->[0];
+    }
 
-        my $plan_row = $db->query(q{
-            SELECT id FROM registry.pricing_plans
-            WHERE pricing_model_type = 'percentage' AND plan_scope = 'tenant' LIMIT 1
-        })->hash;
-        die 'No tenant-scoped percentage plan in DB -- cannot walk pricing step'
-            unless $plan_row;
-        Test::More::ok($plan_row, '2% revenue-share plan present in registry.pricing_plans');
+    # The neutral answer to every offer-publishing step step 4 has or will
+    # add. A step the stored workflow does not have is simply never walked.
+    my %OFFER_STEP_DEFAULTS = (
+        'resource'                    => { resource_mode       => 'existing' },
+        'one-time-payment'            => { one_time            => 'offered' },
+        'percentage-of-sales-payment' => { percentage_of_sales => 'declined' },
+        'refund-policy'               => { refund              => 'none' },
+        'change-policy'               => { change              => 'none' },
+        'use-policy'                  => { use                 => 'none' },
+        'expiry-policy'               => { expiry              => 'never' },
+        'publish'                     => { action              => 'publish' },
+    );
 
-        my $plan_id = $plan_row->{id};
+    # publish_offer($dao, $tenant_slug, $admin_user, \%terms) -> OfferVersion
+    #
+    # The only way a test publishes an offer: runs offer-publishing in
+    # $tenant_slug's schema as $admin_user through Registry::WorkflowProcessor,
+    # walking whatever steps the stored workflow has. Each step is submitted
+    # every step's neutral default, then $terms' top-level fields (so
+    # `refund => undef` withdraws the refund choice from whichever step asks
+    # for it), then $terms->{<step slug>}. Dies naming the step that refuses.
+    sub publish_offer ( $dao, $tenant_slug, $admin_user, $terms ) {
+        require Registry::DAO::OfferVersion;
+        require Registry::Utility::WorkflowProcessor;
+        my $tenant_dao = $dao->connect_schema($tenant_slug);
+        my $db         = $tenant_dao->db;
+        my $workflow   = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } )
+          or die "publish_offer: no offer-publishing workflow in '$tenant_slug'\n";
+        my $processor = Registry::WorkflowProcessor->new( dao => $tenant_dao );
+        my $run = $processor->new_run( $workflow,
+            { user => { id => $admin_user->id, name => $admin_user->name } } );
 
-        # Verify the migration seeded the relationship so a misconfigured DB
-        # fails loudly here, not later.
-        my $rel_count = $db->query(q{
-            SELECT count(*) AS n FROM registry.pricing_relationships
-            WHERE provider_id = '00000000-0000-0000-0000-000000000000'
-              AND pricing_plan_id = ?
-        }, $plan_id)->hash->{n};
-        Test::More::is($rel_count, 1, 'migration seeded exactly one platform pricing relationship for the plan');
-
-        return $plan_id;
+        my %fields = ( map( { %$_ } values %OFFER_STEP_DEFAULTS ),
+            map { $_ => $terms->{$_} } grep { !ref $terms->{$_} } keys %$terms );
+        for ( my $step = $workflow->first_step($db) ; $step ; $step = $step->next_step($db) ) {
+            my $result = $run->process( $db, $step, { %fields, ( $terms->{ $step->slug } // {} )->%* } );
+            die sprintf "publish_offer: %s refused: %s\n", $step->slug, join '; ', $result->{errors}->@*
+              if ref $result eq 'HASH' && $result->{errors};
+            my $published = $run->data->{published_offer_version_id} or next;
+            return Registry::DAO::OfferVersion->find( $db, { id => $published } );
+        }
+        die "publish_offer: the walk ended without publishing\n";
     }
 
     sub import_all_workflows ($dao) {

@@ -67,6 +67,11 @@ package Test::Registry::Fixtures {
         Registry::DAO::Event->create($db, $data);
     }
     
+    sub create_resource ($db, $data) {
+        require Registry::DAO::Resource;
+        Registry::DAO::Resource->create($db, $data);
+    }
+
     sub create_user ($db, $data) {
         require Registry::DAO::User;
         # Pass all provided data - User.pm will properly separate fields for users and user_profiles tables

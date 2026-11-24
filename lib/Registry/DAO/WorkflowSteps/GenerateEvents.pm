@@ -94,6 +94,14 @@ method process ($db, $form_data, $run = undef) {
 }
 
 method create_session_for_location ($db, $project_data, $location, $params, $teacher_id = undef) {
+    # Only a tenant admin publishes a price. $project_data is the run's data,
+    # whose `user` the controller seeds from the session on every request and
+    # no step result can write, so a role posted in the form never reaches it.
+    my $override =
+      ( ( $project_data->{user} // {} )->{role} // '' ) eq 'admin'
+      ? $location->{pricing_override}
+      : undef;
+
     try {
         # Create session for this location
         my $session = Registry::DAO::Session->create($db, {
@@ -114,7 +122,7 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
             metadata => {
                 program_assignment => 'generated',
                 schedule => $location->{schedule},
-                pricing_override => $location->{pricing_override},
+                pricing_override => $override,
                 notes => $location->{notes}
             }
         });
@@ -123,7 +131,6 @@ method create_session_for_location ($db, $project_data, $location, $params, $tea
         # so the session is actually priced and appears on the storefront. An
         # override of 0 produces a free, registerable session. Without this the
         # override is collected but dropped and the session has no price (#218).
-        my $override = $location->{pricing_override};
         if ( defined $override && $override ne '' ) {
             require Registry::DAO::PricingPlan;
             Registry::DAO::PricingPlan->create($db, {

@@ -3,9 +3,17 @@
 % my $session  = stash('session');
 % my $enrolled = stash('enrolled') // 0;
 % my $price    = stash('price_cents');
+% my $can_set_price = stash('can_set_price');
 
 <div class="container">
     <h1><%= $session->name %></h1>
+
+    % if (my $error = flash('error')) {
+        <div class="alert alert-error mb-4"><p><%= $error %></p></div>
+    % }
+    % if (my $success = flash('success')) {
+        <div class="alert alert-success mb-4"><p><%= $success %></p></div>
+    % }
 
     %# #419: all three of these were written once by GenerateEvents and could
     %# never be revised. Capacity and the waitlist toggle live on the session;
@@ -26,6 +34,7 @@
             % }
         </div>
 
+        % if ($can_set_price) {
         <div class="form-field">
             <label for="price_cents">Price, in cents</label>
             <input type="number" id="price_cents" name="price_cents" min="0"
@@ -39,6 +48,14 @@
                 % }
             </p>
         </div>
+        % } else {
+        <div class="form-field">
+            <p class="text-secondary" id="price-read-only">
+                Price: <%= defined $price ? sprintf( '$%.2f', $price / 100 ) : 'not set yet' %>.
+                Prices are set by admins.
+            </p>
+        </div>
+        % }
 
         <div class="form-field">
             <label for="waitlist_enabled">

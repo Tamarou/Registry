@@ -49,6 +49,8 @@ my $project_data = {
     project_id          => $project->id,
     project_name        => $project->name,
     project_description => 'A free program',
+    # The run's acting user. Only a tenant admin's override sets a price.
+    user                => { id => $teacher->id, role => 'admin' },
 };
 my $location_config = {
     id               => $location->id,

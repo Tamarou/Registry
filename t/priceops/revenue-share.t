@@ -151,6 +151,24 @@ subtest 'malformed/non-numeric rate dies' => sub {
     # string. The one rule refuses it rather than treating it as zero.
     ok !defined eval { rate_fraction( 'abc', 'a test plan' ) }, 'a non-numeric rate is refused';
     like $@, qr/not numeric/i, 'dies saying the value is not numeric';
+    ok !defined eval { rate_fraction( "0.\x{0665}", 'a test plan' ) }, 'a non-ASCII digit is not a digit';
+    like $@, qr/not numeric/i, 'and is refused as not numeric';
+};
+
+subtest 'rate rule is exact decimal arithmetic' => sub {
+    # Digits past the fourth place, or past 1, that a float rounds away.
+    for my $case (
+        [ '0.10000000000000000001' => qr/more than 4 decimal places/ ],
+        [ '1.00000000000000000001' => qr/between 0 and 1/ ],
+        [ '-0.00000000000000000001' => qr/between 0 and 1/ ],
+    ) {
+        my ( $raw, $why ) = @$case;
+        ok !defined eval { rate_fraction( $raw, 'a test plan' ) }, "$raw is refused";
+        like $@, $why, 'naming the rule it breaks';
+    }
+    is rate_fraction( $_->[0], 'a test plan' ), $_->[1], "$_->[0] reads as $_->[1]" for
+        [ '0.0200' => '0.02' ], [ '0.025' => '0.025' ], [ '1.0000' => '1' ], [ '0' => '0' ], [ '0.0000' => '0' ],
+        [ '.5' => '0.5' ], [ '+0.0125' => '0.0125' ], [ '1.' => '1' ], [ '25e-3' => '0.025' ], [ '0.0001' => '0.0001' ];
 };
 
 done_testing;

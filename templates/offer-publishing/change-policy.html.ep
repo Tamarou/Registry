@@ -1,0 +1,51 @@
+%# ABOUTME: offer-publishing step: the admin chooses no changes, or a change window with a fee.
+%# ABOUTME: A window moves a held booking to another occurrence of the same offer, up to and including its boundary.
+% extends 'layouts/workflow';
+% title 'Changes';
+% stash description => 'Say whether a booking may move to another occurrence.';
+% my $policy = stash('change_policy') // {};
+% my $chosen = $policy->{kind} // '';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Change policy</legend>
+    <div>
+      <input type="radio" id="change-none" name="change" value="none" required<%= $chosen eq 'none' ? ' checked' : '' %>>
+      <label for="change-none">None: a booking cannot move</label>
+    </div>
+    <div>
+      <input type="radio" id="change-window" name="change" value="window" required<%= $chosen eq 'window' ? ' checked' : '' %>>
+      <label for="change-window">Window: a booking may move to another occurrence of this offer until a set time before its own</label>
+    </div>
+  </fieldset>
+
+  <p>A window needs an offer bound to an occurrence or covering a class. These apply only to a window.</p>
+
+  <div class="form-group">
+    <label class="form-label" for="window_hours">Window, in hours before the occurrence</label>
+    <input class="form-input" type="number" id="window_hours" name="window_hours" value="<%= $policy->{window_hours} %>" min="0" step="1">
+    <p>For example 48: a change is allowed up to and including 48 hours before.</p>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="fee_cents">Change fee, in cents</label>
+    <input class="form-input" type="number" id="fee_cents" name="fee_cents" value="<%= $policy->{fee_cents} %>" min="0" step="1">
+    <p>0 for a free change. Charged as a one-time payment, so the revenue share applies to it.</p>
+  </div>
+
+  <input type="hidden" name="targets" value="same_offer">
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

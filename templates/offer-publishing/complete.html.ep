@@ -1,0 +1,10 @@
+%# ABOUTME: offer-publishing's last screen: the offer version is published and can no longer change.
+%# ABOUTME: Shown after publish; names the offer from the run's offer-basics answer.
+% extends 'layouts/workflow';
+% title 'Offer published';
+% my $basics = stash('offer_basics') // {};
+
+<section class="card">
+  <h2><%= $basics->{offer_name} %> is published</h2>
+  <p>This version of the offer cannot be changed.</p>
+</section>

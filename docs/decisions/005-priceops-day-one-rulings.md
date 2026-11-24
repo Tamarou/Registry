@@ -114,10 +114,12 @@ parent out by hand.
 
 ## Open
 
-**1. The in-studio draft.** "I'll push / point to it (Recommended)". **Not yet
-answered in full:** waiting for perigrin to push `docs/in-studio-bookings-design`
-or say where the draft lives. The rewrite issue, which gates step 7, waits for
-it.
+**1. The in-studio draft.** "I'll push / point to it (Recommended)". On
+2026-11-24 the old draft was still not on the remote, and asked again, perigrin
+answered "Write from scratch (Recommended)". **Ruling:** the rewrite
+(`docs/superpowers/specs/2026-11-24-in-studio-bookings-design.md`) is written
+from scratch on the PriceOps model; no prior draft is used. Its own approval
+still gates step 7.
 
 **12. `/terms` wording.** "Placeholder + I supply text (Recommended)".
 **Ruling:** the executor builds the `/terms` page, the agreement step and

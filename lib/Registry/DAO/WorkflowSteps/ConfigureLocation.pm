@@ -40,7 +40,9 @@ method process ($db, $form_data, $run = undef) {
                 %$location,
                 capacity => int($config->{capacity}),
                 schedule => $config->{schedule} || $standard_times,
-                pricing_override => $config->{pricing_override},
+                # Only an admin's override is kept, so a staff entry can't be priced by whoever finishes the run.
+                pricing_override => ( ( $data->{user} // {} )->{role} // '' ) eq 'admin'
+                    ? $config->{pricing_override} : undef,
                 notes => $config->{notes} || ''
             };
         }

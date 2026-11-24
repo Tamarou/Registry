@@ -1,0 +1,74 @@
+# ABOUTME: Product design: a tenant publishes an immutable offer version for one of its own resources.
+# ABOUTME: Any tenant runs it the same way, the platform tenant included; publish is the last step before complete.
+
+name: Offer Publishing
+description: Name an offer for one of your resources, price it and publish it
+slug: offer-publishing
+
+# Policy and other payment-plan steps go before publish, each its own step.
+steps:
+  - slug: resource
+    label: Resource
+    description: Use an existing resource, create one, or cover a class
+    template: offer-publishing/resource
+    class: Registry::DAO::WorkflowSteps::CreateResource
+
+  - slug: offer-basics
+    label: Offer
+    description: Choose one of this tenant's resources and name the offer
+    template: offer-publishing/offer-basics
+    class: Registry::DAO::WorkflowSteps::OfferBasics
+
+  - slug: offer-price
+    label: Price
+    description: The price and what one acceptance buys
+    template: offer-publishing/offer-price
+    class: Registry::DAO::WorkflowSteps::OfferPrice
+
+  - slug: one-time-payment
+    label: Payment
+    description: Offer a one-time payment plan
+    template: offer-publishing/one-time-payment
+    class: Registry::DAO::WorkflowSteps::OneTimePaymentPlan
+
+  - slug: percentage-of-sales-payment
+    label: Share of sales
+    description: Offer a percentage-of-sales payment plan
+    template: offer-publishing/percentage-of-sales-payment
+    class: Registry::DAO::WorkflowSteps::PercentageOfSalesPaymentPlan
+
+  - slug: refund-policy
+    label: Refund
+    description: Choose whether money comes back on a refund
+    template: offer-publishing/refund-policy
+    class: Registry::DAO::WorkflowSteps::RefundPolicy
+
+  - slug: change-policy
+    label: Change
+    description: Choose whether and how a booking may move to another occurrence
+    template: offer-publishing/change-policy
+    class: Registry::DAO::WorkflowSteps::ChangePolicy
+
+  - slug: use-policy
+    label: Use
+    description: Choose what counts as using the offer
+    template: offer-publishing/use-policy
+    class: Registry::DAO::WorkflowSteps::UsePolicy
+
+  - slug: expiry-policy
+    label: Expiry
+    description: Choose when the offer's entitlement expires
+    template: offer-publishing/expiry-policy
+    class: Registry::DAO::WorkflowSteps::ExpiryPolicy
+
+  - slug: publish
+    label: Publish
+    description: Review and publish an immutable offer version
+    template: offer-publishing/publish
+    class: Registry::DAO::WorkflowSteps::PublishOfferVersion
+
+  - slug: complete
+    label: Done
+    description: The offer version is published
+    template: offer-publishing/complete
+    class: Registry::DAO::WorkflowStep

@@ -11,6 +11,9 @@ use Test::Registry::DB;
 my $test_db = Test::Registry::DB->new();
 my $dao     = $test_db->db;
 
+# Each user needs a unique username; a counter never collides, where rand() did.
+my $USER_N = 0;
+
 # Security audit: Input validation and SQL injection prevention tests
 
 {    # Test SQL injection prevention in DAO layer
@@ -19,7 +22,7 @@ my $dao     = $test_db->db;
         my $malicious_user = Registry::DAO::User->create(
             $dao->db,
             {
-                username => 'testuser' . int( rand(10000) ),
+                username => 'testuser' . ++$USER_N,
                 password => 'password123',
                 email    => "'; DROP TABLE users; --",
                 name     => 'Malicious User'
@@ -77,7 +80,7 @@ my $dao     = $test_db->db;
     my $user = Registry::DAO::User->create(
         $dao->db,
         {
-            username => 'testuser' . int( rand(10000) ),
+            username => 'testuser' . ++$USER_N,
             password => 'password123',
             email    => 'xss@test.com',
             name     => '<script>alert("XSS")</script>'
@@ -99,7 +102,7 @@ my $dao     = $test_db->db;
         my $user = Registry::DAO::User->create(
             $dao->db,
             {
-                username => 'testuser' . int( rand(10000) ),
+                username => 'testuser' . ++$USER_N,
                 password => 'password123',
                 email    => $very_long_string . '@example.com',
                 name     => $very_long_string
@@ -123,7 +126,7 @@ my $dao     = $test_db->db;
     my $user = Registry::DAO::User->create(
         $dao->db,
         {
-            username => 'testuser' . int( rand(10000) ),
+            username => 'testuser' . ++$USER_N,
             password => 'password123',
             email    => 'special@example.com',
             name     => "User with $special_chars"
@@ -152,7 +155,7 @@ my $dao     = $test_db->db;
     my $unicode_user = Registry::DAO::User->create(
         $dao->db,
         {
-            username => 'testuser' . int( rand(10000) ),
+            username => 'testuser' . ++$USER_N,
             password => 'password123',
             email    => 'unicode@example.com',
             name     => $unicode_name
@@ -169,7 +172,7 @@ my $dao     = $test_db->db;
         my $null_byte_user = Registry::DAO::User->create(
             $dao->db,
             {
-                username => 'testuser' . int( rand(10000) ),
+                username => 'testuser' . ++$USER_N,
                 password => 'password123',
                 email    => "test\x00\@example.com",
                 name     => "Test\x00User"
@@ -205,7 +208,7 @@ my $dao     = $test_db->db;
             my $user = Registry::DAO::User->create(
                 $dao->db,
                 {
-                    username => 'testuser' . int( rand(10000) ),
+                    username => 'testuser' . ++$USER_N,
                     password => 'password123',
                     email    => $email,
                     name     => 'Test User'
@@ -238,7 +241,7 @@ my $dao     = $test_db->db;
     my $user = Registry::DAO::User->create(
         $dao->db,
         {
-            username => 'testuser' . int( rand(10000) ),
+            username => 'testuser' . ++$USER_N,
             password => 'password123',
             email    => 'integrity@test.com',
             name     => 'Integrity Test'

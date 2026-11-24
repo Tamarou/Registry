@@ -108,6 +108,9 @@ subtest 'two published platform offers create no tenant' => sub {
 };
 
 subtest 'no published platform offer creates no tenant' => sub {
+    # The database refuses this state (platform-offer-to-tenants-guard); lifted
+    # in this file's own database so signup's own refusal is still proven.
+    $db->query('ALTER TABLE registry.offer_versions DISABLE TRIGGER offer_versions_keep_platform_offer');
     $db->query( q{UPDATE registry.offer_versions SET superseded_at = now()
                    WHERE published_at IS NOT NULL AND superseded_at IS NULL
                      AND NOT conditions @> '[{"kind": "holder_is_offerer"}]'} );

@@ -61,7 +61,8 @@
                                 </p>
                             </div>
 
-                            <!-- Pricing Override -->
+                            <!-- Pricing Override: only a tenant admin sets a price -->
+                            <% if (( ( stash('current_user') // {} )->{role} // '' ) eq 'admin') { %>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">
                                     Pricing Override (optional)
@@ -73,6 +74,7 @@
                                        placeholder="Leave blank to use default pricing">
                                 <p class="text-sm text-gray-500 mt-1">Override default program pricing</p>
                             </div>
+                            <% } %>
                         </div>
 
                         <!-- Schedule Configuration -->

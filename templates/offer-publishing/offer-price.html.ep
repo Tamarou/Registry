@@ -1,0 +1,45 @@
+%# ABOUTME: offer-publishing step: the price in cents, its currency, units per acceptance and the per-booking cap.
+%# ABOUTME: Units per acceptance cannot exceed the resource's capacity, or a class's smallest occurrence.
+% extends 'layouts/workflow';
+% title 'Price your offer';
+% stash description => 'Set the price and what one acceptance buys.';
+% my $price = stash('offer_price') // {};
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-group">
+    <label class="form-label required" for="price_cents">Price, in cents</label>
+    <input class="form-input" type="number" id="price_cents" name="price_cents" value="<%= $price->{price_cents} %>" min="0" step="1" required>
+    <p>For example 2500 for $25.00.</p>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label required" for="currency">Currency</label>
+    <input class="form-input" type="text" id="currency" name="currency" value="<%= uc( $price->{currency} // 'usd' ) %>" maxlength="3" required>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label required" for="units_per_acceptance">Units per acceptance</label>
+    <input class="form-input" type="number" id="units_per_acceptance" name="units_per_acceptance" value="<%= $price->{units_per_acceptance} // 1 %>" min="1" step="1" required>
+    <p>How many units of the resource one acceptance takes: 2 seats for a couple.</p>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label required" for="per_booking_cap">Per-booking cap</label>
+    <input class="form-input" type="number" id="per_booking_cap" name="per_booking_cap" value="<%= $price->{per_booking_cap} // 1 %>" min="1" step="1" required>
+    <p>How many acceptances one booking may take.</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
