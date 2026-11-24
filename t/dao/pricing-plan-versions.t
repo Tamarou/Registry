@@ -310,4 +310,26 @@ subtest 'a plan rate is saved to at most 4 decimals as a fraction' => sub {
     like $@, qr/at most 4 decimals/, 'and 0.005% is refused at revise, not saved as 0';
 };
 
+subtest 'a percentage, hybrid or revenue_share plan with no rate is refused' => sub {
+    # Saved without a rate, it dies in _coerce_pct at checkout for every
+    # tenant linked to it, so it is refused when it is written instead.
+    for my $type (qw( percentage hybrid revenue_share )) {
+        eval { Registry::DAO::PricingPlan->create($db, {
+            plan_scope => 'tenant', plan_name => "Rateless $type",
+            pricing_model_type => $type, pricing_configuration => {} }) };
+        like $@, qr/$type plan needs a rate/, "a $type plan with no rate is refused at create";
+    }
+
+    my $plan = Registry::DAO::PricingPlan->create($db, {
+        plan_scope => 'tenant', plan_name => 'Rated', pricing_model_type => 'percentage',
+        pricing_configuration => { percentage => 0.02 } });
+    eval { $plan->revise($db, { pricing_configuration => { percentage => undef } }) };
+    like $@, qr/percentage plan needs a rate/, 'and revising its rate away is refused';
+
+    ok eval { Registry::DAO::PricingPlan->create($db, {
+        plan_scope => 'tenant', plan_name => 'Flat', pricing_model_type => 'fixed',
+        amount_cents => 5000, pricing_configuration => {} }) },
+        'a fixed plan needs no rate';
+};
+
 done_testing;
