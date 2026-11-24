@@ -8,12 +8,17 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Registry::DAO;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::OutcomeDefinition;
+use Registry::DAO::Payment;
+use Registry::Service::Stripe;
+use Mojo::IOLoop;
+use Mojo::Promise;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -24,7 +29,10 @@ my $admin = Registry::DAO::User->create( $dao->db, {
 
 my $slug_a = "cwr_a_$$";
 Registry::DAO::Tenant->provision( $dao->db, {
-    name => "CWR A $$", slug => $slug_a, users => [$admin] } );
+    name => "CWR A $$", slug => $slug_a, users => [$admin],
+    stripe_connect_account_id => "acct_cwr_$$",
+    stripe_charges_enabled => 1, stripe_details_submitted => 1 } );
+state_platform_terms( $dao->db, $slug_a, { rate => 0 } );
 my $adb = $dao->connect_schema($slug_a)->db;
 
 my $t      = Test::Registry::Mojo->new('Registry');
@@ -106,6 +114,55 @@ subtest 'a step waiting for input leaves the run parked there' => sub {
         'job reports the step that needs a person';
     is reload( $adb, $run )->latest_step($adb)->slug, 'pass-on',
         'the run stays parked before the waiting step';
+};
+
+# --- the shipped Payment step, which returns a Mojo::Promise -----------------
+#
+# Stripe is answered locally, as the payment-step tests do: the step asks for
+# the intent the run names and settles the payment row from Stripe's answer.
+
+my $parent = Registry::DAO::User->create( $adb, {
+    username => "cwr_parent_$$", email => "cwr_parent_$$\@test.example",
+    name => 'CWR Parent', user_type => 'parent' } );
+
+my $intent_n = 0;
+# A pending payment row on intent $intent, and the run data that sends the
+# Payment step down its settle-from-Stripe path.
+sub payment_data ($intent) {
+    my $payment = Registry::DAO::Payment->create( $adb, {
+        user_id      => $parent->id,
+        amount_cents => 5000,
+        metadata     => { tenant_slug => $slug_a },
+    } );
+    $payment->update( $adb, { stripe_payment_intent_id => $intent } );
+    return ( $payment, { user_id => $parent->id, payment_id => $payment->id,
+                         payment_intent_id => $intent } );
+}
+
+subtest 'a Payment step promise is awaited before the next step runs' => sub {
+    my $intent = 'pi_cwr_ok_' . ++$intent_n;
+    my ( $payment, $data ) = payment_data($intent);
+    my $wf  = workflow( $adb, ['before'],
+        [ 'payment', 'Registry::DAO::WorkflowSteps::Payment' ], ['after'] );
+    my $run = parked_run( $adb, $wf, $data );
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
+        my $p = Mojo::Promise->new;
+        Mojo::IOLoop->next_tick( sub {
+            $p->resolve( { id => $id, status => 'succeeded', amount => 5000 } ) } );
+        return $p;
+    };
+
+    my $info = run_job( { tenant => $slug_a, run_id => $run->id } );
+
+    is $info->{state}, 'finished', 'job finished' or diag explain $info->{result};
+    is_deeply $info->{result},
+        { run_id => $run->id, stopped_at => 'after', reason => 'completed' },
+        'the run went on past the payment step to the end';
+    is Registry::DAO::Payment->find( $adb, { id => $payment->id } )->status, 'completed',
+        'the payment step settled from the resolved Stripe answer';
+    is reload( $adb, $run )->latest_step($adb)->slug, 'after', 'the run is complete';
 };
 
 done_testing;

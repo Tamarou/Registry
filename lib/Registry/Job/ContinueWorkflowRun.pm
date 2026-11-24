@@ -4,6 +4,7 @@ use 5.42.0;
 use Object::Pad;
 
 class Registry::Job::ContinueWorkflowRun {
+    use Mojo::Promise;
     use Registry::DAO::WorkflowRun;
 
     sub register ($class, $app) {
@@ -19,7 +20,7 @@ class Registry::Job::ContinueWorkflowRun {
 
         while ( !$run->completed($db) ) {
             my $step   = $run->next_step($db) or last;
-            my $result = $run->process( $db, $step, $run->data );
+            my $result = _settled( $run->process( $db, $step, $run->data ) );
 
             # A step that did not advance the run is waiting on a person.
             return $job->finish( {
@@ -32,5 +33,16 @@ class Registry::Job::ContinueWorkflowRun {
             stopped_at => $run->latest_step($db)->slug,
             reason     => 'completed',
         } );
+    }
+
+    # A step that talks to Stripe returns a promise. The job runs outside the
+    # daemon's loop, so waiting on it here settles it; a rejection dies.
+    sub _settled ($result) {
+        return $result unless $result isa Mojo::Promise;
+        my ( $value, $error, $rejected );
+        $result->then( sub ($v) { $value = $v },
+                       sub ($e) { ( $error, $rejected ) = ( $e, 1 ) } )->wait;
+        die $error if $rejected;
+        return $value;
     }
 }
