@@ -39,3 +39,18 @@
 
 * Role: Students
 * [profile](kylie-and-rob.md)
+
+## Rosa
+
+* Role: Studio owner and admin (in-studio bookings)
+* [profile](rosa.md)
+
+## Theo
+
+* Role: Front-desk staff (in-studio bookings)
+* [profile](theo.md)
+
+## Sam
+
+* Role: Adult booker (in-studio bookings)
+* [profile](sam.md)
