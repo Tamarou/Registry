@@ -312,6 +312,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # instalments need a Stripe schedule, built after the COMMIT below.
         my $schedule_for;
 
+        # Set when a superseded intent was paid: the refund owed, after COMMIT.
+        my $superseded;
+
         try {
             # Transaction-local, so it reverts at COMMIT and cannot ride back
             # into the connection pool the way a session-level setting would.
@@ -323,7 +326,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # One-time program payment finalized by Stripe (e.g. 3DS/redirect
             # cards confirmed off-site). Idempotent with the parent-return path.
             if ($event->{type} eq 'payment_intent.succeeded') {
-                $refund_for = $self->_process_payment_intent_succeeded($db, $event);
+                $refund_for = $self->_process_payment_intent_succeeded($db, $event, \$superseded);
                 $schedule_for = $self->_instalment_to_schedule($db, $event);
             }
             else {
@@ -387,9 +390,58 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 unless $queued;
         }
 
+        return $self->_refund_superseded($superseded) if $superseded;
         return $self->_settle_owed_refund($dao, $slug, $refund_for) if $refund_for;
 
         $self->render(status => 200, text => 'OK');
+    }
+
+    # Every active admin of the schema in search_path, told by email (the
+    # send_notifications drainer delivers it). In the settlement transaction,
+    # so the alert commits with the claim or not at all.
+    method _alert_staff_superseded_paid ($db, $payment_id, $intent_id) {
+        require Registry::DAO::Notification;
+        my $admins = $db->query(
+            q{SELECT id FROM users WHERE user_type = 'admin' AND deactivated_at IS NULL})->hashes;
+        for my $admin (@$admins) {
+            Registry::DAO::Notification->create( $db, {
+                user_id  => $admin->{id},
+                type     => 'general',
+                channel  => 'email',
+                subject  => 'A replaced card payment was charged and is being refunded',
+                message  => "Stripe intent $intent_id for payment $payment_id had been "
+                          . 'replaced by a newer attempt, but it was paid anyway, likely '
+                          . 'from an old browser tab. Nothing was enrolled from it. '
+                          . 'Registry is refunding it in full; if no refund shows for it '
+                          . 'in Stripe, refund it there by hand.',
+                metadata => { payment_id => $payment_id, payment_intent_id => $intent_id },
+            } );
+        }
+    }
+
+    # Refund, in full, a superseded intent that was paid, on the seller
+    # account it was charged on (a direct charge). The row records nothing:
+    # that charge was never this payment's. Always 200, as _settle_owed_refund
+    # and for its reason; staff were alerted in the transaction, and a failure
+    # is logged at error for whoever follows up the alert.
+    # shortcut: one attempt, no retry job; if failures show up in the log,
+    # move this to a Minion task with attempts.
+    method _refund_superseded ($superseded) {
+        my ( $intent_id, $account ) = $superseded->@{qw( intent account )};
+        return Mojo::Promise->resolve->then(sub {
+            Registry::Service::Stripe->from_env->for_account($account)->create_refund_async({
+                payment_intent   => $intent_id,
+                reason           => 'duplicate',
+                _idempotency_key => "refund:superseded:$intent_id",
+            });
+        })->then(sub ($refund) {
+            $self->app->log->info("superseded intent $intent_id refunded ($refund->{id})");
+            $self->render(status => 200, text => 'OK');
+        })->catch(sub ($err) {
+            $self->app->log->error(
+                "refund of superseded intent $intent_id failed; refund it by hand: $err");
+            $self->render(status => 200, text => 'OK');
+        });
     }
 
     # --- Instalments -------------------------------------------------------
@@ -652,7 +704,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # idempotent, so this is safe alongside the parent-return callback.
     # $db arrives inside the caller's transaction with search_path already
     # pointing at the tenant, so every unqualified name below resolves there.
-    method _process_payment_intent_succeeded ($db, $event) {
+    # $superseded, if given, is set when the intent is one this row replaced.
+    method _process_payment_intent_succeeded ($db, $event, $superseded = \my $unused) {
         my $intent     = $event->{data}{object} // {};
         my $payment_id = $intent->{metadata}{payment_id};
 
@@ -693,6 +746,20 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # payment_id, our amount and no application fee; metadata proves
         # nothing. Registry stored the id when it created the intent.
         my $stored = $payment->stripe_payment_intent_id;
+
+        # One Registry made for this row and then replaced: a decline's
+        # best-effort cancel failed and a stale tab paid it. The money is taken
+        # but buys nothing, so nothing settles; staff are told inside this
+        # transaction and the caller refunds it after the COMMIT (ruling 7a).
+        my $meta = ref $payment->metadata eq 'HASH' ? $payment->metadata : {};
+        if ( defined $intent->{id} && !ref $intent->{id}
+                && grep { $_ eq $intent->{id} } @{ $meta->{superseded_intent_ids} // [] } ) {
+            $self->_alert_staff_superseded_paid( $db, $payment_id, $intent->{id} );
+            $$superseded = { intent => $intent->{id}, account => $meta->{stripe_account_id} };
+            return ignore( "it was superseded on payment $payment_id by "
+                  . ( $stored // 'none stored' ) . '; refunding it', 'error' );
+        }
+
         return ignore( "payment $payment_id was created with intent "
               . ( $stored // 'none stored' ) . ', not this one', 'warn' )
             unless defined $stored && defined $intent->{id} && $intent->{id} eq $stored;

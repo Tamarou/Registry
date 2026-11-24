@@ -1,5 +1,5 @@
 # ABOUTME: Only the intent Registry created settles a payment; a seller's own intent naming our payment_id does not.
-# ABOUTME: Also covers escaped warnings, the warn for a payment_id with no row, and malformed payment_ids.
+# ABOUTME: Also covers escaped warnings, a paid superseded intent's refund and alert, and malformed payment_ids.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -175,6 +175,55 @@ subtest 'platform endpoint warns on a slug-bearing payment_id with no row' => su
                       && $_->[1] =~ /not found/ } @logs ),
         'logged at warn, not info';
     is settlement($sale)->{payment}{status}, 'pending', 'and nothing settled';
+};
+
+subtest 'a superseded Registry intent that succeeds is refunded and staff alerted, nothing settles' => sub {
+    my $sale = a_sale( stripe_payment_intent_id => 'pi_superseded_first' );
+
+    # The decline path's retry: a fresh intent replaces the first on the row.
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
+            Mojo::Promise->resolve({ id => 'pi_superseded_retry', client_secret => 'cs' });
+        };
+        $sale->create_payment_intent_async($tdb)->wait;
+    }
+    my $row = Registry::DAO::Payment->find($tdb, { id => $sale->id });
+    is $row->stripe_payment_intent_id, 'pi_superseded_retry', 'the retry is the stored intent';
+    is_deeply $row->metadata->{superseded_intent_ids}, ['pi_superseded_first'],
+        'and the first is recorded as superseded';
+
+    my $before = settlement($sale);
+    my $alerts = sub {
+        $tdb->query( q{SELECT count(*) FROM notifications
+                        WHERE type = 'general' AND message LIKE '%pi_superseded_first%'} )
+            ->array->[0];
+    };
+    my $alerts_before = $alerts->();
+
+    my @refunds;
+    @logs = ();
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, [ $s->stripe_account, $p ];
+            Mojo::Promise->resolve({ id => 're_superseded', status => 'succeeded' });
+        };
+        my ( $tx, $event_id ) = post_intent( 'pi_superseded_first', $sale );
+        $tx->status_is(200, 'acknowledged');
+        ok processed($event_id), 'the event is claimed and marked processed';
+    }
+
+    is scalar @refunds, 1, 'one refund is sent to Stripe';
+    is $refunds[0][0], $account, 'on the seller account the charge was made on';
+    is $refunds[0][1]{payment_intent}, 'pi_superseded_first', 'for the superseded intent';
+    ok !exists $refunds[0][1]{amount}, 'in full';
+    like $refunds[0][1]{_idempotency_key}, qr/pi_superseded_first/, 'under a key for that intent';
+
+    is_deeply settlement($sale), $before, 'no completion, no enrollment, no fee';
+    is $alerts->(), $alerts_before + 1, 'the tenant admin is alerted';
+    ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /pi_superseded_first/ } @logs ),
+        'and the platform log says so at error';
 };
 
 # A seller-written payment_id goes into WHERE id = ?: a non-UUID was a database
