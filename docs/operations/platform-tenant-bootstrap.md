@@ -59,14 +59,34 @@ Expect one row: the all-zeros id with slug `registry`.
 
 ---
 
-## 2. Before the first deploy that carries this
+## 2. Before the deploy that runs these migrations
 
-Run these against production before deploying. Each one is a query the
-migrations would otherwise answer by refusing to deploy or by changing access.
-The `registry-platform` rows still exist at this point, because the deploy has
-not run yet.
+Each check below must run before the migration named in its **Before:** line.
+Each one is a query that migration would otherwise answer by refusing to
+deploy or by changing access. Some of these migrations may already be on
+production, so first list which have run:
+
+```bash
+sqitch status "${DB_URL/#postgresql:/db:pg:}"
+```
+
+or in `psql`:
+
+```sql
+SELECT change, committed_at FROM sqitch.changes
+ WHERE project = 'registry'
+   AND change IN ('collapse-platform-tenant', 'tenant-users-role',
+                  'tenant-stripe-account-unique', 'operator-right-entitlement',
+                  'priceops-entitlement-one-phase',
+                  'platform-entitlement-replaces-plan-link');
+```
+
+Skip any check whose migration is already listed: it has run, so the check no
+longer applies, and some of its queries fail on the changed schema.
 
 1. **Compare `magic_link_expiry_hours` on the two platform rows.**
+
+   **Before:** `collapse-platform-tenant`.
 
    ```sql
    SELECT id, slug, magic_link_expiry_hours FROM registry.tenants
@@ -77,6 +97,8 @@ not run yet.
    names both. Set them equal, to the value that should stand, then deploy.
 
 2. **Check `canonical_domain` on the two platform rows.**
+
+   **Before:** `collapse-platform-tenant`.
 
    ```sql
    SELECT id, slug, canonical_domain FROM registry.tenants
@@ -91,6 +113,8 @@ not run yet.
    it before deploying.
 
 3. **List platform members who are not admins.**
+
+   **Before:** `tenant-users-role`.
 
    ```sql
    SELECT t.slug, u.username, u.user_type, tu.is_primary
@@ -108,6 +132,8 @@ not run yet.
 4. **Look for a Stripe account shared by two tenants, and for Tamarou's account
    on a studio row.**
 
+   **Before:** `tenant-stripe-account-unique`.
+
    ```sql
    SELECT stripe_connect_account_id, array_agg(slug) AS tenants
      FROM registry.tenants
@@ -118,13 +144,18 @@ not run yet.
    SELECT id, slug FROM registry.tenants WHERE stripe_connect_account_id = 'acct_XXXX';
    ```
 
-   The first must return no rows: a Stripe account belongs to one tenant at
-   most, and `tenant-stripe-account-unique` refuses to deploy and names the
-   account otherwise. The second must return nothing, or only a platform row:
+   The first must return no rows, with one exception: a single row whose
+   `tenants` are only `registry` and `registry-platform` is fine.
+   `collapse-platform-tenant` runs first and deletes the old `registry` row,
+   so that pair is one row by the time the unique index is built. Any other
+   row means a Stripe account held by two tenants, and
+   `tenant-stripe-account-unique` refuses to deploy and names the account. The second must return nothing, or only a platform row:
    the bootstrap cannot write `acct_XXXX` onto `registry` while a studio holds
    it.
 
 5. **Run the non-Solo-link query.**
+
+   **Before:** `platform-entitlement-replaces-plan-link`.
 
    ```sql
    SELECT t.slug, p.id, p.plan_name
@@ -141,6 +172,8 @@ not run yet.
 
 6. **Check `registry.tenant_resources`, if it exists.**
 
+   **Before:** `operator-right-entitlement`.
+
    ```sql
    SELECT to_regclass('registry.tenant_resources');
    -- only if that is not null:
@@ -153,19 +186,22 @@ not run yet.
    any other row. On a database that has neither change yet, the first query
    returns null and one deploy runs both.
 
-7. **Confirm the deploy can create `btree_gist`.** `priceops-entitlement-one-phase`,
-   which `bootstrap-platform-offers` depends on, runs
-   `CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public`. That needs CREATE on the
-   database, so sqitch must run as the database owner. Check on staging first:
+7. **Confirm the deploy can create `btree_gist`.**
+
+   **Before:** `priceops-entitlement-one-phase`.
+
+   `priceops-entitlement-one-phase`, which `bootstrap-platform-offers` depends
+   on, runs `CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public`.
+   `btree_gist` is a trusted extension (PostgreSQL 13 and later), so the role
+   sqitch uses needs the CREATE privilege on the database and on schema
+   `public`. Owning the database is one way to have both. Check on staging
+   first, as that role:
 
    ```sql
-   SELECT pg_get_userbyid(datdba) AS owner, current_user
-     FROM pg_database WHERE datname = current_database();
-   CREATE EXTENSION IF NOT EXISTS btree_gist;
+   CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public;
    ```
 
-   `owner` should equal `current_user` for the role sqitch uses, and the
-   `CREATE EXTENSION` should succeed.
+   It must succeed.
 
 ---
 
