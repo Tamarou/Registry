@@ -26,7 +26,17 @@ class Registry::Job::AttendanceCheck {
         
         # Delegate to generic workflow executor
         my $executor = Registry::Job::WorkflowExecutor->new;
-        $executor->run($job, $workflow_opts);
+        my $run = $executor->run($job, $workflow_opts) or return;    # the executor has failed the job
+
+        # Finish with the tenants covered and skipped, as the other sweeps do.
+        # Re-read: the steps wrote their results through their own run object.
+        my $data = Registry::DAO::WorkflowRun->find( $job->app->dao->db, { id => $run->id } )->data;
+        my %skipped = map { $_->{slug} => $_ }
+            map { @{ $data->{$_} // [] } } qw( missing_attendance_skipped upcoming_events_skipped );
+        $job->finish( {
+            tenants_covered => [ grep { !$skipped{$_} } @{ $data->{tenant_schemas} // [] } ],
+            tenants_skipped => [ map { $skipped{$_} } sort keys %skipped ],
+        } );
     }
 
     # Backward compatibility method for tests

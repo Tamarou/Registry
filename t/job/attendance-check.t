@@ -287,6 +287,7 @@ subtest 'Job execution with notifications' => sub {
         sub app { shift->{app} }
         sub id { 'test_job_123' }
         sub fail { shift; warn "Job failed: @_" }
+        sub finish { }    # the job now finishes with the tenants it covered
     }
 
     # Test the job using the backward compatibility method

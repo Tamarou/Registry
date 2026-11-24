@@ -102,7 +102,14 @@ The sweeps and their intervals live in one table in
   second app process or a manual `./registry minion job -e <task>` never
   starts a second chain.
 - Each run gets one attempt: the next run is the retry.
-- Each sweep covers every tenant, the platform tenant (`registry`) included.
+- Each sweep covers every tenant, the platform tenant (`registry`) included,
+  exactly once per run (`t/job/recurring-sweeps-cover-platform.t`).
+  `domain_verification` reads the platform's `tenant_domains` table, which
+  holds every tenant's domains; `instalment_reconcile` covers each tenant
+  whose row names a Stripe account. The per-tenant sweeps finish with
+  `tenants_covered` and `tenants_skipped` (slug and error) in the job
+  result: a tenant whose schema fails, or does not exist, is reported there
+  and the sweep goes on to the rest.
 
 Check a chain with `./registry minion job -t <task> -S inactive`. One queued
 job per sweep is healthy. None means the chain has stopped, and the next

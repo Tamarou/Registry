@@ -24,7 +24,9 @@ class Registry::Job::WorkflowExecutor {
         my $reschedule = $opts->{reschedule} || {};
         
         $job->app->log->info("Starting workflow execution: $workflow_slug");
-        
+
+        # Returned so a caller can report what the run did; undef when it failed.
+        my $completed_run;
         try {
             # Get database connection
             my $dao = $job->app->dao;
@@ -62,7 +64,8 @@ class Registry::Job::WorkflowExecutor {
             }
             
             $job->app->log->info("Workflow '$workflow_slug' completed successfully");
-            
+            $completed_run = $workflow_run;
+
             # Handle rescheduling if specified
             if ($reschedule->{enabled}) {
                 $self->schedule_next_run($job->app, $workflow_slug, $opts, $reschedule);
@@ -78,8 +81,9 @@ class Registry::Job::WorkflowExecutor {
             
             $job->fail($e);
         }
+        return $completed_run;
     }
-    
+
     # Schedule the next execution of this workflow
     method schedule_next_run ($app, $workflow_slug, $original_opts, $reschedule) {
         try {
