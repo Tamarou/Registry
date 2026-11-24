@@ -166,4 +166,21 @@ subtest 'insufficient seats refused with no partial hold' => sub {
     is $target->free_units($studio), 1, 'the free seat stays free';
 };
 
+subtest 'fee comes from stamped offer version' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my $e = booking( $version, $held );
+    my $offer_id = $version->offer_id;
+    my $class    = $studio->select( 'offer_versions', 'class_project_id', { id => $version->id } )->array->[0];
+    my $current  = Registry::DAO::OfferVersion->draft( $studio, $offer_id, offer_terms( undef,
+        class_project_id => $class,
+        policies         => { refund => { kind => 'none' }, change => { %WINDOW, fee_cents => 2500 } } ) )
+        ->publish($studio);
+
+    my ($run) = chosen($e);
+    my $data = hold_target( $run, $target );
+    is $data->{change}{fee_cents}, 1000, 'the fee is the one the entitlement was sold under, not 2500';
+    is $data->{change}{offer_version_id}, $version->id, 'and the version named is the stamped one';
+    isnt $current->id, $version->id, 'though a newer version is current';
+};
+
 done_testing;
