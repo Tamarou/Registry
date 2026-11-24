@@ -38,6 +38,11 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my $why = Registry::DAO::WorkflowSteps::RefundPolicy->refusal( $db, $data, $refund );
         return { stay => 1, errors => [$why] } if $why;
 
+        # From the run, as the change-policy step recorded it, never this form.
+        my $change = $data->{change_policy};
+        return { stay => 1, errors => ['Choose a change policy before publishing'] }
+            unless ref $change eq 'HASH' && defined $change->{kind};
+
         # From the run, as the use-policy step recorded it, never this form.
         my $use = ( ref $data->{use_policy} eq 'HASH' ? $data->{use_policy} : {} )->{use};
         return { stay => 1, errors => ['Choose a use policy before publishing'] }
@@ -68,7 +73,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 $basic->%{qw( resource_id class_project_id )},    # one or the other
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
-                policies => { refund => $refund, use => { kind => $use } },
+                policies => { refund => $refund, change => $change, use => { kind => $use } },
             } )->publish($db);
         };
         unless ($version) {

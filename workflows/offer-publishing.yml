@@ -43,6 +43,12 @@ steps:
     template: offer-publishing/refund-policy
     class: Registry::DAO::WorkflowSteps::RefundPolicy
 
+  - slug: change-policy
+    label: Change
+    description: Choose whether and how a booking may move to another occurrence
+    template: offer-publishing/change-policy
+    class: Registry::DAO::WorkflowSteps::ChangePolicy
+
   - slug: use-policy
     label: Use
     description: Choose what counts as using the offer
