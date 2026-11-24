@@ -81,8 +81,9 @@ subtest 'use none is published' => sub {
 
 subtest 'unknown or empty use value stays with an error' => sub {
     my $before = published_count();
-    for my $value ( 'sometimes', undef ) {
-        my $label = $value // 'a missing value';
+    for my $value ( 'sometimes', 'NONE', '', undef, ['none'] ) {
+        my $label = ref $value ? 'a list value' : !defined $value ? 'a missing value'
+            : $value eq '' ? 'an empty value' : "'$value'";
         my ( $run, $result ) = walk( 'use-policy' => { use => $value } );
         ok $result->{'use-policy'}{errors}, "$label stays with an error";
         ok $result->{publish}{errors}, 'and publish refuses the run';
@@ -97,6 +98,30 @@ subtest 'skipped use choice publishes nothing' => sub {
     like join( ' ', ( $result->{publish}{errors} // [] )->@* ), qr/use policy/i, 'asking for the use policy';
     ok !$run->data->{published_offer_version_id}, 'the run records no version';
     is published_count(), $before, 'and nothing is published';
+};
+
+subtest 'make up shape refused on day one' => sub {
+    my $before = published_count();
+    for my $value (qw( makeup make_up )) {
+        my ( $run, $result ) = walk( 'use-policy' => { use => $value } );
+        ok $result->{'use-policy'}{errors}, "'$value' stays with an error";
+        ok !$run->data->{use_policy}, 'and the run records no use policy';
+        ok $result->{publish}{errors}, 'and publish refuses the run';
+    }
+    is published_count(), $before, 'nothing is published';
+};
+
+subtest 'use value resubmitted at publish is ignored' => sub {
+    for my $value (qw( optional_attendance makeup )) {
+        my ( $run, $result ) = walk(
+            'use-policy' => { use => 'none' },
+            'publish'    => { use => $value, use_policy => { use => $value } },
+        );
+        my $version = published_version($run);
+        ok $version && $version->is_published, "publish with use '$value' in its form still publishes";
+        is_deeply $version && $version->policies->{use}, { kind => 'none' },
+            'with the use policy the use-policy step recorded';
+    }
 };
 
 done_testing;
