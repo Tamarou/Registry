@@ -13,6 +13,8 @@ use Test::Registry::Fixtures;
 use Test::Registry::PricingProbe qw( give_tenant_terms with_tenant_plan without_rate_check );
 use Registry::PriceOps::PlatformTerms qw( platform_terms_for_tenant );
 use Registry::DAO::Payment;
+use Registry::DAO::Entitlement;
+use Registry::DAO::OfferVersion;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 
@@ -179,6 +181,61 @@ subtest 'a rate change afterwards does not rewrite history' => sub {
     is $after->platform_fee_cents, 500, 'the recorded fee is unchanged';
     is $after->platform_offer_version_id, $charged_under,
         'and still names the plan it was actually charged under';
+};
+
+my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+
+# A connect-ready tenant with a schema of its own, holding Solo v1 from 2020.
+Test::Registry::Fixtures::create_tenant( $db, { name => 'Stamp Studio', slug => 'stamp_studio' } );
+$db->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_stamp_studio'
+               WHERE slug = 'stamp_studio'} );
+$db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', 'stamp_studio', $parent->id );
+my $stamp_db = $dao->connect_schema('stamp_studio')->db;
+my $solo_v1_held = Registry::DAO::Entitlement->create( $db, {
+    holder_tenant_id => $db->query( q{SELECT id FROM registry.tenants WHERE slug = 'stamp_studio'} )
+        ->hash->{id},
+    offer_version_id => $SOLO_V1, payment_plan_id => 'revenue_share',
+    starts_at => '2020-01-01T00:00:00Z' } );
+
+sub a_stamped_charge ( $fee ) {
+    my $p = Registry::DAO::Payment->create( $stamp_db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => { tenant_slug => 'stamp_studio', enrollment_items => [] } } );
+    $stamp_db->update( 'payments', { stripe_payment_intent_id => 'pi_stamp_' . $p->id }, { id => $p->id } );
+    Registry::DAO::Payment->find( $stamp_db, { id => $p->id } )->_apply_intent( $stamp_db, {
+        id => 'pi_stamp_' . $p->id, status => 'succeeded', amount => 10000,
+        application_fee_amount => $fee, metadata => { payment_id => $p->id },
+    }, 'pi_stamp_' . $p->id );
+    return Registry::DAO::Payment->find( $stamp_db, { id => $p->id } );
+}
+
+my $under_v1;
+subtest 'charge stamps the platform offer version' => sub {
+    $under_v1 = a_stamped_charge(250);
+    is $under_v1->platform_fee_cents, 250, 'the fee is recorded';
+    is $under_v1->platform_offer_version_id, $SOLO_V1,
+        'with the offer version of the tenant entitlement it was taken under';
+    is $under_v1->platform_payment_plan_id, 'revenue_share', 'and the plan it accepted';
+};
+
+subtest 'stamp survives a later solo version' => sub {
+    # Solo v2 is published and the tenant moves to it: v1's phase ends where
+    # v2's begins.
+    my $v2 = Registry::DAO::OfferVersion->draft( $db, '00000000-0000-0000-0002-000000000001', {
+        resource_id => '00000000-0000-0000-0001-000000000001', price_cents => 0,
+        units_per_acceptance => 1, per_booking_cap => 1,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => '0.03' } ],
+        policies => { refund => { kind => 'none' } } } )->publish($db);
+    $db->query( q{UPDATE registry.entitlements SET in_effect = tstzrange(lower(in_effect), now())
+                   WHERE id = ?}, $solo_v1_held->id );
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $solo_v1_held->holder_tenant_id, offer_version_id => $v2->id,
+        payment_plan_id => 'revenue_share', starts_at => 'now' } );
+
+    my $under_v2 = a_stamped_charge(300);
+    is $under_v2->platform_offer_version_id, $v2->id, 'a charge after the move is stamped v2';
+    is Registry::DAO::Payment->find( $stamp_db, { id => $under_v1->id } )->platform_offer_version_id,
+        $SOLO_V1, 'the charge taken under v1 still names v1';
 };
 
 # A tenant schema of its own, holding completed charges with these recorded
