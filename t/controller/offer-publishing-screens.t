@@ -139,6 +139,7 @@ subtest 'staff post to an admins offer run refused' => sub {
     my $s = client($staff);
     $s->get_ok('/offer-publishing')->status_is(403, 'staff are refused at the route');
     $s->post_ok( $price_url => form => \%PRICE )->status_is(403, 'and a POST to a later step of an admin\'s run');
+    $s->content_unlike( qr/CSRF token validation failed/, 'refused for the role, not for a missing token' );
     is_deeply $db->query( 'SELECT data, latest_step_id FROM workflow_runs WHERE id = ?', $run_id )->hash,
         $before, 'the run is unchanged';
 };
