@@ -376,14 +376,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     method _invoice_schedule_id ($event) {
         my $invoice = $event->{data}{object} // {};
 
-        # Stripe has moved this field across API versions: a schedule id appears
-        # on the invoice itself on some, and under subscription_details on
-        # others. Both are read rather than one being assumed, because guessing
-        # wrong means an instalment is never recorded as paid and the family
-        # appears to owe money they have already sent.
-        return $invoice->{subscription_details}{metadata}{schedule}
-            // $invoice->{schedule}
-            // $invoice->{subscription_schedule};
+        # Stripe has moved this field across API versions, so both spellings are
+        # read. Never subscription_details.metadata: that is the subscription's
+        # metadata, which the seller owns on their own account and can set to
+        # our schedule id -- Registry never writes it.
+        return $invoice->{schedule} // $invoice->{subscription_schedule};
     }
 
     # Mark the earliest still-owed instalment of this set paid, or failed.

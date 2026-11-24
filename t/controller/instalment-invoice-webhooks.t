@@ -234,4 +234,17 @@ subtest 'platform endpoint no longer marks instalments' => sub {
     $dao->db->delete( 'payments', { stripe_schedule_id => $SCHED } );
 };
 
+# The seller owns the account, so they own every subscription's metadata on it
+# and can write our schedule id there. Only an id Stripe sets ties an invoice
+# to the schedule Registry stored.
+subtest 'seller metadata naming a schedule marks nothing' => sub {
+    build_set();
+
+    deliver( 'invoice.paid', {
+        subscription_details => { metadata => { schedule => $SCHED } },
+        payment_intent       => 'pi_seller_own' } );
+
+    is_deeply statuses(), [qw( completed pending pending )], 'no instalment is marked paid';
+};
+
 $t_db->cleanup_test_database;
