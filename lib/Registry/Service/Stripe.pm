@@ -270,6 +270,11 @@ class Registry::Service::Stripe {
         return $self->_request_async('GET', "refunds/$refund_id");
     }
 
+    # Charges API
+    method retrieve_charge_async($charge_id) {
+        return $self->_request_async('GET', "charges/$charge_id");
+    }
+
     # Application Fees API
     #
     # Returning the platform's fee is the exception to keeping it on a refund

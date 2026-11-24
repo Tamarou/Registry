@@ -96,3 +96,4 @@ waitlist-offer-notification-types [operator-right] 2026-11-23T23:00:00Z Chris Pr
 tenant-stripe-account-unique [waitlist-offer-notification-types] 2026-11-24T00:00:00Z Chris Prather <chris.prather@tamarou.com> # A Stripe account id belongs to one tenant at most
 webhook-events-connect-payload [tenant-stripe-account-unique] 2026-11-24T01:00:00Z Chris Prather <chris.prather@tamarou.com> # Store refund, dispute and customer events from the Connect endpoint for later
 pricing-plan-rate-check [webhook-events-connect-payload] 2026-11-24T02:00:00Z Chris Prather <chris.prather@tamarou.com> # A plan rate written in SQL is held to the rule PricingPlan->create enforces
+payments-platform-fee-refunded [pricing-plan-rate-check] 2026-11-24T03:00:00Z Chris Prather <chris.prather@tamarou.com> # Record how much of the platform fee Stripe reports refunded

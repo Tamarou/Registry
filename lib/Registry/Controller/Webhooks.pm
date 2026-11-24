@@ -40,6 +40,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $seen = $db->select( 'registry.webhook_events', ['id'],
             { stripe_event_id => $event_id } )->hash;
 
+        # A fee the platform took on a seller's charge, returned. Never tenant
+        # billing, so it never reaches the subscription handler below.
+        return $self->_settle_fee_refunded( $db, $event, $seen )
+            if ( $event->{type} // '' ) eq 'application_fee.refunded';
+
         # The prefetch is the only Stripe call on this path, and it resolves
         # before the transaction opens. Everything inside the chain below is
         # database work on one connection.
@@ -62,6 +67,55 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # has not claimed, and a claim that was taken rolls back with its
             # transaction. A 500 asks Stripe to redeliver.
             $self->app->log->error("Webhook failed before settlement: $err");
+            $self->render( status => 500, text => 'Webhook processing failed' );
+          } );
+    }
+
+    # application_fee.refunded: Stripe reports how much of the fee on a
+    # seller's charge has gone back, whoever returned it. The fee names the
+    # seller's account, which finds the tenant, and the charge, whose payment
+    # intent finds the payment Registry stored. The charge is read before the
+    # transaction, so the claim never waits on Stripe; a failed read answers
+    # 500 unclaimed, so Stripe's redelivery is recorded rather than lost.
+    method _settle_fee_refunded ( $db, $event, $seen ) {
+        my $fee     = $event->{data}{object} // {};
+        my $account = $fee->{account};
+        my $tenant  = $db->select( 'registry.tenants', ['slug'],
+            { stripe_connect_account_id => $account } )->hash;
+
+        $self->render_later;
+        return (
+            $seen
+            ? Mojo::Promise->resolve(undef)
+            : Registry::Service::Stripe->from_env->for_account($account)
+                ->retrieve_charge_async( $fee->{charge} )
+          )->then( sub ($charge) {
+            my $tx = $db->begin;
+            return unless $self->_claim_event( $db, $event );
+
+            try {
+                $db->query( q{SELECT set_config('search_path', ?, true)}, "$tenant->{slug}, public" );
+                # The highest amount reported wins: a redelivery, or an older
+                # event arriving late, never lowers what was recorded.
+                $db->query(
+                    q{UPDATE payments
+                         SET platform_fee_refunded_cents =
+                             GREATEST(COALESCE(platform_fee_refunded_cents, 0), ?)
+                       WHERE stripe_payment_intent_id = ?},
+                    $fee->{amount_refunded}, $charge->{payment_intent} );
+                $db->query(
+                    q{UPDATE registry.webhook_events SET processed_at = now()
+                      WHERE stripe_event_id = ?}, $event->{id} );
+                $tx->commit;
+            }
+            catch ($e) {
+                $self->app->log->error("Webhook event $event->{id} failed: $e");
+                $self->render( status => 500, text => 'Webhook processing failed' );
+                return;
+            }
+            $self->render( status => 200, text => 'OK' );
+          } )->catch( sub ($err) {
+            $self->app->log->error("Webhook event $event->{id}: charge lookup failed: $err");
             $self->render( status => 500, text => 'Webhook processing failed' );
           } );
     }
