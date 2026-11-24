@@ -160,4 +160,44 @@ subtest 'no workflow_executor job queued' => sub {
         'no run data holds an app object';
 };
 
+# The production command (`./registry minion worker`), run in-process until it
+# has made one pass of its loop, then stopped the way a deploy stops it.
+sub start_worker {
+    $minion->once( worker => sub ( $, $worker ) {
+        $worker->on( wait => sub { kill TERM => $$ } );
+    } );
+    $app->start(qw(minion worker -D 0));
+}
+
+subtest 'worker start seeds every chain' => sub {
+    $minion->reset( { all => 1 } );
+
+    start_worker();
+    is queued($_), 1, "$_ seeded by the worker" for sort keys %INTERVAL;
+
+    $app->setup_recurring_jobs;    # the web server booting too
+    start_worker();                # and the worker restarting
+    is queued($_), 1, "$_ still has one chain" for sort keys %INTERVAL;
+};
+
+subtest 'sweep failed by repair is reseeded by the next worker start' => sub {
+    $minion->reset( { all => 1 } );
+    $app->setup_recurring_jobs;
+    $mdb->query(q{UPDATE minion_jobs SET delayed = now() WHERE task = 'process_waitlist'});
+
+    # A worker takes the sweep, then dies without a heartbeat.
+    my $dead = $minion->worker->register;
+    my $job  = $dead->dequeue( 0, { tasks => ['process_waitlist'] } );
+    $mdb->query( q{UPDATE minion_workers SET notified = now() - interval '1 day' WHERE id = ?}, $dead->id );
+    $minion->repair;
+
+    my $info = $job->info;
+    is $info->{state},  'failed',           'repair failed the sweep';
+    is $info->{result}, 'Worker went away', 'because its worker went away';
+    is queued('process_waitlist'), 0, 'the chain has no next run';
+
+    start_worker();
+    is queued('process_waitlist'), 1, 'the worker start queued exactly one next run';
+};
+
 done_testing;

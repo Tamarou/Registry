@@ -144,6 +144,14 @@ class Registry :isa(Mojolicious) {
             Pg => $ENV{DB_URL} || 'postgresql://localhost/registry'
         });
 
+        # A running worker (`minion worker`) seeds the sweep chains too, after
+        # its startup repair has failed any sweep a dead worker left behind,
+        # so restarting only the worker restarts a stopped chain. `wait` is
+        # emitted only by Minion::Worker->run, not by perform_jobs.
+        $self->minion->on( worker => sub ( $, $worker ) {
+            $worker->once( wait => sub { $self->setup_recurring_jobs } );
+        } );
+
         # HTMX plugin provides is_htmx_request, htmx->res->push_url, etc.
         $self->plugin('Mojolicious::Plugin::HTMX');
 
