@@ -2476,6 +2476,14 @@ SQL
         die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
             unless ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
 
+        # The exception is a term of the platform offer version stamped on the
+        # payment, read backwards: a version whose refund policy has none, or
+        # a payment with no stamp, keeps its fee.
+        my $policy = eval { $self->stamped_platform_terms($db)->{refund_policy}{kind} } // 'none';
+        die REFUND_NOT_SENT . ": payment $id was charged under a refund policy ($policy) with no "
+          . "admin exception to return the platform fee\n"
+            unless $policy eq 'keep_fee_with_admin_exception';
+
         my $asked = $args->{amount_cents};
         die REFUND_NOT_SENT . ": Fee refund of '$asked' cents on payment $id is not a positive whole number\n"
             if defined $asked && !( $asked =~ /\A[0-9]+\z/ && $asked > 0 );
