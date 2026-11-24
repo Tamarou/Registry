@@ -24,8 +24,20 @@ class Registry::Job::InstalmentReconcile {
             SELECT slug, stripe_connect_account_id AS account FROM registry.tenants
              WHERE stripe_connect_account_id IS NOT NULL
         } )->hashes;
-        $self->reconcile_tenant( $app, $_ ) for @$tenants;
-        return $job->finish;
+        # One broken tenant must not hold up the rest; it is reported by slug, as the other sweeps do.
+        my ( @covered, @skipped );
+        for my $tenant (@$tenants) {
+            try {
+                $self->reconcile_tenant( $app, $tenant );
+                push @covered, $tenant->{slug};
+            }
+            catch ($e) {
+                ( my $reason = "$e" ) =~ s/\s+/ /g;
+                $app->log->error("instalment_reconcile: tenant $tenant->{slug} failed: $reason");
+                push @skipped, { slug => $tenant->{slug}, error => $reason };
+            }
+        }
+        return $job->finish( { tenants_covered => \@covered, tenants_skipped => \@skipped } );
     }
 
     method reconcile_tenant ($app, $tenant) {
