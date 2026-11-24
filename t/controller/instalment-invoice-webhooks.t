@@ -200,6 +200,27 @@ subtest 'a paid instalment invoice with no application fee records zero' => sub 
     is_deeply fee_and_plan( $ids[1] ), [ 0, $PLAN ], 'zero, under the snapshotted plan';
 };
 
+# Stripe's retry of a failed invoice is the delivery that takes the fee.
+subtest 'payment_failed then invoice.paid records the fee on that row' => sub {
+    my @ids = build_set();
+
+    deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two' ) );
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', application_fee_amount => 50 ) );
+
+    is_deeply fee_and_plan( $ids[1] ), [ 50, $PLAN ], "the retry's fee is on the row that failed";
+    is_deeply fee_and_plan( $ids[2] ), [ undef, undef ], 'and the next owed row is untouched';
+};
+
+# Recorded once, by the delivery that completed the row.
+subtest 'a redelivered invoice.paid with a different fee leaves the first fee' => sub {
+    my @ids = build_set();
+
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', application_fee_amount => 50 ) );
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', application_fee_amount => 99 ) );
+
+    is_deeply fee_and_plan( $ids[1] ), [ 50, $PLAN ], 'the first fee stands';
+};
+
 subtest 'platform_revenue counts a paid instalment as recorded' => sub {
     build_set();
 

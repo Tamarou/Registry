@@ -853,7 +853,8 @@ field $_stripe_client = undef;
     }
     
     # Write down the application fee and the plan version it was charged under.
-    # Both settlement paths -- process_payment and the webhook -- call this, so
+    # All three settlement paths -- process_payment (via _apply_intent), the
+    # payment_intent webhook, and the instalment invoice handler -- call this, so
     # the missing-fee rule lives here once. $intent is whatever Stripe object
     # reported the fee: the payment intent, or the invoice for instalments 2..N.
     #
