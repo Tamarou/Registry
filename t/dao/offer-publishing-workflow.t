@@ -556,4 +556,11 @@ subtest 'publish capacity check refuses missing units without a warning' => sub 
     is_deeply \@warned, [], 'and nothing is warned';
 };
 
+subtest 'review screen shows a rate as an exact percent' => sub {
+    require Registry::DAO::WorkflowSteps::PublishOfferVersion;
+    is Registry::DAO::WorkflowSteps::PublishOfferVersion->percent_of( $_->[0] ), $_->[1], "$_->[0] shows as $_->[1]" for
+        [ '0.0250' => '2.5%' ], [ '0.025' => '2.5%' ], [ '1.0000' => '100%' ], [ '1' => '100%' ],
+        [ '0.0000' => '0%' ], [ '0.0001' => '0.01%' ], [ '0.1235' => '12.35%' ], [ '0.3000' => '30%' ];
+};
+
 done_testing;

@@ -16,6 +16,17 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::WorkflowSteps::RefundPolicy;
     use Registry::Utility::PriceFormat qw( format_price );
 
+    # A stored fraction (at most 4 places, 0..1) as a percent, by moving the
+    # decimal point in its digits: no float touches the rate on its way to the screen.
+    sub percent_of ( $class, $fraction ) {
+        my ( $whole, $part ) = $fraction =~ /\A([0-9]+)(?:\.([0-9]*))?\z/a
+            or die "not a stored rate: $fraction\n";
+        my $bp = $whole * 10_000 + substr( ( $part // '' ) . '0000', 0, 4 );
+        my $percent = sprintf '%d.%02d', int( $bp / 100 ), $bp % 100;
+        $percent =~ s/\.?0+\z// if $percent =~ /\./;
+        return "$percent%";
+    }
+
     method process ( $db, $form_data, $run = undef ) {
         return { stay => 1 } unless ( $form_data->{action} // '' ) eq 'publish';
 
@@ -80,7 +91,9 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my $published = $db->query( q{
             SELECT data->>'published_offer_version_id' FROM workflow_runs WHERE id = ? FOR UPDATE
         }, $run->id )->array->[0];
-        return { published_offer_version_id => $published } if $published;
+        # Nothing is written on the early returns, so the savepoint is simply released.
+        my $release = sub ($result) { $db->query('RELEASE SAVEPOINT publish_offer_version') unless $tx; $result };
+        return $release->( { published_offer_version_id => $published } ) if $published;
 
         # Capacity asked again under the resource's row lock, which every grant
         # and hold takes first (Resource->locked), so a capacity lowered since
@@ -90,7 +103,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
              WHERE r.id = ? OR e.project_id = ? ORDER BY r.id FOR UPDATE OF r
         }, $basic->@{qw( resource_id class_project_id )} );
         $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
-        return { stay => 1, errors => [$why] } if $why;
+        return $release->( { stay => 1, errors => [$why] } ) if $why;
 
         my $stale;
         my $version = eval {
@@ -144,9 +157,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
             price_display => format_price( $price->{price_cents}, $price->{currency} ),
             change_fee_display => defined( ( $data->{change_policy} // {} )->{fee_cents} )
                 ? format_price( $data->{change_policy}{fee_cents}, $price->{currency} ) : undef,
-            # The exact 4-place fraction as a percent; whole basis points, so 2 places hold it.
             rate_display => defined( ( $data->{percentage_of_sales_payment} // {} )->{fraction} )
-                ? ( 0 + sprintf '%.2f', $data->{percentage_of_sales_payment}{fraction} * 100 ) . '%' : undef,
+                ? __PACKAGE__->percent_of( $data->{percentage_of_sales_payment}{fraction} ) : undef,
         };
     }
 }
