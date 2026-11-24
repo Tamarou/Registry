@@ -160,13 +160,17 @@ sub first_instalment () {
     } );
 }
 
-# Runs $code with the three Stripe calls recorded rather than sent.
+# Runs $code with the four Stripe calls recorded rather than sent.
 sub with_stripe_calls ( $code ) {
     my @calls;
     no warnings 'redefine';
     local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
         push @calls, [ retrieve_payment_intent => $s->stripe_account, $pi ];
         return { id => $pi, customer => 'cus_one', payment_method => 'pm_one' };
+    };
+    local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) {
+        push @calls, [ list_subscription_schedules => $s->stripe_account, $p ];
+        return { data => [] };
     };
     local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
         push @calls, [ create_product => $s->stripe_account, $p ];
@@ -185,12 +189,13 @@ subtest 'schedule is made on the tenant account with fee percent and no transfer
     my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
 
     is_deeply [ map { $_->[0] } @$calls ],
-        [qw( retrieve_payment_intent create_product create_subscription_schedule )],
-        'the intent, the product and the schedule';
-    is_deeply [ map { $_->[1] } @$calls ], [ ('acct_platform_test') x 3 ],
+        [qw( retrieve_payment_intent list_subscription_schedules
+             create_product create_subscription_schedule )],
+        'the intent, any schedule already made, the product and the schedule';
+    is_deeply [ map { $_->[1] } @$calls ], [ ('acct_platform_test') x 4 ],
         'all on the seller account, where the customer and card live';
 
-    my $params = $calls->[2][2];
+    my $params = $calls->[3][2];
     ok $plan_pct > 0, 'the seller is on a revenue-share plan';
     is $params->{'default_settings[application_fee_percent]'}, $plan_pct,
         'our share is the application fee percent';
@@ -203,7 +208,7 @@ subtest 'the schedule names the payment it bills for' => sub {
     my $payment = first_instalment();
     my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
 
-    is $calls->[2][2]{'metadata[payment_id]'}, $payment->id, "instalment one's id";
+    is $calls->[3][2]{'metadata[payment_id]'}, $payment->id, "instalment one's id";
 };
 
 sub params_with_pct ( $pct ) {
@@ -286,8 +291,9 @@ subtest 'rerun creates no second schedule' => sub {
 
 # Stripe as it treats an Idempotency-Key: a key it has seen returns what the
 # first request made, and a request without one makes a new object every time.
-# Persists across runs, as Stripe's memory does across a crashed job.
-my %stripe_by_key;
+# Persists across runs, as Stripe's memory does across a crashed job. Every
+# schedule made stays listable after its key is forgotten, as at Stripe.
+my ( %stripe_by_key, @stripe_schedules );
 my $stripe_serial = 0;
 sub with_keyed_stripe ( $code, %on ) {
     my @made;
@@ -306,8 +312,14 @@ sub with_keyed_stripe ( $code, %on ) {
     local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
         return $make->( prod => $p );
     };
+    local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) {
+        return { data => [ grep { $_->{customer} eq $p->{customer} } @stripe_schedules ] };
+    };
     local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
         my $schedule = $make->( sub_sched => $p );
+        push @stripe_schedules, { %$schedule, customer => $p->{customer},
+            status => 'not_started', metadata => { payment_id => $p->{'metadata[payment_id]'} } }
+            unless grep { $_->{id} eq $schedule->{id} } @stripe_schedules;
         # Once: the hook may itself schedule, and must not fire inside itself.
         if ( my $hook = delete $on{schedule_made} ) { $hook->() }
         return $schedule;
@@ -346,6 +358,31 @@ subtest 'a retried job after create-then-crash makes one schedule' => sub {
 
     my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
     is $row->stripe_schedule_id, $made->[0][1], 'and records the one the first run made';
+    is scheduled_rows($payment), 2, 'with one row per remaining instalment';
+};
+
+subtest 'a late run whose key has expired reuses the existing schedule and makes no second one' => sub {
+    my $payment = first_instalment();
+
+    my $crashed;
+    my $made = with_keyed_stripe(
+        sub { eval { $payment->schedule_remaining_instalments($db); 1 } or $crashed = $@ },
+        schedule_made => sub { die "worker lost\n" },
+    );
+    is scalar @$made, 1, 'a crash before COMMIT leaves one schedule at Stripe';
+
+    # More than 24 hours on, Stripe has forgotten every key, and the run is a
+    # first attempt: a job queued afresh, not a retry.
+    %stripe_by_key = ();
+    require Registry::Job::InstalmentSchedule;
+    my $late = with_keyed_stripe( sub {
+        Registry::Job::InstalmentSchedule->new->create_for( $db,
+            Registry::DAO::Payment->find( $db, { id => $payment->id } ) );
+    } );
+    is_deeply $late, [], 'the late run makes no second schedule';
+
+    my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+    is $row->stripe_schedule_id, $made->[0][1], 'and records the one already at Stripe';
     is scheduled_rows($payment), 2, 'with one row per remaining instalment';
 };
 
@@ -388,8 +425,8 @@ subtest 'schedule uses the account instalment one was charged on' => sub {
     my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
     Test::Registry::Fixtures::platform_seller($db);
 
-    is scalar @$calls, 3, 'the intent, the product and the schedule';
-    is_deeply [ map { $_->[1] } @$calls ], [ ('acct_platform_test') x 3 ],
+    is scalar @$calls, 4, 'the intent, the schedules listed, the product and the schedule';
+    is_deeply [ map { $_->[1] } @$calls ], [ ('acct_platform_test') x 4 ],
         'all on the account the customer was charged on, not the new one';
 
     # A later refund of instalment two goes through that row's own client, so
@@ -433,6 +470,6 @@ subtest 'the instalment schedule uses the rate snapshotted on instalment one' =>
     $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
         $plan_id, $seller );
 
-    is $calls->[2][2]{'default_settings[application_fee_percent]'}, $plan_pct,
+    is $calls->[3][2]{'default_settings[application_fee_percent]'}, $plan_pct,
         'the schedule still takes the rate instalment one was quoted at';
 };

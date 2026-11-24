@@ -1,5 +1,5 @@
 # ABOUTME: Minion job that creates the Stripe schedule for the instalments after the first.
-# ABOUTME: Runs after the webhook's COMMIT; retries look for an earlier run's schedule, the last failure alerts.
+# ABOUTME: Runs after the webhook's COMMIT, because the card only exists once charge one succeeded; the last failure alerts.
 use 5.42.0;
 use Object::Pad;
 
@@ -33,10 +33,10 @@ class Registry::Job::InstalmentSchedule {
         # swallowed: without the schedule the family pays instalment one and
         # nothing else, which is the defect #425 is about, arrived by a different
         # road. Dying fails the job, and Minion retries it on the attempts the
-        # webhook enqueued it with (Controller::Webhooks). A retry looks for a
-        # schedule an earlier run made first, and never changes the key.
+        # webhook enqueued it with (Controller::Webhooks). Every run looks for a
+        # schedule an earlier one made first, and never changes the key.
         my $schedule_id;
-        try { $schedule_id = $self->create_for( $dao->db, $payment, $job->retries > 0 ) }
+        try { $schedule_id = $self->create_for( $dao->db, $payment ) }
         catch ($e) {
             # Minion counts attempts down on each retry: one left is the last.
             $self->_alert( $job, $dao->db, $payment_id, $slug, $e )
@@ -53,8 +53,8 @@ class Registry::Job::InstalmentSchedule {
 
     # Separated so it can be tested without a Minion context, as
     # DomainVerification::check_pending_domains is.
-    method create_for ( $db, $payment, $look_first = 0 ) {
-        return $payment->schedule_remaining_instalments( $db, look_first => $look_first );
+    method create_for ( $db, $payment ) {
+        return $payment->schedule_remaining_instalments($db);
     }
 
     # Both who can act: the tenant's admins, whose family it is, and the

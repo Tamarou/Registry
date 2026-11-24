@@ -199,11 +199,10 @@ field $_stripe_client = undef;
     # then finds its schedule. And the product and schedule creates carry
     # Idempotency-Keys named for the payment, so a retry after Stripe made the
     # schedule but before our COMMIT gets that same schedule back.
-    # With look_first -- a retry -- Stripe is asked for a schedule an earlier
-    # run made before another is created, as a key does not always answer
-    # that: Stripe replays a stored 500 under it for 24 hours, and forgets it
-    # after.
-    method schedule_remaining_instalments ($db, %opt) {
+    # And Stripe is asked for a schedule an earlier run made before another is
+    # created, as a key does not always answer that: Stripe replays a stored
+    # 500 under it for 24 hours, and forgets it after.
+    method schedule_remaining_instalments ($db) {
         my $raw = ($db isa Registry::DAO) ? $db->db : $db;
 
         return $stripe_schedule_id if $stripe_schedule_id;
@@ -246,7 +245,7 @@ field $_stripe_client = undef;
             or die "instalment 1 of payment $id saved no card\n";
 
         my $description = $meta->{instalment_description} // 'Program Enrollment';
-        my $schedule = $opt{look_first} && $self->_schedule_at_stripe( $client, $customer );
+        my $schedule = $self->_schedule_at_stripe( $client, $customer );
         $schedule ||= $client->create_subscription_schedule( {
             %{ instalment_schedule_params( {
                 customer          => $customer,

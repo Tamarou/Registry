@@ -133,7 +133,8 @@ subtest 'a job that fails once and succeeds on retry makes one schedule' => sub 
 # Every Stripe call the job makes for $sale stubbed: the schedule create
 # always answers $error, as Stripe replays a stored 500 under one
 # Idempotency-Key for 24 hours; listing the customer's schedules returns
-# @$listed. Runs $job to its end and returns what Stripe was asked.
+# @$listed once a create has run, as Stripe may have made the schedule it
+# answered 500 for. Runs $job to its end and returns what Stripe was asked.
 sub run_against_replayed_500 ( $job, $error, $listed ) {
     my ( @keys, @lists );
     no warnings 'redefine';
@@ -149,7 +150,7 @@ sub run_against_replayed_500 ( $job, $error, $listed ) {
     };
     local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) {
         push @lists, $p;
-        return { data => $listed };
+        return { data => @keys ? $listed : [] };
     };
 
     my $backoff = $minion->backoff;
@@ -173,7 +174,8 @@ subtest 'a replayed 500 under the key: a retry finds the schedule Stripe made an
 
     is $ran->{info}{state}, 'finished', 'the job finishes';
     is scalar @{ $ran->{keys} }, 1, 'after one create, answered 500';
-    is $ran->{lists}[0]{customer}, 'cus_sr', "the retry lists the payment's customer's schedules";
+    is scalar @{ $ran->{lists} }, 2, 'each run first listed schedules';
+    is $ran->{lists}[1]{customer}, 'cus_sr', "the payment's customer's";
     my $row = Registry::DAO::Payment->find( $tdb, { id => $sale->id } );
     is $row->stripe_schedule_id, 'sub_sched_made', 'and records the one made for this payment';
     is $tdb->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
@@ -191,7 +193,7 @@ subtest 'a job whose last attempt fails alerts an operator naming payment and te
     is_deeply [ sort keys %{ { map { $_ => 1 } @{ $ran->{keys} } } } ],
         [ 'instalment_schedule:' . $sale->id . ':schedule' ],
         'every one under the same key: never a new key';
-    is scalar @{ $ran->{lists} }, 9, 'each retry first looked for a schedule Stripe made';
+    is scalar @{ $ran->{lists} }, 10, 'each attempt first looked for a schedule Stripe made';
     ok !Registry::DAO::Payment->find( $tdb, { id => $sale->id } )->stripe_schedule_id,
         'nothing is recorded';
 
