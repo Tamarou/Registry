@@ -194,11 +194,18 @@ subtest 'failed publish leaves the old version current' => sub {
         CREATE TRIGGER fail_publish BEFORE UPDATE ON offer_versions FOR EACH ROW
          WHEN (OLD.published_at IS NULL AND NEW.published_at IS NOT NULL) EXECUTE FUNCTION fail_publish()
     } );
-    my $result = $run->process( $tdb, $publish, { action => 'publish' } );
+    my @logged;
+    my $result = do {
+        local $SIG{__WARN__} = sub { push @logged, @_ };
+        $run->process( $tdb, $publish, { action => 'publish' } );
+    };
     $tdb->query('DROP TRIGGER fail_publish ON offer_versions');
     $tdb->query('DROP FUNCTION fail_publish()');
 
-    like join( ';', ( $result->{errors} // [] )->@* ), qr/forced publish failure/, 'the run stays with the error';
+    my $shown = join ';', ( $result->{errors} // [] )->@*;
+    like $shown, qr/could not be published/, 'the run stays with a fixed error';
+    unlike $shown, qr/forced publish failure/, 'which shows no internal text';
+    like "@logged", qr/forced publish failure/, 'the detail is logged';
     is_deeply current_versions($offer_id), [ $current->version ], 'the old version is still the current one';
     is scalar Registry::DAO::Offer->find( $tdb, { id => $offer_id } )->versions($tdb)->@*, $count,
         'and no new version, draft or published, is left behind';

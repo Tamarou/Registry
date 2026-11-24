@@ -434,4 +434,15 @@ subtest 'platform publishes through the same workflow' => sub {
         'the platform\'s current Solo version is the bootstrap\'s';
 };
 
+subtest 'publish capacity check refuses missing units without a warning' => sub {
+    require Registry::DAO::WorkflowSteps::OfferPrice;
+    my @warned;
+    local $SIG{__WARN__} = sub { push @warned, @_ };
+    for my $units ( undef, '', 'two', 0 ) {
+        ok Registry::DAO::WorkflowSteps::OfferPrice->refusal( $dao->db, {}, $units ),
+            'units ' . ( $units // 'undef' ) . ' are refused';
+    }
+    is_deeply \@warned, [], 'and nothing is warned';
+};
+
 done_testing;

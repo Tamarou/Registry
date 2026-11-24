@@ -17,6 +17,8 @@ class Registry::DAO::WorkflowSteps::OfferPrice :isa(Registry::DAO::WorkflowStep)
     # class offer is held to the smallest of its occurrences now; one added
     # later with less capacity is not refused here.
     sub refusal ( $class, $db, $data, $units ) {
+        return 'Units per acceptance must be a whole number of at least one'
+            unless defined $units && $units =~ /\A[1-9][0-9]{0,8}\z/;
         my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
         if ( my $class_id = $basic->{class_project_id} ) {
             my ( $name, $smallest ) = ( $db->query( q{

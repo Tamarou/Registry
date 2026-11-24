@@ -80,6 +80,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         }, $run->id )->array->[0];
         return { published_offer_version_id => $published } if $published;
 
+        my $stale;
         my $version = eval {
             # A new version of an existing offer is published only over the
             # version the run started from, read under the offer's lock: a
@@ -90,8 +91,10 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 $db->query( 'SELECT 1 FROM offers WHERE id = ? FOR UPDATE', $offer_id );
                 $offer   = Registry::DAO::Offer->find( $db, { id => $offer_id } );
                 $current = $offer && $offer->current_version($db);
-                die "a newer version of this offer was published since this run began; start again\n"
-                    unless $current && $current->id eq ( $basic->{based_on_version_id} // '' );
+                unless ( $current && $current->id eq ( $basic->{based_on_version_id} // '' ) ) {
+                    $stale = 1;
+                    die "stale run\n";
+                }
             }
             ( $offer // Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } ) )->draft( $db, {
                 $basic->%{qw( resource_id class_project_id )},    # one or the other
@@ -104,6 +107,9 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         # The detail can carry ids and driver messages, so it goes to the log
         # and the screen gets a fixed message; the transaction rolls back.
         unless ($version) {
+            # A refusal the admin can act on, not an internal error.
+            return { stay => 1, errors => ['A newer version of this offer was published since this run began; start again'] }
+                if $stale;
             warn 'offer publish failed for run ' . $run->id . ": $@";
             return { stay => 1, errors => ['The offer could not be published, and nothing was saved. Please try again.'] };
         }
