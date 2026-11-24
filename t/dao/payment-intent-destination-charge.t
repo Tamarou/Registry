@@ -150,7 +150,7 @@ subtest 'tenant with NULL platform_pricing_plan_id -> 0 fee (Free fallback)' => 
         users => [ $free_admin ],
     });
     $db->query(
-        'UPDATE registry.tenants SET stripe_connect_account_id = $1, stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE, platform_pricing_plan_id = NULL WHERE slug = $2',
+        'UPDATE registry.tenants SET stripe_connect_account_id = $1, stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE WHERE slug = $2',
         'acct_free123', $free_slug,
     );
 
@@ -323,16 +323,12 @@ subtest 'async create_payment_intent_async is a direct charge on the tenant acco
 
 # ---- (f) the platform sells like any seller: no slug exemption --------------
 subtest 'registry seller is charged directly on its own account' => sub {
-    # The platform tenant, linked to the seeded Free plan explicitly rather than
-    # by fallback, with Tamarou's account planted as a fixture.
-    my $free_plan_id = $db->query(q{
-        SELECT id FROM registry.pricing_plans
-         WHERE plan_scope = 'platform' AND metadata->>'default' = 'true'
-    })->hash->{id};
-    ok $free_plan_id, 'seeded Free plan found';
+    # The platform tenant, given stated 0% terms rather than left on the
+    # fallback, with Tamarou's account planted as a fixture.
+    give_tenant_terms( $db, 'registry', { rate => 0, name => 'Free' } );
     $db->query(
-        'UPDATE registry.tenants SET stripe_connect_account_id = ?, platform_pricing_plan_id = ? WHERE slug = ?',
-        'acct_platform123', $free_plan_id, 'registry',
+        'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
+        'acct_platform123', 'registry',
     );
 
     my $payment = Registry::DAO::Payment->create($db, {
