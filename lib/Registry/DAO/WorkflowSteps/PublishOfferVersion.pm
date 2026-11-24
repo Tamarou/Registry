@@ -128,8 +128,10 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 payment_plans => \@plans,
                 policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry } },
             } )->publish($db);
-            # Commit-time checks run now, so a refusal is this step's error rather than a failed commit.
-            $db->query('SET CONSTRAINTS ALL IMMEDIATE');
+            # The platform-offer guard runs now, so its refusal is this step's error
+            # rather than a failed commit; then deferred again, as a caller expects.
+            $db->query('SET CONSTRAINTS registry.offer_versions_keep_platform_offer IMMEDIATE');
+            $db->query('SET CONSTRAINTS registry.offer_versions_keep_platform_offer DEFERRED');
             $published;
         };
         # The detail can carry ids and driver messages, so it goes to the log
