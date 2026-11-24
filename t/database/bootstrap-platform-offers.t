@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;
 use App::Sqitch;
+use Capture::Tiny qw( capture_stderr );
 use Test::PostgreSQL;
 use Mojo::Pg;
 
@@ -162,6 +163,114 @@ subtest 'seed reverts and redeploys by its own rows' => sub {
 
     lives_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', CHANGE ) } 'the seed redeploys';
     is_deeply ids_by_table(), $deployed, 'redeploying recreates the same rows';
+};
+
+my $SOLO_V1 = q{
+    SELECT v.* FROM registry.offer_versions v JOIN registry.offers o ON o.id = v.offer_id
+     WHERE o.name = 'Solo' AND v.version = 1
+};
+
+# The platform's 0% offer to itself: the self offer that buys payment processing.
+sub self_offer () {
+    return $db->query( q{
+        SELECT v.* FROM registry.offer_versions v
+          JOIN registry.resources r ON r.id = v.resource_id
+         WHERE r.name = 'payment processing'
+           AND v.conditions @> '[{"kind": "holder_is_offerer"}]'
+    } )->hashes->to_array;
+}
+
+subtest 'redeploy leaves one solo offer' => sub {
+    lives_ok { $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', CHANGE . '^', '-y' ) } 'reverts';
+    lives_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', CHANGE ) } 'redeploys';
+    is $db->query(q{SELECT count(*) FROM registry.offers WHERE name = 'Solo'})->array->[0], 1,
+        'one Solo offer';
+    is $db->query( q{
+        SELECT count(*) FROM registry.offer_versions v JOIN registry.offers o ON o.id = v.offer_id
+         WHERE o.name = 'Solo' AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+    } )->array->[0], 1, 'one current Solo version';
+};
+
+subtest 'self offer not offered to tenants' => sub {
+    my $self = self_offer();
+    is scalar @$self, 1, 'one 0% self offer';
+    ok !grep( { $_->{id} eq $self->[0]{id} } offered_to_tenants()->@* ), 'it is not offered to tenants';
+    is $db->query( q{
+        SELECT count(*) FROM registry.entitlements
+         WHERE offer_version_id = ? AND holder_tenant_id IS DISTINCT FROM ?
+    }, $self->[0]{id}, PLATFORM_UUID )->array->[0], 0, 'no tenant but registry holds it';
+};
+
+subtest 'self offer zero and solo rate stored exactly' => sub {
+    my $fraction = sub ($version_id) {
+        $db->query( 'SELECT fraction::text FROM registry.offer_version_payment_plans WHERE offer_version_id = ?',
+            $version_id )->array->[0];
+    };
+    is $fraction->( self_offer()->[0]{id} ), '0', 'the self offer stores exactly 0, not NULL';
+    is $fraction->( $db->query($SOLO_V1)->hash->{id} ), '0.025', 'Solo stores exactly 0.025';
+};
+
+subtest 'seeded solo v1 is immutable' => sub {
+    my $solo = $db->query($SOLO_V1)->hash;
+    throws_ok {
+        $db->query( 'UPDATE registry.offer_version_payment_plans SET fraction = 0.03 WHERE offer_version_id = ?',
+            $solo->{id} )
+    } qr/is published: its payment plans cannot be/, 'its percentage cannot be changed';
+    throws_ok { $db->query( 'UPDATE registry.offer_versions SET price_cents = 100 WHERE id = ?', $solo->{id} ) }
+        qr/immutable once published/, 'nor its price';
+    is $db->query( 'SELECT fraction::text FROM registry.offer_version_payment_plans WHERE offer_version_id = ?',
+        $solo->{id} )->array->[0], '0.025', 'the rate is unchanged';
+};
+
+subtest 'only registry holds seeded entitlements' => sub {
+    is $db->query( q{
+        SELECT count(*) FROM registry.entitlements WHERE holder_tenant_id IS DISTINCT FROM ?
+    }, PLATFORM_UUID )->array->[0], 0, 'no other holder holds any entitlement';
+    is scalar held_for('email sending')->@*, 1, 'registry holds email sending';
+    is scalar( grep { $_->{resource_name} =~ /\Arun:/ } held_now()->@* ), 5,
+        'registry holds the five product-design run rights';
+};
+
+subtest 'each self right is its own one time zero offer version' => sub {
+    my $rights = $db->query( q{
+        SELECT v.id, v.offer_id, v.price_cents, r.name AS resource_name,
+               (SELECT count(*) FROM registry.offer_version_payment_plans p
+                 WHERE p.offer_version_id = v.id) AS plans,
+               (SELECT count(*) FROM registry.offer_version_payment_plans p
+                 WHERE p.offer_version_id = v.id AND p.kind = 'one_time') AS one_time_plans
+          FROM registry.offer_versions v
+          JOIN registry.resources r ON r.id = v.resource_id
+         WHERE r.name = 'email sending' OR r.name LIKE 'run:%'
+    } )->hashes->to_array;
+    is scalar @$rights, 6, 'six self rights: email sending and five run rights';
+    my %offers = map { $_->{offer_id} => 1 } @$rights;
+    is scalar keys %offers, 6, 'each is its own offer';
+    my $self_offer_id = self_offer()->[0]{offer_id};
+    ok !$offers{$self_offer_id}, 'none is part of the 0% self offer';
+    for my $right (@$rights) {
+        is $right->{plans},          1, "$right->{resource_name}: one payment plan";
+        is $right->{one_time_plans}, 1, "$right->{resource_name}: it is one-time";
+        ok defined $right->{price_cents} && $right->{price_cents} == 0,
+            "$right->{resource_name}: priced at exactly 0";
+    }
+};
+
+subtest 'revert refuses while a tenant holds solo' => sub {
+    my $tenant = $db->query( q{INSERT INTO registry.tenants (name, slug)
+                               VALUES ('Solo Holder', 'solo_holder') RETURNING id} )->hash->{id};
+    my $entitlement = $db->query( q{
+        INSERT INTO registry.entitlements (holder_tenant_id, offer_version_id, payment_plan_id, in_effect)
+        VALUES (?, ?, 'revenue_share', tstzrange(now(), NULL, '[)')) RETURNING id
+    }, $tenant, $db->query($SOLO_V1)->hash->{id} )->hash->{id};
+
+    my $stderr = capture_stderr {
+        dies_ok { $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', CHANGE . '^', '-y' ) }
+            'the revert fails';
+    };
+    like $stderr, qr/an entitlement other than the seed's/, 'loudly, naming why';
+    is $db->query( 'SELECT count(*) FROM registry.entitlements WHERE id = ?', $entitlement )->array->[0], 1,
+        "the tenant's entitlement is kept";
+    is $db->query($SOLO_V1)->hashes->size, 1, 'and so is Solo v1';
 };
 
 done_testing;
