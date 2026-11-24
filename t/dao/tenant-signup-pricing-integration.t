@@ -7,79 +7,26 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
-use Registry::DAO::PricingPlan;
-use Registry::DAO::PricingRelationship;
+use Registry::DAO::Offer;
+use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO::WorkflowSteps::PricingPlanSelection;
 use Registry::DAO::WorkflowSteps::TenantPayment;
 
 my $test_db = Test::Registry::DB->new;
 my $dao = $test_db->db;
 
-# Create platform tenant pricing plans in registry schema
-my $platform_uuid = '00000000-0000-0000-0000-000000000000';
+# The resource every platform offer to tenants buys.
+my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 
 subtest 'Integration test setup' => sub {
-    # Create platform user for pricing relationships
-    my $platform_user_id = $dao->db->query('SELECT gen_random_uuid()')->array->[0];
+    # A published platform offer to tenants with a monthly base.
+    my $offer = Registry::DAO::Offer->create( $dao->db, { name => 'Registry Enterprise' } );
+    my $enterprise = $offer->draft( $dao->db, offer_terms( $PAYMENT_PROCESSING,
+        price_cents   => 50000,    # $500.00 in cents
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.01 } ],
+    ) )->publish( $dao->db );
 
-    $dao->db->query(q{
-        INSERT INTO registry.users (id, username, passhash, user_type)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT (username) DO NOTHING
-    }, $platform_user_id, 'platform_admin', '$2b$12$DummyHashForSystemUser', 'admin');
-
-    # Reuse whichever row owns the username (seeded by create-default-pricing-relationships, or just inserted).
-    $platform_user_id = $dao->db->query(
-        q{SELECT id FROM registry.users WHERE username = 'platform_admin'}
-    )->hash->{id};
-
-    $dao->db->query(q{
-        INSERT INTO registry.user_profiles (user_id, email, name)
-        VALUES (?, ?, ?)
-        ON CONFLICT DO NOTHING
-    }, $platform_user_id, 'admin@registry.platform', 'Platform Admin');
-
-    $dao->db->query(q{
-        INSERT INTO registry.tenant_users (tenant_id, user_id, is_primary)
-        VALUES (?, ?, ?)
-        ON CONFLICT DO NOTHING
-    }, $platform_uuid, $platform_user_id, 1);
-
-    # Create enterprise pricing plan
-    my $enterprise_plan = Registry::DAO::PricingPlan->create($dao->db, {
-        plan_name => 'Registry Enterprise',
-        plan_type => 'standard',
-        plan_scope => 'tenant',
-        pricing_model_type => 'fixed',
-        amount_cents => 50000,  # $500.00 in cents
-        currency => 'USD',
-        pricing_configuration => {
-            trial_days => 30,
-            billing_cycle => 'monthly',
-            description => 'Advanced features for large organizations',
-            features => [
-                'Everything in Professional',
-                'Advanced analytics and reporting',
-                'White-label customization',
-                'Priority support'
-            ]
-        },
-        metadata => {
-            display_order => 1,
-            suitable_for => 'large_programs'
-        }
-    });
-
-    # Create pricing relationship
-    Registry::DAO::PricingRelationship->create($dao->db, {
-        provider_id => $platform_uuid,
-        consumer_id => $platform_user_id,
-        pricing_plan_id => $enterprise_plan->id,
-        status => 'active',
-        metadata => { plan_type => 'tenant_subscription' }
-    });
-
-    ok $enterprise_plan->id, 'Enterprise plan created';
+    ok $enterprise->id, 'Enterprise offer published';
 };
 
 subtest 'Full tenant signup integration test' => sub {
@@ -128,9 +75,9 @@ subtest 'Full tenant signup integration test' => sub {
     ok $pricing_result->{data}->{pricing_plans}, 'Pricing plans available';
     cmp_ok scalar(@{$pricing_result->{data}->{pricing_plans}}), '>=', 1, 'At least one pricing plan available';
 
-    # By name. This file seeds its own Enterprise plan and the shipped seed offers
-    # the tier ladder beside it, so [0] is a statement about the ladder rather
-    # than about the plan this subtest selects.
+    # By name. This file publishes its own Enterprise offer and the shipped seed
+    # publishes Solo beside it, so [0] is a statement about Solo rather than
+    # about the plan this subtest selects.
     my ($enterprise_plan) = grep { $_->{plan_name} eq 'Registry Enterprise' }
         @{ $pricing_result->{data}->{pricing_plans} };
     ok $enterprise_plan, 'Enterprise plan available';
@@ -142,14 +89,10 @@ subtest 'Full tenant signup integration test' => sub {
     });
 
     ok !$selection_result->{_validation_errors}, 'No errors when selecting plan';
-    ok $selection_result->{selected_pricing_plan}, 'Moves to next step after selection';
 
-    # Verify plan was stored in workflow data
-    my $stored_plan = $run->data->{selected_pricing_plan};
-
-    ok $stored_plan, 'Pricing plan stored in workflow data';
-    is $stored_plan->{plan_name}, 'Registry Enterprise', 'Correct plan name stored';
-    is $stored_plan->{amount_cents}, 50000, 'Correct amount stored';
+    # Only the version id is carried; its terms are re-read where quoted.
+    is $run->data->{selected_offer_version}, $enterprise_plan->{id},
+        'the chosen offer version is carried in workflow data';
 
     # Step 2: Test payment step uses selected plan
     my $payment_step_obj = $workflow->get_step($dao->db, { slug => 'payment' });
@@ -159,9 +102,10 @@ subtest 'Full tenant signup integration test' => sub {
 
     is $payment_config->{plan_name}, 'Registry Enterprise', 'Payment uses selected plan name';
     is $payment_config->{monthly_amount}, 50000, 'Payment uses selected plan amount';
-    is $payment_config->{trial_days}, 30, 'Payment uses selected plan trial days';
+    is $payment_config->{trial_days}, 0, 'An offer version declares no trial';
     is $payment_config->{formatted_price}, '$500/month', 'Payment formats price correctly';
-    like $payment_config->{description}, qr/Advanced features/, 'Payment uses selected plan description';
+    is $payment_config->{description}, '$500 a month, 1% of each payment you take',
+        'Payment describes the selected version from its own terms';
 
     # Test payment data preparation
     my $payment_data = $payment_step_obj->prepare_payment_data($dao->db, $run);
@@ -196,13 +140,14 @@ subtest 'Backwards compatibility test' => sub {
         admin_email => 'admin@legacy.test'
     });
 
-    # Test that payment step falls back to default configuration
+    # With no choice carried the payment step quotes the first listed offer,
+    # the published Solo version, from its own terms.
     my $legacy_payment_obj = $legacy_workflow->get_step($dao->db, { slug => 'payment' });
     my $legacy_config = $legacy_payment_obj->get_subscription_config($dao->db, $legacy_run);
 
-    is $legacy_config->{plan_name}, 'Solo', 'Falls back to default plan name';
-    is $legacy_config->{monthly_amount}, 0, 'Falls back to default amount (free)';
-    is $legacy_config->{formatted_price}, 'Free', 'Falls back to default price format';
+    is $legacy_config->{plan_name}, 'Solo', 'Quotes the Solo offer';
+    is $legacy_config->{monthly_amount}, 0, 'At its $0 price';
+    is $legacy_config->{formatted_price}, 'Free', 'Formatted as free';
 
     ok 1, 'Backwards compatibility maintained';
 };

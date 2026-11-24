@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: The tier ladder a prospect actually sees, asserted against the SHIPPED seed.
-# ABOUTME: t/controller/tenant-pricing-display.t seeds its own Solo/Studio/Empire; this one must not.
+# ABOUTME: The plans a prospect actually sees, asserted against the SHIPPED seed: the published Solo version alone.
+# ABOUTME: t/controller/tenant-pricing-display.t publishes its own offers; this one must not.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -27,9 +27,8 @@ my $db      = $dao->db;
 
 # The plan-choice page left the signup funnel when Solo became the only tier on
 # sale, so the step is built here rather than looked up in tenant-signup. What
-# this file asserts is unchanged: the ladder the seed ships, the rate it
-# carries, and the refusal that keeps an anchor from being bought. The ladder
-# still has to be right -- it is what Studio and Empire launch onto.
+# this file asserts: what the seed publishes, the rate it
+# carries, and the refusal that keeps an unpublished tier from being bought.
 my $workflow = Registry::DAO::Workflow->create( $db, {
     name        => 'Tier Ladder Probe',
     slug        => "tier-ladder-$$",
@@ -47,57 +46,25 @@ ok $step, 'the plan-choice step is available to render the ladder';
 my $run   = $workflow->new_run($db);
 my $plans = $step->prepare_pricing_data($db, $run)->{pricing_plans};
 
-subtest 'the signup page offers the tier ladder, in order' => sub {
-    is scalar @$plans, 3, 'three tiers are on offer'
+subtest 'the signup page offers exactly the published Solo version' => sub {
+    is_deeply [ map { $_->{plan_name} } @$plans ], ['Solo'], 'Solo alone is on offer'
         or diag 'got: ' . join( ', ', map { $_->{plan_name} } @$plans );
-
-    is_deeply [ map { $_->{plan_name} } @$plans ], [qw( Solo Studio Empire )],
-        'Solo, Studio, Empire';
-
-    # The sort key itself. display_order and amount_cents happen to be monotone
-    # in the same direction, so the order above cannot tell which one produced
-    # it -- prepare_pricing_data falls back to amount_cents when display_order
-    # is absent, and the list comes out identical either way.
-    is_deeply [ map { $_->{metadata}{display_order} } @$plans ], [ 1, 2, 3 ],
-        'and every tier carries an explicit display_order, which is what sorts them';
+    is $plans->[0]{id}, '00000000-0000-0000-0003-000000000001',
+        'as the version the bootstrap publishes';
 };
 
-subtest 'one tier is buyable and the rest anchor it' => sub {
-    my ($solo, $studio, $empire) = @$plans;
+subtest 'the unpublished tiers cannot be bought, however they are posted' => sub {
+    my %old = map { $_->{plan_name} => $_->{id} } $db->query( q{
+        SELECT plan_name, id FROM registry.pricing_plans
+         WHERE plan_name IN ('Studio', 'Empire') AND superseded_at IS NULL
+    } )->hashes->@*;
 
-    ok !$solo->{metadata}{coming_soon},   'Solo is buyable';
-    ok $studio->{metadata}{coming_soon},  'Studio is an anchor';
-    ok $empire->{metadata}{coming_soon},  'Empire is an anchor';
+    # Fatal precondition. Every refusal below would pass on an undef id.
+    ok defined $old{Studio} && defined $old{Empire}, 'both old tier ids resolved' or return;
 
-    # The ladder only anchors if the prices climb. A free tier beside two other
-    # free tiers is not a price ladder, it is three identical cards.
-    cmp_ok $solo->{amount_cents},   '<', $studio->{amount_cents},
-        'Studio costs more than Solo';
-    cmp_ok $studio->{amount_cents}, '<', $empire->{amount_cents},
-        'and Empire more than Studio';
-
-    # And the revenue share falls as the base rises -- that is the trade the
-    # ladder is selling. If it ever inverts, the anchors argue against upgrading.
-    my @rates = map { $_->{pricing_configuration}{percentage} } @$plans;
-    cmp_ok $rates[0], '>', $rates[1], 'Studio takes a smaller share than Solo';
-    cmp_ok $rates[1], '>', $rates[2], 'and Empire smaller than Studio';
-};
-
-subtest 'the anchors cannot be bought, however they are posted' => sub {
-    my ($solo, $studio, $empire) = @$plans;
-
-    # Fatal precondition. validate_plan_selection returns early on a falsy id,
-    # so every refusal below would pass on an undef -- and these four lines are
-    # the whole mutation surface for the guard this ladder depends on.
-    ok defined $solo->{id} && defined $studio->{id} && defined $empire->{id},
-        'all three tier ids resolved' or return;
-
-    ok $step->validate_plan_selection( $db, $solo->{id} ),
-        'the launched tier selects';
-    ok !$step->validate_plan_selection( $db, $studio->{id} ),
-        'Studio is refused server-side, not merely greyed out';
-    ok !$step->validate_plan_selection( $db, $empire->{id} ),
-        'and Empire likewise';
+    ok $step->validate_plan_selection( $db, $plans->[0]{id} ), 'the published Solo version selects';
+    ok !$step->validate_plan_selection( $db, $old{Studio} ), 'Studio is refused server-side';
+    ok !$step->validate_plan_selection( $db, $old{Empire} ), 'and Empire likewise';
 };
 
 # The one place the launch DECISION is written down in a test.
