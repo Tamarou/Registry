@@ -1547,6 +1547,10 @@ SQL
                 { id => $enrollment, payment_id => $id } ) if defined $enrollment;
         }
         else {
+            # So a replay of this refund's first "pending" answer is not held again.
+            $db->query( q{UPDATE payments SET metadata = metadata || jsonb_build_object('failed_refunds',
+                    COALESCE(metadata->'failed_refunds', '{}'::jsonb) || jsonb_build_object(?::text, ?::text))
+                 WHERE id = ?}, $refund->{id}, $refund->{status} // 'unknown', $id );
             $self->record_refund_failure( $db, "Stripe refund $refund->{id} on payment $id is "
                 . ( $refund->{status} // 'unknown' )
                 . ( defined $refund->{failure_reason} ? " ($refund->{failure_reason})" : '' ) );
@@ -2327,6 +2331,16 @@ SQL
             return Mojo::Promise->resolve($done) if $done;
         }
 
+        # Still pending under this key: resending replays "pending" inside
+        # Stripe's 24h key window, and past it creates a second real refund.
+        if ( my $key = $args->{idempotency_key} ) {
+            my $held = $db->query( q{
+                SELECT p.key AS id, 'pending' AS status
+                  FROM payments, jsonb_each(metadata->'pending_refunds') p
+                 WHERE payments.id = ? AND p.value->>'key' = ?}, $id, $key )->hash;
+            return Mojo::Promise->resolve($held) if $held;
+        }
+
         # Marked, because what an operator needs to know first is whether any
         # money can have moved, and for these it certainly cannot: the request
         # is never dispatched. Classifying on a marker rather than on wording --
@@ -2388,6 +2402,11 @@ SQL
             $args->{idempotency_key}
                 ? ( _idempotency_key => $args->{idempotency_key} ) : (),
         })->then(sub ($refund) {
+            # A key replayed inside Stripe's window answers with the refund's
+            # first response, "pending", for a refund refund.updated already failed.
+            my $failed = $db->query( q{SELECT metadata->'failed_refunds'->>?::text AS status
+                FROM payments WHERE id = ?}, $refund->{id}, $id )->hash->{status};
+            die "Stripe refund $refund->{id} on payment $id is $failed\n" if $failed;
             # Told, not inferred. This used to read the presence of an
             # idempotency key as "this is a capacity increment", because at the
             # time only increments carried one. They are two independent

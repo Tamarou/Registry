@@ -153,4 +153,63 @@ subtest 'a refund Stripe returns failed or canceled is not counted' => sub {
     }
 };
 
+# A retry of a refund still pending under its key: the capacity loop and a
+# re-run drop step both do this. Resending replays "pending" inside Stripe's 24h
+# key window and, past it, creates a second real refund beside the first.
+subtest 'a refund still pending under its key is not resent' => sub {
+    my $seller = Test::Registry::Fixtures::platform_seller($db);
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 15000, status => 'completed',
+        stripe_payment_intent_id => 'pi_rfc_held',
+        metadata => { enrollment_items => [], tenant_slug => $seller } });
+
+    my $calls = 0;
+    my @got;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $params) {
+            $calls++;
+            Mojo::Promise->resolve({ id => 're_held', status => 'pending' });
+        };
+        for (1, 2) {
+            settle( $payment->refund_async( $db,
+                { amount_cents => 5000, idempotency_key => 'key_rfc_held' } )
+                ->then( sub { push @got, shift } ) );
+        }
+    }
+
+    is $calls, 1, 'Stripe is asked once';
+    is $got[1]{id}, 're_held', 'the retry gets the held refund back';
+    is $got[1]{status}, 'pending', 'still pending';
+};
+
+# Within the 24h key window Stripe replays the original "pending" answer for a
+# refund that has since failed. Holding it again would wait forever on a
+# refund.updated that already came.
+subtest 'a replayed refund already recorded as failed is rejected' => sub {
+    my $seller = Test::Registry::Fixtures::platform_seller($db);
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 15000, status => 'completed',
+        stripe_payment_intent_id => 'pi_rfc_replay',
+        metadata => { enrollment_items => [], tenant_slug => $seller } });
+
+    my $err;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $params) {
+            Mojo::Promise->resolve({ id => 're_replay', status => 'pending' });
+        };
+        settle( $payment->refund_async( $db,
+            { amount_cents => 5000, idempotency_key => 'key_rfc_replay' } ) );
+        $payment->settle_pending_refund( $db, { id => 're_replay', status => 'failed' } );
+        settle( $payment->refund_async( $db,
+            { amount_cents => 5000, idempotency_key => 'key_rfc_replay' } )
+            ->catch( sub { $err = shift } ) );
+    }
+
+    like $err // '', qr/re_replay.*failed/, 'the caller is told it failed';
+    my $row = $db->select('payments', '*', { id => $payment->id })->expand->hash;
+    ok !exists $row->{metadata}{pending_refunds}{re_replay}, 'and it is not held again';
+};
+
 done_testing;
