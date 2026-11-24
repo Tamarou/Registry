@@ -103,6 +103,16 @@ sub deliver ( $type, $invoice, $tenant = $A ) {
         ->status_is(200);
 }
 
+# A schedule's invoice as Stripe sends it at 2024-12-18.acacia. A retry after a
+# failure is the same invoice on the same payment intent.
+sub invoice ( $id, $intent, %more ) {
+    return {
+        id => $id, object => 'invoice', subscription => $SUB,
+        payment_intent => $intent, billing_reason => 'subscription_cycle',
+        amount_due => 3333, amount_paid => 0, status => 'open', %more,
+    };
+}
+
 sub statuses ( $tenant = $A ) {
     return $tenant->{db}->query( q{
         SELECT status FROM payments WHERE stripe_schedule_id = ? ORDER BY instalment_seq
@@ -112,16 +122,15 @@ sub statuses ( $tenant = $A ) {
 subtest 'connect instalment invoice marks the tenant instalment' => sub {
     build_set();
 
-    deliver( 'invoice.paid', { subscription => $SUB, payment_intent => 'pi_conn_two' } );
+    deliver( 'invoice.paid', invoice( 'in_conn_two', 'pi_conn_two' ) );
     is_deeply statuses(), [qw( completed completed pending )],
         "the earliest owed row in the account's tenant is completed";
 
-    deliver( 'invoice.paid', { subscription => $SUB, payment_intent => 'pi_conn_two' } );
+    deliver( 'invoice.paid', invoice( 'in_conn_two', 'pi_conn_two' ) );
     is_deeply statuses(), [qw( completed completed pending )],
         'a redelivery does not advance the set';
 
-    deliver( 'invoice.payment_failed', {
-        subscription => $SUB, payment_intent => 'pi_conn_three' } );
+    deliver( 'invoice.payment_failed', invoice( 'in_conn_three', 'pi_conn_three' ) );
     is_deeply statuses(), [qw( completed completed failed )],
         'and a failed invoice marks the next owed row failed';
 };
@@ -130,14 +139,12 @@ subtest 'a paid invoice completes the earliest owed instalment' => sub {
     build_set();
     is_deeply statuses(), [qw( completed pending pending )], 'two still owed';
 
-    deliver( 'invoice.paid', {
-        subscription => $SUB, payment_intent => 'pi_two', amount_paid => 3333 } );
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', amount_paid => 3333 ) );
 
     is_deeply statuses(), [qw( completed completed pending )],
         'the second is paid, the third is not';
 
-    deliver( 'invoice.paid', {
-        subscription => $SUB, payment_intent => 'pi_three', amount_paid => 3334 } );
+    deliver( 'invoice.paid', invoice( 'in_three', 'pi_three', amount_paid => 3334 ) );
 
     is_deeply statuses(), [qw( completed completed completed )], 'and then the third';
 };
@@ -148,10 +155,10 @@ subtest 'a paid invoice completes the earliest owed instalment' => sub {
 subtest 'a redelivered invoice advances nothing' => sub {
     build_set();
 
-    deliver( 'invoice.paid', { subscription => $SUB, payment_intent => 'pi_two' } );
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two' ) );
     is_deeply statuses(), [qw( completed completed pending )], 'the second is paid';
 
-    deliver( 'invoice.paid', { subscription => $SUB, payment_intent => 'pi_two' } );
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two' ) );
     is_deeply statuses(), [qw( completed completed pending )],
         'and the same invoice again changes nothing';
 };
@@ -159,11 +166,8 @@ subtest 'a redelivered invoice advances nothing' => sub {
 subtest 'a failed instalment is recorded, and the child keeps their place' => sub {
     my @ids = build_set();
 
-    deliver( 'invoice.payment_failed', {
-        subscription   => $SUB,
-        payment_intent => 'pi_two_failed',
-        last_finalization_error => { message => 'Your card was declined.' },
-    } );
+    deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two_failed',
+        last_finalization_error => { message => 'Your card was declined.' } ) );
 
     is_deeply statuses(), [qw( completed failed pending )],
         'the second instalment is failed, the third still pending';
@@ -183,15 +187,27 @@ subtest 'a failed instalment is recorded, and the child keeps their place' => su
 subtest 'a retry after a failure completes the same instalment' => sub {
     build_set();
 
-    deliver( 'invoice.payment_failed', {
-        subscription => $SUB, payment_intent => 'pi_two_failed' } );
+    deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two_failed' ) );
     is_deeply statuses(), [qw( completed failed pending )], 'failed';
 
     # A failed row is still owed, so Stripe's own retry lands on it rather than
     # skipping to the third instalment and leaving the second owed forever.
-    deliver( 'invoice.paid', { subscription => $SUB, payment_intent => 'pi_two_retry' } );
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two_retry' ) );
     is_deeply statuses(), [qw( completed completed pending )],
         'the retry settles the instalment that failed, not the next one';
+};
+
+# Stripe retries an invoice on the payment intent it already tried, so the paid
+# event carries the intent the failure stored on the row.
+subtest 'payment_failed then invoice.paid on the same intent completes the same row' => sub {
+    build_set();
+
+    deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two' ) );
+    is_deeply statuses(), [qw( completed failed pending )], 'failed';
+
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', amount_paid => 3333, status => 'paid' ) );
+    is_deeply statuses(), [qw( completed completed pending )],
+        'the retry completes the row that failed';
 };
 
 # Stripe's invoice at 2024-12-18.acacia: `subscription`, and no schedule field.
@@ -256,7 +272,7 @@ subtest 'invoice matching only another tenant changes neither' => sub {
     $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
     build_set($B);
 
-    deliver( 'invoice.paid', { subscription => $SUB, payment_intent => 'pi_cross_tenant' } );
+    deliver( 'invoice.paid', invoice( 'in_cross_tenant', 'pi_cross_tenant' ) );
 
     is_deeply statuses($B), [qw( completed pending pending )], 'the other tenant is untouched';
     is_deeply statuses($A), [], 'and the tenant the account names has nothing to mark';

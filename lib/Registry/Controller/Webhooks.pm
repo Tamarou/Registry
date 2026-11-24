@@ -403,31 +403,34 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return $row ? 1 : 0;
     }
 
-    # Mark the earliest still-owed instalment of this set paid, or failed.
+    # Mark one instalment of this set paid, or failed.
     #
-    # Matched by position rather than by amount: only the last instalment differs
-    # from the others, so amounts are not distinguishing, while "the earliest one
-    # still owed" is exactly what a schedule bills next. The Stripe payment
-    # intent is recorded on the row, which is what makes a redelivery idempotent.
+    # Keyed on the invoice id, which is stored on the row it first marked:
+    # Stripe retries an invoice on the same invoice and payment intent, so a
+    # retry or a redelivery finds that row again. An invoice not seen before
+    # takes the earliest row no invoice has marked -- by position, not amount,
+    # since only the last instalment's amount differs. A failed row is never
+    # taken by a later invoice: it is its own month, still owed.
     method _process_instalment_invoice ($db, $event, $schedule) {
         my $invoice  = $event->{data}{object} // {};
         my $paid     = $event->{type} eq 'invoice.paid';
 
-        my $intent = $invoice->{payment_intent};
-
-        # Already recorded. A redelivery of the same invoice must not advance the
-        # set by another instalment.
-        if ($intent) {
-            my $seen = $db->query(
-                'SELECT 1 FROM payments WHERE stripe_payment_intent_id = ? LIMIT 1',
-                $intent )->hash;
-            return if $seen;
+        my $intent     = $invoice->{payment_intent};
+        my $invoice_id = $invoice->{id};
+        unless ( defined $invoice_id && !ref $invoice_id ) {
+            $self->app->log->warn("instalment invoice for schedule $schedule has no id");
+            return;
         }
 
         my $row = $db->query( q{
-            SELECT id FROM payments
+            SELECT id, status FROM payments
              WHERE stripe_schedule_id = ?
-               AND status IN ('pending', 'failed')
+               AND metadata->>'stripe_invoice_id' = ?
+             FOR UPDATE
+        }, $schedule, $invoice_id )->hash // $db->query( q{
+            SELECT id, status FROM payments
+             WHERE stripe_schedule_id = ?
+               AND status = 'pending'
              ORDER BY instalment_seq
              LIMIT 1
              FOR UPDATE
@@ -438,14 +441,21 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         };
 
         if ($paid) {
+            return if $row->{status} eq 'completed';    # a redelivery
             $db->query( q{
                 UPDATE payments
                    SET status = 'completed', completed_at = now(),
-                       stripe_payment_intent_id = ?, error_message = NULL
+                       stripe_payment_intent_id = ?, error_message = NULL,
+                       metadata = COALESCE(metadata, '{}')
+                           || jsonb_build_object('stripe_invoice_id', ?::text)
                  WHERE id = ?
-            }, $intent, $row->{id} );
+            }, $intent, $invoice_id, $row->{id} );
             return;
         }
+
+        # A failure this invoice already recorded, or one reported after its
+        # retry paid: history, not news.
+        return unless $row->{status} eq 'pending';
 
         # Failed. The enrolment is NOT touched: a child who has been attending
         # for six weeks does not lose their place over an expired card. The debt
@@ -457,9 +467,11 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         $db->query( q{
             UPDATE payments
                SET status = 'failed', error_message = ?,
-                   stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id)
+                   stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
+                   metadata = COALESCE(metadata, '{}')
+                       || jsonb_build_object('stripe_invoice_id', ?::text)
              WHERE id = ?
-        }, $why, $intent, $row->{id} );
+        }, $why, $intent, $invoice_id, $row->{id} );
     }
 
     # Refund what the capacity gate demoted, after its transaction committed.
