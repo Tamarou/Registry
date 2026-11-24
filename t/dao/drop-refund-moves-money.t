@@ -429,6 +429,29 @@ subtest 'a refund past what remains on a partially refunded payment is refused' 
     is refunded_cents_of($payment), 5000, 'and nothing more is counted';
 };
 
+# Capacity debt is money already owed back on this payment. A keyed drop
+# refund that ignored it could take returned + owed past what was captured,
+# and Stripe would refuse the excess only after the request went out.
+subtest 'the refund cap counts capacity debt still owed' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'payments', { status => 'refund_pending', refund_owed_cents => 5000 },
+        { id => $payment->id } );
+    $payment = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    my $error;
+    eval { settle( $payment->refund_async( $db, {
+        amount_cents    => 5001,
+        idempotency_key => $payment->drop_refund_key( $dropped->id ),
+    } ) ); 1 } or $error = $@;
+    like $error, qr/REFUND_NOT_SENT: Refund of 5001 cents .* past its 10000 captured cents/,
+        'owed plus the refund past captured is refused';
+    is scalar @calls, 0, 'before anything reaches Stripe';
+};
+
 subtest 'a fully refunded payment is still refused' => sub {
     my ( $payment ) = a_paid_cart();
     my @calls;

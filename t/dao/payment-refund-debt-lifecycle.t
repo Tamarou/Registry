@@ -111,6 +111,7 @@ subtest 'a paid debt is cleared, so a later settlement does not pay it again' =>
             settle( $p->refund_async($db, {
                 amount_cents    => $inc->{cents},
                 idempotency_key => $p->capacity_refund_key( $inc->{seq} ),
+                increment       => 1,
             }) );
             $p->settle_refund_increment( $db, $inc->{seq}, { id => 're_dbt' } );
         }
@@ -242,7 +243,8 @@ subtest 'a failed refund leaves the debt for the runbook' => sub {
         local *Registry::Service::Stripe::create_refund_async =
             sub { Mojo::Promise->reject('card network unavailable') };
         eval { settle( reload($payment)->refund_async($db, {
-            amount_cents => 10000, idempotency_key => 'refund:capacity:fail' }) ); 1 };
+            amount_cents => 10000, idempotency_key => 'refund:capacity:fail',
+            increment    => 1 }) ); 1 };
     }
 
     is reload($payment)->refund_owed_cents, 10000,

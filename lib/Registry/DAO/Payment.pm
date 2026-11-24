@@ -2219,9 +2219,10 @@ SQL
             unless $stripe_payment_intent_id;
 
         # Read fresh: the object may predate a settled increment.
-        my $refunded = $db->query(
-            'SELECT refunded_cents FROM payments WHERE id = ?', $id
-        )->hash->{refunded_cents} // 0;
+        my $fresh = $db->query(
+            'SELECT refunded_cents, refund_owed_cents FROM payments WHERE id = ?', $id
+        )->hash // {};
+        my $refunded = $fresh->{refunded_cents} // 0;
         # With no amount, return what is left, not the whole charge again (005 8a).
         my $refund_cents = $args->{amount_cents} // $amount_cents - $refunded;
         my $reason = $args->{reason} // 'requested_by_customer';
@@ -2231,9 +2232,13 @@ SQL
             unless $refund_cents > 0;
 
         # Stripe would refuse it too, but only after the request went out.
+        # Capacity debt is money already owed back on this charge, so it counts
+        # against what is left -- except for an increment, which IS that debt.
+        my $owed = $args->{increment} ? 0 : $fresh->{refund_owed_cents} // 0;
         die REFUND_NOT_SENT . ": Refund of $refund_cents cents would take payment $id "
-          . "past its $amount_cents captured cents ($refunded already refunded)\n"
-            if $refunded + $refund_cents > $amount_cents;
+          . "past its $amount_cents captured cents ($refunded already refunded, "
+          . "$owed owed)\n"
+            if $refunded + $owed + $refund_cents > $amount_cents;
 
         # Refused BEFORE the money moves. An earlier version of this guard sat
         # in _apply_refund_result, which runs inside create_refund_async's
