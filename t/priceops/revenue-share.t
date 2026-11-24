@@ -151,6 +151,8 @@ subtest 'malformed/non-numeric rate dies' => sub {
     # string. The one rule refuses it rather than treating it as zero.
     ok !defined eval { rate_fraction( 'abc', 'a test plan' ) }, 'a non-numeric rate is refused';
     like $@, qr/not numeric/i, 'dies saying the value is not numeric';
+    ok !defined eval { rate_fraction( "0.\x{0665}", 'a test plan' ) }, 'a non-ASCII digit is not a digit';
+    like $@, qr/not numeric/i, 'and is refused as not numeric';
 };
 
 subtest 'rate rule is exact decimal arithmetic' => sub {

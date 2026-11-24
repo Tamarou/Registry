@@ -145,7 +145,7 @@ sub rate_fraction ($raw, $context) {
 
     # An exponent of nine digits at most keeps every count below an integer.
     die "Revenue-share percentage '$raw' is not numeric for $context - check pricing_configuration."
-        unless $raw =~ /\A([-+]?)(?=\.?\d)(\d*)\.?(\d*)(?:[eE]([-+]?\d{1,9}))?\z/;
+        unless $raw =~ /\A([-+]?)(?=\.?\d)(\d*)\.?(\d*)(?:[eE]([-+]?\d{1,9}))?\z/a;
 
     # Decimal digits and integer counts, never a float: the rate is 0.$digits
     # x 10^$point, with $digits stripped to its significant ones.
