@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Self-test for Test::Registry::StripeConfirm and Test::Registry::StripeWebhook helpers.
-# ABOUTME: Skips unless STRIPE_SECRET_KEY (sk_test_) is set; needs STRIPE_WEBHOOK_SECRET from the
-# ABOUTME: caller for the webhook self-test, which dies without it. Never touches live Stripe.
+# ABOUTME: Skips unless STRIPE_SECRET_KEY (sk_test_) is set, signs its own webhooks, and never touches live Stripe.
 #
 # Deviation from the issue contract (C2): the issue states these helpers are
 # "exercised by t/stripe-live/paid-enrollment.t" (C3, not yet written).  The
@@ -23,6 +22,7 @@ use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Registry::DAO::Family;
 use Registry::DAO::Payment;
+use Registry::Service::Stripe;
 
 plan skip_all => 'STRIPE_SECRET_KEY (sk_test_) not set'
     unless Test::Registry::StripeConnect::available();
@@ -65,6 +65,30 @@ subtest 'confirm with pm_card_visa_chargeDeclined dies with card_declined' => su
     note "Decline PI: $pi->{id}  error=$err";
 };
 
+subtest 'live key makes the suite refuse to run' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk' . '_live_' . 'x' x 24;
+    my $sent = 0;
+    no warnings 'redefine';
+    local *Mojo::UserAgent::start = sub { $sent++; die "request sent\n" };
+
+    ok !Test::Registry::StripeConnect::available(),
+        'the skip guard reports no usable key, so every live file skips';
+    my %calls = (
+        ready_account         => sub { Test::Registry::StripeConnect::ready_account() },
+        create_payment_intent => sub {
+            Test::Registry::StripeConfirm::create_payment_intent( amount => 500, currency => 'usd' );
+        },
+        confirm            => sub { Test::Registry::StripeConfirm::confirm( 'pi_x', undef, 'acct_x' ) },
+        charge_for_settled => sub { Test::Registry::StripeConfirm::charge_for_settled( 'pi_x', 'acct_x' ) },
+        'Service::Stripe from_env' => sub { Registry::Service::Stripe->from_env },
+    );
+    for my $name ( sort keys %calls ) {
+        ok !eval { $calls{$name}->(); 1 }, "$name dies";
+        unlike $@, qr/request sent/, "$name dies before any request";
+    }
+    is $sent, 0, 'and no request was sent';
+};
+
 # ---------------------------------------------------------------------------
 # Part 2: StripeWebhook -- DB-local, no Stripe network
 # ---------------------------------------------------------------------------
@@ -72,9 +96,8 @@ subtest 'confirm with pm_card_visa_chargeDeclined dies with card_declined' => su
 subtest 'StripeWebhook: post_succeeded finalizes payment and deduplicates' => sub {
     # Fake key prevents accidental live Stripe calls from the webhook handler.
     local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake_for_webhook_tests';
-    # STRIPE_WEBHOOK_SECRET must be set by the caller (e.g. whsec_test_fake_for_helper_tests).
-    die "STRIPE_WEBHOOK_SECRET not set -- pass it on the command line\n"
-        unless $ENV{STRIPE_WEBHOOK_SECRET};
+    # The events are self-signed, so the secret is a local value, not Stripe's.
+    local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_local_helper_tests';
 
     my $test_db = Test::Registry::DB->new;
     my $dao     = $test_db->db;
@@ -126,6 +149,10 @@ subtest 'StripeWebhook: post_succeeded finalizes payment and deduplicates' => su
         },
     });
 
+    # Only the intent Registry stored settles a payment.
+    $db->update('payments', { stripe_payment_intent_id => 'pi_helper_fake_001' },
+        { id => $payment->id });
+
     my sub enrollment_count {
         scalar @{ $db->select('enrollments', '*', { payment_id => $payment->id })->hashes };
     }
@@ -149,6 +176,35 @@ subtest 'StripeWebhook: post_succeeded finalizes payment and deduplicates' => su
     )->status_is(200, 'replay of same event_id returns 200');
 
     is enrollment_count(), 1, 'replay deduped -- still exactly one enrollment';
+};
+
+# ---------------------------------------------------------------------------
+# Part 3: confirm and poll on a connected account -- a direct charge lives
+# there, so every call names it in Stripe-Account.
+# ---------------------------------------------------------------------------
+
+subtest 'confirm and poll run on the connected account' => sub {
+    my $acct = Test::Registry::StripeConnect::ready_account();
+
+    my $pi = Test::Registry::StripeConfirm::create_payment_intent(
+        stripe_account           => $acct,
+        amount                   => 1000,
+        currency                 => 'usd',
+        application_fee_amount   => 25,
+        'payment_method_types[]' => 'card',
+    );
+    like $pi->{id}, qr/^pi_/, 'an intent on the connected account';
+
+    my $confirmed = Test::Registry::StripeConfirm::confirm( $pi->{id}, undef, $acct );
+    is $confirmed->{status}, 'succeeded', 'confirm reaches it with the account named';
+
+    my $charge = Test::Registry::StripeConfirm::charge_for_settled( $pi->{id}, $acct );
+    is $charge->{amount}, 1000, 'charge_for_settled finds its charge there';
+    like $charge->{application_fee}, qr/^fee_/, 'and waits for the application fee';
+    ok !$charge->{transfer}, 'with no transfer, since nothing is moved to the account';
+
+    ok !eval { Test::Registry::StripeConfirm::charge_for( $pi->{id} ); 1 },
+        'without the account the intent is not found on the platform';
 };
 
 done_testing;
