@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# ABOUTME: The instalment schedule Registry builds is one the real Stripe API accepts.
+# ABOUTME: The instalment schedule Registry builds is one the real Stripe API accepts, on the tenant's account.
 # ABOUTME: Requires STRIPE_SECRET_KEY (sk_test_); skips entirely without one.
 
 use 5.42.0;
@@ -15,13 +15,15 @@ use Registry::DAO::Payment;
 plan skip_all => 'STRIPE_SECRET_KEY (sk_test_) not set'
     unless Test::Registry::StripeConnect::available();
 
-my $stripe = Registry::Service::Stripe->from_env;
+my $platform = Registry::Service::Stripe->from_env;
 
+# Set once the tenant account exists; cleanup acts on that account.
+my $stripe;
 my @schedules;
 my @customers;
 END {
     local $?;
-    my $s = eval { Registry::Service::Stripe->from_env } or return;
+    my $s = $stripe or return;
 
     # Schedules first: a customer with a live schedule cannot be deleted.
     for my $id (@schedules) {
@@ -40,10 +42,14 @@ END {
     # that has prices, and the schedule created two. It is inert.
 }
 
-# A connected account Stripe has approved, so a destination charge against it is
+# A connected account Stripe has approved, so a direct charge on it is
 # something the API will actually accept rather than refuse for capabilities.
 my $acct = Test::Registry::StripeConnect::ready_account();
 like $acct, qr/^acct_/, "a charges_enabled connected account ($acct)";
+
+# Everything below lives on the tenant's account, as production's
+# seller-bound client (Payment::stripe_client) puts it there.
+$stripe = $platform->for_account($acct);
 
 # A customer with a saved card, which is what instalments two and three are
 # charged against once nobody is present to approve them.
@@ -64,21 +70,20 @@ $stripe->_await( $stripe->attach_payment_method_async( $pm->{id}, $customer->{id
 # The uneven case on purpose: $100 in three is 33.33 / 33.33 / 33.34, so the
 # schedule has to carry two phases. Instalment one is taken at checkout, so what
 # a schedule covers is the remaining two.
-# One product per thing being sold. It lives on the PLATFORM account -- the
-# schedule is ours, with the charges destined for the tenant -- so this is our
-# clutter, not theirs.
+# One product per thing being sold. It lives on the tenant's account, with
+# the schedule that bills against it.
 my $product = $stripe->_await( $stripe->create_product_async({
     name                => 'Summer Camp',
     'metadata[purpose]' => 'registry-test-suite',
 }) );
 like $product->{id}, qr/^prod_/, 'a product for the session being sold';
 
-subtest 'Stripe accepts the schedule for the instalments still to come' => sub {
+my $schedule;
+subtest 'schedule is on the tenant account with fee percent and no transfer' => sub {
     my $params = Registry::DAO::Payment::instalment_schedule_params({
         product           => $product->{id},
         customer          => $customer->{id},
         payment_method    => $pm->{id},
-        connect_account   => $acct,
         revenue_share_pct => 2.5,
         currency          => 'usd',
         description       => 'Summer Camp',
@@ -88,7 +93,7 @@ subtest 'Stripe accepts the schedule for the instalments still to come' => sub {
         ],
     });
 
-    my $schedule = eval { $stripe->create_subscription_schedule($params) };
+    $schedule = eval { $stripe->create_subscription_schedule($params) };
     ok $schedule, 'the schedule was created' or do { diag $@; return };
     like $schedule->{id}, qr/^sub_sched_/, 'and Stripe gave it an id';
     push @schedules, $schedule->{id};
@@ -101,8 +106,10 @@ subtest 'Stripe accepts the schedule for the instalments still to come' => sub {
         or diag explain $phases;
 
     # What the money does, read back from Stripe rather than from our own hash.
-    is $schedule->{default_settings}{transfer_data}{destination}, $acct,
-        'each charge settles in the tenant account';
+    is $stripe->retrieve_subscription_schedule( $schedule->{id} )->{id}, $schedule->{id},
+        'it is found on the tenant account';
+    ok !$schedule->{default_settings}{transfer_data},
+        'with no transfer: each charge is already the tenant\'s';
     is $schedule->{default_settings}{application_fee_percent} + 0, 2.5,
         'and our revenue share is the application fee';
 
@@ -113,6 +120,14 @@ subtest 'Stripe accepts the schedule for the instalments still to come' => sub {
     } @amounts;
     is_deeply \@unit, [ 3333, 3334 ],
         'the even share and the remainder, in that order';
+};
+
+subtest 'schedule is not on the platform account' => sub {
+    my $id = $schedule && $schedule->{id}
+        or plan skip_all => 'no schedule was created';
+    ok !eval { $platform->retrieve_subscription_schedule($id); 1 },
+        'the platform account, with no Stripe-Account, does not find it';
+    like $@, qr/No such subscription schedule.*resource_missing/, 'because it does not exist there';
 };
 
 done_testing;
