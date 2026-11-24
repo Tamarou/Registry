@@ -22,11 +22,14 @@ DECLARE
 BEGIN
     IF TG_OP <> 'INSERT' THEN old_version := OLD.offer_version_id; END IF;
     IF TG_OP <> 'DELETE' THEN new_version := NEW.offer_version_id; END IF;
+    -- FOR SHARE, so a concurrent publish waits for this change, or this one
+    -- sees it. It locks only rows returned, so a draft is filtered out below.
     FOR v IN EXECUTE format(
-        'SELECT offer_id, version FROM %I.offer_versions
-          WHERE id IN ($1, $2) AND published_at IS NOT NULL', TG_TABLE_SCHEMA)
+        'SELECT offer_id, version, published_at FROM %I.offer_versions
+          WHERE id IN ($1, $2) FOR SHARE', TG_TABLE_SCHEMA)
         USING old_version, new_version
     LOOP
+        CONTINUE WHEN v.published_at IS NULL;
         RAISE EXCEPTION
             'offer % version % is published: its payment plans cannot be '
             'added, changed or removed. Publish a new version instead.',

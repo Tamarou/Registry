@@ -9,6 +9,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;
 use Test::Registry::DB;
+use Mojo::Pg;
 use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO::Resource;
 use Registry::DAO::Offer;
@@ -278,6 +279,20 @@ subtest 'published child data insert or delete refused' => sub {
     throws_ok {
         $tdb->query( 'DELETE FROM offer_version_payment_plans WHERE offer_version_id = ?', $tv->id )
     } qr/offer \Q@{[ $toffer->id ]}\E version 1/, "and so is removing one in a new tenant's schema";
+};
+
+subtest 'plan edit and publish take turns' => sub {
+    my $draft = new_offer('Race')->draft( $db, offer_terms( $seat->id ) );
+    my $tx = $db->begin;
+    $db->query( q{INSERT INTO offer_version_payment_plans (offer_version_id, id, kind) VALUES (?, 'late', 'one_time')},
+        $draft->id );
+
+    my $other = Mojo::Pg->new( $test_db->uri )->db;
+    $other->query(q{SET lock_timeout = '200ms'});
+    throws_ok {
+        $other->query( 'UPDATE registry.offer_versions SET published_at = now() WHERE id = ?', $draft->id )
+    } qr/lock timeout/, 'a publish waits for a plan change in flight instead of slipping past it';
+    undef $tx;
 };
 
 done_testing;
