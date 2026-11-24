@@ -13,6 +13,10 @@ class Registry::DAO::WorkflowSteps::RecordFeeRefundException :isa(Registry::DAO:
         my $found = Registry::DAO::WorkflowSteps::FindTenantPayment->located( $db, $form_data, $run );
         return { stay => 1, errors => [ $found->{error} ] } if $found->{error};
 
+        my $reason = $form_data->{reason};
+        $reason = defined $reason && !ref $reason ? $reason =~ s/\A\s+|\s+\z//gr : '';
+        return { stay => 1, errors => ['Give the reason the platform returns its fee'] } unless length $reason;
+
         my $payment = $found->{payment};
         # Written only when absent, in one statement: a second application,
         # or two at once, leaves the first request as it was.
@@ -23,7 +27,7 @@ class Registry::DAO::WorkflowSteps::RecordFeeRefundException :isa(Registry::DAO:
              WHERE id = ? AND metadata->'platform_fee_refund_exception' IS NULL
         }, encode_json( {
             idempotency_key           => 'platform-fee-refund:' . $payment->id,
-            reason                    => $form_data->{reason},
+            reason                    => $reason,
             amount_cents              => $found->{remaining_cents},
             platform_offer_version_id => $found->{terms}{id},
             requested_by              => $form_data->{user_id},

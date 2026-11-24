@@ -31,6 +31,8 @@ class Registry::DAO::WorkflowSteps::FindTenantPayment :isa(Registry::DAO::Workfl
     # The slug must be a registry.tenants row before any schema is connected,
     # because it becomes a search_path.
     sub locate ( $class, $db, $data, $slug, $payment_id ) {
+        if ( my $why = $class->operator_refusal( $db, $data ) ) { return { error => $why } }
+
         my $tenant = defined $slug && !ref $slug && length $slug
             && Registry::DAO::Tenant->find( $db, { slug => $slug } );
         return { error => 'There is no tenant with that slug' } unless $tenant;
@@ -39,9 +41,17 @@ class Registry::DAO::WorkflowSteps::FindTenantPayment :isa(Registry::DAO::Workfl
             && Registry::DAO::Payment->find( $tenant->dao->db, { id => $payment_id } );
         return { error => 'That tenant has no payment with that id' } unless $payment;
 
+        return { error => 'That payment has not been refunded' }
+            unless Registry::DAO::Payment->_money_returned( $payment->status );
+
         my $terms = eval { $payment->stamped_platform_terms($db) };
+        return { error => 'That payment was not charged under platform terms that allow the fee to be returned' }
+            unless $terms && ( ( $terms->{refund_policy} // {} )->{kind} // '' ) eq 'keep_fee_with_admin_exception';
 
         my $remaining = ( $payment->platform_fee_cents // 0 ) - ( $payment->platform_fee_refunded_cents // 0 );
+        return { error => 'None of the platform fee on that payment is left to return' }
+            unless $remaining > 0;
+
         return { tenant => $tenant, payment => $payment, terms => $terms, remaining_cents => $remaining };
     }
 
