@@ -448,13 +448,24 @@ the platform's host):
   idempotency key `platform-fee-refund:<payment id>`. Applying it again keeps
   the first record.
 - **Return the fee:** `refund_platform_fee_async` reads the fee id from the
-  seller's charge and calls `POST /v1/application_fees/{fee}/refunds` on the
-  platform account (no `Stripe-Account`) with the recorded amount and key.
-  Pressing it again after a failure is safe: the key and Stripe's own
-  remaining-fee check stop a second refund.
+  seller's charge, then reads the fee on the platform account and refuses
+  (before sending anything) a fee whose `charge` is not the payment's charge
+  or whose `account` is not the payment's `metadata.stripe_account_id`, and a
+  recorded amount larger than the whole fee. It then calls
+  `POST /v1/application_fees/{fee}/refunds` on the platform account (no
+  `Stripe-Account`) under the recorded key, for the recorded amount or, when
+  some of the fee was returned outside the workflow after the request was
+  recorded, for only what is left.
+- **Pressing it again** is safe and finishes the run. If
+  `platform_fee_refunded_cents` already shows the whole fee returned, nothing
+  is read or sent. Otherwise, if Stripe's fee shows nothing left (`amount`
+  equals `amount_refunded`: an earlier press, or a return by hand), nothing is
+  sent and Stripe's `amount_refunded` is recorded on the payment. The
+  complete screen says the fee was already returned.
 - **The result:** the kept-fee figure (`payments.platform_fee_refunded_cents`)
-  changes only when Stripe sends `application_fee.refunded` to the platform
-  endpoint, not when the workflow finishes.
+  changes when Stripe sends `application_fee.refunded` to the platform
+  endpoint, or when a press finds the fee already returned in full; a fee
+  refund the workflow sends is not recorded until that event arrives.
 
 ### Refunds
 
