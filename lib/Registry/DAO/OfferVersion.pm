@@ -13,6 +13,9 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     field $offer_id :param :reader;
     field $version :param :reader;
     field $resource_id :param :reader;
+    field $price_cents :param :reader;             # whole smallest currency units
+    field $units_per_acceptance :param :reader;    # e.g. 2 seats for a couple
+    field $per_booking_cap :param :reader;         # acceptances one booking may take
     field $published_at :param :reader = undef;
     field $superseded_at :param :reader = undef;
     field $created_at :param :reader;
@@ -40,11 +43,13 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
         my $row = _with_offer_locked( $db, $offer_id, sub {
             $db->query(
-                'INSERT INTO offer_versions (offer_id, version, resource_id)
-                 SELECT ?, coalesce(max(version), 0) + 1, ?
+                'INSERT INTO offer_versions (offer_id, version, resource_id,
+                        price_cents, units_per_acceptance, per_booking_cap)
+                 SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?
                    FROM offer_versions WHERE offer_id = ?
                  RETURNING *',
-                $offer_id, $terms->{resource_id}, $offer_id )->hash;
+                $offer_id, $terms->@{qw( resource_id price_cents units_per_acceptance per_booking_cap )},
+                $offer_id )->hash;
         } );
         return $class->new(%$row);
     }

@@ -99,3 +99,4 @@ pricing-plan-rate-check [webhook-events-connect-payload] 2026-11-24T02:00:00Z Ch
 payments-platform-fee-refunded [pricing-plan-rate-check] 2026-11-24T03:00:00Z Chris Prather <chris.prather@tamarou.com> # Record how much of the platform fee Stripe reports refunded
 tenant-plan-has-rate [payments-platform-fee-refunded] 2026-11-24T03:30:00Z Chris Prather <chris.prather@tamarou.com> # A tenant links only to a platform plan that carries a rate
 priceops-offer-versions [tenant-plan-has-rate] 2026-11-24T04:00:00Z Chris Prather <chris.prather@tamarou.com> # Resources and offers with append-only versions, immutable once published
+priceops-offer-policies [priceops-offer-versions] 2026-11-24T05:00:00Z Chris Prather <chris.prather@tamarou.com> # Offer versions carry price, units, payment plans, policies and conditions as data

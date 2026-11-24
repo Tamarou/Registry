@@ -33,6 +33,7 @@ my @CHANGES = qw(
     webhook-events-processed-at
     payments-typed-obligation
     enrollment-reenrol-after-drop
+    priceops-offer-policies
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;

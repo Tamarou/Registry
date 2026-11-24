@@ -9,6 +9,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Exception;
 use Test::Registry::DB;
+use Test::Registry::Offers qw( offer_terms );
 use Mojo::Pg;
 use POSIX ();
 use Registry::DAO::Resource;
@@ -44,19 +45,19 @@ my $clay = Registry::DAO::Resource->create( $db,
 subtest 'publishing appends a version and supersedes the last' => sub {
     my $offer = Registry::DAO::Offer->create( $db, { name => 'Drop-in wheel' } );
 
-    my $v1 = $offer->draft( $db, { resource_id => $clay->id } );
+    my $v1 = $offer->draft( $db, offer_terms( $clay->id ) );
     is $v1->version, 1, 'the first draft is version 1';
     ok !$v1->is_published, 'and is a draft';
     ok !$offer->current_version($db), 'an offer with only a draft has no current version';
 
-    $v1 = $v1->update( $db, { resource_id => $seat->id } );
+    $v1 = $v1->update( $db, offer_terms( $seat->id ) );
     is $v1->resource_id, $seat->id, 'a draft can be edited';
 
     $v1 = $v1->publish($db);
     ok $v1->is_published, 'publishing marks the version published';
     is $offer->current_version($db)->id, $v1->id, 'and makes it current';
 
-    my $v2 = $offer->draft( $db, { resource_id => $seat->id } );
+    my $v2 = $offer->draft( $db, offer_terms( $seat->id ) );
     is $v2->version, 2, 'the next draft is version 2';
     is $offer->current_version($db)->id, $v1->id, 'a draft does not replace the current version';
 
@@ -77,7 +78,7 @@ subtest 'publishing appends a version and supersedes the last' => sub {
 # An offer whose version 1 is published; returns the offer and that version.
 sub published_offer ( $name, $handle = $db ) {
     my $offer = Registry::DAO::Offer->create( $handle, { name => $name } );
-    return ( $offer, $offer->draft( $handle, { resource_id => $seat->id } )->publish($handle) );
+    return ( $offer, $offer->draft( $handle, offer_terms( $seat->id ) )->publish($handle) );
 }
 
 subtest 'published version terms refused by the database' => sub {
@@ -98,7 +99,7 @@ subtest 'published version terms refused by the database' => sub {
         $db->query( 'UPDATE offer_versions SET superseded_at = now() WHERE id = ?', $v1->id )
     } 'setting only the superseded marker is allowed';
 
-    my $draft = $offer->draft( $db, { resource_id => $seat->id } );
+    my $draft = $offer->draft( $db, offer_terms( $seat->id ) );
     lives_ok {
         $db->query( 'UPDATE offer_versions SET resource_id = ? WHERE id = ?', $clay->id, $draft->id )
     } 'a draft stays editable by raw SQL';
@@ -106,7 +107,7 @@ subtest 'published version terms refused by the database' => sub {
 
 subtest 'added column is protected without trigger change' => sub {
     my ( $offer, $v1 ) = published_offer('Couples night');
-    my $draft = $offer->draft( $db, { resource_id => $seat->id } );
+    my $draft = $offer->draft( $db, offer_terms( $seat->id ) );
 
     my $tx = $db->begin;    # rolled back on scope exit: the column is the test's own
     $db->query('ALTER TABLE offer_versions ADD COLUMN test_note text');
@@ -133,7 +134,7 @@ subtest 'new tenant schema has offer tables and triggers' => sub {
     my $res = Registry::DAO::Resource->create( $tdb,
         { name => 'Wheel', kind => 'finite', capacity => 4 } );
     my $offer = Registry::DAO::Offer->create( $tdb, { name => 'Taster' } );
-    my $v1 = $offer->draft( $tdb, { resource_id => $res->id } )->publish($tdb);
+    my $v1 = $offer->draft( $tdb, offer_terms( $res->id ) )->publish($tdb);
     ok $v1->is_published, 'an offer is published in the tenant schema';
 
     throws_ok {
@@ -167,7 +168,7 @@ subtest 'published version delete refused' => sub {
     } qr/offer \Q@{[ $offer->id ]}\E version 1/, 'deleting a published version is refused';
     ok Registry::DAO::OfferVersion->find( $db, { id => $v1->id } ), 'and the version is still there';
 
-    my $draft = $offer->draft( $db, { resource_id => $seat->id } );
+    my $draft = $offer->draft( $db, offer_terms( $seat->id ) );
     lives_ok { $db->query( 'DELETE FROM offer_versions WHERE id = ?', $draft->id ) }
         'a draft, never sold under, can still be discarded';
 };
@@ -179,7 +180,7 @@ subtest 'unpublishing refused by the database' => sub {
         $db->query( 'UPDATE offer_versions SET published_at = NULL WHERE id = ?', $v1->id )
     } $names, 'setting a published version back to draft is refused';
 
-    $offer->draft( $db, { resource_id => $seat->id } )->publish($db);
+    $offer->draft( $db, offer_terms( $seat->id ) )->publish($db);
     throws_ok {
         $db->query( 'UPDATE offer_versions SET superseded_at = NULL WHERE id = ?', $v1->id )
     } $names, 'clearing the superseded marker while its successor is current is refused';
@@ -191,7 +192,8 @@ subtest 'unpublishing refused by the database' => sub {
 subtest 'duplicate version number refused' => sub {
     my ( $offer, $v1 ) = published_offer('Raku firing');
     throws_ok {
-        $db->query( 'INSERT INTO offer_versions (offer_id, version, resource_id) VALUES (?, 1, ?)',
+        $db->query( 'INSERT INTO offer_versions (offer_id, version, resource_id, price_cents, units_per_acceptance, per_booking_cap)
+                  VALUES (?, 1, ?, 0, 1, 1)',
             $offer->id, $seat->id )
     } qr/offer_versions_offer_version_key/, 'a second version 1 for the same offer is refused';
 };
@@ -222,7 +224,7 @@ subtest 'concurrent publishes leave one current version' => sub {
         my $pg  = Mojo::Pg->new($uri)->search_path( [ 'registry', 'public' ] );
         my $bdb = $pg->db;
         my $ok  = eval {
-            Registry::DAO::OfferVersion->draft( $bdb, $offer->id, { resource_id => $seat->id } )
+            Registry::DAO::OfferVersion->draft( $bdb, $offer->id, offer_terms( $seat->id ) )
                 ->publish($bdb);
             1;
         };
@@ -234,7 +236,7 @@ subtest 'concurrent publishes leave one current version' => sub {
     my $pg  = Mojo::Pg->new($uri)->search_path( [ 'registry', 'public' ] );
     my $adb = $pg->db;
     my $tx  = $adb->begin;
-    Registry::DAO::OfferVersion->draft( $adb, $offer->id, { resource_id => $seat->id } )->publish($adb);
+    Registry::DAO::OfferVersion->draft( $adb, $offer->id, offer_terms( $seat->id ) )->publish($adb);
     print $parent_writes "go\n";
     $parent_writes->flush;
     sleep 1;    # let B reach the offer and block behind A
@@ -257,7 +259,7 @@ subtest 'cross schema resource reference refused' => sub {
     my $b_only = Registry::DAO::Resource->create( $bdb, { name => 'B wheel', kind => 'finite', capacity => 2 } );
     my $offer  = Registry::DAO::Offer->create( $adb, { name => 'A taster' } );
 
-    throws_ok { $offer->draft( $adb, { resource_id => $b_only->id } ) }
+    throws_ok { $offer->draft( $adb, offer_terms( $b_only->id ) ) }
         qr/offer_versions_resource_id_fkey/,
         "tenant A's offer version cannot name a resource that only tenant B has";
 };
@@ -267,7 +269,7 @@ subtest 'tenant connection never reads another tenants offers' => sub {
     my $bdb = new_tenant('studio_d');
     my $res = Registry::DAO::Resource->create( $adb, { name => 'C wheel', kind => 'finite', capacity => 2 } );
     my $offer = Registry::DAO::Offer->create( $adb, { name => 'C taster' } );
-    my $v1 = $offer->draft( $adb, { resource_id => $res->id } )->publish($adb);
+    my $v1 = $offer->draft( $adb, offer_terms( $res->id ) )->publish($adb);
 
     ok !Registry::DAO::Offer->find( $bdb, { id => $offer->id } ), "B cannot find A's offer by id";
     ok !Registry::DAO::OfferVersion->find( $bdb, { id => $v1->id } ), "nor A's offer version";
