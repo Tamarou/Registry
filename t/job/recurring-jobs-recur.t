@@ -6,7 +6,7 @@ BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
-use experimental qw(signatures);
+use experimental qw(signatures defer);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
@@ -90,8 +90,8 @@ subtest 'task without interval dies' => sub {
 # the length of one run.
 sub with_table_gone ( $table, $code ) {
     $mdb->query("ALTER TABLE registry.$table RENAME TO ${table}_gone");
+    defer { $mdb->query("ALTER TABLE registry.${table}_gone RENAME TO $table") }
     $code->();
-    $mdb->query("ALTER TABLE registry.${table}_gone RENAME TO $table");
 }
 
 subtest 'failed sweep schedules next run without duplicate chain' => sub {

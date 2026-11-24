@@ -1,3 +1,5 @@
+# ABOUTME: attendance-check workflow step kept as a no-op: the job now schedules its own next run.
+# ABOUTME: Left in place so stored runs that point at it still resolve; removal waits on ruling 01a20490.
 use 5.42.0;
 
 use Object::Pad;
