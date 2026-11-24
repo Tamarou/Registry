@@ -2207,6 +2207,13 @@ SQL
         return 'unknown';
     }
 
+    # Stripe has not moved the money yet and may still fail: settled later by
+    # refund.updated, and until then neither counted nor treated as done.
+    sub refund_is_pending ( $class, $refund ) {
+        return ( ( ref $refund eq 'HASH' ? $refund->{status} : undef ) // '' )
+            =~ /\A(?:pending|requires_action)\z/ ? 1 : 0;
+    }
+
     # The log is where an operator looks second; the row is where the runbook
     # looks first. Best-effort: a stamp that cannot be written must not turn a
     # refund failure into a second failure on top of it.

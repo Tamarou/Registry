@@ -86,7 +86,7 @@ class Registry::DAO::WorkflowSteps::ProcessDropRefund :isa(Registry::DAO::Workfl
             sub ($refund) {
                 # Stripe has not moved the money yet. The enrollment stays
                 # pending until refund.updated settles it; the drop carries on.
-                if ( ( $refund->{status} // '' ) =~ /\A(?:pending|requires_action)\z/ ) {
+                if ( Registry::DAO::Payment->refund_is_pending($refund) ) {
                     return {
                         refund_processed    => 0,
                         refund_status       => 'pending',

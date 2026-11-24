@@ -291,4 +291,39 @@ subtest 'the parent-return path refunds each increment separately' => sub {
         . 'on the composed refund_async/_apply_refund_result/settle path';
 };
 
+# A pending refund has moved no money and may fail, so the parent-return path
+# leaves the increment owed for refund.updated to settle.
+subtest 'the parent-return path leaves a pending capacity refund owed' => sub {
+    my $kid = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'CB Pending Kid', birth_date => '2018-03-03', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $kid->id } ],
+            tenant_slug      => $platform },
+    });
+    my $run = run_for($payment);
+    $payment->record_capacity_obligation( $db, 4000, ['kid-c'] );
+    $db->update('payments',
+        { stripe_payment_intent_id => 'pi_cb_pending_' . $payment->id },
+        { id => $payment->id });
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async =
+        sub { Mojo::Promise->resolve( intent_for($payment) ) };
+    local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+        Mojo::Promise->resolve({ id => 're_cb_pending', status => 'pending' });
+    };
+
+    settle( $step->handle_payment_callback( $db, $run, {
+        payment_intent_id => 'pi_cb_pending',
+    } ) );
+
+    my $row = Registry::DAO::Payment->find($db, { id => $payment->id });
+    is $row->refund_owed_cents, 4000, 'the debt is not discharged';
+    is $row->refunded_cents, 0, 'and nothing is counted as returned';
+};
+
 done_testing;

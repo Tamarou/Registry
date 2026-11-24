@@ -702,6 +702,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                         # said rather than inferred from the key (#286).
                         increment => 1,
                     })->then(sub ($refund) {
+                        # Still owed until refund.updated settles it.
+                        return $refund if Registry::DAO::Payment->refund_is_pending($refund);
                         # Settled per increment, so a partial success is kept.
                         # Discharging the whole obligation on one response is
                         # how a debt that grew mid-flight got erased.

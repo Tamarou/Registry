@@ -477,6 +477,8 @@ method handle_payment_callback ($db, $run, $form_data) {
                             # said rather than inferred from the key (#286).
                             increment => 1,
                         })->then(sub ($refund) {
+                            # Still owed until refund.updated settles it.
+                            return $refund if Registry::DAO::Payment->refund_is_pending($refund);
                             $settled->settle_refund_increment($db, $inc->{seq}, $refund)
                                 or warn "capacity refund: settling increment "
                                       . "$inc->{seq} of payment @{[ $settled->id ]} "

@@ -245,6 +245,28 @@ subtest 'a rejected refund still answers Stripe with 2xx' => sub {
         'and leaves the row for the runbook';
 };
 
+# A pending refund has moved no money and may fail. Settling the increment on
+# it discharged the debt and read refunded; it waits for refund.updated.
+subtest 'a pending capacity refund leaves the debt owed' => sub {
+    my $payment = a_doomed_payment();
+    my @errors;
+    {
+        no warnings 'redefine', 'once';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            Mojo::Promise->resolve({ id => 're_cr_wait_' . $payment->id, status => 'pending' });
+        };
+        local *Mojo::Log::error = sub ($self, @msg) { push @errors, join '', @msg };
+        post_settlement($payment)->status_is(200);
+    }
+
+    my $row = tenant_payment($payment);
+    is $row->status, 'refund_pending', 'the payment still owes the refund';
+    is $row->refund_owed_cents, 15000, 'the debt is not discharged';
+    is $row->refunded_cents, 0, 'nothing is counted as returned';
+    is scalar @{ $row->unsettled_refund_increments($tdb) }, 1, 'the increment is unsettled';
+    is_deeply \@errors, [], 'and waiting is not logged as an error';
+};
+
 subtest 'a refund that throws synchronously still answers 2xx' => sub {
     # refund_async dies before returning a promise in several real ways: the
     # status guard, a missing intent id, stripe_client refusing a live key. A
