@@ -110,3 +110,4 @@ operator-right-entitlement [priceops-occurrence-resources] 2026-11-24T09:30:00Z 
 self-offer-guard [operator-right-entitlement] 2026-11-24T10:00:00Z Chris Prather <chris.prather@tamarou.com> # Only the platform tenant may hold the platform's offers to itself (holder_is_offerer)
 platform-entitlement-one-in-effect [self-offer-guard] 2026-11-24T11:00:00Z Chris Prather <chris.prather@tamarou.com> # A tenant holds one active platform entitlement to payment processing at a time
 platform-entitlement-replaces-plan-link [platform-entitlement-one-in-effect] 2026-11-24T12:00:00Z Chris Prather <chris.prather@tamarou.com> # A tenant's platform fee comes from its platform entitlement, and the plan link is dropped
+offer-publishing-adds-percentage-of-sales [platform-entitlement-replaces-plan-link] 2026-11-24T13:00:00Z Chris Prather <chris.prather@tamarou.com> # offer-publishing gains a percentage-of-sales payment step; the stored workflow is cleared so import rebuilds it
