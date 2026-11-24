@@ -13,7 +13,7 @@ use Test::More;
 # fully-controlled environment (the parent shell may export a real live key).
 # Single-quoted here-string: $vars below are literal, evaluated by the child.
 my $build_client = 'require Registry::DAO::Payment;'
-    . 'my $p = Registry::DAO::Payment->new;'
+    . 'my $p = Registry::DAO::Payment->new(metadata => { stripe_account_id => q{acct_keyguard} });'
     . 'my $ok = eval { $p->stripe_client; 1 };'
     . 'print $ok ? "OK\n" : "ERR: $@";';
 

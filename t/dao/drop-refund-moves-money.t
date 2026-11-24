@@ -4,7 +4,7 @@
 # #286. An admin could approve a refund, the parent was shown "pending", and no
 # money ever left -- worse than not offering refunds. The money machinery was
 # already there and proven (Payment->refund_async accumulates refunded_cents,
-# re-checks capacity debt, sends reverse_transfer); what was missing was a
+# re-checks capacity debt, refunds on the seller's account); what was missing was a
 # caller.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -42,11 +42,9 @@ my $parent = $dao->create( User => {
     username => 'dr_parent', name => 'DR Parent', user_type => 'parent',
     email => 'dr@test.local' } );
 
-# A Connect-ready tenant, because the refund has to reverse the transfer: the
-# platform took an application fee on the way in, and the tenant -- not the
-# platform -- bears the refund. Without a tenant_slug and a connect account
-# _refund_connect_params returns nothing, and the assertion below would pass
-# against an empty hash.
+# A Connect-ready tenant, because the payment is a direct charge on the
+# tenant's account: the refund is made there too, and the tenant -- not the
+# platform -- bears it.
 my $tenant = Test::Registry::Fixtures::create_tenant( $db, {
     name => 'Refunding Studio', slug => 'refunding_studio' } );
 $db->query(
@@ -142,7 +140,7 @@ sub refunded_cents_of ($payment) {
 # method is replaced: refund_async's own guards must run for real.
 sub capturing_stripe ( $calls, %opt ) {
     return sub ( $self, $params ) {
-        push @$calls, $params;
+        push @$calls, { %$params, _account => $self->stripe_account };
         return Mojo::Promise->reject( $opt{fail} ) if $opt{fail};
         return Mojo::Promise->resolve( {
             id     => 'rf_' . scalar(@$calls),
@@ -182,8 +180,6 @@ subtest 'an approved refund actually moves the money' => sub {
     is scalar @calls, 1, 'Stripe was asked for exactly one refund';
     is $calls[0]{amount}, 5000, 'for the approved amount, not the whole cart';
     is $calls[0]{payment_intent}, 'pi_drop_' . $payment->id, 'against the right intent';
-    is $calls[0]{reverse_transfer}, 'true',
-        'reversing the transfer, so the tenant bears it rather than the platform';
     like $calls[0]{_idempotency_key}, qr/\Qrefund:drop:\E/,
         'under an idempotency key, so a retry cannot double-refund';
 
@@ -191,6 +187,25 @@ subtest 'an approved refund actually moves the money' => sub {
     is refund_status_of($dropped), 'processed',
         'and the enrollment says processed -- the status that had no writer at all';
     is refunded_cents_of($payment), 5000, 'the payment records what went back';
+};
+
+subtest 'drop refund is made on the tenant account without reverse transfer' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is scalar @calls, 1, 'one refund request';
+    is $calls[0]{_account}, 'acct_drop_refund', 'sent on the tenant account';
+    ok !exists $calls[0]{reverse_transfer}, 'no transfer to reverse on a direct charge';
+    ok !exists $calls[0]{refund_application_fee}, 'and the platform fee is kept';
 };
 
 subtest 'a refund with no amount refuses rather than refunding the whole cart' => sub {
@@ -227,10 +242,177 @@ subtest 'a refund Stripe refuses stays pending, never processed' => sub {
         refund_requested => 1, refund_amount_cents => 5000 );
 
     is scalar @calls, 1, 'Stripe was asked';
-    is $result->{refund_processed}, 0, 'the step does not claim success';
-    ok $result->{error}, 'the failure is reported rather than swallowed';
+    ok !$result->{refund_processed}, 'the step does not claim success';
+    ok $result->{errors}, 'the failure is reported rather than swallowed';
     is refund_status_of($dropped), 'pending',
         'the enrollment still owes the money -- processed would be a lie';
+};
+
+# Driven through the run, not the bare step: whether the run advances is
+# decided by WorkflowRun::_persist_step_result, and that is where a failed
+# refund used to slip through to the waitlist and notification steps.
+sub drive_run ( %data ) {
+    my $run = $workflow->new_run($db);
+    $run->update_data( $db, \%data );
+    my $step = Registry::DAO::WorkflowSteps::ProcessDropRefund->new(
+        id => $step_row->id, workflow_id => $workflow->id,
+        slug => 'process-refund', description => 'Process refund if requested',
+        class => 'Registry::DAO::WorkflowSteps::ProcessDropRefund' );
+    my $result = settle( $run->process( $db, $step, {} ) );
+    my $latest = $db->query( 'SELECT latest_step_id FROM workflow_runs WHERE id = ?',
+        $run->id )->hash->{latest_step_id};
+    return ( $result, $latest );
+}
+
+sub last_refund_failure_of ($payment) {
+    return $db->query( q{SELECT metadata->'refund_last_failure' AS f
+                           FROM payments WHERE id = ?}, $payment->id )->expand->hash->{f};
+}
+
+subtest 'a drop refund Stripe refuses stops the run on the refund step and is recorded' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async =
+        capturing_stripe( \@calls, fail => "card_declined\n" );
+
+    my ( $result, $latest ) = drive_run( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is scalar @calls, 1, 'Stripe was asked';
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/refund/i,
+        'the admin is shown why' ) or diag explain $result;
+    is( ( last_refund_failure_of($payment) // {} )->{classification}, 'unknown',
+        'the runbook has a record, classified as unknown' );
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
+};
+
+subtest 'a drop refund refused before sending stops the run on the refund step and is recorded' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    # Past the 10000 captured: refund_async refuses this synchronously.
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 10001 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    my ( $result, $latest ) = eval { drive_run( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 10001 ) };
+    is $@, '', 'the guard does not escape as a 500';
+
+    is scalar @calls, 0, 'nothing reached Stripe';
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/REFUND_NOT_SENT/,
+        'the admin is shown why' ) or diag explain $result;
+    is( ( last_refund_failure_of($payment) // {} )->{classification}, 'not_sent',
+        'the runbook has a record, classified as not sent' );
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
+};
+
+# `error` (singular) is not a stop signal to _persist_step_result, so these two
+# used to advance the run to the waitlist and notifications with the refund
+# still owed and nothing on the admin's screen.
+subtest 'a drop refund with no approved amount stops the run on the refund step' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments', { refund_status => 'pending' }, { id => $dropped->id } );
+
+    my ( $result, $latest ) = drive_run( enrollment_id => $dropped->id, refund_requested => 1 );
+
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/no refund amount/,
+        'the admin is shown why' ) or diag explain $result;
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
+};
+
+subtest 'a drop refund for an enrollment with no payment stops the run on the refund step' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000, payment_id => undef },
+        { id => $dropped->id } );
+
+    my ( $result, $latest ) = drive_run( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/no payment/,
+        'the admin is shown why' ) or diag explain $result;
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
+};
+
+# The runbook reads refund_last_failure first; once a retry has paid, a record
+# left behind tells the operator money is still owed when it is not.
+subtest 'a drop refund that succeeds on retry clears the recorded failure' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+    my %drop = ( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    no warnings 'redefine';
+    {
+        local *Registry::Service::Stripe::create_refund_async =
+            capturing_stripe( [], fail => "card_declined\n" );
+        drive_run(%drop);
+    }
+    ok last_refund_failure_of($payment), 'the failed attempt is recorded';
+
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( [] );
+    drive_run(%drop);
+
+    is refund_status_of($dropped), 'processed', 'the retry paid';
+    is last_refund_failure_of($payment), undef, 'and the failure record is gone';
+};
+
+subtest 'a pending refund leaves the recorded failure in place' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $payment->record_refund_failure( $db, "card_declined\n" );
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ( $self, $params ) {
+        Mojo::Promise->resolve( { id => 'rf_pending', amount => $params->{amount},
+            status => 'pending' } );
+    };
+    run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    ok last_refund_failure_of($payment),
+        'a refund that may still fail does not clear the record';
+};
+
+# Stripe answers some refunds 'pending': the money has not moved and may not.
+# 'processed' is the parent's receipt, so it waits for refund.updated to settle
+# the refund; the drop itself carries on.
+subtest 'a pending drop refund waits instead of reading processed' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ( $self, $params ) {
+        Mojo::Promise->resolve( { id => 'rf_drop_waits', amount => $params->{amount},
+            status => 'pending' } );
+    };
+    my $result = run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is refund_status_of($dropped), 'pending', 'the enrollment still says pending';
+    is $result->{refund_processed}, 0, 'the step does not report the refund processed';
+    is $result->{refund_status}, 'pending', 'it reports it pending';
+    is $result->{errors}, undef, 'and the drop carries on';
+    is refunded_cents_of($payment), 0, 'nothing is counted as returned yet';
 };
 
 subtest 'a refund already processed is not refunded again' => sub {
@@ -255,6 +437,133 @@ subtest 'a refund already processed is not refunded again' => sub {
     is scalar @calls, 1, 'the second run does not ask Stripe again';
     is $again->{refund_processed}, 1, 'and still reports the refund as done';
     is refunded_cents_of($payment), 5000, 'the money went back exactly once';
+};
+
+# Stripe paid and the payment recorded it, but the step died before writing
+# 'processed' (ProcessDropRefund's enrollment->update). The payment now reads
+# partially_refunded, so refund_async's guards refuse the retry with
+# REFUND_NOT_SENT and the drop would stay pending for good.
+subtest 'a drop refund retried after a partial failure reaches processed without a second refund' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ( $self, $params ) {
+        push @calls, $params;
+        # Stripe replays the refund it already made for a key it has seen.
+        return Mojo::Promise->resolve( {
+            id => "rf_$params->{_idempotency_key}", amount => $params->{amount},
+            status => 'succeeded' } );
+    };
+
+    # The first attempt, up to the point where the step failed: the money moved
+    # and the payment recorded it, the enrollment did not.
+    settle( $payment->refund_async( $db, {
+        amount_cents    => 5000,
+        reason          => 'requested_by_customer',
+        idempotency_key => $payment->drop_refund_key( $dropped->id ),
+    } ) );
+    is refunded_cents_of($payment), 5000, 'the dropped seat is back with the parent';
+    is refund_status_of($dropped), 'pending', 'but the enrollment never heard';
+
+    my $retry = run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is $retry->{refund_processed}, 1, 'the retry finishes' or diag explain $retry;
+    is refund_status_of($dropped), 'processed', 'and the enrollment says processed';
+    is scalar @calls, 1, 'without a second refund at Stripe';
+    is refunded_cents_of($payment), 5000, 'and the money is counted once';
+};
+
+# One partial refund leaves the payment partially_refunded; ruling 8a expects
+# further refunds of what remains, so a second drop from the same cart must
+# still be refunded for its own share.
+subtest 'a second drop from the same cart is refunded after a first partial refund' => sub {
+    my ( $payment, $first, $second ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => [ $first->id, $second->id ] } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    run_step( enrollment_id => $first->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+    is $db->select( payments => ['status'], { id => $payment->id } )->hash->{status},
+        'partially_refunded', 'the first drop leaves the payment partially refunded';
+
+    my $result = run_step( enrollment_id => $second->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is $result->{refund_processed}, 1, 'the second drop is refunded' or diag explain $result;
+    is scalar @calls, 2, 'Stripe was asked once per drop';
+    is $calls[1]{amount}, 5000, 'for the second child\'s own share';
+    is refund_status_of($second), 'processed', 'the second enrollment says processed';
+    is refunded_cents_of($payment), 10000, 'both shares are counted';
+    is $db->select( payments => ['status'], { id => $payment->id } )->hash->{status},
+        'refunded', 'and the payment now reads fully refunded';
+};
+
+subtest 'a refund past what remains on a partially refunded payment is refused' => sub {
+    my ( $payment ) = a_paid_cart();
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    settle( $payment->refund_async( $db, { amount_cents => 5000 } ) );
+    is $payment->status, 'partially_refunded', 'one seat is back';
+
+    my $error;
+    eval { settle( $payment->refund_async( $db, { amount_cents => 5001 } ) ); 1 }
+        or $error = $@;
+    like $error, qr/REFUND_NOT_SENT: Refund of 5001 cents .* past its 10000 captured cents/,
+        'the past-captured guard refuses it';
+    is scalar @calls, 1, 'before anything reaches Stripe';
+    is refunded_cents_of($payment), 5000, 'and nothing more is counted';
+};
+
+# Capacity debt is money already owed back on this payment. A keyed drop
+# refund that ignored it could take returned + owed past what was captured,
+# and Stripe would refuse the excess only after the request went out.
+subtest 'the refund cap counts capacity debt still owed' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'payments', { status => 'refund_pending', refund_owed_cents => 5000 },
+        { id => $payment->id } );
+    $payment = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    my $error;
+    eval { settle( $payment->refund_async( $db, {
+        amount_cents    => 5001,
+        idempotency_key => $payment->drop_refund_key( $dropped->id ),
+    } ) ); 1 } or $error = $@;
+    like $error, qr/REFUND_NOT_SENT: Refund of 5001 cents .* past its 10000 captured cents/,
+        'owed plus the refund past captured is refused';
+    is scalar @calls, 0, 'before anything reaches Stripe';
+};
+
+subtest 'a fully refunded payment is still refused' => sub {
+    my ( $payment ) = a_paid_cart();
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    settle( $payment->refund_async( $db, {} ) );
+    is $payment->status, 'refunded', 'the whole cart is back';
+
+    my $error;
+    eval { settle( $payment->refund_async( $db, { amount_cents => 1 } ) ); 1 }
+        or $error = $@;
+    like $error, qr/REFUND_NOT_SENT: Cannot refund a payment with status 'refunded'/,
+        'the status guard refuses it';
+    is scalar @calls, 1, 'before anything reaches Stripe';
 };
 
 subtest 'the refund settles inside a running IOLoop' => sub {

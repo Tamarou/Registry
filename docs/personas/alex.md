@@ -6,7 +6,7 @@
 A technical solo founder with 25+ years of experience building web applications, running Registry as a Tiny Empire - a lifestyle business optimized for freedom and profit, not growth and scale. Influenced by Tim Ferriss's 4 Hour Work Week and Joshua Tiernan's Tiny Empires philosophy, aiming for 15-20 hours/week of work once systems are established.
 
 **Current Stage:**
-Pre-revenue with a committed first customer and a launch-ready product: the paid-enrollment path is live, with tuition settling into the customer's own Stripe account (Connect destination charges) and the platform collecting its revenue share at charge time. What remains before first revenue is operational - onboarding the first customer's Stripe account and validating one live registration - not feature work. The bootstrap uncertainty now centers on pricing validation, customer pipeline, and product-market fit confirmation rather than product readiness.
+Pre-revenue with a committed first customer and a launch-ready product: the paid-enrollment path is live, with each sale a direct charge on the selling tenant's own Stripe account, which owns the customer, payment method, refunds and disputes. The platform takes its revenue share (2.5% on Solo) as the application fee and keeps it on a refund unless Tamarou was at fault, and payment events reach Registry through the Connect webhook endpoint. Alex administers the platform tenant, `registry`, as an ordinary tenant admin. What remains before first revenue is operational - onboarding the first customer's Stripe account and validating one live registration - not feature work. The bootstrap uncertainty now centers on pricing validation, customer pipeline, and product-market fit confirmation rather than product readiness.
 
 ---
 

@@ -27,6 +27,7 @@ use DateTime;
 use Test::Mojo;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::StripeWebhook;
 use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
@@ -55,6 +56,7 @@ use Registry::DAO::Location;
 local $ENV{STRIPE_SECRET_KEY}       = 'sk_test_dummy';
 local $ENV{STRIPE_PUBLISHABLE_KEY}  = 'pk_test_dummy';
 local $ENV{STRIPE_WEBHOOK_SECRET}   = 'whsec_test_journey';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_journey_connect';
 
 # ---------------------------------------------------------------------------
 # Database setup
@@ -223,7 +225,7 @@ my sub reload_run ($run) {
     return $fresh;
 }
 
-# File-scope state threaded through the four subtests.
+# File-scope state threaded through the subtests.
 my ($journey_parent_id, $journey_child_id, $journey_run_id);
 
 # ---------------------------------------------------------------------------
@@ -395,15 +397,17 @@ subtest 'activate: account row + signed account.updated webhook' => sub {
     ok !$pre->stripe_connect_ready,
         'tenant not ready after account id recorded (booleans still false)';
 
-    # (b) Deliver signed account.updated over HTTP.
+    # (b) Deliver signed account.updated over HTTP, to the Connect endpoint:
+    # it describes the connected account, so Stripe sends it there.
     # The webhook controller uses $self->app->dao (pinned to $tenant_dao).
     # _process_account_updated does: $dao->db->query('UPDATE registry.tenants ...')
     # $tenant_dao->db has search_path = $slug, public -- but registry.tenants is
     # qualified, so the update reaches the right table.  We verify empirically below.
     my $acct_event_id = 'evt_journey_acct_' . $$;
-    post_signed_webhook($t_webhook, {
-        id   => $acct_event_id,
-        type => 'account.updated',
+    Test::Registry::StripeWebhook::post_connect($t_webhook, {
+        id      => $acct_event_id,
+        type    => 'account.updated',
+        account => 'acct_journey',
         data => { object => {
             id                => 'acct_journey',
             charges_enabled   => \1,
@@ -421,9 +425,9 @@ subtest 'activate: account row + signed account.updated webhook' => sub {
 # ---------------------------------------------------------------------------
 # Phase 3: Collect -- intercept Stripe, retry payment step, verify params.
 # ---------------------------------------------------------------------------
-my $captured_params;
+my ($captured_params, $captured_account);
 
-subtest 'collect: payment step passes, correct Stripe Connect params captured' => sub {
+subtest 'collect: payment step passes, correct fee and metadata captured' => sub {
     my ($run)  = $tenant_dao->find(WorkflowRun => { id => $journey_run_id });
     my $step   = $run->next_step($tenant_db);
     is $step->slug, 'payment', 'run is still on payment step (gate refusal did not advance it)';
@@ -435,7 +439,8 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
         no warnings 'redefine';
         local *Registry::Service::Stripe::create_payment_intent_async = sub {
             my ($self_stripe, $params) = @_;
-            $captured_params = $params;
+            $captured_params  = $params;
+            $captured_account = $self_stripe->stripe_account;
             return Mojo::Promise->resolve(
                 { id => 'pi_journey', client_secret => 'cs_journey' });
         };
@@ -458,12 +463,6 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
 
     ok $captured_params,
         'Stripe create_payment_intent_async was called and params captured';
-
-    # Connect routing params
-    is $captured_params->{'transfer_data[destination]'}, 'acct_journey',
-        'transfer_data[destination] is the connected account id';
-    is $captured_params->{'on_behalf_of'}, 'acct_journey',
-        'on_behalf_of is the connected account id';
 
     # Both operands read rather than restated: the amount from the fixture, the
     # rate through the same resolver the charge path calls. A hardcoded rate here
@@ -506,6 +505,14 @@ subtest 'collect: payment step passes, correct Stripe Connect params captured' =
     my $reg_pays = $db->select(
         'registry.payments', ['id'], { user_id => $journey_parent_id })->hashes;
     is scalar @$reg_pays, 0, 'no payment row in registry schema';
+};
+
+subtest 'activate and collect pins a direct charge' => sub {
+    is $captured_account, 'acct_journey',
+        'the intent is created by a client bound to the connected account';
+    ok !exists $captured_params->{'transfer_data[destination]'},
+        'no transfer_data[destination]';
+    ok !exists $captured_params->{'on_behalf_of'}, 'no on_behalf_of';
 };
 
 # ---------------------------------------------------------------------------

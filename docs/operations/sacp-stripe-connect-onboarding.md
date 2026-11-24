@@ -1,5 +1,11 @@
 # SACP Stripe Connect Onboarding
 
+> **Registry now makes direct charges on the tenant's own account, not
+> destination charges.** See
+> [ADR 003](../decisions/003-direct-charges-stripe-source-of-truth.md) for the
+> decision. Steps below that assume destination charges are out of date until
+> this runbook is rewritten.
+
 Operator runbook for wiring SACP's Stripe Standard connected account into the
 Registry platform so tenant-scoped destination charges work.
 
@@ -267,10 +273,12 @@ psql $DATABASE_URL -c \
   "SELECT id, amount_cents, refund_owed_cents, refunded_cents,
           jsonb_pretty(refund_increments) AS increments,
           metadata->'refund_manual_review' AS manual_review,
+          metadata->'refund_last_failure' AS last_failure,
           stripe_payment_intent_id, completed_at
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
        OR jsonb_array_length(COALESCE(metadata->'refund_manual_review', '[]'::jsonb)) > 0
+       OR metadata ? 'refund_last_failure'
     ORDER BY completed_at"
 ```
 
@@ -286,6 +294,43 @@ JSON array of debts, each with its own `seq`, `cents`, and `settled_at`. Send
 one refund per increment whose `settled_at` is null, **for that increment's own
 `cents`** -- never for the `refund_owed_cents` total. The increments sum to the
 total by construction, and sending the total is how one debt gets paid twice.
+
+`metadata.refund_last_failure` is the most recent refund attempt on this
+payment that failed -- a capacity increment (paid from the payment step or the
+webhook) or an approved drop's refund
+(`Registry::DAO::Payment::record_refund_failure`). It holds `classification`,
+`message`, and `at` (epoch seconds). Read `classification` before anything else:
+
+| `classification` | Means | Do |
+|---|---|---|
+| `not_sent` | The request never left Registry. No money moved. | Fix the cause in `message`, then Step 3. Step 2 is still cheap insurance. |
+| `unknown` | Stripe refused it, or the response was lost. Money may have moved. | Step 2 first, always. |
+
+**A drop's refund is not a capacity increment: Steps 3 and 4 do not apply to
+it.** A drop has no increment, its row is usually `completed` rather than
+`refund_pending` (the last predicate above is what lists it), and Step 3's
+`refund:capacity:...` key would not match the drop's own. Run Step 2 first.
+Then retry by resubmitting the drop's refund step, which reuses the key
+`refund:drop:<payment_id>:<enrollment_id>`, so Stripe returns the earlier refund
+rather than sending a second. If you must refund by hand instead, use that same
+key and then set the enrollment's `refund_status = 'processed'`; otherwise a
+later re-approval of the drop refunds the family again.
+
+The field is cleared automatically when a later refund on the same payment
+succeeds, so a row that still carries it has had no successful refund since that
+failure. A `pending` refund does not clear it. One failure is kept per payment,
+so it is a lead, not the queue: a successful refund for one child on a shared
+cart clears it even if another child's refund is still owed. The queue is
+`status`, `refund_increments` and, for drops, the enrollment's
+`refund_status = 'pending'`. When you settle a row by hand (Step 4), remove it
+yourself:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET metadata = metadata - 'refund_last_failure'
+    WHERE id = '<payment_id>'"
+```
 
 A row with `refund_manual_review` set reached a state the automatic path could
 not resolve and needs a human decision on the amount. Two causes, and they call
@@ -590,10 +635,31 @@ Behavior by scenario:
 
 ## 7. Pre-launch Stripe test suite
 
-A gated suite exercises the real Stripe Connect API against a live `sk_test_`
-key. It lives under `t/stripe-live/` and currently includes
-`connect-helper.t` and `helpers.t`. The paid-enrollment end-to-end suite lands
-as Leg C3.
+A gated suite exercises the real Stripe Connect API against a `sk_test_`
+key. It lives under `t/stripe-live/` and proves the direct-charge model, where
+every tenant payment is made on the tenant's own connected account:
+
+- `paid-enrollment.t` -- a paid enrollment is a direct charge on the tenant
+  account (retrieved with `Stripe-Account`), with no `transfer_data` or
+  `on_behalf_of`, carrying the plan's `application_fee_amount`; the charge is
+  not on the platform account; `payment_intent.succeeded` settles once through
+  the Connect endpoint (`/webhooks/stripe/connect`); a full or partial refund
+  is made on the tenant account and leaves `application_fee.amount_refunded`
+  at 0; the same idempotency key returns the same intent; plus the unready
+  gate, a declined card, and the browser return.
+- `instalment-schedule.t` -- the schedule for instalments two onwards is on
+  the tenant account with the fee percent and no transfer destination, and is
+  not found on the platform account.
+- `helpers.t` -- the test helpers confirm and poll on the connected account,
+  and an `sk_live_` key makes the suite refuse to run without sending a
+  request.
+- `connect-helper.t`, `connect-onboarding.t` -- test connected accounts and
+  the onboarding flow.
+- `platform-account-header.t`, `schedule-fee-precision.t`,
+  `service-version.t` -- pinned Stripe behaviours the money path relies on.
+
+Creating connected accounts needs a key with Connect write access; a
+restricted key without it stops at `POST /accounts`.
 
 To run:
 

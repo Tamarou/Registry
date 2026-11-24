@@ -72,15 +72,88 @@ subtest 'the fee Stripe reported is what gets recorded' => sub {
         'with the plan version it was charged under (#427)';
 };
 
-subtest 'an intent that reports no fee records none, rather than a guess' => sub {
-    # A registry/platform payment, or any charge with no destination: there is
-    # no application fee, and inventing one from the rate would put revenue on
-    # the books that Stripe never took.
+subtest 'a payment with no seller account records no fee, rather than a guess' => sub {
+    # No Connect params were ever sent: there is no application fee to know
+    # about, and inventing one -- even 0 -- would claim a charge we never made.
     my $payment = a_completed_payment( amount => 5000 );
 
     is $payment->status, 'completed', 'it still settles';
     is $payment->platform_fee_cents, undef,
         'and the fee is NULL -- not recorded, not zero';
+};
+
+subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub {
+    # Stripe omits a zero application_fee_amount (564b6a1), so a Free-plan
+    # charge comes back with none. That is a recorded $0, not missing data.
+    my $free = $db->query( q{SELECT id FROM registry.pricing_plans
+        WHERE plan_scope = 'platform' AND metadata->>'default' = 'true'
+          AND superseded_at IS NULL} )->hash;
+    Test::Registry::Fixtures::create_tenant( $db, {
+        name => 'Free Studio', slug => 'free_studio' } );
+    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
+                  stripe_connect_account_id = 'acct_free_studio' WHERE slug = 'free_studio'},
+        $free->{id} );
+    $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
+        'free_studio', $parent->id );
+    my $tdb = $dao->connect_schema('free_studio')->db;
+
+    my $p = Registry::DAO::Payment->create( $tdb, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => { tenant_slug => 'free_studio', enrollment_items => [] },
+    } );
+    $tdb->update( 'payments',
+        { stripe_payment_intent_id => 'pi_free_' . $p->id }, { id => $p->id } );
+    $p = Registry::DAO::Payment->find( $tdb, { id => $p->id } );
+
+    # The parent-return path (process_payment -> _apply_intent): no fee reported.
+    $p->_apply_intent( $tdb, {
+        id => 'pi_free_' . $p->id, status => 'succeeded', amount => 10000,
+        metadata => { payment_id => $p->id },
+    }, 'pi_free_' . $p->id );
+
+    my $row = Registry::DAO::Payment->find( $tdb, { id => $p->id } );
+    is $row->status, 'completed', 'the charge settled';
+    is $row->platform_fee_cents, 0, 'and the fee is recorded as 0';
+    is $row->platform_pricing_plan_id, $free->{id}, 'under the plan it was charged on';
+
+    my ($t) = grep { $_->{slug} eq 'free_studio' }
+        @{ Registry::DAO::Tenant->platform_revenue($db)->{tenants} };
+    is $t->{charges}, 1, 'the revenue view counts the charge';
+    is $t->{unrecorded}, 0, 'as recorded, not as a gap';
+};
+
+subtest 'the plan that priced the fee is recorded, not the plan at settle' => sub {
+    # The rate is fixed at create (ruling 7c); the plan id recorded with the
+    # fee must be the one that rate came from, even if the tenant moves first.
+    my $plan_b = $db->query(
+        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Empire' LIMIT 1}
+    )->hash;
+    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
+                  stripe_connect_account_id = 'acct_revenue_studio' WHERE id = ?},
+        $solo->{id}, $tenant->id );
+
+    my $p = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => { tenant_slug => 'revenue_studio', enrollment_items => [],
+                      platform_pricing_plan_id => $plan_b->{id} },
+    } );
+    $db->update( 'payments',
+        { stripe_payment_intent_id => 'pi_snap_' . $p->id }, { id => $p->id } );
+
+    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE id = ?',
+        $plan_b->{id}, $tenant->id );
+
+    $p = Registry::DAO::Payment->find( $db, { id => $p->id } );
+    $p->record_platform_fee( $db, { application_fee_amount => 250 } );
+
+    my $row = Registry::DAO::Payment->find( $db, { id => $p->id } );
+    is $row->platform_fee_cents, 250, 'the fee is recorded';
+    is $row->platform_pricing_plan_id, $solo->{id},
+        'under plan A, the one it was created on -- not B, and not a caller value';
+
+    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
+                  stripe_connect_account_id = NULL WHERE id = ?},
+        $solo->{id}, $tenant->id );
 };
 
 subtest 'a rate change afterwards does not rewrite history' => sub {
@@ -99,6 +172,62 @@ subtest 'a rate change afterwards does not rewrite history' => sub {
     is $after->platform_fee_cents, 500, 'the recorded fee is unchanged';
     is $after->platform_pricing_plan_id, $solo->{id},
         'and still names the plan it was actually charged under';
+};
+
+# A tenant schema of its own, holding completed charges with these recorded
+# fees and refunded fees.
+sub revenue_of ( $slug, @rows ) {
+    Test::Registry::Fixtures::create_tenant( $db, { name => "Studio $slug", slug => $slug } );
+    $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug, $parent->id );
+    my $tdb = $dao->connect_schema($slug)->db;
+    for my $row (@rows) {
+        my ( $fee, $returned, $status ) = @$row;
+        $tdb->insert( 'payments', {
+            user_id => $parent->id, amount_cents => 10000,
+            status => $status // 'completed',
+            platform_fee_cents => $fee, platform_fee_refunded_cents => $returned,
+        } );
+    }
+    my ($t) = grep { $_->{slug} eq $slug }
+        @{ Registry::DAO::Tenant->platform_revenue($db)->{tenants} };
+    return $t;
+}
+
+subtest 'platform revenue is net of refunded fees' => sub {
+    my $t = revenue_of( 'net_studio', [ 250, 100 ], [ 250, 250 ] );
+    is $t->{fees_cents}, 150, 'each fee counts less what Stripe reports returned';
+};
+
+subtest 'null refunded fee counts full fee and net is never negative' => sub {
+    my $t = revenue_of( 'null_net_studio', [ 250, undef ] );
+    is $t->{fees_cents}, 250, 'no refunded fee reported counts the whole fee';
+
+    # More reported returned than recorded taken (a fee recorded short, say)
+    # nets that charge to nothing, not to a debt against the other.
+    $t = revenue_of( 'over_net_studio', [ 250, undef ], [ 100, 300 ] );
+    is $t->{fees_cents}, 250, 'a charge never nets below zero';
+};
+
+subtest 'refunded and partially refunded payments count the fee the platform kept' => sub {
+    # The platform keeps its fee on a refund unless Stripe reports it returned,
+    # so a refunded charge is still revenue: fee less refunded fee, floored at 0.
+    # refund_pending is money captured with a refund not yet settled; the fee is
+    # still held, so it counts the same way.
+    my $t = revenue_of( 'refunded_studio',
+        [ 250, undef, 'refunded' ],
+        [ 250, 250,   'refunded' ],
+        [ 300, 100,   'partially_refunded' ],
+        [ 200, undef, 'refund_pending' ],
+        [ 100, 400,   'partially_refunded' ],
+        [ 999, undef, 'pending' ],
+        [ 999, undef, 'failed' ],
+        [ undef, undef, 'refunded' ],
+    );
+    is $t->{fees_cents}, 250 + 0 + 200 + 200 + 0,
+        'each refund status nets its fee; pending and failed are not revenue';
+    is $t->{charges}, 6, 'every charge where money moved is counted';
+    is $t->{unrecorded}, 1,
+        'a refunded charge with no recorded fee is a gap, like a completed one';
 };
 
 done_testing;

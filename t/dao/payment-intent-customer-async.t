@@ -40,6 +40,9 @@ my $parent = $dao->create( User => {
     username => 'instal_parent', user_type => 'parent',
     email => 'instal@test.example', name => 'Ida Instalment' } );
 
+$db->query( 'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
+    'acct_instal_seller', $slug );
+
 # Payments live in the tenant schema; the payer must be resident there first.
 $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug, $parent->id );
 my $tdb = $dao->connect_schema($slug)->db;
@@ -91,7 +94,7 @@ sub an_instalment_payment {
         status           => 'pending',
         instalment_seq   => 1,
         instalment_count => 3,
-        metadata         => { enrollment_items => [] },
+        metadata         => { tenant_slug => $slug, enrollment_items => [] },
     } );
 }
 
@@ -139,7 +142,7 @@ subtest 'a one-off charge needs no customer and makes no extra call' => sub {
         user_id      => $parent->id,
         amount_cents => 10000,
         status       => 'pending',
-        metadata     => { enrollment_items => [] },
+        metadata     => { tenant_slug => $slug, enrollment_items => [] },
     } );
     ok !$payment->is_instalment, 'not an instalment';
 
@@ -197,6 +200,86 @@ subtest 'the customer is reused on a second intent for the same payment' => sub 
 
     is scalar @customer_calls, 1,
         'the stored customer is reused rather than a second one created';
+};
+
+subtest 'instalment customer is created on the seller account' => sub {
+    my $payment = Registry::DAO::Payment->create( $tdb, {
+        user_id          => $parent->id,
+        amount_cents     => 30000,
+        status           => 'pending',
+        instalment_seq   => 1,
+        instalment_count => 3,
+        metadata         => { tenant_slug => $slug, enrollment_items => [] },
+    } );
+
+    my @accounts;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_customer = sub ( $self, $params ) {
+        push @accounts, $self->stripe_account;
+        return { id => 'cus_sync_seller' };
+    };
+    local *Registry::Service::Stripe::create_customer_async = sub ( $self, $params ) {
+        push @accounts, $self->stripe_account;
+        return deferred( { id => 'cus_async_seller' } );
+    };
+
+    # Sync path, then a second payment through the async path.
+    $payment->_stripe_customer_for($tdb);
+    is $accounts[0], 'acct_instal_seller', 'sync: the customer is created on the seller account';
+
+    my $async_payment = Registry::DAO::Payment->create( $tdb, {
+        user_id          => $parent->id,
+        amount_cents     => 30000,
+        status           => 'pending',
+        instalment_seq   => 1,
+        instalment_count => 3,
+        metadata         => { tenant_slug => $slug, enrollment_items => [] },
+    } );
+    my ( undef, $error ) =
+      in_running_loop( sub { $async_payment->_stripe_customer_async($tdb) } );
+    is $error, undef, 'async customer settles';
+    is $accounts[1], 'acct_instal_seller', 'async: the customer is created on the seller account';
+};
+
+subtest 'customer from tenant a is never reused on tenant b' => sub {
+    # The same family buys from a second studio, on that studio's own account.
+    my $slug_b = 'instal_async_b';
+    Test::Registry::Fixtures::create_tenant( $db, { name => 'Second Studio', slug => $slug_b } );
+    $db->query( 'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
+        'acct_instal_b', $slug_b );
+    $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug_b, $parent->id );
+    my $tdb_b = $dao->connect_schema($slug_b)->db;
+
+    my %customers;    # account => [ customer ids created there ]
+    my %intents;      # account => customer sent on the intent
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_customer = sub ( $self, $params ) {
+        my $id = 'cus_on_' . $self->stripe_account;
+        push @{ $customers{ $self->stripe_account } }, $id;
+        return { id => $id };
+    };
+    local *Registry::Service::Stripe::create_payment_intent = sub ( $self, $params ) {
+        $intents{ $self->stripe_account } = $params->{customer};
+        return { id => 'pi_' . $self->stripe_account, client_secret => 'secret' };
+    };
+
+    for ( [ $tdb, $slug ], [ $tdb_b, $slug_b ] ) {
+        my ( $sdb, $s ) = @$_;
+        Registry::DAO::Payment->create( $sdb, {
+            user_id => $parent->id, amount_cents => 30000, status => 'pending',
+            instalment_seq => 1, instalment_count => 3,
+            metadata => { tenant_slug => $s, enrollment_items => [] },
+        } )->create_payment_intent($sdb);
+    }
+
+    is_deeply \%customers,
+        { acct_instal_seller => ['cus_on_acct_instal_seller'],
+          acct_instal_b      => ['cus_on_acct_instal_b'] },
+        'one customer on each account';
+    is $intents{acct_instal_b}, 'cus_on_acct_instal_b',
+        "B's intent carries B's own customer";
+    isnt $intents{acct_instal_b}, 'cus_on_acct_instal_seller',
+        "A's customer id is never sent on B's intent";
 };
 
 done_testing;

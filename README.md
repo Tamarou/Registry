@@ -121,6 +121,8 @@ Registry is production-ready with the following features implemented:
 
 #### Production Checklist
 - [ ] Set environment variables: `DATABASE_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`,
+      `STRIPE_CONNECT_WEBHOOK_SECRET` (the Connect webhook endpoint's own
+      signing secret),
       and the platform's own Stripe account: `PLATFORM_STRIPE_ACCOUNT_ID`
       (`acct_...`) and `PLATFORM_STRIPE_READY` (`true`/`false`), and
       `PLATFORM_ADMIN_EMAIL`, the address of the platform tenant's first

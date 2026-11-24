@@ -19,6 +19,10 @@ use Test::Registry::Helpers qw(authenticate_as);
 use Test::Registry::Helpers qw(join_tenant);
 use Registry::DAO::PricingPlan;
 use Registry::Service::Stripe;
+use Test::Registry::StripeWebhook;
+use Mojo::JSON;
+
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_local_connect_onboarding';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -111,6 +115,34 @@ subtest 'the state the screen reports follows the tenant row' => sub {
     $t->get_ok('/admin/billing')
       ->status_is(200)
       ->content_like(qr/You can take payments/i, 'an approved account reads as ready');
+
+    $dao->db->query(
+        'UPDATE registry.tenants SET stripe_connect_account_id = NULL,
+            stripe_charges_enabled = FALSE, stripe_details_submitted = FALSE
+         WHERE slug = ?', 'registry' );
+};
+
+# Readiness is Stripe's to give. It describes the connected account, so it
+# arrives at the Connect endpoint, and the screen follows it.
+subtest 'onboarding readiness arrives through connect endpoint' => sub {
+    join_tenant( $dao, $admin );
+    authenticate_as( $t, $admin );
+
+    $dao->db->query(
+        'UPDATE registry.tenants SET stripe_connect_account_id = ?,
+            stripe_charges_enabled = FALSE, stripe_details_submitted = FALSE
+         WHERE slug = ?', 'acct_probe_onboarded', 'registry' );
+
+    Test::Registry::StripeWebhook::post_connect( $t, {
+        type    => 'account.updated',
+        account => 'acct_probe_onboarded',
+        data    => { object => { id => 'acct_probe_onboarded',
+            charges_enabled => Mojo::JSON::true, details_submitted => Mojo::JSON::true } },
+    } )->status_is(200);
+
+    $t->get_ok('/admin/billing')
+      ->status_is(200)
+      ->content_like(qr/You can take payments/i, "Stripe's account event made the tenant ready");
 
     $dao->db->query(
         'UPDATE registry.tenants SET stripe_connect_account_id = NULL,

@@ -6,7 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
+use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check solo_linked_tenant);
 use Registry::PriceOps::RevenueShare qw(revenue_share_fraction_for_tenant);
 
 my $test_db = Test::Registry::DB->new;
@@ -157,8 +157,9 @@ subtest 'missing Free fallback plan causes die' => sub {
 subtest 'linked plan with no percentage key dies rather than guessing' => sub {
     # pricing_configuration->>'percentage' is the only rate source. A plan that
     # declares no rate has no rate; there is nothing else on the row to read --
-    # amount_cents holds money, never a rate.
-    with_tenant_plan( $db, $seeded_slug,
+    # amount_cents holds money, never a rate. The database refuses such a plan
+    # now; the guard stays for a row that predates the check.
+    without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
         { pricing_configuration => {}, amount_cents => 3 },
         sub {
             my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
@@ -166,15 +167,16 @@ subtest 'linked plan with no percentage key dies rather than guessing' => sub {
                 or diag "returned $fraction -- the money column was read as a rate";
             like $@, qr/percentage/i, 'dies naming the missing percentage';
         }
-    );
+    ) } );
 };
 
 subtest 'fixed-price plan does not have its dollar amount read as a rate' => sub {
     # A plan carrying a price and no rate -- the shape of "Registry Standard -
     # $200/month", which is the plan marked default:true and so the one an admin
     # is most likely to pick. Reading its price as a rate would yield a 20000%
-    # application fee that Stripe rejects outright.
-    with_tenant_plan( $db, $seeded_slug,
+    # application fee that Stripe rejects outright. tenants_plan_has_rate
+    # refuses the link now; the guard stays for a link that predates it.
+    without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
         {   pricing_configuration => {},
             amount_cents          => 20000,
             pricing_model_type    => 'fixed',
@@ -186,15 +188,17 @@ subtest 'fixed-price plan does not have its dollar amount read as a rate' => sub
             like $@, qr/percentage|rate/i,
                 'dies pointing at the missing percentage rather than inventing one';
         }
-    );
+    ) } );
 };
 
 subtest 'a rate outside 0..1 dies rather than reaching Stripe' => sub {
     # Backstop at the coercion boundary: "2" almost certainly means 2%, but as a
     # fraction it is a 200% fee. No legitimate revenue share sits outside [0,1],
     # so refuse it here rather than let Stripe reject the charge at capture time.
+    # The database refuses such a rate now; the guard stays for a row that
+    # predates the check.
     for my $bad ( 2, -0.01 ) {
-        with_tenant_plan( $db, $seeded_slug,
+        without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
             { pricing_configuration => { percentage => $bad } },
             sub {
                 my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
@@ -202,21 +206,21 @@ subtest 'a rate outside 0..1 dies rather than reaching Stripe' => sub {
                 like $@, qr/between 0 and 1|fraction/i,
                     "percentage $bad dies with a message naming the expected range";
             }
-        );
+        ) } );
     }
 };
 
 subtest 'malformed/non-numeric resolved value dies' => sub {
     # The linked plan's percentage is present but a non-numeric string, so it
     # cannot be coerced and must not be treated as zero.
-    with_tenant_plan( $db, $seeded_slug,
+    without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
         { pricing_configuration => { percentage => 'abc' } },
         sub {
             my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
             ok !defined $fraction, 'a non-numeric percentage is refused';
             like $@, qr/not numeric|numeric/i, 'dies saying the value is not numeric';
         }
-    );
+    ) } );
 };
 
 done_testing;

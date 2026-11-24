@@ -14,6 +14,7 @@ class Registry::Service::Stripe {
     field $api_key :param;
     field $api_version :param = '2024-12-18.acacia'; # Stripe release name for this API date; the bare date is rejected as invalid
     field $webhook_secret :param = undef;
+    field $stripe_account :param :reader = undef;
     
     # Configure user agent for optimal performance
     ADJUST {
@@ -42,7 +43,26 @@ class Registry::Service::Stripe {
         );
     }
 
-    method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef) {
+    # A client for one connected account: every request it makes names that
+    # account in a Stripe-Account header. The platform's own calls use the
+    # unbound client from_env returns. The id goes into a header, so only
+    # acct_ followed by word characters is accepted (no CR/LF injection), and
+    # undef or '' never quietly yields a client acting on the platform account.
+    method for_account($account_id) {
+        croak "Stripe account id must look like acct_<alnum>"
+            unless defined $account_id && $account_id =~ /\Aacct_[A-Za-z0-9_]+\z/;
+
+        return (ref $self)->new(
+            api_key        => $api_key,
+            api_version    => $api_version,
+            webhook_secret => $webhook_secret,
+            stripe_account => $account_id,
+        );
+    }
+
+    # $on_platform drops Stripe-Account, for objects only the platform's own
+    # account holds.
+    method _request_async($method, $endpoint, $data = {}, $idempotency_key = undef, $on_platform = 0) {
         my $url = "https://api.stripe.com/v1/$endpoint";
         my $headers = {
             'Authorization' => "Bearer $api_key",
@@ -50,6 +70,7 @@ class Registry::Service::Stripe {
             'User-Agent' => 'Registry/1.0 (https://registry.com)',
         };
         $headers->{'Idempotency-Key'} = $idempotency_key if defined $idempotency_key;
+        $headers->{'Stripe-Account'} = $stripe_account if defined $stripe_account && !$on_platform;
         
         my $promise;
         
@@ -117,8 +138,8 @@ class Registry::Service::Stripe {
         return $self->_request_async('POST', 'payment_intents', \%p, $ik);
     }
     
-    method retrieve_payment_intent_async($intent_id) {
-        return $self->_request_async('GET', "payment_intents/$intent_id");
+    method retrieve_payment_intent_async($intent_id, $params = {}) {
+        return $self->_request_async('GET', "payment_intents/$intent_id", $params);
     }
     
     method confirm_payment_intent_async($intent_id, $params = {}) {
@@ -144,7 +165,9 @@ class Registry::Service::Stripe {
     
     # Customers API
     method create_customer_async($params) {
-        return $self->_request_async('POST', 'customers', $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'customers', \%p, $ik);
     }
     
     method retrieve_customer_async($customer_id) {
@@ -190,8 +213,8 @@ class Registry::Service::Stripe {
         return $self->_request_async('POST', 'subscriptions', $params);
     }
     
-    method retrieve_subscription_async($subscription_id) {
-        return $self->_request_async('GET', "subscriptions/$subscription_id");
+    method retrieve_subscription_async($subscription_id, $params = {}) {
+        return $self->_request_async('GET', "subscriptions/$subscription_id", $params);
     }
     
     method update_subscription_async($subscription_id, $params) {
@@ -214,11 +237,17 @@ class Registry::Service::Stripe {
     # 33.33 / 33.33 / 33.34, and the odd cent has to land somewhere, so the last
     # charge differs from the others. Phases are what let it.
     method create_subscription_schedule_async($params) {
-        return $self->_request_async('POST', 'subscription_schedules', $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'subscription_schedules', \%p, $ik);
     }
 
     method retrieve_subscription_schedule_async($schedule_id) {
         return $self->_request_async('GET', "subscription_schedules/$schedule_id");
+    }
+
+    method list_subscription_schedules_async($params = {}) {
+        return $self->_request_async('GET', 'subscription_schedules', $params);
     }
 
     method cancel_subscription_schedule_async($schedule_id, $params = {}) {
@@ -244,6 +273,34 @@ class Registry::Service::Stripe {
     method retrieve_refund_async($refund_id) {
         return $self->_request_async('GET', "refunds/$refund_id");
     }
+
+    # Charges API
+    method retrieve_charge_async($charge_id) {
+        return $self->_request_async('GET', "charges/$charge_id");
+    }
+
+    # Application Fees API
+    #
+    # Returning the platform's fee is the exception to keeping it on a refund
+    # (005). A fee is an object on the platform's own account, so these calls
+    # never send Stripe-Account, whichever client they are made on. The id goes
+    # into the URL path, so only fee_ followed by alphanumerics is accepted.
+    sub _check_fee_id ($fee_id) {
+        croak "Stripe application fee id must look like fee_<alnum>"
+            unless defined $fee_id && $fee_id =~ /\Afee_[A-Za-z0-9]+\z/;
+    }
+
+    method create_application_fee_refund_async($fee_id, $params = {}) {
+        _check_fee_id($fee_id);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', "application_fees/$fee_id/refunds", \%p, $ik, 1);
+    }
+
+    method retrieve_application_fee_async($fee_id) {
+        _check_fee_id($fee_id);
+        return $self->_request_async('GET', "application_fees/$fee_id", {}, undef, 1);
+    }
     
     # Prices API (for subscriptions)
     method create_price_async($params) {
@@ -260,7 +317,9 @@ class Registry::Service::Stripe {
     
     # Products API
     method create_product_async($params) {
-        return $self->_request_async('POST', 'products', $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'products', \%p, $ik);
     }
     
     method retrieve_product_async($product_id) {
@@ -339,6 +398,14 @@ class Registry::Service::Stripe {
         return $self->_await($self->retrieve_subscription_schedule_async($schedule_id));
     }
 
+    method list_subscription_schedules($params = {}) {
+        return $self->_await($self->list_subscription_schedules_async($params));
+    }
+
+    method create_product($params) {
+        return $self->_await($self->create_product_async($params));
+    }
+
     method cancel_subscription_schedule($schedule_id, $params = {}) {
         return $self->_await($self->cancel_subscription_schedule_async($schedule_id, $params));
     }
@@ -357,6 +424,10 @@ class Registry::Service::Stripe {
 
     method create_refund($params) {
         return $self->_await($self->create_refund_async($params));
+    }
+
+    method create_application_fee_refund($fee_id, $params = {}) {
+        return $self->_await($self->create_application_fee_refund_async($fee_id, $params));
     }
 
     method create_customer($params) {

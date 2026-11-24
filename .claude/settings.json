@@ -1,0 +1,27 @@
+{
+  "extraKnownMarketplaces": {
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
+    },
+    "perigrin-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "perigrin/claude-plugins-marketplace"
+      }
+    },
+    "paad": {
+      "source": {
+        "source": "github",
+        "repo": "Ovid/paad"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "ponytail@ponytail": true,
+    "crochet@perigrin-marketplace": true,
+    "paad@paad": true
+  }
+}

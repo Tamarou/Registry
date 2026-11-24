@@ -53,6 +53,18 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         $class->SUPER::create($db, $data);
     }
     
+    # Every active admin of the schema $db is bound to, told by email (the
+    # send_notifications drainer delivers it).
+    sub alert_admins ($class, $db, $subject, $message, $metadata = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $admins = $db->query(
+            q{SELECT id FROM users WHERE user_type = 'admin' AND deactivated_at IS NULL})->hashes;
+        $class->create( $db, {
+            user_id => $_->{id}, type => 'general', channel => 'email',
+            subject => $subject, message => $message, metadata => {%$metadata},
+        } ) for @$admins;
+    }
+
     # Map notification type to email template name
     method _template_name_for_type {
         return 'attendance_alert'     if $type eq 'attendance_missing';

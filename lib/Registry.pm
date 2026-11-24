@@ -7,8 +7,10 @@ use Registry::Utility::BaseDomain ();
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::DomainVerification;
+use Registry::Job::InstalmentReconcile;
 use Registry::Job::InstalmentSchedule;
 use Registry::Job::SendNotifications;
+use Registry::Job::SupersededRefund;
 use Registry::Job::ProcessWaitlist;
 use Registry::Job::WaitlistExpiration;
 use Registry::Command::schema;
@@ -35,6 +37,9 @@ class Registry :isa(Mojolicious) {
     #                          to create_demo_enrollments: enrolled, not charged.
     #   STRIPE_WEBHOOK_SECRET  Webhooks refuses every delivery with a 500, so no
     #                          payment ever settles.
+    #   STRIPE_CONNECT_WEBHOOK_SECRET  the Connect endpoint refuses every
+    #                          delivery with a 500, so no event on a seller's
+    #                          own account is settled.
     #   POSTMARK_SERVER_TOKEN  Notification builds no transport, so nothing is
     #                          delivered.
     #   LOG_LEVEL              the per-request access line is at debug, so it is
@@ -48,6 +53,8 @@ class Registry :isa(Mojolicious) {
           cost => 'priced enrolments complete WITHOUT charging' },
         { key => 'STRIPE_WEBHOOK_SECRET', secret => 1,
           cost => 'webhooks are refused, so no payment settles' },
+        { key => 'STRIPE_CONNECT_WEBHOOK_SECRET', secret => 1,
+          cost => "Connect webhooks are refused, so no event on a seller's account settles" },
         { key => 'POSTMARK_SERVER_TOKEN', secret => 1,
           cost => 'no email is delivered' },
         { key => 'LOG_LEVEL',
@@ -152,8 +159,10 @@ class Registry :isa(Mojolicious) {
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
         Registry::Job::DomainVerification->register($self);
+        Registry::Job::InstalmentReconcile->register($self);
         Registry::Job::InstalmentSchedule->register($self);
         Registry::Job::SendNotifications->register($self);
+        Registry::Job::SupersededRefund->register($self);
         Registry::Job::ProcessWaitlist->register($self);
         Registry::Job::WaitlistExpiration->register($self);
 
@@ -971,6 +980,8 @@ class Registry :isa(Mojolicious) {
         # Webhook routes (no auth required)
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
           ->name('webhook_stripe');
+        $self->routes->post('/webhooks/stripe/connect')->to('webhooks#stripe_connect')
+          ->name('webhook_stripe_connect');
 
         # Root route dispatches to whichever storefront belongs to the
         # requester -- see storefront_workflow. It deliberately names no
@@ -1529,6 +1540,23 @@ class Registry :isa(Mojolicious) {
             });
 
             $self->log->info("Scheduled recurring notification sending job");
+        }
+
+        # Settle instalment invoices Stripe collected but no webhook recorded.
+        # Ops can also run it at once: ./registry minion job -e instalment_reconcile
+        my $existing_reconcile = $self->minion->jobs({
+            tasks => ['instalment_reconcile'],
+            states => ['inactive', 'active']
+        })->total;
+
+        unless ($existing_reconcile) {
+            $self->minion->enqueue('instalment_reconcile', [], {
+                delay => 3600,
+                attempts => 3,
+                priority => 5
+            });
+
+            $self->log->info("Scheduled recurring instalment reconcile job");
         }
 
         # Schedule waitlist expiration check to run every 5 minutes

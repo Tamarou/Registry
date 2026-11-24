@@ -97,6 +97,7 @@ method prepare_template_data ($db, $run, $params = {}) {
         step_data => {
             %$step_data,
             %$retry_state,
+            stripe_account => $self->_intent_account($db, $run),
         },
     };
 }
@@ -107,7 +108,25 @@ method prepare_template_data ($db, $run, $params = {}) {
 # the floor, card form included. Same shape prepare_template_data returns, so
 # both entry points (POST render and flash-redirect GET) agree.
 method _render_data ($db, $run, %extra) {
-    return { step_data => { %{ $self->prepare_payment_data($db, $run) }, %extra } };
+    return { step_data => {
+        %{ $self->prepare_payment_data($db, $run) }, %extra,
+        stripe_account => $self->_intent_account($db, $run),
+    } };
+}
+
+# The Stripe account this run's payment intent was created on, for the browser:
+# a direct charge's client_secret confirms only in Stripe.js initialised with
+# it. Read from the account snapshotted on the run's own payment row, never
+# from the request or the retry state, and set last so neither can override
+# it. Any status: a declined card leaves the row failed, and its retry intent
+# is on the same row and account. undef when there is no such payment.
+method _intent_account ($db, $run) {
+    my $payment_id = $self->_run_payment_id($run) // return undef;
+    return undef unless $payment_id =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
+    my $payment = Registry::DAO::Payment->find($db, { id => $payment_id }) // return undef;
+    my $meta    = $payment->metadata // {};
+    return undef unless ( $meta->{workflow_run_id} // '' ) eq $run->id;
+    return $meta->{stripe_account_id};
 }
 
 # The run's payment_id is bound straight into a WHERE clause, so it must be a
@@ -458,6 +477,8 @@ method handle_payment_callback ($db, $run, $form_data) {
                             # said rather than inferred from the key (#286).
                             increment => 1,
                         })->then(sub ($refund) {
+                            # Still owed until refund.updated settles it.
+                            return $refund if Registry::DAO::Payment->refund_is_pending($refund);
                             $settled->settle_refund_increment($db, $inc->{seq}, $refund)
                                 or warn "capacity refund: settling increment "
                                       . "$inc->{seq} of payment @{[ $settled->id ]} "

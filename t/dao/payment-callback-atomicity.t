@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
@@ -23,6 +24,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_callback_atomicity';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 my $uri     = $test_db->uri;
 
 # --- fixtures: a real payment row, because _apply_intent genuinely writes to it
@@ -69,15 +71,19 @@ my $step = Registry::DAO::WorkflowStep->find($db, {
 });
 
 sub fresh_payment () {
-    return Registry::DAO::Payment->create($db, {
+    my $payment = Registry::DAO::Payment->create($db, {
         user_id => $parent->id,
         amount_cents => 10000,
         status => 'pending',
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
-            tenant_slug      => undef,
+            tenant_slug      => $platform,
         },
     });
+    # The intent Registry created for it, as intent_for names it.
+    $db->update('payments', { stripe_payment_intent_id => 'pi_cb_' . $payment->id },
+        { id => $payment->id });
+    return Registry::DAO::Payment->find($db, { id => $payment->id });
 }
 
 sub run_for ($payment) {
@@ -102,11 +108,9 @@ sub intent_for ($payment) {
         status         => 'succeeded',
         amount         => 10000,
         payment_method => 'pm_cb_test',
-        # _apply_intent only honours an intent that belongs to this row: either
-        # the id stored at creation, or one stamped with our payment_id. These
-        # rows have no stored intent id, so the metadata stamp is what makes the
-        # ownership check pass -- without it the settlement is refused before it
-        # writes anything, and the test grades nothing.
+        # _apply_intent only settles the intent Registry stored for this row
+        # (fresh_payment stores this id) -- without it the settlement is
+        # refused before it writes anything, and the test grades nothing.
         metadata       => { payment_id => $payment->id },
     };
 }
@@ -170,8 +174,10 @@ subtest 'the settlement holds the payment row while it decides' => sub {
         metadata => {
             enrollment_items => [ { session_id => $session->id,
                                     child_id   => $probe_child->id } ],
-            tenant_slug => undef },
+            tenant_slug => $platform },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_cb_' . $payment->id },
+        { id => $payment->id });
     my $run = run_for($payment);
     my ( $payment_locked, $session_locked );
 
@@ -245,7 +251,7 @@ subtest 'the parent-return path refunds each increment separately' => sub {
         user_id => $parent->id, amount_cents => 10000, status => 'pending',
         metadata => {
             enrollment_items => [ { session_id => $session->id, child_id => $kid->id } ],
-            tenant_slug      => undef },
+            tenant_slug      => $platform },
     });
     my $run = run_for($payment);
 
@@ -283,6 +289,41 @@ subtest 'the parent-return path refunds each increment separately' => sub {
     is $done->refunded_cents, 6500,
         'with exactly what reached Stripe recorded as returned -- counted once, '
         . 'on the composed refund_async/_apply_refund_result/settle path';
+};
+
+# A pending refund has moved no money and may fail, so the parent-return path
+# leaves the increment owed for refund.updated to settle.
+subtest 'the parent-return path leaves a pending capacity refund owed' => sub {
+    my $kid = Registry::DAO::Family->add_child($db, $parent->id, {
+        child_name => 'CB Pending Kid', birth_date => '2018-03-03', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' },
+    });
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => {
+            enrollment_items => [ { session_id => $session->id, child_id => $kid->id } ],
+            tenant_slug      => $platform },
+    });
+    my $run = run_for($payment);
+    $payment->record_capacity_obligation( $db, 4000, ['kid-c'] );
+    $db->update('payments',
+        { stripe_payment_intent_id => 'pi_cb_pending_' . $payment->id },
+        { id => $payment->id });
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async =
+        sub { Mojo::Promise->resolve( intent_for($payment) ) };
+    local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+        Mojo::Promise->resolve({ id => 're_cb_pending', status => 'pending' });
+    };
+
+    settle( $step->handle_payment_callback( $db, $run, {
+        payment_intent_id => 'pi_cb_pending',
+    } ) );
+
+    my $row = Registry::DAO::Payment->find($db, { id => $payment->id });
+    is $row->refund_owed_cents, 4000, 'the debt is not discharged';
+    is $row->refunded_cents, 0, 'and nothing is counted as returned';
 };
 
 done_testing;

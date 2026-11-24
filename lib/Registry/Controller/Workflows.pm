@@ -59,8 +59,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     # Request params are merged into a run's data verbatim, on every step, so
     # any key the server owns has to be re-derived from the request rather than
-    # trusted. __tenant_slug alone selects the Stripe destination account,
-    # on_behalf_of, and the revenue-share rate; user_id decides whose enrollment
+    # trusted. __tenant_slug alone selects the seller's Stripe account the
+    # charge is made on, and the revenue-share rate; user_id decides whose enrollment
     # and whose charge this is, and user names the same person for the steps
     # that read the acting user off the run. All are dropped when there is
     # nothing to derive -- an absent session is not a licence to invent a user.
@@ -90,10 +90,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # __remote_address joins the list for the same reason: the tenant-signup
         # commit counts recent provisionings from the caller's address to bound
         # the clone cost, and a client-supplied address is a rate limit the
-        # client sets for itself.
+        # client sets for itself. stripe_account_id is the seller account a
+        # payment snapshots; only the server resolves it, from the seller row.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address|stripe_account_id)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in

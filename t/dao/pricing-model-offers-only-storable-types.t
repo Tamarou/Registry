@@ -83,12 +83,14 @@ subtest 'every type the step offers can actually be stored' => sub {
     my @offered = $menu =~ /value\s*=>\s*'([a-z_]+)'/g;
     ok scalar @offered, 'it offers something';
 
+    # A rate on every row, since percentage and hybrid plans must carry one;
+    # what is under test here is the type.
     for my $type (@offered) {
         my $ok = eval {
             $db->query( <<~'SQL', "Storable $type", $type );
                 INSERT INTO registry.pricing_plans
-                       (plan_name, plan_type, pricing_model_type)
-                VALUES (?, 'standard', ?)
+                       (plan_name, plan_type, pricing_model_type, pricing_configuration)
+                VALUES (?, 'standard', ?, '{"percentage": 0.02}')
                 SQL
             1;
         };

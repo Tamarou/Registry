@@ -190,6 +190,12 @@ test.describe('Payment happy path', () => {
         throw err;
       }
 
+      // The intent is a direct charge on the tenant's account, so Stripe.js
+      // must be initialised on that account or it cannot confirm the intent.
+      expect(await registryPage.content(),
+        'Stripe.js is initialised on the seeded connected account'
+      ).toContain(`{ stripeAccount: '${seededConnectAccount}' }`);
+
       // -----------------------------------------------------------------------
       // 7. Fill the Stripe test card (4242... instant approval, no 3DS) inside
       //    the Stripe-hosted iframe.  Selectors target the input names the

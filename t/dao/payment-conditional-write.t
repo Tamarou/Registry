@@ -168,8 +168,8 @@ subtest '3DS: a row written failed by requires_action still completes' => sub {
     # _apply_intent writes 'failed' for any status it does not recognise, and
     # requires_action is an ordinary 3DS payment mid-authentication.
     my $out = $p->_apply_intent( $db,
-        { id => 'pi_3ds', status => 'requires_action', amount => 10000,
-          metadata => { payment_id => $p->id } }, 'pi_3ds' );
+        { id => $p->stripe_payment_intent_id, status => 'requires_action', amount => 10000,
+          metadata => { payment_id => $p->id } }, $p->stripe_payment_intent_id );
     ok !$out->{success}, 'the intent is not settled yet';
     is status_of($p), 'failed', 'and the row is written failed (pre-existing)';
 
@@ -196,8 +196,8 @@ subtest 'decline then retry: the reused row still completes' => sub {
 subtest 'a retry that goes to processing is not reported against a refused write' => sub {
     my $p = a_payment('failed');
     my $out = $p->_apply_intent( $db,
-        { id => 'pi_proc', status => 'processing', amount => 10000,
-          metadata => { payment_id => $p->id } }, 'pi_proc' );
+        { id => $p->stripe_payment_intent_id, status => 'processing', amount => 10000,
+          metadata => { payment_id => $p->id } }, $p->stripe_payment_intent_id );
 
     is status_of($p), 'processing',
         'the row really moves, so "please wait" is not shown against a dead row';
@@ -229,6 +229,27 @@ subtest 'a successful write leaves the object agreeing with the row' => sub {
     my $t = a_payment('pending');
     $t->_record_intent_id( $db, 'pi_stamped' );
     is $t->stripe_payment_intent_id, 'pi_stamped', 'as does the intent stamp';
+};
+
+subtest 're-storing a superseded intent drops it from the superseded list' => sub {
+    my $p = a_payment('pending');
+    my $first = $p->stripe_payment_intent_id;
+    $p->_record_intent_id( $db, 'pi_aba_b' );
+    $p->_record_intent_id( $db, $first );
+    my $meta = Registry::DAO::Payment->find($db, { id => $p->id })->metadata;
+    is_deeply $meta->{superseded_intent_ids}, ['pi_aba_b'],
+        'the stored intent is not listed; the one it replaced is';
+};
+
+subtest 'the superseded list keeps only the newest 20 intents' => sub {
+    my $p = a_payment('pending');
+    my $first = $p->stripe_payment_intent_id;
+    $p->_record_intent_id( $db, "pi_cap_$_" ) for 1 .. 25;
+    my $listed = Registry::DAO::Payment->find($db, { id => $p->id })
+        ->metadata->{superseded_intent_ids};
+    is scalar @$listed, 20, 'capped at 20';
+    is_deeply $listed, [ map {"pi_cap_$_"} 5 .. 24 ], 'the newest, oldest first';
+    ok !( grep { $_ eq $first } @$listed ), 'the oldest dropped off';
 };
 
 # A refused write must NOT refresh the object -- that is how a caller comes to

@@ -1,10 +1,11 @@
 # ABOUTME: Minion job that creates the Stripe schedule for the instalments after the first.
-# ABOUTME: Runs after the webhook's COMMIT, because the card only exists once charge one succeeded.
+# ABOUTME: Runs after the webhook's COMMIT, because the card only exists once charge one succeeded; the last failure alerts.
 use 5.42.0;
 use Object::Pad;
 
 class Registry::Job::InstalmentSchedule {
     use Registry::DAO;
+    use Registry::DAO::Notification;
     use Registry::DAO::Payment;
 
     sub register ($class, $app) {
@@ -31,8 +32,17 @@ class Registry::Job::InstalmentSchedule {
         # Stripe is reached here, so a failure must be retried rather than
         # swallowed: without the schedule the family pays instalment one and
         # nothing else, which is the defect #425 is about, arrived by a different
-        # road. Minion's own backoff does the retrying.
-        my $schedule_id = $self->create_for( $dao->db, $payment );
+        # road. Dying fails the job, and Minion retries it on the attempts the
+        # webhook enqueued it with (Controller::Webhooks). Every run looks for a
+        # schedule an earlier one made first, and never changes the key.
+        my $schedule_id;
+        try { $schedule_id = $self->create_for( $dao->db, $payment ) }
+        catch ($e) {
+            # Minion counts attempts down on each retry: one left is the last.
+            $self->_alert( $job, $dao->db, $payment_id, $slug, $e )
+                if $job->info->{attempts} <= 1;
+            die $e;
+        }
 
         return $job->finish(
             $schedule_id
@@ -45,5 +55,20 @@ class Registry::Job::InstalmentSchedule {
     # DomainVerification::check_pending_domains is.
     method create_for ( $db, $payment ) {
         return $payment->schedule_remaining_instalments($db);
+    }
+
+    # Both who can act: the tenant's admins, whose family it is, and the
+    # platform's operators, who can re-run the job once Stripe recovers.
+    method _alert ( $job, $db, $payment_id, $slug, $err ) {
+        Registry::DAO::Notification->alert_admins( $db,
+            'Instalments could not be scheduled',
+            "Registry could not set up the remaining instalments of payment $payment_id "
+          . "(tenant $slug) at Stripe, so the family has paid instalment one and will "
+          . 'not be charged the rest. Collect them by hand, or ask Registry support '
+          . 'to schedule them.',
+            { payment_id => $payment_id } );
+        $job->app->log->error( "instalment_schedule for payment $payment_id (tenant $slug) "
+              . 'failed its last attempt; the rest will not be charged: '
+              . ( "$err" =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger ) );
     }
 }

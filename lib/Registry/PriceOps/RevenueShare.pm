@@ -6,7 +6,7 @@ use experimental 'signatures';
 package Registry::PriceOps::RevenueShare;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id refund_application_fee_for_tenant);
+our @EXPORT_OK = qw(revenue_share_fraction_for_tenant revenue_share_plan_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id);
 
 use Registry::DAO;
 
@@ -22,6 +22,15 @@ use Registry::DAO;
 #   3. Free plan missing                        -> die (deployment bug)
 #   4. Resolved percentage absent or non-numeric -> die (data bug)
 sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
+    return ( revenue_share_plan_for_tenant( $db, $tenant_slug ) )[0];
+}
+
+# revenue_share_plan_for_tenant($db, $tenant_slug) -> ($fraction, $plan_id)
+#
+# The same resolution, with the id of the plan the rate came from -- the Free
+# plan's when the tenant has none linked -- so a payment can record which plan
+# priced it.
+sub revenue_share_plan_for_tenant ($db, $tenant_slug) {
     $db = $db->db if $db isa Registry::DAO;
 
     # Step 1: look up the tenant's explicitly linked plan rate.
@@ -35,7 +44,7 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     # retired version here is correct, not stale. Moving a tenant to a newer
     # version is a deliberate act (#277).
     my $row = $db->query(q{
-        SELECT p.pricing_configuration->>'percentage' AS pct
+        SELECT p.id, p.pricing_configuration->>'percentage' AS pct
           FROM registry.tenants t
           JOIN registry.pricing_plans p
             ON p.id = t.platform_pricing_plan_id
@@ -43,12 +52,12 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     }, $tenant_slug)->hash;
 
     if ($row) {
-        return _coerce_pct($row->{pct}, "linked plan for tenant '$tenant_slug'");
+        return ( _coerce_pct($row->{pct}, "linked plan for tenant '$tenant_slug'"), $row->{id} );
     }
 
     # Step 2: tenant has no linked plan (NULL FK, or tenant row absent).
     # Fall back to the seeded platform default (Free) plan.
-    return platform_default_fraction($db);
+    return _platform_default_plan($db);
 }
 
 # platform_default_fraction($db) -> number
@@ -59,6 +68,11 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
 # seeded platform default plan is missing -- the same fail-loud behavior as the
 # charge path, never a silent 0%.
 sub platform_default_fraction ($db) {
+    return ( _platform_default_plan($db) )[0];
+}
+
+# _platform_default_plan($db) -> ($fraction, $plan_id)
+sub _platform_default_plan ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
     # Current versions only. This is a SEARCH by mark, not a lookup by id: once
@@ -66,7 +80,7 @@ sub platform_default_fraction ($db) {
     # this the fallback rate could come from a version that has been replaced --
     # chosen arbitrarily by LIMIT 1 between the two.
     my $free_row = $db->query(q{
-        SELECT pricing_configuration->>'percentage' AS pct
+        SELECT id, pricing_configuration->>'percentage' AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
@@ -79,7 +93,7 @@ sub platform_default_fraction ($db) {
       . "This is a deployment bug - run the seed-free-platform-plan migration."
         unless $free_row;
 
-    return _coerce_pct($free_row->{pct}, "platform default (Free) plan");
+    return ( _coerce_pct($free_row->{pct}, "platform default (Free) plan"), $free_row->{id} );
 }
 
 # platform_launch_fraction($db) -> number
@@ -143,75 +157,6 @@ sub _launch_plan_row ($db) {
         if $rows->size > 1;
 
     return $rows->first;
-}
-
-# refund_application_fee_for_tenant($db, $tenant_slug) -> 1 or 0
-#
-# Returns whether the platform refunds its application fee when a tenant payment
-# is refunded. Reads the boolean field refund_application_fee from the tenant's
-# linked pricing plan's pricing_configuration. Postgres ->> returns 'true'/'false'
-# as strings; this sub returns 1/0.
-#
-# Resolution order:
-#   1. tenant.platform_pricing_plan_id is set  -> use that plan's setting
-#   2. FK is NULL or tenant row absent          -> use the platform default plan's setting
-#   3. Either plan has the key absent/null      -> default true (1)
-#   4. Platform default plan missing            -> die (deployment bug)
-#   5. Value present but not 'true'/'false'     -> die (data bug)
-sub refund_application_fee_for_tenant ($db, $tenant_slug) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    # Step 1: look up the tenant's explicitly linked plan refund flag.
-    my $row = $db->query(q{
-        SELECT p.pricing_configuration->>'refund_application_fee' AS raw
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p
-            ON p.id = t.platform_pricing_plan_id
-         WHERE t.slug = ?
-    }, $tenant_slug)->hash;
-
-    if ($row) {
-        return _coerce_refund_flag($row->{raw});
-    }
-
-    # Step 2: tenant has no linked plan (NULL FK, or tenant row absent).
-    # Fall back to the seeded platform default plan's setting.
-    return _platform_default_refund_flag($db);
-}
-
-# _platform_default_refund_flag($db) -> 1 or 0
-#
-# Reads refund_application_fee from the platform default plan. Key absent/null
-# means default true (1). Missing plan entirely is a deployment bug -- die loudly
-# to mirror the behavior of platform_default_fraction.
-sub _platform_default_refund_flag ($db) {
-    # Current versions only, as platform_default_fraction above.
-    my $r = $db->query(q{
-        SELECT pricing_configuration->>'refund_application_fee' AS raw
-          FROM registry.pricing_plans
-         WHERE plan_scope = 'platform'
-           AND metadata->>'default' = 'true'
-           AND superseded_at IS NULL
-         LIMIT 1
-    })->hash;
-
-    die "No platform default (Free) plan found in registry.pricing_plans "
-      . "(plan_scope='platform', metadata->>'default'='true'). "
-      . "This is a deployment bug - run the seed-free-platform-plan migration."
-        unless $r;
-
-    return _coerce_refund_flag($r->{raw});
-}
-
-# _coerce_refund_flag($raw) -> 1 or 0
-# Coerces a Postgres ->> boolean string to 1 or 0. Key absent (undef) defaults to 1.
-# Dies on any value that is not 'true', 'false', or undef.
-sub _coerce_refund_flag ($raw) {
-    return 1 unless defined $raw;       # key absent/null -> default true
-    return 1 if $raw eq 'true';
-    return 0 if $raw eq 'false';
-    die "refund_application_fee must be 'true' or 'false', got '$raw' "
-      . "- check pricing_configuration in registry.pricing_plans.";
 }
 
 # _coerce_pct($raw, $context) -> number

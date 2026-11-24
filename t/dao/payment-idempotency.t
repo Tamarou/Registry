@@ -86,6 +86,7 @@ my $captured;
 # -----------------------------------------------------------------------
 
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Registry::DAO;
 use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
@@ -103,6 +104,7 @@ use Registry::DAO::Location;
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;    # Registry::DAO
 my $db      = $dao->db;        # Mojo::Pg::Database
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 
 my $b2_user_id = $db->query(q{
     INSERT INTO registry.users (username, passhash)
@@ -118,7 +120,7 @@ subtest 'AC3: auto-generated token survives -json/ADJUST round-trip on reload' =
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $b2_user_id,
         amount_cents => 1000,
-        metadata => {},
+        metadata => { tenant_slug => $platform },
     });
 
     my $token = $payment->metadata->{idempotency_token};
@@ -148,7 +150,7 @@ subtest 'AC1: both create_payment_intent calls send identical "pi-create:<token>
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $b2_user_id,
         amount_cents => 3000,
-        metadata => {},
+        metadata => { tenant_slug => $platform },
     });
 
     my $token = $payment->metadata->{idempotency_token};
@@ -180,7 +182,7 @@ subtest 'AC2: rotate_idempotency_token changes token, persists, next intent uses
     my $payment = Registry::DAO::Payment->create($db, {
         user_id  => $b2_user_id,
         amount_cents => 4000,
-        metadata => {},
+        metadata => { tenant_slug => $platform },
     });
 
     my $orig_token = $payment->metadata->{idempotency_token};
@@ -236,7 +238,7 @@ my $b3db  = $b3dao->db;
 my $b3_location = Registry::DAO::Location->create($b3db, {
     name         => 'B3 Studio',
     address_info => { street_address => '1 B3 St', city => 'Testville', state => 'TX', postal_code => '78701' },
-    metadata     => {},
+    metadata     => { tenant_slug => $platform },
 });
 
 my $b3_teacher = Registry::DAO::User->create($b3db, {
@@ -248,7 +250,7 @@ my $b3_teacher = Registry::DAO::User->create($b3db, {
 
 my $b3_project = Registry::DAO::Project->create($b3db, {
     name     => 'B3 Summer Camp',
-    metadata => {},
+    metadata => { tenant_slug => $platform },
 });
 
 my $b3_event = Registry::DAO::Event->create($b3db, {
@@ -258,7 +260,7 @@ my $b3_event = Registry::DAO::Event->create($b3db, {
     project_id  => $b3_project->id,
     teacher_id  => $b3_teacher->id,
     capacity    => 20,
-    metadata    => {},
+    metadata    => { tenant_slug => $platform },
 });
 
 my $b3_session = Registry::DAO::Session->create($b3db, {
@@ -267,7 +269,7 @@ my $b3_session = Registry::DAO::Session->create($b3db, {
     end_date   => '2026-07-07',
     status     => 'published',
     capacity   => 20,
-    metadata   => {},
+    metadata   => { tenant_slug => $platform },
 });
 $b3_session->add_events($b3db, $b3_event->id);
 
@@ -625,7 +627,7 @@ subtest 'W1: process_payment rejects a succeeded intent whose amount mismatches 
         amount_cents             => 10000,
         status                   => 'pending',
         stripe_payment_intent_id => 'pi_w1_guard',
-        metadata                 => {},
+        metadata                 => { tenant_slug => $platform },
     });
     $payment = Registry::DAO::Payment->find($db, { id => $payment->id });
 

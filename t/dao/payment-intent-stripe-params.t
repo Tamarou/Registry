@@ -13,6 +13,10 @@ my $t   = Test::Registry::DB->new;
 my $dao = $t->db;
 my $db  = $dao->db;
 
+# The seller the payment names, with an account to charge on.
+$db->query( q{INSERT INTO registry.tenants (name, slug, stripe_connect_account_id)
+              VALUES ('Some Tenant', 'some_tenant', 'acct_some_tenant')} );
+
 my $user = $dao->create(User => {
     username  => 'stripe_params_user',
     email     => 'stripe_params@test.local',

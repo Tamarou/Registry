@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;
@@ -18,6 +19,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_write_guards';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 
 my $parent = $dao->create(User => {
     username => 'wg_parent', name => 'WG Parent', user_type => 'parent',
@@ -26,7 +28,7 @@ my $parent = $dao->create(User => {
 sub a_payment ($status = 'pending') {
     my $p = Registry::DAO::Payment->create($db, {
         user_id => $parent->id, amount_cents => 10000, status => 'pending',
-        metadata => { enrollment_items => [], tenant_slug => undef } });
+        metadata => { enrollment_items => [], tenant_slug => $platform } });
     $db->update('payments',
         { status => $status, stripe_payment_intent_id => 'pi_wg_' . $p->id },
         { id => $p->id });

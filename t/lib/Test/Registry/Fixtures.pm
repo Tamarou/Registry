@@ -17,6 +17,16 @@ package Test::Registry::Fixtures {
         Registry::DAO->new( url => $pgsql->uri );
     }
     
+    # The platform tenant as a seller: its row names a Stripe account, as
+    # `registry platform bootstrap` writes in production, so a payment sold
+    # as `registry` has an account to be charged on. Returns the slug.
+    sub platform_seller ($db) {
+        my $raw = $db isa Registry::DAO ? $db->db : $db;
+        $raw->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_platform_test'
+                        WHERE slug = 'registry'} );
+        return 'registry';
+    }
+
     sub create_tenant ($db, $data) {
         require Registry::DAO::Tenant;
         my $tenant = Registry::DAO::Tenant->create($db, $data);

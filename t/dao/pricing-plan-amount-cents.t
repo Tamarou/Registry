@@ -8,7 +8,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::PricingPlan;
-use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
+use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check solo_linked_tenant);
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
 my $test_db = Test::Registry::DB->new;
@@ -124,28 +124,15 @@ subtest 'the revenue-share rate no longer comes from the money column' => sub {
 subtest 'a percentage plan with no rate in config fails loud' => sub {
     # Before the split, such a plan quietly fell back to the amount column.
     # With the fallback gone there is nothing left to guess with, and guessing
-    # is the one thing a charge-time rate resolver must never do.
-    my $plan = Registry::DAO::PricingPlan->create($db, {
-        plan_name             => 'Rateless Share',
-        plan_scope            => 'tenant',
-        pricing_model_type    => 'percentage',
-        amount_cents          => 2,
-        currency              => 'USD',
-        pricing_configuration => {},
-    });
-
-    my $tenant = Test::Registry::Fixtures::create_tenant($db, {
-        name => 'Rateless Tenant',
-        slug => 'rateless_tenant',
-    });
-    $db->query(
-        'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
-        $plan->id, 'rateless_tenant'
-    );
-
-    my $fraction = eval { revenue_share_fraction_for_tenant( $db, 'rateless_tenant' ) };
-    ok !defined $fraction, 'no rate is invented';
-    like $@, qr/percentage/i, "and the error names the missing rate: $@";
+    # is the one thing a charge-time rate resolver must never do. Create and
+    # the table both refuse such a plan now, so it is planted past both.
+    without_rate_check( $db, sub {
+        with_tenant_plan( $db, solo_linked_tenant($db), { pricing_configuration => {} }, sub {
+            my $fraction = eval { revenue_share_fraction_for_tenant( $db, solo_linked_tenant($db) ) };
+            ok !defined $fraction, 'no rate is invented';
+            like $@, qr/percentage/i, "and the error names the missing rate: $@";
+        } );
+    } );
 };
 
 subtest 'a percentage discount cannot leave a fractional cent behind' => sub {

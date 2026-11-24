@@ -70,9 +70,17 @@ field $_stripe_client = undef;
 
     # Platform revenue share, collected at charge time as a Stripe application
     # fee on the destination charge. The fraction is resolved from the tenant's
-    # plan by the caller. Integer cents, rounded half-up.
+    # plan by the caller. Integer cents, rounded half to even (ruling 7c).
+    # Computed in integers: the rate as whole basis points (plans are saved to
+    # at most 4 decimals, PricingPlan), so a half cent is exactly a half cent.
     sub application_fee_cents ($amount_cents, $fraction) {
-        return int($amount_cents * $fraction + 0.5);
+        my $bp = sprintf '%.0f', $fraction * 10_000;
+        die "revenue share $fraction is finer than a basis point\n"
+            if abs( $fraction * 10_000 - $bp ) > 1e-6;
+        my $n = $amount_cents * $bp;
+        my ( $q, $r ) = ( int( $n / 10_000 ), $n % 10_000 );
+        $q++ if $r > 5_000 || ( $r == 5_000 && $q % 2 );
+        return $q;
     }
 
     # --- Instalments -------------------------------------------------------
@@ -135,18 +143,20 @@ field $_stripe_client = undef;
             'default_settings[collection_method]'     => 'charge_automatically',
             'default_settings[default_payment_method]' => $args->{payment_method},
 
-            # Destination charges, as the one-off path does in _connect_params:
-            # the tenant is the merchant of record and our share is the
-            # application fee. Without these every instalment would settle into
-            # the PLATFORM's balance and the tenant would be paid nothing.
-            'default_settings[transfer_data][destination]' => $args->{connect_account},
+            # No transfer_data: the schedule is made on the seller's own account
+            # (a direct charge, as the one-off path is), so the money is
+            # already theirs and our share is the application fee.
         );
 
         # Omitted rather than sent as zero. A tenant on the Free plan owes no
         # revenue share, and an explicit 0 is a value Stripe has no reason to
         # accept on a schedule that takes no fee.
-        $params{'default_settings[application_fee_percent]'} = $args->{revenue_share_pct}
-            if $args->{revenue_share_pct};
+        # Fixed to two places and trimmed: Stripe refuses a third decimal here
+        # (t/stripe-live/schedule-fee-precision.t), and plans are saved to at
+        # most 2 (PricingPlan::_check_rate), so this only trims float noise; and
+        # Perl would write a small rate as 1e-02 and float noise in full.
+        ( my $pct = sprintf '%.2f', $args->{revenue_share_pct} // 0 ) =~ s/\.?0+\z//;
+        $params{'default_settings[application_fee_percent]'} = $pct if $pct > 0;
 
         for my $i ( 0 .. $#$phases ) {
             my $p = $phases->[$i];
@@ -182,9 +192,16 @@ field $_stripe_client = undef;
     # webhook's transaction is the shape of #284 -- the work belongs after the
     # COMMIT, where a failure can be retried without holding a lock.
     #
-    # Idempotent by the schedule id: a retried job finds one already recorded and
-    # returns it rather than creating a second schedule that would double-bill
-    # the family.
+    # Idempotent three ways, because a second schedule bills the family twice.
+    # A run that finds a schedule recorded returns it. Runs for one payment are
+    # serialised by an advisory lock, and the check is repeated under it, so a
+    # second job (two success events can queue two) waits for the first and
+    # then finds its schedule. And the product and schedule creates carry
+    # Idempotency-Keys named for the payment, so a retry after Stripe made the
+    # schedule but before our COMMIT gets that same schedule back.
+    # And Stripe is asked for a schedule an earlier run made before another is
+    # created, as a key does not always answer that: Stripe replays a stored
+    # 500 under it for 24 hours, and forgets it after.
     method schedule_remaining_instalments ($db) {
         my $raw = ($db isa Registry::DAO) ? $db->db : $db;
 
@@ -199,18 +216,26 @@ field $_stripe_client = undef;
         my $slug = $meta->{tenant_slug}
             or die "cannot schedule instalments without a tenant slug\n";
 
-        # Where the money goes, and what our share of it is -- read at scheduling
-        # time from the tenant's linked plan, the same authority the one-off
-        # charge path reads in _connect_params.
-        my $acct = $raw->query(
-            'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
-            $slug )->hash->{stripe_connect_account_id}
-            or die "tenant '$slug' has no Connect account to pay instalments into\n";
+        # Our share -- the rate snapshotted on instalment one's row at create, as
+        # _connect_params reads it, so a retry under the keys below sends the
+        # same fee even after the tenant changes plan.
+        my $pct = ( $meta->{revenue_share_fraction}
+            // Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+                $raw, $slug ) ) * 100;
 
-        my $pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
-            $raw, $slug ) * 100;
-
+        # Bound to the account instalment one was charged on, where its customer
+        # and card live; dies, before any Stripe call, when there is none.
         my $client = $self->stripe_client;
+
+        # Open across the Stripe calls for the lock alone: it holds no row lock
+        # until the writes at the end, so nothing waits on Stripe but another
+        # run for this payment. Released by COMMIT, or by rollback on any death.
+        my $txn = $raw->begin;
+        $raw->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+            "instalment_schedule:$id" );
+        my $done = $raw->select( 'payments', ['stripe_schedule_id'], { id => $id } )
+            ->hash->{stripe_schedule_id};
+        return $stripe_schedule_id = $done if $done;
 
         # The customer the first charge was made against, and the card it saved.
         my $intent = $client->retrieve_payment_intent($stripe_payment_intent_id);
@@ -220,27 +245,31 @@ field $_stripe_client = undef;
             or die "instalment 1 of payment $id saved no card\n";
 
         my $description = $meta->{instalment_description} // 'Program Enrollment';
-        my $product = $client->create_product({
-            name                  => $description,
-            'metadata[payment_id]' => $id,
-        });
-
-        my $schedule = $client->create_subscription_schedule(
-            instalment_schedule_params( {
+        my $schedule = $self->_schedule_at_stripe( $client, $customer, $pct,
+            scalar @{ instalment_phases( \@remaining, lc $currency, $description ) } );
+        $schedule ||= $client->create_subscription_schedule( {
+            %{ instalment_schedule_params( {
                 customer          => $customer,
                 payment_method    => $card,
-                connect_account   => $acct,
                 revenue_share_pct => $pct,
                 currency          => lc $currency,
                 description       => $description,
-                product           => $product->{id},
+                product           => $client->create_product({
+                    name                   => $description,
+                    'metadata[payment_id]' => $id,
+                    _idempotency_key       => "instalment_schedule:$id:product",
+                })->{id},
                 instalments       => \@remaining,
-            } ) );
+            } ) },
+            # So an invoice that beats the COMMIT below is retried, not
+            # ignored (Webhooks::_schedule_not_recorded).
+            'metadata[payment_id]' => $id,
+            _idempotency_key => "instalment_schedule:$id:schedule",
+        } );
 
-        # Recorded in one transaction with the rows it bills, so a crash between
-        # them cannot leave a schedule at Stripe that Registry has no record of.
-        my $txn = $raw->begin;
-
+        # Recorded in one transaction with the rows it bills. A crash before the
+        # COMMIT leaves a schedule at Stripe with no record here; the retry's
+        # Idempotency-Key gets that same schedule back, so it is recorded once.
         $raw->update( 'payments', { stripe_schedule_id => $schedule->{id} },
             { id => $id } );
 
@@ -257,8 +286,14 @@ field $_stripe_client = undef;
                 due_date           => $part->{due_date},
                 stripe_schedule_id => $schedule->{id},
                 metadata           => { -json => {
-                    instalment_of => $id,
-                    tenant_slug   => $slug,
+                    instalment_of     => $id,
+                    tenant_slug       => $slug,
+                    # The account this set is charged on, so a refund of this
+                    # row goes where its money went.
+                    stripe_account_id => $meta->{stripe_account_id},
+                    # The plan that priced this schedule's fee, for
+                    # record_platform_fee when this row's invoice is paid.
+                    platform_pricing_plan_id => $meta->{platform_pricing_plan_id},
                     description   => $description,
                 } },
             } );
@@ -267,6 +302,31 @@ field $_stripe_client = undef;
         $txn->commit;
         $stripe_schedule_id = $schedule->{id};
         return $schedule->{id};
+    }
+
+    # A live schedule at Stripe made for this payment, or undef. Each carries
+    # metadata[payment_id] (schedule_remaining_instalments) -- but it is on the
+    # seller's own account, where the seller can write that too, so it is
+    # adopted only if it takes our fee in as many phases as we would send.
+    # shortcut: phase amounts are not compared, as a listed phase's price is an
+    # id; expand data.phases.items.price if a seller ever games the count.
+    # shortcut: reads the customer's first 100 schedules; page through them
+    # if one customer ever holds more.
+    method _schedule_at_stripe ($client, $customer, $pct, $phase_count) {
+        my $listed = $client->list_subscription_schedules(
+            { customer => $customer, limit => 100 } );
+        my $ours = sprintf '%.2f', $pct;
+        for my $s ( @{ $listed->{data} // [] } ) {
+            next unless ( $s->{metadata}{payment_id} // '' ) eq $id
+                && ( $s->{status} // '' ) !~ /\A(?:canceled|released)\z/;
+            return $s
+                if sprintf( '%.2f', $s->{default_settings}{application_fee_percent} // 0 ) eq $ours
+                && @{ $s->{phases} // [] } == $phase_count;
+            warn "not adopting Stripe schedule "
+                . ( ( $s->{id} // "" ) =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                . " for payment $id: its fee or phases are not ours\n";
+        }
+        return undef;
     }
 
     # The instalments of this set that are still owed, earliest first. Morgan's
@@ -324,61 +384,28 @@ field $_stripe_client = undef;
         return map { ( "metadata[$_]" => $m{$_} ) } sort keys %m;
     }
 
-    # Derive Stripe Connect destination-charge params from a tenant slug and
-    # amount. Tenant payments are destination charges: tuition settles into the
-    # tenant's connected account, the platform keeps the application fee, and
-    # on_behalf_of makes the tenant the settlement merchant (bearer of Stripe's
-    # processing fee). Derived from the payment's own metadata so every intent
-    # for this payment -- including retries -- routes the same way.
-    # Platform/registry payments (no tenant_slug) are unchanged. The Task 5 gate
-    # guarantees readiness before any tenant intent is created, so routing on
-    # account presence (not re-checking readiness booleans) keeps this method
-    # total. tenants has no jsonb columns; plain ->hash is sufficient.
+    # The platform's share of a direct charge. The charge is made on the
+    # seller's own account (stripe_client is bound to it), so the tenant is the
+    # merchant of record without transfer_data or on_behalf_of; all that is
+    # left to send is the application fee. Read from the payment's own
+    # metadata -- the account snapshotted by create -- so every intent for this
+    # payment, retries included, routes the same way. tenants has no jsonb
+    # columns; plain ->hash is sufficient.
     sub _connect_params ($db, $metadata, $amount_cents) {
         $db = $db->db if $db isa Registry::DAO;
         my $meta = ref $metadata eq 'HASH' ? $metadata : {};
-        my $slug = $meta->{tenant_slug};
-        return unless $slug && $slug ne 'registry';
+        return () unless $meta->{stripe_account_id};
 
-        my $row = $db->query(
-            'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
-            $slug
-        )->hash;
-        return () unless $row;
-        my $acct = $row->{stripe_connect_account_id};
-        return () unless $acct;
+        # The fraction create snapshotted; the tenant's live plan only for a row
+        # made before the snapshot existed. $db is already a Mojo::Pg handle here
+        # (coerced at the top of this sub).
+        my $fraction = $meta->{revenue_share_fraction}
+            // Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+                $db, $meta->{tenant_slug} );
+        my $fee = application_fee_cents($amount_cents, $fraction);
 
-        # Resolve the revenue-share fraction from the tenant's linked plan
-        # (Free 0% when the tenant has no plan link). $db is already a Mojo::Pg
-        # handle here (coerced at the top of this sub).
-        my $fraction = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant($db, $slug);
-
-        return (
-            'transfer_data[destination]' => $acct,
-            on_behalf_of                 => $acct,
-            application_fee_amount       => application_fee_cents($amount_cents, $fraction),
-        );
-    }
-
-    # Connect refunds: for a destination charge the tenant received the tuition, so
-    # the transfer must be reversed; whether the platform also returns its
-    # application fee is governed by the tenant's plan. Registry/platform payments
-    # (no tenant_slug, or tenant_slug eq 'registry') are unchanged -- neither
-    # parameter is sent and Stripe defaults apply.
-    #
-    # Stripe's form-encoded API (Stripe.pm posts `form => $data`) requires string
-    # booleans ('true'/'false'). Sending numeric 1/0 yields an "Invalid boolean"
-    # API error on every refund, so these values must always be strings.
-    method _refund_connect_params ($db) {
-        my $slug = ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef;
-        return () unless $slug && $slug ne 'registry';
-        $db = $db->db if $db isa Registry::DAO;
-        my $refund_fee =
-            Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db, $slug);
-        return (
-            reverse_transfer       => 'true',
-            refund_application_fee => $refund_fee ? 'true' : 'false',
-        );
+        # Stripe's rule: a zero application fee is omitted, never sent as 0.
+        return $fee ? ( application_fee_amount => $fee ) : ();
     }
 
     sub create ($class, $db, $data) {
@@ -392,6 +419,31 @@ field $_stripe_client = undef;
         $data->{metadata}{idempotency_token} //= $raw_db->query(
             'SELECT gen_random_uuid()::text AS uuid'
         )->hash->{uuid};
+
+        # The seller's Stripe account, resolved once from the seller row and
+        # kept with the payment: every intent, retry, retrieve and cancel for
+        # this payment goes to the account it was first charged on, even if the
+        # tenant's account changes later. Server-owned, so a caller's value is
+        # never trusted. The platform tenant sells like any other seller.
+        #
+        # The revenue share is fixed here too, at quote time (ruling 7c): every
+        # intent for this payment shares one Idempotency-Key, and Stripe refuses
+        # a retry under it that carries a different application_fee_amount.
+        # So is the plan version that rate came from, recorded with the fee --
+        # the Free plan's when the tenant has none linked.
+        delete $data->{metadata}->@{qw( stripe_account_id revenue_share_fraction
+                                        platform_pricing_plan_id )};
+        if ( my $slug = $data->{metadata}{tenant_slug} ) {
+            my $row = $raw_db->query(
+                'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
+                $slug )->hash;
+            if ( $row && $row->{stripe_connect_account_id} ) {
+                $data->{metadata}{stripe_account_id} = $row->{stripe_connect_account_id};
+                $data->{metadata}->@{qw( revenue_share_fraction platform_pricing_plan_id )} =
+                    Registry::PriceOps::RevenueShare::revenue_share_plan_for_tenant(
+                        $raw_db, $slug );
+            }
+        }
         $data->{metadata} = { -json => $data->{metadata} };
 
         return $class->SUPER::create($db, $data);
@@ -399,12 +451,19 @@ field $_stripe_client = undef;
     
     # The env-reading and the live-key guard live on the service now, so the
     # Connect-onboarding controller enforces the same rule rather than growing a
-    # second copy of it. This keeps the per-payment cache.
+    # second copy of it. This keeps the per-payment cache. The client is bound
+    # to the seller account create snapshotted, so every call it makes for this
+    # payment carries that Stripe-Account.
     method stripe_client {
         return $_stripe_client if $_stripe_client;
 
+        # No fallback to an unbound client: that would charge the platform's
+        # own account for a sale that belongs to the seller.
+        my $acct = ref $metadata eq 'HASH' ? $metadata->{stripe_account_id} : undef;
+        die "payment $id has no seller Stripe account to charge on\n" unless $acct;
+
         # Handle SSL requirement gracefully in test environments
-        eval { $_stripe_client = Registry::Service::Stripe->from_env };
+        eval { $_stripe_client = Registry::Service::Stripe->from_env->for_account($acct) };
 
         if ($@) {
             # If SSL or other requirements fail, re-throw with a clear message
@@ -499,14 +558,33 @@ field $_stripe_client = undef;
           } );
     }
 
+    # The email and name are snapshotted on first use: a retry under the same
+    # key must send the same body, or Stripe answers idempotency_error when the
+    # parent edited their profile in between.
     method _customer_params ($raw) {
-        require Registry::DAO::User;
-        my $user = Registry::DAO::User->find( $raw, { id => $user_id } );
+        my $details = $metadata->{stripe_customer_details};
+        unless ( ref $details eq 'HASH' ) {
+            require Registry::DAO::User;
+            my $user = Registry::DAO::User->find( $raw, { id => $user_id } );
+            $details = {
+                ( $user && $user->email ? ( email => $user->email ) : () ),
+                ( $user && $user->name  ? ( name  => $user->name )  : () ),
+            };
+            $raw->query( q{
+                UPDATE payments
+                   SET metadata = COALESCE(metadata, '{}'::jsonb)
+                                  || jsonb_build_object('stripe_customer_details', ?::jsonb)
+                 WHERE id = ?
+            }, { json => $details }, $id );
+            $metadata->{stripe_customer_details} = $details;
+        }
 
         return {
-            ( $user && $user->email ? ( email => $user->email ) : () ),
-            ( $user && $user->name  ? ( name  => $user->name )  : () ),
+            %$details,
             'metadata[registry_user_id]' => $user_id // '',
+            # One customer per payment: a create whose response was lost is
+            # retried under this key and Stripe returns the customer it made.
+            _idempotency_key => "customer-create:$id",
         };
     }
 
@@ -682,8 +760,9 @@ field $_stripe_client = undef;
         # Do not mutate status on mismatch: a forged id must not be able to
         # flip a payment to failed either.
         my $intent_id = $intent->{id} // $payment_intent_id;
-        my $owned =
-            ( defined $stripe_payment_intent_id && $intent_id eq $stripe_payment_intent_id )
+        my $stored_intent =
+            defined $stripe_payment_intent_id && $intent_id eq $stripe_payment_intent_id;
+        my $owned = $stored_intent
             || ( ( $intent->{metadata}{payment_id} // '' ) eq $id );
         unless ($owned) {
             return {
@@ -713,6 +792,16 @@ field $_stripe_client = undef;
                 success           => 0,
                 already_completed => 1,
                 error             => "Payment is already settled (status '$status')",
+            };
+        }
+
+        # A stamp may learn the row is settled, as above, but only the intent
+        # Registry created may move it: the seller owns the account the intent
+        # is retrieved from, and can mint one stamped with our payment_id.
+        unless ($stored_intent) {
+            return {
+                success => 0,
+                error   => 'Payment intent does not belong to this payment',
             };
         }
 
@@ -753,7 +842,7 @@ field $_stripe_client = undef;
             # (#277), on every refund that returns the fee, and wherever
             # Stripe's rounding differs from ours -- so a revenue screen built
             # on derivation reports money that was never taken.
-            $self->_record_platform_fee( $db, $intent );
+            $self->record_platform_fee( $db, $intent );
 
             return { success => 1, payment => $self };
         } elsif ($intent->{status} eq 'processing') {
@@ -776,28 +865,37 @@ field $_stripe_client = undef;
     }
     
     # Write down the application fee and the plan version it was charged under.
+    # All three settlement paths -- process_payment (via _apply_intent), the
+    # payment_intent webhook, and the instalment invoice handler -- call this, so
+    # the missing-fee rule lives here once. $intent is whatever Stripe object
+    # reported the fee: the payment intent, or the invoice for instalments 2..N.
     #
     # Best effort: a failure here must not undo a captured charge. The payment is
     # settled and the enrolment is the point; an unrecorded fee leaves a NULL,
     # which the revenue view reports as a gap rather than silently summing as
     # zero.
     #
-    # The plan is read now rather than at intent creation, which leaves a window
-    # of seconds in which an admin could move the tenant between plan versions
-    # and have this charge attributed to the newer one. Accepted deliberately:
-    # moving a tenant is a deliberate act (#277), the window is one Stripe round
-    # trip, and the alternative is threading the id through the params builder
-    # and the webhook's run-less path for a case nobody has hit.
-    method _record_platform_fee ( $db, $intent ) {
+    # The plan is the one create snapshotted beside the rate, so the id names
+    # the version that priced the fee even when the tenant moves plan between
+    # quote and settle (up to a day). The tenant's live plan only for a row
+    # create did not snapshot -- one with no seller account.
+    method record_platform_fee ( $db, $intent ) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $fee = $intent->{application_fee_amount};
+        # Stripe omits a zero application fee rather than sending 0, so a
+        # charge on a seller's account that reports none took nothing. A row
+        # with no seller account sent no Connect params: its fee stays NULL.
+        my $connected = ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
+        my $fee = $intent->{application_fee_amount} // ( $connected ? 0 : undef );
         return unless defined $fee && !ref $fee;
 
         my $slug = ( ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef );
 
         my $plan_id;
-        if ( defined $slug && !ref $slug && length $slug ) {
+        if ( $connected ) {
+            $plan_id = $metadata->{platform_pricing_plan_id};
+        }
+        elsif ( defined $slug && !ref $slug && length $slug ) {
             my $row = $db->query(
                 'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',
                 $slug )->hash;
@@ -1433,6 +1531,45 @@ SQL
 
 
 
+    # refund.updated for a refund _apply_refund_result held as pending. A
+    # terminal answer is recorded as _apply_refund_result records any other,
+    # from what the refund was sent as; a succeeded one then discharges its
+    # capacity increment or marks its dropped seat processed. Returns the
+    # status recorded, or nothing when the refund is not held here or is
+    # still in flight. Once: the hold is released by the recording.
+    method settle_pending_refund ($db, $refund) {
+        $db = $db->db if $db isa Registry::DAO;
+        return if __CLASS__->refund_is_pending($refund);
+
+        my $row = $db->query( <<'SQL', $refund->{id}, $id )->expand->hash;
+            SELECT metadata->'pending_refunds'->?::text AS held
+              FROM payments WHERE id = ? FOR UPDATE
+SQL
+        my $held = $row && $row->{held} or return;
+        my $key  = $held->{key} // '';
+        my ($seq)        = $key =~ /\Arefund:capacity:\Q$id\E:(\d+)\z/;
+        my ($enrollment) = $key =~ /\Arefund:drop:\Q$id\E:(.+)\z/;
+
+        $self->_apply_refund_result( $db, $refund, $held->{cents}, $held->{reason},
+            defined $seq ? 1 : 0, $held->{key} );
+
+        if ( ( $refund->{status} // '' ) eq 'succeeded' ) {
+            $self->settle_refund_increment( $db, $seq, $refund ) if defined $seq;
+            $db->update( 'enrollments', { refund_status => 'processed' },
+                { id => $enrollment, payment_id => $id } ) if defined $enrollment;
+        }
+        else {
+            # So a replay of this refund's first "pending" answer is not held again.
+            $db->query( q{UPDATE payments SET metadata = metadata || jsonb_build_object('failed_refunds',
+                    COALESCE(metadata->'failed_refunds', '{}'::jsonb) || jsonb_build_object(?::text, ?::text))
+                 WHERE id = ?}, $refund->{id}, $refund->{status} // 'unknown', $id );
+            $self->record_refund_failure( $db, "Stripe refund $refund->{id} on payment $id is "
+                . ( $refund->{status} // 'unknown' )
+                . ( defined $refund->{failure_reason} ? " ($refund->{failure_reason})" : '' ) );
+        }
+        return $refund->{status};
+    }
+
     method add_line_item ($db, $args) {
         $db = $db->db if $db isa Registry::DAO;
         
@@ -1514,8 +1651,26 @@ SQL
     method _record_intent_id ($db, $intent_id) {
         $db = $db->db if $db isa Registry::DAO;
 
-        my $moved = $db->query( <<'SQL', $intent_id, $id, __CLASS__->_settled_statuses )->rows;
-            UPDATE payments SET stripe_payment_intent_id = ?
+        # The intent it replaces is kept: a decline's cancel is best-effort, and
+        # if it failed a stale tab can still pay the old one. The webhook
+        # refunds a superseded intent that succeeds; it settles nothing.
+        # SET reads the row as it was, so the old id is the one appended. The
+        # new id leaves the list: an A-B-A resubmit re-stores a superseded one.
+        # The newest 20 are kept, as each decline retry adds one.
+        # shortcut: an older intent paid from a stale tab is only warned about
+        # by the webhook, not refunded; raise the cap if that warning shows up.
+        my $moved = $db->query( <<'SQL', $intent_id, $intent_id, $intent_id, $id, __CLASS__->_settled_statuses )->rows;
+            UPDATE payments
+               SET metadata = CASE
+                       WHEN stripe_payment_intent_id IS NULL
+                         OR stripe_payment_intent_id = ? THEN metadata
+                       ELSE jsonb_set( COALESCE(metadata, '{}'::jsonb), '{superseded_intent_ids}',
+                                jsonb_path_query_array(
+                                    ( COALESCE(metadata->'superseded_intent_ids', '[]'::jsonb)
+                                      || to_jsonb(stripe_payment_intent_id) ) - ?::text,
+                                    '$[last - 19 to last]' ) )
+                   END,
+                   stripe_payment_intent_id = ?
              WHERE id = ? AND NOT (status = ANY(?))
 SQL
         return 0 unless $moved;
@@ -1765,8 +1920,11 @@ SQL
             ? 1 : 0;
     }
 
+    # partially_refunded, so a second drop from one cart can be refunded (005
+    # 8a); refund_async's past-captured guard caps it at what remains.
     sub _refundable_status ($class, $status) {
-        return ( $status // '' ) =~ /\A (?: completed | refund_pending ) \z/x ? 1 : 0;
+        return ( $status // '' )
+            =~ /\A (?: completed | refund_pending | partially_refunded ) \z/x ? 1 : 0;
     }
 
     # The bookkeeping the refund path applies once Stripe confirms.
@@ -1791,8 +1949,18 @@ SQL
     # settle_refund_increment owns both: it subtracts exactly the increment it
     # settles, adds exactly that to refunded_cents, and moves the status only
     # when nothing is left owed.
-    method _apply_refund_result ($db, $refund, $refund_cents, $reason, $is_increment = 0) {
+    method _apply_refund_result ($db, $refund, $refund_cents, $reason, $is_increment = 0, $key = undef) {
         $db = $db->db if $db isa Registry::DAO;
+
+        # Only a succeeded refund has moved money. A pending one may still fail
+        # and a failed or canceled one never will, so none of them moves status
+        # or refunded_cents, or is remembered as counted.
+        # A pending one is held under pending_refunds with what it was sent
+        # as, so settle_pending_refund can count it when refund.updated says
+        # it succeeded; any other answer releases the hold.
+        my $pending   = ( $refund->{status} // '' ) eq 'succeeded' ? 0 : 1;
+        my $hold      = $is_increment || $pending ? 1 : 0;
+        my $in_flight = __CLASS__->refund_is_pending($refund);
 
         # A targeted jsonb merge, not save(). save() would write six columns
         # from an object loaded before the Stripe round trip, over a row
@@ -1814,9 +1982,29 @@ SQL
         # it out of the runbook's queue AND out of _refundable_status, so the
         # outstanding increments can never be paid -- the money is stranded with
         # no operator able to find it.
-        $db->query( <<'SQL', encode_json({
+        #
+        # A counted refund is remembered by its Stripe id (with the key it went
+        # out under), and the whole write is skipped for an id already there: a
+        # retry under the same Idempotency-Key gets the same refund back, and
+        # adding it again told the ledger more went back than the bank sent.
+        #
+        # A refund that has moved money retires record_refund_failure's stamp,
+        # which the runbook reads first; a pending one may still fail, so not yet.
+        # shortcut: one failure slot per payment, so a sibling drop's success on the same cart clears it too (that drop stays findable by its enrollment's refund_status); key the record by idempotency key if that ever misleads an operator.
+        $db->query( <<'SQL', $pending, $refund->{id}, encode_json({
             UPDATE payments
-               SET metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb,
+               SET metadata = ( CASE WHEN ?::boolean THEN COALESCE(metadata, '{}'::jsonb)
+                                     ELSE COALESCE(metadata, '{}'::jsonb) - 'refund_last_failure' END
+                                #- ARRAY['pending_refunds', ?::text] )
+                   || ?::jsonb
+                   || CASE WHEN ?::boolean THEN '{}'::jsonb
+                      ELSE jsonb_build_object('recorded_refunds',
+                          COALESCE(metadata->'recorded_refunds', '{}'::jsonb)
+                          || jsonb_build_object(?::text, ?::text)) END
+                   || CASE WHEN ?::boolean THEN jsonb_build_object('pending_refunds',
+                          COALESCE(metadata->'pending_refunds', '{}'::jsonb)
+                          || jsonb_build_object(?::text, ?::jsonb))
+                      ELSE '{}'::jsonb END,
                    status = CASE
                        WHEN ?::boolean THEN status
                        -- A debt recorded between refund_async's check and this
@@ -1837,12 +2025,17 @@ SQL
                        WHEN refund_owed_cents > 0 THEN refunded_cents
                        ELSE LEAST(amount_cents, refunded_cents + ?::integer) END
              WHERE id = ?
+               AND metadata->'recorded_refunds'->?::text IS NULL
 SQL
             refund_id           => $refund->{id},
             refund_amount_cents => $refund_cents,
             refund_reason       => $reason,
-        }), $is_increment ? 1 : 0, $refund_cents,
-            $is_increment ? 1 : 0, $refund_cents, $id );
+            refund_status       => $refund->{status},
+        }), $hold, $refund->{id}, $key,
+            $in_flight, $refund->{id},
+            encode_json({ key => $key, cents => $refund_cents, reason => $reason }),
+            $hold, $refund_cents, $hold, $refund_cents,
+            $id, $refund->{id} );
 
         # Refresh the in-memory status for the direct path. refund_async gates
         # on this field, and leaving it stale let a second full refund through
@@ -2095,6 +2288,13 @@ SQL
         return 'unknown';
     }
 
+    # Stripe has not moved the money yet and may still fail: settled later by
+    # refund.updated, and until then neither counted nor treated as done.
+    sub refund_is_pending ( $class, $refund ) {
+        return ( ( ref $refund eq 'HASH' ? $refund->{status} : undef ) // '' )
+            =~ /\A(?:pending|requires_action)\z/ ? 1 : 0;
+    }
+
     # The log is where an operator looks second; the row is where the runbook
     # looks first. Best-effort: a stamp that cannot be written must not turn a
     # refund failure into a second failure on top of it.
@@ -2128,6 +2328,31 @@ SQL
         # silent warn and no refund.
         $db = $db->db if $db isa Registry::DAO;
 
+        # A retry (a drop whose step died after Stripe paid) of a refund already
+        # recorded under this key gets that refund back. The guards below would
+        # refuse it, because the payment already reflects it. Only a succeeded
+        # refund is ever recorded there, so 'succeeded' is what was recorded.
+        # refund_last_failure is left alone: only a non-increment (drop) refund
+        # is recorded, and recording it cleared the slot, so a failure here now
+        # is a sibling's on the same cart -- still owed, and this moved no money.
+        if ( my $key = $args->{idempotency_key} ) {
+            my $done = $db->query( q{
+                SELECT r.key AS id, 'succeeded' AS status
+                  FROM payments, jsonb_each_text(metadata->'recorded_refunds') r
+                 WHERE payments.id = ? AND r.value = ?}, $id, $key )->hash;
+            return Mojo::Promise->resolve($done) if $done;
+        }
+
+        # Still pending under this key: resending replays "pending" inside
+        # Stripe's 24h key window, and past it creates a second real refund.
+        if ( my $key = $args->{idempotency_key} ) {
+            my $held = $db->query( q{
+                SELECT p.key AS id, 'pending' AS status
+                  FROM payments, jsonb_each(metadata->'pending_refunds') p
+                 WHERE payments.id = ? AND p.value->>'key' = ?}, $id, $key )->hash;
+            return Mojo::Promise->resolve($held) if $held;
+        }
+
         # Marked, because what an operator needs to know first is whether any
         # money can have moved, and for these it certainly cannot: the request
         # is never dispatched. Classifying on a marker rather than on wording --
@@ -2138,8 +2363,27 @@ SQL
         die REFUND_NOT_SENT . ": No Stripe payment intent ID"
             unless $stripe_payment_intent_id;
 
-        my $refund_cents = $args->{amount_cents} // $amount_cents;
+        # Read fresh: the object may predate a settled increment.
+        my $fresh = $db->query(
+            'SELECT refunded_cents, refund_owed_cents FROM payments WHERE id = ?', $id
+        )->hash // {};
+        my $refunded = $fresh->{refunded_cents} // 0;
+        # With no amount, return what is left, not the whole charge again (005 8a).
+        my $refund_cents = $args->{amount_cents} // $amount_cents - $refunded;
         my $reason = $args->{reason} // 'requested_by_customer';
+
+        # Stripe refuses these too, after the request, where it reads as unknown.
+        die REFUND_NOT_SENT . ": Refund of $refund_cents cents on payment $id is not positive\n"
+            unless $refund_cents > 0;
+
+        # Stripe would refuse it too, but only after the request went out.
+        # Capacity debt is money already owed back on this charge, so it counts
+        # against what is left -- except for an increment, which IS that debt.
+        my $owed = $args->{increment} ? 0 : $fresh->{refund_owed_cents} // 0;
+        die REFUND_NOT_SENT . ": Refund of $refund_cents cents would take payment $id "
+          . "past its $amount_cents captured cents ($refunded already refunded, "
+          . "$owed owed)\n"
+            if $refunded + $owed + $refund_cents > $amount_cents;
 
         # Refused BEFORE the money moves. An earlier version of this guard sat
         # in _apply_refund_result, which runs inside create_refund_async's
@@ -2159,14 +2403,22 @@ SQL
               . "cents of capacity debt is outstanding on payment $id\n" if $owed;
         }
 
+        # stripe_client refuses too, but unmarked; this says no money moved.
+        die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
+            unless ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
+
         return $self->stripe_client->create_refund_async({
             payment_intent => $stripe_payment_intent_id,
             amount         => $refund_cents,
             reason         => $reason,
-            $self->_refund_connect_params($db),
             $args->{idempotency_key}
                 ? ( _idempotency_key => $args->{idempotency_key} ) : (),
         })->then(sub ($refund) {
+            # A key replayed inside Stripe's window answers with the refund's
+            # first response, "pending", for a refund refund.updated already failed.
+            my $failed = $db->query( q{SELECT metadata->'failed_refunds'->>?::text AS status
+                FROM payments WHERE id = ?}, $refund->{id}, $id )->hash->{status};
+            die "Stripe refund $refund->{id} on payment $id is $failed\n" if $failed;
             # Told, not inferred. This used to read the presence of an
             # idempotency key as "this is a capacity increment", because at the
             # time only increments carried one. They are two independent
@@ -2176,10 +2428,52 @@ SQL
             # increment, so refunded_cents never moved and the ledger denied a
             # refund the bank had made.
             $self->_apply_refund_result( $db, $refund, $refund_cents, $reason,
-                $args->{increment} ? 1 : 0 );
+                $args->{increment} ? 1 : 0, $args->{idempotency_key} );
+            # Recorded as such above; the caller's failure branch keeps it owed.
+            die "Stripe refund $refund->{id} on payment $id is $refund->{status}\n"
+                if ( $refund->{status} // '' ) =~ /\A(?:failed|canceled)\z/;
             return $refund;
         })->catch(sub ($error) {
             die "Refund failed: $error";
+        });
+    }
+
+    # Returning the platform's fee: the exception to keeping it on a refund
+    # (005), applied by the platform tenant's admin. The charge is the seller's,
+    # so its fee id is read through the seller-bound client; the fee is the
+    # platform's, so it is read and refunded on an unbound one. Nothing is
+    # written here: what was returned is recorded from application_fee.refunded.
+    method refund_platform_fee_async ($db, $args = {}) {
+        die REFUND_NOT_SENT . ": No Stripe payment intent ID\n"
+            unless $stripe_payment_intent_id;
+        die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
+            unless ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
+
+        my $asked = $args->{amount_cents};
+        die REFUND_NOT_SENT . ": Fee refund of '$asked' cents on payment $id is not a positive whole number\n"
+            if defined $asked && !( $asked =~ /\A[0-9]+\z/ && $asked > 0 );
+
+        my $platform = Registry::Service::Stripe->from_env;
+
+        return $self->stripe_client->retrieve_payment_intent_async(
+            $stripe_payment_intent_id, { 'expand[]' => 'latest_charge' }
+        )->then(sub ($intent) {
+            my $charge = $intent->{latest_charge};
+            my $fee_id = ref $charge eq 'HASH' ? $charge->{application_fee} : undef;
+            die REFUND_NOT_SENT . ": the charge for payment $id took no application fee\n"
+                unless $fee_id;
+            return $platform->retrieve_application_fee_async($fee_id);
+        })->then(sub ($fee) {
+            my $left   = $fee->{amount} - $fee->{amount_refunded};
+            my $amount = $asked // $left;
+            die REFUND_NOT_SENT . ": Fee refund of $amount cents on payment $id is more "
+              . "than the $left cents of its fee not yet returned\n"
+                unless $amount > 0 && $amount <= $left;
+            return $platform->create_application_fee_refund_async( $fee->{id}, {
+                amount => $amount,
+                $args->{idempotency_key}
+                    ? ( _idempotency_key => $args->{idempotency_key} ) : (),
+            } );
         });
     }
 }

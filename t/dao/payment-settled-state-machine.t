@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Fixtures;
 use Test::Registry::Async qw( settle );
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;
@@ -18,6 +19,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_settled_state';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+my $platform = Test::Registry::Fixtures::platform_seller($db);
 
 my $parent = $dao->create(User => {
     username => 'ssm_parent', name => 'SSM Parent', user_type => 'parent',
@@ -27,7 +29,7 @@ my $parent = $dao->create(User => {
 sub payment_with ($status) {
     my $p = Registry::DAO::Payment->create($db, {
         user_id => $parent->id, amount_cents => 10000, status => 'pending',
-        metadata => { enrollment_items => [], tenant_slug => undef },
+        metadata => { enrollment_items => [], tenant_slug => $platform },
     });
     $db->update('payments', {
         status => $status, stripe_payment_intent_id => 'pi_ssm_' . $p->id,
@@ -82,7 +84,7 @@ subtest 'a refunded payment is not re-completed and does not owe again' => sub {
     # so the "does not owe again" half of this subtest's title graded nothing.
     my $payment = payment_with('refunded');
     $db->update('payments', {
-        metadata => { -json => { enrollment_items => [], tenant_slug => undef } },
+        metadata => { -json => { %{ $payment->metadata }, enrollment_items => [] } },
     }, { id => $payment->id });
     $db->query( q{UPDATE payments SET refund_owed_cents = 10000,
                          refund_increments = ?::jsonb WHERE id = ?},

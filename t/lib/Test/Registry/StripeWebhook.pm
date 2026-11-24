@@ -1,6 +1,6 @@
 use 5.42.0;
-# ABOUTME: Test helper for building, signing, and posting payment_intent.succeeded webhook events.
-# ABOUTME: Used by the gated real-Stripe suite (Leg C3) and the helper self-test (helpers.t).
+# ABOUTME: Test helper for building, signing, and posting Stripe webhook events (platform and Connect).
+# ABOUTME: Used by the gated real-Stripe suite (Leg C3), the helper self-test, and the Connect endpoint tests.
 
 package Test::Registry::StripeWebhook {
     use Digest::SHA qw(hmac_sha256_hex);
@@ -48,6 +48,32 @@ package Test::Registry::StripeWebhook {
             'stripe-signature' => "t=$timestamp,v1=$sig",
             'Content-Type'     => 'application/json',
         } => $payload);
+        return $t->tx($tx);
+    }
+
+    # Sign and POST a Connect event: one that happened on a connected account,
+    # so Stripe sends it to the Connect endpoint with a top-level `account`.
+    #
+    # $t      - Test::Mojo object with a live app
+    # $event  - event hashref; give it `account` (or leave it out to test that)
+    # %opts:
+    #   secret    => '...'   sign with this instead of STRIPE_CONNECT_WEBHOOK_SECRET
+    #   path      => '...'   post here instead of /webhooks/stripe/connect
+    #   timestamp => N       sign with this time instead of now
+    #   body      => '...'   send this body instead of the one signed
+    sub post_connect {
+        my ($t, $event, %opts) = @_;
+
+        $event->{id} //= sprintf('evt_connect_%d_%d_%d', time(), $$, ++$counter);
+
+        my $payload   = encode_json($event);
+        my $timestamp = $opts{timestamp} // time();
+        my $secret    = $opts{secret} // $ENV{STRIPE_CONNECT_WEBHOOK_SECRET};
+        my $sig       = hmac_sha256_hex("$timestamp.$payload", $secret);
+        my $tx = $t->ua->post(($opts{path} // '/webhooks/stripe/connect') => {
+            'stripe-signature' => "t=$timestamp,v1=$sig",
+            'Content-Type'     => 'application/json',
+        } => ($opts{body} // $payload));
         return $t->tx($tx);
     }
 }

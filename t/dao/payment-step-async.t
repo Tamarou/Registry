@@ -418,7 +418,7 @@ sub in_flight_payment ($run, $cents) {
         user_id      => $parent->id,
         amount_cents => $cents,
         status       => 'processing',
-        metadata     => { workflow_run_id => $run->id },
+        metadata     => { workflow_run_id => $run->id, tenant_slug => $slug },
     } );
     $payment->update( $tdb, { stripe_payment_intent_id => 'pi_superseded' } );
     $run->update_data( $tdb, { payment_id => $payment->id } );

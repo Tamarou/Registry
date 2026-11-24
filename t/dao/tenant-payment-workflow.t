@@ -181,7 +181,7 @@ sub buyable_plan ( $name, $cents ) {
     my $plan = Registry::DAO::PricingPlan->create( $db, {
         plan_scope => 'tenant', plan_name => $name, plan_type => 'standard',
         pricing_model_type => 'hybrid', amount_cents => $cents, currency => 'USD',
-        pricing_configuration => { trial_days => 14, description => "$name plan" },
+        pricing_configuration => { percentage => 0.02, trial_days => 14, description => "$name plan" },
         metadata => {},
     } );
     my $admin = $db->query(

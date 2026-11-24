@@ -1,4 +1,4 @@
-# ABOUTME: Gated real-Stripe test suite proving invariants I1-I8 for the money path.
+# ABOUTME: Gated real-Stripe suite proving the money path's invariants for direct charges on the tenant account.
 # ABOUTME: Requires STRIPE_SECRET_KEY (sk_test_); skips entirely without one, and signs its own webhooks.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -31,10 +31,13 @@ use Registry::DAO::WorkflowStep;
 plan skip_all => 'STRIPE_SECRET_KEY (sk_test_) not set'
     unless Test::Registry::StripeConnect::available();
 
-# Self-sign synthetic webhook events with a local secret.
+# Self-sign synthetic webhook events with local secrets. A tenant's sale
+# happened on the tenant's account, so Stripe reports it to the Connect
+# endpoint, signed with the Connect secret.
 # DO NOT localise STRIPE_SECRET_KEY -- the real key must reach the production
 # create_payment_intent call inside each subtest that drives the workflow step.
-local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_c3_local';
+local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_c3_local';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_c3_connect_local';
 
 # I8 resolves its tenant from a <slug>.localhost Host header, and the base-domain
 # list is an environment variable with a default. A shell configured for staging
@@ -310,14 +313,27 @@ $db->query(q{
 }, $slug);
 
 # Shared state populated by I1+I2 and consumed by I4 and I6.
-my ($main_payment_id, $main_pi_id, $charge_fee_id, $charge_transfer_id,
+my ($main_payment_id, $main_pi_id, $charge_id, $charge_fee_id,
     $charge_fee_amount);
 
+# Sign and deliver payment_intent.succeeded as Stripe would for a sale on the
+# tenant's account: to the Connect endpoint, naming the account, carrying the
+# intent as Stripe holds it there.
+sub post_connect_succeeded ( $pi_id, $event_id ) {
+    my $intent = Test::Registry::StripeConfirm::_get( "/payment_intents/$pi_id", $ready_acct );
+    return Test::Registry::StripeWebhook::post_connect( $t, {
+        id      => $event_id,
+        type    => 'payment_intent.succeeded',
+        account => $ready_acct,
+        data    => { object => $intent },
+    } );
+}
+
 # ---------------------------------------------------------------------------
-# I1+I2: Real Stripe destination charge, correct routing and fee.
+# I1+I2: Real Stripe direct charge on the tenant account, with the plan fee.
 # ---------------------------------------------------------------------------
 
-subtest 'I1+I2: destination charge routes to ready account with the fee its plan declares' => sub {
+subtest 'direct charge lands on the tenant account with the plan fee' => sub {
     my $run  = make_e2e_run();
     my $step = get_payment_step();
     my $result = process_payment_step($step, $run);
@@ -331,17 +347,20 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
     my $payment = Registry::DAO::Payment->find($tdb, { id => $main_payment_id });
     $main_pi_id = $payment->stripe_payment_intent_id;
     like $main_pi_id, qr/^pi_/, 'I1/I2: stripe_payment_intent_id is a real pi_ id';
+    is $payment->metadata->{stripe_account_id}, $ready_acct,
+        'I1: the payment snapshotted the tenant account as its seller';
 
-    # Confirm the intent server-side (browser-confirmation stand-in)
-    my $confirmed = Test::Registry::StripeConfirm::confirm($main_pi_id);
+    # Confirm the intent server-side (browser-confirmation stand-in), on the
+    # tenant account the intent was created on.
+    my $confirmed = Test::Registry::StripeConfirm::confirm($main_pi_id, undef, $ready_acct);
     is $confirmed->{status}, 'succeeded', 'I1/I2: intent confirmed as succeeded';
 
-    # Wait for the destination-charge side effects (application_fee + transfer)
-    # to attach; they are eventually consistent, a few seconds behind the charge.
-    my $charge = Test::Registry::StripeConfirm::charge_for_settled($main_pi_id);
+    # Retrieved with Stripe-Account: the charge is the tenant's. Polls for the
+    # application fee, which attaches a few seconds behind the charge.
+    my $charge = Test::Registry::StripeConfirm::charge_for_settled($main_pi_id, $ready_acct);
 
-    is $charge->{transfer_data}{destination}, $ready_acct,
-        'I1: charge.transfer_data.destination is the ready account';
+    ok !$charge->{transfer_data},
+        'I1: no transfer_data -- the money is already on the tenant account';
     # The amount, not just the fee. Rounding a fee to whole cents makes the fee
     # assertion tolerate a band of charge amounts either side of the true one, so
     # a fee that looks right does not establish that the right amount was taken.
@@ -368,48 +387,52 @@ subtest 'I1+I2: destination charge routes to ready account with the fee its plan
         $db, $slug );
     # Production's own function, so this expectation cannot drift from the charge
     # path's arithmetic. It deliberately does not test the rounding --
-    # t/dao/payment-intent-destination-charge.t does that against literals, and
+    # the DAO tests do that against literals, and
     # at this fixture price the product is exact anyway. What it tests is that
     # the fee was taken on the amount actually charged, at the rate the tenant's
     # own plan carries. A fee on a different basis, or a rate that stops coming
     # from the tenant's plan, fail here; no fee at all fails earlier, in
-    # charge_for_settled, which is where this file already credits it.
+    # charge_for_settled, which polls for the fee object.
     my $expected_fee = Registry::DAO::Payment::application_fee_cents(
         $charge->{amount}, $fraction );
     is $charge->{application_fee_amount}, $expected_fee,
         "I2: application_fee_amount == $expected_fee cents "
       . "(the tenant plan's own rate, read from the DB)";
 
-    # Runbook section 5 step 3 asks for this on the charge itself. It was
-    # asserted only against captured params in t/integration, which cannot show
-    # what Stripe actually recorded. on_behalf_of is what makes the tenant the
-    # settlement merchant -- bearer of Stripe's fees and of the descriptor the
-    # parent sees on their statement.
-    is $charge->{on_behalf_of}, $ready_acct,
-        'I2: charge.on_behalf_of is the tenant account';
+    # A direct charge is the tenant's own, so there is no on_behalf_of: the
+    # tenant is the merchant of record without being named as one.
+    ok !$charge->{on_behalf_of}, 'I2: no on_behalf_of on a direct charge';
 
-    # Save charge fields for I6 refund assertions
+    # Save charge fields for the refund assertions
+    $charge_id          = $charge->{id};
     $charge_fee_id      = $charge->{application_fee};
     $charge_fee_amount  = $charge->{application_fee_amount};
-    $charge_transfer_id = $charge->{transfer};
-    # No assertion on these two. charge_for_settled polls until both are present
-    # and dies otherwise, so a charge built without a fee or a transfer fails
-    # there, thirty seconds earlier and with a better message. Asserting their
-    # shape here would only restate what Stripe's own typing guarantees. I6
-    # dereferences both ids through _get, which dies on a bad one.
+};
+
+subtest 'charge is not on the platform account' => sub {
+    ok $charge_id, 'precondition: the direct charge exists' or return;
+
+    # The platform's own view, with no Stripe-Account header.
+    ok !eval { Test::Registry::StripeConfirm::_get("/charges/$charge_id"); 1 },
+        'the charge is not found on the platform account';
+    like $@, qr/No such charge/, 'because it does not exist there';
+    ok !eval { Test::Registry::StripeConfirm::_get("/payment_intents/$main_pi_id"); 1 },
+        'nor is its intent';
+
+    my $charge = Test::Registry::StripeConfirm::_get( "/charges/$charge_id", $ready_acct );
+    ok !$charge->{transfer}, 'and the charge made no transfer, so nothing passed through the platform';
 };
 
 # ---------------------------------------------------------------------------
-# I4: Webhook dedup -- first delivery finalizes; replay is absorbed at 200.
+# I4: Connect delivery -- first delivery finalizes; replay is absorbed at 200.
 # ---------------------------------------------------------------------------
 
-subtest 'I4: webhook dedup -- first delivery enrolls, same event_id replay is a no-op' => sub {
+subtest 'connect endpoint settles a live payment once' => sub {
     my $evt1 = sprintf('evt_c3_%d_%d_1', time(), $$);
 
-    Test::Registry::StripeWebhook::post_succeeded(
-        $t, $main_payment_id, $slug, $main_pi_id,
-        event_id => $evt1,
-    )->status_is(200, 'I4: first webhook delivery returns 200');
+    post_connect_succeeded( $main_pi_id, $evt1 )
+        ->status_is(200, 'I4: first Connect delivery returns 200')
+        ->content_is('OK', 'I4: and settled it');
 
     my $enrs = $tdb->select('enrollments', '*', { payment_id => $main_payment_id })->hashes;
     is scalar @$enrs, 1, 'I4: exactly one enrollment after first webhook';
@@ -419,10 +442,8 @@ subtest 'I4: webhook dedup -- first delivery enrolls, same event_id replay is a 
     is $pay->status, 'completed', 'I4: payment marked completed after webhook';
 
     # Replay the identical event_id: dedup ledger must absorb it.
-    Test::Registry::StripeWebhook::post_succeeded(
-        $t, $main_payment_id, $slug, $main_pi_id,
-        event_id => $evt1,
-    )->status_is(200, 'I4: replay of same event_id returns 200')
+    post_connect_succeeded( $main_pi_id, $evt1 )
+     ->status_is(200, 'I4: replay of same event_id returns 200')
      ->content_is('OK (duplicate)',
         'I4: absorbed by the dedup ledger, not merely re-run idempotently');
 
@@ -447,7 +468,7 @@ subtest 'I3: declined card fails with card_declined and creates no enrollment' =
     like $pi_id3, qr/^pi_/, 'I3: fresh real PI created for decline test';
 
     my $decline_err = '';
-    eval { Test::Registry::StripeConfirm::confirm($pi_id3, 'pm_card_visa_chargeDeclined') };
+    eval { Test::Registry::StripeConfirm::confirm($pi_id3, 'pm_card_visa_chargeDeclined', $ready_acct) };
     $decline_err = $@;
 
     like $decline_err, qr/card_declined/,
@@ -465,10 +486,10 @@ subtest 'I3: declined card fails with card_declined and creates no enrollment' =
 };
 
 # ---------------------------------------------------------------------------
-# I6: Refund honors plan policy: transfer reversed, application fee returned.
+# I6: Refund on the tenant account; the platform keeps its application fee.
 # ---------------------------------------------------------------------------
 
-subtest 'I6: refund reverses transfer and returns the application fee per plan policy' => sub {
+subtest 'refund keeps the application fee' => sub {
     my $main_payment = Registry::DAO::Payment->find($tdb, { id => $main_payment_id });
     is $main_payment->status, 'completed',
         'I6 precondition: I1 payment is completed (I4 webhook ran)';
@@ -482,25 +503,73 @@ subtest 'I6: refund reverses transfer and returns the application fee per plan p
     is $refund->{amount}, $main_payment->amount_cents,
         'I6: the parent gets the full amount back';
 
-    # The plan carries refund_application_fee=true, so whatever the platform took
-    # must come back -- asserted against the fee actually charged, not an amount.
+    # Made where the charge is: found with the tenant's Stripe-Account.
+    is Test::Registry::StripeConfirm::_get( "/refunds/$refund->{id}", $ready_acct )->{charge},
+        $charge_id, 'I6: the refund is on the tenant account, against the charge';
+
+    # The fee object is the platform's, so it is read without Stripe-Account.
+    # Checked first: a die below would still let the subtest print ok.
+    like $charge_fee_id, qr/^fee_/, 'I6: the charge carried an application fee' or return;
     # ponytail: _get is package-private by convention; calling cross-package is intentional
     my $fee = Test::Registry::StripeConfirm::_get("/application_fees/$charge_fee_id");
-    # Against the fee actually charged, not a literal. "The platform returns what
-    # it took" is the property under test, and it stays true at any rate -- so
-    # this assertion does not need editing when the launch rate moves, and
-    # cannot quietly certify the wrong one.
-    is $fee->{amount_refunded}, $charge_fee_amount,
-        "I6: application_fee.amount_refunded == the $charge_fee_amount cents charged "
-      . "(fee fully returned)";
+    is $fee->{amount}, $charge_fee_amount, 'I6: the fee is the one charged';
+    is $fee->{amount_refunded}, 0,
+        'I6: application_fee.amount_refunded stays 0 -- the platform keeps its fee';
+};
 
-    # Transfer reversal: verify the connected-account transfer was reversed.
-    my $transfer = Test::Registry::StripeConfirm::_get("/transfers/$charge_transfer_id");
-    # The whole transfer, not merely a positive amount. refund_async always sends
-    # reverse_transfer, so `> 0` fails only if that is dropped entirely -- a
-    # regression that reversed the wrong amount stays green.
-    is $transfer->{amount_reversed}, $transfer->{amount},
-        'I6: the whole transfer was reversed, not part of it';
+subtest 'partial refund keeps the whole fee' => sub {
+    # A child of their own, so this is a first seat rather than a duplicate.
+    my $who = Registry::DAO::Family->add_child( $tdb, $parent->id, {
+        child_name        => 'C3 Partial Child',
+        birth_date        => '2018-03-15',
+        grade             => '3',
+        medical_info      => {},
+        emergency_contact => { name => 'Emergency', phone => '555-0199' },
+    });
+    my $result = process_payment_step( get_payment_step(), make_e2e_run($who) );
+    ok !$result->{errors}, 'an intent for the partial refund' or diag explain $result->{errors};
+
+    my $payment = Registry::DAO::Payment->find( $tdb, { id => $result->{data}{step_data}{payment_id} } );
+    my $pi_id   = $payment->stripe_payment_intent_id;
+    is Test::Registry::StripeConfirm::confirm( $pi_id, undef, $ready_acct )->{status},
+        'succeeded', 'confirmed on the tenant account';
+    my $charge = Test::Registry::StripeConfirm::charge_for_settled( $pi_id, $ready_acct );
+
+    post_connect_succeeded( $pi_id, sprintf( 'evt_c3_%d_%d_partial', time(), $$ ) )
+        ->status_is(200, 'settled through the Connect endpoint');
+    $payment = Registry::DAO::Payment->find( $tdb, { id => $payment->id } );
+    is $payment->status, 'completed', 'precondition: the payment is completed';
+
+    my $part   = int( $payment->amount_cents / 3 );
+    my $refund = settle( $payment->refund_async( $tdb, { amount_cents => $part } ) );
+    is $refund->{amount}, $part, 'a part of the payment goes back';
+
+    like $charge->{application_fee}, qr/^fee_/, 'the charge carried an application fee' or return;
+    my $fee = Test::Registry::StripeConfirm::_get("/application_fees/$charge->{application_fee}");
+    is $fee->{amount}, $charge->{application_fee_amount}, 'the fee is the one charged';
+    is $fee->{amount_refunded}, 0, 'and none of it is refunded';
+};
+
+subtest 'same idempotency key returns the same intent' => sub {
+    my $result = process_payment_step( get_payment_step(), make_e2e_run() );
+    ok !$result->{errors}, 'an intent for the replay' or diag explain $result->{errors};
+
+    my $payment = Registry::DAO::Payment->find( $tdb, { id => $result->{data}{step_data}{payment_id} } );
+    my $first   = $payment->stripe_payment_intent_id;
+    like $first, qr/^pi_/, 'the step created a real intent';
+
+    # Production's own create, on the seller's client, with the payment's
+    # unchanged idempotency key and the arguments the step sent.
+    my $again = $payment->create_payment_intent( $tdb, {
+        description   => 'Program Enrollment',
+        receipt_email => $parent->email,
+    } );
+    is $again->{payment_intent_id}, $first, 'Stripe returns the same intent';
+
+    is Test::Registry::StripeConfirm::confirm( $first, undef, $ready_acct )->{status},
+        'succeeded', 'it confirms';
+    my $charges = Test::Registry::StripeConfirm::_get( "/charges?payment_intent=$first", $ready_acct );
+    is scalar @{ $charges->{data} // [] }, 1, 'and there is one charge, not two';
 };
 
 # ---------------------------------------------------------------------------
@@ -539,7 +608,7 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
         'I7: double submit returns the SAME Stripe PI id (idempotency key preserved)';
 
     # Confirm once: exactly one charge follows.
-    my $confirmed7 = Test::Registry::StripeConfirm::confirm($pi_id_a);
+    my $confirmed7 = Test::Registry::StripeConfirm::confirm($pi_id_a, undef, $ready_acct);
     is $confirmed7->{status}, 'succeeded', 'I7: intent confirms as succeeded';
 
     # A count, not an identity: charge_for follows latest_charge off the intent,
@@ -548,7 +617,7 @@ subtest 'I7: double agreeTerms yields same PI id; rotated token yields distinct 
     # charge -- and only the test confirms, so no Registry change moves it. The
     # Registry-side half of "no double charge" is the payment-row assertion above.
     my $charges7 = Test::Registry::StripeConfirm::_get(
-        "/charges?payment_intent=$pi_id_a" );
+        "/charges?payment_intent=$pi_id_a", $ready_acct );
     is scalar @{ $charges7->{data} // [] }, 1,
         'I7: one confirm yielded exactly one charge';
 
@@ -600,7 +669,7 @@ subtest "I8: the browser return alone finalizes a real payment" => sub {
     my $pi_id      = $payment->stripe_payment_intent_id;
     like $pi_id, qr/^pi_/, 'I8: a real intent to return from';
 
-    my $confirmed = Test::Registry::StripeConfirm::confirm($pi_id);
+    my $confirmed = Test::Registry::StripeConfirm::confirm($pi_id, undef, $ready_acct);
     is $confirmed->{status}, 'succeeded', 'I8: intent confirmed as the browser would';
 
     # The "alone" in this subtest's name, pinned rather than argued. Confirming

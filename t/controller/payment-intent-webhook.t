@@ -9,6 +9,8 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::StripeWebhook;
+use Registry::DAO::Tenant;
 use Digest::SHA qw(hmac_sha256_hex);
 use Mojo::JSON qw(encode_json);
 use Registry::DAO::Family;
@@ -16,6 +18,7 @@ use Registry::DAO::Payment;
 
 local $ENV{STRIPE_SECRET_KEY}     = 'sk_test_fake_for_webhook_tests';
 local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_test_fake_for_webhook_tests';
+local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_fake_for_connect_webhook_tests';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -23,6 +26,12 @@ my $db      = $dao->db;
 
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
+
+# Every log line the app writes, kept here instead of on stderr.
+my @logs;
+$t->app->log->unsubscribe('message');
+$t->app->log->level('info');
+$t->app->log->on(message => sub ($log, $level, @lines) { push @logs, [ $level, "@lines" ] });
 
 # --- seed a registration's worth of data ---
 my $loc = $dao->create(Location => { name => 'PI Studio', slug => 'pi-studio', address_info => {}, metadata => {} });
@@ -54,6 +63,8 @@ my $payment = Registry::DAO::Payment->create($db, {
         tenant_slug      => undef,
     },
 });
+# The intent Registry created for it, stored as create_payment_intent stores it.
+$db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment->id }, { id => $payment->id });
 
 sub pi_event ($event_id) {
     return {
@@ -129,6 +140,8 @@ subtest 'amount mismatch fails loudly and does not finalize (Leg W1)' => sub {
             tenant_slug      => undef,
         },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment2->id },
+        { id => $payment2->id });
 
     my sub pi2_event ($event_id, $amount) {
         return {
@@ -180,6 +193,8 @@ subtest 'a die mid-finalization leaves no partial enrollment and no claim (Leg 0
             tenant_slug      => undef,
         },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment3->id },
+        { id => $payment3->id });
 
     my sub pi3_event ($event_id) {
         return {
@@ -247,6 +262,8 @@ subtest 'webhook settlement stamps completed_at and preserves metadata (Leg 0 Ta
             tenant_slug      => undef,
         },
     });
+    $db->update('payments', { stripe_payment_intent_id => 'pi_' . $payment4->id },
+        { id => $payment4->id });
 
     my $before = $db->select('payments', ['completed_at'], { id => $payment4->id })->hash;
     is $before->{completed_at}, undef, 'completed_at starts NULL';
@@ -345,6 +362,201 @@ subtest 'a delivery onto a settled row does not re-complete it (Leg 0 Task 3)' =
                 "and no enrollment is created against $settled money";
         }
     }
+};
+
+# --- Connect: sellers with their own accounts and schemas ---
+
+my $admin = $dao->create(User => { username => 'pi_conn_admin', name => 'A',
+    user_type => 'admin', email => 'pi_conn_admin@test.local' });
+
+# A seller with a schema of its own, a seat to sell, and a family to sell it to.
+sub a_seller ($tag) {
+    my $slug    = "pi_${tag}_$$";
+    my $account = "acct_pi_${tag}_$$";
+    Registry::DAO::Tenant->provision($db, {
+        name => "PI $tag $$", slug => $slug, users => [$admin],
+        stripe_connect_account_id => $account,
+        stripe_charges_enabled => 1, stripe_details_submitted => 1 });
+    my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
+
+    my $loc = Registry::DAO::Location->create($tdb, { name => "PI $tag Studio",
+        slug => "pi-$tag-studio", address_info => {}, metadata => {} });
+    my $prog = Registry::DAO::Project->create($tdb, { name => "PI $tag Camp",
+        status => 'published', program_type_slug => 'summer-camp', metadata => {} });
+    my $teacher = Registry::DAO::User->create($tdb, { username => "pi_${tag}_teacher",
+        name => 'T', user_type => 'staff', email => "pi_${tag}_t\@test.local" });
+    my $session = Registry::DAO::Session->create($tdb, { name => "PI $tag Week",
+        start_date => '2026-01-01', end_date => '2026-12-31',
+        status => 'published', capacity => 10, metadata => {} });
+    my $event = Registry::DAO::Event->create($tdb, { time => '2026-06-15 09:00:00',
+        duration => 60, location_id => $loc->id, project_id => $prog->id,
+        teacher_id => $teacher->id, capacity => 10, metadata => {} });
+    $session->add_events($tdb, $event->id);
+    my $parent = Registry::DAO::User->create($tdb, { username => "pi_${tag}_parent",
+        name => 'P', user_type => 'parent', email => "pi_${tag}_p\@test.local" });
+
+    return { slug => $slug, account => $account, tdb => $tdb,
+             session => $session, parent => $parent };
+}
+
+my $kids = 0;
+sub a_sale ($seller, %extra) {
+    my $tdb   = $seller->{tdb};
+    my $child = Registry::DAO::Family->add_child($tdb, $seller->{parent}->id, {
+        child_name => 'PI Conn Kid ' . ++$kids, birth_date => '2018-01-01', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
+    my $sale = Registry::DAO::Payment->create($tdb, {
+        user_id => $seller->{parent}->id, amount_cents => 10000, status => 'pending',
+        %extra,
+        metadata => {
+            enrollment_items => [ { session_id => $seller->{session}->id, child_id => $child->id } ],
+            tenant_slug      => $seller->{slug} } });
+    # The intent Registry created for it, as settle_on names it.
+    $tdb->update('payments', { stripe_payment_intent_id => 'pi_conn_' . $sale->id },
+        { id => $sale->id });
+    return $sale;
+}
+
+# Everything a settlement could write in a seller's schema, as one comparable value.
+sub ledger ($seller) {
+    my $tdb = $seller->{tdb};
+    return {
+        payments    => $tdb->query(q{SELECT id, status, completed_at, platform_fee_cents
+                                     FROM payments ORDER BY id})->hashes->to_array,
+        enrollments => $tdb->query('SELECT id FROM enrollments ORDER BY id')->hashes->to_array,
+    };
+}
+
+my $seller_a = a_seller('a');
+
+subtest 'connect event for charge registry did not make is ignored' => sub {
+    a_sale($seller_a);    # something there to leave alone
+    my $before = ledger($seller_a);
+
+    for my $case ( [ 'no payment id' => {} ],
+                   [ 'unknown payment id' =>
+                       { payment_id => '00000000-0000-0000-0000-000000000000' } ] ) {
+        my ( $name, $metadata ) = @$case;
+        @logs = ();
+        Test::Registry::StripeWebhook::post_connect($t, {
+            type    => 'payment_intent.succeeded',
+            account => $seller_a->{account},
+            data    => { object => { id => "pi_counter_$name", amount => 10000,
+                                     metadata => $metadata } },
+        })->status_is(200, "$name: answered 200");
+        ok scalar( grep { $_->[1] =~ /pi_counter_\Q$name\E/ } @logs ), "$name: logged";
+    }
+
+    is_deeply ledger($seller_a), $before, 'and no row in the seller schema was created or changed';
+};
+
+subtest 'platform endpoint ignores metadata tenant slug' => sub {
+    my $sale   = a_sale($seller_a);
+    my $before = ledger($seller_a);
+
+    post_webhook({
+        id   => "evt_platform_slug_$$",
+        type => 'payment_intent.succeeded',
+        data => { object => {
+            id       => 'pi_platform_slug_' . $sale->id,
+            amount   => 10000,
+            metadata => { payment_id => $sale->id, tenant_slug => $seller_a->{slug} },
+        } },
+    })->status_is(200);
+
+    is_deeply ledger($seller_a), $before,
+        "the tenant's schema is untouched -- metadata does not choose where to settle";
+};
+
+my $seller_b = a_seller('b');
+
+sub sale_status ($seller, $sale) {
+    Registry::DAO::Payment->find($seller->{tdb}, { id => $sale->id })->status;
+}
+
+sub settle_on ($seller, $sale, %object) {
+    return Test::Registry::StripeWebhook::post_connect($t, {
+        type    => 'payment_intent.succeeded',
+        account => $seller->{account},
+        data    => { object => {
+            id       => 'pi_conn_' . $sale->id,
+            amount   => 10000,
+            metadata => { payment_id => $sale->id },
+            %object,
+        } },
+    });
+}
+
+subtest 'metadata tenant mismatch settles only in account tenant' => sub {
+    my $sale     = a_sale($seller_a);
+    my $b_before = ledger($seller_b);
+
+    @logs = ();
+    settle_on($seller_a, $sale,
+        metadata => { payment_id => $sale->id, tenant_slug => $seller_b->{slug} })
+        ->status_is(200);
+
+    is sale_status($seller_a, $sale), 'completed', 'the account names the tenant it settles in';
+    is_deeply ledger($seller_b), $b_before, 'the tenant metadata names is untouched';
+    ok scalar( grep { $_->[0] eq 'warn'
+                      && $_->[1] =~ /\Q$seller_b->{slug}\E/ && $_->[1] =~ /\Q$seller_a->{slug}\E/ } @logs ),
+        'and the mismatch is logged';
+};
+
+subtest 'payment id from another tenant is not completed' => sub {
+    my $sale     = a_sale($seller_b);
+    my $b_before = ledger($seller_b);
+
+    settle_on($seller_a, $sale)->status_is(200);
+
+    is sale_status($seller_b, $sale), 'pending', "B's payment is not completed by A's event";
+    is_deeply ledger($seller_b), $b_before, "and nothing in B's schema moved";
+};
+
+subtest 'explicit zero percent sale records fee zero not null' => sub {
+    my $sale = a_sale($seller_a);
+
+    # Stripe omits a zero application fee, so a 0% sale's intent carries none.
+    settle_on($seller_a, $sale, application_fee_amount => undef)->status_is(200);
+
+    my $row = $seller_a->{tdb}->select('payments', ['status', 'platform_fee_cents'],
+        { id => $sale->id })->hash;
+    is $row->{status}, 'completed', 'the sale finalizes';
+    is $row->{platform_fee_cents}, 0, 'and records a fee of 0, not NULL';
+};
+
+subtest 'settlement failure leaves event unclaimed and nothing behind' => sub {
+    # Instalment one, so success would enqueue a schedule job; and a cart naming
+    # a child who does not exist, so the enrollment insert fails after the
+    # payment has been completed and its fee written in the same transaction.
+    my $sale = a_sale($seller_a, instalment_seq => 1, instalment_count => 3);
+    $seller_a->{tdb}->query(
+        q{UPDATE payments
+             SET metadata = jsonb_set(metadata, '{enrollment_items,0,child_id}', to_jsonb(?::text))
+           WHERE id = ?}, '00000000-0000-0000-0000-000000000000', $sale->id);
+    my $jobs_before = $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total;
+
+    my $event_id = "evt_conn_fail_$$";
+    Test::Registry::StripeWebhook::post_connect($t, {
+        id      => $event_id,
+        type    => 'payment_intent.succeeded',
+        account => $seller_a->{account},
+        data    => { object => {
+            id => 'pi_conn_' . $sale->id, amount => 10000, application_fee_amount => 300,
+            metadata => { payment_id => $sale->id },
+        } },
+    })->status_is(500);
+
+    my $row = $seller_a->{tdb}->select('payments', ['status', 'platform_fee_cents'],
+        { id => $sale->id })->hash;
+    is $row->{status}, 'pending', 'the payment is not completed';
+    is $row->{platform_fee_cents}, undef, 'no fee is left recorded';
+    is $seller_a->{tdb}->select('enrollments', ['id'], { payment_id => $sale->id })->rows, 0,
+        'no enrollment is left behind';
+    is $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total, $jobs_before,
+        'no schedule job is enqueued';
+    is $db->select('registry.webhook_events', ['id'], { stripe_event_id => $event_id })->rows, 0,
+        'and the event stays unclaimed for the retry';
 };
 
 done_testing;
