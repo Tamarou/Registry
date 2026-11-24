@@ -39,6 +39,10 @@ field $refund_increments :param :reader = undef;
 field $platform_fee_cents        :param :reader = undef;
 field $platform_offer_version_id :param :reader = undef;
 field $platform_payment_plan_id  :param :reader = undef;
+
+# The seller's offer version this charge was sold under, in the payment's own
+# schema. NULL for after-school cart payments; fixed once set (by the database).
+field $offer_version_id :param :reader = undef;
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 

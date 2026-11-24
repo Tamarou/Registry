@@ -118,3 +118,4 @@ offer-publishing-adds-change-policy [offer-publishing-adds-refund-policy] 2026-1
 offer-publishing-adds-expiry-policy [offer-publishing-adds-change-policy] 2026-11-24T18:00:00Z Chris Prather <chris.prather@tamarou.com> # offer-publishing asks for an expiry policy, so the stored workflow is rebuilt from YAML
 platform-offer-to-tenants-guard [offer-publishing-adds-expiry-policy] 2026-11-24T19:00:00Z Chris Prather <chris.prather@tamarou.com> # Registry always keeps a current platform offer to tenants, checked at commit
 platform-offer-resource-keeps-name [platform-offer-to-tenants-guard] 2026-11-24T20:00:00Z Chris Prather <chris.prather@tamarou.com> # The resource a current platform offer to tenants is for keeps its name
+payments-offer-version-stamp [platform-offer-resource-keeps-name] 2026-11-24T21:00:00Z Chris Prather <chris.prather@tamarou.com> # A payment is stamped with the offer version it was sold under, fixed once set
