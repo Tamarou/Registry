@@ -197,4 +197,26 @@ subtest 'skipped expiry choice publishes nothing' => sub {
     is published_count(), $before, 'and nothing is published';
 };
 
+subtest 'expiry refused at publish when the offer changed binding' => sub {
+    my $wf = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } );
+    my $again = sub ( $run, $resource ) {
+        $run->process( $tdb, $wf->get_step( $tdb, { slug => 'offer-basics' } ),
+            { resource_id => $resource->id, offer_name => 'Wheel night' } );
+        return $run->process( $tdb, $wf->get_step( $tdb, { slug => 'publish' } ), { action => 'publish' } );
+    };
+    my $before = published_count();
+
+    # never on the unbound offer, then offer-basics answered with an occurrence.
+    my ($run) = walk( 'expiry-policy' => { expiry => 'never' }, 'publish' => undef );
+    ok $again->( $run, occurrence_seats() )->{errors}, 'never on a now-bound offer stays with an error';
+    ok !published_version($run), 'and publishes no version';
+
+    # end of occurrence on a bound offer, then offer-basics answered with no occurrence.
+    my ($run2) = walk( 'offer-basics' => { resource_id => occurrence_seats()->id },
+        'expiry-policy' => { expiry => 'end_of_occurrence' }, 'publish' => undef );
+    ok $again->( $run2, $open )->{errors}, 'end of occurrence on a now-unbound offer stays with an error';
+    ok !published_version($run2), 'and publishes no version';
+    is published_count(), $before, 'nothing is published';
+};
+
 done_testing;

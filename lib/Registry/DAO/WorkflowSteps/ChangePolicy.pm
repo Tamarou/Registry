@@ -26,8 +26,7 @@ class Registry::DAO::WorkflowSteps::ChangePolicy :isa(Registry::DAO::WorkflowSte
         # The day-one rule: only another occurrence of this same offer.
         push @errors, 'A change can only move to another occurrence of the same offer'
             unless $f{targets} eq 'same_offer';
-        push @errors, 'A change window needs an offer bound to an occurrence or covering a class'
-            unless $self->_has_occurrences( $db, $run );
+        push @errors, __PACKAGE__->refusal( $db, $run ? $run->data : {}, { kind => 'window' } ) // ();
         return { stay => 1, errors => \@errors } if @errors;
 
         return { change_policy => {
@@ -38,12 +37,15 @@ class Registry::DAO::WorkflowSteps::ChangePolicy :isa(Registry::DAO::WorkflowSte
         } };
     }
 
-    # What offer-basics recorded: a class, or a resource that is an occurrence.
-    method _has_occurrences ( $db, $run ) {
-        my $basic = $run && ref $run->data->{offer_basics} eq 'HASH' ? $run->data->{offer_basics} : {};
-        return 1 if $basic->{class_project_id};
+    # Why $policy no longer fits the offer the run describes, or nothing; publish
+    # asks again, since offer-basics can be answered again after this step.
+    sub refusal ( $class, $db, $data, $policy ) {
+        return unless ( $policy->{kind} // '' ) eq 'window';
+        my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
+        return if $basic->{class_project_id};
         my $resource = $basic->{resource_id} && Registry::DAO::Resource->find( $db, { id => $basic->{resource_id} } );
-        return $resource && $resource->event_id;
+        return if $resource && $resource->event_id;
+        return 'A change window needs an offer bound to an occurrence or covering a class';
     }
 }
 

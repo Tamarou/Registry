@@ -198,4 +198,17 @@ subtest 'change value resubmitted at publish is ignored' => sub {
         'with the change policy the change-policy step recorded';
 };
 
+subtest 'window refused at publish when the offer lost its occurrence' => sub {
+    my $before = published_count();
+    # Chosen on the bound offer, then offer-basics is answered again with loose seats.
+    my ($run) = walk( 'change-policy' => \%WINDOW, 'publish' => undef );
+    my $wf = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } );
+    $run->process( $tdb, $wf->get_step( $tdb, { slug => 'offer-basics' } ),
+        { resource_id => $loose->id, offer_name => 'Wheel night' } );
+    my $result = $run->process( $tdb, $wf->get_step( $tdb, { slug => 'publish' } ), { action => 'publish' } );
+    ok $result->{errors}, 'publish stays with an error';
+    ok !published_version($run), 'and publishes no version';
+    is published_count(), $before, 'nothing is published';
+};
+
 done_testing;

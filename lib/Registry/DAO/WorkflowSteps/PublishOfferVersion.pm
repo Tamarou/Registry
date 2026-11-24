@@ -10,6 +10,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::Project;
     use Registry::DAO::Resource;
     use Registry::DAO::Tenant;
+    use Registry::DAO::WorkflowSteps::ChangePolicy;
+    use Registry::DAO::WorkflowSteps::ExpiryPolicy;
     use Registry::DAO::WorkflowSteps::RefundPolicy;
     use Registry::Utility::PriceFormat qw( format_price );
 
@@ -42,6 +44,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my $change = $data->{change_policy};
         return { stay => 1, errors => ['Choose a change policy before publishing'] }
             unless ref $change eq 'HASH' && defined $change->{kind};
+        $why = Registry::DAO::WorkflowSteps::ChangePolicy->refusal( $db, $data, $change );
+        return { stay => 1, errors => [$why] } if $why;
 
         # From the run, as the use-policy step recorded it, never this form.
         my $use = ( ref $data->{use_policy} eq 'HASH' ? $data->{use_policy} : {} )->{use};
@@ -50,6 +54,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my $expiry = ( ref $data->{expiry_policy} eq 'HASH' ? $data->{expiry_policy} : {} )->{expiry};
         return { stay => 1, errors => ['Choose an expiry policy before publishing'] }
             unless defined $expiry && !ref $expiry;
+        $why = Registry::DAO::WorkflowSteps::ExpiryPolicy->refusal( $db, $data, $expiry );
+        return { stay => 1, errors => [$why] } if $why;
 
         # Every plan a payment step declared; refused, never defaulted, when
         # none did: absence is not zero.
