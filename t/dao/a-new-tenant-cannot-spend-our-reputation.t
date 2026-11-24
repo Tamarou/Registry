@@ -239,4 +239,60 @@ subtest 'registry without the entitlement is capped' => sub {
         'like any unverified tenant';
 };
 
+# A new unverified tenant named $slug, with a handle on its schema.
+sub unverified_tenant ($slug) {
+    my $t = Test::Registry::Fixtures::create_tenant( $db, { name => "Studio $slug", slug => $slug } );
+    return ( $t, $dao->connect_schema($slug)->db );
+}
+
+sub allowance ( $h, $slug ) { Registry::Job::SendNotifications->send_allowance( $h, $slug ) }
+
+subtest 'cloned email entitlement does not lift the cap' => sub {
+    my ( $t, $h ) = unverified_tenant('mail_clone');
+    # The same entitlement, written in the tenant's own schema: its cloned
+    # tables are the tenant's to write, so they cannot speak for the platform.
+    my $resource = $h->insert( 'resources', { name => 'email sending', kind => 'unbounded' },
+        { returning => 'id' } )->hash->{id};
+    my $version = Registry::DAO::Offer->create( $h, { name => 'Our own email' } )
+        ->draft( $h, offer_terms($resource) )->publish($h);
+    $h->insert( 'tenants', { id => $t->id, name => $t->name, slug => $t->slug },
+        { on_conflict => undef } );
+    Registry::DAO::Entitlement->create( $h, {
+        holder_tenant_id => $t->id, offer_version_id => $version->id,
+        payment_plan_id  => 'pay',  starts_at        => $PAST } );
+
+    ok defined allowance( $h, 'mail_clone' ), 'the tenant is still capped';
+};
+
+subtest 'future dated email entitlement does not lift the cap' => sub {
+    my ( $t, $h ) = unverified_tenant('mail_later');
+    email_entitlement( $t->id, '2999-01-01T00:00:00Z' );
+    ok defined allowance( $h, 'mail_later' ), 'capped until its period starts';
+};
+
+subtest 'other resource entitlement does not lift the cap' => sub {
+    my ( $t, $h ) = unverified_tenant('mail_solo');
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $t->id, offer_version_id => '00000000-0000-0000-0003-000000000001',
+        payment_plan_id  => 'revenue_share', starts_at => $PAST } );
+    ok defined allowance( $h, 'mail_solo' ), 'a tenant holding only Solo is capped';
+};
+
+subtest 'cap fails closed without the email resource' => sub {
+    my ( $t, $h ) = unverified_tenant('mail_closed');
+    email_entitlement( $t->id );
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => '00000000-0000-0000-0000-000000000000',
+        offer_version_id => '00000000-0000-0000-0003-000000000003',
+        payment_plan_id  => 'one_time', starts_at => $PAST } );
+    is allowance( $h, 'mail_closed' ), undef, 'uncapped while the resource exists';
+    is allowance( $db, 'registry' ),   undef, 'and so is registry';
+
+    # Absent as far as the check can find it: no resource named email sending.
+    $db->update( 'registry.resources', { name => 'email sending (gone)' }, { name => 'email sending' } );
+    ok defined allowance( $h, 'mail_closed' ), 'without it the tenant is capped';
+    ok defined allowance( $db, 'registry' ),   'and so is registry';
+    $db->update( 'registry.resources', { name => 'email sending' }, { name => 'email sending (gone)' } );
+};
+
 done_testing;
