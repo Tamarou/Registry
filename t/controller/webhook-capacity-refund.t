@@ -7,6 +7,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
 use Registry::DAO;
@@ -39,6 +40,7 @@ Registry::DAO::Tenant->provision($db, {
     stripe_charges_enabled => 1, stripe_details_submitted => 1 });
 
 my $tdao = Registry::DAO->new(url => $uri, schema => $slug);
+state_platform_terms( $db, $slug, { rate => 0 } );
 my $tdb  = $tdao->db;
 
 my $parent = Registry::DAO::User->create($tdb, {

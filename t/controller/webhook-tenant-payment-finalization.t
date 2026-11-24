@@ -14,6 +14,7 @@ use Registry::DAO::Family;
 use Registry::DAO::Payment;
 use Registry::Controller::Webhooks;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
 
@@ -47,6 +48,7 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
     stripe_details_submitted  => 0,
 });
 ok $tenant, 'tenant provisioned';
+state_platform_terms( $db, $slug, { rate => 0 } );
 
 # Tenant-schema DAO / db handle
 my $tdao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $slug);

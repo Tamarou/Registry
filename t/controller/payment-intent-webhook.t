@@ -9,6 +9,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::StripeWebhook;
 use Registry::DAO::Tenant;
 use Digest::SHA qw(hmac_sha256_hex);
@@ -428,6 +429,7 @@ sub ledger ($seller) {
 }
 
 my $seller_a = a_seller('a');
+state_platform_terms( $db, $seller_a->{slug}, { rate => 0 } );
 
 subtest 'connect event for charge registry did not make is ignored' => sub {
     a_sale($seller_a);    # something there to leave alone
@@ -469,6 +471,7 @@ subtest 'platform endpoint ignores metadata tenant slug' => sub {
 };
 
 my $seller_b = a_seller('b');
+state_platform_terms( $db, $seller_b->{slug}, { rate => 0 } );
 
 sub sale_status ($seller, $sale) {
     Registry::DAO::Payment->find($seller->{tdb}, { id => $sale->id })->status;
