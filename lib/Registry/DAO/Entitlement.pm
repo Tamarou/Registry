@@ -8,6 +8,7 @@ use Object::Pad;
 class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     use Registry::DAO::OfferVersion;
     use Registry::DAO::Resource;
+    use Carp qw( croak );
 
     field $id :param :reader;
     field $holder_user_id :param :reader = undef;             # a person
@@ -40,6 +41,11 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
         my $tx       = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $resource = Registry::DAO::Resource->find( $db, { id => $resource_id } );
         my %held     = map { $_ => 1 } $resource->held_units($db)->@*;
+        my $free     = $resource->free_units($db);
+        my $wanted   = $numbers ? @$numbers : $count;
+        croak sprintf '%s (%s) has %d of %d units free: %d asked for',
+            $resource->name, $resource_id, $free, $resource->capacity, $wanted
+            if $wanted > $free;
         $numbers //= [ ( grep { !$held{$_} } 1 .. $resource->capacity )[ 0 .. $count - 1 ] ];
 
         my $entitlement = $class->create( $db, \%row );

@@ -92,4 +92,18 @@ subtest 'free units count held entitlements' => sub {
     is $resource->free_units($studio), 7, 'a future-dated entitlement occupies its unit too';
 };
 
+subtest 'grant beyond capacity refused' => sub {
+    my ( $resource, $version ) = seats(2);
+    Registry::DAO::Entitlement->grant( $studio,
+        sale( $version, person(), units => 2, ends_at => '2021-01-01T00:00:00Z' ) );
+    is $resource->free_units($studio), 2, 'an entitlement whose period has ended holds nothing';
+
+    Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), units => 2 ) );
+    my $resource_id = $resource->id;
+    throws_ok { Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), units => 1 ) ) }
+        qr/Wheel seats \($resource_id\) has 0 of 2 units free/,
+        'a grant past capacity is refused, naming the resource';
+    is $resource->free_units($studio), 0, 'and capacity is not overrun';
+};
+
 done_testing;
