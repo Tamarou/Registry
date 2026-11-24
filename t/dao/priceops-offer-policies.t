@@ -161,6 +161,12 @@ subtest 'publish without payment plan refused' => sub {
         $db->query( 'UPDATE offer_versions SET published_at = now() WHERE id = ?', $draft->id )
     } qr/no payment plan/, 'publishing it by raw SQL is refused too';
     ok !Registry::DAO::OfferVersion->find( $db, { id => $draft->id } )->is_published, 'it stays a draft';
+    throws_ok {
+        $db->query( q{INSERT INTO offer_versions (offer_id, version, resource_id, price_cents,
+                units_per_acceptance, per_booking_cap, policies, published_at)
+            VALUES (?, 1, ?, 100, 1, 1, '{"refund":{"kind":"none"}}', now())},
+            new_offer('Born published')->id, $seat->id )
+    } qr/no payment plan/, 'inserting it already published by raw SQL is refused too';
 };
 
 subtest 'publish without explicit refund policy refused' => sub {

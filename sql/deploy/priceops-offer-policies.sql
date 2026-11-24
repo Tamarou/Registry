@@ -40,8 +40,10 @@ END;
 $t$ LANGUAGE plpgsql;
 
 -- Absence is not zero: a version is published only with a payment plan, by
--- whatever path publishes it. Run at commit, so plans and publish can be
--- written in either order within one transaction.
+-- whatever path publishes it: an update of published_at or an insert of a row
+-- already published. A draft passes. Checked at commit, so one transaction can
+-- insert a draft, add its plans and publish it; plans must come first, since a
+-- published version's plans cannot be added.
 CREATE OR REPLACE FUNCTION registry.offer_version_requires_payment_plan() RETURNS trigger AS $t$
 DECLARE
     has_plan boolean;
@@ -138,7 +140,7 @@ BEGIN
             'DROP TRIGGER IF EXISTS offer_versions_require_payment_plan ON %I.offer_versions', s);
         EXECUTE format($f$
             CREATE CONSTRAINT TRIGGER offer_versions_require_payment_plan
-                AFTER UPDATE OF published_at ON %I.offer_versions
+                AFTER INSERT OR UPDATE OF published_at ON %I.offer_versions
                 DEFERRABLE INITIALLY DEFERRED
                 FOR EACH ROW EXECUTE FUNCTION registry.offer_version_requires_payment_plan()
         $f$, s);
