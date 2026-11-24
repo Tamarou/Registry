@@ -11,6 +11,8 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
 use Registry::DAO;
+use Registry::DAO::Entitlement;
+use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -60,6 +62,18 @@ subtest 'admin publishes a percentage of sales plan' => sub {
 
     refused( 'a rate finer than 4 fraction places', 'percentage-of-sales-payment', rate_percent => '2.50005' );
     refused( 'a rate above 100%',                   'percentage-of-sales-payment', rate_percent => '100.01' );
+};
+
+subtest 'holder revenue share read from the version' => sub {
+    my $tenant = Test::Registry::Fixtures::create_tenant( $dao, { name => 'Solo Studio', slug => 'solo_studio' } );
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $tenant->id,
+        offer_version_id => $solo->id,
+        payment_plan_id  => 'percentage_of_sales',
+        starts_at        => '2020-01-01T00:00:00Z',
+    } );
+    is revenue_share_fraction_for_tenant( $db, 'solo_studio' ), '0.025',
+        'the holder\'s revenue share is the published 2.5%';
 };
 
 subtest 'no payment plan publishes nothing' => sub {
