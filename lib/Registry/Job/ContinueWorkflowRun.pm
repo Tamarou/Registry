@@ -5,6 +5,7 @@ use Object::Pad;
 
 class Registry::Job::ContinueWorkflowRun {
     use Mojo::Promise;
+    use Registry::DAO::Tenant;
     use Registry::DAO::WorkflowRun;
 
     sub register ($class, $app) {
@@ -14,9 +15,18 @@ class Registry::Job::ContinueWorkflowRun {
     }
 
     method run ( $job, $args ) {
-        my ( $tenant, $run_id ) = $args->@{qw(tenant run_id)};
+        my ( $tenant, $run_id ) = ref $args eq 'HASH' ? $args->@{qw(tenant run_id)} : ();
+        die "continue_workflow_run needs a tenant and a run_id\n"
+            unless defined $tenant && defined $run_id;
+        die "continue_workflow_run: run_id is not a UUID\n"
+            unless $run_id =~ /\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
+        # The slug becomes a search_path, so only a known tenant's is used.
+        die "continue_workflow_run: tenant is not a registered tenant\n"
+            unless Registry::DAO::Tenant->find( $job->app->dao->db, { slug => $tenant } );
+
         my $db  = $job->app->dao->connect_schema($tenant)->db;
-        my $run = Registry::DAO::WorkflowRun->find( $db, { id => $run_id } );
+        my $run = Registry::DAO::WorkflowRun->find( $db, { id => $run_id } )
+            or die "continue_workflow_run: run not found: $run_id in tenant $tenant\n";
 
         while ( !$run->completed($db) ) {
             my $step   = $run->next_step($db) or last;
