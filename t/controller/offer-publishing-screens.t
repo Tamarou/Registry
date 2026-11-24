@@ -76,7 +76,11 @@ subtest 'admin completes offer publishing over http' => sub {
     check_screen( $t, 'offer-price' );
     like submit_step( $t, 'offer-price', %PRICE ), qr{/one-time-payment\z}, 'on to payment';
     check_screen( $t, 'one-time-payment' );
-    like submit_step( $t, 'one-time-payment', one_time => 'offered' ), qr{/publish\z}, 'on to publish';
+    like submit_step( $t, 'one-time-payment', one_time => 'offered' ), qr{/percentage-of-sales-payment\z},
+        'on to the share of sales';
+    check_screen( $t, 'percentage-of-sales-payment' );
+    like submit_step( $t, 'percentage-of-sales-payment', percentage_of_sales => 'declined' ), qr{/publish\z},
+        'on to publish';
     check_screen( $t, 'publish' );
     $t->content_like(qr/Life drawing/)->content_like(qr/\$40/);
 
@@ -99,6 +103,7 @@ subtest 'offer name is escaped' => sub {
     submit_step( $t, 'offer-basics', %BASICS, offer_name => $name );
     submit_step( $t, 'offer-price', %PRICE );
     submit_step( $t, 'one-time-payment', one_time => 'offered' );
+    submit_step( $t, 'percentage-of-sales-payment', percentage_of_sales => 'declined' );
     $t->content_unlike(qr/<script>alert/)->content_like(qr/&lt;script&gt;alert/, 'escaped on the publish page');
     submit_step( $t, 'publish', action => 'publish', refund => 'none' );
     $t->content_unlike(qr/<script>alert/)->content_like(qr/&lt;script&gt;alert/, 'and on the complete page');
