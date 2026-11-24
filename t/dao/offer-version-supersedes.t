@@ -271,6 +271,25 @@ subtest 'a solo version that is no offer to tenants is refused' => sub {
     like $@, qr/no current published platform offer to tenants/, 'by the database';
 };
 
+# Signup and the guard find the platform offer by its resource's name, so
+# renaming that resource would retire every platform offer without a retirement.
+subtest 'the resource a platform offer to tenants is for keeps its name' => sub {
+    my $rdb = $dao->db;
+    my $pp  = '00000000-0000-0000-0001-000000000001';
+    ok !eval { $rdb->query( q{UPDATE registry.resources SET name = 'card processing' WHERE id = ?}, $pp ); 1 },
+        'renaming it is refused';
+    like $@, qr/platform offer to tenants/, 'by the database';
+    ok !eval { $rdb->query( 'DELETE FROM registry.resources WHERE id = ?', $pp ); 1 }, 'deleting it is refused';
+    is $rdb->query( 'SELECT name FROM registry.resources WHERE id = ?', $pp )->array->[0],
+        'payment processing', 'it keeps its name';
+    ok eval { $rdb->query( q{UPDATE registry.resources SET name = name || ' ' WHERE id <> ?}, $pp ); 1 },
+        "registry's other resources rename freely" or diag $@;
+    my $gdb = $tenant_dao{glaze_house}->db;
+    my $own = Test::Registry::Fixtures::create_resource( $gdb, { name => 'payment processing', kind => 'unbounded' } );
+    ok eval { $gdb->query( q{UPDATE resources SET name = 'card fees' WHERE id = ?}, $own->id ); 1 },
+        "a tenant's own payment processing resource renames freely" or diag $@;
+};
+
 # clone_schema gives each tenant an immediate copy of the guard; even an offer
 # shaped like the platform's, on the tenant's own "payment processing", is free.
 subtest 'a tenant still publishes and retires its own offers freely' => sub {
