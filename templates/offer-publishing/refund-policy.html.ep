@@ -33,7 +33,7 @@
 
   <div class="form-group">
     <label class="form-label" for="cutoff_hours">Cutoff, in hours before the start</label>
-    <input type="number" id="cutoff_hours" name="cutoff_hours" min="0" step="1">
+    <input class="form-input" type="number" id="cutoff_hours" name="cutoff_hours" min="0" step="1">
     <p>Only for a full refund until a cutoff. A refund asked for exactly at the cutoff is allowed.</p>
   </div>
 

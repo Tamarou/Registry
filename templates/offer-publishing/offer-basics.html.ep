@@ -1,3 +1,5 @@
+%# ABOUTME: offer-publishing step: the admin picks one of this tenant's resources and names the offer.
+%# ABOUTME: In class mode the class chosen at the resource step stands in for the resource.
 % extends 'layouts/workflow';
 % title 'Name your offer';
 % stash description => 'Choose one of your resources and name the offer that sells it.';
@@ -52,7 +54,7 @@
 
   <div class="form-group">
     <label class="form-label" for="offer_name">Offer name</label>
-    <input type="text" id="offer_name" name="offer_name">
+    <input class="form-input" type="text" id="offer_name" name="offer_name">
     <p>Needed for a new offer; a new version keeps its offer's name.</p>
   </div>
 

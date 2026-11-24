@@ -94,6 +94,9 @@ subtest 'admin completes offer publishing over http' => sub {
     like submit_step( $t, 'expiry-policy', expiry => 'never' ), qr{/publish\z}, 'on to publish';
     check_screen( $t, 'publish' );
     $t->content_like(qr/Life drawing/)->content_like(qr/\$40/);
+    my %reviewed = map { $_->text => $_->next->all_text } $t->tx->res->dom->find('#workflow-content dt')->each;
+    is_deeply [ @reviewed{ 'Refund policy', 'Change policy', 'Use policy', 'Expiry policy' } ],
+        [ 'none', 'none', 'optional_attendance', 'never' ], 'the review shows every chosen policy before publishing';
 
     like submit_step( $t, 'publish', action => 'publish' ), qr{/complete\z},
         'publishing lands on the complete page';
@@ -152,6 +155,13 @@ subtest 'anonymous request creates no offer run' => sub {
     $t->post_ok( '/offer-publishing' => form => {} )->status_is(302)->header_is( Location => '/auth/login',
         'and so is an anonymous POST' );
     is $runs->(), $before, 'and no run is created';
+};
+
+subtest 'every offer-publishing template starts with its ABOUTME header' => sub {
+    for my $file ( path('templates/offer-publishing')->list->grep(qr/\.html\.ep\z/)->each ) {
+        my @head = ( split /\n/, $file->slurp, 3 )[ 0, 1 ];
+        is scalar( grep { /\A%# ABOUTME: \S/ } @head ), 2, $file->basename . ' starts with two %# ABOUTME: lines';
+    }
 };
 
 done_testing;

@@ -1,3 +1,5 @@
+%# ABOUTME: offer-publishing step: what counts as using what the offer buys.
+%# ABOUTME: Optional attendance or none, chosen explicitly with no default.
 % extends 'layouts/workflow';
 % title 'How it is used';
 % stash description => 'Say what counts as using what this offer buys.';

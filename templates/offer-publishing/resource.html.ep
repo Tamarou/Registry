@@ -1,3 +1,5 @@
+%# ABOUTME: offer-publishing's first step: use an existing resource, create one, or cover every occurrence of a class.
+%# ABOUTME: A new finite resource has a capacity and may be one occurrence; an unbounded one has neither.
 % extends 'layouts/workflow';
 % title 'What the offer sells';
 % stash description => 'Use one of your resources, or create the one this offer sells.';
@@ -32,7 +34,7 @@
 
   <div class="form-group">
     <label class="form-label" for="class_project_id">Class, to cover its occurrences</label>
-    <select id="class_project_id" name="class_project_id">
+    <select class="form-select" id="class_project_id" name="class_project_id">
       <option value="">None</option>
       % for my $class (@{ stash('classes') // [] }) {
       <option value="<%= $class->id %>"><%= $class->name %></option>
@@ -44,7 +46,7 @@
     <legend>New resource</legend>
     <div class="form-group">
       <label class="form-label" for="resource_name">Name</label>
-      <input type="text" id="resource_name" name="resource_name">
+      <input class="form-input" type="text" id="resource_name" name="resource_name">
     </div>
     <div>
       <input type="radio" id="resource_kind-finite" name="resource_kind" value="finite">
@@ -56,11 +58,11 @@
     </div>
     <div class="form-group">
       <label class="form-label" for="capacity">Capacity, for a finite resource</label>
-      <input type="number" id="capacity" name="capacity" min="1" step="1">
+      <input class="form-input" type="number" id="capacity" name="capacity" min="1" step="1">
     </div>
     <div class="form-group">
       <label class="form-label" for="event_id">Occurrence it is, for a finite resource</label>
-      <select id="event_id" name="event_id">
+      <select class="form-select" id="event_id" name="event_id">
         <option value="">None</option>
         % for my $occurrence (@$occurrences) {
         <option value="<%= $occurrence->{id} %>"><%= $occurrence->{label} %></option>

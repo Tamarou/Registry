@@ -31,13 +31,13 @@
 
   <div class="form-group">
     <label class="form-label" for="window_hours">Window, in hours before the occurrence</label>
-    <input type="number" id="window_hours" name="window_hours" min="0" step="1">
+    <input class="form-input" type="number" id="window_hours" name="window_hours" min="0" step="1">
     <p>For example 48: a change is allowed up to and including 48 hours before.</p>
   </div>
 
   <div class="form-group">
     <label class="form-label" for="fee_cents">Change fee, in cents</label>
-    <input type="number" id="fee_cents" name="fee_cents" min="0" step="1">
+    <input class="form-input" type="number" id="fee_cents" name="fee_cents" min="0" step="1">
     <p>0 for a free change. Charged as a one-time payment, so the revenue share applies to it.</p>
   </div>
 

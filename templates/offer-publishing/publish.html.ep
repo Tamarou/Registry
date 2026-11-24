@@ -1,9 +1,13 @@
+%# ABOUTME: offer-publishing's review screen: every term and policy the run collected, before an immutable publish.
+%# ABOUTME: Publishing posts action=publish; the step re-checks the run's answers and shows a fixed message on failure.
 % extends 'layouts/workflow';
 % title 'Review and publish';
 % stash description => 'Once published, this version of the offer cannot be changed.';
 % my $basics = stash('offer_basics') // {};
 % my $price  = stash('offer_price') // {};
 % my $resource = stash('resource');
+% my $refund = stash('refund_policy') // {};
+% my $change = stash('change_policy') // {};
 
 % if (my @errors = @{ stash('errors') // [] }) {
 <div class="alert alert-error" role="alert">
@@ -29,7 +33,13 @@
     <dt>One-time payment</dt>
     <dd><%= ( stash('one_time_payment') // {} )->{one_time} // '' %></dd>
     <dt>Refund policy</dt>
-    <dd><%= ( stash('refund_policy') // {} )->{kind} // '' %><%= defined( ( stash('refund_policy') // {} )->{cutoff_hours} ) ? ', until ' . stash('refund_policy')->{cutoff_hours} . ' hours before the start' : '' %></dd>
+    <dd><%= $refund->{kind} // '' %><%= defined $refund->{cutoff_hours} ? ", until $refund->{cutoff_hours} hours before the start" : '' %></dd>
+    <dt>Change policy</dt>
+    <dd><%= $change->{kind} // '' %><%= defined $change->{window_hours} ? ", up to $change->{window_hours} hours before the start, for a fee of $change->{fee_cents} cents" : '' %></dd>
+    <dt>Use policy</dt>
+    <dd><%= ( stash('use_policy') // {} )->{use} // '' %></dd>
+    <dt>Expiry policy</dt>
+    <dd><%= ( stash('expiry_policy') // {} )->{expiry} // '' %></dd>
   </dl>
 </section>
 

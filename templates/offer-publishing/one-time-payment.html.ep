@@ -1,3 +1,5 @@
+%# ABOUTME: offer-publishing step: whether the offer may be paid for once, in full, at acceptance.
+%# ABOUTME: Offered or not offered, chosen explicitly; publish needs at least one payment plan.
 % extends 'layouts/workflow';
 % title 'How it is paid for';
 % stash description => 'Say whether the offer may be paid for once, in full.';
