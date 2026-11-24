@@ -6,7 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check solo_linked_tenant);
+use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check solo_linked_tenant give_tenant_terms);
 use Test::Registry::Fixtures;
 use Registry::PriceOps::PlatformTerms qw(platform_terms_for_tenant);
 use Registry::PriceOps::RevenueShare qw(revenue_share_plan_for_tenant);
@@ -166,6 +166,23 @@ subtest 'resolver reads registry from a tenant connection' => sub {
             isnt platform_terms_for_tenant( $tenant_db, 'terms_second' )->{id}, $free->{id},
                 'not the Free fallback an empty clone would give';
         } );
+};
+
+$db->query( q{INSERT INTO registry.tenants (name, slug) VALUES ('Terms Stated', 'terms_stated')} );
+
+subtest 'probe states terms the resolver returns' => sub {
+    give_tenant_terms( $db, 'terms_stated',
+        { rate => '0.0173', amount_cents => 1500, name => 'Stated Terms' } );
+
+    my $terms = platform_terms_for_tenant( $db, 'terms_stated' );
+    isnt $terms->{id}, $free->{id}, 'the tenant no longer falls back to Free';
+    cmp_ok abs( $terms->{fraction} - 0.0173 ), '<', 1e-9, 'it holds the stated rate';
+    is $terms->{amount_cents}, 1500,           'and the stated monthly amount';
+    is $terms->{name},         'Stated Terms', 'under the stated name';
+
+    give_tenant_terms( $db, 'terms_stated', { rate => 0 } );
+    is platform_terms_for_tenant( $db, 'terms_stated' )->{fraction}, 0,
+        'stating terms again replaces them, for the rest of the test';
 };
 
 done_testing;

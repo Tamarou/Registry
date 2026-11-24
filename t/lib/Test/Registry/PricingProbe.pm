@@ -1,4 +1,4 @@
-# ABOUTME: Test helper that points a tenant at a purpose-built pricing plan for one assertion.
+# ABOUTME: Test helpers that give a tenant stated platform terms, for one block or for the rest of a test.
 # ABOUTME: Plan rows are immutable, so a test that needs different terms creates a plan rather than editing one.
 use 5.42.0;
 use warnings;
@@ -6,7 +6,7 @@ use warnings;
 package Test::Registry::PricingProbe;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( with_tenant_plan without_rate_check solo_linked_tenant );
+our @EXPORT_OK = qw( with_tenant_plan give_tenant_terms without_rate_check solo_linked_tenant );
 
 use Mojo::JSON qw( encode_json );
 
@@ -37,35 +37,7 @@ sub with_tenant_plan ( $db, $slug, $overrides, $cb ) {
     die "with_tenant_plan: tenant '$slug' has no linked plan to copy"
         unless $original;
 
-    my $template = $db->query(
-        'SELECT * FROM registry.pricing_plans WHERE id = ?', $original )
-        ->expand->hash;
-
-    my %plan = (
-        session_id            => $template->{session_id},
-        plan_scope            => $template->{plan_scope},
-        plan_name             => 'Probe ' . ( $template->{plan_name} // 'plan' ),
-        plan_type             => $template->{plan_type},
-        pricing_model_type    => $template->{pricing_model_type},
-        currency              => $template->{currency},
-        amount_cents          => $template->{amount_cents},
-        requirements          => $template->{requirements}          // {},
-        pricing_configuration => $template->{pricing_configuration} // {},
-        metadata              => $template->{metadata}              // {},
-        %$overrides,
-    );
-
-    my $made = $db->query( q{
-        INSERT INTO registry.pricing_plans
-            (session_id, plan_scope, plan_name, plan_type, pricing_model_type,
-             currency, amount_cents, requirements, pricing_configuration, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb)
-        RETURNING id
-    },  @plan{qw( session_id plan_scope plan_name plan_type pricing_model_type
-                  currency amount_cents )},
-        map { ref $_ ? encode_json($_) : $_ }
-            @plan{qw( requirements pricing_configuration metadata )},
-    )->hash->{id};
+    my $made = _probe_plan( $db, $original, $overrides );
 
     $db->query(
         'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
@@ -83,6 +55,74 @@ sub with_tenant_plan ( $db, $slug, $overrides, $cb ) {
 
     die $err unless $ok;
     return;
+}
+
+# give_tenant_terms($db, $slug, { rate => '0.025', amount_cents => 0, name => ... })
+#
+# Gives $slug's tenant the stated platform terms for the rest of the test: a
+# new plan shaped like the seeded revenue-share (Solo) plan, carrying exactly
+# this rate, monthly amount and name, which the tenant is then linked to. A
+# test that charges money says what it charges under, rather than inheriting
+# whatever the seed or the Free fallback happens to carry. No refund flag:
+# refunds keep the platform fee for every seller (ADR 003).
+#
+# Column-backed today; the switch to entitlements re-implements only this.
+sub give_tenant_terms ( $db, $slug, $terms ) {
+    my $made = _probe_plan( $db, _solo_plan_id($db), {
+        plan_name             => $terms->{name} // 'Stated terms',
+        amount_cents          => $terms->{amount_cents} // 0,
+        pricing_configuration => { percentage => $terms->{rate} },
+        metadata              => {},
+    } );
+    $db->query(
+        'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
+        $made, $slug );
+    return;
+}
+
+# The seeded revenue-share plan, by tenant-platform-pricing-plan's backfill predicate.
+sub _solo_plan_id ($db) {
+    return $db->query( q{
+        SELECT id FROM registry.pricing_plans
+         WHERE plan_scope = 'tenant'
+           AND pricing_model_type = 'percentage'
+           AND metadata->>'default' IS DISTINCT FROM 'true'
+         ORDER BY created_at
+         LIMIT 1
+    } )->hash->{id} // die "no revenue-share plan in the seed to shape terms on\n";
+}
+
+# A new plan copied from $template_id with %$overrides applied; returns its id.
+sub _probe_plan ( $db, $template_id, $overrides ) {
+    my $template = $db->query(
+        'SELECT * FROM registry.pricing_plans WHERE id = ?', $template_id )
+        ->expand->hash;
+
+    my %plan = (
+        session_id            => $template->{session_id},
+        plan_scope            => $template->{plan_scope},
+        plan_name             => 'Probe ' . ( $template->{plan_name} // 'plan' ),
+        plan_type             => $template->{plan_type},
+        pricing_model_type    => $template->{pricing_model_type},
+        currency              => $template->{currency},
+        amount_cents          => $template->{amount_cents},
+        requirements          => $template->{requirements}          // {},
+        pricing_configuration => $template->{pricing_configuration} // {},
+        metadata              => $template->{metadata}              // {},
+        %$overrides,
+    );
+
+    return $db->query( q{
+        INSERT INTO registry.pricing_plans
+            (session_id, plan_scope, plan_name, plan_type, pricing_model_type,
+             currency, amount_cents, requirements, pricing_configuration, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb)
+        RETURNING id
+    },  @plan{qw( session_id plan_scope plan_name plan_type pricing_model_type
+                  currency amount_cents )},
+        map { ref $_ ? encode_json($_) : $_ }
+            @plan{qw( requirements pricing_configuration metadata )},
+    )->hash->{id};
 }
 
 # without_rate_check($db, $cb)
