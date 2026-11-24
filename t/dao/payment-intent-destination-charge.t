@@ -15,6 +15,7 @@ use Registry::DAO::WorkflowSteps::Payment;
 use Registry::Service::Stripe;
 use Mojo::Promise;
 use Test::Registry::Async qw( settle );
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -42,34 +43,17 @@ $db->query(
     'acct_test123', $slug,
 );
 
-# Link the tenant to the seeded revenue-share plan. A tenant provisioned
-# directly like this has platform_pricing_plan_id NULL -- the real signup sets it
-# from the gated pricing step -- so the resolver would otherwise fall back to the
-# Free 0% plan.
-my $two_pct_plan_id = $db->query(q{
-    SELECT id FROM registry.pricing_plans
-     WHERE plan_scope = 'tenant'
-       AND pricing_model_type = 'percentage'
-       AND metadata->>'default' IS DISTINCT FROM 'true'
-     ORDER BY created_at
-     LIMIT 1
-})->hash->{id};
-ok $two_pct_plan_id, 'seeded revenue-share plan found';
-$db->query(
-    'UPDATE registry.tenants SET platform_pricing_plan_id = $1 WHERE slug = $2',
-    $two_pct_plan_id, $slug,
-);
+# State the platform terms the tenant charges under. A tenant provisioned
+# directly like this holds none, so the resolver would otherwise fall back to
+# the Free 0% plan. The rate is this test's own, not the launch decision's, so
+# the expected fee follows from what the test stated.
+my $stated_rate = '0.0137';
+give_tenant_terms( $db, $slug, { rate => $stated_rate } );
 
-# Expected application fee for a $100.00 charge, at whatever rate the plan this
-# tenant was just linked to actually carries. Read from that plan rather than
-# restated: the rate is a launch decision, and a test that hardcodes it fails on
-# the decision rather than on the behaviour it is checking. The half-up rule
-# itself is unit-tested against literals below, which is where it belongs.
-my $plan_fraction = $db->query(
-    q{SELECT (pricing_configuration->>'percentage')::numeric
-        FROM registry.pricing_plans WHERE id = ?}, $two_pct_plan_id )->array->[0];
-my $expected_fee_2pct =
-    Registry::DAO::Payment::application_fee_cents( 10000, $plan_fraction );
+# Expected application fee for a $100.00 charge at the stated rate. The half-up
+# rule itself is unit-tested against literals below, which is where it belongs.
+my $expected_fee =
+    Registry::DAO::Payment::application_fee_cents( 10000, $stated_rate );
 
 my $tenant_dao = Registry::DAO->new(url => $test_db->uri, schema => $slug);
 my $tenant_db  = $tenant_dao->db;
@@ -144,8 +128,8 @@ subtest 'tenant intent is a direct charge on its own account' => sub {
         'no transfer_data[destination]: the charge is already on the tenant account';
     ok !exists $captured->{'on_behalf_of'},
         'no on_behalf_of: the tenant is the merchant by being the account charged';
-    is $captured->{'application_fee_amount'}, $expected_fee_2pct,
-        "application_fee_amount is the plan's rate on 10000 cents ($expected_fee_2pct)";
+    is $captured->{'application_fee_amount'}, $expected_fee,
+        "application_fee_amount is the stated rate on 10000 cents ($expected_fee)";
 };
 
 # ---- (a2) tenant with NULL plan link -> Free 0% fee, still its own account -----
@@ -298,7 +282,7 @@ subtest 'retry intent is a direct charge on the same account' => sub {
         'retry intent carries no transfer_data[destination]';
     ok !exists $retry_captured->{'on_behalf_of'},
         'retry intent carries no on_behalf_of';
-    is $retry_captured->{'application_fee_amount'}, $expected_fee_2pct,
+    is $retry_captured->{'application_fee_amount'}, $expected_fee,
         'retry intent carries same application_fee_amount';
 };
 
@@ -333,8 +317,8 @@ subtest 'async create_payment_intent_async is a direct charge on the tenant acco
         'async: no transfer_data[destination]';
     ok !exists $async_captured->{'on_behalf_of'},
         'async: no on_behalf_of';
-    is $async_captured->{'application_fee_amount'}, $expected_fee_2pct,
-        "async: application_fee_amount is $expected_fee_2pct cents";
+    is $async_captured->{'application_fee_amount'}, $expected_fee,
+        "async: application_fee_amount is $expected_fee cents";
 };
 
 # ---- (f) the platform sells like any seller: no slug exemption --------------
