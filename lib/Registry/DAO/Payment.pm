@@ -199,10 +199,11 @@ field $_stripe_client = undef;
     # then finds its schedule. And the product and schedule creates carry
     # Idempotency-Keys named for the payment, so a retry after Stripe made the
     # schedule but before our COMMIT gets that same schedule back.
-    # shortcut: Stripe keeps a key for 24 hours, so a retry later than that
-    # after such a crash makes a second schedule; reconcile against Stripe's
-    # schedules for the customer if retries ever run that late.
-    method schedule_remaining_instalments ($db) {
+    # With look_first -- a retry -- Stripe is asked for a schedule an earlier
+    # run made before another is created, as a key does not always answer
+    # that: Stripe replays a stored 500 under it for 24 hours, and forgets it
+    # after.
+    method schedule_remaining_instalments ($db, %opt) {
         my $raw = ($db isa Registry::DAO) ? $db->db : $db;
 
         return $stripe_schedule_id if $stripe_schedule_id;
@@ -245,20 +246,19 @@ field $_stripe_client = undef;
             or die "instalment 1 of payment $id saved no card\n";
 
         my $description = $meta->{instalment_description} // 'Program Enrollment';
-        my $product = $client->create_product({
-            name                  => $description,
-            'metadata[payment_id]' => $id,
-            _idempotency_key       => "instalment_schedule:$id:product",
-        });
-
-        my $schedule = $client->create_subscription_schedule( {
+        my $schedule = $opt{look_first} && $self->_schedule_at_stripe( $client, $customer );
+        $schedule ||= $client->create_subscription_schedule( {
             %{ instalment_schedule_params( {
                 customer          => $customer,
                 payment_method    => $card,
                 revenue_share_pct => $pct,
                 currency          => lc $currency,
                 description       => $description,
-                product           => $product->{id},
+                product           => $client->create_product({
+                    name                   => $description,
+                    'metadata[payment_id]' => $id,
+                    _idempotency_key       => "instalment_schedule:$id:product",
+                })->{id},
                 instalments       => \@remaining,
             } ) },
             # So an invoice that beats the COMMIT below is retried, not
@@ -302,6 +302,20 @@ field $_stripe_client = undef;
         $txn->commit;
         $stripe_schedule_id = $schedule->{id};
         return $schedule->{id};
+    }
+
+    # A live schedule at Stripe made for this payment, or undef. Each carries
+    # metadata[payment_id] (schedule_remaining_instalments).
+    # shortcut: reads the customer's first 100 schedules; page through them
+    # if one customer ever holds more.
+    method _schedule_at_stripe ($client, $customer) {
+        my $listed = $client->list_subscription_schedules(
+            { customer => $customer, limit => 100 } );
+        my ($made) = grep {
+            ( $_->{metadata}{payment_id} // '' ) eq $id
+                && ( $_->{status} // '' ) !~ /\A(?:canceled|released)\z/
+        } @{ $listed->{data} // [] };
+        return $made;
     }
 
     # The instalments of this set that are still owed, earliest first. Morgan's

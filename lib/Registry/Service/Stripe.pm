@@ -246,6 +246,10 @@ class Registry::Service::Stripe {
         return $self->_request_async('GET', "subscription_schedules/$schedule_id");
     }
 
+    method list_subscription_schedules_async($params = {}) {
+        return $self->_request_async('GET', 'subscription_schedules', $params);
+    }
+
     method cancel_subscription_schedule_async($schedule_id, $params = {}) {
         return $self->_request_async('POST', "subscription_schedules/$schedule_id/cancel", $params);
     }
@@ -392,6 +396,10 @@ class Registry::Service::Stripe {
 
     method retrieve_subscription_schedule($schedule_id) {
         return $self->_await($self->retrieve_subscription_schedule_async($schedule_id));
+    }
+
+    method list_subscription_schedules($params = {}) {
+        return $self->_await($self->list_subscription_schedules_async($params));
     }
 
     method create_product($params) {

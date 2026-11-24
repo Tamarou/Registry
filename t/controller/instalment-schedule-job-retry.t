@@ -1,5 +1,5 @@
 # ABOUTME: The instalment_schedule job as the Connect webhook enqueues it, run by Minion's own worker.
-# ABOUTME: A failed run is retried, and a retry after a failure still makes one Stripe schedule.
+# ABOUTME: Retries make one schedule, adopt one a replayed 500 hid, and alert when the last attempt fails.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -41,6 +41,11 @@ my $parent = Registry::DAO::User->create( $tdb, {
 # The real dao helper, not an override: the job finds the tenant's schema by slug.
 my $t      = Test::Registry::Mojo->new('Registry');
 my $minion = $t->app->minion;
+
+my @logs;
+$t->app->log->unsubscribe('message');
+$t->app->log->level('info');
+$t->app->log->on( message => sub ( $log, $level, @lines ) { push @logs, [ $level, "@lines" ] } );
 
 my $sales = 0;
 
@@ -88,7 +93,8 @@ subtest 'the schedule job is enqueued to be retried' => sub {
 subtest 'a job that fails once and succeeds on retry makes one schedule' => sub {
     my ( $sale, $job ) = a_settled_first_instalment();
 
-    # Stripe answers the first schedule create with an error, then makes it.
+    # The first schedule create never reaches Stripe, then makes it. Not a 500:
+    # Stripe would replay a 500 under the same key (see below).
     my ( $tries, @made ) = (0);
     no warnings 'redefine';
     local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
@@ -97,8 +103,11 @@ subtest 'a job that fails once and succeeds on retry makes one schedule' => sub 
     local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
         return { id => 'prod_sr' };
     };
+    local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) {
+        return { data => [] };
+    };
     local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
-        die "Stripe API error: 500 Internal Server Error\n" unless $tries++;
+        die "Connect timeout\n" unless $tries++;
         push @made, "sub_sched_sr_$tries";
         return { id => $made[-1] };
     };
@@ -119,6 +128,79 @@ subtest 'a job that fails once and succeeds on retry makes one schedule' => sub 
     is $row->stripe_schedule_id, 'sub_sched_sr_2', 'which is the one recorded';
     is $tdb->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
         $sale->id )->array->[0], 2, 'with one row per remaining instalment';
+};
+
+# Every Stripe call the job makes for $sale stubbed: the schedule create
+# always answers $error, as Stripe replays a stored 500 under one
+# Idempotency-Key for 24 hours; listing the customer's schedules returns
+# @$listed. Runs $job to its end and returns what Stripe was asked.
+sub run_against_replayed_500 ( $job, $error, $listed ) {
+    my ( @keys, @lists );
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
+        return { id => $pi, customer => 'cus_sr', payment_method => 'pm_sr' };
+    };
+    local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
+        return { id => 'prod_sr' };
+    };
+    local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
+        push @keys, $p->{_idempotency_key};
+        die "$error\n";
+    };
+    local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) {
+        push @lists, $p;
+        return { data => $listed };
+    };
+
+    my $backoff = $minion->backoff;
+    $minion->backoff( sub ($retries) { 0 } );
+    $minion->perform_jobs_in_foreground( { id => $job->{id} } );
+    $minion->backoff($backoff);
+    return { keys => \@keys, lists => \@lists, info => $minion->job( $job->{id} )->info };
+}
+
+sub alerts_for ($sale) {
+    $tdb->query( q{SELECT subject, message FROM notifications
+                    WHERE user_id = ? AND message LIKE ?}, $admin->id, '%' . $sale->id . '%' )
+        ->hashes->to_array;
+}
+
+subtest 'a replayed 500 under the key: a retry finds the schedule Stripe made and records it' => sub {
+    my ( $sale, $job ) = a_settled_first_instalment();
+    my $ran = run_against_replayed_500( $job, 'Stripe api_error: An unknown error occurred',
+        [ { id => 'sub_sched_other', status => 'active', metadata => { payment_id => 'someone-else' } },
+          { id => 'sub_sched_made',  status => 'not_started', metadata => { payment_id => $sale->id } } ] );
+
+    is $ran->{info}{state}, 'finished', 'the job finishes';
+    is scalar @{ $ran->{keys} }, 1, 'after one create, answered 500';
+    is $ran->{lists}[0]{customer}, 'cus_sr', "the retry lists the payment's customer's schedules";
+    my $row = Registry::DAO::Payment->find( $tdb, { id => $sale->id } );
+    is $row->stripe_schedule_id, 'sub_sched_made', 'and records the one made for this payment';
+    is $tdb->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
+        $sale->id )->array->[0], 2, 'with one row per remaining instalment';
+    is scalar @{ alerts_for($sale) }, 0, 'and nobody is alerted';
+};
+
+subtest 'a job whose last attempt fails alerts an operator naming payment and tenant' => sub {
+    my ( $sale, $job ) = a_settled_first_instalment();
+    @logs = ();
+    my $ran = run_against_replayed_500( $job, 'Stripe api_error: An unknown error occurred', [] );
+
+    is $ran->{info}{state}, 'failed', 'the job ends failed';
+    is scalar @{ $ran->{keys} }, 10, 'after ten attempts';
+    is_deeply [ sort keys %{ { map { $_ => 1 } @{ $ran->{keys} } } } ],
+        [ 'instalment_schedule:' . $sale->id . ':schedule' ],
+        'every one under the same key: never a new key';
+    is scalar @{ $ran->{lists} }, 9, 'each retry first looked for a schedule Stripe made';
+    ok !Registry::DAO::Payment->find( $tdb, { id => $sale->id } )->stripe_schedule_id,
+        'nothing is recorded';
+
+    my $alerts = alerts_for($sale);
+    is scalar @$alerts, 1, "the tenant's admin is alerted once, at the last attempt";
+    like $alerts->[0]{message}, qr/\Q$slug\E/, 'naming the tenant';
+    my @errors = grep { $_->[0] eq 'error' && $_->[1] =~ /\Q${\ $sale->id }\E/ } @logs;
+    is scalar @errors, 1, 'and the platform log says so once at error';
+    like $errors[0][1] // '', qr/\Q$slug\E/, 'naming the tenant';
 };
 
 done_testing;
