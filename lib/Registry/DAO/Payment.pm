@@ -389,13 +389,17 @@ field $_stripe_client = undef;
         # The revenue share is fixed here too, at quote time (ruling 7c): every
         # intent for this payment shares one Idempotency-Key, and Stripe refuses
         # a retry under it that carries a different application_fee_amount.
-        delete $data->{metadata}->@{qw( stripe_account_id revenue_share_fraction )};
+        # So is the plan version that rate came from, recorded with the fee.
+        delete $data->{metadata}->@{qw( stripe_account_id revenue_share_fraction
+                                        platform_pricing_plan_id )};
         if ( my $slug = $data->{metadata}{tenant_slug} ) {
             my $row = $raw_db->query(
-                'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
+                'SELECT stripe_connect_account_id, platform_pricing_plan_id
+                   FROM registry.tenants WHERE slug = ?',
                 $slug )->hash;
             if ( $row && $row->{stripe_connect_account_id} ) {
                 $data->{metadata}{stripe_account_id} = $row->{stripe_connect_account_id};
+                $data->{metadata}{platform_pricing_plan_id} = $row->{platform_pricing_plan_id};
                 $data->{metadata}{revenue_share_fraction} =
                     Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
                         $raw_db, $slug );
@@ -814,12 +818,10 @@ field $_stripe_client = undef;
     # which the revenue view reports as a gap rather than silently summing as
     # zero.
     #
-    # The plan is read now rather than at intent creation, which leaves a window
-    # of seconds in which an admin could move the tenant between plan versions
-    # and have this charge attributed to the newer one. Accepted deliberately:
-    # moving a tenant is a deliberate act (#277), the window is one Stripe round
-    # trip, and the alternative is threading the id through the params builder
-    # and the webhook's run-less path for a case nobody has hit.
+    # The plan is the one create snapshotted beside the rate, so the id names
+    # the version that priced the fee even when the tenant moves plan between
+    # quote and settle (up to a day). The tenant's live plan only for a row
+    # create did not snapshot -- one with no seller account.
     method record_platform_fee ( $db, $intent ) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -833,7 +835,10 @@ field $_stripe_client = undef;
         my $slug = ( ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef );
 
         my $plan_id;
-        if ( defined $slug && !ref $slug && length $slug ) {
+        if ( $connected ) {
+            $plan_id = $metadata->{platform_pricing_plan_id};
+        }
+        elsif ( defined $slug && !ref $slug && length $slug ) {
             my $row = $db->query(
                 'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',
                 $slug )->hash;

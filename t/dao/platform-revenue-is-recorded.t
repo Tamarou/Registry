@@ -122,6 +122,40 @@ subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub
     is $t->{unrecorded}, 0, 'as recorded, not as a gap';
 };
 
+subtest 'the plan that priced the fee is recorded, not the plan at settle' => sub {
+    # The rate is fixed at create (ruling 7c); the plan id recorded with the
+    # fee must be the one that rate came from, even if the tenant moves first.
+    my $plan_b = $db->query(
+        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Empire' LIMIT 1}
+    )->hash;
+    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
+                  stripe_connect_account_id = 'acct_revenue_studio' WHERE id = ?},
+        $solo->{id}, $tenant->id );
+
+    my $p = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => { tenant_slug => 'revenue_studio', enrollment_items => [],
+                      platform_pricing_plan_id => $plan_b->{id} },
+    } );
+    $db->update( 'payments',
+        { stripe_payment_intent_id => 'pi_snap_' . $p->id }, { id => $p->id } );
+
+    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE id = ?',
+        $plan_b->{id}, $tenant->id );
+
+    $p = Registry::DAO::Payment->find( $db, { id => $p->id } );
+    $p->record_platform_fee( $db, { application_fee_amount => 250 } );
+
+    my $row = Registry::DAO::Payment->find( $db, { id => $p->id } );
+    is $row->platform_fee_cents, 250, 'the fee is recorded';
+    is $row->platform_pricing_plan_id, $solo->{id},
+        'under plan A, the one it was created on -- not B, and not a caller value';
+
+    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
+                  stripe_connect_account_id = NULL WHERE id = ?},
+        $solo->{id}, $tenant->id );
+};
+
 subtest 'a rate change afterwards does not rewrite history' => sub {
     # The whole reason to record rather than derive. Moving the tenant to a
     # different plan must not re-price what was already charged.
