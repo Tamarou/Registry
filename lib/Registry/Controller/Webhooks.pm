@@ -506,8 +506,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # completed the payment.
         if ($continue_run) {
             $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
+                # Three attempts: the driver marks the run halted only on the last.
                 $minion->enqueue( continue_workflow_run =>
-                    [ { tenant => $slug // 'registry', run_id => $continue_run } ] );
+                    [ { tenant => $slug // 'registry', run_id => $continue_run } ], { attempts => 3 } );
             }, 'continue_workflow_run', "run $continue_run",
                "Workflow run $continue_run was paid for but not continued: continue it by hand.",
                { workflow_run_id => $continue_run } );

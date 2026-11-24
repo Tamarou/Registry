@@ -29,7 +29,7 @@ class Registry::Job::ContinueWorkflowRun {
 
         # One driver per run: a second job for it waits here, then finds the
         # run where the first left it. Released however the drive ends.
-        my $lock = 'SELECT %s(hashtextextended(?, 0))';
+        my $lock = q{SELECT %s(hashtextextended('workflow_run:' || ?, 0))};
         $db->query( sprintf( $lock, 'pg_advisory_lock' ), $run_id );
         my $done;
         try { $done = $self->_drive( $job, $db, $tenant, $run_id ) }

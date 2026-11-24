@@ -190,6 +190,7 @@ subtest 'succeeded payment continues run unattended' => sub {
     is scalar @queued, 1, 'one continue_workflow_run is queued for the run';
     is_deeply $queued[0]{args}, [ { tenant => $studio->{slug}, run_id => $run->id } ],
         "naming the run and the seller's schema";
+    is $queued[0]{attempts}, 3, 'with three attempts, so a passing failure is retried before the run halts';
 
     connect_event( 'payment_intent.succeeded', $studio->{account}, "pi_otp_ok_$$",
         $payment->id, id => "evt_otp_ok_$$" )->status_is(200);
