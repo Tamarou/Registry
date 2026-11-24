@@ -121,13 +121,16 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                     die "stale run\n";
                 }
             }
-            ( $offer // Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } ) )->draft( $db, {
+            my $published = ( $offer // Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } ) )->draft( $db, {
                 $basic->%{qw( resource_id class_project_id )},    # one or the other
                 conditions => $current ? $current->conditions : [],    # who may hold it carries over
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
                 policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry } },
             } )->publish($db);
+            # Commit-time checks run now, so a refusal is this step's error rather than a failed commit.
+            $db->query('SET CONSTRAINTS ALL IMMEDIATE');
+            $published;
         };
         # The detail can carry ids and driver messages, so it goes to the log
         # and the screen gets a fixed message; the transaction rolls back.

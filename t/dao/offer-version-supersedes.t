@@ -235,4 +235,60 @@ subtest 'signup resolves one platform offer after a new solo version' => sub {
         'signup finds exactly one platform offer to tenants: the new Solo version';
 };
 
+# Solo is the one platform offer to tenants: a version that stops being one
+# would leave signup refusing every tenant, so the database refuses it at commit.
+subtest 'a solo version that is no offer to tenants is refused' => sub {
+    my $rdb     = $dao->db;
+    my $solo_id = '00000000-0000-0000-0002-000000000001';
+    my $before  = Registry::DAO::Offer->find( $rdb, { id => $solo_id } )->current_version($rdb);
+    my %solo    = (
+        'offer-basics'                => { resource_id => '00000000-0000-0000-0001-000000000001', offer_id => $solo_id },
+        'one-time-payment'            => { one_time => 'declined' },
+        'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.4' },
+        price(0),
+    );
+    for my $case (
+        [ 'on another resource', { 'offer-basics' => { $solo{'offer-basics'}->%*,
+            resource_id => '00000000-0000-0000-0001-000000000002' } } ],    # email sending
+        [ 'without its percentage plan', {
+            'one-time-payment'            => { one_time => 'offered' },
+            'percentage-of-sales-payment' => { percentage_of_sales => 'declined' } } ],
+    ) {
+        my @logged;
+        my $ok = eval {
+            local $SIG{__WARN__} = sub { push @logged, @_ };
+            publish_offer( $dao, 'registry', $admin, { %solo, $case->[1]->%* } );
+            1;
+        };
+        ok !$ok, "a solo version $case->[0] is refused";
+        like $@, qr/\Apublish_offer: publish refused: The offer could not be published/, 'at publish, with an error';
+        like "@logged", qr/no current published platform offer to tenants/, 'the database refused it';
+        is_deeply current_versions( $solo_id, $rdb ), [ $before->version ], 'the old version stays current';
+    }
+
+    ok !eval { $rdb->query( 'UPDATE registry.offer_versions SET superseded_at = now() WHERE id = ?', $before->id ); 1 },
+        'retiring solo outright is refused';
+    like $@, qr/no current published platform offer to tenants/, 'by the database';
+};
+
+# clone_schema gives each tenant an immediate copy of the guard; even an offer
+# shaped like the platform's, on the tenant's own "payment processing", is free.
+subtest 'a tenant still publishes and retires its own offers freely' => sub {
+    my $gdb   = $tenant_dao{glaze_house}->db;
+    my %terms = (
+        'offer-basics' => { offer_name => 'Card fees', resource_id => Test::Registry::Fixtures::create_resource(
+            $gdb, { name => 'payment processing', kind => 'unbounded' } )->id },
+        'one-time-payment'            => { one_time => 'declined' },
+        'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '3' },
+        price(0),
+    );
+    my $v1 = publish_offer( $dao, 'glaze_house', $admin, \%terms );
+    my $v2 = publish_offer( $dao, 'glaze_house', $admin,
+        { %terms, 'offer-basics' => { $terms{'offer-basics'}->%*, offer_id => $v1->offer_id } } );
+    is_deeply current_versions( $v1->offer_id, $gdb ), [2], 'a new version supersedes the first';
+    ok eval { $gdb->query( 'UPDATE offer_versions SET superseded_at = now() WHERE id = ?', $v2->id ); 1 },
+        "retiring the tenant's only current offer is allowed" or diag $@;
+    is_deeply current_versions( $v1->offer_id, $gdb ), [], 'and it has no current version';
+};
+
 done_testing;
