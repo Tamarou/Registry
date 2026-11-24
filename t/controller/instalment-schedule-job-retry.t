@@ -170,7 +170,11 @@ subtest 'a replayed 500 under the key: a retry finds the schedule Stripe made an
     my ( $sale, $job ) = a_settled_first_instalment();
     my $ran = run_against_replayed_500( $job, 'Stripe api_error: An unknown error occurred',
         [ { id => 'sub_sched_other', status => 'active', metadata => { payment_id => 'someone-else' } },
-          { id => 'sub_sched_made',  status => 'not_started', metadata => { payment_id => $sale->id } } ] );
+          { id => 'sub_sched_made',  status => 'not_started', metadata => { payment_id => $sale->id },
+            # Our fee in the two phases we send, so it is ours to adopt.
+            default_settings => { application_fee_percent => 100
+                * Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, $slug ) },
+            phases => [ {}, {} ] } ] );
 
     is $ran->{info}{state}, 'finished', 'the job finishes';
     is scalar @{ $ran->{keys} }, 1, 'after one create, answered 500';

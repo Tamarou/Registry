@@ -160,8 +160,9 @@ sub first_instalment () {
     } );
 }
 
-# Runs $code with the four Stripe calls recorded rather than sent.
-sub with_stripe_calls ( $code ) {
+# Runs $code with the four Stripe calls recorded rather than sent; listing
+# the customer's schedules answers @$listed.
+sub with_stripe_calls ( $code, $listed = [] ) {
     my @calls;
     no warnings 'redefine';
     local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
@@ -170,7 +171,7 @@ sub with_stripe_calls ( $code ) {
     };
     local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) {
         push @calls, [ list_subscription_schedules => $s->stripe_account, $p ];
-        return { data => [] };
+        return { data => $listed };
     };
     local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
         push @calls, [ create_product => $s->stripe_account, $p ];
@@ -317,8 +318,14 @@ sub with_keyed_stripe ( $code, %on ) {
     };
     local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
         my $schedule = $make->( sub_sched => $p );
+        # Listed as Stripe lists it: the fee under default_settings, one
+        # entry per phase (its price an id, so no amount to read).
         push @stripe_schedules, { %$schedule, customer => $p->{customer},
-            status => 'not_started', metadata => { payment_id => $p->{'metadata[payment_id]'} } }
+            status => 'not_started', metadata => { payment_id => $p->{'metadata[payment_id]'} },
+            default_settings => {
+                application_fee_percent => $p->{'default_settings[application_fee_percent]'} },
+            phases => [ map { { items => [ { price => 'price_x', quantity => 1 } ] } }
+                grep { /\Aphases\[\d+\]\[iterations\]\z/ } keys %$p ] }
             unless grep { $_->{id} eq $schedule->{id} } @stripe_schedules;
         # Once: the hook may itself schedule, and must not fire inside itself.
         if ( my $hook = delete $on{schedule_made} ) { $hook->() }
@@ -384,6 +391,39 @@ subtest 'a late run whose key has expired reuses the existing schedule and makes
     my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
     is $row->stripe_schedule_id, $made->[0][1], 'and records the one already at Stripe';
     is scheduled_rows($payment), 2, 'with one row per remaining instalment';
+};
+
+# The schedule is on the seller's own account, so the seller can make one
+# naming this payment. Metadata proves nothing; adopted only when it bills
+# our fee in the phases we would send.
+sub seller_made_schedule_is_refused ( $listed_fee, $listed_phases ) {
+    my $payment = first_instalment();
+    my @warnings;
+    my $calls = do {
+        local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+        with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) }, [ {
+            id               => "sub_sched_seller\n",
+            status           => 'not_started',
+            metadata         => { payment_id => $payment->id },
+            default_settings => { application_fee_percent => $listed_fee },
+            phases           => $listed_phases,
+        } ] );
+    };
+    is scalar( grep { $_->[0] eq 'create_subscription_schedule' } @$calls ), 1,
+        'Registry makes its own schedule';
+    my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+    like $row->stripe_schedule_id, qr/\Asub_sched_\d+\z/, 'and records that one';
+    is scalar @warnings, 1, 'with one warning';
+    like $warnings[0], qr/not adopting .*sub_sched_seller\\x\{a\}/,
+        'naming the schedule, escaped';
+}
+
+subtest 'a listed schedule naming this payment but taking no fee is not adopted' => sub {
+    seller_made_schedule_is_refused( undef, [ {}, {} ] );
+};
+
+subtest 'a listed schedule naming this payment with the wrong phases is not adopted' => sub {
+    seller_made_schedule_is_refused( $plan_pct, [ {} ] );
 };
 
 subtest 'two jobs for one payment make one schedule' => sub {

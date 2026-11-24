@@ -245,7 +245,8 @@ field $_stripe_client = undef;
             or die "instalment 1 of payment $id saved no card\n";
 
         my $description = $meta->{instalment_description} // 'Program Enrollment';
-        my $schedule = $self->_schedule_at_stripe( $client, $customer );
+        my $schedule = $self->_schedule_at_stripe( $client, $customer, $pct,
+            scalar @{ instalment_phases( \@remaining, lc $currency, $description ) } );
         $schedule ||= $client->create_subscription_schedule( {
             %{ instalment_schedule_params( {
                 customer          => $customer,
@@ -304,17 +305,28 @@ field $_stripe_client = undef;
     }
 
     # A live schedule at Stripe made for this payment, or undef. Each carries
-    # metadata[payment_id] (schedule_remaining_instalments).
+    # metadata[payment_id] (schedule_remaining_instalments) -- but it is on the
+    # seller's own account, where the seller can write that too, so it is
+    # adopted only if it takes our fee in as many phases as we would send.
+    # shortcut: phase amounts are not compared, as a listed phase's price is an
+    # id; expand data.phases.items.price if a seller ever games the count.
     # shortcut: reads the customer's first 100 schedules; page through them
     # if one customer ever holds more.
-    method _schedule_at_stripe ($client, $customer) {
+    method _schedule_at_stripe ($client, $customer, $pct, $phase_count) {
         my $listed = $client->list_subscription_schedules(
             { customer => $customer, limit => 100 } );
-        my ($made) = grep {
-            ( $_->{metadata}{payment_id} // '' ) eq $id
-                && ( $_->{status} // '' ) !~ /\A(?:canceled|released)\z/
-        } @{ $listed->{data} // [] };
-        return $made;
+        my $ours = sprintf '%.2f', $pct;
+        for my $s ( @{ $listed->{data} // [] } ) {
+            next unless ( $s->{metadata}{payment_id} // '' ) eq $id
+                && ( $s->{status} // '' ) !~ /\A(?:canceled|released)\z/;
+            return $s
+                if sprintf( '%.2f', $s->{default_settings}{application_fee_percent} // 0 ) eq $ours
+                && @{ $s->{phases} // [] } == $phase_count;
+            warn "not adopting Stripe schedule "
+                . ( ( $s->{id} // "" ) =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                . " for payment $id: its fee or phases are not ours\n";
+        }
+        return undef;
     }
 
     # The instalments of this set that are still owed, earliest first. Morgan's
