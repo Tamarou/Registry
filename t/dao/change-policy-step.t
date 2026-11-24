@@ -11,6 +11,7 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant );
 use Registry::DAO;
+use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Resource;
 use Registry::Utility::WorkflowProcessor;
@@ -131,12 +132,22 @@ subtest 'invalid window or fee stays with an error' => sub {
     for my $field (qw( window_hours fee_cents )) {
         refused( "a missing $field",  { %WINDOW, $field => undef } );
         refused( "a negative $field", { %WINDOW, $field => -1 } );
+        refused( "a non-integer $field '$_'", { %WINDOW, $field => $_ } ) for '10.00', '2.5', '1e3', 'ten', '';
+        refused( "a list $field", { %WINDOW, $field => [48] } );
     }
 };
 
 subtest 'targets other than same offer refused' => sub {
     refused( "targets '$_'", { %WINDOW, targets => $_ } ) for qw( any_offer all );
     refused( 'missing targets', { %WINDOW, targets => undef } );
+    refused( 'a list of targets', { %WINDOW, targets => ['same_offer'] } );
+
+    # Another offer of this tenant, and one in another tenant's schema.
+    my $mine = Registry::DAO::Offer->create( $tdb, { name => 'Kiln night' } );
+    Test::Registry::Fixtures::create_tenant( $dao, { name => 'Glass Studio', slug => 'glass_studio' } );
+    my $theirs = Registry::DAO::Offer->create( $dao->connect_schema('glass_studio')->db, { name => 'Glass night' } );
+    refused( "another offer's id", { %WINDOW, targets => $mine->id } );
+    refused( "another tenant's offer id", { %WINDOW, targets => $theirs->id } );
 };
 
 subtest 'change window refused without an occurrence' => sub {
@@ -148,6 +159,35 @@ subtest 'change window refused without an occurrence' => sub {
     my ( $run ) = walk( 'change-policy' => { change => 'none' },
         'offer-basics' => { resource_id => $loose->id, offer_name => 'Drop in' } );
     ok published_version($run), 'change none still publishes on an offer with no occurrence';
+};
+
+subtest 'unknown or skipped change choice publishes nothing' => sub {
+    refused( "change '$_'", { change => $_ } ) for 'sometimes', 'NONE', 'reschedule', '';
+    refused( 'a missing change value', { change => undef } );
+    refused( 'a list change value', { change => ['none'] } );
+
+    my $before = published_count();
+    my ( $run, $result ) = walk( 'change-policy' => undef );
+    ok $result->{publish}{errors}, 'skipping the choice makes publish stay with an error';
+    like join( ' ', ( $result->{publish}{errors} // [] )->@* ), qr/change policy/i, 'asking for the change policy';
+    ok !$run->data->{published_offer_version_id}, 'the run records no version';
+    is published_count(), $before, 'and nothing is published';
+};
+
+subtest 'change details ignored with change none' => sub {
+    my ( $run, $result ) = walk( 'change-policy' => { %WINDOW, change => 'none', targets => 'anything' } );
+    ok !$result->{'change-policy'}{errors}, 'none with window details is accepted';
+    is_deeply $run->data->{change_policy}, { kind => 'none' }, 'the run records none alone';
+    my $version = published_version($run);
+    is_deeply $version && $version->policies->{change}, { kind => 'none' }, 'and none alone is published';
+};
+
+subtest 'change value resubmitted at publish is ignored' => sub {
+    my ( $run ) = walk( 'publish' => { change => 'window', change_policy => { %WINDOW, kind => 'window' } } );
+    my $version = published_version($run);
+    ok $version && $version->is_published, 'publish with a window in its form still publishes';
+    is_deeply $version && $version->policies->{change}, { kind => 'none' },
+        'with the change policy the change-policy step recorded';
 };
 
 done_testing;
