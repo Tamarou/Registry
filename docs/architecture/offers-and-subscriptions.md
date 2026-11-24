@@ -37,7 +37,8 @@ fallback to Free or to 0.
 
 Each of his parents' payments stamps the offer version and payment plan it was
 charged under (`payments.platform_offer_version_id`,
-`payments.platform_payment_plan_id`). A refund reads the refund policy of that
+`payments.platform_payment_plan_id`). An ordinary refund keeps the platform's
+fee whatever the policy says; returning that fee reads the refund policy of the
 stamped version, not his current one.
 
 ### At the tenant scale
