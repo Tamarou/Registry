@@ -6,6 +6,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use JSON;
     use Digest::SHA qw(hmac_sha256_hex);
     use Mojo::Promise;
+    use Registry::Service::Stripe;
 
     method stripe() {
         my $event = $self->_verified_event('STRIPE_WEBHOOK_SECRET') or return;
@@ -199,6 +200,35 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return $self->_settle_event( $self->app->dao, $db, $event, $event_id, $slug, undef );
         }
 
+        # An instalment invoice names its subscription, never the schedule
+        # behind it (API 2024-12-18.acacia). The schedule is read off the
+        # subscription on this account -- Stripe sets that field, the seller
+        # cannot -- before the transaction, so the claim never waits on Stripe.
+        # A failed lookup answers 500 unclaimed, so Stripe retries.
+        # shortcut: reads only the top-level invoice.subscription; when the
+        # Connect endpoint's API version moves past acacia, read the new spelling.
+        my $sub_id = $event->{data}{object}{subscription};
+        if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/ && $sub_id && !ref $sub_id ) {
+            $self->render_later;
+            return Registry::Service::Stripe->from_env->for_account($account)
+                ->retrieve_subscription_async($sub_id)->then( sub ($subscription) {
+                    $self->_settle_connect_event( $db, $event, $slug, $subscription->{schedule} );
+                } )->catch( sub ($err) {
+                    $self->app->log->error(
+                        "Connect webhook event $event_id: subscription $sub_id lookup failed: $err");
+                    $self->render( status => 500, text => 'Webhook processing failed' );
+                } );
+        }
+
+        return $self->_settle_connect_event( $db, $event, $slug, undef );
+    }
+
+    # Claim, work, commit for a Connect event in the tenant's schema. $schedule
+    # is the schedule Stripe says an invoice's subscription belongs to, if any.
+    method _settle_connect_event ($db, $event, $slug, $schedule) {
+        my $event_id = $event->{id};
+        my $account  = $event->{account};
+
         my $tx = $db->begin;
         return unless $self->_claim_event( $db, $event );
 
@@ -210,8 +240,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # this account, so matched in this tenant's schema only. Never
             # tenant billing: that is the platform's own subscriptions.
             if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/
-                    && $self->_invoice_is_instalment($db, $event) ) {
-                $self->_process_instalment_invoice($db, $event);
+                    && $self->_invoice_is_instalment($db, $schedule) ) {
+                $self->_process_instalment_invoice($db, $event, $schedule);
             }
             # The readiness mirror, for the account that sent it and no other:
             # the account named inside the event must be the one Stripe
@@ -364,23 +394,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # Is this invoice one of a family's instalments, rather than a tenant paying
     # us? Both arrive as invoice.paid, and the tenant-billing handler would read
     # a parent's instalment as our own subscription being settled.
-    method _invoice_is_instalment ($db, $event) {
-        my $schedule = $self->_invoice_schedule_id($event) or return 0;
+    method _invoice_is_instalment ($db, $schedule) {
+        return 0 unless $schedule;
 
         my $row = $db->query(
             'SELECT 1 FROM payments WHERE stripe_schedule_id = ? LIMIT 1',
             $schedule )->hash;
         return $row ? 1 : 0;
-    }
-
-    method _invoice_schedule_id ($event) {
-        my $invoice = $event->{data}{object} // {};
-
-        # Stripe has moved this field across API versions, so both spellings are
-        # read. Never subscription_details.metadata: that is the subscription's
-        # metadata, which the seller owns on their own account and can set to
-        # our schedule id -- Registry never writes it.
-        return $invoice->{schedule} // $invoice->{subscription_schedule};
     }
 
     # Mark the earliest still-owed instalment of this set paid, or failed.
@@ -389,9 +409,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # from the others, so amounts are not distinguishing, while "the earliest one
     # still owed" is exactly what a schedule bills next. The Stripe payment
     # intent is recorded on the row, which is what makes a redelivery idempotent.
-    method _process_instalment_invoice ($db, $event) {
+    method _process_instalment_invoice ($db, $event, $schedule) {
         my $invoice  = $event->{data}{object} // {};
-        my $schedule = $self->_invoice_schedule_id($event) or return;
         my $paid     = $event->{type} eq 'invoice.paid';
 
         my $intent = $invoice->{payment_intent};
