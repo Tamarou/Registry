@@ -20,6 +20,12 @@ BEGIN
         IF to_regclass(format('%I.resources', s)) IS NULL THEN
             RAISE EXCEPTION 'resources missing in schema %', s;
         END IF;
+        IF to_regclass(format('%I.offers', s)) IS NULL THEN
+            RAISE EXCEPTION 'offers missing in schema %', s;
+        END IF;
+        IF to_regclass(format('%I.offer_versions', s)) IS NULL THEN
+            RAISE EXCEPTION 'offer_versions missing in schema %', s;
+        END IF;
     END LOOP;
 END $$;
 

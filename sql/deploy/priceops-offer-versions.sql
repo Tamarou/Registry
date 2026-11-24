@@ -40,6 +40,40 @@ BEGIN
                 )
             )
         $f$, s);
+
+        -- An offer is the family; its terms live on its versions.
+        EXECUTE format($f$
+            CREATE TABLE IF NOT EXISTS %1$I.offers (
+                id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                name       text NOT NULL,
+                created_at timestamp with time zone NOT NULL DEFAULT now()
+            )
+        $f$, s);
+
+        -- A version is a draft while published_at is NULL, and current while
+        -- published and not superseded. Policies, payment plans and conditions
+        -- arrive as further columns or child rows in later changes.
+        EXECUTE format($f$
+            CREATE TABLE IF NOT EXISTS %1$I.offer_versions (
+                id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                offer_id      uuid NOT NULL REFERENCES %1$I.offers (id),
+                version       integer NOT NULL CHECK (version > 0),
+                resource_id   uuid NOT NULL REFERENCES %1$I.resources (id),
+                published_at  timestamp with time zone,
+                superseded_at timestamp with time zone,
+                created_at    timestamp with time zone NOT NULL DEFAULT now(),
+                CONSTRAINT offer_versions_offer_version_key UNIQUE (offer_id, version),
+                CONSTRAINT offer_versions_superseded_only_if_published
+                    CHECK (superseded_at IS NULL OR published_at IS NOT NULL)
+            )
+        $f$, s);
+
+        -- "The current version" has one answer per offer.
+        EXECUTE format($f$
+            CREATE UNIQUE INDEX IF NOT EXISTS offer_versions_one_current_per_offer
+                ON %1$I.offer_versions (offer_id)
+             WHERE published_at IS NOT NULL AND superseded_at IS NULL
+        $f$, s);
     END LOOP;
 END $$;
 

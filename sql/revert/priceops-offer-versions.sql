@@ -18,6 +18,8 @@ BEGIN
         UNION ALL
         SELECT slug::name FROM registry.tenants WHERE slug != 'registry'
     LOOP
+        EXECUTE format('DROP TABLE IF EXISTS %I.offer_versions', s);
+        EXECUTE format('DROP TABLE IF EXISTS %I.offers', s);
         EXECUTE format('DROP TABLE IF EXISTS %I.resources', s);
     END LOOP;
 END $$;
