@@ -6,7 +6,6 @@ use utf8;
 use Object::Pad;
 
 class Registry::PriceOps::Hold :isa(Registry::DAO::Object) {
-    use Carp qw( croak );
     use Registry::DAO::Resource;
 
     field $id :param :reader;
@@ -24,10 +23,7 @@ class Registry::PriceOps::Hold :isa(Registry::DAO::Object) {
         $db = $db->db if $db isa Registry::DAO;
         my $tx       = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $resource = Registry::DAO::Resource->locked( $db, $data->{resource_id} );
-        my $free     = $resource->free_units($db);
-        croak sprintf '%s (%s) has %d of %d units free: %d asked for',
-            $resource->name, $resource->id, $free, $resource->capacity, $data->{units}
-            if $data->{units} > $free;
+        $resource->claim( $db, $data->{units} );
         my $hold = $class->create( $db, $data );
         $tx->commit if $tx;
         return $hold;

@@ -45,11 +45,11 @@ sub run_id () {
 }
 
 # A hold of $units units of $resource for ten minutes.
-sub hold ( $handle, $resource, $units ) {
+sub hold ( $handle, $resource, $units, $run = run_id() ) {
     return Registry::PriceOps::Hold->place( $handle, {
         resource_id     => $resource->id,
         units           => $units,
-        workflow_run_id => run_id(),
+        workflow_run_id => $run,
         expires_at      => \"now() + interval '10 minutes'",
     } );
 }
@@ -192,6 +192,146 @@ subtest 'lapsed or released holds free their units' => sub {
     # Time passing, without waiting for it: nothing sweeps a lapsed hold.
     $studio->update( 'holds', { expires_at => \"now() - interval '1 second'" }, { id => $kept->id } );
     is $resource->free_units($studio), 4, 'a hold past its lapse time no longer occupies its units';
+};
+
+# Counts of what a refused claim might have left behind on $resource.
+sub rows_for ($resource) {
+    return $studio->query( q{
+        SELECT (SELECT count(*) FROM entitlement_units WHERE resource_id = $1),
+               (SELECT count(*) FROM holds WHERE resource_id = $1)
+    }, $resource->id )->array;
+}
+
+subtest 'zero or negative units refused' => sub {
+    my ( $resource, $version ) = seats(10);
+    my $before = $studio->query('SELECT count(*) FROM entitlements')->array->[0];
+    for my $units ( 0, -1 ) {
+        throws_ok { Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), units => $units ) ) }
+            qr/at least one unit/, "a grant of $units units is refused";
+    }
+    throws_ok { Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), unit_numbers => [] ) ) }
+        qr/at least one unit/, 'as is a grant naming no unit';
+    is $studio->query('SELECT count(*) FROM entitlements')->array->[0], $before,
+        'and no entitlement is stored';
+};
+
+subtest 'unbought or foreign resource refused' => sub {
+    my ( $resource, $version ) = seats(10);
+    my ( $other ) = seats(10);
+    my $other_id = $other->id;
+    throws_ok {
+        Registry::DAO::Entitlement->grant( $studio,
+            sale( $version, person(), units => 1, resource_id => $other_id ) )
+    } qr/does not buy resource $other_id/, 'units of a resource the version does not buy are refused';
+    is_deeply rows_for($other), [ 0, 0 ], 'and none are stored';
+
+    my $sends = Registry::DAO::Resource->create( $studio, { name => 'Sends', kind => 'unbounded' } );
+    my $send_version = Registry::DAO::Offer->create( $studio, { name => 'Sends plan' } )
+        ->draft( $studio, offer_terms( $sends->id ) )->publish($studio);
+    throws_ok { Registry::DAO::Entitlement->grant( $studio, sale( $send_version, person(), units => 1 ) ) }
+        qr/Sends .* has no units to hold/, 'an unbounded resource has no discrete units to grant';
+
+    my $registry_only = Registry::DAO::Resource->create( $db,
+        { name => 'Platform seats', kind => 'finite', capacity => 10 } )->id;
+    for my $absent ( $registry_only, '00000000-0000-4000-8000-000000000001' ) {
+        throws_ok {
+            Registry::DAO::Entitlement->grant( $studio,
+                sale( $version, person(), units => 1, resource_id => $absent ) )
+        } qr/no resource $absent here/, "a resource id absent from this schema is refused ($absent)";
+    }
+};
+
+subtest 'oversized grant refused atomically' => sub {
+    my ( $resource, $version ) = seats(10);
+    my $before = $studio->query( 'SELECT count(*) FROM entitlements WHERE offer_version_id = ?',
+        $version->id )->array->[0];
+    throws_ok { Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), units => 11 ) ) }
+        qr/has 10 of 10 units free: 11 asked for/, 'eleven units of an empty ten are refused';
+    is $studio->query( 'SELECT count(*) FROM entitlements WHERE offer_version_id = ?',
+        $version->id )->array->[0], $before, 'no entitlement row is left';
+    is_deeply rows_for($resource), [ 0, 0 ], 'no units are left';
+    is $resource->free_units($studio), 10, 'and free units are unchanged';
+};
+
+subtest 'held unit cannot be granted twice' => sub {
+    my ( $resource, $version ) = seats(10);
+    Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), unit_numbers => [3] ) );
+    throws_ok {
+        Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), unit_numbers => [ 4, 3 ] ) )
+    } qr/unit 3 of Wheel seats .* is not free/, 'a unit held by an in-effect entitlement is refused';
+    throws_ok {
+        Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), unit_numbers => [ 5, 5 ] ) )
+    } qr/unit 5 of Wheel seats .* is not free/, 'as is naming one unit twice';
+    throws_ok {
+        Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), unit_numbers => [11] ) )
+    } qr/unit 11 of Wheel seats .* is not free/, 'and a unit past the capacity';
+    is_deeply rows_for($resource), [ 1, 0 ], 'only the first grant holds a unit';
+};
+
+subtest 'concurrent partial grants leave one' => sub {
+    my ( $resource, $version ) = seats(3);
+    my ( $sam, $pat ) = ( person(), person() );
+    my $grant = sub ($holder) {
+        sub ($handle) { Registry::DAO::Entitlement->grant( $handle, sale( $version, $holder, units => 2 ) ) }
+    };
+
+    is race( $grant->($sam), $grant->($pat) ), 'refused', 'the second grant of two is refused';
+    is_deeply rows_for($resource), [ 2, 0 ], 'exactly one grant holds units';
+    is $resource->free_units($studio), 1, 'and one unit is free';
+};
+
+subtest 'future dated entitlement occupies units' => sub {
+    my ( $resource, $version ) = seats(2);
+    Registry::DAO::Entitlement->grant( $studio,
+        sale( $version, person(), units => 2, starts_at => $FUTURE ) );
+    throws_ok { Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), units => 1 ) ) }
+        qr/has 0 of 2 units free/, 'a grant for now cannot take seats sold for later';
+    throws_ok {
+        Registry::DAO::Entitlement->grant( $studio,
+            sale( $version, person(), units => 1, starts_at => '2098-01-01T00:00:00Z' ) )
+    } qr/has 0 of 2 units free/, 'nor can another future-dated grant';
+};
+
+subtest 'holder check false after entitlement ends' => sub {
+    my ( $resource, $version ) = seats(10);
+    my $sam = person();
+    Registry::DAO::Entitlement->grant( $studio,
+        sale( $version, $sam, units => 1, ends_at => '2021-01-01T00:00:00Z' ) );
+    ok !Registry::DAO::Entitlement->holds_unit_of( $studio, $sam, $resource->id ),
+        'a holder whose entitlement has ended holds no unit';
+};
+
+subtest 'hold and grant race for the last unit leave one' => sub {
+    my ( $resource, $version ) = seats(1);
+    my ( $sam, $run ) = ( person(), run_id() );
+    my $grant = sub ($handle) {
+        Registry::DAO::Entitlement->grant( $handle, sale( $version, $sam, units => 1 ) );
+    };
+    my $hold = sub ($handle) { hold( $handle, $resource, 1, $run ) };
+
+    is race( $hold, $grant ), 'refused', 'a sale behind a hold on the last unit is refused';
+    is_deeply rows_for($resource), [ 0, 1 ], 'the hold won';
+
+    my ( $seat, $version2 ) = seats(1);
+    my $run2 = run_id();
+    my $sale2 = sub ($handle) {
+        Registry::DAO::Entitlement->grant( $handle, sale( $version2, $sam, units => 1 ) );
+    };
+    is race( $sale2, sub ($handle) { hold( $handle, $seat, 1, $run2 ) } ), 'refused',
+        'a hold behind a sale of the last unit is refused';
+    is_deeply rows_for($seat), [ 1, 0 ], 'the sale won';
+    is $seat->free_units($studio), 0, 'and capacity is never exceeded';
+};
+
+subtest 'invalid hold refused' => sub {
+    my ( $resource ) = seats(2);
+    for my $units ( 0, -1 ) {
+        throws_ok { hold( $studio, $resource, $units ) } qr/at least one unit/,
+            "a hold of $units units is refused";
+    }
+    throws_ok { hold( $studio, $resource, 3 ) } qr/has 2 of 2 units free: 3 asked for/,
+        'a hold larger than the free units is refused';
+    is_deeply rows_for($resource), [ 0, 0 ], 'and nothing is stored';
 };
 
 done_testing;

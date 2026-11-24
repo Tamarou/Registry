@@ -28,6 +28,10 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
 
     method is_published { defined $published_at }
 
+    # Whether accepting this version buys units of $resource. The one place
+    # that answers it: 01a20447-8f10 widens it to a class offer's coverage.
+    method buys ($resource) { $resource eq $resource_id }
+
     # Drafting and publishing both read the offer's versions and then write
     # one, so two writers to the same offer take turns on the offer row. Without
     # it the second computes the same next number, or retires a version the

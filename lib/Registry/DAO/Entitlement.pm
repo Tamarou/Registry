@@ -33,6 +33,7 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
 
     # Grants $data's entitlement holding units of $data->{resource_id}: either
     # `units` (a count, lowest free numbers first) or `unit_numbers` (named).
+    # All or nothing, under the resource's lock.
     sub grant ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
         my %row = %$data;
@@ -40,13 +41,17 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
 
         my $tx       = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $resource = Registry::DAO::Resource->locked( $db, $resource_id );
-        my %held     = map { $_ => 1 } $resource->held_units($db)->@*;
-        my $free     = $resource->free_units($db);
-        my $wanted   = $numbers ? @$numbers : $count;
-        croak sprintf '%s (%s) has %d of %d units free: %d asked for',
-            $resource->name, $resource_id, $free, $resource->capacity, $wanted
-            if $wanted > $free;
+        my $version  = Registry::DAO::OfferVersion->find( $db, { id => $row{offer_version_id} } );
+        croak "offer version $row{offer_version_id} does not buy resource $resource_id"
+            unless $version && $version->buys($resource_id);
+        $resource->claim( $db, $numbers ? scalar @$numbers : $count );
+
+        my %held = map { $_ => 1 } $resource->held_units($db)->@*;
         $numbers //= [ ( grep { !$held{$_} } 1 .. $resource->capacity )[ 0 .. $count - 1 ] ];
+        for my $n (@$numbers) {
+            croak sprintf 'unit %s of %s (%s) is not free', $n, $resource->name, $resource_id
+                if $n !~ /\A[1-9][0-9]*\z/ || $n > $resource->capacity || $held{$n}++;
+        }
 
         my $entitlement = $class->create( $db, \%row );
         $db->insert( 'entitlement_units',

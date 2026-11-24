@@ -6,6 +6,8 @@ use utf8;
 use Object::Pad;
 
 class Registry::DAO::Resource :isa(Registry::DAO::Object) {
+    use Carp qw( croak );
+
     field $id :param :reader;
     field $name :param :reader;
     field $kind :param :reader;    # 'finite' or 'unbounded'
@@ -19,7 +21,20 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
     # with no other claim in between.
     sub locked ( $class, $db, $id ) {
         my $row = $db->query( 'SELECT * FROM resources WHERE id = ? FOR UPDATE', $id )->hash;
-        return $row && $class->new(%$row);
+        croak "no resource $id here" unless $row;
+        return $class->new(%$row);
+    }
+
+    # Refuses $wanted units unless it is a whole number of at least one and
+    # that many are free. Call it holding locked()'s lock.
+    method claim ( $db, $wanted ) {
+        croak "$name ($id) is unbounded: it has no units to hold" unless $kind eq 'finite';
+        croak "a claim on $name ($id) holds at least one unit"
+            unless defined $wanted && $wanted =~ /\A[1-9][0-9]*\z/;
+        my $free = $self->free_units($db);
+        croak sprintf '%s (%s) has %d of %d units free: %d asked for',
+            $name, $id, $free, $capacity, $wanted
+            if $wanted > $free;
     }
 
     # Unit numbers held by entitlements in effect now or later; ended ones
