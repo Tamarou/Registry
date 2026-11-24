@@ -92,6 +92,23 @@ subtest 'platform holds uncapped email sending' => sub {
     is $held->[0]{capacity}, undef, 'with no capacity';
 };
 
+my @PRODUCT_DESIGN = qw( offer-publishing program-creation program-setup session-creation event-creation );
+
+subtest 'platform holds the right to run product design' => sub {
+    for my $slug (@PRODUCT_DESIGN) {
+        is $db->query( 'SELECT count(*) FROM registry.resources WHERE name = ?', "run:$slug" )
+            ->array->[0], 1, "one run resource for $slug";
+        my $held = held_for("run:$slug");
+        is scalar @$held, 1, "registry holds one in-effect right to run $slug";
+    }
+    is $db->query( q{
+        SELECT count(*) FROM registry.entitlements e
+          JOIN registry.offer_versions v ON v.id = e.offer_version_id
+          JOIN registry.resources r      ON r.id = v.resource_id
+         WHERE r.name LIKE 'run:%' AND e.holder_tenant_id IS DISTINCT FROM ?
+    }, PLATFORM_UUID )->array->[0], 0, 'no other tenant holds a run right';
+};
+
 subtest 'self offers carry holder is offerer and solo does not' => sub {
     my $solo = $db->query( q{
         SELECT v.conditions FROM registry.offer_versions v
