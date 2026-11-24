@@ -28,6 +28,7 @@ use Test::Mojo;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::StripeWebhook;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
@@ -102,20 +103,11 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
 ok $tenant, 'tenant provisioned (not yet Stripe Connect ready)';
 ok !$tenant->stripe_connect_ready, 'precondition: tenant not Stripe Connect ready';
 
-# Link the tenant to the seeded revenue-share plan so the charge-time resolver
-# has a rate to apply. A tenant provisioned directly like this has
-# platform_pricing_plan_id NULL (the one-time backfill ran before it existed),
-# which would otherwise resolve to the Free 0% plan.
-$db->query(q{
-    UPDATE registry.tenants SET platform_pricing_plan_id = (
-        SELECT id FROM registry.pricing_plans
-         WHERE plan_scope = 'tenant'
-           AND pricing_model_type = 'percentage'
-           AND metadata->>'default' IS DISTINCT FROM 'true'
-         ORDER BY created_at
-         LIMIT 1
-    ) WHERE slug = ?
-}, $slug);
+# State the platform terms the tenant charges under, so the charge-time
+# resolver has a rate to apply. A tenant provisioned directly like this holds
+# none, which would otherwise resolve to the Free 0% plan.
+my $STATED_RATE = '0.0137';
+give_tenant_terms( $db, $slug, { rate => $STATED_RATE } );
 
 # Tenant-schema DAO
 my $tenant_dao = Registry::DAO->new(url => $test_db->uri, schema => $slug);
@@ -464,30 +456,16 @@ subtest 'collect: payment step passes, correct fee and metadata captured' => sub
     ok $captured_params,
         'Stripe create_payment_intent_async was called and params captured';
 
-    # Both operands read rather than restated: the amount from the fixture, the
-    # rate through the same resolver the charge path calls. A hardcoded rate here
-    # fails on a launch decision rather than on the behaviour under test, and the
-    # obvious repair -- editing the number -- is the drift that let three rates be
-    # live at once. The half-up rule is unit-tested against literals in
-    # t/dao/payment-intent-destination-charge.t, which is where it belongs.
-    # Read from the plan row directly, NOT through
-    # revenue_share_fraction_for_tenant. _connect_params builds
-    # application_fee_amount from that same resolver, so calling it here would
-    # compute the expectation with the function under test -- a 3x bug in the
-    # resolver moves both sides together and this passes. The plan row is an
-    # oracle the charge path does not share.
-    my $fraction = $db->query( q{
-        SELECT (p.pricing_configuration->>'percentage')::numeric
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
-         WHERE t.slug = ?
-    }, $slug )->array->[0];
+    # The amount from the fixture, the rate as this test stated it. Neither is
+    # read back through the resolver _connect_params calls, so a bug there
+    # cannot move both sides together. The half-up rule is unit-tested against
+    # literals in t/dao/payment-intent-destination-charge.t.
     my $expected_fee =
-        Registry::DAO::Payment::application_fee_cents( $PLAN_AMOUNT_CENTS, $fraction );
+        Registry::DAO::Payment::application_fee_cents( $PLAN_AMOUNT_CENTS, $STATED_RATE );
     cmp_ok $expected_fee, '>', 0,
         'the tenant carries a chargeable rate, not the Free-plan zero';
     is $captured_params->{'application_fee_amount'}, $expected_fee,
-        "application_fee_amount is the tenant plan's own rate on the charge";
+        "application_fee_amount is the tenant's stated rate on the charge";
 
     # Bracket-notation metadata keys for webhook routing
     ok exists $captured_params->{'metadata[payment_id]'},
