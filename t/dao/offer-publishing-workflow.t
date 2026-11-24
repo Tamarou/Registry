@@ -10,7 +10,7 @@ use Test::More;
 use POSIX ();
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers qw( import_all_workflows join_tenant );
+use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer platform_solo_offer_version_id );
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::OfferVersion;
@@ -232,6 +232,73 @@ subtest 'double publish leaves one version' => sub {
     waitpid $pid, 0;
     is $? >> 8, 0, 'the concurrent submission completes';
     is published_count(), $before + 1, 'two concurrent submissions publish one version';
+};
+
+subtest 'skeleton publishes with an explicit none refund policy' => sub {
+    my $version = publish_offer( $dao, 'clay_studio', $admin, {
+        'offer-basics' => { resource_id => $seats->id, offer_name => 'Glaze night' },
+        'offer-price'  => { price_cents => 1500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 2 },
+    } );
+    ok $version->is_published, 'the offer publishes';
+    is_deeply $version->policies->{refund}, { kind => 'none' }, 'with an explicit none refund policy';
+};
+
+subtest 'skeleton refuses to publish without a refund choice' => sub {
+    my $before = published_count();
+    my $ok = eval {
+        publish_offer( $dao, 'clay_studio', $admin, {
+            'offer-basics' => { resource_id => $seats->id, offer_name => 'Glaze night again' },
+            'offer-price'  => { price_cents => 1500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 2 },
+            refund         => undef,
+        } );
+        1;
+    };
+    ok !$ok, 'publishing without a refund choice is refused';
+    like $@, qr/refund/i, 'for want of the refund choice';
+    is published_count(), $before, 'and publishes nothing';
+};
+
+subtest 'publish offer helper drives the workflow' => sub {
+    my $version = publish_offer( $dao, 'clay_studio', $admin, {
+        'offer-basics' => { resource_id => $seats->id, offer_name => 'Helper night' },
+        'offer-price'  => { price_cents => 900, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
+    } );
+    is $version->price_cents, 900, 'the helper returns the version it published';
+    is_deeply $version->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
+        'with the one-time plan its default offers';
+    is $tdb->query( q{
+        SELECT count(*) FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id
+         WHERE w.slug = 'offer-publishing' AND r.data->>'published_offer_version_id' = ?
+    }, $version->id )->array->[0], 1, 'through an offer-publishing run';
+};
+
+subtest 'platform publishes through the same workflow' => sub {
+    my $alex = Test::Registry::Fixtures::create_user( $dao,
+        { username => 'alex', name => 'Alex', email => 'alex@registry.test', user_type => 'admin' } );
+    join_tenant( $dao, $alex, 'admin' );
+    my $rdb      = $dao->db;
+    my $coaching = Test::Registry::Fixtures::create_resource( $rdb,
+        { name => 'Onboarding call', kind => 'finite', capacity => 1 } );
+
+    my $before = published_count($rdb);
+    walk( $dao, $alex, terms(
+        'offer-basics' => { resource_id => $coaching->id, offer_name => 'Onboarding call' },
+        'offer-price'  => { units_per_acceptance => 1, per_booking_cap => 1 },
+    ) );
+    is published_count($rdb), $before + 1, 'registry\'s admin publishes an offer version';
+    my ($v) = Registry::DAO::OfferVersion->find( $rdb, { resource_id => $coaching->id } );
+    ok $v && $v->is_published, 'owned by the platform tenant, in the registry schema';
+
+    my $classes = sub ($db) {
+        $db->query( q{
+            SELECT s.slug, s.class FROM workflow_steps s JOIN workflows w ON w.id = s.workflow_id
+             WHERE w.slug = 'offer-publishing' ORDER BY s.slug
+        } )->arrays->to_array;
+    };
+    is_deeply $classes->($rdb), $classes->($tdb), 'through the same steps and step classes as a tenant';
+
+    is platform_solo_offer_version_id($dao), '00000000-0000-0000-0003-000000000001',
+        'the platform\'s current Solo version is the bootstrap\'s';
 };
 
 done_testing;
