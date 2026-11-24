@@ -190,4 +190,63 @@ subtest 'connect account updated mirrors tenant readiness' => sub {
         "the tenant event.account names is ready";
 };
 
+my $other_account = 'acct_conn_wh_other_' . $$;
+Registry::DAO::Tenant->provision($db, {
+    name  => "Connect WH Other Tenant $$",
+    slug  => "conn_wh_other_$$",
+    users => [ $admin ],
+    stripe_connect_account_id => $other_account,
+});
+
+sub all_readiness () {
+    return $db->query(q{SELECT id, stripe_charges_enabled, stripe_details_submitted
+                          FROM registry.tenants ORDER BY id})->hashes->to_array;
+}
+
+sub set_ready (@accounts) {
+    $db->update('registry.tenants',
+        { stripe_charges_enabled => 1, stripe_details_submitted => 1 },
+        { stripe_connect_account_id => { -in => \@accounts } });
+}
+
+subtest 'account updated for unknown account changes nothing' => sub {
+    set_ready($account);
+    my $before = all_readiness();
+
+    Test::Registry::StripeWebhook::post_connect($t, account_updated('acct_nobody_' . $$,
+        charges_enabled => Mojo::JSON::false, details_submitted => Mojo::JSON::false))
+        ->status_is(200);
+
+    is_deeply all_readiness(), $before, 'no tenant row changed';
+};
+
+subtest 'charges disabled clears flag only for named tenant' => sub {
+    set_ready($account, $other_account);
+
+    Test::Registry::StripeWebhook::post_connect($t, account_updated($account,
+        charges_enabled => Mojo::JSON::false, details_submitted => Mojo::JSON::true))
+        ->status_is(200);
+
+    is_deeply readiness($account),
+        { stripe_charges_enabled => 0, stripe_details_submitted => 1 },
+        'the named tenant can no longer take charges';
+    is_deeply readiness($other_account),
+        { stripe_charges_enabled => 1, stripe_details_submitted => 1 },
+        'and the other tenant is untouched';
+};
+
+# Absence is not false: an event that does not mention a flag says nothing
+# about it, and reading it as false would close a ready tenant's checkout.
+subtest 'account updated without readiness keys leaves flags' => sub {
+    set_ready($account);
+
+    Test::Registry::StripeWebhook::post_connect($t, account_updated($account,
+        business_profile => { name => 'Renamed Studio' }))
+        ->status_is(200);
+
+    is_deeply readiness($account),
+        { stripe_charges_enabled => 1, stripe_details_submitted => 1 },
+        'both flags are left as they were';
+};
+
 done_testing;

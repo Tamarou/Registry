@@ -704,13 +704,14 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $account = $event->{data}{object} // {};
         my $acct_id = $account->{id} or return;
 
+        # A flag the event leaves out stays as it was: absence is not false.
+        my sub flag ($key) { defined $account->{$key} ? ( $account->{$key} ? 1 : 0 ) : undef }
         my $updated = $db->query(
             q{UPDATE registry.tenants
-              SET stripe_charges_enabled = ?, stripe_details_submitted = ?
+              SET stripe_charges_enabled   = COALESCE(?, stripe_charges_enabled),
+                  stripe_details_submitted = COALESCE(?, stripe_details_submitted)
               WHERE stripe_connect_account_id = ?},
-            ($account->{charges_enabled}   ? 1 : 0),
-            ($account->{details_submitted} ? 1 : 0),
-            $acct_id,
+            flag('charges_enabled'), flag('details_submitted'), $acct_id,
         )->rows;
         $self->app->log->info("account.updated for unknown connected account $acct_id")
             unless $updated;
