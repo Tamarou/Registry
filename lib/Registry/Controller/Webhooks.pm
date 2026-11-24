@@ -207,8 +207,12 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # A failed lookup answers 500 unclaimed, so Stripe retries.
         # shortcut: reads only the top-level invoice.subscription; when the
         # Connect endpoint's API version moves past acacia, read the new spelling.
+        # Only an invoice the schedule billed is an instalment: a seller's own
+        # invoice against the subscription (billing_reason manual, ...) is not.
         my $sub_id = $event->{data}{object}{subscription};
-        if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/ && $sub_id && !ref $sub_id ) {
+        if ( $event->{type} =~ /^invoice\.(paid|payment_failed)$/ && $sub_id && !ref $sub_id
+                && ( $event->{data}{object}{billing_reason} // '' )
+                    =~ /\Asubscription_(?:create|cycle)\z/ ) {
             $self->render_later;
             return Registry::Service::Stripe->from_env->for_account($account)
                 ->retrieve_subscription_async($sub_id)->then( sub ($subscription) {

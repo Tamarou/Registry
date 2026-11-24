@@ -232,12 +232,29 @@ subtest 'month two failed then month three paid completes month three only' => s
         "month three's row completes and month two stays failed";
 };
 
+# The seller can raise their own invoice against Registry's subscription on
+# their account. Only what the schedule itself billed is an instalment.
+subtest 'an invoice the schedule did not bill changes no instalment' => sub {
+    build_set();
+
+    for my $reason (qw( manual subscription_update )) {
+        deliver( 'invoice.paid', invoice( "in_$reason", "pi_$reason",
+            billing_reason => $reason, amount_paid => 3333, status => 'paid' ) );
+        deliver( 'invoice.payment_failed', invoice( "in_${reason}_failed", "pi_${reason}_failed",
+            billing_reason => $reason ) );
+        is_deeply statuses(), [qw( completed pending pending )], "$reason marks no instalment";
+    }
+
+    deliver( 'invoice.paid', invoice( 'in_create', 'pi_create', billing_reason => 'subscription_create' ) );
+    is_deeply statuses(), [qw( completed completed pending )], 'subscription_create does';
+};
+
 # Stripe's invoice at 2024-12-18.acacia: `subscription`, and no schedule field.
 subtest 'an invoice naming only its subscription completes the earliest owed row' => sub {
     build_set();
     @lookups = ();
 
-    deliver( 'invoice.paid', { id => 'in_by_sub', subscription => $SUB, payment_intent => 'pi_by_sub' } );
+    deliver( 'invoice.paid', invoice( 'in_by_sub', 'pi_by_sub' ) );
 
     is_deeply statuses(), [qw( completed completed pending )],
         'the schedule the subscription names marks the earliest owed row';
@@ -251,7 +268,7 @@ subtest 'a subscription with no schedule, or another schedule, changes nothing' 
     for my $sub (qw( sub_studio_unscheduled sub_studio_own )) {
         Test::Registry::StripeWebhook::post_connect( $t, {
             type => 'invoice.paid', account => $A->{account},
-            data => { object => { subscription => $sub, payment_intent => "pi_$sub" } } } )
+            data => { object => invoice( "in_$sub", "pi_$sub", subscription => $sub ) } } )
             ->status_is(200)->content_is('OK');
         is_deeply statuses(), [qw( completed pending pending )], "$sub marks no instalment";
     }
@@ -262,7 +279,7 @@ subtest 'a subscription Stripe cannot return asks for a retry' => sub {
     build_set();
 
     my $event = { type => 'invoice.paid', account => $A->{account},
-        data => { object => { subscription => 'sub_unreadable', payment_intent => 'pi_unreadable' } } };
+        data => { object => invoice( 'in_unreadable', 'pi_unreadable', subscription => 'sub_unreadable' ) } };
     Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(500);
 
     is_deeply statuses(), [qw( completed pending pending )], 'no instalment is marked';
@@ -277,7 +294,7 @@ subtest 'unmatched connect invoice changes nothing and skips billing' => sub {
 
     for my $type (qw( invoice.paid invoice.payment_failed )) {
         my $event = { type => $type, account => $A->{account},
-            data => { object => { subscription => 'sub_studio_own', payment_intent => "pi_studio_$type" } } };
+            data => { object => invoice( "in_studio_$type", "pi_studio_$type", subscription => 'sub_studio_own' ) } };
         Test::Registry::StripeWebhook::post_connect( $t, $event )
             ->status_is(200)->content_is('OK');
 
@@ -305,10 +322,8 @@ subtest 'invoice matching only another tenant changes neither' => sub {
 subtest 'failed after paid never reverts a completed instalment' => sub {
     build_set();
 
-    deliver( 'invoice.paid', {
-        id => 'in_two', subscription => $SUB, payment_intent => 'pi_two_late' } );
-    deliver( 'invoice.payment_failed', {
-        id => 'in_two', subscription => $SUB, payment_intent => 'pi_two_late' } );
+    deliver( 'invoice.paid', invoice( 'in_two', 'pi_two_late' ) );
+    deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two_late' ) );
 
     is_deeply statuses(), [qw( completed completed pending )],
         'the paid instalment stays completed and the next is not failed';
@@ -324,7 +339,7 @@ subtest 'platform endpoint no longer marks instalments' => sub {
 
     Test::Registry::StripeWebhook::post_connect( $t, {
         type => 'invoice.paid',
-        data => { object => { subscription => $SUB, payment_intent => 'pi_platform_inst' } } },
+        data => { object => invoice( 'in_platform_inst', 'pi_platform_inst' ) } },
         path => '/webhooks/stripe', secret => $ENV{STRIPE_WEBHOOK_SECRET} )->status_is(200);
 
     is_deeply statuses($reg), [qw( completed pending pending )], 'no registry instalment is marked';

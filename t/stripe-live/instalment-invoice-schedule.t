@@ -87,6 +87,8 @@ subtest "an invoice's subscription names the schedule Registry stored" => sub {
     is $invoice->{subscription}, $sub_id, "and the invoice's subscription is that subscription";
     ok !exists $invoice->{schedule} && !exists $invoice->{subscription_schedule},
         'while the invoice itself carries no schedule field';
+    is $invoice->{billing_reason}, 'subscription_create',
+        'and its billing_reason is one the Connect webhook accepts as an instalment';
 };
 
 done_testing;
