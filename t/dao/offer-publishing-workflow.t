@@ -41,7 +41,7 @@ sub walk ( $workflow_dao, $user, %by_step ) {
     my $processor = Registry::WorkflowProcessor->new( dao => $workflow_dao );
     my $run       = $processor->new_run( $workflow, { user => { id => $user->id, name => $user->name } } );
     my %result;
-    for my $slug (qw( offer-basics offer-price one-time-payment refund-policy use-policy publish )) {
+    for my $slug (qw( offer-basics offer-price one-time-payment refund-policy change-policy use-policy publish )) {
         my $step = $workflow->get_step( $workflow_dao->db, { slug => $slug } );
         $result{$slug} = $run->process( $workflow_dao->db, $step, $by_step{$slug} // {} );
     }
@@ -55,6 +55,7 @@ sub terms (%override) {
         'offer-price'      => { price_cents => 2500, currency => 'USD', units_per_acceptance => 2, per_booking_cap => 3 },
         'one-time-payment' => { one_time => 'offered' },
         'refund-policy'    => { refund => 'none' },
+        'change-policy'    => { change => 'none' },
         'use-policy'       => { use => 'none' },
         'publish'          => { action => 'publish' },
     );
@@ -81,8 +82,9 @@ subtest 'admin publishes a one time priced offer version' => sub {
     is $v->per_booking_cap,      3,          'and a per-booking cap of three';
     is_deeply $v->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
         'paid for once';
-    is_deeply $v->policies, { refund => { kind => 'none' }, use => { kind => 'none' } },
-        'with explicit none refund and use policies';
+    is_deeply $v->policies,
+        { refund => { kind => 'none' }, change => { kind => 'none' }, use => { kind => 'none' } },
+        'with explicit none refund, change and use policies';
     is $tdb->query( 'SELECT o.name FROM offers o WHERE o.id = ?', $v->offer_id )->array->[0],
         'Couples wheel night', 'under the offer name given';
 
@@ -178,6 +180,7 @@ subtest 'staff run publishes nothing' => sub {
         offer_price      => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
         one_time_payment => { one_time => 'offered' },
         refund_policy    => { kind => 'none' },
+        change_policy    => { kind => 'none' },
         use_policy       => { use => 'none' },
     } } );
     my $composed = $run->process( $tdb, $own->first_step($tdb), { action => 'publish' } );

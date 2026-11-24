@@ -39,6 +39,7 @@ sub walk (%override) {
         'offer-price'      => { price_cents => 2500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 2 },
         'one-time-payment' => { one_time => 'offered' },
         'refund-policy'    => { refund => 'none' },
+        'change-policy'    => { change => 'none' },
         'use-policy'       => { use => 'none' },
         'publish'          => { action => 'publish' },
     );
