@@ -7,6 +7,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Registry::DAO::Workflow;
     use Registry::DAO::OutcomeDefinition;
     use Registry::DAO;
+    use Registry::DAO::Payment;
     field $id :param :reader = undef;
     field $name :param :reader;
     field $slug :param :reader //= __PACKAGE__->slug_for_name($name);
@@ -808,8 +809,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             # every writer of a slug keeps agreeing.
             my $schema = $db->dbh->quote_identifier( $row->{slug} );
 
+            # Every status in which money moved, refunds included: the platform
+            # keeps its fee on a refund unless Stripe reports it returned, and
+            # refund_pending is a captured charge whose fee is still held.
             my $c = eval {
-                $db->query( <<~"SQL" )->hash;
+                $db->query( <<~"SQL", Registry::DAO::Payment->_settled_statuses )->hash;
                     SELECT COUNT(*)                                  AS charges,
                            -- What the platform kept: each fee less what
                            -- Stripe reports returned (NULL is none), and
@@ -820,7 +824,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                            COUNT(*) FILTER (
                                WHERE platform_fee_cents IS NULL )    AS unrecorded
                       FROM $schema.payments
-                     WHERE status = 'completed'
+                     WHERE status = ANY(?)
                     SQL
             };
 

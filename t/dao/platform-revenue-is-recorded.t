@@ -181,9 +181,10 @@ sub revenue_of ( $slug, @rows ) {
     $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug, $parent->id );
     my $tdb = $dao->connect_schema($slug)->db;
     for my $row (@rows) {
-        my ( $fee, $returned ) = @$row;
+        my ( $fee, $returned, $status ) = @$row;
         $tdb->insert( 'payments', {
-            user_id => $parent->id, amount_cents => 10000, status => 'completed',
+            user_id => $parent->id, amount_cents => 10000,
+            status => $status // 'completed',
             platform_fee_cents => $fee, platform_fee_refunded_cents => $returned,
         } );
     }
@@ -205,6 +206,28 @@ subtest 'null refunded fee counts full fee and net is never negative' => sub {
     # nets that charge to nothing, not to a debt against the other.
     $t = revenue_of( 'over_net_studio', [ 250, undef ], [ 100, 300 ] );
     is $t->{fees_cents}, 250, 'a charge never nets below zero';
+};
+
+subtest 'refunded and partially refunded payments count the fee the platform kept' => sub {
+    # The platform keeps its fee on a refund unless Stripe reports it returned,
+    # so a refunded charge is still revenue: fee less refunded fee, floored at 0.
+    # refund_pending is money captured with a refund not yet settled; the fee is
+    # still held, so it counts the same way.
+    my $t = revenue_of( 'refunded_studio',
+        [ 250, undef, 'refunded' ],
+        [ 250, 250,   'refunded' ],
+        [ 300, 100,   'partially_refunded' ],
+        [ 200, undef, 'refund_pending' ],
+        [ 100, 400,   'partially_refunded' ],
+        [ 999, undef, 'pending' ],
+        [ 999, undef, 'failed' ],
+        [ undef, undef, 'refunded' ],
+    );
+    is $t->{fees_cents}, 250 + 0 + 200 + 200 + 0,
+        'each refund status nets its fee; pending and failed are not revenue';
+    is $t->{charges}, 6, 'every charge where money moved is counted';
+    is $t->{unrecorded}, 1,
+        'a refunded charge with no recorded fee is a gap, like a completed one';
 };
 
 done_testing;
