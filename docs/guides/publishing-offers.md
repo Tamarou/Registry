@@ -97,9 +97,13 @@ selected. In class mode this screen instead says which class the offer covers.
 If the tenant already has published offers, an **Offer** choice appears:
 
 - **A new offer, named below.** Fill in **Offer name**.
-- **A new version of _name_.** The new version keeps the offer's name, and the
-  **Price your offer** screen starts from the current version's price. The
-  payment and policy screens are asked again.
+- **A new version of _name_.** The new version keeps the offer's name, and
+  every later screen starts from the current version's terms: the price, each
+  payment plan with its rate, and each policy with its cutoff, window and fee
+  are already chosen and filled in. Change only what differs; submitting each
+  screen unchanged publishes a version with the same terms. A screen you have
+  already answered in this run shows your answer; choosing the offer again on
+  **Name your offer** starts the later screens from its current terms once more.
 
 ### Price your offer
 

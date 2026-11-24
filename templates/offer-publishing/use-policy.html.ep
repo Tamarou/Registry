@@ -3,6 +3,7 @@
 % extends 'layouts/workflow';
 % title 'How it is used';
 % stash description => 'Say what counts as using what this offer buys.';
+% my $chosen = ( stash('use_policy') // {} )->{use} // '';
 
 % if (my @errors = @{ stash('errors') // [] }) {
 <div class="alert alert-error" role="alert">
@@ -18,11 +19,11 @@
   <fieldset>
     <legend>Use policy</legend>
     <div>
-      <input type="radio" id="use-optional_attendance" name="use" value="optional_attendance" required>
+      <input type="radio" id="use-optional_attendance" name="use" value="optional_attendance" required<%= $chosen eq 'optional_attendance' ? ' checked' : '' %>>
       <label for="use-optional_attendance">Optional attendance: a booking may be marked attended; nothing depends on it</label>
     </div>
     <div>
-      <input type="radio" id="use-none" name="use" value="none" required>
+      <input type="radio" id="use-none" name="use" value="none" required<%= $chosen eq 'none' ? ' checked' : '' %>>
       <label for="use-none">None: nothing is tracked as use</label>
     </div>
   </fieldset>

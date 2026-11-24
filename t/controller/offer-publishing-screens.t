@@ -15,6 +15,7 @@ use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant );
 use Registry;
 use Registry::DAO;
+use Registry::DAO::OfferVersion;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -135,6 +136,63 @@ subtest 'the review shows the percentage plan, policy names and the change fee i
         'Use policy'          => 'None',
         'Expiry policy'       => 'At the end of the occurrence',
     }, 'every term in plain words';
+};
+
+# The page form's fields as a browser would submit them untouched: checked
+# radios, and every other named input that carries a value.
+sub prefilled ($t) {
+    my %v;
+    for my $in ( $t->tx->res->dom->find('#workflow-content form input[name]')->each ) {
+        next if ( $in->attr('type') // '' ) eq 'radio' && !exists $in->attr->{checked};
+        next if $in->attr('name') eq 'csrf_token';    # the test client sends its own
+        my $value = $in->val;
+        $v{ $in->attr('name') } = $value if defined $value && length $value;
+    }
+    return %v;
+}
+
+subtest 'a new version pre-fills every payment and policy screen from the current version' => sub {
+    my $class = $db->insert( 'projects', { name => 'Clay class', slug => 'clay-class' }, { returning => 'id' } )->hash->{id};
+    my %v1 = (
+        'one-time-payment'            => { one_time => 'offered' },
+        'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.5' },
+        'refund-policy'               => { refund => 'full_until_cutoff', cutoff_hours => '36' },
+        'change-policy'               => { change => 'window', window_hours => '48', fee_cents => '1550', targets => 'same_offer' },
+        'use-policy'                  => { use => 'optional_attendance' },
+        'expiry-policy'               => { expiry => 'end_of_occurrence' },
+    );
+    my @screens = qw( one-time-payment percentage-of-sales-payment refund-policy change-policy use-policy expiry-policy );
+
+    my $t = client($admin);
+    $t->get_ok('/offer-publishing')->status_is(200);
+    submit_step( $t, 'resource', resource_mode => 'class', class_project_id => $class );
+    submit_step( $t, 'offer-basics', offer_name => 'Clay nights' );
+    submit_step( $t, 'offer-price', %PRICE );
+    submit_step( $t, $_, $v1{$_}->%* ) for @screens;
+    submit_step( $t, 'publish', action => 'publish' );
+    my $offer = $db->query( q{SELECT id FROM offers WHERE name = 'Clay nights'} )->hash->{id};
+
+    $t = client($admin);
+    $t->get_ok('/offer-publishing')->status_is(200);
+    submit_step( $t, 'resource', resource_mode => 'class', class_project_id => $class );
+    submit_step( $t, 'offer-basics', offer_id => $offer );
+    submit_step( $t, 'offer-price', prefilled($t) );
+    for my $screen (@screens) {
+        is_deeply { prefilled($t) }, $v1{$screen}, "$screen is pre-filled with the current version's answer";
+        submit_step( $t, $screen, prefilled($t) );
+    }
+    like submit_step( $t, 'publish', action => 'publish' ), qr{/complete\z}, 'the unchanged version publishes';
+
+    my @versions = map { Registry::DAO::OfferVersion->find( $db, { offer_id => $offer, version => $_ } ) } 1, 2;
+    ok $versions[1], 'a second version is published' or return;
+    my $terms = sub ($v) {
+        return {
+            ( map { $_ => $v->$_ } qw( price_cents currency units_per_acceptance per_booking_cap ) ),
+            policies => $v->policies,
+            plans    => [ sort map { "$_->{kind}:" . ( $_->{fraction} // '' ) } $v->payment_plans($db)->@* ],
+        };
+    };
+    is_deeply $terms->( $versions[1] ), $terms->( $versions[0] ), 'with the same terms as the version it supersedes';
 };
 
 subtest 'offer name is escaped' => sub {

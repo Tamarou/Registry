@@ -6,6 +6,15 @@ use utf8;
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PercentageOfSalesPaymentPlan :isa(Registry::DAO::WorkflowStep) {
+    use Registry::DAO::WorkflowSteps::PublishOfferVersion;
+
+    # The recorded rate, as the percent the form asks for.
+    method prepare_template_data ( $db, $run, $params = {} ) {
+        my $data     = $run->data || {};
+        my $fraction = ( $data->{percentage_of_sales_payment} // {} )->{fraction};
+        return { %$data, rate_percent => defined $fraction
+                ? Registry::DAO::WorkflowSteps::PublishOfferVersion->percent_of($fraction) =~ s/%\z//r : '' };
+    }
 
     method process ( $db, $form_data, $run = undef ) {
         my $choice = $form_data->{percentage_of_sales} // '';
