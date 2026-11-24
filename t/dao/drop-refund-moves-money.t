@@ -242,10 +242,80 @@ subtest 'a refund Stripe refuses stays pending, never processed' => sub {
         refund_requested => 1, refund_amount_cents => 5000 );
 
     is scalar @calls, 1, 'Stripe was asked';
-    is $result->{refund_processed}, 0, 'the step does not claim success';
-    ok $result->{error}, 'the failure is reported rather than swallowed';
+    ok !$result->{refund_processed}, 'the step does not claim success';
+    ok $result->{errors}, 'the failure is reported rather than swallowed';
     is refund_status_of($dropped), 'pending',
         'the enrollment still owes the money -- processed would be a lie';
+};
+
+# Driven through the run, not the bare step: whether the run advances is
+# decided by WorkflowRun::_persist_step_result, and that is where a failed
+# refund used to slip through to the waitlist and notification steps.
+sub drive_run ( %data ) {
+    my $run = $workflow->new_run($db);
+    $run->update_data( $db, \%data );
+    my $step = Registry::DAO::WorkflowSteps::ProcessDropRefund->new(
+        id => $step_row->id, workflow_id => $workflow->id,
+        slug => 'process-refund', description => 'Process refund if requested',
+        class => 'Registry::DAO::WorkflowSteps::ProcessDropRefund' );
+    my $result = settle( $run->process( $db, $step, {} ) );
+    my $latest = $db->query( 'SELECT latest_step_id FROM workflow_runs WHERE id = ?',
+        $run->id )->hash->{latest_step_id};
+    return ( $result, $latest );
+}
+
+sub last_refund_failure_of ($payment) {
+    return $db->query( q{SELECT metadata->'refund_last_failure' AS f
+                           FROM payments WHERE id = ?}, $payment->id )->expand->hash->{f};
+}
+
+subtest 'a drop refund Stripe refuses stops the run on the refund step and is recorded' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async =
+        capturing_stripe( \@calls, fail => "card_declined\n" );
+
+    my ( $result, $latest ) = drive_run( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is scalar @calls, 1, 'Stripe was asked';
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/refund/i,
+        'the admin is shown why' ) or diag explain $result;
+    is( ( last_refund_failure_of($payment) // {} )->{classification}, 'unknown',
+        'the runbook has a record, classified as unknown' );
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
+};
+
+subtest 'a drop refund refused before sending stops the run on the refund step and is recorded' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    # Past the 10000 captured: refund_async refuses this synchronously.
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 10001 },
+        { id => $dropped->id } );
+
+    my @calls;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( \@calls );
+
+    my ( $result, $latest ) = eval { drive_run( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 10001 ) };
+    is $@, '', 'the guard does not escape as a 500';
+
+    is scalar @calls, 0, 'nothing reached Stripe';
+    ok !defined $latest || $latest ne $step_row->id,
+        'the run did not advance past the refund step';
+    like( ( $result->{errors} // [] )->[0] // '', qr/REFUND_NOT_SENT/,
+        'the admin is shown why' ) or diag explain $result;
+    is( ( last_refund_failure_of($payment) // {} )->{classification}, 'not_sent',
+        'the runbook has a record, classified as not sent' );
+    is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
 };
 
 subtest 'a refund already processed is not refunded again' => sub {

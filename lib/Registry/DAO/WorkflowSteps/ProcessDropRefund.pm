@@ -8,6 +8,7 @@ class Registry::DAO::WorkflowSteps::ProcessDropRefund :isa(Registry::DAO::Workfl
     use Carp qw(confess);
     use Registry::DAO::Enrollment;
     use Registry::DAO::Payment;
+    use Mojo::Promise;
 
     method process ( $db, $, $run = undef ) {
         $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
@@ -71,10 +72,16 @@ class Registry::DAO::WorkflowSteps::ProcessDropRefund :isa(Registry::DAO::Workfl
         # and a drop refund is a separate obligation -- possibly to a different
         # parent -- that should not wait on it. _apply_refund_result re-checks
         # the debt before moving any status, so the increments stay findable.
-        return $payment->refund_async( $db, {
-            amount_cents    => $cents,
-            reason          => 'requested_by_customer',
-            idempotency_key => $payment->drop_refund_key($enrollment_id),
+        #
+        # Started from a resolved promise, as the payment step and webhook do,
+        # so a synchronous REFUND_NOT_SENT guard becomes a rejection the
+        # failure branch records, rather than escaping as a 500.
+        return Mojo::Promise->resolve->then( sub {
+            $payment->refund_async( $db, {
+                amount_cents    => $cents,
+                reason          => 'requested_by_customer',
+                idempotency_key => $payment->drop_refund_key($enrollment_id),
+            } );
         } )->then(
             sub ($refund) {
                 # Only now. 'processed' is the parent's receipt, and writing it
@@ -99,14 +106,17 @@ class Registry::DAO::WorkflowSteps::ProcessDropRefund :isa(Registry::DAO::Workfl
                 my $message = "$error";
                 $message =~ s/\s+\z//;
 
+                # The runbook reads this row first; the classification says
+                # whether any money can have moved.
+                $payment->record_refund_failure( $db, $error );
+
                 # Left pending on purpose: the money is still owed. Writing a
                 # terminal status here would close the obligation in the ledger
-                # without closing it at the bank.
+                # without closing it at the bank. `errors` stops the run here
+                # and shows the admin why, instead of advancing to the waitlist
+                # and notifications as if the refund had worked.
                 return {
-                    refund_processed => 0,
-                    refund_status    => $enrollment->refund_status,
-                    error            => $message,
-                    message          => 'Refund failed; still owed',
+                    errors => ["Refund not completed; still owed: $message"],
                 };
             },
         );
