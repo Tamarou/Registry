@@ -19,14 +19,26 @@ subscription is a record of who took it. Both can change.
 
 ### At the platform scale
 
-Alex defines the platform's offers as rows in `registry.pricing_plans` --
-today Solo at $0/month plus a 2.5% revenue share, with Studio and Empire
-marked `coming_soon` and refused server-side.
+Alex defines the platform's offer to tenants as a published version in
+`registry.offer_versions` for the resource "payment processing" -- today Solo
+v1: $0 plus a 2.5% `percentage_of_sales` payment plan, with a refund policy of
+`keep_fee_with_admin_exception`. The signup page still quotes plans from
+`registry.pricing_plans`, where Studio and Empire are marked `coming_soon` and
+refused server-side.
 
-Jordan subscribes by completing tenant signup. Provisioning writes
-`registry.tenants.platform_pricing_plan_id`, which is the link to the offer he
-took. `Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant`
-reads that link to compute the application fee on his parents' payments.
+Jordan subscribes by completing tenant signup. Provisioning grants his tenant
+an entitlement in `registry.entitlements` to that offer version and payment
+plan, in effect from that moment. The entitlement is the source of his rate:
+`Registry::PriceOps::PlatformTerms::platform_terms_for_tenant` reads the
+tenant's in-effect platform entitlement to payment processing and returns the
+version, the payment plan and its rate as an exact decimal string ("0.025").
+A tenant with no entitlement in effect is refused by name. There is no
+fallback to Free or to 0.
+
+Each of his parents' payments stamps the offer version and payment plan it was
+charged under (`payments.platform_offer_version_id`,
+`payments.platform_payment_plan_id`). A refund reads the refund policy of that
+stamped version, not his current one.
 
 ### At the tenant scale
 
@@ -46,10 +58,12 @@ that acceptance never produces a charge.
 
 ## What the pattern explains
 
-**Why `platform_pricing_plan_id` needs a switch path (#277).** It is a
-subscription link, not a stamp. There is no path that changes it today only
-because there has never been a second buyable offer to move between -- not
-because moving is forbidden.
+**Why a tenant's platform entitlement needs a switch path (#277).** It is a
+subscription, not a stamp: its in-effect range can end and another can start.
+The database allows only one in effect at a time
+(`platform-entitlement-one-in-effect`). There is no path that moves a tenant
+today only because there has never been a second buyable offer to move
+between -- not because moving is forbidden.
 
 **Why `coming_soon` is more than a marketing state.** With one buyable offer,
 nothing has ever needed to move a tenant between offers, so no code does.
@@ -62,13 +76,15 @@ entirely.
 
 ## Vocabulary
 
-The code has three names for one idea, which is part of why the issues above
-read as unrelated:
+The code names the same ideas differently at each scale, which is part of why
+the issues above read as unrelated:
 
 | concept | in the code |
 |---|---|
-| an offer | `pricing_plans` row |
-| a tenant's subscription to a platform offer | `tenants.platform_pricing_plan_id` |
+| a platform offer | `offer_versions` row + `offer_version_payment_plans` row |
+| a tenant offer | `pricing_plans` row |
+| a tenant's subscription to a platform offer | `entitlements` row (in effect) |
+| the platform terms a payment was charged under | `payments.platform_offer_version_id` + `platform_payment_plan_id` |
 | a parent's acceptance of a tenant offer | `enrollments` row + `payments` row |
 
 ## Where the seams are tested
