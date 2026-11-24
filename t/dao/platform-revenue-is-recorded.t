@@ -174,4 +174,27 @@ subtest 'a rate change afterwards does not rewrite history' => sub {
         'and still names the plan it was actually charged under';
 };
 
+# A tenant schema of its own, holding completed charges with these recorded
+# fees and refunded fees.
+sub revenue_of ( $slug, @rows ) {
+    Test::Registry::Fixtures::create_tenant( $db, { name => "Studio $slug", slug => $slug } );
+    $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug, $parent->id );
+    my $tdb = $dao->connect_schema($slug)->db;
+    for my $row (@rows) {
+        my ( $fee, $returned ) = @$row;
+        $tdb->insert( 'payments', {
+            user_id => $parent->id, amount_cents => 10000, status => 'completed',
+            platform_fee_cents => $fee, platform_fee_refunded_cents => $returned,
+        } );
+    }
+    my ($t) = grep { $_->{slug} eq $slug }
+        @{ Registry::DAO::Tenant->platform_revenue($db)->{tenants} };
+    return $t;
+}
+
+subtest 'platform revenue is net of refunded fees' => sub {
+    my $t = revenue_of( 'net_studio', [ 250, 100 ], [ 250, 250 ] );
+    is $t->{fees_cents}, 150, 'each fee counts less what Stripe reports returned';
+};
+
 done_testing;

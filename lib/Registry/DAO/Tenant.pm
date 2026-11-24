@@ -811,7 +811,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             my $c = eval {
                 $db->query( <<~"SQL" )->hash;
                     SELECT COUNT(*)                                  AS charges,
-                           COALESCE(SUM(platform_fee_cents), 0)      AS fees_cents,
+                           -- What the platform kept: each fee less what
+                           -- Stripe reports returned (NULL is none).
+                           COALESCE(SUM(platform_fee_cents
+                               - COALESCE(platform_fee_refunded_cents, 0)), 0)
+                                                                     AS fees_cents,
                            COUNT(*) FILTER (
                                WHERE platform_fee_cents IS NULL )    AS unrecorded
                       FROM $schema.payments
