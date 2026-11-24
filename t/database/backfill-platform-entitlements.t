@@ -59,14 +59,41 @@ sub platform_entitlements ($tenant_id) {
     }, $tenant_id )->hashes->to_array;
 }
 
+# The platform's own row, planted linked to Solo: it still takes no share.
+$db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = 'registry'}, $solo_v1_plan );
+
+# Every tenant's link and the whole entitlements table, to compare across a failed deploy.
+sub snapshot () {
+    return {
+        links        => $db->query( 'SELECT slug, platform_pricing_plan_id FROM registry.tenants ORDER BY slug' )
+            ->hashes->to_array,
+        entitlements => $db->query( 'SELECT * FROM registry.entitlements ORDER BY id' )->hashes->to_array,
+    };
+}
+
 my $studio_plan = $db->query( q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Studio'} )->hash->{id};
 my $studio_linked = tenant_linked_to( 'linked_studio', $studio_plan );
 
-throws_ok { deploy($CHANGE) } qr/linked_studio.*\Q$studio_plan\E/s,
-    'a tenant linked to a plan outside the Solo family fails the deploy, naming the tenant and plan';
+subtest 'failed backfill changes nothing' => sub {
+    my $before = snapshot();
+    throws_ok { deploy($CHANGE) } qr/linked_studio.*\Q$studio_plan\E/s,
+        'a tenant linked to a plan outside the Solo family fails the deploy, naming the tenant and plan';
+    is_deeply snapshot(), $before, 'every link and every entitlement is as it was: none was written';
+    ok $db->query( q{SELECT 1 FROM information_schema.columns WHERE table_schema = 'registry'
+                      AND table_name = 'tenants' AND column_name = 'platform_pricing_plan_id'} )->rows,
+        'the link column is still there';
+    ok $db->query( q{SELECT 1 FROM information_schema.columns WHERE table_schema = 'linked_solo_v1'
+                      AND table_name = 'payments' AND column_name = 'platform_pricing_plan_id'} )->rows,
+        'and so is every payments table\'s old stamp';
+};
 
 $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = 'linked_studio'} );
 lives_ok { deploy($CHANGE) } 'the change deploys once no tenant is linked outside Solo';
+
+# A connection of its own: one held across a deploy that drops a tenants
+# column has DBD::Pg crash on its cached statements.
+$pg = Mojo::Pg->new($uri)->search_path( [ 'registry', 'public' ] );
+$db = $pg->db;
 
 subtest 'backfill grants solo v1 and drops the link' => sub {
     for my $which (qw( solo_v1 solo_later )) {
@@ -79,6 +106,28 @@ subtest 'backfill grants solo v1 and drops the link' => sub {
     ok !$db->query( q{SELECT 1 FROM information_schema.columns WHERE table_schema = 'registry'
                        AND table_name = 'tenants' AND column_name = 'platform_pricing_plan_id'} )->rows,
         'tenants.platform_pricing_plan_id no longer exists';
+};
+
+subtest 'registry resolves zero after backfill' => sub {
+    require Registry::PriceOps::RevenueShare;
+    is Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, 'registry' ), 0,
+        'the platform takes exactly 0 of its own sales';
+    ok !grep( { $_->{offer_version_id} eq $SOLO_V1 }
+            @{ platform_entitlements('00000000-0000-0000-0000-000000000000') } ),
+        'and holds no Solo entitlement, though its row was linked to Solo';
+};
+
+subtest 'every payments table has the new stamp column' => sub {
+    my @schemas = @{ $db->query( q{SELECT table_schema FROM information_schema.tables
+                                    WHERE table_name = 'payments' ORDER BY 1} )->arrays->flatten->to_array };
+    ok scalar( grep { $_ eq 'registry' } @schemas ) && @schemas > 4, 'registry and every tenant schema have payments';
+    for my $schema (@schemas) {
+        my %has = map { $_ => 1 } @{ $db->query( q{SELECT column_name FROM information_schema.columns
+                                                   WHERE table_schema = ? AND table_name = 'payments'}, $schema )
+            ->arrays->flatten->to_array };
+        ok $has{platform_offer_version_id} && $has{platform_payment_plan_id} && !$has{platform_pricing_plan_id},
+            "$schema.payments stamps the offer version and plan, not the plan id";
+    }
 };
 
 done_testing;
