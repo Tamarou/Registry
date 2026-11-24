@@ -70,9 +70,17 @@ field $_stripe_client = undef;
 
     # Platform revenue share, collected at charge time as a Stripe application
     # fee on the destination charge. The fraction is resolved from the tenant's
-    # plan by the caller. Integer cents, rounded half-up.
+    # plan by the caller. Integer cents, rounded half to even (ruling 7c).
+    # Computed in integers: the rate as whole basis points (plans are saved to
+    # at most 4 decimals, PricingPlan), so a half cent is exactly a half cent.
     sub application_fee_cents ($amount_cents, $fraction) {
-        return int($amount_cents * $fraction + 0.5);
+        my $bp = sprintf '%.0f', $fraction * 10_000;
+        die "revenue share $fraction is finer than a basis point\n"
+            if abs( $fraction * 10_000 - $bp ) > 1e-6;
+        my $n = $amount_cents * $bp;
+        my ( $q, $r ) = ( int( $n / 10_000 ), $n % 10_000 );
+        $q++ if $r > 5_000 || ( $r == 5_000 && $q % 2 );
+        return $q;
     }
 
     # --- Instalments -------------------------------------------------------

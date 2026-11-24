@@ -83,17 +83,27 @@ my $parent = Registry::DAO::User->create($tenant_db, {
 
 # ---- (e) unit tests for application_fee_cents ---------------------------------
 subtest 'application_fee_cents unit tests' => sub {
-    # The fee is now a plain fraction-of-cents computation, rounded half-up.
+    # The fee is a plain fraction-of-cents computation, rounded half to even.
     # Amounts that round to a 0 fee are acceptable; Stripe forbids the fee
     # exceeding the charge, never an issue at these rates.
     is Registry::DAO::Payment::application_fee_cents(10000, 0.02), 200,
         '$100.00 (10000 cents) at 2% -> 200 cents fee';
     is Registry::DAO::Payment::application_fee_cents(999, 0.02),   20,
-        '$9.99 (999 cents) at 2% -> 20 cents fee (rounded half-up)';
+        '$9.99 (999 cents) at 2% -> 20 cents fee (19.98 rounded)';
     is Registry::DAO::Payment::application_fee_cents(1, 0.02),      0,
         '$0.01 (1 cent) at 2% -> 0 cents fee';
     is Registry::DAO::Payment::application_fee_cents(10000, 0.00),  0,
         '$100.00 (10000 cents) at 0% (Free) -> 0 cents fee';
+};
+
+subtest 'a fee landing on a half cent rounds to the even cent (ruling 7c)' => sub {
+    is Registry::DAO::Payment::application_fee_cents(1020, 0.025), 26,
+        '2.5% of 1020 = 25.5 -> 26';
+    is Registry::DAO::Payment::application_fee_cents(1060, 0.025), 26,
+        '2.5% of 1060 = 26.5 -> 26';
+    # 600 * 0.0175 is 10.500000000000002 in binary floating point.
+    is Registry::DAO::Payment::application_fee_cents(600, 0.0175), 10,
+        '1.75% of 600 = 10.5 -> 10, with no binary-float error';
 };
 
 # ---- the constant must be gone -----------------------------------------------
