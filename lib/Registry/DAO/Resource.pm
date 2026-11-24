@@ -12,9 +12,34 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
     field $name :param :reader;
     field $kind :param :reader;    # 'finite' or 'unbounded'
     field $capacity :param :reader = undef;
+    field $event_id :param :reader = undef;    # the occurrence it is, if any
     field $created_at :param :reader;
 
     sub table { 'resources' }
+
+    # The finite resource that is occurrence $event_id, with the event's seats.
+    sub for_occurrence ( $class, $db, $event_id ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->query( q{
+            INSERT INTO resources (name, kind, capacity, event_id)
+            SELECT p.name || ' ' || e.time, 'finite', e.capacity, e.id
+              FROM events e JOIN projects p ON p.id = e.project_id
+             WHERE e.id = ?
+            RETURNING *
+        }, $event_id )->hash;
+        croak "no event $event_id here" unless $row;
+        return $class->new(%$row);
+    }
+
+    # The occurrence's start and end instants, read from its event: the one
+    # place they are computed.
+    method occurrence_window ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        croak "$name ($id) is not an occurrence" unless $event_id;
+        return $db->query( q{
+            SELECT time, time + duration * interval '1 minute' FROM events WHERE id = ?
+        }, $event_id )->array->@*;
+    }
 
     # The resource, its row locked until the caller's transaction ends: every
     # grant and hold takes this lock first, so capacity is read and claimed
