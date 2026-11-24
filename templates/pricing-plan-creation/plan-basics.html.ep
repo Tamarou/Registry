@@ -8,7 +8,7 @@
         <h2 class="text-2xl font-semibold mb-4">Step 1: Plan Basics</h2>
         <p class="text-gray-600 mb-6">Define the basic information for your pricing plan.</p>
 
-        <form method="POST" action="<%= url_for('workflow_step', workflow_id => $workflow->id, run_id => $run->id, step_id => 'plan-basics') %>"
+        <form method="POST" action="<%= $action %>"
               id="plan-basics-form">
 
             <div class="space-y-6">
@@ -44,7 +44,7 @@
                         Plan Type <span class="text-red-500">*</span>
                     </label>
                     <div class="space-y-3">
-                        <% my $plan_types = stash('step_data')->{plan_types} || []; %>
+                        <% my $plan_types = stash('plan_types') || []; %>
                         <% for my $type (@$plan_types) { %>
                             <label class="flex items-start p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
                                 <input type="radio"
@@ -67,7 +67,7 @@
                         Plan Scope <span class="text-red-500">*</span>
                     </label>
                     <div class="space-y-3">
-                        <% my $scopes = stash('step_data')->{plan_scopes} || []; %>
+                        <% my $scopes = stash('plan_scopes') || []; %>
                         <% for my $scope (@$scopes) { %>
                             <label class="flex items-start p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
                                 <input type="radio"
