@@ -26,6 +26,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         my $error_handler = Registry::Utility::ErrorHandler->new();
 
+        # A second press of the commit button: this run already made its tenant.
+        if ( my $done = $self->_provisioned( $db, $run ) ) {
+            return { next_step => 'complete', tenant_created => 1, %$done };
+        }
+
         # Check for rate limiting
         if (my $rate_limit_error = $self->check_rate_limits($db, $run)) {
             $error_handler->log_error($rate_limit_error, {
@@ -572,6 +577,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # tenant/organization_name/subdomain/admin_email keys.  This is the single
     # provisioning path for all completion scenarios (no-Stripe mock, real-Stripe).
     method _provision_tenant($db, $run) {
+        if ( my $done = $self->_provisioned( $db, $run ) ) { return $done }
         my $data = $run->data;
         my $profile = $data->{profile} || {};
         my $subscription_data = $data->{subscription} || {};
@@ -701,7 +707,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # shortcut: grants the one offer without asking; 01a20416-6d40 replaces
     # this with the tenant's own choice through the accept primitive.
     method _platform_offer_to_tenants ($db) {
-        return $db->query( q{
+        my $offers = $db->query( q{
             SELECT v.id AS offer_version_id, p.id AS payment_plan_id
               FROM registry.offer_versions v
               JOIN registry.resources r ON r.id = v.resource_id
@@ -710,7 +716,21 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
              WHERE r.name = 'payment processing'
                AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
                AND NOT v.conditions @> '[{"kind": "holder_is_offerer"}]'
-        } )->hash;
+        } )->hashes;
+        die sprintf "Signup needs exactly one published platform offer to tenants; found %d.\n",
+            $offers->size
+            unless $offers->size == 1;
+        return $offers->first;
+    }
+
+    # The result _provision_tenant stored for $run, when the tenant it names
+    # exists: provisioning has already happened for this run.
+    method _provisioned ( $db, $run ) {
+        my $data = $run->data // {};
+        return undef unless $data->{tenant} && !ref $data->{tenant}
+            && Registry::DAO::Tenant->find( $db, { id => $data->{tenant} } );
+        return { map { $_ => $data->{$_} }
+                 qw( tenant organization_name subdomain admin_email success_timestamp ) };
     }
 
     method template { 'tenant-signup/payment' }
