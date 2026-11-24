@@ -406,6 +406,7 @@ subtest 'with no platform tenant row the guard refuses with 403' => sub {
     for my $table (qw( tenant_users tenant_profiles tenant_domains subscription_events )) {
         $db->query( "DELETE FROM registry.$table WHERE tenant_id = ?", $platform->id );
     }
+    $db->query( q{DELETE FROM registry.entitlements WHERE holder_tenant_id = ?}, $platform->id );
     $db->query( q{DELETE FROM registry.tenants WHERE id = ?}, $platform->id );
     $tx->commit;
 
