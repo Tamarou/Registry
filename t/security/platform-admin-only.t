@@ -9,6 +9,7 @@ use experimental 'signatures';
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Test::Registry::Helpers qw( authenticate_as );
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
@@ -284,14 +285,11 @@ subtest 'the revenue screen is behind the guard, and admits its gaps' => sub {
     # it is that an unrecorded charge is declared on the page, so the total
     # reads as a floor. A screen that quietly omitted them would be the lie this
     # whole feature exists to avoid.
-    my $solo = $db->query(
-        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' LIMIT 1}
-    )->hash;
     my $earning = Test::Registry::Fixtures::create_tenant( $db, {
         name => 'Revenue Screen Studio', slug => 'revenue_screen' } );
-    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ?,
-                 billing_status = ? WHERE id = ?',
-        $solo->{id}, 'past_due', $earning->id );
+    give_tenant_terms( $db, 'revenue_screen', { rate => '0.025' } );
+    $db->query( 'UPDATE registry.tenants SET billing_status = ? WHERE id = ?',
+        'past_due', $earning->id );
 
     my $payer = Registry::DAO::User->create( $db, {
         username => 'screen_payer', name => 'Payer', user_type => 'parent',
@@ -408,6 +406,7 @@ subtest 'with no platform tenant row the guard refuses with 403' => sub {
     for my $table (qw( tenant_users tenant_profiles tenant_domains subscription_events )) {
         $db->query( "DELETE FROM registry.$table WHERE tenant_id = ?", $platform->id );
     }
+    $db->query( q{DELETE FROM registry.entitlements WHERE holder_tenant_id = ?}, $platform->id );
     $db->query( q{DELETE FROM registry.tenants WHERE id = ?}, $platform->id );
     $tx->commit;
 

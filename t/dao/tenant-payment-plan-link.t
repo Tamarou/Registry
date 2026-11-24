@@ -1,4 +1,4 @@
-# ABOUTME: Verifies TenantPayment persists the tenant -> platform plan link at signup
+# ABOUTME: Verifies TenantPayment quotes the launch plan and grants the platform's published offer at signup
 # ABOUTME: including when nobody chose a plan, which is now every signup.
 use 5.42.0;
 use lib qw(lib t/lib);
@@ -10,6 +10,7 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::WorkflowSteps::TenantPayment;
 use Registry::PriceOps::RevenueShare ();
+use Registry::PriceOps::PlatformTerms qw( platform_entitlement_terms );
 use Registry::DAO::User;
 
 my $test_db = Test::Registry::DB->new;
@@ -30,18 +31,6 @@ my $step = Registry::DAO::WorkflowSteps::TenantPayment->create($db, {
     description => 'Payment step',
 });
 
-# Resolve the seeded 2% revenue-share plan to select during signup.
-my $selected_plan = $db->query(q{
-    SELECT id, plan_name, amount_cents, currency, pricing_configuration
-      FROM registry.pricing_plans
-     WHERE plan_scope = 'tenant'
-       AND pricing_model_type = 'percentage'
-       AND metadata->>'default' IS DISTINCT FROM 'true'
-     ORDER BY created_at
-     LIMIT 1
-})->hash;
-ok $selected_plan, 'seeded 2% revenue-share plan found';
-
 subtest 'a run with no plan selection resolves the launch plan' => sub {
     plan tests => 3;
 
@@ -61,8 +50,8 @@ subtest 'a run with no plan selection resolves the launch plan' => sub {
         'the quoted rate is that plan rate, not the Free plan 0%';
 };
 
-subtest 'provisioning persists the selected plan link' => sub {
-    plan tests => 2;
+subtest 'provisioning grants the published platform offer' => sub {
+    plan tests => 3;
 
     my $slug = "planlink_tenant_$$";
     my $run = Registry::DAO::WorkflowRun->create($db, {
@@ -80,24 +69,16 @@ subtest 'provisioning persists the selected plan link' => sub {
                 trial_ends_at          => time() + (30 * 24 * 60 * 60),
                 status                 => 'trialing',
             },
-            selected_pricing_plan => {
-                id            => $selected_plan->{id},
-                plan_name     => $selected_plan->{plan_name},
-                amount_cents  => $selected_plan->{amount_cents},
-                currency      => $selected_plan->{currency},
-            },
         },
     });
 
     my $result = $step->_provision_tenant($db, $run);
     ok $result->{tenant}, 'tenant provisioned';
 
-    my $row = $db->query(
-        'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',
-        $slug,
-    )->hash;
-    is $row->{platform_pricing_plan_id}, $selected_plan->{id},
-        'tenant row links to the selected platform pricing plan';
+    my $terms = platform_entitlement_terms( $db, $slug );
+    is $terms->{id}, '00000000-0000-0000-0003-000000000001',
+        'tenant holds an entitlement to Solo v1, the published platform offer';
+    cmp_ok $terms->{fraction}, '==', 0.025, 'under its 2.5% revenue share';
 };
 
 $test_db->cleanup_test_database;

@@ -7,6 +7,7 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 
 use Registry::Service::Stripe;
 use Registry::PriceOps::RevenueShare;
+use Registry::PriceOps::PlatformTerms ();
 use Mojo::JSON qw(encode_json from_json);
 use Mojo::Promise ();
 use experimental 'keyword_any';
@@ -30,13 +31,14 @@ field $refunded_cents    :param :reader = 0;
 field $refund_seq        :param :reader = 0;
 field $refund_increments :param :reader = undef;
 
-# What the platform took on this charge, and the plan version it took it under.
-# NULL on both means NOT RECORDED -- every charge made before these columns
-# existed, and any charge with no destination account (a registry/platform
-# payment has no application fee at all). Zero would claim the platform took
-# nothing, which is a different and sometimes false statement.
+# What the platform took on this charge, and the platform offer version and
+# payment plan it took it under. NULL means NOT RECORDED -- every charge made
+# before these columns existed, and any charge with no seller account. Zero
+# would claim the platform took nothing, which is a different and sometimes
+# false statement.
 field $platform_fee_cents        :param :reader = undef;
-field $platform_pricing_plan_id  :param :reader = undef;
+field $platform_offer_version_id :param :reader = undef;
+field $platform_payment_plan_id  :param :reader = undef;
 field $created_at :param :reader = undef;
 field $updated_at :param :reader = undef;
 
@@ -148,7 +150,7 @@ field $_stripe_client = undef;
             # already theirs and our share is the application fee.
         );
 
-        # Omitted rather than sent as zero. A tenant on the Free plan owes no
+        # Omitted rather than sent as zero. A tenant on a 0% platform offer owes no
         # revenue share, and an explicit 0 is a value Stripe has no reason to
         # accept on a schedule that takes no fee.
         # Fixed to two places and trimmed: Stripe refuses a third decimal here
@@ -291,9 +293,10 @@ field $_stripe_client = undef;
                     # The account this set is charged on, so a refund of this
                     # row goes where its money went.
                     stripe_account_id => $meta->{stripe_account_id},
-                    # The plan that priced this schedule's fee, for
-                    # record_platform_fee when this row's invoice is paid.
-                    platform_pricing_plan_id => $meta->{platform_pricing_plan_id},
+                    # The platform terms that priced this schedule's fee,
+                    # for record_platform_fee when this row's invoice is paid.
+                    platform_offer_version_id => $meta->{platform_offer_version_id},
+                    platform_payment_plan_id  => $meta->{platform_payment_plan_id},
                     description   => $description,
                 } },
             } );
@@ -396,8 +399,8 @@ field $_stripe_client = undef;
         my $meta = ref $metadata eq 'HASH' ? $metadata : {};
         return () unless $meta->{stripe_account_id};
 
-        # The fraction create snapshotted; the tenant's live plan only for a row
-        # made before the snapshot existed. $db is already a Mojo::Pg handle here
+        # The fraction create snapshotted; the tenant's live terms only for a
+        # row made before the snapshot existed. $db is already a Mojo::Pg handle here
         # (coerced at the top of this sub).
         my $fraction = $meta->{revenue_share_fraction}
             // Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
@@ -429,19 +432,21 @@ field $_stripe_client = undef;
         # The revenue share is fixed here too, at quote time (ruling 7c): every
         # intent for this payment shares one Idempotency-Key, and Stripe refuses
         # a retry under it that carries a different application_fee_amount.
-        # So is the plan version that rate came from, recorded with the fee --
-        # the Free plan's when the tenant has none linked.
+        # So are the platform offer version and payment plan that rate came
+        # from, recorded with the fee. A tenant with no platform entitlement in
+        # effect dies here, before any row is written or Stripe is called.
         delete $data->{metadata}->@{qw( stripe_account_id revenue_share_fraction
-                                        platform_pricing_plan_id )};
+                                        platform_offer_version_id platform_payment_plan_id )};
         if ( my $slug = $data->{metadata}{tenant_slug} ) {
             my $row = $raw_db->query(
                 'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
                 $slug )->hash;
             if ( $row && $row->{stripe_connect_account_id} ) {
                 $data->{metadata}{stripe_account_id} = $row->{stripe_connect_account_id};
-                $data->{metadata}->@{qw( revenue_share_fraction platform_pricing_plan_id )} =
-                    Registry::PriceOps::RevenueShare::revenue_share_plan_for_tenant(
-                        $raw_db, $slug );
+                my $terms = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant(
+                    $raw_db, $slug );
+                $data->{metadata}->@{qw( revenue_share_fraction platform_offer_version_id
+                                         platform_payment_plan_id )} = $terms->@{qw( fraction id plan_id )};
             }
         }
         $data->{metadata} = { -json => $data->{metadata} };
@@ -864,7 +869,7 @@ field $_stripe_client = undef;
         }
     }
     
-    # Write down the application fee and the plan version it was charged under.
+    # Write down the application fee and the platform terms it was charged under.
     # All three settlement paths -- process_payment (via _apply_intent), the
     # payment_intent webhook, and the instalment invoice handler -- call this, so
     # the missing-fee rule lives here once. $intent is whatever Stripe object
@@ -875,10 +880,11 @@ field $_stripe_client = undef;
     # which the revenue view reports as a gap rather than silently summing as
     # zero.
     #
-    # The plan is the one create snapshotted beside the rate, so the id names
-    # the version that priced the fee even when the tenant moves plan between
-    # quote and settle (up to a day). The tenant's live plan only for a row
-    # create did not snapshot -- one with no seller account.
+    # The stamp is the offer version and plan create snapshotted beside the
+    # rate, so it names the terms that priced the fee even when the tenant
+    # moves to another version between quote and settle (up to a day). The
+    # tenant's live terms only for a row create did not snapshot -- one with
+    # no seller account.
     method record_platform_fee ( $db, $intent ) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -891,24 +897,33 @@ field $_stripe_client = undef;
 
         my $slug = ( ref $metadata eq 'HASH' ? $metadata->{tenant_slug} : undef );
 
-        my $plan_id;
+        my %stamp;
         if ( $connected ) {
-            $plan_id = $metadata->{platform_pricing_plan_id};
+            %stamp = ( version => $metadata->{platform_offer_version_id},
+                       plan    => $metadata->{platform_payment_plan_id} );
         }
         elsif ( defined $slug && !ref $slug && length $slug ) {
-            my $row = $db->query(
-                'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',
-                $slug )->hash;
-            $plan_id = $row && $row->{platform_pricing_plan_id};
+            # Best-effort like the write below: unreadable terms must not fail settlement.
+            eval {
+                my $terms = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $slug );
+                %stamp = ( version => $terms->{id}, plan => $terms->{plan_id} );
+                1;
+            } or do {
+                my $err = $@ || 'unknown error';
+                $err =~ s/\s+/ /g;
+                warn "could not resolve platform terms for payment $id: $err\n";
+            };
         }
 
         eval {
             $db->update( 'payments',
-                { platform_fee_cents       => $fee,
-                  platform_pricing_plan_id => $plan_id },
+                { platform_fee_cents        => $fee,
+                  platform_offer_version_id => $stamp{version},
+                  platform_payment_plan_id  => $stamp{plan} },
                 { id => $id } );
-            $platform_fee_cents       = $fee;
-            $platform_pricing_plan_id = $plan_id;
+            $platform_fee_cents        = $fee;
+            $platform_offer_version_id = $stamp{version};
+            $platform_payment_plan_id  = $stamp{plan};
             1;
         } or do {
             my $err = $@ || 'unknown error';
@@ -917,6 +932,18 @@ field $_stripe_client = undef;
         };
 
         return;
+    }
+
+    # The platform terms this payment's fee was taken under: the offer version
+    # and payment plan stamped on it, superseded or not. Refunds resolve
+    # backwards from these, never from the tenant's current terms. Dies when
+    # the payment carries no stamp.
+    method stamped_platform_terms ($db) {
+        my $meta    = ref $metadata eq 'HASH' ? $metadata : {};
+        my $version = $platform_offer_version_id // $meta->{platform_offer_version_id};
+        my $plan    = $platform_payment_plan_id  // $meta->{platform_payment_plan_id};
+        die "payment $id carries no platform terms stamp\n" unless $version && $plan;
+        return Registry::PriceOps::PlatformTerms::platform_version_terms( $db, $version, $plan );
     }
 
     # Idempotently create the paid enrollments and queue their confirmation
@@ -2448,6 +2475,14 @@ SQL
             unless $stripe_payment_intent_id;
         die REFUND_NOT_SENT . ": payment $id has no seller Stripe account\n"
             unless ref $metadata eq 'HASH' && $metadata->{stripe_account_id};
+
+        # The exception is a term of the platform offer version stamped on the
+        # payment, read backwards: a version whose refund policy has none, or
+        # a payment with no stamp, keeps its fee.
+        my $policy = eval { $self->stamped_platform_terms($db)->{refund_policy}{kind} } // 'none';
+        die REFUND_NOT_SENT . ": payment $id was charged under a refund policy ($policy) with no "
+          . "admin exception to return the platform fee\n"
+            unless $policy eq 'keep_fee_with_admin_exception';
 
         my $asked = $args->{amount_cents};
         die REFUND_NOT_SENT . ": Fee refund of '$asked' cents on payment $id is not a positive whole number\n"

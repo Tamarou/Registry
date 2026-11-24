@@ -23,11 +23,12 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(import_all_workflows platform_revenue_share_plan_id);
+use Test::Registry::Helpers qw(import_all_workflows);
 
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
+use Registry::PriceOps::PlatformTerms qw( platform_entitlement_terms );
 
 # ---------------------------------------------------------------------------
 # Database setup
@@ -51,11 +52,10 @@ my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema'
     or BAIL_OUT('tenant-signup workflow missing -- cannot walk funnel');
 
-# The migration seeds the platform pricing relationship. Nobody chooses a plan
-# any more, so this is no longer an input to the walk -- it is what the tenant
-# must come out linked to. See #268.
-my $plan_id = platform_revenue_share_plan_id($dao)
-    or BAIL_OUT('platform_revenue_share_plan_id failed -- no plan for signup to link');
+# The bootstrap seeds Solo v1, the platform's one published offer to tenants.
+# Nobody chooses a plan any more, so this is no longer an input to the walk --
+# it is what the tenant must come out holding. See #268.
+my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow
@@ -295,23 +295,22 @@ subtest 'tenant storefront serves at <slug>.localhost' => sub {
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 4: the tenant comes out on the plan the platform sells.
+# Assertion 4: the tenant comes out holding the offer the platform sells.
 #
 # This is the assertion that costs money if it fails. Nobody chose a plan, and
-# a tenant with platform_pricing_plan_id NULL resolves to the platform Free
-# plan's 0% at charge time -- the funnel would run green while onboarding
-# every studio at no revenue share at all.
+# a tenant holding no platform entitlement earns the platform nothing -- the
+# funnel would run green while onboarding every studio at no revenue share.
 # ---------------------------------------------------------------------------
 subtest 'tenant row is billable' => sub {
     my $tenant_row = $db->query(
-        q{SELECT billing_status, stripe_subscription_id, platform_pricing_plan_id
+        q{SELECT billing_status, stripe_subscription_id
           FROM registry.tenants WHERE slug = ?},
         $slug
     )->hash;
     ok $tenant_row, 'tenant row accessible for billing assertions';
 
-    is $tenant_row->{platform_pricing_plan_id}, $plan_id,
-        'tenant is linked to the platform plan that is on sale';
+    is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V1,
+        'tenant holds an entitlement to the platform offer that is on sale';
 
     is $tenant_row->{billing_status}, 'active',
         'billing_status is "active" -- there is no trial to end';

@@ -20,6 +20,7 @@ use Mojo::IOLoop;
 use Mojo::Promise;
 
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( give_tenant_terms state_platform_terms );
 use Test::Registry::Fixtures;
 use Registry::DAO;
 use Registry::DAO::User;
@@ -42,6 +43,7 @@ my $parent = $dao->create( User => {
 
 $db->query( 'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
     'acct_instal_seller', $slug );
+state_platform_terms( $db, $slug, { rate => 0 } );
 
 # Payments live in the tenant schema; the payer must be resident there first.
 $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug, $parent->id );
@@ -247,6 +249,7 @@ subtest 'customer from tenant a is never reused on tenant b' => sub {
     Test::Registry::Fixtures::create_tenant( $db, { name => 'Second Studio', slug => $slug_b } );
     $db->query( 'UPDATE registry.tenants SET stripe_connect_account_id = ? WHERE slug = ?',
         'acct_instal_b', $slug_b );
+    give_tenant_terms( $db, $slug_b, { rate => 0 } );
     $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $slug_b, $parent->id );
     my $tdb_b = $dao->connect_schema($slug_b)->db;
 

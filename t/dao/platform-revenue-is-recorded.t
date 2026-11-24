@@ -10,7 +10,11 @@ use Test::More;
 use experimental 'signatures';
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe qw( give_tenant_terms with_tenant_plan without_rate_check );
+use Registry::PriceOps::PlatformTerms qw( platform_terms_for_tenant );
 use Registry::DAO::Payment;
+use Registry::DAO::Entitlement;
+use Registry::DAO::OfferVersion;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 
@@ -24,18 +28,13 @@ my $parent = $dao->create(User => {
     username => 'rev_parent', name => 'Rev Parent', user_type => 'parent',
     email => 'rev@test.local' });
 
-# The Solo plan the seed ships: 2.5% revenue share.
-my $solo = $db->query(
-    q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' LIMIT 1}
-)->hash;
-ok $solo, 'the seeded Solo plan is there to charge against';
-
 my $tenant = Test::Registry::Fixtures::create_tenant( $db, {
     name => 'Revenue Studio', slug => 'revenue_studio',
 } );
-$db->query(
-    'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE id = ?',
-    $solo->{id}, $tenant->id );
+
+# The terms this tenant charges under: a 2.5% revenue share.
+give_tenant_terms( $db, 'revenue_studio', { rate => '0.025' } );
+my $solo = platform_terms_for_tenant( $db, 'revenue_studio' );
 
 sub a_completed_payment ( %opts ) {
     my $p = Registry::DAO::Payment->create( $db, {
@@ -68,8 +67,9 @@ subtest 'the fee Stripe reported is what gets recorded' => sub {
     is $payment->status, 'completed', 'the payment settled';
     is $payment->platform_fee_cents, 250,
         'and the platform fee is on the row';
-    is $payment->platform_pricing_plan_id, $solo->{id},
-        'with the plan version it was charged under (#427)';
+    is $payment->platform_offer_version_id, $solo->{id},
+        'with the platform offer version it was charged under (#427)';
+    is $payment->platform_payment_plan_id, $solo->{plan_id}, 'and its payment plan';
 };
 
 subtest 'a payment with no seller account records no fee, rather than a guess' => sub {
@@ -82,17 +82,34 @@ subtest 'a payment with no seller account records no fee, rather than a guess' =
         'and the fee is NULL -- not recorded, not zero';
 };
 
+subtest 'a non-seller-account payment on a bad-rate plan still settles' => sub {
+    # The fee record is best-effort: a malformed held rate must not fail
+    # settlement (a webhook 500 Stripe retries forever).
+    without_rate_check( $db, sub { with_tenant_plan( $db, 'revenue_studio',
+        { rate => '0.00125' },
+        sub {
+            my @warnings;
+            local $SIG{__WARN__} = sub { push @warnings, @_ };
+            my $payment = eval { a_completed_payment( amount => 10000, fee => 250 ) };
+
+            ok $payment, 'settling did not die' or diag $@;
+            is $payment && $payment->status, 'completed', 'the payment settled';
+            is $payment && $payment->platform_offer_version_id, undef,
+                'with no offer version recorded';
+            like "@warnings", qr/could not resolve platform terms/,
+                'and the bad rate is warned about';
+        } ) } );
+};
+
 subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub {
     # Stripe omits a zero application_fee_amount (564b6a1), so a Free-plan
     # charge comes back with none. That is a recorded $0, not missing data.
-    my $free = $db->query( q{SELECT id FROM registry.pricing_plans
-        WHERE plan_scope = 'platform' AND metadata->>'default' = 'true'
-          AND superseded_at IS NULL} )->hash;
     Test::Registry::Fixtures::create_tenant( $db, {
         name => 'Free Studio', slug => 'free_studio' } );
-    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
-                  stripe_connect_account_id = 'acct_free_studio' WHERE slug = 'free_studio'},
-        $free->{id} );
+    give_tenant_terms( $db, 'free_studio', { rate => 0 } );
+    my $free = platform_terms_for_tenant( $db, 'free_studio' );
+    $db->query( q{UPDATE registry.tenants
+                  SET stripe_connect_account_id = 'acct_free_studio' WHERE slug = 'free_studio'} );
     $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)',
         'free_studio', $parent->id );
     my $tdb = $dao->connect_schema('free_studio')->db;
@@ -114,7 +131,7 @@ subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub
     my $row = Registry::DAO::Payment->find( $tdb, { id => $p->id } );
     is $row->status, 'completed', 'the charge settled';
     is $row->platform_fee_cents, 0, 'and the fee is recorded as 0';
-    is $row->platform_pricing_plan_id, $free->{id}, 'under the plan it was charged on';
+    is $row->platform_offer_version_id, $free->{id}, 'under the terms it was charged on';
 
     my ($t) = grep { $_->{slug} eq 'free_studio' }
         @{ Registry::DAO::Tenant->platform_revenue($db)->{tenants} };
@@ -125,53 +142,100 @@ subtest 'a connected-account charge with a zero fee records 0, not a gap' => sub
 subtest 'the plan that priced the fee is recorded, not the plan at settle' => sub {
     # The rate is fixed at create (ruling 7c); the plan id recorded with the
     # fee must be the one that rate came from, even if the tenant moves first.
-    my $plan_b = $db->query(
-        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Empire' LIMIT 1}
-    )->hash;
-    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
-                  stripe_connect_account_id = 'acct_revenue_studio' WHERE id = ?},
-        $solo->{id}, $tenant->id );
+    my $caller_value = '00000000-0000-0000-0003-000000000002';    # the platform's 0% to itself
+    $db->query( q{UPDATE registry.tenants
+                  SET stripe_connect_account_id = 'acct_revenue_studio' WHERE id = ?},
+        $tenant->id );
 
     my $p = Registry::DAO::Payment->create( $db, {
         user_id => $parent->id, amount_cents => 10000, status => 'pending',
         metadata => { tenant_slug => 'revenue_studio', enrollment_items => [],
-                      platform_pricing_plan_id => $plan_b->{id} },
+                      platform_offer_version_id => $caller_value },
     } );
     $db->update( 'payments',
         { stripe_payment_intent_id => 'pi_snap_' . $p->id }, { id => $p->id } );
 
-    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE id = ?',
-        $plan_b->{id}, $tenant->id );
+    give_tenant_terms( $db, 'revenue_studio', { rate => '0.05', name => 'Plan B' } );
 
     $p = Registry::DAO::Payment->find( $db, { id => $p->id } );
     $p->record_platform_fee( $db, { application_fee_amount => 250 } );
 
     my $row = Registry::DAO::Payment->find( $db, { id => $p->id } );
     is $row->platform_fee_cents, 250, 'the fee is recorded';
-    is $row->platform_pricing_plan_id, $solo->{id},
+    is $row->platform_offer_version_id, $solo->{id},
         'under plan A, the one it was created on -- not B, and not a caller value';
 
-    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id = ?,
-                  stripe_connect_account_id = NULL WHERE id = ?},
-        $solo->{id}, $tenant->id );
+    $db->query( q{UPDATE registry.tenants
+                  SET stripe_connect_account_id = NULL WHERE id = ?}, $tenant->id );
 };
 
 subtest 'a rate change afterwards does not rewrite history' => sub {
     # The whole reason to record rather than derive. Moving the tenant to a
     # different plan must not re-price what was already charged.
+    my $charged_under = platform_terms_for_tenant( $db, 'revenue_studio' )->{id};
     my $payment = a_completed_payment( amount => 20000, fee => 500 );
 
-    my $empire = $db->query(
-        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Empire' LIMIT 1}
-    )->hash;
-    $db->query(
-        'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE id = ?',
-        $empire->{id}, $tenant->id );
+    give_tenant_terms( $db, 'revenue_studio', { rate => '0.01', name => 'Later terms' } );
 
     my $after = Registry::DAO::Payment->find( $db, { id => $payment->id } );
     is $after->platform_fee_cents, 500, 'the recorded fee is unchanged';
-    is $after->platform_pricing_plan_id, $solo->{id},
+    is $after->platform_offer_version_id, $charged_under,
         'and still names the plan it was actually charged under';
+};
+
+my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+
+# A connect-ready tenant with a schema of its own, holding Solo v1 from 2020.
+Test::Registry::Fixtures::create_tenant( $db, { name => 'Stamp Studio', slug => 'stamp_studio' } );
+$db->query( q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_stamp_studio'
+               WHERE slug = 'stamp_studio'} );
+$db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', 'stamp_studio', $parent->id );
+my $stamp_db = $dao->connect_schema('stamp_studio')->db;
+my $solo_v1_held = Registry::DAO::Entitlement->create( $db, {
+    holder_tenant_id => $db->query( q{SELECT id FROM registry.tenants WHERE slug = 'stamp_studio'} )
+        ->hash->{id},
+    offer_version_id => $SOLO_V1, payment_plan_id => 'revenue_share',
+    starts_at => '2020-01-01T00:00:00Z' } );
+
+sub a_stamped_charge ( $fee ) {
+    my $p = Registry::DAO::Payment->create( $stamp_db, {
+        user_id => $parent->id, amount_cents => 10000, status => 'pending',
+        metadata => { tenant_slug => 'stamp_studio', enrollment_items => [] } } );
+    $stamp_db->update( 'payments', { stripe_payment_intent_id => 'pi_stamp_' . $p->id }, { id => $p->id } );
+    Registry::DAO::Payment->find( $stamp_db, { id => $p->id } )->_apply_intent( $stamp_db, {
+        id => 'pi_stamp_' . $p->id, status => 'succeeded', amount => 10000,
+        application_fee_amount => $fee, metadata => { payment_id => $p->id },
+    }, 'pi_stamp_' . $p->id );
+    return Registry::DAO::Payment->find( $stamp_db, { id => $p->id } );
+}
+
+my $under_v1;
+subtest 'charge stamps the platform offer version' => sub {
+    $under_v1 = a_stamped_charge(250);
+    is $under_v1->platform_fee_cents, 250, 'the fee is recorded';
+    is $under_v1->platform_offer_version_id, $SOLO_V1,
+        'with the offer version of the tenant entitlement it was taken under';
+    is $under_v1->platform_payment_plan_id, 'revenue_share', 'and the plan it accepted';
+};
+
+subtest 'stamp survives a later solo version' => sub {
+    # Solo v2 is published and the tenant moves to it: v1's phase ends where
+    # v2's begins.
+    my $v2 = Registry::DAO::OfferVersion->draft( $db, '00000000-0000-0000-0002-000000000001', {
+        resource_id => '00000000-0000-0000-0001-000000000001', price_cents => 0,
+        units_per_acceptance => 1, per_booking_cap => 1,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => '0.03' } ],
+        policies => { refund => { kind => 'none' } } } )->publish($db);
+    $db->query( q{UPDATE registry.entitlements SET in_effect = tstzrange(lower(in_effect), now())
+                   WHERE id = ?}, $solo_v1_held->id );
+    Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => $solo_v1_held->holder_tenant_id, offer_version_id => $v2->id,
+        payment_plan_id => 'revenue_share', starts_at => 'now' } );
+
+    my $under_v2 = a_stamped_charge(300);
+    is $under_v2->platform_offer_version_id, $v2->id, 'a charge after the move is stamped v2';
+    is Registry::DAO::Payment->find( $stamp_db, { id => $under_v1->id } )->platform_offer_version_id,
+        $SOLO_V1, 'the charge taken under v1 still names v1';
 };
 
 # A tenant schema of its own, holding completed charges with these recorded

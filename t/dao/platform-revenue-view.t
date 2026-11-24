@@ -10,6 +10,8 @@ use Test::More;
 use experimental 'signatures';
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
+use Registry::PriceOps::PlatformTerms qw( platform_terms_for_tenant );
 use Registry::DAO::Tenant;
 use Registry::DAO::Payment;
 use Registry::DAO::User;
@@ -22,20 +24,18 @@ my $parent = $dao->create(User => {
     username => 'rv_parent', name => 'RV Parent', user_type => 'parent',
     email => 'rv@test.local' });
 
-my $solo = $db->query(
-    q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' LIMIT 1} )->hash;
-
 my $studio = Test::Registry::Fixtures::create_tenant( $db, {
     name => 'Earning Studio', slug => 'earning_studio' } );
-$db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ?,
-             billing_status = ? WHERE id = ?',
-    $solo->{id}, 'active', $studio->id );
+give_tenant_terms( $db, 'earning_studio', { rate => '0.025', name => 'Earning Terms' } );
+$db->query( 'UPDATE registry.tenants SET billing_status = ? WHERE id = ?',
+    'active', $studio->id );
+my $earning_terms = platform_terms_for_tenant( $db, 'earning_studio' );
 
 my $arrears = Test::Registry::Fixtures::create_tenant( $db, {
     name => 'Owing Studio', slug => 'owing_studio' } );
-$db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ?,
-             billing_status = ? WHERE id = ?',
-    $solo->{id}, 'past_due', $arrears->id );
+give_tenant_terms( $db, 'owing_studio', { rate => '0.025' } );
+$db->query( 'UPDATE registry.tenants SET billing_status = ? WHERE id = ?',
+    'past_due', $arrears->id );
 
 # Charges: two recorded, one not. The unrecorded one is every charge made
 # before the fee column existed.
@@ -66,7 +66,7 @@ sub a_charge ( $slug, $amount, $fee ) {
     } );
     $tenant_db->update( 'payments',
         { defined $fee ? ( platform_fee_cents => $fee,
-                           platform_pricing_plan_id => $solo->{id} ) : () ,
+                           platform_offer_version_id => $earning_terms->{id} ) : () ,
           completed_at => \'NOW()' },
         { id => $p->id } );
     return $p;
@@ -106,7 +106,7 @@ subtest 'the rate each tenant is on comes from their plan row' => sub {
     my $revenue = Registry::DAO::Tenant->platform_revenue($db);
     my %by_slug = map { $_->{slug} => $_ } @{ $revenue->{tenants} };
 
-    is $by_slug{earning_studio}{plan_name}, 'Solo', 'the plan is named';
+    is $by_slug{earning_studio}{plan_name}, 'Earning Terms', 'the plan is named';
     is $by_slug{earning_studio}{rate_pct} + 0, 2.5,
         'at the rate that plan actually declares, not a constant';
 };
@@ -140,7 +140,7 @@ subtest 'a charge written where production writes it is counted' => sub {
     } );
     $tenant_db->update( 'payments',
         { platform_fee_cents       => 1000,
-          platform_pricing_plan_id => $solo->{id},
+          platform_offer_version_id => $earning_terms->{id},
           completed_at             => \'NOW()' },
         { id => $real->id } );
 

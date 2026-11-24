@@ -5,6 +5,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;
 use Mojo::Promise;
@@ -16,6 +17,7 @@ my $db  = $dao->db;
 # The seller the payment names, with an account to charge on.
 $db->query( q{INSERT INTO registry.tenants (name, slug, stripe_connect_account_id)
               VALUES ('Some Tenant', 'some_tenant', 'acct_some_tenant')} );
+state_platform_terms( $db, 'some_tenant', { rate => 0 } );
 
 my $user = $dao->create(User => {
     username  => 'stripe_params_user',

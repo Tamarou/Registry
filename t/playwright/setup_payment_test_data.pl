@@ -23,7 +23,11 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::WorkflowRun;
 use Test::Registry::StripeConnect;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 use JSON::PP qw(encode_json);
+
+# PricingProbe loads Test::More, whose notes go to STDOUT; keep STDOUT for the JSON.
+Test::Builder->new->output( \*STDERR );
 
 # Session dates are derived from the day the suite runs, never written down.
 # The storefront lists a session only while end_date >= CURRENT_DATE, so a
@@ -86,19 +90,9 @@ $db->query(
     $connect_account_id, $slug,
 );
 
-# Link the 2% percentage revenue-share plan (same SQL as tenant-paid-enrollment.t).
-# A freshly provisioned tenant has platform_pricing_plan_id NULL, which resolves
-# to the free 0% plan -- that would skip the Stripe charge entirely.
-$db->query(q{
-    UPDATE registry.tenants SET platform_pricing_plan_id = (
-        SELECT id FROM registry.pricing_plans
-         WHERE plan_scope = 'tenant'
-           AND pricing_model_type = 'percentage'
-           AND metadata->>'default' IS DISTINCT FROM 'true'
-         ORDER BY created_at
-         LIMIT 1
-    ) WHERE slug = ?
-}, $slug);
+# State the tenant's platform terms. A freshly provisioned tenant holds none,
+# which resolves to the free 0% plan -- that would skip the Stripe charge entirely.
+give_tenant_terms( $db, $slug, { rate => '0.025' } );
 
 # ---------------------------------------------------------------------------
 # Tenant-scoped DAO for all data that lives in the tenant schema

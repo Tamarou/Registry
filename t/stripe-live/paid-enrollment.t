@@ -10,6 +10,7 @@ use Test::Registry::StripeConnect;
 use Test::Registry::StripeConfirm;
 use Test::Registry::StripeWebhook;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Test::Registry::Mojo;
 use Test::Registry::Async qw( settle );
 
@@ -296,21 +297,10 @@ $db->query(
     $ready_acct, $slug,
 );
 
-# Link the tenant to the seeded tenant-scope percentage plan, so the fee resolver
-# has a plan to read a rate from. The SQL selects by scope and model type, never
-# by rate -- the rate itself is whatever that plan carries, and the assertions
-# read it from the database rather than assuming it here. Same UPDATE as
-# tenant-paid-enrollment.t.
-$db->query(q{
-    UPDATE registry.tenants SET platform_pricing_plan_id = (
-        SELECT id FROM registry.pricing_plans
-         WHERE plan_scope = 'tenant'
-           AND pricing_model_type = 'percentage'
-           AND metadata->>'default' IS DISTINCT FROM 'true'
-         ORDER BY created_at
-         LIMIT 1
-    ) WHERE slug = ?
-}, $slug);
+# State the platform terms the tenant charges under, so the fee resolver has a
+# rate to apply. The assertions read the rate back through the resolver rather
+# than assuming it here.
+give_tenant_terms( $db, $slug, { rate => '0.025' } );
 
 # Shared state populated by I1+I2 and consumed by I4 and I6.
 my ($main_payment_id, $main_pi_id, $charge_id, $charge_fee_id,

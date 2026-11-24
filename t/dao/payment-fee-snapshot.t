@@ -8,6 +8,7 @@ use experimental 'signatures';
 use Mojo::Promise;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Registry::DAO::Payment;
 use Registry::DAO::User;
 use Registry::Service::Stripe;
@@ -21,14 +22,9 @@ my $parent = Registry::DAO::User->create( $db, {
     username => 'fee_snap_parent', name => 'Fee Snap Parent',
     user_type => 'parent', email => 'fee_snap@test.local' } );
 
-sub plan_id ($name) {
-    $db->query( 'SELECT id FROM registry.pricing_plans WHERE plan_name = ? LIMIT 1', $name )
-        ->hash->{id};
-}
-
-sub move_to_plan ( $slug, $plan_name ) {
-    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
-        plan_id($plan_name), $slug );
+# The tenant moves to other platform terms: an entitlement to a new version.
+sub move_to_terms ( $slug, $rate ) {
+    give_tenant_terms( $db, $slug, { rate => $rate } );
 }
 
 my $slug = 'fee_snap';
@@ -67,7 +63,7 @@ sub with_wire ( $code, %fail ) {
 }
 
 subtest 'a retry after a plan change sends the originally computed fee' => sub {
-    move_to_plan( $slug, 'Solo' );    # 2.5%
+    move_to_terms( $slug, '0.025' );
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id => $parent->id, amount_cents => 10000,
         metadata => { tenant_slug => $slug, enrollment_items => [] } } );
@@ -77,7 +73,7 @@ subtest 'a retry after a plan change sends the originally computed fee' => sub {
         eval { $payment->create_payment_intent( $db, {} ); 1 };
     }, payment_intents => 1 );
 
-    move_to_plan( $slug, 'Registry Free' );    # 0%: the tenant changed plan
+    move_to_terms( $slug, 0 );    # the tenant changed terms
 
     with_wire( sub {
         Registry::DAO::Payment->find( $db, { id => $payment->id } )
@@ -151,22 +147,28 @@ subtest 'a retry after a profile edit ends with one customer stored on the payme
         $customers[0][1], 'and the payment stores it';
 };
 
-subtest 'a tenant with no linked plan snapshots the Free plan it was priced at' => sub {
-    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = ?', $slug );
+subtest 'a tenant snapshots the exact rate and the terms it was priced at' => sub {
+    move_to_terms( $slug, '0.0137' );
+    my $held = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $slug );
     my $payment = Registry::DAO::Payment->create( $db, {
         user_id => $parent->id, amount_cents => 10000,
         metadata => { tenant_slug => $slug, enrollment_items => [] } } );
 
-    is $payment->metadata->{revenue_share_fraction}, 0, 'priced at the Free rate';
-    is $payment->metadata->{platform_pricing_plan_id}, plan_id('Registry Free'),
-        'and the snapshot names the Free plan';
+    is $payment->metadata->{revenue_share_fraction}, '0.0137', 'priced at the exact rate';
+    is $payment->metadata->{platform_offer_version_id}, $held->{id},
+        'and the snapshot names the offer version';
+    is $payment->metadata->{platform_payment_plan_id}, $held->{plan_id}, 'and its payment plan';
+    is $db->query( q{SELECT metadata->>'revenue_share_fraction' FROM payments WHERE id = ?}, $payment->id )
+        ->array->[0], '0.0137', 'stored as an exact decimal, not a float';
 
-    move_to_plan( $slug, 'Solo' );
-    is Registry::DAO::Payment->create( $db, {
+    move_to_terms( $slug, '0.025' );
+    isnt Registry::DAO::Payment->create( $db, {
         user_id => $parent->id, amount_cents => 10000,
         metadata => { tenant_slug => $slug, enrollment_items => [] } } )
-        ->metadata->{platform_pricing_plan_id}, plan_id('Solo'),
-        'a linked tenant still snapshots its own plan';
+        ->metadata->{platform_offer_version_id}, $held->{id},
+        'a payment after a move snapshots the new terms';
+    is Registry::DAO::Payment->find( $db, { id => $payment->id } )->metadata->{platform_offer_version_id},
+        $held->{id}, 'while the first keeps its own';
 };
 
 $test_db->cleanup_test_database;

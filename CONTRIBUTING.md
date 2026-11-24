@@ -351,6 +351,8 @@ subtest 'Test description' => sub {
 done_testing;
 ```
 
+A test that charges money states its platform terms through `Test::Registry::PricingProbe` (t/lib), e.g. `give_tenant_terms($db, $slug, { rate => '0.025' })`, never by relying on a fallback plan.
+
 ## Code Style
 
 ### Perl Style Guidelines

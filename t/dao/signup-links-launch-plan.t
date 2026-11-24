@@ -1,5 +1,5 @@
-# ABOUTME: A tenant that signs up without ever seeing a plan page still lands on the launch plan.
-# ABOUTME: A NULL platform_pricing_plan_id silently resolves to the Free plan's 0%, so this link IS the money path.
+# ABOUTME: A tenant that signs up without ever seeing a plan page still holds the platform's published offer.
+# ABOUTME: Absence is not zero: that entitlement IS the money path, so its rate must be the advertised one.
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer signatures);
@@ -11,7 +11,8 @@ use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::Tenant;
-use Registry::PriceOps::RevenueShare qw( platform_launch_fraction revenue_share_fraction_for_tenant );
+use Registry::PriceOps::RevenueShare qw( platform_launch_fraction );
+use Registry::PriceOps::PlatformTerms qw( platform_entitlement_terms );
 
 my $t_db = Test::Registry::DB->new;
 my $dao  = $t_db->db;
@@ -28,10 +29,8 @@ ok $workflow, 'tenant-signup workflow imported';
 my $launch_fraction = platform_launch_fraction($db);
 cmp_ok $launch_fraction, '>', 0, 'the platform sells a non-zero revenue share';
 
-my $launch_plan_id = $db->query(q{
-    SELECT id FROM registry.pricing_plans
-     WHERE metadata->>'launch_rate' = 'true' AND superseded_at IS NULL
-})->hash->{id};
+# The bootstrap seed's fixed id for Solo v1, the platform's offer to tenants.
+my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
 
 # Walk the depends_on chain, which is what the controller follows when it
 # redirects to the next step -- not creation order, which only looks right.
@@ -56,7 +55,7 @@ subtest 'the signup flow no longer asks which plan' => sub {
         or diag "steps: @slugs";
 };
 
-subtest 'a signup with no plan selection is provisioned onto the launch plan' => sub {
+subtest 'a signup with no plan selection is granted the published platform offer' => sub {
     my $slug = "launchplan_$$";
 
     my $run = Registry::DAO::WorkflowRun->create( $db, {
@@ -79,17 +78,15 @@ subtest 'a signup with no plan selection is provisioned onto the launch plan' =>
 
     $run->process( $db, $review, {} );
 
-    my $row = $db->query(
-        'SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?',
-        $slug )->hash;
-    ok $row, 'the review button provisioned the tenant';
+    ok $db->query( 'SELECT 1 FROM registry.tenants WHERE slug = ?', $slug )->hash,
+        'the review button provisioned the tenant';
 
-    is $row->{platform_pricing_plan_id}, $launch_plan_id,
-        'tenant is linked to the plan the platform sells';
+    my $terms = platform_entitlement_terms( $db, $slug );
+    is $terms->{id}, $SOLO_V1, 'tenant holds an entitlement to the offer the platform sells';
 
     # The assertion that actually costs money if it fails.
-    is revenue_share_fraction_for_tenant( $db, $slug ), $launch_fraction,
-        'the charge path resolves the advertised rate for this tenant';
+    cmp_ok $terms->{fraction}, '==', $launch_fraction,
+        'the entitlement carries the advertised rate for this tenant';
 };
 
 subtest 'the subdomain the applicant is shown is the one they get' => sub {

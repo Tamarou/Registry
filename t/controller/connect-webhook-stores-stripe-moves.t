@@ -13,6 +13,7 @@ use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::DAO::Payment;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( give_tenant_terms state_platform_terms );
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
 
@@ -41,6 +42,7 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
 });
 
 my $tdb = Registry::DAO->new(url => $ENV{DB_URL}, schema => $slug)->db;
+state_platform_terms( $db, $slug, { rate => 0 } );
 my $parent = Registry::DAO::User->create($tdb, {
     username  => "conn_moves_parent_$$",
     email     => "conn_moves_parent_$$\@test.example",
@@ -166,6 +168,7 @@ subtest 'stored tenant comes from account not metadata' => sub {
         users => [ $admin ],
         stripe_connect_account_id => "acct_conn_moves_b_$$",
     });
+    give_tenant_terms( $db, $other_slug, { rate => 0 } );
 
     my $event = refund_event( id => "evt_moves_metadata_$$" );
     $event->{data}{object}{metadata}{tenant_slug} = $other_slug;

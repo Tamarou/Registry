@@ -13,7 +13,8 @@ BEGIN
         SELECT column_name, is_nullable, data_type
           FROM information_schema.columns
          WHERE table_schema = 'registry' AND table_name = 'payments'
-           AND column_name IN ('platform_fee_cents', 'platform_pricing_plan_id')
+           AND column_name IN ('platform_fee_cents', 'platform_pricing_plan_id',
+                               'platform_offer_version_id')
     LOOP
         IF r.is_nullable <> 'YES' THEN
             RAISE EXCEPTION
@@ -23,7 +24,9 @@ BEGIN
 
     IF (SELECT COUNT(*) FROM information_schema.columns
          WHERE table_schema = 'registry' AND table_name = 'payments'
-           AND column_name IN ('platform_fee_cents','platform_pricing_plan_id')) <> 2
+           -- platform-entitlement-replaces-plan-link replaces the plan stamp.
+           AND column_name IN ('platform_fee_cents','platform_pricing_plan_id',
+                               'platform_offer_version_id')) <> 2
     THEN
         RAISE EXCEPTION 'both platform fee columns must exist on registry.payments';
     END IF;

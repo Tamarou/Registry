@@ -8,6 +8,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Registry::DAO::OutcomeDefinition;
     use Registry::DAO;
     use Registry::DAO::Payment;
+    use Registry::DAO::Entitlement;
+    use Registry::PriceOps::PlatformTerms ();
     field $id :param :reader = undef;
     field $name :param :reader;
     field $slug :param :reader //= __PACKAGE__->slug_for_name($name);
@@ -370,21 +372,24 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     #
     # The one seam every caller asks, about the resource and never a plan or a
     # slug: the operator right is held by whichever tenant the data says holds
-    # it. Reads the interim table operator-right.sql seeds; step 3 re-points
-    # this at its entitlement table, so nothing else reads that table.
+    # it, as an entitlement to the resource of that name in effect now.
     #
-    # Qualified with registry: clone_schema gives every tenant schema an empty
-    # copy of the table, and a row a tenant writes into its own copy grants
-    # nothing.
+    # Qualified with registry: clone_schema gives every tenant schema its own
+    # copy of the PriceOps tables, and an entitlement a tenant records in its
+    # own copy grants nothing.
     sub holds ($class, $db, $tenant_id, $resource) {
         $db = $db->db if $db isa Registry::DAO;
         return 0 unless defined $tenant_id && length $tenant_id
                      && defined $resource  && length $resource;
 
-        return $db->select( 'registry.tenant_resources', 'COUNT(*)', {
-            tenant_id => $tenant_id,
-            resource  => $resource,
-        } )->array->[0] ? 1 : 0;
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', q{tstzrange(now(), now(), '[]')} );
+        return $db->query( qq{
+            SELECT EXISTS (
+                SELECT 1 FROM registry.entitlements e
+                  JOIN registry.offer_versions v ON v.id = e.offer_version_id
+                  JOIN registry.resources r      ON r.id = v.resource_id
+                 WHERE e.holder_tenant_id = ? AND r.name = ? AND $in_effect)
+        }, $tenant_id, $resource )->array->[0] ? 1 : 0;
     }
 
     # Is $user_id an admin of some tenant that holds $resource?
@@ -687,19 +692,25 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                    t.stripe_connect_account_id,
                    t.stripe_charges_enabled,
                    t.stripe_details_submitted,
-                   p.plan_name,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
                    ) AS schema_present
               FROM registry.tenants t
-              LEFT JOIN registry.pricing_plans p
-                     ON p.id = t.platform_pricing_plan_id
              ORDER BY t.created_at
             SQL
 
         for my $row (@$rows) {
             my @problems;
+
+            # shortcut: one resolver call per tenant, fine for a handful of tenants; batch it when the fleet grows.
+            $row->{plan_name} = eval {
+                Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $row->{slug} )->{name};
+            };
+            if ( my $err = $@ ) {
+                $err =~ s/\s+/ /g;
+                push @problems, "platform terms are unreadable: $err";
+            }
 
             unless ( $row->{schema_present} ) {
                 push @problems, 'schema was never created';
@@ -781,16 +792,11 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                    t.name,
                    t.billing_status,
                    t.stripe_subscription_id,
-                   p.plan_name,
-                   (p.pricing_configuration->>'percentage')::numeric * 100
-                       AS rate_pct,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
                    ) AS schema_present
               FROM registry.tenants t
-              LEFT JOIN registry.pricing_plans p
-                     ON p.id = t.platform_pricing_plan_id
              ORDER BY t.name
             SQL
 
@@ -798,6 +804,14 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
         for my $row (@$tenants) {
             @{$row}{qw( charges fees_cents unrecorded )} = ( 0, 0, 0 );
+
+            # shortcut: one resolver call per tenant, fine for a handful of tenants; batch it when the fleet grows.
+            # Terms that will not resolve leave the plan blank rather than take the page down.
+            if ( my $terms = eval {
+                Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $row->{slug} ) } )
+            {
+                @{$row}{qw( plan_name rate_pct )} = ( $terms->{name}, $terms->{fraction} * 100 );
+            }
 
             # A tenant with no schema has no payments table to read. That is a
             # provisioning fault, and fleet() is the screen that reports it; here
@@ -1018,7 +1032,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             billing_status trial_ends_at subscription_started_at
             magic_link_expiry_hours
             stripe_connect_account_id stripe_charges_enabled stripe_details_submitted
-            platform_pricing_plan_id created_from_ip
+            created_from_ip
         );
         my %tenant_data = map { $_ => $data->{$_} }
                           grep { exists $TENANT_COLUMNS{$_} } keys %$data;
@@ -1029,6 +1043,19 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         my $tx = $db->begin;
 
         my $tenant = $class->create($db, \%tenant_data);
+
+        # $data->{platform_entitlement} names { offer_version_id,
+        # payment_plan_id }: the tenant holds it in registry from now on, or
+        # the tenant is not created.
+        if ( my $grant = $data->{platform_entitlement} ) {
+            require Registry::DAO::Entitlement;
+            Registry::DAO::Entitlement->create( $db, {
+                %$grant,
+                holder_tenant_id => $tenant->id,
+                starts_at        => 'now',
+            } );
+        }
+
         $db->query('SELECT clone_schema(?)', $tenant->slug);
 
         # clone_schema changes the connection's search_path to the new schema

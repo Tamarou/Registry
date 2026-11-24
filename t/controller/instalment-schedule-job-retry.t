@@ -8,6 +8,7 @@ use lib qw(lib t/lib);
 use experimental qw(signatures);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
 use Registry::DAO;
@@ -33,6 +34,7 @@ Registry::DAO::Tenant->provision( $db, {
     stripe_connect_account_id => $account,
     stripe_charges_enabled => 1, stripe_details_submitted => 1 } );
 my $tdb = Registry::DAO->new( url => $test_db->uri, schema => $slug )->db;
+state_platform_terms( $db, $slug, { rate => 0 } );
 
 my $parent = Registry::DAO::User->create( $tdb, {
     username => "sr_parent_$$", email => "sr_parent_$$\@test.example",

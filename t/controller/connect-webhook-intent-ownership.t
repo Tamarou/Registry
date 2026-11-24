@@ -8,6 +8,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::StripeWebhook;
 use Registry::DAO::Tenant;
 use Registry::DAO::Family;
@@ -41,6 +42,7 @@ Registry::DAO::Tenant->provision($db, {
     stripe_connect_account_id => $account,
     stripe_charges_enabled => 1, stripe_details_submitted => 1 });
 my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
+state_platform_terms( $db, $slug, { rate => 0 } );
 
 my $loc = Registry::DAO::Location->create($tdb, { name => 'Own Studio',
     slug => 'own-studio', address_info => {}, metadata => {} });

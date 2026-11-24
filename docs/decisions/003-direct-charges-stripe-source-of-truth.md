@@ -78,11 +78,11 @@ instead, and only when the percent is above zero; Stripe computes each
 instalment's fee from it. The fee on each paid instalment invoice is then
 recorded from the invoice.
 
-Today the rate comes from `registry.tenants.platform_pricing_plan_id`, falling
-back to the 0% Free plan (`Registry::PriceOps::RevenueShare`). The platform
-tenant's own sales therefore take no fee through the same "omit at zero" rule,
-not through a platform check. Step 3 moves the rate source to the tenant's
-entitlement from the platform.
+The rate comes from the tenant's in-effect entitlement from the platform to
+"payment processing" (`Registry::PriceOps::PlatformTerms`), with no fallback:
+a tenant with none is refused. The platform tenant holds its own entitlement
+at an explicit 0%, so its own sales take no fee through the same "omit at
+zero" rule, not through a platform check.
 
 ### Refunds send no `reverse_transfer`, and the fee is kept
 

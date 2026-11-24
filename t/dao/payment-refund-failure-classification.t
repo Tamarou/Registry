@@ -6,6 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Async qw( settle );
 use Test::Registry::Fixtures;
 use Registry::DAO::Payment;
@@ -17,6 +18,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_refund_classification';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+state_platform_terms( $db, 'registry', { rate => 0 } );
 
 my $parent = $dao->create(User => {
     username => 'rfc_parent', name => 'RFC Parent', user_type => 'parent',

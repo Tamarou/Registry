@@ -106,15 +106,15 @@ subtest 'the revenue-share rate no longer comes from the money column' => sub {
     # be, which is a launch decision this test has no business restating.
     my $before = revenue_share_fraction_for_tenant( $db, $slug );
     cmp_ok $before, '>', 0,
-        'the rate resolves from pricing_configuration';
+        'the rate resolves from the held payment plan';
 
     # The whole point of the split. A plan carrying a plausible dollar amount in
     # the money column alongside the same rate: if anything still reads that
     # column as a rate, the fraction moves and every charge for this tenant
     # carries the wrong application fee.
     #
-    # A purpose-built plan rather than an UPDATE, because plan rows are immutable
-    # -- and the same property is tested either way.
+    # Purpose-built terms rather than an UPDATE, because offer versions are
+    # immutable -- and the same property is tested either way.
     with_tenant_plan( $db, $slug, { amount_cents => 5000 }, sub {
         cmp_ok abs( revenue_share_fraction_for_tenant( $db, $slug ) - $before ), '<', 1e-9,
             'a $50.00 amount_cents on the plan does not move the rate';
@@ -127,7 +127,7 @@ subtest 'a percentage plan with no rate in config fails loud' => sub {
     # is the one thing a charge-time rate resolver must never do. Create and
     # the table both refuse such a plan now, so it is planted past both.
     without_rate_check( $db, sub {
-        with_tenant_plan( $db, solo_linked_tenant($db), { pricing_configuration => {} }, sub {
+        with_tenant_plan( $db, solo_linked_tenant($db), { rate => undef }, sub {
             my $fraction = eval { revenue_share_fraction_for_tenant( $db, solo_linked_tenant($db) ) };
             ok !defined $fraction, 'no rate is invented';
             like $@, qr/percentage/i, "and the error names the missing rate: $@";

@@ -10,6 +10,7 @@ use utf8;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Fixtures;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw( authenticate_as );
@@ -39,6 +40,7 @@ Test::Registry::Fixtures::create_tenant($dao->db, {
     slug => 'hosttenant',
 });
 $dao->db->query('SELECT clone_schema(?)', 'hosttenant');
+state_platform_terms( $dao->db, 'hosttenant', { rate => 0 } );
 
 # Two passthrough steps: no outcome definition, so validate() is a no-op and
 # whatever the client posts is merged into the run's data.
@@ -291,6 +293,31 @@ subtest 'submitted seller account or tenant slug is ignored' => sub {
     }
 
     is $account, 'acct_host', "the charge is made on the cart's own tenant account";
+};
+
+subtest 'a posted tenant id is ignored and signup provisions a new tenant' => sub {
+    # The signup commit reads run data's tenant as "already provisioned"; a
+    # posted one would skip provisioning and show another tenant's plan.
+    $dao->import_workflows( ['workflows/tenant-signup.yml'] );
+    my $existing = $dao->db->query( q{SELECT id FROM registry.tenants WHERE slug = 'hosttenant'} )
+        ->hash->{id};
+
+    $t->post_ok( '/tenant-signup' => form => { tenant => $existing } )->status_is(302);
+    my $url = $t->tx->res->headers->location;
+    $t->post_ok( $url => form => { name => 'Planted Studio', tenant => $existing } )->status_is(302);
+    $url = $t->tx->res->headers->location;
+    $t->post_ok( $url => form => {
+        admin_name => 'Planted Admin', admin_email => 'planted_admin@example.com',
+        admin_username => 'planted_admin', admin_user_type => 'admin', tenant => $existing,
+    } )->status_is(302);
+    $url = $t->tx->res->headers->location;
+    $t->post_ok( $url => form => { terms_accepted => 1, tenant => $existing } )->status_is(302);
+
+    my ($run_id) = $url =~ m{/tenant-signup/([^/]+)/};
+    my $tenant = data_for($run_id)->{tenant};
+    isnt $tenant, $existing, 'the run does not name the posted tenant';
+    my $row = $dao->db->query( 'SELECT slug FROM registry.tenants WHERE id = ?', $tenant )->hash;
+    is $row && $row->{slug}, 'planted_studio', 'a new tenant was provisioned for this signup';
 };
 
 # authenticate_as installs a permanent before_dispatch hook, so every request

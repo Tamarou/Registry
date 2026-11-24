@@ -157,10 +157,25 @@ class Registry::Job::SendNotifications {
     # rather than somebody locked out or an emergency withheld.
     my %CAPPED_TYPES = map { $_ => 1 } qw( message_announcement message_update );
 
-    # undef means "no cap" -- a tenant whose own domain is verified has staked
-    # its own reputation and is not throttled on ours.
+    # undef means "no cap": the tenant holds an in-effect uncapped
+    # email-sending entitlement from the platform, or its own domain is
+    # verified, so it has staked its own reputation and is not throttled on ours.
     sub send_allowance ( $class, $db, $slug ) {
-        return undef if $slug eq 'registry';
+        require Registry::DAO::Entitlement;
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', q{tstzrange(now(), now(), '[]')} );
+        # Read registry's table by name: a tenant's cloned entitlements are its
+        # own to write, so they must not lift the platform's cap.
+        return undef if $db->query( <<~"SQL", $slug )->array->[0];
+            SELECT EXISTS (
+                SELECT 1
+                  FROM registry.entitlements e
+                  JOIN registry.tenants t        ON t.id = e.holder_tenant_id
+                  JOIN registry.offer_versions v ON v.id = e.offer_version_id
+                  JOIN registry.resources r      ON r.id = v.resource_id
+                 WHERE t.slug = ? AND r.name = 'email sending' AND r.kind = 'unbounded'
+                   AND $in_effect
+            )
+            SQL
 
         my $verified = $db->query( <<~'SQL', $slug )->hash->{verified};
             SELECT EXISTS (

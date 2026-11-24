@@ -98,3 +98,15 @@ webhook-events-connect-payload [tenant-stripe-account-unique] 2026-11-24T01:00:0
 pricing-plan-rate-check [webhook-events-connect-payload] 2026-11-24T02:00:00Z Chris Prather <chris.prather@tamarou.com> # A plan rate written in SQL is held to the rule PricingPlan->create enforces
 payments-platform-fee-refunded [pricing-plan-rate-check] 2026-11-24T03:00:00Z Chris Prather <chris.prather@tamarou.com> # Record how much of the platform fee Stripe reports refunded
 tenant-plan-has-rate [payments-platform-fee-refunded] 2026-11-24T03:30:00Z Chris Prather <chris.prather@tamarou.com> # A tenant links only to a platform plan that carries a rate
+priceops-offer-versions [tenant-plan-has-rate] 2026-11-24T04:00:00Z Chris Prather <chris.prather@tamarou.com> # Resources and offers with append-only versions, immutable once published
+priceops-offer-policies [priceops-offer-versions] 2026-11-24T05:00:00Z Chris Prather <chris.prather@tamarou.com> # Offer versions carry price, units, payment plans, policies and conditions as data
+priceops-entitlements [priceops-offer-policies] 2026-11-24T06:00:00Z Chris Prather <chris.prather@tamarou.com> # Entitlements record holder, payer, stamped offer version and plan, and in-effect period
+priceops-entitlement-one-phase [priceops-entitlements] 2026-11-24T07:00:00Z Chris Prather <chris.prather@tamarou.com> # One schedule phase of an offer in effect at a time per holder, by exclusion constraint
+priceops-entitlement-units [priceops-entitlement-one-phase] 2026-11-24T07:30:00Z Chris Prather <chris.prather@tamarou.com> # A discrete entitlement holds named units of a finite resource, never past its capacity
+priceops-entitlement-lifecycle [priceops-entitlement-units] 2026-11-24T08:00:00Z Chris Prather <chris.prather@tamarou.com> # An entitlement is active or ended once, with when and why, and links to the payment that created it
+bootstrap-platform-offers [priceops-entitlement-lifecycle] 2026-11-24T08:30:00Z Chris Prather <chris.prather@tamarou.com> # The bootstrap seeds Solo v1 and the platform's offers to itself, with registry's entitlements
+priceops-occurrence-resources [bootstrap-platform-offers] 2026-11-24T09:00:00Z Chris Prather <chris.prather@tamarou.com> # An occurrence is its own finite resource, and a class offer covers its class's occurrences
+operator-right-entitlement [priceops-occurrence-resources] 2026-11-24T09:30:00Z Chris Prather <chris.prather@tamarou.com> # The platform holds the operator right as an entitlement, and the interim table goes
+self-offer-guard [operator-right-entitlement] 2026-11-24T10:00:00Z Chris Prather <chris.prather@tamarou.com> # Only the platform tenant may hold the platform's offers to itself (holder_is_offerer)
+platform-entitlement-one-in-effect [self-offer-guard] 2026-11-24T11:00:00Z Chris Prather <chris.prather@tamarou.com> # A tenant holds one active platform entitlement to payment processing at a time
+platform-entitlement-replaces-plan-link [platform-entitlement-one-in-effect] 2026-11-24T12:00:00Z Chris Prather <chris.prather@tamarou.com> # A tenant's platform fee comes from its platform entitlement, and the plan link is dropped

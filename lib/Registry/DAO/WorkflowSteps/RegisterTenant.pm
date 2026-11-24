@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::RegisterTenant :isa(Registry::DAO::WorkflowS
 
 use Registry::DAO::Workflow;
 use Registry::Utility::BaseDomain ();
+use Registry::PriceOps::PlatformTerms ();
 use Carp qw(croak);
 use DateTime;
 
@@ -72,25 +73,19 @@ method prepare_completion_data($db, $run) {
     };
 }
 
-# Read from the row that governs the charge -- tenants.platform_pricing_plan_id
-# -- rather than from a resolver the page would have to trust separately. What
-# the confirmation states is then what the tenant will actually be billed.
+# Read from the resolver that governs the charge, so what the confirmation
+# states is what the tenant will actually be billed.
 method _plan_summary ($db, $run) {
     my $tenant_id = ( $run->data || {} )->{tenant} or return {};
+    my $tenant = $db->query( 'SELECT slug FROM registry.tenants WHERE id = ?', $tenant_id )->hash
+        or return {};
 
-    my $row = $db->query(q{
-        SELECT p.plan_name,
-               p.amount_cents,
-               p.pricing_configuration->>'percentage' AS pct
-          FROM registry.tenants t
-          JOIN registry.pricing_plans p ON p.id = t.platform_pricing_plan_id
-         WHERE t.id = ?
-    }, $tenant_id)->hash or return {};
+    my $terms = Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $db, $tenant->{slug} );
 
     return {
-        plan_name             => $row->{plan_name},
-        monthly_amount        => $row->{amount_cents},
-        revenue_share_percent => ( $row->{pct} // 0 ) * 100,
+        plan_name             => $terms->{name},
+        monthly_amount        => $terms->{amount_cents},
+        revenue_share_percent => $terms->{fraction} * 100,
     };
 }
 

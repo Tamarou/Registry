@@ -1,88 +1,255 @@
 # SACP Stripe Connect Onboarding
 
-> **Registry now makes direct charges on the tenant's own account, not
-> destination charges.** See
-> [ADR 003](../decisions/003-direct-charges-stripe-source-of-truth.md) for the
-> decision. Steps below that assume destination charges are out of date until
-> this runbook is rewritten.
+Operator runbook for wiring SACP's Stripe Standard connected account into
+Registry so SACP can take paid enrollments.
 
-Operator runbook for wiring SACP's Stripe Standard connected account into the
-Registry platform so tenant-scoped destination charges work.
+Registry makes **direct charges**: every sale is charged on the selling
+tenant's own Stripe account, with a `Stripe-Account` header naming it, and the
+platform's share is the charge's `application_fee_amount`. There is no
+`transfer_data`, no `on_behalf_of` and no `reverse_transfer`. The customer,
+payment method, refunds and disputes all live on SACP's account. See
+[ADR 003](../decisions/003-direct-charges-stripe-source-of-truth.md) for the
+decision.
 
-This runbook covers one tenant. Repeat for any future tenant that needs paid
-enrollment.
+This runbook covers one tenant. Repeat it for any future tenant that needs
+paid enrollment. The platform tenant (`registry`) is set up by
+[the platform tenant bootstrap runbook](platform-tenant-bootstrap.md), not by
+this one.
+
+Placeholders:
+
+| Placeholder | Means |
+|---|---|
+| `acct_PLATFORM` | Tamarou's own (platform) Stripe account id |
+| `acct_XXXX` | SACP's connected account id |
+| `<sacp-slug>` | SACP's `registry.tenants.slug` |
+| `<platform-host>` | the host Registry is served on |
+| `sk_test_...`, `whsec_...` | a Stripe secret key and a webhook signing secret |
+
+Never paste a real key or signing secret into a ticket or this file.
 
 ---
 
-## 1. Create / locate SACP's Standard connected account in the Stripe dashboard
+## 1. Create / locate SACP's Standard connected account
 
-1. Log in to the Registry **platform** Stripe account (`acct_1NBjkkLMFKfcYAvR`).
-2. Navigate to **Connect → Accounts**.
-3. Create a new Standard connected account for SACP, or locate the existing one
-   if already created during earlier onboarding.
-4. Complete onboarding until the account detail page shows both:
-   - `charges_enabled: true`
-   - `details_submitted: true`
+The normal path is self-service: an admin of SACP opens **Admin → Billing**
+(`/admin/billing`) and presses connect. `POST /admin/billing/connect` creates a
+Standard account on Stripe, writes its id to
+`registry.tenants.stripe_connect_account_id` before redirecting, and sends the
+admin to Stripe's hosted onboarding. When Stripe sends them back to
+`/admin/billing/return`, Registry reads the account and writes
+`stripe_charges_enabled` and `stripe_details_submitted`.
 
-   These fields appear on the account overview page. If the account shows
-   "Restricted" or is missing either flag, the operator or SACP must complete
-   the Stripe identity / bank-account verification steps before proceeding.
+If the account has to be found or finished by hand instead:
+
+1. Log in to the platform Stripe account (`acct_PLATFORM`).
+2. Go to **Connect → Accounts** and open SACP's Standard account (or create
+   one).
+3. Complete onboarding.
+
+   **Check:** the account overview shows `charges_enabled: true` and
+   `details_submitted: true`. If it shows "Restricted" or either flag is false,
+   SACP must finish Stripe's identity and bank-account steps first.
 
 ---
 
-## 2. Record the connected account on the tenant row
+## 2. Record the connected account and check SACP's platform terms
 
-Once both readiness flags are true in Stripe, record the account ID in the
-Registry database. Replace `acct_XXXX` with SACP's actual account ID and
-`<sacp-slug>` with the value in `registry.tenants.slug` for SACP. Find the
-slug first if unsure:
+1. Find SACP's slug:
 
-```sql
-SELECT slug, name FROM registry.tenants WHERE name ILIKE '%sacp%';
-```
+   ```sql
+   SELECT slug, name, stripe_connect_account_id,
+          stripe_charges_enabled, stripe_details_submitted
+     FROM registry.tenants WHERE name ILIKE '%sacp%';
+   ```
 
-```sql
-UPDATE registry.tenants
-SET stripe_connect_account_id = 'acct_XXXX',
-    stripe_charges_enabled    = true,
-    stripe_details_submitted  = true
-WHERE slug = '<sacp-slug>';
-```
+   **Check:** one row. If `stripe_connect_account_id` is already `acct_XXXX`
+   and both flags are true, the self-service flow did this step; go to step 3.
 
-Verify one row was updated:
+2. Only if the row does not name the account yet, record it:
 
-```sql
-SELECT slug, stripe_connect_account_id, stripe_charges_enabled, stripe_details_submitted
-FROM registry.tenants
-WHERE slug = '<sacp-slug>';
-```
+   ```sql
+   UPDATE registry.tenants
+      SET stripe_connect_account_id = 'acct_XXXX',
+          stripe_charges_enabled    = true,
+          stripe_details_submitted  = true
+    WHERE slug = '<sacp-slug>';
+   ```
 
-The boolean columns self-heal after this point via the `account.updated` webhook
-(see step 3), so manual re-edits are only needed when the webhook is not yet
-configured or after a Stripe account suspension.
+   **Check:** `UPDATE 1`. Re-run the step 1 query and see `acct_XXXX` with both
+   flags true.
+
+   After this the flags are kept current by `account.updated` on the Connect
+   endpoint (section 3), which updates only the tenant whose
+   `stripe_connect_account_id` is the account the event is for. Hand edits are
+   needed only before that endpoint exists.
+
+3. Confirm SACP holds a platform entitlement to payment processing. A payment
+   is created only for a tenant with one in effect; there is no fallback to
+   Free or 0 (section 6, "Revenue share rate"):
+
+   ```sql
+   SELECT o.name, p.kind, p.fraction, e.state
+     FROM registry.entitlements e
+     JOIN registry.tenants t ON t.id = e.holder_tenant_id
+     JOIN registry.offer_versions v ON v.id = e.offer_version_id
+     JOIN registry.offers o ON o.id = v.offer_id
+     JOIN registry.resources r ON r.id = v.resource_id
+     JOIN registry.offer_version_payment_plans p
+       ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
+    WHERE r.name = 'payment processing'
+      AND t.slug = '<sacp-slug>';
+   ```
+
+   **Check:** one `active` row, `Solo`, `0.025`. Solo v1 is described in
+   [section 9 of the bootstrap runbook](platform-tenant-bootstrap.md#9-solo-v1-and-the-platforms-0-offer-to-itself).
+
+Changing `stripe_connect_account_id` later does not move existing payments.
+Each payment copies the account into `metadata.stripe_account_id` when it is
+created, and every intent, retrieve, cancel and refund for that payment goes to
+that account.
 
 ---
 
 ## 3. Webhook configuration
 
-The Registry platform webhook endpoint must receive **both** platform events and
-Connect events from connected accounts.
+Registry has **two** Stripe webhook endpoints, each with its own signing
+secret. A delivery signed for one never verifies at the other.
 
-1. In the Stripe dashboard, navigate to **Developers → Webhooks** on the
-   platform account (`acct_1NBjkkLMFKfcYAvR`).
-2. Edit the existing Registry endpoint.
-3. Under **Listen to**, confirm "Events on Connected accounts" is enabled in
-   addition to the existing platform events.
-4. Ensure `account.updated` is in the event list. This event arrives when a
-   connected account's `charges_enabled` or `details_submitted` changes, and
-   the `_process_account_updated` handler (`lib/Registry/Controller/Webhooks.pm`)
-   mirrors those flags back onto `registry.tenants` automatically.
+| Endpoint | Stripe setting | Secret variable | Receives |
+|---|---|---|---|
+| `POST /webhooks/stripe` | **Events on your account**, on `acct_PLATFORM` | `STRIPE_WEBHOOK_SECRET` | events on the platform's own account: tenant billing, `application_fee.refunded`, and the platform tenant's own sales |
+| `POST /webhooks/stripe/connect` | **Events on Connected accounts**, on `acct_PLATFORM` | `STRIPE_CONNECT_WEBHOOK_SECRET` | events on sellers' accounts, SACP's included |
 
-**`payment_intent.succeeded` routing note:** For destination charges, Stripe
-delivers the `payment_intent.succeeded` event to the **platform** webhook, not
-the connected account's webhook, and the payment intent metadata fields
-(`metadata.payment_id`, `metadata.tenant_slug`) are preserved. Confirm this
-once in test mode (step 5) before going live.
+Both secrets are in the `registry-stripe` env group (`render.yaml`), shared by
+the web service and the worker. With `MOJO_MODE=production`, startup logs
+`STRIPE_CONNECT_WEBHOOK_SECRET is not set in production: ...` at error when it
+is missing, and the Connect endpoint then answers every delivery with 500
+`Webhook verification not configured`.
+
+### 3.1 The platform endpoint
+
+1. In the Stripe dashboard on `acct_PLATFORM`, go to **Developers → Webhooks**
+   and open (or add) the endpoint `https://<platform-host>/webhooks/stripe`,
+   listening to **Events on your account**.
+2. Select these events:
+   - `customer.subscription.updated`, `customer.subscription.deleted`,
+     `customer.subscription.trial_will_end`, `invoice.payment_succeeded`,
+     `invoice.payment_failed` (tenant billing)
+   - `application_fee.refunded` (the platform's fee on a seller's charge was
+     returned; see section 6)
+   - `payment_intent.succeeded` (the platform tenant's own sales, which are
+     made on `acct_PLATFORM` and settle in the `registry` schema)
+3. Copy the endpoint's signing secret into `STRIPE_WEBHOOK_SECRET`.
+
+   **Check:** in the endpoint's delivery log, recent deliveries answer 200. A
+   400 `Invalid signature` means the secret in `STRIPE_WEBHOOK_SECRET` is not
+   this endpoint's.
+
+### 3.2 The Connect endpoint
+
+1. On `acct_PLATFORM`, **Developers → Webhooks → Add endpoint**:
+   - URL `https://<platform-host>/webhooks/stripe/connect`
+   - Listen to **Events on Connected accounts**
+   - API version `2024-12-18.acacia`. The handler reads an invoice's
+     subscription from the top-level `invoice.subscription`, which is where
+     that version puts it.
+2. Select these events:
+   - `payment_intent.succeeded`
+   - `invoice.paid`, `invoice.payment_failed`, `invoice.voided`,
+     `invoice.marked_uncollectible`
+   - `account.updated`
+   - `refund.updated`
+   - the refund, dispute and customer events Registry stores (`STRIPE_MOVES`
+     in `Webhooks.pm`): `charge.refunded`, `charge.refund.updated`,
+     `refund.*`, `charge.dispute.*`, `customer.*`
+3. Copy this endpoint's signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET`
+   and redeploy.
+
+   **Check:** the startup log has no
+   `STRIPE_CONNECT_WEBHOOK_SECRET is not set in production` line, and the
+   endpoint's delivery log shows 200s, not 500 or 400.
+
+### 3.3 What the Connect endpoint does with an event
+
+**The tenant is found by `event.account`**, the top-level account Stripe puts
+on every Connect event, matched exactly against
+`registry.tenants.stripe_connect_account_id`. Metadata is never used to pick
+the tenant: the seller can edit metadata on its own account. If a
+`payment_intent.succeeded` names a different `tenant_slug` in metadata, the
+account wins and a warning is logged.
+
+| Event | What happens |
+|---|---|
+| any event for an account no tenant names | 200 `OK (no tenant)`, logged, not claimed; except the refund, dispute and customer events below, which are stored with no tenant |
+| `payment_intent.succeeded` for the intent Registry stored on the payment | settles the payment in SACP's schema: completes it, records the fee, finalizes the enrollments |
+| `payment_intent.succeeded` for a payment Registry did not make (no or non-UUID `metadata.payment_id`, no such payment, or not the intent Registry stored), such as SACP's own Terminal or counter sale | 200, logged, ignored |
+| `payment_intent.succeeded` for an intent Registry created and later replaced (listed in the payment's `metadata.superseded_intent_ids`) | nothing settles, staff are alerted, and the `superseded_refund` job refunds it in full (section 6) |
+| `invoice.paid`, `invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible` | the subscription is read from SACP's account with `expand[]=schedule`; only an invoice whose schedule Registry recorded, with `billing_reason` `subscription_create`, `subscription_cycle` or `subscription_update`, marks an instalment row |
+| `account.updated` | mirrors `charges_enabled` and `details_submitted` onto the tenant row, when the account in the event is the one it was delivered for |
+| `refund.updated` for a refund Registry holds as pending | settles that refund (section 6, "Refunds") |
+| other refund, dispute and customer events (`charge.refunded`, `charge.refund.updated`, `refund.*`, `charge.dispute.*`, `customer.*`) | **stored, not applied**: the row in `registry.webhook_events` keeps the account, tenant and payload, with `processed_at` NULL. Nothing in Registry changes. |
+| anything else | claimed, logged as not handled, 200 |
+
+To see what has been stored unapplied:
+
+```sql
+SELECT stripe_event_id, event_type, account, tenant_id, received_at
+  FROM registry.webhook_events
+ WHERE processed_at IS NULL
+ ORDER BY received_at DESC;
+```
+
+A refund or dispute SACP makes in its own Stripe dashboard shows up here and
+nowhere else in Registry. Act on it by hand until Registry applies these
+events.
+
+### 3.4 Instalment invoices Stripe collected but Registry did not record
+
+An instalment invoice billed before its schedule was recorded is retried for a
+day and then dropped. The `instalment_reconcile` job closes that gap: for every
+tenant with a Stripe account, it lists the paid invoices of each schedule that
+still has a `pending` or `failed` row, on that tenant's account, and settles
+them as `invoice.paid` would.
+
+`instalment_reconcile` is queued when the web server starts, if none is
+already waiting, to run an hour later. It does not queue itself again.
+
+1. Run it now on the worker or web host:
+
+   ```bash
+   ./registry minion job -e instalment_reconcile
+   ```
+
+2. **Check:** the instalment rows now show `completed` with
+   `metadata.stripe_invoice_id` set:
+
+   ```sql
+   SELECT id, instalment_seq, status, metadata->>'stripe_invoice_id' AS invoice
+     FROM "<sacp-slug>".payments
+    WHERE stripe_schedule_id = '<sub_sched_...>'
+    ORDER BY instalment_seq;
+   ```
+
+3. Read the log for `instalment_reconcile: ... matches no owed row`. That line
+   means Stripe collected an invoice that no payment row records. Settle it
+   with SACP by hand.
+
+### 3.5 The platform's own account
+
+The platform tenant sells like any seller: its row names `acct_PLATFORM` and
+its payments carry `Stripe-Account: acct_PLATFORM`. Stripe accepts a
+`Stripe-Account` header naming the API key's own account: the
+`RESULT:` line of `t/stripe-live/platform-account-header.t` records it accepted
+on 2026-11-23 (API `2024-12-18.acacia`, test mode) for creating and confirming
+a payment intent, creating a customer and retrieving the intent, and records a
+header naming a nonexistent account refused. So the payment step sends the
+header for every seller, the platform included, and has no special case. If
+Stripe ever refuses it, that live test fails.
+
+The platform's own sales take no fee because `registry` holds a 0% entitlement,
+and a zero fee is omitted. Setting that up is covered by
+[the bootstrap runbook](platform-tenant-bootstrap.md), not here.
 
 ---
 
@@ -140,36 +307,83 @@ Then run one test-mode paid enrollment on a test tenant (see step 5).
 
 ## 5. Live validation (test mode before going live)
 
-Use Stripe **test** keys and a Stripe test connected account for this step.
-Do not use live keys. Set the environment for the app under test:
+Use Stripe **test** keys and a Stripe test connected account. Do not use live
+keys: `Registry::Service::Stripe->from_env` refuses an `sk_live_` key unless
+`MOJO_MODE=production`. Configure both endpoints of section 3 in test mode and
+set:
 
 ```bash
-export STRIPE_SECRET_KEY=sk_test_...      # test secret key
-export STRIPE_WEBHOOK_SECRET=whsec_...    # the test endpoint's signing secret
+export STRIPE_SECRET_KEY=sk_test_...                # test secret key
+export STRIPE_WEBHOOK_SECRET=whsec_...              # test platform endpoint's secret
+export STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...      # test Connect endpoint's secret
 ```
 
-Note: the application refuses an `sk_live_` key unless `MOJO_MODE=production`
-(a safety guard in `Registry::DAO::Payment`), so a test run with a live key
-aborts by design.
+1. Point a test tenant at a test connected account (sections 1 and 2, with
+   `<test-slug>` and the test account `acct_XXXX`).
 
-1. Configure a test tenant with `stripe_connect_account_id` set to a Stripe
-   test connected account ID (e.g. `acct_test_XXXX`).
-2. Complete one end-to-end paid enrollment through the application for that
-   test tenant using Stripe test card `4242 4242 4242 4242`.
-3. In the Stripe dashboard (test mode), confirm the resulting charge shows:
-   - `transfer_data.destination` set to the test connected account
-   - `application_fee_amount` equal to the tenant's plan rate (2% at launch)
-     of the charge amount (rounded to the nearest cent, half-up)
-   - `on_behalf_of` set to the same connected account
-4. Confirm the `payment_intent.succeeded` event arrived on the platform webhook
-   (not the connected account's webhook).
-5. In the Registry database, confirm:
-   - The payment row exists in `<test-tenant-slug>.payments` (tenant schema)
-   - The enrollment row exists in `<test-tenant-slug>.enrollments`
-   - `registry.payments` has no corresponding row for this payment
+   **Check:** section 2 step 3's query returns one active entitlement.
 
-Once all five checks pass, the feature is validated and SACP can be switched
-from test to live keys.
+2. Complete one paid enrollment for that tenant with test card
+   `4242 4242 4242 4242`, and note the amount in cents.
+
+   **Check:**
+
+   ```sql
+   SELECT id, status, amount_cents, platform_fee_cents,
+          platform_offer_version_id, platform_payment_plan_id,
+          stripe_payment_intent_id, metadata->>'stripe_account_id' AS account
+     FROM "<test-slug>".payments ORDER BY created_at DESC LIMIT 1;
+   ```
+
+   `status = 'completed'`, `account = 'acct_XXXX'`, both platform ids set.
+   `platform_fee_cents` is the amount times 0.025 (Solo v1), in whole cents,
+   rounded half to even; for a zero fee it is 0. The enrollment is in
+   `"<test-slug>".enrollments`, and `registry.payments` has no row with this
+   id.
+
+3. Read the intent **on the connected account**:
+
+   ```bash
+   curl -s https://api.stripe.com/v1/payment_intents/<pi_...> \
+     -u "$STRIPE_SECRET_KEY:" -H "Stripe-Account: acct_XXXX"
+   ```
+
+   **Check:** `status` is `succeeded`, `application_fee_amount` equals
+   `platform_fee_cents` (the field is absent when the fee is 0), and there is
+   no `transfer_data` and no `on_behalf_of`. For an instalment payment,
+   `customer` is set, and that customer is on `acct_XXXX` too. The same request
+   **without** `Stripe-Account` fails with `No such payment_intent`: the charge
+   is not on the platform account.
+
+4. Read the fee **on the platform account** (no `Stripe-Account`):
+
+   ```bash
+   curl -s https://api.stripe.com/v1/application_fees \
+     -u "$STRIPE_SECRET_KEY:" -G -d charge=<ch_... from latest_charge>
+   ```
+
+   **Check:** one fee whose `amount` equals `platform_fee_cents` and whose
+   `account` is `acct_XXXX`.
+
+5. Confirm the event arrived at the Connect endpoint:
+
+   ```sql
+   SELECT event_type, processed_at
+     FROM registry.webhook_events
+    WHERE event_type = 'payment_intent.succeeded'
+    ORDER BY received_at DESC LIMIT 1;
+   ```
+
+   **Check:** `processed_at` is set, and the Connect endpoint's (not the
+   platform endpoint's) delivery log in Stripe shows the event answered 200.
+
+6. Run the live suite (section 7).
+
+   **Check:** it passes. Its refund tests make a full and a partial refund on
+   the tenant account and assert the refund is found with `Stripe-Account` and
+   the fee's `amount_refunded` stays 0.
+
+Once all six checks pass, SACP can be switched from test to live keys.
 
 ---
 
@@ -177,41 +391,139 @@ from test to live keys.
 
 ### Revenue share rate
 
-The application fee charged on each destination charge is calculated from the
-tenant's linked pricing plan. The relevant field is
-`pricing_configuration->>'percentage'` on the `registry.pricing_plans` row
-linked to the tenant via `platform_pricing_plan_id`. The platform free plan
-(scope `platform`, `metadata->>'default'='true'`) is the fallback when no plan
-is linked. At launch the single percentage plan carries a 2% rate.
+The tenant's platform entitlement is the source of its rate. Each tenant holds
+an entitlement in `registry.entitlements` to an offer version for the resource
+"payment processing", with one of that version's payment plans. Signup grants
+it. The rate is the `fraction` on that payment plan
+(`registry.offer_version_payment_plans`). Solo v1 carries `0.025` (2.5%).
 
-Rate resolution is performed by
-`Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant`, which
-returns the fraction (e.g. `0.02` for 2%) used by `_connect_params` to compute
-`application_fee_amount` in integer cents, rounded half-up.
+`Registry::PriceOps::PlatformTerms::platform_terms_for_tenant($db,
+$tenant_slug)` resolves the entitlement in effect now. It returns the offer
+version id, the payment plan id and the rate as an exact decimal string
+(`"0.025"`, never a float). There is no fallback to Free or to 0.
 
-### Refund policy config
+For a tenant whose row sets `stripe_connect_account_id`,
+`Registry::DAO::Payment->create` resolves those terms when the payment is
+created and keeps the rate, offer version id and payment plan id in the
+payment's metadata, so every retry sends the same `application_fee_amount`
+(integer cents, rounded half to even). Such a tenant with no entitlement in
+effect is refused by name, and no payment row is written. A tenant with no
+`stripe_connect_account_id` is not resolved at create: its row is written with
+no rate, and its terms are read from the tenant's entitlement in effect only
+when a fee is recorded. When the fee is recorded, the payment row is stamped
+with the terms it was charged under: `platform_offer_version_id` and
+`platform_payment_plan_id`.
 
-Whether the platform returns its application fee when a tenant payment is
-refunded is controlled by `pricing_configuration.refund_application_fee` on
-the tenant's linked pricing plan. This is a JSON boolean stored in the plan's
-`pricing_configuration` jsonb column; the default is `true` (the platform
-refunds its fee). The `reverse_transfer` flag is always sent for
-destination-charge refunds regardless of this setting.
+### Refund policy
 
-Seeded at deploy time by the `refund-application-fee-config` sqitch change:
-both the platform default plan and all tenant percentage plans receive
-`refund_application_fee: true` explicitly, making the policy visible even
-though an absent or null key also defaults to `true`.
+An ordinary refund keeps the platform's fee whatever the refund policy says:
+it sends no `refund_application_fee` (section 6, "Refunds").
 
-Resolved at refund time by
-`Registry::PriceOps::RevenueShare::refund_application_fee_for_tenant($db,
-$tenant_slug)`, which returns `1` (refund the fee) or `0` (keep the fee).
-`Registry::DAO::Payment::_refund_connect_params` maps those to the string
-booleans `'true'`/`'false'` required by Stripe's form-encoded API.
+Only returning the platform's fee reads the refund policy, and it reads the
+policy of the offer version stamped on the payment, not the tenant's current
+entitlement. The policy is `policies->'refund'` on `registry.offer_versions`,
+read through `Registry::DAO::Payment::stamped_platform_terms`.
+
+- The platform's fee can be returned only when the stamped version's refund
+  policy is `keep_fee_with_admin_exception` (Solo v1's).
+  `Registry::DAO::Payment::refund_platform_fee_async` does this. It refuses,
+  before calling Stripe, any payment with no stamp or under any other policy.
+  Nothing in the application calls it yet.
+
+### Refunds
+
+Every refund Registry makes is a refund on the seller's account: the request
+carries `Stripe-Account` naming the account in the payment's
+`metadata.stripe_account_id`, and sends only `payment_intent`, `amount` and
+`reason`, under an Idempotency-Key. It sends no `reverse_transfer` (there is
+no transfer to reverse) and no `refund_application_fee`, so Tamarou keeps its
+fee.
+
+| Refund | Key | `reason` | `amount` |
+|---|---|---|---|
+| capacity increment (payment step or webhook) | `refund:capacity:<payment_id>:<seq>` | `requested_by_customer` | the increment's `cents` |
+| approved drop | `refund:drop:<payment_id>:<enrollment_id>` | `requested_by_customer` | the enrollment's approved `refund_amount_cents` |
+| paid superseded intent (`superseded_refund` job) | `refund:superseded:<pi_...>` | `duplicate` | not sent: the whole charge |
+
+Stripe refuses a reused key whose parameters differ. A refund issued by hand
+under one of these keys must send exactly the same parameters, with the same
+`Stripe-Account`.
+
+**Pending refunds are held.** A refund Stripe answers `pending` or
+`requires_action` is not counted. Registry holds it in the payment's
+`metadata.pending_refunds` (keyed by refund id, with its key, cents and
+reason) and settles it when `refund.updated` for that refund reaches the
+Connect endpoint: `succeeded` counts it, settles its capacity increment or
+marks the dropped enrollment `refund_status = 'processed'`; `failed` or
+`canceled` records it in `metadata.failed_refunds` and
+`metadata.refund_last_failure`, and alerts staff that it is still owed. While a
+refund is held, a retry under its key returns the held refund instead of
+sending again.
+
+**The kept fee is recorded from `application_fee.refunded`.** When any part
+of the platform's fee on a seller's charge is returned, whoever returned it,
+Stripe sends `application_fee.refunded` to the **platform** endpoint. Registry
+finds the tenant by the fee's `account`, reads the charge on that account to
+find its payment intent, and sets the payment's
+`platform_fee_refunded_cents` to the fee's `amount_refunded`. The highest
+amount seen wins, so a late or repeated event never lowers it. What the
+platform kept is `platform_fee_cents - platform_fee_refunded_cents`:
+
+```sql
+SELECT id, platform_fee_cents, COALESCE(platform_fee_refunded_cents, 0) AS fee_returned
+  FROM "<sacp-slug>".payments
+ WHERE stripe_payment_intent_id = '<pi_...>';
+```
+
+### A paid superseded intent
+
+When a parent pays an intent Registry had already replaced (an old browser
+tab), the Connect endpoint settles nothing, alerts staff ("A replaced card
+payment was charged and is being refunded"), and after commit queues the
+`superseded_refund` job (10 attempts). It refunds the whole charge on the
+account the payment names, as in the table above, and emails the parent. This
+is the one refund Registry starts on its own. If Stripe refuses the request or
+the last attempt fails, staff get "Refund failed: refund it by hand".
+
+To refund it by hand:
+
+1. Read the account from the payment:
+
+   ```sql
+   SELECT metadata->>'stripe_account_id' AS account
+     FROM "<sacp-slug>".payments WHERE id = '<payment_id>';
+   ```
+
+2. List refunds for the intent on that account:
+
+   ```bash
+   curl -s https://api.stripe.com/v1/refunds \
+     -u "$STRIPE_SECRET_KEY:" -H "Stripe-Account: acct_XXXX" \
+     -G -d payment_intent=<pi_...>
+   ```
+
+   **Check:** if a `succeeded` or `pending` refund is listed, stop: it is
+   refunded or on its way.
+
+3. Only on an empty list, refund it with the job's own parameters:
+
+   ```bash
+   curl -s https://api.stripe.com/v1/refunds \
+     -u "$STRIPE_SECRET_KEY:" -H "Stripe-Account: acct_XXXX" \
+     -H "Idempotency-Key: refund:superseded:<pi_...>" \
+     -H "Stripe-Version: 2024-12-18.acacia" \
+     -d payment_intent=<pi_...> \
+     -d reason=duplicate
+   ```
+
+   **Check:** the response's `status` is `succeeded` (or `pending`; list again
+   later). Nothing in Registry records this refund: the payment row is not
+   touched by the job either.
 
 ### Clearing a stranded `refund_pending` payment
 
-`refund_pending` means the platform owes a refund it has not yet issued, and
+`refund_pending` means Registry owes a refund, on the seller's account, that it
+has not yet issued, and
 the refund call itself failed after the settlement transaction had already
 committed. Two different things put a row here, and they leave DIFFERENT
 enrollment state behind:
@@ -274,6 +586,8 @@ psql $DATABASE_URL -c \
           jsonb_pretty(refund_increments) AS increments,
           metadata->'refund_manual_review' AS manual_review,
           metadata->'refund_last_failure' AS last_failure,
+          metadata->'pending_refunds' AS pending_refunds,
+          metadata->>'stripe_account_id' AS account,
           stripe_payment_intent_id, completed_at
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
@@ -295,6 +609,16 @@ one refund per increment whose `settled_at` is null, **for that increment's own
 `cents`** -- never for the `refund_owed_cents` total. The increments sum to the
 total by construction, and sending the total is how one debt gets paid twice.
 
+`account` is the seller account the payment was charged on. Every Stripe call
+below goes to that account with `Stripe-Account: <account>`. It is the
+account the payment recorded at creation, which is not necessarily the
+tenant's current `stripe_connect_account_id`.
+
+`pending_refunds` lists refunds Stripe answered `pending` that Registry is
+waiting on. Leave those alone: `refund.updated` on the Connect endpoint
+settles them, and a retry under the same key returns the held refund rather
+than sending a new one.
+
 `metadata.refund_last_failure` is the most recent refund attempt on this
 payment that failed -- a capacity increment (paid from the payment step or the
 webhook) or an approved drop's refund
@@ -306,15 +630,24 @@ webhook) or an approved drop's refund
 | `not_sent` | The request never left Registry. No money moved. | Fix the cause in `message`, then Step 3. Step 2 is still cheap insurance. |
 | `unknown` | Stripe refused it, or the response was lost. Money may have moved. | Step 2 first, always. |
 
+A `message` of the form `Stripe refund re_... on payment ... is failed` (or
+`canceled`) is Stripe's answer for that one refund, either at once or later
+through `refund.updated`. It is classified `unknown`; that refund moved no
+money, but run Step 2 anyway before sending another.
+
 **A drop's refund is not a capacity increment: Steps 3 and 4 do not apply to
 it.** A drop has no increment, its row is usually `completed` rather than
 `refund_pending` (the last predicate above is what lists it), and Step 3's
 `refund:capacity:...` key would not match the drop's own. Run Step 2 first.
 Then retry by resubmitting the drop's refund step, which reuses the key
 `refund:drop:<payment_id>:<enrollment_id>`, so Stripe returns the earlier refund
-rather than sending a second. If you must refund by hand instead, use that same
-key and then set the enrollment's `refund_status = 'processed'`; otherwise a
-later re-approval of the drop refunds the family again.
+rather than sending a second. If you must refund by hand instead, send exactly
+what the drop step sends: `Stripe-Account: <account>`, the key
+`refund:drop:<payment_id>:<enrollment_id>`, `payment_intent`,
+`amount=<the enrollment's refund_amount_cents>` and
+`reason=requested_by_customer`. Then set the enrollment's
+`refund_status = 'processed'`; otherwise a later re-approval of the drop
+refunds the family again.
 
 The field is cleared automatically when a later refund on the same payment
 succeeds, so a row that still carries it has had no successful refund since that
@@ -356,24 +689,23 @@ after Stripe accepted the refund, so the debt can already be discharged:
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
+  -H "Stripe-Account: <account>" \
   -G -d payment_intent=<stripe_payment_intent_id>
 ```
 
-**No `Stripe-Account` header.** These are destination charges made *on the
-platform account* -- `Registry::DAO::Payment` sets
-`transfer_data[destination]` and `on_behalf_of` rather than acting as the
-connected account, and `Registry::Service::Stripe::_request_async` never sends
-`Stripe-Account`. Adding the header queries an account on which the
-PaymentIntent does not exist, so the listing comes back empty and this check --
-whose entire purpose is "has a refund already gone out?" -- silently reports
-"nothing reached Stripe" for a refund that did.
+**The `Stripe-Account` header is required.** These are direct charges on the
+seller's account: `Registry::DAO::Payment` refunds through a client bound to
+`metadata.stripe_account_id`, and `Registry::Service::Stripe::_request_async`
+sends `Stripe-Account` on every request that client makes. Without the header
+the request asks the platform account, where the PaymentIntent does not exist,
+so it can never show a refund that did go out.
 
 Act on what comes back:
 
 | Result | Action |
 |---|---|
 | A `succeeded` Refund for the owed amount | The debt is paid. Settle the row (step 4). Do not re-issue. |
-| A `pending` Refund | Leave it alone. Connect refunds can sit pending; re-issuing duplicates it. Re-check later. |
+| A `pending` Refund | Leave it alone; re-issuing duplicates it. If Registry holds it in `pending_refunds`, `refund.updated` settles it. If not, re-check later and settle the row by hand (step 4) once it is `succeeded`. |
 | A `failed` Refund | See the warning below. Do **not** re-issue blindly and do **not** change the status. |
 | An empty list | Nothing reached Stripe. Only this case justifies issuing the refund. |
 
@@ -392,19 +724,27 @@ the whole point of it.
 ```bash
 curl -s https://api.stripe.com/v1/refunds \
   -u "$STRIPE_SECRET_KEY:" \
+  -H "Stripe-Account: <account>" \
   -H "Idempotency-Key: refund:capacity:<payment_id>:<seq>" \
+  -H "Stripe-Version: 2024-12-18.acacia" \
   -d payment_intent=<stripe_payment_intent_id> \
   -d amount=<this increment's cents, NOT refund_owed_cents> \
-  -d reason=requested_by_customer \
-  -d reverse_transfer=true \
-  -d refund_application_fee=<true|false>
+  -d reason=requested_by_customer
 ```
 
-`reason` is not optional here. The automated path always sends
-`requested_by_customer`, and Stripe rejects a replay of a used idempotency key
-whose parameters differ rather than folding it — so a hand-issued refund that
-omits it cannot share a key with the automated attempt, and whichever runs
-second is refused.
+**Send exactly these parameters and no others.** The automated refund
+(`Registry::DAO::Payment::refund_async`) sends only `payment_intent`, `amount`
+and `reason=requested_by_customer` under this key, on the seller's account.
+Stripe refuses a reused idempotency key whose parameters differ rather than
+folding it, so a hand-issued refund that adds a parameter (`reverse_transfer`,
+`refund_application_fee`) or omits `reason` cannot share the key with the
+automated attempt, and whichever runs second is refused. No
+`refund_application_fee` means Stripe's default applies: Tamarou keeps its fee.
+
+**Check:** the response's `status` is `succeeded`. A `pending` refund issued
+by hand is not in `pending_refunds`, so Registry will not settle it: list it
+again later and run Step 4 once it is `succeeded`. Its `refund.updated` is
+stored unapplied in `registry.webhook_events`.
 
 **One refund per unsettled increment.** Repeat this call for each element of
 `refund_increments` whose `settled_at` is null, using that element's `seq` in
@@ -412,10 +752,6 @@ the key and that element's `cents` as the amount. Sending `refund_owed_cents`
 under a single key is the shape that caused a double refund: the key moved as
 the debt grew, so Stripe saw a key it had never seen and paid the whole
 accumulated balance again.
-
-`refund_application_fee` follows the tenant's plan config -- see **Refund
-policy config** above; `reverse_transfer` is always `true` for
-destination-charge refunds.
 
 > **Stripe prunes idempotency keys after 24 hours.** The key protects a retry
 > made minutes later. It does **not** protect one made the next day: the same

@@ -13,6 +13,7 @@ class Registry::DAO::Project :isa(Registry::DAO::Object) {
     field $metadata :param :reader = {};
     field $notes :param :reader = '';
     field $status :param :reader = 'draft';
+    field $seats_per_occurrence :param :reader = undef;    # a class's default seats per occurrence
     field $created_at :param :reader;
     field $updated_at :param :reader;
 

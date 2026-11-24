@@ -7,6 +7,7 @@ BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Fixtures;
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;
@@ -17,6 +18,7 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 my $platform = Test::Registry::Fixtures::platform_seller($db);
+state_platform_terms( $db, $platform, { rate => 0 } );
 
 my $user_id = $db->query(q{
     INSERT INTO registry.users (username, passhash)

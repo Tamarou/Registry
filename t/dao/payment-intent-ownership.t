@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::PricingProbe qw( give_tenant_terms state_platform_terms );
 use Registry::DAO::Payment;
 use Registry::Service::Stripe;
 use Mojo::Promise;
@@ -17,6 +18,7 @@ local $ENV{STRIPE_SECRET_KEY} = 'sk_test_intent_ownership';
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
+state_platform_terms( $db, 'registry', { rate => 0 } );
 
 my $parent = $dao->create(User => {
     username => 'io_parent', name => 'IO Parent', user_type => 'parent',
@@ -145,6 +147,7 @@ subtest 'a payment that never took money cannot be refunded' => sub {
 subtest 'intent made on another tenant account is unreachable' => sub {
     $db->query( q{INSERT INTO registry.tenants (name, slug, stripe_connect_account_id)
                   VALUES ('Own A', 'own_a', 'acct_own_a'), ('Own B', 'own_b', 'acct_own_b')} );
+    give_tenant_terms( $db, $_, { rate => 0 } ) for qw( own_a own_b );
     my $payment = Registry::DAO::Payment->create($db, {
         user_id => $parent->id, amount_cents => 200000, status => 'pending',
         metadata => { enrollment_items => [], tenant_slug => 'own_a' } });

@@ -26,6 +26,15 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
         my $error_handler = Registry::Utility::ErrorHandler->new();
 
+        # A second press of the commit button: this run already made its tenant.
+        if ( my $done = $self->_provisioned( $db, $run ) ) {
+            return { next_step => 'complete', tenant_created => 1, %$done };
+        }
+
+        # Refuse a signup with no single offer to grant before any user is
+        # written or Stripe is called; _provision_tenant asks again to grant it.
+        $self->_platform_offer_to_tenants($db);
+
         # Check for rate limiting
         if (my $rate_limit_error = $self->check_rate_limits($db, $run)) {
             $error_handler->log_error($rate_limit_error, {
@@ -169,9 +178,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # step and nothing after it. This puts the same refusal on the path where
     # the money actually moves.
     #
-    # Returns undef when no plan was selected, and also when a selected one no
-    # longer resolves. Both then take the Solo/Free default below: a stale or
-    # shelved selection charges nothing rather than charging the wrong thing.
+    # When no plan was selected, or a selected one no longer resolves, returns
+    # the platform's launch plan from _launch_plan instead (undef if that is not
+    # on offer): a stale or shelved selection is never the plan charged.
     # Refusing the run outright would be stronger still, but get_subscription_config
     # is also called to RENDER the payment page, where an error has nowhere to
     # go -- see #347 for the restructuring that would allow it.
@@ -187,10 +196,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         # Nothing chosen, or what was chosen is no longer on offer. Signup no
         # longer asks which plan -- everyone starts on the one the platform
         # sells -- so this is the ordinary path, not the exceptional one.
-        # Returning undef here instead would leave platform_pricing_plan_id
-        # NULL, and revenue_share_fraction_for_tenant reads a NULL link as the
-        # Free plan's 0%: every tenant onboarded free of revenue share, with
-        # nothing in the flow to notice.
         return $self->_launch_plan($db);
     }
 
@@ -576,6 +581,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     # tenant/organization_name/subdomain/admin_email keys.  This is the single
     # provisioning path for all completion scenarios (no-Stripe mock, real-Stripe).
     method _provision_tenant($db, $run) {
+        if ( my $done = $self->_provisioned( $db, $run ) ) { return $done }
         my $data = $run->data;
         my $profile = $data->{profile} || {};
         my $subscription_data = $data->{subscription} || {};
@@ -642,13 +648,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             if $data->{__remote_address};
         $provision_data{slug} = $slug if $slug;
 
-        # Persist the tenant -> platform plan link when a plan was selected, so
-        # the charge-time revenue-share resolver reads the chosen rate.
-        # The plan the charge resolved to, not the one run data remembers -- the
-        # tenants row is the charge-time rate authority, so linking a different
-        # plan than was billed is the divergence this guards against.
-        my $resolved_plan = $self->resolve_selected_plan( $db, $run );
-        $provision_data{platform_pricing_plan_id} = $resolved_plan->id if $resolved_plan;
+        # The new tenant holds the platform's offer to tenants from the moment
+        # it exists; Tenant->provision grants it in the same transaction.
+        $provision_data{platform_entitlement} = $self->_platform_offer_to_tenants($db);
 
         if ($subscription_data->{stripe_subscription_id}) {
             $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
@@ -700,6 +702,39 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         $run->update_data($db, $result);
 
         return $result;
+    }
+
+    # The platform's current published offer to tenants and its
+    # percentage-of-sales plan, as { offer_version_id, payment_plan_id }: a
+    # payment-processing version without the holder_is_offerer condition,
+    # which marks the platform's offers to itself.
+    # shortcut: grants the one offer without asking; 01a20416-6d40 replaces
+    # this with the tenant's own choice through the accept primitive.
+    method _platform_offer_to_tenants ($db) {
+        my $offers = $db->query( q{
+            SELECT v.id AS offer_version_id, p.id AS payment_plan_id
+              FROM registry.offer_versions v
+              JOIN registry.resources r ON r.id = v.resource_id
+              JOIN registry.offer_version_payment_plans p
+                ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
+             WHERE r.name = 'payment processing'
+               AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+               AND NOT v.conditions @> '[{"kind": "holder_is_offerer"}]'
+        } )->hashes;
+        die sprintf "Signup needs exactly one published platform offer to tenants; found %d.\n",
+            $offers->size
+            unless $offers->size == 1;
+        return $offers->first;
+    }
+
+    # The result _provision_tenant stored for $run, when the tenant it names
+    # exists: provisioning has already happened for this run.
+    method _provisioned ( $db, $run ) {
+        my $data = $run->data // {};
+        return undef unless $data->{tenant} && !ref $data->{tenant}
+            && Registry::DAO::Tenant->find( $db, { id => $data->{tenant} } );
+        return { map { $_ => $data->{$_} }
+                 qw( tenant organization_name subdomain admin_email success_timestamp ) };
     }
 
     method template { 'tenant-signup/payment' }

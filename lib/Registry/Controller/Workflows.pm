@@ -92,9 +92,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # the clone cost, and a client-supplied address is a rate limit the
         # client sets for itself. stripe_account_id is the seller account a
         # payment snapshots; only the server resolves it, from the seller row.
+        # tenant is the id signup provisioning writes; a posted one would read
+        # as already provisioned and hand the run someone else's tenant.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address|stripe_account_id)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_pricing_plan|__remote_address|stripe_account_id|tenant)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in
