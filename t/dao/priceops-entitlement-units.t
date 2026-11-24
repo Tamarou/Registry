@@ -15,6 +15,7 @@ use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Entitlement;
 use Registry::DAO::Tenant;
+use POSIX ();
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -53,6 +54,36 @@ sub sale ( $version, $holder, %more ) {
         starts_at        => $PAST,
         %more,
     };
+}
+
+# Two real connections and a fork, as one connection cannot interleave with
+# itself. A runs $first inside an open transaction; B then runs $second and
+# must wait for A's lock. Returns how B ended: 'ok', 'refused' (capacity) or
+# the error.
+sub race ( $first, $second ) {
+    my $uri = $test_db->uri;
+    pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
+    my $pid = fork() // die "fork: $!";
+    unless ($pid) {
+        close $parent_writes;
+        readline $child_reads;
+        my $bdb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
+        my $ok  = eval { $second->($bdb); 1 };
+        POSIX::_exit(0) if $ok;
+        POSIX::_exit(3) if $@ =~ /units free/;
+        print STDERR "second connection failed: $@";
+        POSIX::_exit(1);
+    }
+    close $child_reads;
+    my $adb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
+    my $tx  = $adb->begin;
+    $first->($adb);
+    print $parent_writes "go\n";
+    $parent_writes->flush;
+    sleep 1;    # let B reach the resource and block behind A
+    $tx->commit;
+    waitpid $pid, 0;
+    return { 0 => 'ok', 3 => 'refused' }->{ $? >> 8 } // 'failed';
 }
 
 subtest 'entitlement holds named units of a resource' => sub {
@@ -104,6 +135,19 @@ subtest 'grant beyond capacity refused' => sub {
         qr/Wheel seats \($resource_id\) has 0 of 2 units free/,
         'a grant past capacity is refused, naming the resource';
     is $resource->free_units($studio), 0, 'and capacity is not overrun';
+};
+
+subtest 'concurrent grants of the last unit never overrun' => sub {
+    my ( $resource, $version ) = seats(1);
+    my ( $sam, $pat ) = ( person(), person() );
+    my $grant = sub ($holder) {
+        sub ($handle) { Registry::DAO::Entitlement->grant( $handle, sale( $version, $holder, units => 1 ) ) }
+    };
+
+    is race( $grant->($sam), $grant->($pat) ), 'refused', 'the second grant waits for the first and is refused';
+    is $studio->query( 'SELECT count(*) FROM entitlement_units WHERE resource_id = ?',
+        $resource->id )->array->[0], 1, 'exactly one unit was granted';
+    is $resource->free_units($studio), 0, 'and capacity is never exceeded';
 };
 
 done_testing;

@@ -39,7 +39,7 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
         my ( $resource_id, $count, $numbers ) = delete @row{qw( resource_id units unit_numbers )};
 
         my $tx       = $db->dbh->{AutoCommit} ? $db->begin : undef;
-        my $resource = Registry::DAO::Resource->find( $db, { id => $resource_id } );
+        my $resource = Registry::DAO::Resource->locked( $db, $resource_id );
         my %held     = map { $_ => 1 } $resource->held_units($db)->@*;
         my $free     = $resource->free_units($db);
         my $wanted   = $numbers ? @$numbers : $count;

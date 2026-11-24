@@ -14,6 +14,14 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
 
     sub table { 'resources' }
 
+    # The resource, its row locked until the caller's transaction ends: every
+    # grant and hold takes this lock first, so capacity is read and claimed
+    # with no other claim in between.
+    sub locked ( $class, $db, $id ) {
+        my $row = $db->query( 'SELECT * FROM resources WHERE id = ? FOR UPDATE', $id )->hash;
+        return $row && $class->new(%$row);
+    }
+
     # Unit numbers held by entitlements in effect now or later; ended ones
     # free theirs.
     # shortcut: reads the period alone, as no state exists yet; 01a20448-1177
