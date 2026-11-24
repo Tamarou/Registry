@@ -13,6 +13,9 @@ use Registry::DAO::WorkflowRun;
 use Registry::DAO::Tenant;
 use Registry::DAO::Entitlement;
 use Registry::DAO::Offer;
+use Registry::DAO::User;
+use Registry::Service::Stripe;
+use Mojo::Promise;
 use Test::Registry::Offers qw( offer_terms );
 
 my $test_db = Test::Registry::DB->new;
@@ -114,6 +117,49 @@ subtest 'no published platform offer creates no tenant' => sub {
     like $@, qr/exactly one/, 'provisioning refuses, rather than granting the self-offer';
     ok !tenant_id('no_offer_studio'), 'no tenant';
     is entitlement_count(), $before, 'no entitlement';
+};
+
+# Runs after the subtest above has superseded every offer to tenants.
+subtest 'with no published platform offer no user is created and Stripe is not called' => sub {
+    # A plan with a monthly base, so the paid run takes the card-collection
+    # branch that calls Stripe (fixture as in t/security/tenant-provisioning-guards.t).
+    my $PLATFORM_UUID = '00000000-0000-0000-0000-000000000000';
+    my $paid_plan_id  = $db->query( q{
+        INSERT INTO registry.pricing_plans
+            (plan_scope, plan_name, plan_type, pricing_model_type, currency,
+             amount_cents, requirements, pricing_configuration, metadata)
+        VALUES ('tenant', 'Offerless Monthly', 'standard', 'fixed', 'USD',
+                19900, '{}'::jsonb, '{"percentage": 0.02}'::jsonb, '{}'::jsonb)
+        RETURNING id
+    } )->hash->{id};
+    my $consumer_id = $db->query(
+        'SELECT consumer_id FROM registry.pricing_relationships WHERE provider_id = ? LIMIT 1',
+        $PLATFORM_UUID )->hash->{consumer_id};
+    $db->query( q{
+        INSERT INTO registry.pricing_relationships (provider_id, consumer_id, pricing_plan_id, status)
+        VALUES (?, ?, ?, 'active')
+    }, $PLATFORM_UUID, $consumer_id, $paid_plan_id );
+
+    my @stripe;
+    no warnings 'redefine';
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_dummy';
+    local *Registry::Service::Stripe::_request_async = sub ( $self, $method, $endpoint, @ ) {
+        push @stripe, $endpoint;
+        return Mojo::Promise->new;
+    };
+
+    my $paid = signup_run('offerless_paid');
+    $paid->update_data( $db, {
+        selected_pricing_plan => { id => $paid_plan_id },
+        billing_email         => 'offerless_paid@test.example',
+    } );
+    eval { $paid->process( $db, $review, { collect_payment_method => 1 } ) };
+    is_deeply \@stripe, [], 'the paid signup makes no Stripe call';
+
+    eval { signup_run('offerless_free')->process( $db, $review, {} ) };
+    like $@, qr/exactly one/, 'the free signup refuses';
+    ok !Registry::DAO::User->find( $db, { username => 'offerless_free_admin' } ),
+        'and creates no user';
 };
 
 $test_db->cleanup_test_database;

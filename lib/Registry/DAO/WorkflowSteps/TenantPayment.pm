@@ -31,6 +31,10 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             return { next_step => 'complete', tenant_created => 1, %$done };
         }
 
+        # Refuse a signup with no single offer to grant before any user is
+        # written or Stripe is called; _provision_tenant asks again to grant it.
+        $self->_platform_offer_to_tenants($db);
+
         # Check for rate limiting
         if (my $rate_limit_error = $self->check_rate_limits($db, $run)) {
             $error_handler->log_error($rate_limit_error, {
