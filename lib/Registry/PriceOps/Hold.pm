@@ -45,13 +45,34 @@ class Registry::PriceOps::Hold :isa(Registry::DAO::Object) {
     # fields ($into, as Entitlement->grant takes them, payment link included),
     # grants a new entitlement holding the hold's units. Given an existing
     # Entitlement, moves it onto the hold's units in place instead: it keeps
-    # its id, state and payment link, and gives up the units it held.
+    # its id, state and payment link, and gives up the units it held. A move
+    # is refused, leaving the hold held, unless the entitlement is active and
+    # not yet over, buys the hold's resource and holds as many units as it.
     method convert ( $db, $into ) {
         $db = $db->db if $db isa Registry::DAO;
         my $tx     = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $moving = $into isa Registry::DAO::Entitlement;
-        my @from   = $moving ? $db->select( 'entitlement_units', 'DISTINCT resource_id',
-            { entitlement_id => $into->id } )->arrays->flatten->each : ();
+        my ( $entitlement, @from );
+        if ($moving) {
+            # Locked before its units are read, so a concurrent move or end waits;
+            # every refusal comes before the hold is touched.
+            my $current = Registry::DAO::Entitlement->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );
+            $current = $db->query( "SELECT $current FROM entitlements e WHERE e.id = ? FOR UPDATE", $into->id )
+                ->array->[0];
+            $entitlement = Registry::DAO::Entitlement->find( $db, { id => $into->id } );
+            croak sprintf 'entitlement %s is %s: units move only onto an active one', $into->id, $entitlement->state
+                unless $entitlement->state eq 'active';
+            croak sprintf 'entitlement %s has ended: units move only onto a current one', $into->id
+                unless $current;
+            croak sprintf 'entitlement %s does not buy resource %s', $into->id, $resource_id
+                unless $entitlement->offer_version($db)->buys( $db, $resource_id );
+            my $has = $db->select( 'entitlement_units', 'count(*)', { entitlement_id => $into->id } )->array->[0];
+            croak sprintf 'hold %s is %d units but entitlement %s holds %d: a move keeps its unit count',
+                $id, $units, $into->id, $has
+                unless $has == $units;
+            @from = $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $into->id } )
+                ->arrays->flatten->each;
+        }
         # Every resource lock in id order, so two converts never deadlock.
         my %locked = map { $_ => Registry::DAO::Resource->locked( $db, $_ ) }
             sort keys %{ { map { $_ => 1 } $resource_id, @from } };
@@ -60,17 +81,12 @@ class Registry::PriceOps::Hold :isa(Registry::DAO::Object) {
             or croak "hold $id is not live: it lapsed, was released or was converted";
 
         unless ($moving) {
-            my $entitlement = Registry::DAO::Entitlement->grant( $db,
+            $entitlement = Registry::DAO::Entitlement->grant( $db,
                 { %$into, resource_id => $resource_id, units => $units } );
             $tx->commit if $tx;
             return $entitlement;
         }
 
-        my $entitlement = Registry::DAO::Entitlement->find( $db, { id => $into->id } );
-        croak sprintf 'entitlement %s is %s: units move only onto an active one', $into->id, $entitlement->state
-            unless $entitlement->state eq 'active';
-        croak sprintf 'entitlement %s does not buy resource %s', $into->id, $resource_id
-            unless $entitlement->offer_version($db)->buys( $db, $resource_id );
         $db->delete( 'entitlement_units', { entitlement_id => $into->id } );
         my $resource = $locked{$resource_id};
         my %held     = map { $_ => 1 } $resource->held_units($db)->@*;

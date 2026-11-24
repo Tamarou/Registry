@@ -222,9 +222,9 @@ subtest 'lapsed or released hold cannot convert' => sub {
         'and no units';
     is hold_state($lapsed), 'held', 'the lapsed hold is left as it was';
 
-    my ( $other, $a ) = occurrences(1);
+    my ( $other, $a, $b ) = occurrences(2);
     my $e    = Registry::DAO::Entitlement->grant( $studio, sale( $other, resource_id => $a->id, units => 1 ) );
-    my $gone = hold( $studio, $seats, 1 );
+    my $gone = hold( $studio, $b, 1 );
     $gone->release($studio);
     throws_ok { $gone->convert( $studio, $e ) } qr/not live/, 'nor can it convert onto an existing entitlement';
     is_deeply $e->units( $studio, $a->id ), [1], 'which keeps its unit';
@@ -293,6 +293,74 @@ subtest 'lapse under lock frees seats for waiting request' => sub {
     is $studio->query( q{SELECT count(*) FROM holds WHERE resource_id = ? AND state = 'held'}, $seat->id )
         ->array->[0], 1, 'only the lapsed hold is stored';
     is $seat->free_units($studio), 0, 'and capacity is never exceeded';
+};
+
+# Converts $hold onto $e inside the caller's own transaction, which catches
+# the refusal and commits anyway; returns the error.
+sub refused_in_callers_tx ( $hold, $e ) {
+    my $tx = $studio->begin;
+    my $ok = eval { $hold->convert( $studio, $e ); 1 };
+    my $error = $@;
+    $tx->commit;
+    return $ok ? '' : $error;
+}
+
+subtest 'refused move leaves the hold held' => sub {
+    my ( $version, $a, $b ) = occurrences(2);
+    my $ended = Registry::DAO::Entitlement->grant( $studio, sale( $version, resource_id => $a->id, units => 1 ) );
+    $ended->end( $studio, 'refunded', 're_move_1' );
+    my $hold = hold( $studio, $b, 1 );
+    like refused_in_callers_tx( $hold, $ended ), qr/units move only onto an active one/,
+        'a move onto a refunded entitlement is refused';
+    is hold_state($hold), 'held', 'the hold stays held';
+    is_deeply $ended->units( $studio, $a->id ), [1], 'the entitlement keeps its unit';
+    is_deeply $ended->units( $studio, $b->id ), [], 'and gains none';
+
+    my ( $other, $c ) = occurrences(1);
+    my $e = Registry::DAO::Entitlement->grant( $studio, sale( $other, resource_id => $c->id, units => 1 ) );
+    like refused_in_callers_tx( $hold, $e ), qr/does not buy resource/,
+        'a move onto a version that does not buy the resource is refused';
+    is hold_state($hold), 'held', 'the hold stays held';
+    is_deeply $e->units( $studio, $c->id ), [1], 'the entitlement keeps its unit';
+    is_deeply $e->units( $studio, $b->id ), [], 'and gains none';
+};
+
+subtest 'move with a different seat count refused' => sub {
+    my ( $version, $a, $b ) = occurrences(2);
+    my $e    = Registry::DAO::Entitlement->grant( $studio, sale( $version, resource_id => $a->id, units => 2 ) );
+    my $hold = hold( $studio, $b, 1 );
+    like refused_in_callers_tx( $hold, $e ), qr/keeps its unit count/, 'a 1-seat hold cannot carry 2 seats';
+    is hold_state($hold), 'held', 'the hold stays held';
+    is_deeply $e->units( $studio, $a->id ), [ 1, 2 ], 'the entitlement keeps both seats';
+};
+
+subtest 'move onto an ended entitlement refused' => sub {
+    my ( $version, $a, $b ) = occurrences(2);
+    my $over = Registry::DAO::Entitlement->grant( $studio,
+        sale( $version, resource_id => $a->id, units => 1, ends_at => '2021-01-01T00:00:00Z' ) );
+    my $hold = hold( $studio, $b, 1 );
+    like refused_in_callers_tx( $hold, $over ), qr/has ended/, 'an active entitlement whose period ended is refused';
+    is hold_state($hold), 'held', 'the hold stays held';
+    is_deeply $over->units( $studio, $a->id ), [1], 'the entitlement keeps its unit';
+
+    my $later = Registry::DAO::Entitlement->grant( $studio,
+        sale( $version, resource_id => $a->id, units => 1, starts_at => '2099-01-01T00:00:00Z' ) );
+    $hold->convert( $studio, $later );
+    is_deeply $later->units( $studio, $b->id ), [1], 'one not yet started takes the move';
+};
+
+subtest 'concurrent moves of one entitlement lock what they change' => sub {
+    my ( $version, $a, $b ) = occurrences(2);
+    my $e    = Registry::DAO::Entitlement->grant( $studio, sale( $version, resource_id => $a->id, units => 1 ) );
+    my $hold = hold( $studio, $b, 1 );
+    my ( $waited, $error ) = race(
+        sub ($handle) { $e->end( $handle, 'refunded', 're_race_1' ) },
+        sub ($handle) { $hold->convert( $handle, $e ) },
+    );
+    ok $waited, 'a move waits on the entitlement another transaction is changing';
+    like $error, qr/units move only onto an active one/, 'and then sees it ended';
+    is hold_state($hold), 'held', 'the hold stays held';
+    is_deeply $e->units( $studio, $a->id ), [1], 'the entitlement keeps its unit';
 };
 
 done_testing;
