@@ -15,6 +15,7 @@ use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Entitlement;
 use Registry::DAO::Tenant;
+use Registry::PriceOps::Hold;
 use POSIX ();
 
 my $test_db = Test::Registry::DB->new;
@@ -33,6 +34,24 @@ my $people = 0;
 sub person ($name = 'p' . ++$people) {
     return $studio->insert( 'users', { username => "$name-$people" }, { returning => 'id' } )
         ->hash->{id};
+}
+
+# A workflow run in the studio, to hold units; returns its id.
+sub run_id () {
+    my $workflow = $studio->insert( 'workflows', { slug => 'book-' . ++$people, name => "Book $people" },
+        { returning => 'id' } )->hash->{id};
+    return $studio->insert( 'workflow_runs', { workflow_id => $workflow }, { returning => 'id' } )
+        ->hash->{id};
+}
+
+# A hold of $units units of $resource for ten minutes.
+sub hold ( $handle, $resource, $units ) {
+    return Registry::PriceOps::Hold->place( $handle, {
+        resource_id     => $resource->id,
+        units           => $units,
+        workflow_run_id => run_id(),
+        expires_at      => \"now() + interval '10 minutes'",
+    } );
 }
 
 # A finite resource of $capacity units and a published version that buys it.
@@ -148,6 +167,31 @@ subtest 'concurrent grants of the last unit never overrun' => sub {
     is $studio->query( 'SELECT count(*) FROM entitlement_units WHERE resource_id = ?',
         $resource->id )->array->[0], 1, 'exactly one unit was granted';
     is $resource->free_units($studio), 0, 'and capacity is never exceeded';
+};
+
+subtest 'live holds occupy units' => sub {
+    my ( $resource, $version ) = seats(10);
+    Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), units => 6 ) );
+
+    my $hold = hold( $studio, $resource, 3 );
+    is $hold->state, 'held', 'a placed hold is held';
+    is $resource->free_units($studio), 1, 'six units sold and three held leave one free';
+    throws_ok { Registry::DAO::Entitlement->grant( $studio, sale( $version, person(), units => 2 ) ) }
+        qr/has 1 of 10 units free: 2 asked for/, 'so a further grant of two is refused';
+};
+
+subtest 'lapsed or released holds free their units' => sub {
+    my ( $resource ) = seats(4);
+    my ( $kept, $dropped ) = ( hold( $studio, $resource, 2 ), hold( $studio, $resource, 2 ) );
+    is $resource->free_units($studio), 0, 'two live holds of two fill four units';
+
+    my $released = $dropped->release($studio);
+    is $released->state, 'released', 'a released hold says so';
+    is $resource->free_units($studio), 2, 'and no longer occupies its units';
+
+    # Time passing, without waiting for it: nothing sweeps a lapsed hold.
+    $studio->update( 'holds', { expires_at => \"now() - interval '1 second'" }, { id => $kept->id } );
+    is $resource->free_units($studio), 4, 'a hold past its lapse time no longer occupies its units';
 };
 
 done_testing;

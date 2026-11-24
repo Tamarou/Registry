@@ -1,4 +1,4 @@
--- ABOUTME: The specific units of a finite resource a discrete entitlement holds (the seats it occupies).
+-- ABOUTME: The units of a finite resource a discrete entitlement holds, and time-limited holds on N units.
 -- ABOUTME: Built in registry and every tenant schema; grants are counted against capacity under a resource lock.
 
 -- Deploy registry:priceops-entitlement-units to pg
@@ -31,6 +31,21 @@ BEGIN
                 unit           integer NOT NULL
                     CONSTRAINT entitlement_units_unit_check CHECK (unit > 0),
                 PRIMARY KEY (resource_id, unit, entitlement_id)
+            )
+        $f$, s);
+
+        -- A hold occupies N units of a resource for a workflow run until it
+        -- lapses at expires_at (no sweep: a lapsed hold simply stops
+        -- counting) or leaves the held state. Placed under the same lock.
+        EXECUTE format($f$
+            CREATE TABLE IF NOT EXISTS %1$I.holds (
+                id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                resource_id     uuid NOT NULL REFERENCES %1$I.resources (id),
+                units           integer NOT NULL CONSTRAINT holds_units_check CHECK (units > 0),
+                workflow_run_id uuid NOT NULL REFERENCES %1$I.workflow_runs (id),
+                expires_at      timestamp with time zone NOT NULL,
+                state           text NOT NULL DEFAULT 'held'
+                    CONSTRAINT holds_state_check CHECK (state IN ('held', 'converted', 'released'))
             )
         $f$, s);
     END LOOP;

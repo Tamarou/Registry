@@ -35,9 +35,15 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
         }, $id )->arrays->flatten->to_array;
     }
 
-    # How many units are free right now.
+    # How many units are free right now: capacity less units held by
+    # entitlements and by live holds (held and not yet lapsed).
     method free_units ($db) {
-        return $capacity - $self->held_units($db)->@*;
+        $db = $db->db if $db isa Registry::DAO;
+        my $on_hold = $db->query( q{
+            SELECT coalesce(sum(units), 0) FROM holds
+             WHERE resource_id = ? AND state = 'held' AND expires_at > now()
+        }, $id )->array->[0];
+        return $capacity - $self->held_units($db)->@* - $on_hold;
     }
 }
 
