@@ -104,3 +104,4 @@ priceops-entitlements [priceops-offer-policies] 2026-11-24T06:00:00Z Chris Prath
 priceops-entitlement-one-phase [priceops-entitlements] 2026-11-24T07:00:00Z Chris Prather <chris.prather@tamarou.com> # One schedule phase of an offer in effect at a time per holder, by exclusion constraint
 priceops-entitlement-units [priceops-entitlement-one-phase] 2026-11-24T07:30:00Z Chris Prather <chris.prather@tamarou.com> # A discrete entitlement holds named units of a finite resource, never past its capacity
 priceops-entitlement-lifecycle [priceops-entitlement-units] 2026-11-24T08:00:00Z Chris Prather <chris.prather@tamarou.com> # An entitlement is active or ended once, with when and why, and links to the payment that created it
+bootstrap-platform-offers [priceops-entitlement-lifecycle] 2026-11-24T08:30:00Z Chris Prather <chris.prather@tamarou.com> # The bootstrap seeds Solo v1 and the platform's offers to itself, with registry's entitlements
