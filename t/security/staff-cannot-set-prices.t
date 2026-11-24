@@ -15,6 +15,12 @@ use Registry::DAO::Session;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
+use Registry::DAO::Workflow;
+use Registry::DAO::Location;
+use Registry::DAO::Project;
+use Registry::Utility::WorkflowProcessor;    # defines Registry::WorkflowProcessor
+use Mojo::File qw(path);
+use DateTime;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -153,6 +159,70 @@ subtest 'admin cannot edit another tenants session' => sub {
     is current_cents( $theirs, $beta_db ), 5000, "tenant B's price is unchanged";
     is scalar plans( $theirs, $beta_db )->@*, 1, 'with no new pricing row';
     is reload( $theirs, $beta_db )->capacity, 10, "and tenant B's capacity is unchanged";
+};
+
+# program-location-assignment, driven through the real processor and steps.
+# The run's `user` is what the controller seeds from the session -- the
+# acting user with their role in this tenant -- so a run here starts with it.
+my $pla = Registry::DAO::Workflow->from_yaml( $dao,
+    path('workflows/program-location-assignment.yml')->slurp );
+
+sub assign_with_override ( $user, $role, $forged = {} ) {
+    $n++;
+    my $loc = Registry::DAO::Location->create( $db, {
+        name => "PLA Loc $n", slug => "pla_loc_$n", address_info => {}, metadata => {} } );
+    my $proj = Registry::DAO::Project->create( $db, {
+        name => "PLA Proj $n", status => 'published', metadata => {} } );
+
+    my $run = Registry::WorkflowProcessor->new( dao => $dao )->new_run( $pla, {
+        user_id    => $user->id,
+        user       => { id => $user->id, user_type => $user->user_type, role => $role },
+        project_id => $proj->id,
+    } );
+    my $step = sub ($slug) { $pla->get_step( $db, { slug => $slug } ) };
+    $run->process( $db, $step->('choose-locations'), { location_ids => $loc->id } );
+    $run->process( $db, $step->('configure-location'), {
+        "location_configs[@{[ $loc->id ]}][capacity]"         => 12,
+        "location_configs[@{[ $loc->id ]}][schedule][monday]" => '15:00',
+        "location_configs[@{[ $loc->id ]}][pricing_override]" => '25.00',
+    } );
+    $run->process( $db, $step->('generate-events'), {
+        confirm_generation                => 1,
+        # A week of its own: Schedule::check_conflicts dies on a teacher who
+        # already has an event in the window, which is not what is tested here.
+        'generation_params[start_date]'     => DateTime->new( year => 2027, month => 1, day => 4 )->add( weeks => $n )->ymd,
+        'generation_params[duration_weeks]' => 1,
+        %$forged,
+    } );
+
+    my $created = Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )
+        ->data->{created_sessions} // [];
+    return $created->[0] ? $created->[0]{session_id} : undef;
+}
+sub plan_rows ($session_id) {
+    $db->select( 'pricing_plans', '*', { session_id => $session_id } )->hashes->to_array;
+}
+
+subtest 'staff location override creates no price' => sub {
+    my $as_staff = assign_with_override( $staff, 'staff' );
+    ok $as_staff, 'the staff run generated its session';
+    is scalar plan_rows($as_staff)->@*, 0, 'but created no pricing row from the override';
+
+    my $as_admin = assign_with_override( $admin, 'admin' );
+    ok $as_admin, 'the admin run generated its session';
+    my $rows = plan_rows($as_admin);
+    is scalar @$rows, 1, 'and the override priced it';
+    is $rows->[0]{amount_cents}, 2500, 'at the override, in cents';
+};
+
+subtest 'forged admin user creates no override price' => sub {
+    my $sid = assign_with_override( $staff, 'staff', {
+        'user[role]'      => 'admin',
+        'user[user_type]' => 'admin',
+    } );
+    ok $sid, 'the session was generated';
+    is scalar plan_rows($sid)->@*, 0,
+        'a user claiming admin in the submitted form prices nothing';
 };
 
 done_testing;
