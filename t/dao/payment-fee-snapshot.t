@@ -40,7 +40,7 @@ $db->query( q{UPDATE registry.tenants
 
 # Stripe as the wire sees it: every request the service would send, with its
 # Idempotency-Key. A keyed request Stripe has seen returns what it first made.
-my ( @sent, %made_by_key, $serial );
+my ( @sent, @made, %made_by_key, $serial );
 sub with_wire ( $code, %fail ) {
     no warnings 'redefine';
     local *Registry::Service::Stripe::_request_async =
@@ -48,6 +48,7 @@ sub with_wire ( $code, %fail ) {
         push @sent, { endpoint => $endpoint, data => {%$data}, key => $ik };
         my $obj = ( defined $ik && $made_by_key{$ik} ) || do {
             my $new = { id => "${endpoint}_" . ++$serial, client_secret => 'cs' };
+            push @made, [ $endpoint, $new->{id} ];
             $made_by_key{$ik} = $new if defined $ik;
             $new;
         };
@@ -81,6 +82,33 @@ subtest 'a retry after a plan change sends the originally computed fee' => sub {
     is $sent[0]{data}{application_fee_amount}, 250, 'the first carried the 2.5% fee';
     is $sent[1]{data}{application_fee_amount}, 250,
         'and the retry carried the same fee, not the new plan\'s';
+};
+
+subtest 'a retried customer create uses an idempotency key and makes one customer' => sub {
+    my $payment = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 3333, status => 'pending',
+        instalment_seq => 1, instalment_count => 3,
+        metadata => { tenant_slug => $slug, enrollment_items => [] } } );
+
+    @sent = @made = ();
+    with_wire( sub {
+        eval { $payment->create_payment_intent( $db, {} ); 1 };
+    }, customers => 1 );
+    with_wire( sub {
+        Registry::DAO::Payment->find( $db, { id => $payment->id } )
+            ->create_payment_intent( $db, {} );
+    } );
+
+    my @creates = grep { $_->{endpoint} eq 'customers' } @sent;
+    is scalar @creates, 2, 'the customer create was sent twice';
+    ok defined $creates[0]{key}, 'with an Idempotency-Key';
+    is $creates[1]{key}, $creates[0]{key}, 'the same key on the retry';
+    ok !exists $creates[0]{data}{_idempotency_key}, 'sent as a header, not a form field';
+
+    my @customers = grep { $_->[0] eq 'customers' } @made;
+    is scalar @customers, 1, 'so Stripe made one customer';
+    is Registry::DAO::Payment->find( $db, { id => $payment->id } )->metadata->{stripe_customer_id},
+        $customers[0][1], 'and the payment remembers it';
 };
 
 $test_db->cleanup_test_database;

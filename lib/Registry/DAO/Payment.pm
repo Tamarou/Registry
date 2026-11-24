@@ -523,6 +523,9 @@ field $_stripe_client = undef;
             ( $user && $user->email ? ( email => $user->email ) : () ),
             ( $user && $user->name  ? ( name  => $user->name )  : () ),
             'metadata[registry_user_id]' => $user_id // '',
+            # One customer per payment: a create whose response was lost is
+            # retried under this key and Stripe returns the customer it made.
+            _idempotency_key => "customer-create:$id",
         };
     }
 

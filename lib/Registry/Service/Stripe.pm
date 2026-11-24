@@ -165,7 +165,9 @@ class Registry::Service::Stripe {
     
     # Customers API
     method create_customer_async($params) {
-        return $self->_request_async('POST', 'customers', $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', 'customers', \%p, $ik);
     }
     
     method retrieve_customer_async($customer_id) {
