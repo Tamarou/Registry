@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Each instalment invoice marks exactly one owed row, and a failure does not cost a child their place.
-# ABOUTME: Matched by position, not amount -- only the last instalment differs, so amounts do not distinguish.
+# ABOUTME: Keyed on the invoice id; a new invoice takes the earliest pending row by position, not amount.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -217,6 +217,19 @@ subtest 'payment_failed with no payment_intent delivered twice marks no row fail
 
     deliver( 'invoice.payment_failed', invoice( 'in_no_intent', undef ) ) for 1 .. 2;
     is_deeply statuses(), [qw( completed pending pending )], 'no row is failed';
+};
+
+# Each month is its own invoice. A later month paying does not settle an
+# earlier month's debt.
+subtest 'month two failed then month three paid completes month three only' => sub {
+    build_set();
+
+    deliver( 'invoice.payment_failed', invoice( 'in_month_two', 'pi_month_two' ) );
+    deliver( 'invoice.paid', invoice( 'in_month_three', 'pi_month_three',
+        amount_due => 3334, amount_paid => 3334, status => 'paid' ) );
+
+    is_deeply statuses(), [qw( completed failed completed )],
+        "month three's row completes and month two stays failed";
 };
 
 # Stripe's invoice at 2024-12-18.acacia: `subscription`, and no schedule field.
