@@ -86,8 +86,9 @@ Whether the offer is bound to an occurrence decides which policies it may
 carry later (see the [policy table](#the-day-one-policies)). An offer is bound
 when its resource is an occurrence or it covers a class.
 
-The resource is created when you continue. Going back and submitting again does
-not create a second one.
+The resource is created when you continue, once per run: if the same run
+answers this screen again, it keeps the resource it already made. (The screens
+don't yet let you go back to an earlier step in the browser.)
 
 ### Name your offer
 
