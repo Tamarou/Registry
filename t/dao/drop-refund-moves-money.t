@@ -391,6 +391,30 @@ subtest 'a pending refund leaves the recorded failure in place' => sub {
         'a refund that may still fail does not clear the record';
 };
 
+# Stripe answers some refunds 'pending': the money has not moved and may not.
+# 'processed' is the parent's receipt, so it waits for refund.updated to settle
+# the refund; the drop itself carries on.
+subtest 'a pending drop refund waits instead of reading processed' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ( $self, $params ) {
+        Mojo::Promise->resolve( { id => 'rf_drop_waits', amount => $params->{amount},
+            status => 'pending' } );
+    };
+    my $result = run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    is refund_status_of($dropped), 'pending', 'the enrollment still says pending';
+    is $result->{refund_processed}, 0, 'the step does not report the refund processed';
+    is $result->{refund_status}, 'pending', 'it reports it pending';
+    is $result->{errors}, undef, 'and the drop carries on';
+    is refunded_cents_of($payment), 0, 'nothing is counted as returned yet';
+};
+
 subtest 'a refund already processed is not refunded again' => sub {
     my ( $payment, $dropped ) = a_paid_cart();
     $db->update( 'enrollments',
