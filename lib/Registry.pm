@@ -6,6 +6,7 @@ use Registry::DAO;
 use Registry::Utility::BaseDomain ();
 use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
+use Registry::Job::ContinueWorkflowRun;
 use Registry::Job::DomainVerification;
 use Registry::Job::InstalmentReconcile;
 use Registry::Job::InstalmentSchedule;
@@ -159,6 +160,7 @@ class Registry :isa(Mojolicious) {
 
         # Register background jobs
         Registry::Job::AttendanceCheck->register($self);
+        Registry::Job::ContinueWorkflowRun->register($self);
         Registry::Job::DomainVerification->register($self);
         Registry::Job::InstalmentReconcile->register($self);
         Registry::Job::InstalmentSchedule->register($self);
