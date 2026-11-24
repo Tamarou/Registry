@@ -1,0 +1,41 @@
+% extends 'layouts/workflow';
+% title 'Name your offer';
+% stash description => 'Choose one of your resources and name the offer that sells it.';
+% my $resources = stash('resources') // [];
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Resource</legend>
+    % unless (@$resources) {
+    <p>You have no resources yet, so there is nothing to offer.</p>
+    % }
+    % for my $resource (@$resources) {
+    <div>
+      <input type="radio" id="resource-<%= $resource->id %>" name="resource_id" value="<%= $resource->id %>" required>
+      <label for="resource-<%= $resource->id %>">
+        <%= $resource->name %>
+        (<%= $resource->kind eq 'finite' ? $resource->capacity . ' available' : 'unbounded' %>)
+      </label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label required" for="offer_name">Offer name</label>
+    <input type="text" id="offer_name" name="offer_name" required>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

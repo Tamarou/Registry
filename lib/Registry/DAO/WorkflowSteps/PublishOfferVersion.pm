@@ -7,7 +7,9 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::WorkflowStep) {
     use Registry::DAO::Offer;
+    use Registry::DAO::Resource;
     use Registry::DAO::Tenant;
+    use Registry::Utility::PriceFormat qw( format_price );
 
     method process ( $db, $form_data, $run = undef ) {
         return { stay => 1 } unless ( $form_data->{action} // '' ) eq 'publish';
@@ -61,7 +63,14 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     }
 
     method prepare_template_data ( $db, $run, $params = {} ) {
-        return $run->data;
+        my $data  = $run->data;
+        my $price = $data->{offer_price} // {};
+        my $id    = ( $data->{offer_basics} // {} )->{resource_id};
+        return {
+            %$data,
+            resource      => $id ? Registry::DAO::Resource->find( $db, { id => $id } ) : undef,
+            price_display => format_price( $price->{price_cents}, $price->{currency} ),
+        };
     }
 }
 

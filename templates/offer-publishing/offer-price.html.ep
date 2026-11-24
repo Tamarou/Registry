@@ -1,0 +1,42 @@
+% extends 'layouts/workflow';
+% title 'Price your offer';
+% stash description => 'Set the price and what one acceptance buys.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-group">
+    <label class="form-label required" for="price_cents">Price, in cents</label>
+    <input type="number" id="price_cents" name="price_cents" min="0" step="1" required>
+    <p>For example 2500 for $25.00.</p>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label required" for="currency">Currency</label>
+    <input type="text" id="currency" name="currency" value="USD" maxlength="3" required>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label required" for="units_per_acceptance">Units per acceptance</label>
+    <input type="number" id="units_per_acceptance" name="units_per_acceptance" value="1" min="1" step="1" required>
+    <p>How many units of the resource one acceptance takes: 2 seats for a couple.</p>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label required" for="per_booking_cap">Per-booking cap</label>
+    <input type="number" id="per_booking_cap" name="per_booking_cap" value="1" min="1" step="1" required>
+    <p>How many acceptances one booking may take.</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

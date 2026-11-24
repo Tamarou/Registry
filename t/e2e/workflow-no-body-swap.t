@@ -17,6 +17,7 @@ my @template_dirs = map { $root->child($_) } qw(
     templates/program-creation
     templates/program-creation-enhanced
     templates/pricing-plan-creation
+    templates/offer-publishing
 );
 
 for my $dir (@template_dirs) {

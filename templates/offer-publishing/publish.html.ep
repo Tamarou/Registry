@@ -1,0 +1,48 @@
+% extends 'layouts/workflow';
+% title 'Review and publish';
+% stash description => 'Once published, this version of the offer cannot be changed.';
+% my $basics = stash('offer_basics') // {};
+% my $price  = stash('offer_price') // {};
+% my $resource = stash('resource');
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<section class="card">
+  <h2><%= $basics->{offer_name} %></h2>
+  <dl>
+    <dt>Resource</dt>
+    <dd><%= $resource ? $resource->name : '' %></dd>
+    <dt>Price</dt>
+    <dd><%= stash('price_display') %></dd>
+    <dt>Units per acceptance</dt>
+    <dd><%= $price->{units_per_acceptance} %></dd>
+    <dt>Per-booking cap</dt>
+    <dd><%= $price->{per_booking_cap} %></dd>
+    <dt>One-time payment</dt>
+    <dd><%= ( stash('one_time_payment') // {} )->{one_time} // '' %></dd>
+  </dl>
+</section>
+
+<form method="POST" action="<%= $action %>">
+  <input type="hidden" name="action" value="publish">
+
+  <fieldset>
+    <legend>Refund policy</legend>
+    <div>
+      <input type="radio" id="refund-none" name="refund" value="none" required>
+      <label for="refund-none">No refunds</label>
+    </div>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Publish</button>
+  </div>
+</form>

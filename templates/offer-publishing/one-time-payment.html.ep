@@ -1,0 +1,31 @@
+% extends 'layouts/workflow';
+% title 'How it is paid for';
+% stash description => 'Say whether the offer may be paid for once, in full.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>One-time payment</legend>
+    <div>
+      <input type="radio" id="one_time-offered" name="one_time" value="offered" required>
+      <label for="one_time-offered">Offered: paid in full at acceptance</label>
+    </div>
+    <div>
+      <input type="radio" id="one_time-declined" name="one_time" value="declined" required>
+      <label for="one_time-declined">Not offered</label>
+    </div>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
