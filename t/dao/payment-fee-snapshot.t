@@ -151,5 +151,23 @@ subtest 'a retry after a profile edit ends with one customer stored on the payme
         $customers[0][1], 'and the payment stores it';
 };
 
+subtest 'a tenant with no linked plan snapshots the Free plan it was priced at' => sub {
+    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = NULL WHERE slug = ?', $slug );
+    my $payment = Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 10000,
+        metadata => { tenant_slug => $slug, enrollment_items => [] } } );
+
+    is $payment->metadata->{revenue_share_fraction}, 0, 'priced at the Free rate';
+    is $payment->metadata->{platform_pricing_plan_id}, plan_id('Registry Free'),
+        'and the snapshot names the Free plan';
+
+    move_to_plan( $slug, 'Solo' );
+    is Registry::DAO::Payment->create( $db, {
+        user_id => $parent->id, amount_cents => 10000,
+        metadata => { tenant_slug => $slug, enrollment_items => [] } } )
+        ->metadata->{platform_pricing_plan_id}, plan_id('Solo'),
+        'a linked tenant still snapshots its own plan';
+};
+
 $test_db->cleanup_test_database;
 done_testing;

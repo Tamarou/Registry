@@ -398,19 +398,18 @@ field $_stripe_client = undef;
         # The revenue share is fixed here too, at quote time (ruling 7c): every
         # intent for this payment shares one Idempotency-Key, and Stripe refuses
         # a retry under it that carries a different application_fee_amount.
-        # So is the plan version that rate came from, recorded with the fee.
+        # So is the plan version that rate came from, recorded with the fee --
+        # the Free plan's when the tenant has none linked.
         delete $data->{metadata}->@{qw( stripe_account_id revenue_share_fraction
                                         platform_pricing_plan_id )};
         if ( my $slug = $data->{metadata}{tenant_slug} ) {
             my $row = $raw_db->query(
-                'SELECT stripe_connect_account_id, platform_pricing_plan_id
-                   FROM registry.tenants WHERE slug = ?',
+                'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
                 $slug )->hash;
             if ( $row && $row->{stripe_connect_account_id} ) {
                 $data->{metadata}{stripe_account_id} = $row->{stripe_connect_account_id};
-                $data->{metadata}{platform_pricing_plan_id} = $row->{platform_pricing_plan_id};
-                $data->{metadata}{revenue_share_fraction} =
-                    Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+                $data->{metadata}->@{qw( revenue_share_fraction platform_pricing_plan_id )} =
+                    Registry::PriceOps::RevenueShare::revenue_share_plan_for_tenant(
                         $raw_db, $slug );
             }
         }

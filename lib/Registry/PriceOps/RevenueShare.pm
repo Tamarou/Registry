@@ -6,7 +6,7 @@ use experimental 'signatures';
 package Registry::PriceOps::RevenueShare;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(revenue_share_fraction_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id);
+our @EXPORT_OK = qw(revenue_share_fraction_for_tenant revenue_share_plan_for_tenant platform_default_fraction platform_launch_fraction platform_launch_plan_id);
 
 use Registry::DAO;
 
@@ -22,6 +22,15 @@ use Registry::DAO;
 #   3. Free plan missing                        -> die (deployment bug)
 #   4. Resolved percentage absent or non-numeric -> die (data bug)
 sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
+    return ( revenue_share_plan_for_tenant( $db, $tenant_slug ) )[0];
+}
+
+# revenue_share_plan_for_tenant($db, $tenant_slug) -> ($fraction, $plan_id)
+#
+# The same resolution, with the id of the plan the rate came from -- the Free
+# plan's when the tenant has none linked -- so a payment can record which plan
+# priced it.
+sub revenue_share_plan_for_tenant ($db, $tenant_slug) {
     $db = $db->db if $db isa Registry::DAO;
 
     # Step 1: look up the tenant's explicitly linked plan rate.
@@ -35,7 +44,7 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     # retired version here is correct, not stale. Moving a tenant to a newer
     # version is a deliberate act (#277).
     my $row = $db->query(q{
-        SELECT p.pricing_configuration->>'percentage' AS pct
+        SELECT p.id, p.pricing_configuration->>'percentage' AS pct
           FROM registry.tenants t
           JOIN registry.pricing_plans p
             ON p.id = t.platform_pricing_plan_id
@@ -43,12 +52,12 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
     }, $tenant_slug)->hash;
 
     if ($row) {
-        return _coerce_pct($row->{pct}, "linked plan for tenant '$tenant_slug'");
+        return ( _coerce_pct($row->{pct}, "linked plan for tenant '$tenant_slug'"), $row->{id} );
     }
 
     # Step 2: tenant has no linked plan (NULL FK, or tenant row absent).
     # Fall back to the seeded platform default (Free) plan.
-    return platform_default_fraction($db);
+    return _platform_default_plan($db);
 }
 
 # platform_default_fraction($db) -> number
@@ -59,6 +68,11 @@ sub revenue_share_fraction_for_tenant ($db, $tenant_slug) {
 # seeded platform default plan is missing -- the same fail-loud behavior as the
 # charge path, never a silent 0%.
 sub platform_default_fraction ($db) {
+    return ( _platform_default_plan($db) )[0];
+}
+
+# _platform_default_plan($db) -> ($fraction, $plan_id)
+sub _platform_default_plan ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
     # Current versions only. This is a SEARCH by mark, not a lookup by id: once
@@ -66,7 +80,7 @@ sub platform_default_fraction ($db) {
     # this the fallback rate could come from a version that has been replaced --
     # chosen arbitrarily by LIMIT 1 between the two.
     my $free_row = $db->query(q{
-        SELECT pricing_configuration->>'percentage' AS pct
+        SELECT id, pricing_configuration->>'percentage' AS pct
           FROM registry.pricing_plans
          WHERE plan_scope = 'platform'
            AND metadata->>'default' = 'true'
@@ -79,7 +93,7 @@ sub platform_default_fraction ($db) {
       . "This is a deployment bug - run the seed-free-platform-plan migration."
         unless $free_row;
 
-    return _coerce_pct($free_row->{pct}, "platform default (Free) plan");
+    return ( _coerce_pct($free_row->{pct}, "platform default (Free) plan"), $free_row->{id} );
 }
 
 # platform_launch_fraction($db) -> number
