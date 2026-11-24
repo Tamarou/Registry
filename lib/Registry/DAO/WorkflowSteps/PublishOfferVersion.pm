@@ -38,9 +38,6 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         return { stay => 1, errors => ['Choose a use policy before publishing'] }
             unless defined $use && !ref $use;
 
-        # One version per run: the run's row is locked while this reads whether
-        # it has published, so a repeated or concurrent submission waits and
-        # then finds the first one's version instead of publishing another.
         # Every plan a payment step declared; refused, never defaulted, when
         # none did: absence is not zero.
         my $percentage = $data->{percentage_of_sales_payment} // {};
@@ -52,6 +49,9 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         );
         return { stay => 1, errors => ['Offer at least one payment plan'] } unless @plans;
 
+        # One version per run: the run's row is locked while this reads whether
+        # it has published, so a repeated or concurrent submission waits and
+        # then finds the first one's version instead of publishing another.
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $published = $db->query( q{
             SELECT data->>'published_offer_version_id' FROM workflow_runs WHERE id = ? FOR UPDATE

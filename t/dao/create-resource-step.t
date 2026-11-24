@@ -252,6 +252,16 @@ subtest 'resubmitted resource step leaves one resource' => sub {
     $run->process( $tdb, $step, { resource_mode => 'existing' } );
     $run->process( $tdb, $step, { %NEW_SEATS, resource_name => 'Once seats' } );
     is resource_count(), $before + 1, 'switching away and back creates none either';
+
+    # Bound to an occurrence: the occurrence then holds this run's own resource.
+    my $event = event_of( class_in() );
+    my %bound = ( %NEW_SEATS, resource_name => 'Bound once', event_id => $event );
+    my ( $brun, $bfirst ) = resource_step( $admin, \%bound );
+    my $bsecond = $brun->process( $tdb, $step, \%bound );
+    ok !$bsecond->{errors}, 'a resubmitted occurrence-bound create is accepted' or diag explain $bsecond;
+    is $brun->data->{resource_choice}{resource_id}, $bfirst->{resource_choice}{resource_id},
+        'and keeps the resource it already made';
+    is resource_count(), $before + 2, 'creating no second resource';
 };
 
 done_testing;

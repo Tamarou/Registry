@@ -55,10 +55,12 @@ class Registry::DAO::WorkflowSteps::CreateResource :isa(Registry::DAO::WorkflowS
         # tenant's occurrence names nothing here.
         my $event_id = $finite && length $f{event_id} ? $f{event_id} : undef;
         if ( defined $event_id ) {
+            # The run's own resource doesn't count, so a resubmitted create finds it below.
             my $free = $event_id =~ $UUID ? $db->query( q{
-                SELECT NOT EXISTS (SELECT 1 FROM resources r WHERE r.event_id = e.id)
+                SELECT NOT EXISTS (SELECT 1 FROM resources r
+                                    WHERE r.event_id = e.id AND r.id IS DISTINCT FROM ?::uuid)
                   FROM events e WHERE e.id = ?
-            }, $event_id )->array : undef;
+            }, $run->data->{created_resource_id}, $event_id )->array : undef;
             push @errors, !$free ? 'Choose one of your occurrences'
                 : !$free->[0] ? 'That occurrence already has its resource' : ();
         }
