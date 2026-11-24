@@ -272,6 +272,7 @@ psql $DATABASE_URL -c \
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
        OR jsonb_array_length(COALESCE(metadata->'refund_manual_review', '[]'::jsonb)) > 0
+       OR metadata ? 'refund_last_failure'
     ORDER BY completed_at"
 ```
 
@@ -298,6 +299,16 @@ webhook) or an approved drop's refund
 |---|---|---|
 | `not_sent` | The request never left Registry. No money moved. | Fix the cause in `message`, then Step 3. Step 2 is still cheap insurance. |
 | `unknown` | Stripe refused it, or the response was lost. Money may have moved. | Step 2 first, always. |
+
+**A drop's refund is not a capacity increment: Steps 3 and 4 do not apply to
+it.** A drop has no increment, its row is usually `completed` rather than
+`refund_pending` (the last predicate above is what lists it), and Step 3's
+`refund:capacity:...` key would not match the drop's own. Run Step 2 first.
+Then retry by resubmitting the drop's refund step, which reuses the key
+`refund:drop:<payment_id>:<enrollment_id>`, so Stripe returns the earlier refund
+rather than sending a second. If you must refund by hand instead, use that same
+key and then set the enrollment's `refund_status = 'processed'`; otherwise a
+later re-approval of the drop refunds the family again.
 
 The field is cleared automatically when a later refund on the same payment
 succeeds, so a row that still carries it has had no successful refund since that
