@@ -428,7 +428,33 @@ read through `Registry::DAO::Payment::stamped_platform_terms`.
   policy is `keep_fee_with_admin_exception` (Solo v1's).
   `Registry::DAO::Payment::refund_platform_fee_async` does this. It refuses,
   before calling Stripe, any payment with no stamp or under any other policy.
-  Nothing in the application calls it yet.
+
+Solo keeps the fee on a refund by default. When the fault was the platform's,
+an admin of the platform tenant applies the exception with the
+`platform-fee-refund-exception` workflow (`/platform-fee-refund-exception` on
+the platform's host):
+
+- **Who may:** a member of `registry` with the `admin` role, acting as
+  `registry`. Every step also asks for the operator right, so an admin of any
+  other tenant, `registry` staff, and a platform admin acting as another
+  tenant are all refused.
+- **Find the payment:** the tenant's slug and the payment id. Refused unless
+  the tenant exists, the payment is that tenant's, it has been refunded, its
+  stamped platform offer version's refund policy is
+  `keep_fee_with_admin_exception`, and some of its fee is not yet returned.
+- **Record the reason:** written once on the payment, under
+  `metadata.platform_fee_refund_exception`: the reason, the amount (the whole
+  fee not yet returned), the stamped version, the admin and the time, with the
+  idempotency key `platform-fee-refund:<payment id>`. Applying it again keeps
+  the first record.
+- **Return the fee:** `refund_platform_fee_async` reads the fee id from the
+  seller's charge and calls `POST /v1/application_fees/{fee}/refunds` on the
+  platform account (no `Stripe-Account`) with the recorded amount and key.
+  Pressing it again after a failure is safe: the key and Stripe's own
+  remaining-fee check stop a second refund.
+- **The result:** the kept-fee figure (`payments.platform_fee_refunded_cents`)
+  changes only when Stripe sends `application_fee.refunded` to the platform
+  endpoint, not when the workflow finishes.
 
 ### Refunds
 

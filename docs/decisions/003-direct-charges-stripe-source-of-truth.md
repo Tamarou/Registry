@@ -185,9 +185,9 @@ test fails, and that fallback is the fix.
   intents or on schedules.
 - **No `reverse_transfer`** on any refund.
 - **No fee refund by default.** The fee is returned only through
-  `refund_platform_fee_async`, the admin exception. No screen calls it yet;
-  letting the platform tenant's admin apply Solo's fee-refund exception is
-  step 5.
+  `refund_platform_fee_async`, the admin exception, which the platform
+  tenant's admin applies through the `platform-fee-refund-exception`
+  workflow.
 - **No `application_fee_amount` of zero** is ever put in a request.
 - **No applying seller-made moves yet.** Refunds, disputes and customer
   changes made in a tenant's dashboard are stored, not applied, until step 5.
