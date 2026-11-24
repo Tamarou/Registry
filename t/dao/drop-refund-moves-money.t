@@ -350,6 +350,47 @@ subtest 'a drop refund for an enrollment with no payment stops the run on the re
     is refund_status_of($dropped), 'pending', 'the enrollment still owes the money';
 };
 
+# The runbook reads refund_last_failure first; once a retry has paid, a record
+# left behind tells the operator money is still owed when it is not.
+subtest 'a drop refund that succeeds on retry clears the recorded failure' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $db->update( 'enrollments',
+        { refund_status => 'pending', refund_amount_cents => 5000 },
+        { id => $dropped->id } );
+    my %drop = ( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    no warnings 'redefine';
+    {
+        local *Registry::Service::Stripe::create_refund_async =
+            capturing_stripe( [], fail => "card_declined\n" );
+        drive_run(%drop);
+    }
+    ok last_refund_failure_of($payment), 'the failed attempt is recorded';
+
+    local *Registry::Service::Stripe::create_refund_async = capturing_stripe( [] );
+    drive_run(%drop);
+
+    is refund_status_of($dropped), 'processed', 'the retry paid';
+    is last_refund_failure_of($payment), undef, 'and the failure record is gone';
+};
+
+subtest 'a pending refund leaves the recorded failure in place' => sub {
+    my ( $payment, $dropped ) = a_paid_cart();
+    $payment->record_refund_failure( $db, "card_declined\n" );
+
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ( $self, $params ) {
+        Mojo::Promise->resolve( { id => 'rf_pending', amount => $params->{amount},
+            status => 'pending' } );
+    };
+    run_step( enrollment_id => $dropped->id,
+        refund_requested => 1, refund_amount_cents => 5000 );
+
+    ok last_refund_failure_of($payment),
+        'a refund that may still fail does not clear the record';
+};
+
 subtest 'a refund already processed is not refunded again' => sub {
     my ( $payment, $dropped ) = a_paid_cart();
     $db->update( 'enrollments',

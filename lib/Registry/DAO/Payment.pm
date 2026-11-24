@@ -1881,7 +1881,8 @@ SQL
         # A pending refund has not moved money yet and may fail, so it moves
         # neither status nor refunded_cents.
         # shortcut: nothing settles it later (no refund.updated handler); add one when async refunds are offered.
-        my $hold = $is_increment || ( $refund->{status} // '' ) =~ /\A(?:pending|requires_action)\z/ ? 1 : 0;
+        my $pending = ( $refund->{status} // '' ) =~ /\A(?:pending|requires_action)\z/ ? 1 : 0;
+        my $hold    = $is_increment || $pending ? 1 : 0;
 
         # A targeted jsonb merge, not save(). save() would write six columns
         # from an object loaded before the Stripe round trip, over a row
@@ -1908,9 +1909,15 @@ SQL
         # out under), and the whole write is skipped for an id already there: a
         # retry under the same Idempotency-Key gets the same refund back, and
         # adding it again told the ledger more went back than the bank sent.
-        $db->query( <<'SQL', encode_json({
+        #
+        # A refund that has moved money retires record_refund_failure's stamp,
+        # which the runbook reads first; a pending one may still fail, so not yet.
+        # shortcut: one failure slot per payment, so a sibling drop's success on the same cart clears it too (that drop stays findable by its enrollment's refund_status); key the record by idempotency key if that ever misleads an operator.
+        $db->query( <<'SQL', $pending, encode_json({
             UPDATE payments
-               SET metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb
+               SET metadata = CASE WHEN ?::boolean THEN COALESCE(metadata, '{}'::jsonb)
+                                   ELSE COALESCE(metadata, '{}'::jsonb) - 'refund_last_failure' END
+                   || ?::jsonb
                    || CASE WHEN ?::boolean THEN '{}'::jsonb
                       ELSE jsonb_build_object('recorded_refunds',
                           COALESCE(metadata->'recorded_refunds', '{}'::jsonb)

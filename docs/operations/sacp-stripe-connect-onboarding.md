@@ -267,6 +267,7 @@ psql $DATABASE_URL -c \
   "SELECT id, amount_cents, refund_owed_cents, refunded_cents,
           jsonb_pretty(refund_increments) AS increments,
           metadata->'refund_manual_review' AS manual_review,
+          metadata->'refund_last_failure' AS last_failure,
           stripe_payment_intent_id, completed_at
      FROM \"<sacp-slug>\".payments
     WHERE status = 'refund_pending'
@@ -286,6 +287,33 @@ JSON array of debts, each with its own `seq`, `cents`, and `settled_at`. Send
 one refund per increment whose `settled_at` is null, **for that increment's own
 `cents`** -- never for the `refund_owed_cents` total. The increments sum to the
 total by construction, and sending the total is how one debt gets paid twice.
+
+`metadata.refund_last_failure` is the most recent refund attempt on this
+payment that failed -- a capacity increment (paid from the payment step or the
+webhook) or an approved drop's refund
+(`Registry::DAO::Payment::record_refund_failure`). It holds `classification`,
+`message`, and `at` (epoch seconds). Read `classification` before anything else:
+
+| `classification` | Means | Do |
+|---|---|---|
+| `not_sent` | The request never left Registry. No money moved. | Fix the cause in `message`, then Step 3. Step 2 is still cheap insurance. |
+| `unknown` | Stripe refused it, or the response was lost. Money may have moved. | Step 2 first, always. |
+
+The field is cleared automatically when a later refund on the same payment
+succeeds, so a row that still carries it has had no successful refund since that
+failure. A `pending` refund does not clear it. One failure is kept per payment,
+so it is a lead, not the queue: a successful refund for one child on a shared
+cart clears it even if another child's refund is still owed. The queue is
+`status`, `refund_increments` and, for drops, the enrollment's
+`refund_status = 'pending'`. When you settle a row by hand (Step 4), remove it
+yourself:
+
+```bash
+psql $DATABASE_URL -c \
+  "UPDATE \"<sacp-slug>\".payments
+      SET metadata = metadata - 'refund_last_failure'
+    WHERE id = '<payment_id>'"
+```
 
 A row with `refund_manual_review` set reached a state the automatic path could
 not resolve and needs a human decision on the amount. Two causes, and they call
