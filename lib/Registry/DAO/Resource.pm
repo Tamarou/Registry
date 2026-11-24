@@ -37,15 +37,15 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
             if $wanted > $free;
     }
 
-    # Unit numbers held by entitlements in effect now or later; ended ones
-    # free theirs.
-    # shortcut: reads the period alone, as no state exists yet; 01a20448-1177
-    # rewires this to the one in-effect predicate.
+    # Unit numbers held by entitlements in effect now or later, by the one
+    # in-effect rule: ended ones free theirs at once.
     method held_units ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        return $db->query( q{
+        require Registry::DAO::Entitlement;
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );
+        return $db->query( qq{
             SELECT u.unit FROM entitlement_units u JOIN entitlements e ON e.id = u.entitlement_id
-             WHERE u.resource_id = ? AND (upper_inf(e.in_effect) OR upper(e.in_effect) > now())
+             WHERE u.resource_id = ? AND $in_effect
              ORDER BY u.unit
         }, $id )->arrays->flatten->to_array;
     }

@@ -117,4 +117,39 @@ subtest 'payment finds the entitlements it created' => sub {
         [ sort map { $_->id } @made ], 'a payment that created two entitlements finds both and no other';
 };
 
+my $SOON = do {
+    my @t = gmtime( time + 3600 );
+    sprintf '%04d-%02d-%02dT%02d:%02d:%02dZ', $t[5] + 1900, $t[4] + 1, @t[ 3, 2, 1, 0 ];
+};
+
+# A grant of $units units of $version's resource to a new person.
+sub granted ( $version, $units, %more ) {
+    return Registry::DAO::Entitlement->grant( $studio, {
+        holder_user_id   => person(),
+        offer_version_id => $version->id,
+        payment_plan_id  => 'pay',
+        resource_id      => $version->resource_id,
+        units            => $units,
+        starts_at        => $PAST,
+        %more,
+    } );
+}
+
+subtest 'ended entitlement frees its units' => sub {
+    my ( $resource, $version ) = seats(4);
+    my $refunded = granted( $version, 2 );
+    my $future   = granted( $version, 1, starts_at => '2099-01-01T00:00:00Z' );
+    my $skewed   = granted( $version, 1 );
+    is $resource->free_units($studio), 0, 'four units held fill the resource';
+
+    $refunded->end( $studio, 'refunded', 're_units_1' );
+    is $resource->free_units($studio), 2, 'a refunded entitlement frees its two units';
+    $future->end( $studio, 'refunded', 're_units_2' );
+    is $resource->free_units($studio), 3, 'one refunded before it began frees its unit';
+    # Stripe's clock may run ahead of ours: ended is ended, whatever the time.
+    $skewed->end( $studio, 'dispute_lost', 'dp_units_1', $SOON );
+    is $resource->free_units($studio), 4, 'one ended at a time still ahead frees its unit now';
+    ok granted( $version, 4 ), 'so all four can be granted again';
+};
+
 done_testing;
