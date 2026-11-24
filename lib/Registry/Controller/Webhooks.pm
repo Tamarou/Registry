@@ -202,7 +202,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             my $named = $event->{data}{object}{metadata}{tenant_slug};
             # The seller wrote $named, so it cannot forge lines in our log.
             $self->app->log->warn( "Connect webhook event $event_id names tenant '"
-                  . ( $named =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                  . _printable($named)
                   . "' in metadata but account $account is tenant '$slug'; settling in '$slug'" )
                 if defined $named && !ref $named && $named ne $slug;
 
@@ -229,9 +229,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 # The seller chose the reason by how they raised the invoice, so
                 # it is escaped before it reaches our log.
                 $self->app->log->warn( "Connect webhook event $event_id: invoice for subscription '"
-                      . ( $sub_id =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                      . _printable($sub_id)
                       . "' has billing_reason '"
-                      . ( "$reason" =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
+                      . _printable($reason)
                       . "'; not an instalment" );
                 return $self->_settle_connect_event( $db, $event, $slug, undef );
             }
