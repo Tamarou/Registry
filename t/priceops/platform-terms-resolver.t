@@ -6,7 +6,8 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
+use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check solo_linked_tenant);
+use Test::Registry::Fixtures;
 use Registry::PriceOps::PlatformTerms qw(platform_terms_for_tenant);
 use Registry::PriceOps::RevenueShare qw(revenue_share_plan_for_tenant);
 use Registry::DAO::Payment;
@@ -116,6 +117,55 @@ subtest 'readers agree with the resolver' => sub {
         sub { readers_agree( $linked, 'a tenant on a probe plan' ) } );
 
     readers_agree( 'terms_unlinked', 'a tenant with no linked plan' );
+};
+
+subtest 'resolver refuses an over precise or out of range rate' => sub {
+    for my $bad ( [ '0.00125', qr/4 decimal/ ], [ 2, qr/between 0 and 1/ ], [ -0.01, qr/between 0 and 1/ ] ) {
+        my ( $rate, $why ) = @$bad;
+        without_rate_check( $db, sub { with_tenant_plan( $db, $linked,
+            { pricing_configuration => { percentage => $rate } },
+            sub {
+                my $terms = eval { platform_terms_for_tenant( $db, $linked ) };
+                ok !defined $terms, "a rate of $rate is refused";
+                like $@, $why, "naming what is wrong with $rate";
+            } ) } );
+    }
+};
+
+# A second linked tenant with a schema of its own, so a tenant-schema
+# connection has an empty registry clone to (wrongly) read.
+Test::Registry::Fixtures::create_tenant( $db, { name => 'Terms Second', slug => 'terms_second' } );
+$db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id =
+                (SELECT platform_pricing_plan_id FROM registry.tenants WHERE slug = ?)
+               WHERE slug = 'terms_second'}, $linked );
+
+subtest 'readers carry each tenants own terms' => sub {
+    with_tenant_plan( $db, $linked,
+        { pricing_configuration => { percentage => '0.0137' }, amount_cents => 4200 },
+        sub { with_tenant_plan( $db, 'terms_second',
+            { plan_name => 'Second Probe', pricing_configuration => { percentage => '0.0311' }, amount_cents => 900 },
+            sub {
+                my $one = platform_terms_for_tenant( $db, $linked );
+                my $two = platform_terms_for_tenant( $db, 'terms_second' );
+                isnt $one->{id}, $two->{id}, 'the two tenants hold different terms';
+                isnt $one->{name}, $two->{name}, 'with different names';
+
+                readers_agree( $linked,        'the first tenant' );
+                readers_agree( 'terms_second', 'the second tenant' );
+            } ) } );
+};
+
+subtest 'resolver reads registry from a tenant connection' => sub {
+    with_tenant_plan( $db, 'terms_second',
+        { pricing_configuration => { percentage => '0.0311' }, amount_cents => 900 },
+        sub {
+            my $tenant_db = $dao->connect_schema('terms_second')->db;
+            is_deeply platform_terms_for_tenant( $tenant_db, 'terms_second' ),
+                platform_terms_for_tenant( $db, 'terms_second' ),
+                'the same terms on the tenant connection as on registry';
+            isnt platform_terms_for_tenant( $tenant_db, 'terms_second' )->{id}, $free->{id},
+                'not the Free fallback an empty clone would give';
+        } );
 };
 
 done_testing;

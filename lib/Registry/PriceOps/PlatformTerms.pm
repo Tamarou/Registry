@@ -96,6 +96,12 @@ sub _coerce_pct ($raw, $context) {
       . "- express the rate as a fraction (0.02 means 2%)."
         unless $raw >= 0 && $raw <= 1;
 
+    # Whole basis points, as the database and PricingPlan hold it: a finer rate
+    # dies in application_fee_cents mid-checkout, so refuse it here by name.
+    die "Revenue-share percentage '$raw' has more than 4 decimal places for $context "
+      . "- a rate is whole basis points (0.0125 means 1.25%)."
+        unless abs( $raw * 10_000 - sprintf '%.0f', $raw * 10_000 ) < 1e-6;
+
     return $raw + 0;
 }
 
