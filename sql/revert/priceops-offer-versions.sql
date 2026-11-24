@@ -21,6 +21,10 @@ BEGIN
         EXECUTE format('DROP TABLE IF EXISTS %I.offer_versions', s);
         EXECUTE format('DROP TABLE IF EXISTS %I.offers', s);
         EXECUTE format('DROP TABLE IF EXISTS %I.resources', s);
+        -- clone_schema copies registry's functions too, so a tenant provisioned
+        -- after deploy has its own copy of the trigger function.
+        CONTINUE WHEN s = 'registry';
+        EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_immutable()', s);
     END LOOP;
 END $$;
 
