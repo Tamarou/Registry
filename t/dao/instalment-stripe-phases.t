@@ -393,6 +393,22 @@ subtest 'schedule uses the account instalment one was charged on' => sub {
         'and the later instalment rows carry that same account';
 };
 
+# A later instalment's fee is recorded when its invoice is paid, months on, and
+# must name the plan that priced the schedule -- not whatever the tenant is on.
+subtest 'later instalment rows carry the plan snapshotted on instalment one' => sub {
+    my $payment = first_instalment();
+    is $payment->metadata->{platform_pricing_plan_id}, $plan_id,
+        'instalment one snapshotted the plan';
+
+    with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
+
+    my $later = $db->query( q{
+        SELECT metadata->>'platform_pricing_plan_id' FROM payments
+         WHERE metadata->>'instalment_of' = ? ORDER BY instalment_seq
+    }, $payment->id )->arrays->flatten->to_array;
+    is_deeply $later, [ ($plan_id) x 2 ], 'and so does each later row';
+};
+
 # The product and schedule creates carry Idempotency-Keys, so a retry after a
 # crash must send what the first run sent; a rate read afresh would differ
 # after a plan change and Stripe would answer with an idempotency error.

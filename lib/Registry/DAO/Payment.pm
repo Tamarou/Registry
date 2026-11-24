@@ -288,6 +288,9 @@ field $_stripe_client = undef;
                     # The account this set is charged on, so a refund of this
                     # row goes where its money went.
                     stripe_account_id => $meta->{stripe_account_id},
+                    # The plan that priced this schedule's fee, for
+                    # record_platform_fee when this row's invoice is paid.
+                    platform_pricing_plan_id => $meta->{platform_pricing_plan_id},
                     description   => $description,
                 } },
             } );
