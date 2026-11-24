@@ -75,10 +75,22 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         # it has published, so a repeated or concurrent submission waits and
         # then finds the first one's version instead of publishing another.
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+        # In a caller's transaction, a savepoint, so a failure leaves nothing behind in it.
+        $db->query('SAVEPOINT publish_offer_version') unless $tx;
         my $published = $db->query( q{
             SELECT data->>'published_offer_version_id' FROM workflow_runs WHERE id = ? FOR UPDATE
         }, $run->id )->array->[0];
         return { published_offer_version_id => $published } if $published;
+
+        # Capacity asked again under the resource's row lock, which every grant
+        # and hold takes first (Resource->locked), so a capacity lowered since
+        # the check above is seen; a class's occurrences are locked in id order.
+        $db->query( q{
+            SELECT r.id FROM resources r LEFT JOIN events e ON e.id = r.event_id
+             WHERE r.id = ? OR e.project_id = ? ORDER BY r.id FOR UPDATE OF r
+        }, $basic->@{qw( resource_id class_project_id )} );
+        $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
+        return { stay => 1, errors => [$why] } if $why;
 
         my $stale;
         my $version = eval {
@@ -107,6 +119,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         # The detail can carry ids and driver messages, so it goes to the log
         # and the screen gets a fixed message; the transaction rolls back.
         unless ($version) {
+            $db->query('ROLLBACK TO SAVEPOINT publish_offer_version') unless $tx;
             # A refusal the admin can act on, not an internal error.
             return { stay => 1, errors => ['A newer version of this offer was published since this run began; start again'] }
                 if $stale;
@@ -114,7 +127,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
             return { stay => 1, errors => ['The offer could not be published, and nothing was saved. Please try again.'] };
         }
         $run->update_data( $db, { published_offer_version_id => $version->id } );
-        $tx->commit if $tx;
+        $tx ? $tx->commit : $db->query('RELEASE SAVEPOINT publish_offer_version');
 
         return { published_offer_version_id => $version->id };
     }

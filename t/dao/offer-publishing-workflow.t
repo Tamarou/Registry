@@ -79,6 +79,95 @@ sub answer ( $run, $slug, $fields ) {
 
 sub errors_of ($result) { join ' ', ( $result->{errors} // [] )->@* }
 
+# A class with no occurrences yet, and a sub adding one at $time with
+# $capacity that returns the occurrence's resource.
+sub new_class ($name) {
+    my $slug    = lc $name =~ s/\W+/-/gr;
+    my $class   = $tdb->insert( 'projects', { name => $name, slug => $slug }, { returning => 'id' } )->hash->{id};
+    my $teacher = $tdb->insert( 'users', { username => "$slug-teacher" }, { returning => 'id' } )->hash->{id};
+    my $room    = $tdb->insert( 'locations', { name => "$name room", slug => "$slug-room" }, { returning => 'id' } )->hash->{id};
+    return ( $class, sub ( $time, $capacity ) {
+        my $event = $tdb->insert( 'events', {
+            project_id => $class, location_id => $room, teacher_id => $teacher,
+            time       => $time, duration => 90, capacity => $capacity,
+        }, { returning => 'id' } )->hash->{id};
+        Registry::DAO::Resource->for_occurrence( $tdb, $event );
+    } );
+}
+
+# A run of a workflow an admin composed around the publish step alone, handed
+# run data no step checked: a resource that does not exist. Returns the
+# workflow and the run.
+sub ghost_run ($name) {
+    state $own = do {
+        my $w = Registry::DAO::Workflow->create( $tdb,
+            { slug => 'admin-own-publish', name => 'Admin own publish', description => 'composed by an admin' } );
+        $w->add_step( $tdb, { slug => 'publish', description => 'publish',
+            class => 'Registry::DAO::WorkflowSteps::PublishOfferVersion' } );
+        $w;
+    };
+    return ( $own, $own->new_run( $tdb, { data => {
+        user             => { id => $admin->id },
+        offer_basics     => { resource_id => '00000000-0000-0000-0000-00000000abcd', offer_name => $name },
+        offer_price      => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
+        one_time_payment => { one_time => 'offered' },
+        refund_policy    => { kind => 'none' },
+        change_policy    => { kind => 'none' },
+        use_policy       => { use => 'none' },
+        expiry_policy    => { expiry => 'never' },
+    } } ) );
+}
+
+# Waits, pausing between polls, until a session waits on $holder's locks, as
+# Postgres reports it, or child $pid exits first, or 30 seconds pass. True
+# when one waited.
+sub blocked_behind ( $holder, $pid ) {
+    my ( $blocked, $deadline ) = ( 0, time + 30 );
+    until ( $blocked || waitpid( $pid, POSIX::WNOHANG() ) || time > $deadline ) {
+        select undef, undef, undef, 0.05;
+        $blocked = $tdb->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))', $holder )
+            ->array->[0];
+    }
+    return $blocked;
+}
+
+# Publishes $run from a second connection while a third holds @resource_ids'
+# rows locked and lowers their capacity to $capacity, committing only once
+# the publish waits on that lock. Returns whether it waited and the
+# publish's errors.
+sub publish_while_capacity_lowers ( $run, $capacity, @resource_ids ) {
+    my $uri = $test_db->uri;
+    pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
+    pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
+    my $pid = fork() // die "fork: $!";
+    unless ($pid) {
+        close $_ for $parent_writes, $parent_reads;
+        readline $child_reads;
+        my $bdao    = Registry::DAO->new( url => $uri, schema => 'clay_studio' );
+        my $publish = $bdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $bdao->db, { slug => 'publish' } );
+        my $errors  = eval {
+            errors_of( $bdao->find( WorkflowRun => { id => $run->id } )->process( $bdao->db, $publish, { action => 'publish' } ) );
+        } // "child publish died: $@";
+        print $child_writes $errors;
+        close $child_writes;
+        POSIX::_exit(0);
+    }
+    close $_ for $child_reads, $child_writes;
+    my $adb = Registry::DAO->new( url => $uri, schema => 'clay_studio' )->db;
+    my $tx  = $adb->begin;
+    for my $id ( sort @resource_ids ) {
+        Registry::DAO::Resource->locked( $adb, $id );
+        $adb->update( 'resources', { capacity => $capacity }, { id => $id } );
+    }
+    my $holder = $adb->query('SELECT pg_backend_pid()')->array->[0];
+    print $parent_writes "go\n";
+    $parent_writes->flush;
+    my $blocked = blocked_behind( $holder, $pid );
+    $tx->commit;
+    waitpid $pid, 0;
+    return ( $blocked, do { local $/; readline $parent_reads } );
+}
+
 my $only_admin = qr/Only an administrator of this tenant can publish an offer/;
 
 subtest 'admin publishes a one time priced offer version' => sub {
@@ -158,7 +247,8 @@ subtest 'invalid offer terms stay with an error' => sub {
         my ( $label, $slug, $fields ) = @$case;
         my ( undef, $result ) = walk( $tenant_dao, $admin, terms( $slug => $fields ) );
         ok $result->{$slug}{errors}, "$label stays with an error";
-        ok $result->{publish}{errors}, 'and publish refuses the run';
+        is_deeply $result->{publish}{errors}, ['Complete the offer and price steps before publishing'],
+        'and publish refuses the run, which has no price';
     }
     is published_count(), $before, 'nothing is published';
 
@@ -249,16 +339,7 @@ subtest 'publish rechecks units against the chosen resource capacity' => sub {
 };
 
 subtest 'a class offer is held to its smallest occurrence capacity' => sub {
-    my $class   = $tdb->insert( 'projects', { name => 'Wheel class', slug => 'wheel-class' }, { returning => 'id' } )->hash->{id};
-    my $teacher = $tdb->insert( 'users', { username => 'wheel-teacher' }, { returning => 'id' } )->hash->{id};
-    my $room    = $tdb->insert( 'locations', { name => 'Wheel room', slug => 'wheel-room' }, { returning => 'id' } )->hash->{id};
-    my $occurrence = sub ( $time, $capacity ) {
-        my $event = $tdb->insert( 'events', {
-            project_id => $class, location_id => $room, teacher_id => $teacher,
-            time       => $time, duration => 90, capacity => $capacity,
-        }, { returning => 'id' } )->hash->{id};
-        Registry::DAO::Resource->for_occurrence( $tdb, $event );
-    };
+    my ( $class, $occurrence ) = new_class('Wheel class');
     $occurrence->( '2099-03-01T10:00:00Z', 10 );
     $occurrence->( '2099-03-08T10:00:00Z', 3 );
     my %as_class = (
@@ -270,7 +351,8 @@ subtest 'a class offer is held to its smallest occurrence capacity' => sub {
     my ( undef, $result ) = walk( $tenant_dao, $admin, terms( %as_class, 'offer-price' => { units_per_acceptance => 4 } ) );
     like errors_of( $result->{'offer-price'} ), qr/cannot exceed 3, the smallest capacity among Wheel class's occurrences/,
         'the price step refuses units above the smallest occurrence capacity';
-    ok $result->{publish}{errors}, 'and publish refuses the run';
+    is_deeply $result->{publish}{errors}, ['Complete the offer and price steps before publishing'],
+        'and publish refuses the run, which has no price';
     is published_count(), $before, 'publishing nothing';
 
     my ($run) = walk( $tenant_dao, $admin, terms( %as_class, 'offer-price' => { units_per_acceptance => 3 }, publish => { action => 'review' } ) );
@@ -282,23 +364,7 @@ subtest 'a class offer is held to its smallest occurrence capacity' => sub {
 };
 
 subtest 'a failed publish shows a fixed message and logs the detail' => sub {
-    # An admin may compose the publish step into a workflow of their own and
-    # hand it run data no step checked: here, a resource that does not exist.
-    my $own = Registry::DAO::Workflow->create( $tdb,
-        { slug => 'admin-own-publish', name => 'Admin own publish', description => 'composed by an admin' } );
-    $own->add_step( $tdb, { slug => 'publish', description => 'publish',
-        class => 'Registry::DAO::WorkflowSteps::PublishOfferVersion' } );
-    my $missing = '00000000-0000-0000-0000-00000000abcd';
-    my $run = $own->new_run( $tdb, { data => {
-        user             => { id => $admin->id },
-        offer_basics     => { resource_id => $missing, offer_name => 'Ghost night' },
-        offer_price      => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
-        one_time_payment => { one_time => 'offered' },
-        refund_policy    => { kind => 'none' },
-        change_policy    => { kind => 'none' },
-        use_policy       => { use => 'none' },
-        expiry_policy    => { expiry => 'never' },
-    } } );
+    my ( $own, $run ) = ghost_run('Ghost night');
 
     my $before = published_count();
     my @logged;
@@ -357,14 +423,58 @@ subtest 'double publish leaves one version' => sub {
     # Commit only once the second submission is blocked behind this
     # transaction's lock, as Postgres itself reports it, so it cannot finish
     # first and pass without the lock.
-    my ( $blocked, $deadline ) = ( 0, time + 30 );
-    $blocked = $tdb->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))', $holder )
-        ->array->[0] until $blocked || time > $deadline;
+    my $blocked = blocked_behind( $holder, $pid );
     ok $blocked, 'the second submission waits on the first one\'s lock';
     $tx->commit;
     waitpid $pid, 0;
     is $? >> 8, 0, 'the concurrent submission completes';
     is published_count(), $before + 1, 'two concurrent submissions publish one version';
+};
+
+subtest 'a failed publish in the caller\'s transaction leaves nothing in it' => sub {
+    my ( $own, $run ) = ghost_run('Ghost in a transaction');
+    my $tx     = $tdb->begin;
+    my $result = do {
+        local $SIG{__WARN__} = sub { };
+        $run->process( $tdb, $own->first_step($tdb), { action => 'publish' } );
+    };
+    is_deeply $result->{errors}, ['The offer could not be published, and nothing was saved. Please try again.'],
+        'the screen shows the fixed message';
+    is $tdb->query( 'SELECT count(*) FROM offers WHERE name = ?', 'Ghost in a transaction' )->array->[0], 0,
+        'the caller\'s transaction holds no offer, and is still usable';
+    $tx->commit;
+};
+
+subtest 'publish rechecks capacity under the resource\'s lock' => sub {
+    my $wheel  = Test::Registry::Fixtures::create_resource( $tdb, { name => 'Locked wheel', kind => 'finite', capacity => 5 } );
+    my $before = published_count();
+    my ($run)  = walk( $tenant_dao, $admin, terms(
+        'offer-basics' => { resource_id => $wheel->id },
+        'offer-price'  => { units_per_acceptance => 4 },
+        publish        => { action => 'review' },
+    ) );
+    my ( $blocked, $errors ) = publish_while_capacity_lowers( $run, 3, $wheel->id );
+    ok $blocked, 'publish waits on the resource\'s lock';
+    like $errors, qr/\AUnits per acceptance cannot exceed Locked wheel's capacity of 3\z/,
+        'and refuses units above the capacity committed meanwhile';
+    is published_count(), $before, 'publishing nothing';
+};
+
+subtest 'a class publish rechecks capacity under its occurrences\' locks' => sub {
+    my ( $class, $occurrence ) = new_class('Locked class');
+    my @ids = map { $occurrence->( $_, 10 )->id } '2099-04-01T10:00:00Z', '2099-04-08T10:00:00Z';
+    my $before = published_count();
+    my ($run) = walk( $tenant_dao, $admin, terms(
+        resource        => { resource_mode => 'class', class_project_id => $class },
+        'expiry-policy' => { expiry => 'end_of_occurrence' },
+        'offer-price'   => { units_per_acceptance => 4 },
+        publish         => { action => 'review' },
+    ) );
+    my ( $blocked, $errors ) = publish_while_capacity_lowers( $run, 3, @ids );
+    ok $blocked, 'publish waits on the occurrences\' locks';
+    like $errors, qr/\AUnits per acceptance cannot exceed 3, the smallest capacity among Locked class's occurrences\z/,
+        'and refuses units above the capacity committed meanwhile';
+    is published_count(), $before, 'publishing nothing';
 };
 
 subtest 'skeleton publishes with an explicit none refund policy' => sub {
@@ -439,7 +549,8 @@ subtest 'publish capacity check refuses missing units without a warning' => sub 
     my @warned;
     local $SIG{__WARN__} = sub { push @warned, @_ };
     for my $units ( undef, '', 'two', 0 ) {
-        ok Registry::DAO::WorkflowSteps::OfferPrice->refusal( $dao->db, {}, $units ),
+        is Registry::DAO::WorkflowSteps::OfferPrice->refusal( $dao->db, {}, $units ),
+            'Units per acceptance must be a whole number of at least one',
             'units ' . ( $units // 'undef' ) . ' are refused';
     }
     is_deeply \@warned, [], 'and nothing is warned';
