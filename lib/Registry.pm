@@ -1421,6 +1421,10 @@ class Registry :isa(Mojolicious) {
             # registry must not change what every tenant is charged.
             'pricing-plan-creation' => ['admin'],
 
+            # Publishing an offer version is an admin's alone: staff may build
+            # programs, not set what the tenant sells them for.
+            'offer-publishing' => ['admin'],
+
             # A parent acts on their own enrollment; staff and admins reach the
             # same flows on a family's behalf.
             ( map { $_ => [ 'parent', 'admin', 'staff' ] } qw(

@@ -1,0 +1,38 @@
+# ABOUTME: Product design: a tenant publishes an immutable offer version for one of its own resources.
+# ABOUTME: Any tenant runs it the same way, the platform tenant included; publish is the last step before complete.
+
+name: Offer Publishing
+description: Name an offer for one of your resources, price it and publish it
+slug: offer-publishing
+
+# Policy and other payment-plan steps go before publish, each its own step.
+steps:
+  - slug: offer-basics
+    label: Offer
+    description: Choose one of this tenant's resources and name the offer
+    template: offer-publishing/offer-basics
+    class: Registry::DAO::WorkflowSteps::OfferBasics
+
+  - slug: offer-price
+    label: Price
+    description: The price and what one acceptance buys
+    template: offer-publishing/offer-price
+    class: Registry::DAO::WorkflowSteps::OfferPrice
+
+  - slug: one-time-payment
+    label: Payment
+    description: Offer a one-time payment plan
+    template: offer-publishing/one-time-payment
+    class: Registry::DAO::WorkflowSteps::OneTimePaymentPlan
+
+  - slug: publish
+    label: Publish
+    description: Review and publish an immutable offer version
+    template: offer-publishing/publish
+    class: Registry::DAO::WorkflowSteps::PublishOfferVersion
+
+  - slug: complete
+    label: Done
+    description: The offer version is published
+    template: offer-publishing/complete
+    class: Registry::DAO::WorkflowStep
