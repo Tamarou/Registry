@@ -392,3 +392,22 @@ subtest 'schedule uses the account instalment one was charged on' => sub {
     is_deeply $later, [ ('acct_platform_test') x 2 ],
         'and the later instalment rows carry that same account';
 };
+
+# The product and schedule creates carry Idempotency-Keys, so a retry after a
+# crash must send what the first run sent; a rate read afresh would differ
+# after a plan change and Stripe would answer with an idempotency error.
+subtest 'the instalment schedule uses the rate snapshotted on instalment one' => sub {
+    my $payment = first_instalment();
+    $db->query( q{UPDATE registry.tenants SET platform_pricing_plan_id =
+                    (SELECT id FROM registry.pricing_plans WHERE plan_name = 'Registry Free' LIMIT 1)
+                   WHERE slug = ?}, $seller );
+    is Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, $seller ), 0,
+        'the seller has since moved to a plan with no revenue share';
+
+    my $calls = with_stripe_calls( sub { $payment->schedule_remaining_instalments($db) } );
+    $db->query( 'UPDATE registry.tenants SET platform_pricing_plan_id = ? WHERE slug = ?',
+        $plan_id, $seller );
+
+    is $calls->[2][2]{'default_settings[application_fee_percent]'}, $plan_pct,
+        'the schedule still takes the rate instalment one was quoted at';
+};

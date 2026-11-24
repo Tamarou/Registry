@@ -207,10 +207,12 @@ field $_stripe_client = undef;
         my $slug = $meta->{tenant_slug}
             or die "cannot schedule instalments without a tenant slug\n";
 
-        # Our share -- read at scheduling time from the tenant's linked plan, the
-        # same authority the one-off charge path reads in _connect_params.
-        my $pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
-            $raw, $slug ) * 100;
+        # Our share -- the rate snapshotted on instalment one's row at create, as
+        # _connect_params reads it, so a retry under the keys below sends the
+        # same fee even after the tenant changes plan.
+        my $pct = ( $meta->{revenue_share_fraction}
+            // Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
+                $raw, $slug ) ) * 100;
 
         # Bound to the account instalment one was charged on, where its customer
         # and card live; dies, before any Stripe call, when there is none.
