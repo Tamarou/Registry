@@ -78,8 +78,21 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         return { published_offer_version_id => $published } if $published;
 
         my $version = eval {
-            Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } )->draft( $db, {
+            # A new version of an existing offer is published only over the
+            # version the run started from, read under the offer's lock: a
+            # concurrent or earlier publish of it leaves this run with an error,
+            # never two current versions or a newer one replaced unseen.
+            my ( $offer, $current );
+            if ( my $offer_id = $basic->{offer_id} ) {
+                $db->query( 'SELECT 1 FROM offers WHERE id = ? FOR UPDATE', $offer_id );
+                $offer   = Registry::DAO::Offer->find( $db, { id => $offer_id } );
+                $current = $offer && $offer->current_version($db);
+                die "a newer version of this offer was published since this run began; start again\n"
+                    unless $current && $current->id eq ( $basic->{based_on_version_id} // '' );
+            }
+            ( $offer // Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } ) )->draft( $db, {
                 $basic->%{qw( resource_id class_project_id )},    # one or the other
+                conditions => $current ? $current->conditions : [],    # who may hold it carries over
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
                 policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry } },

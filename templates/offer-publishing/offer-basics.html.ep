@@ -34,9 +34,26 @@
   </fieldset>
   % }
 
+  % if (my @offers = @{ stash('offers') // [] }) {
+  <fieldset>
+    <legend>Offer</legend>
+    <div>
+      <input type="radio" id="offer-new" name="offer_id" value="" checked>
+      <label for="offer-new">A new offer, named below</label>
+    </div>
+    % for my $offer (@offers) {
+    <div>
+      <input type="radio" id="offer-<%= $offer->id %>" name="offer_id" value="<%= $offer->id %>">
+      <label for="offer-<%= $offer->id %>">A new version of <%= $offer->name %></label>
+    </div>
+    % }
+  </fieldset>
+  % }
+
   <div class="form-group">
-    <label class="form-label required" for="offer_name">Offer name</label>
-    <input type="text" id="offer_name" name="offer_name" required>
+    <label class="form-label" for="offer_name">Offer name</label>
+    <input type="text" id="offer_name" name="offer_name">
+    <p>Needed for a new offer; a new version keeps its offer's name.</p>
   </div>
 
   <div class="form-actions">
