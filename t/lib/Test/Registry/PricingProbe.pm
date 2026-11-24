@@ -6,7 +6,7 @@ use warnings;
 package Test::Registry::PricingProbe;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( with_tenant_plan solo_linked_tenant );
+our @EXPORT_OK = qw( with_tenant_plan without_rate_check solo_linked_tenant );
 
 use Mojo::JSON qw( encode_json );
 
@@ -83,6 +83,18 @@ sub with_tenant_plan ( $db, $slug, $overrides, $cb ) {
 
     die $err unless $ok;
     return;
+}
+
+# without_rate_check($db, $cb)
+#
+# Runs $cb with pricing_plans_percentage_rate_check lifted, in a transaction
+# that is rolled back, so a test can plant a rate the database refuses and
+# prove the application's own guard still stops it.
+sub without_rate_check ( $db, $cb ) {
+    my $tx = $db->begin;
+    $db->query( 'ALTER TABLE registry.pricing_plans DROP CONSTRAINT pricing_plans_percentage_rate_check' );
+    $cb->();
+    return;    # $tx goes out of scope uncommitted: the constraint comes back
 }
 
 # solo_linked_tenant($db) -> $slug

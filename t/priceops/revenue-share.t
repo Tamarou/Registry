@@ -6,7 +6,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw(with_tenant_plan solo_linked_tenant);
+use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check solo_linked_tenant);
 use Registry::PriceOps::RevenueShare qw(revenue_share_fraction_for_tenant);
 
 my $test_db = Test::Registry::DB->new;
@@ -193,8 +193,10 @@ subtest 'a rate outside 0..1 dies rather than reaching Stripe' => sub {
     # Backstop at the coercion boundary: "2" almost certainly means 2%, but as a
     # fraction it is a 200% fee. No legitimate revenue share sits outside [0,1],
     # so refuse it here rather than let Stripe reject the charge at capture time.
+    # The database refuses such a rate now; the guard stays for a row that
+    # predates the check.
     for my $bad ( 2, -0.01 ) {
-        with_tenant_plan( $db, $seeded_slug,
+        without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
             { pricing_configuration => { percentage => $bad } },
             sub {
                 my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
@@ -202,21 +204,21 @@ subtest 'a rate outside 0..1 dies rather than reaching Stripe' => sub {
                 like $@, qr/between 0 and 1|fraction/i,
                     "percentage $bad dies with a message naming the expected range";
             }
-        );
+        ) } );
     }
 };
 
 subtest 'malformed/non-numeric resolved value dies' => sub {
     # The linked plan's percentage is present but a non-numeric string, so it
     # cannot be coerced and must not be treated as zero.
-    with_tenant_plan( $db, $seeded_slug,
+    without_rate_check( $db, sub { with_tenant_plan( $db, $seeded_slug,
         { pricing_configuration => { percentage => 'abc' } },
         sub {
             my $fraction = eval { revenue_share_fraction_for_tenant($db, $seeded_slug) };
             ok !defined $fraction, 'a non-numeric percentage is refused';
             like $@, qr/not numeric|numeric/i, 'dies saying the value is not numeric';
         }
-    );
+    ) } );
 };
 
 done_testing;
