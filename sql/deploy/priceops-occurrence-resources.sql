@@ -46,6 +46,14 @@ BEGIN
                 ADD CONSTRAINT offer_versions_buys_resource_or_class
                     CHECK (num_nonnulls(resource_id, class_project_id) = 1)
         $f$, s);
+
+        -- One entitlement holds units of one resource: seats in two
+        -- occurrences are two entitlements. btree_gist (from
+        -- priceops-entitlement-one-phase) gives uuid its = and <>.
+        EXECUTE format($f$
+            ALTER TABLE %1$I.entitlement_units
+                ADD EXCLUDE USING gist (entitlement_id WITH =, resource_id WITH <>)
+        $f$, s);
     END LOOP;
 END $$;
 

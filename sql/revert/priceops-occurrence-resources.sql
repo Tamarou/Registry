@@ -17,6 +17,8 @@ BEGIN
         SELECT slug::name FROM registry.tenants WHERE slug != 'registry'
     LOOP
         CONTINUE WHEN to_regclass(format('%I.resources', s)) IS NULL;
+        EXECUTE format('ALTER TABLE %I.entitlement_units
+                          DROP CONSTRAINT entitlement_units_entitlement_id_resource_id_excl', s);
         -- Dropping a column drops its key, foreign key and checks.
         EXECUTE format($f$
             ALTER TABLE %1$I.offer_versions

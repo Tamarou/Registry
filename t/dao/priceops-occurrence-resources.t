@@ -154,4 +154,80 @@ subtest 'change targets are the other covered occurrences' => sub {
         'the other occurrences its stamped version covers, not its own';
 };
 
+# How many entitlements $holder has.
+sub held_by ($holder) { scalar( () = Registry::DAO::Entitlement->held_by( $studio, $holder ) ) }
+
+subtest 'units of an uncovered occurrence refused' => sub {
+    my ($offer) = class_with_occurrences(1);
+    my $elsewhere = Registry::DAO::Resource->for_occurrence( $studio, event_of( class_in() ) );
+    my $holder    = person();
+    throws_ok { Registry::DAO::Entitlement->grant( $studio, seat_sale( $offer, $elsewhere, $holder ) ) }
+        qr/does not buy resource/, "an occurrence of another class is refused";
+    is held_by($holder), 0, 'and leaves no entitlement';
+    is $elsewhere->free_units($studio), 10, 'nor any held seat';
+};
+
+subtest 'occurrence from another tenant schema refused' => sub {
+    my $kiln  = $studio{kiln_house};
+    my $there = event_of( class_in($kiln), '2099-04-01T10:00:00Z', handle => $kiln );
+    throws_ok {
+        $studio->insert( 'resources',
+            { name => 'Borrowed', kind => 'finite', capacity => 10, event_id => $there } )
+    } qr/resources_event_id_fkey/, "another tenant's event is no occurrence here";
+    throws_ok { Registry::DAO::Resource->for_occurrence( $studio, $there ) } qr/no event/,
+        'and the DAO finds no such event';
+};
+
+subtest 'second resource for one occurrence refused' => sub {
+    my $event = event_of( class_in() );
+    Registry::DAO::Resource->for_occurrence( $studio, $event );
+    throws_ok { Registry::DAO::Resource->for_occurrence( $studio, $event ) }
+        qr/resources_event_id_key/, 'one occurrence has one resource';
+};
+
+subtest 'entitlement spanning two occurrences refused' => sub {
+    my ( $offer, $a, $b ) = class_with_occurrences(2);
+    my $holder = person();
+    throws_ok {
+        my $tx = $studio->begin;
+        my $e  = Registry::DAO::Entitlement->create( $studio, {
+            holder_user_id   => $holder,
+            offer_version_id => $offer->id,
+            payment_plan_id  => 'pay',
+            starts_at        => '2020-01-01T00:00:00Z',
+        } );
+        $studio->insert( 'entitlement_units', { entitlement_id => $e->id, resource_id => $_->id, unit => 1 } )
+            for $a, $b;
+        $tx->commit;
+    } qr/entitlement_units_entitlement_id_resource_id_excl/, 'seats in two occurrences are two entitlements';
+    is held_by($holder), 0, 'and nothing is stored';
+    is $_->free_units($studio), 10, 'no seat held in ' . $_->name for $a, $b;
+};
+
+subtest 'published coverage cannot be changed' => sub {
+    my ($offer) = class_with_occurrences(1);
+    ok $offer->is_published && !defined $offer->resource_id,
+        'a class offer version with no resource is published';
+    my $d = class_in();
+    throws_ok {
+        $studio->query( 'UPDATE offer_versions SET class_project_id = ? WHERE id = ?', $d, $offer->id )
+    } qr/immutable once published/, 'its class cannot be changed';
+    throws_ok {
+        $studio->query( 'UPDATE offer_versions SET class_project_id = NULL, resource_id = ? WHERE id = ?',
+            Registry::DAO::Resource->for_occurrence( $studio, event_of($d) )->id, $offer->id )
+    } qr/immutable once published/, 'nor swapped for one resource';
+    is( Registry::DAO::OfferVersion->find( $studio, { id => $offer->id } )->class_project_id,
+        $offer->class_project_id, 'it still covers its class' );
+};
+
+subtest 'an offer version buys one resource or one class' => sub {
+    my $c        = class_in();
+    my $resource = Registry::DAO::Resource->for_occurrence( $studio, event_of($c) );
+    my $offer    = Registry::DAO::Offer->create( $studio, { name => 'Muddled' } );
+    throws_ok { $offer->draft( $studio, offer_terms( $resource->id, class_project_id => $c ) ) }
+        qr/offer_versions_buys_resource_or_class/, 'not both';
+    throws_ok { $offer->draft( $studio, offer_terms(undef) ) }
+        qr/offer_versions_buys_resource_or_class/, 'nor neither';
+};
+
 done_testing;

@@ -18,6 +18,9 @@ BEGIN
         EXECUTE format('SELECT event_id FROM %I.resources WHERE false', s);
         EXECUTE format('SELECT seats_per_occurrence FROM %I.projects WHERE false', s);
         EXECUTE format('SELECT class_project_id FROM %I.offer_versions WHERE false', s);
+        PERFORM 1 / count(*) FROM pg_constraint
+          WHERE conname = 'entitlement_units_entitlement_id_resource_id_excl'
+            AND conrelid = format('%I.entitlement_units', s)::regclass;
     END LOOP;
 END $$;
 
