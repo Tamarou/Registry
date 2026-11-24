@@ -8,11 +8,20 @@ package Test::Registry::PricingProbe;
 use Exporter 'import';
 our @EXPORT_OK = qw( with_tenant_plan give_tenant_terms state_platform_terms without_rate_check solo_linked_tenant );
 
+use Mojo::Home;
 use Mojo::JSON qw( encode_json );
 use Test::More ();
+use Registry::DAO;
+use Registry::DAO::User;
+use Registry::DAO::Workflow;
+use Test::Registry::Helpers qw( join_tenant publish_offer );
 use Registry::PriceOps::PlatformTerms qw( rate_fraction );
 
 my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+
+# The refund kinds offer-publishing publishes on payment processing:
+# full_until_cutoff needs an occurrence or class, which it is not.
+my %PUBLISHABLE_REFUND = map { $_ => 1 } qw( none keep_fee_with_admin_exception );
 
 # with_tenant_plan($db, $slug, { rate, amount_cents, name, refund }, $cb)
 #
@@ -39,6 +48,7 @@ sub with_tenant_plan ( $db, $slug, $overrides, $cb ) {
     my $err = $@;
 
     _hold( $db, $slug, undef );
+    # Not terms: the exact rows it held back, ids and history included, which no interface re-creates.
     $db->query( q{INSERT INTO registry.entitlements
                   SELECT * FROM jsonb_populate_recordset(NULL::registry.entitlements, ?::jsonb)},
         encode_json($held) );
@@ -101,6 +111,7 @@ sub without_rate_check ( $db, $cb ) {
 # A tenant holding the bootstrap's Solo v1, made on first call.
 sub solo_linked_tenant ($db) {
     my $slug = 'solo_linked_probe';
+    # Not terms: a bare tenant row, with no schema, to hold the seed's Solo v1.
     $db->query( q{INSERT INTO registry.tenants (name, slug) VALUES ('Solo Linked Probe', ?)
                   ON CONFLICT (slug) DO NOTHING}, $slug );
     _hold( $db, $slug, $SOLO_V1 ) unless @{ _held( $db, $slug ) };
@@ -119,23 +130,67 @@ sub _held ( $db, $slug ) {
 }
 
 # Replaces $slug's platform entitlements to payment processing with one to
-# $version_id under its revenue_share plan, in effect from now; none when
+# $version_id under its percentage-of-sales plan, in effect from now; none when
 # $version_id is undef. Deleted rather than ended: a probe rewrites the
 # tenant's history for the test, it is not a lifecycle move.
 sub _hold ( $db, $slug, $version_id ) {
     $db->query( 'DELETE FROM registry.entitlements WHERE id = ?', $_->{id} ) for @{ _held( $db, $slug ) };
     return unless $version_id;
+    # Not terms: the probe's grant, since nothing yet grants a tenant a chosen platform version.
     $db->query( q{
         INSERT INTO registry.entitlements (holder_tenant_id, offer_version_id, payment_plan_id, in_effect)
-        SELECT id, ?, 'revenue_share', tstzrange(now(), NULL, '[)') FROM registry.tenants WHERE slug = ?
-    }, $version_id, $slug );
+        SELECT t.id, p.offer_version_id, p.id, tstzrange(now(), NULL, '[)')
+          FROM registry.tenants t, registry.offer_version_payment_plans p
+         WHERE t.slug = ? AND p.offer_version_id = ? AND p.kind = 'percentage_of_sales'
+    }, $slug, $version_id );
     return;
 }
 
 # A new offer for payment processing, named $terms->{name}, with one version
 # carrying exactly these terms: published and retired at once, so signup
 # never offers it and no published version is edited. Returns the version id.
+# Published through offer-publishing by a platform admin, as a real platform
+# offer is; only terms the workflow refuses are planted (_planted_version).
 sub _probe_version ( $db, $terms ) {
+    my $refund = $terms->{refund} // { kind => 'keep_fee_with_admin_exception' };
+    my $rate   = eval { rate_fraction( $terms->{rate}, 'a probe' ) };
+    return _planted_version( $db, $terms, $refund )
+        unless defined $rate && keys %$refund == 1 && $PUBLISHABLE_REFUND{ $refund->{kind} // '' };
+
+    my $dao = Registry::DAO->new;    # DB_URL's registry schema, where platform offers are published
+    # A no-op once stored, so a test that never imported workflows still has it.
+    Registry::DAO::Workflow->from_yaml( $dao, Mojo::Home->new->child( 'workflows', 'offer-publishing.yml' )->slurp );
+    my $basis_points = sprintf '%.0f', $rate * 10_000;    # whole: rate_fraction refuses finer
+    my $version = publish_offer( $dao, 'registry', _platform_admin( $dao->db ), {
+        resource_id => $db->query(q{SELECT id FROM registry.resources WHERE name = 'payment processing'})->array->[0],
+        offer_name  => $terms->{name} // 'Stated terms',
+        price_cents => $terms->{amount_cents} // 0,
+        currency    => 'usd',
+        units_per_acceptance => 1,
+        per_booking_cap      => 1,
+        one_time             => 'declined',
+        percentage_of_sales  => 'offered',
+        rate_percent         => sprintf( '%d.%02d', int( $basis_points / 100 ), $basis_points % 100 ),
+        refund               => $refund->{kind},
+    } );
+    # Retired at once: signup grants the one current platform offer to tenants.
+    $db->query( 'UPDATE registry.offer_versions SET superseded_at = now() WHERE id = ?', $version->id );
+    return $version->id;
+}
+
+# A platform admin, the only one who may publish a platform offer; made on first call.
+sub _platform_admin ($db) {
+    my $admin = Registry::DAO::User->find( $db, { username => 'pricing_probe_admin' } )
+        // Registry::DAO::User->create( $db, { username => 'pricing_probe_admin', name => 'Pricing Probe Admin',
+            email => 'pricing_probe_admin@test.local', user_type => 'admin' } );
+    join_tenant( $db, $admin, 'admin', 'registry' );
+    return $admin;
+}
+
+# Planted as rows, because the probe's point is terms offer-publishing refuses:
+# a rate the database refuses (planted inside without_rate_check), no rate at
+# all, or a refund policy payment processing cannot be published with.
+sub _planted_version ( $db, $terms, $refund ) {
     my $offer = $db->query( 'INSERT INTO registry.offers (name) VALUES (?) RETURNING id',
         $terms->{name} // 'Stated terms' )->hash->{id};
     my $version = $db->query( q{
@@ -143,9 +198,7 @@ sub _probe_version ( $db, $terms ) {
             (offer_id, version, resource_id, price_cents, units_per_acceptance, per_booking_cap, policies)
         SELECT ?, 1, id, ?, 1, 1, ?::jsonb FROM registry.resources WHERE name = 'payment processing'
         RETURNING id
-    }, $offer, $terms->{amount_cents} // 0,
-        encode_json( { refund => $terms->{refund} // { kind => 'keep_fee_with_admin_exception' } } ),
-    )->hash->{id};
+    }, $offer, $terms->{amount_cents} // 0, encode_json( { refund => $refund } ) )->hash->{id};
     $db->query( q{INSERT INTO registry.offer_version_payment_plans (offer_version_id, id, kind, fraction)
                   VALUES (?, 'revenue_share', 'percentage_of_sales', ?)}, $version, $terms->{rate} );
     $db->query( 'UPDATE registry.offer_versions SET published_at = now(), superseded_at = now() WHERE id = ?',

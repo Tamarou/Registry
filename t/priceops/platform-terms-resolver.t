@@ -175,6 +175,27 @@ subtest 'probe states terms the resolver returns' => sub {
         'stating terms again replaces them, for the rest of the test';
 };
 
+subtest 'probe publishes the terms it can through offer-publishing' => sub {
+    my $published_by_run = sub ($id) {
+        $db->query( q{SELECT 1 FROM registry.workflow_runs r JOIN registry.workflows w ON w.id = r.workflow_id
+                       WHERE w.slug = 'offer-publishing' AND r.data->>'published_offer_version_id' = ?}, $id )->rows;
+    };
+    my $retired = sub ($id) {
+        $db->query( 'SELECT superseded_at IS NOT NULL FROM registry.offer_versions WHERE id = ?', $id )->array->[0];
+    };
+
+    give_tenant_terms( $db, 'terms_stated', { rate => '0.0173', amount_cents => 1500, name => 'Published Terms' } );
+    my $given = platform_terms_for_tenant( $db, 'terms_stated' );
+    ok $published_by_run->( $given->{id} ), 'give_tenant_terms publishes its version through the workflow';
+    ok $retired->( $given->{id} ), 'and retires it, so signup never offers it';
+
+    with_tenant_plan( $db, 'terms_stated', { rate => '0.0311' }, sub {
+        my $probe = platform_terms_for_tenant( $db, 'terms_stated' );
+        ok $published_by_run->( $probe->{id} ), 'with_tenant_plan publishes its version through the workflow';
+        ok $retired->( $probe->{id} ), 'and retires it too';
+    } );
+};
+
 subtest 'probe refuses an over precise or out of range rate' => sub {
     my $plans  = sub { $db->query('SELECT count(*) FROM registry.offer_versions')->array->[0] };
     my $before = platform_terms_for_tenant( $db, 'terms_stated' );
