@@ -1,0 +1,15 @@
+%# ABOUTME: platform-fee-refund-exception's last screen: Stripe has the application-fee refund.
+%# ABOUTME: Or that the fee was already returned and nothing more was sent.
+% extends 'layouts/workflow';
+% title 'Fee returned';
+% my $found = stash('fee_refund_payment') // {};
+% my $refund = stash('fee_refund') // {};
+
+<section class="card">
+  <h2>The platform fee is on its way back to <%= $found->{tenant_name} %></h2>
+  % if ( defined $refund->{already_returned_cents} ) {
+  <p><%= sprintf '$%.2f', $refund->{already_returned_cents} / 100 %> of the fee was already returned, so nothing more was sent.</p>
+  % } else {
+  <p>Stripe fee refund <%= $refund->{id} %> for <%= sprintf '$%.2f', ( $refund->{amount_cents} // 0 ) / 100 %>.</p>
+  % }
+</section>

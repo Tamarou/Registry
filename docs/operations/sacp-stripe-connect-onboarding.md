@@ -187,8 +187,9 @@ account wins and a warning is logged.
 | `payment_intent.succeeded` for an intent Registry created and later replaced (listed in the payment's `metadata.superseded_intent_ids`) | nothing settles, staff are alerted, and the `superseded_refund` job refunds it in full (section 6) |
 | `invoice.paid`, `invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible` | the subscription is read from SACP's account with `expand[]=schedule`; only an invoice whose schedule Registry recorded, with `billing_reason` `subscription_create`, `subscription_cycle` or `subscription_update`, marks an instalment row |
 | `account.updated` | mirrors `charges_enabled` and `details_submitted` onto the tenant row, when the account in the event is the one it was delivered for |
-| `refund.updated` for a refund Registry holds as pending | settles that refund (section 6, "Refunds") |
-| other refund, dispute and customer events (`charge.refunded`, `charge.refund.updated`, `refund.*`, `charge.dispute.*`, `customer.*`) | **stored, not applied**: the row in `registry.webhook_events` keeps the account, tenant and payload, with `processed_at` NULL. Nothing in Registry changes. |
+| `refund.updated` for a refund Registry holds as pending | settles that refund (section 6, "Refunds"); once it has succeeded it is also stored and applied to the bookings, as below |
+| a refund (`refund.*`, `charge.refund.updated`, or `charge.refunded` when it lists its refunds) of a payment Registry made for SACP | **stored, then applied**: the row in `registry.webhook_events` keeps the account, tenant and payload, and an `entitlement-stripe-move` run applies it in the background, setting `processed_at`. A succeeded full refund ends the bookings that payment bought and frees their seats; a partial one is recorded against them and leaves them in effect; pending, failed and canceled refunds change nothing. The offer's refund policy does not gate this: Stripe has already moved the money. If the run fails three times, SACP's admins are alerted. |
+| other refund, dispute and customer events (`charge.dispute.*`, `customer.*`, and refunds of payments Registry did not make) | **stored, not applied**: the row keeps the account, tenant and payload, with `processed_at` NULL. Nothing in Registry changes. |
 | anything else | claimed, logged as not handled, 200 |
 
 To see what has been stored unapplied:
@@ -200,9 +201,9 @@ SELECT stripe_event_id, event_type, account, tenant_id, received_at
  ORDER BY received_at DESC;
 ```
 
-A refund or dispute SACP makes in its own Stripe dashboard shows up here and
-nowhere else in Registry. Act on it by hand until Registry applies these
-events.
+A refund SACP makes in its own Stripe dashboard is applied to the bookings its
+payment bought (above). A dispute is still only stored here: act on it by hand
+until Registry applies those events.
 
 ### 3.4 Instalment invoices Stripe collected but Registry did not record
 
@@ -428,7 +429,44 @@ read through `Registry::DAO::Payment::stamped_platform_terms`.
   policy is `keep_fee_with_admin_exception` (Solo v1's).
   `Registry::DAO::Payment::refund_platform_fee_async` does this. It refuses,
   before calling Stripe, any payment with no stamp or under any other policy.
-  Nothing in the application calls it yet.
+
+Solo keeps the fee on a refund by default. When the fault was the platform's,
+an admin of the platform tenant applies the exception with the
+`platform-fee-refund-exception` workflow (`/platform-fee-refund-exception` on
+the platform's host):
+
+- **Who may:** a member of `registry` with the `admin` role, acting as
+  `registry`. Every step also asks for the operator right, so an admin of any
+  other tenant, `registry` staff, and a platform admin acting as another
+  tenant are all refused.
+- **Find the payment:** the tenant's slug and the payment id. Refused unless
+  the tenant exists, the payment is that tenant's, it has been refunded, its
+  stamped platform offer version's refund policy is
+  `keep_fee_with_admin_exception`, and some of its fee is not yet returned.
+- **Record the reason:** written once on the payment, under
+  `metadata.platform_fee_refund_exception`: the reason, the amount (the whole
+  fee not yet returned), the stamped version, the admin and the time, with the
+  idempotency key `platform-fee-refund:<payment id>`. Applying it again keeps
+  the first record.
+- **Return the fee:** `refund_platform_fee_async` reads the fee id from the
+  seller's charge, then reads the fee on the platform account and refuses
+  (before sending anything) a fee whose `charge` is not the payment's charge
+  or whose `account` is not the payment's `metadata.stripe_account_id`, and a
+  recorded amount larger than the whole fee. It then calls
+  `POST /v1/application_fees/{fee}/refunds` on the platform account (no
+  `Stripe-Account`) under the recorded key, for the recorded amount or, when
+  some of the fee was returned outside the workflow after the request was
+  recorded, for only what is left.
+- **Pressing it again** is safe and finishes the run. If
+  `platform_fee_refunded_cents` already shows the whole fee returned, nothing
+  is read or sent. Otherwise, if Stripe's fee shows nothing left (`amount`
+  equals `amount_refunded`: an earlier press, or a return by hand), nothing is
+  sent and Stripe's `amount_refunded` is recorded on the payment. The
+  complete screen says the fee was already returned.
+- **The result:** the kept-fee figure (`payments.platform_fee_refunded_cents`)
+  changes when Stripe sends `application_fee.refunded` to the platform
+  endpoint, or when a press finds the fee already returned in full; a fee
+  refund the workflow sends is not recorded until that event arrives.
 
 ### Refunds
 

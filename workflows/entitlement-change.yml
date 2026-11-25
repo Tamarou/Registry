@@ -1,0 +1,23 @@
+# ABOUTME: A customer, or an admin or staff member for them, moves an entitlement to another occurrence of its offer.
+# ABOUTME: Choose, hold the target, pay the change fee (passed through on a zero fee), then move it.
+
+name: Entitlement Change
+description: Move a booking to another occurrence of the same offer, under the change policy it was sold with
+slug: entitlement-change
+
+steps:
+  - slug: choose-target
+    description: Choose the booking to change
+    class: Registry::DAO::WorkflowSteps::ChooseChangeTarget
+  - slug: hold-target
+    description: Choose the occurrence to move to, and hold its seats
+    class: Registry::DAO::WorkflowSteps::HoldChangeTarget
+  - slug: pay
+    description: Pay the change fee
+    class: Registry::DAO::WorkflowSteps::PayChangeFee
+  - slug: complete-change
+    description: Move the booking onto the held occurrence
+    class: Registry::DAO::WorkflowSteps::CompleteChange
+  - slug: done
+    description: The booking has moved
+    class: Registry::DAO::WorkflowStep

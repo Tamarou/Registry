@@ -15,6 +15,7 @@ defer { done_testing };
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Registry::DAO::Tenant;
+use Test::Registry::Helpers;
 
 my $t_db = Test::Registry::DB->new;
 my $dao  = $t_db->db;
@@ -68,7 +69,7 @@ sub sign_up ( $name, $subdomain ) {
     } )->status_is(302);
     my $review = $t->tx->res->headers->location;
     $t->get_ok($review)->status_is(200);
-    $t->post_ok( $review => form => { terms_accepted => 1 } );
+    $t->post_ok( $review => form => { terms_accepted => 1, offer_version => platform_solo_offer_version_id($db) } );
     return $review;
 }
 

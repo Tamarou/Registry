@@ -58,7 +58,6 @@ subtest 'responsive design meta tags are present' => sub {
 
 subtest 'semantic templates use proper HTML5 structure' => sub {
     my @semantic_templates = (
-        'templates/tenant-signup/payment.html.ep',
         'templates/tenant-signup/complete.html.ep',
         'templates/tenant-signup/users.html.ep'
     );

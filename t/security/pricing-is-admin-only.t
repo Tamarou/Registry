@@ -78,6 +78,23 @@ subtest 'admin starts pricing plan creation' => sub {
     $t->get_ok( $t->tx->res->headers->location => $HOST )->status_is(200);
 };
 
+subtest 'admin plan basics authored by this tenant' => sub {
+    my $t = app_as($admin);
+    $t->post_ok( '/pricing-plan-creation' => $HOST => form => {} )->status_is(302);
+    my ($run_id) = $t->tx->res->headers->location =~ m{/pricing-plan-creation/([0-9a-f-]{36})/};
+
+    $t->post_ok( "/pricing-plan-creation/$run_id/plan-basics" => $HOST => form => {
+        plan_name => 'Here Authored Plan', plan_type => 'standard', plan_scope => 'customer',
+        __tenant_slug => 'price_there', offering_tenant_id => $there->id,
+    } )->status_is(302)
+      ->header_unlike( Location => qr{/plan-basics}, 'the post moves past plan basics' );
+
+    my $data = decode_json( $here_db->query( 'SELECT data FROM workflow_runs WHERE id = ?', $run_id )
+        ->hash->{data} );
+    is $data->{plan_basics}{offering_tenant_id}, $here->id,
+      "the plan is authored by the tenant serving the request, not one the client named";
+};
+
 subtest 'staff refused pricing plan creation' => sub {
     my $before = pricing_runs();
     my $t = app_as($staff);

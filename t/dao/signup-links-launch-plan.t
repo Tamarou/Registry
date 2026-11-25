@@ -1,4 +1,4 @@
-# ABOUTME: A tenant that signs up without ever seeing a plan page still holds the platform's published offer.
+# ABOUTME: A tenant that signs up on the review page's preselected Solo holds the platform's published offer.
 # ABOUTME: Absence is not zero: that entitlement IS the money path, so its rate must be the advertised one.
 use 5.42.0;
 use lib qw(lib t/lib);
@@ -11,7 +11,7 @@ use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::Tenant;
-use Registry::PriceOps::RevenueShare qw( platform_launch_fraction );
+use Registry::PriceOps::RevenueShare qw( platform_offered_fraction );
 use Registry::PriceOps::PlatformTerms qw( platform_entitlement_terms );
 
 my $t_db = Test::Registry::DB->new;
@@ -26,7 +26,7 @@ ok $workflow, 'tenant-signup workflow imported';
 # The rate the platform advertises, read from the database rather than written
 # here as a literal -- a test that hardcodes 2.5% passes on the day someone
 # changes the plan and the copy disagrees.
-my $launch_fraction = platform_launch_fraction($db);
+my $launch_fraction = platform_offered_fraction($db);
 cmp_ok $launch_fraction, '>', 0, 'the platform sells a non-zero revenue share';
 
 # The bootstrap seed's fixed id for Solo v1, the platform's offer to tenants.
@@ -55,7 +55,7 @@ subtest 'the signup flow no longer asks which plan' => sub {
         or diag "steps: @slugs";
 };
 
-subtest 'a signup with no plan selection is granted the published platform offer' => sub {
+subtest 'a signup on the preselected Solo is granted the published platform offer' => sub {
     my $slug = "launchplan_$$";
 
     my $run = Registry::DAO::WorkflowRun->create( $db, {
@@ -76,7 +76,7 @@ subtest 'a signup with no plan selection is granted the published platform offer
     my ($review) = $workflow->get_step( $db, { slug => 'review' } );
     ok $review, 'found the review step';
 
-    $run->process( $db, $review, {} );
+    $run->process( $db, $review, { offer_version => $SOLO_V1 } );
 
     ok $db->query( 'SELECT 1 FROM registry.tenants WHERE slug = ?', $slug )->hash,
         'the review button provisioned the tenant';
@@ -117,7 +117,7 @@ subtest 'the subdomain the applicant is shown is the one they get' => sub {
     my $shown = $review->prepare_template_data( $db, $run )->{profile}{subdomain};
     is $shown, $previewed, 'the review page shows that same slug';
 
-    $run->process( $db, $review, {} );
+    $run->process( $db, $review, { offer_version => $SOLO_V1 } );
     is $run->data->{subdomain}, $previewed,
         'and provisioning uses it rather than deriving a different one';
 };

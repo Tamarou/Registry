@@ -15,14 +15,26 @@ JOIN registry.tenant_users tu ON tu.user_id = u.id
 WHERE tu.tenant_id = '00000000-0000-0000-0000-000000000000'::UUID
 AND tu.is_primary = true;
 
--- Verify all tenant-scoped pricing plans have active pricing relationships
-SELECT 1/COUNT(*) FROM registry.pricing_plans p
-WHERE p.plan_scope = 'tenant'
-AND EXISTS (
-    SELECT 1 FROM registry.pricing_relationships pr
-    WHERE pr.provider_id = '00000000-0000-0000-0000-000000000000'::UUID
-    AND pr.pricing_plan_id = p.id
-    AND pr.status = 'active'
-);
+-- Verify all tenant-scoped pricing plans have active pricing relationships.
+-- Vacuous once drop-pricing-relationships has run: every verify runs again
+-- against the final schema, where the table is gone.
+DO $$
+BEGIN
+    IF to_regclass('registry.pricing_relationships') IS NULL THEN
+        RETURN;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM registry.pricing_plans p
+        WHERE p.plan_scope = 'tenant'
+        AND EXISTS (
+            SELECT 1 FROM registry.pricing_relationships pr
+            WHERE pr.provider_id = '00000000-0000-0000-0000-000000000000'::UUID
+            AND pr.pricing_plan_id = p.id
+            AND pr.status = 'active'
+        )
+    ) THEN
+        RAISE EXCEPTION 'no tenant-scoped pricing plan has an active platform relationship';
+    END IF;
+END $$;
 
 ROLLBACK;

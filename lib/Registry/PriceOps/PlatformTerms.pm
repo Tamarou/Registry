@@ -6,14 +6,19 @@ use experimental 'signatures';
 package Registry::PriceOps::PlatformTerms;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(platform_terms_for_tenant platform_default_terms
-                    platform_entitlement_terms platform_version_terms rate_fraction);
+our @EXPORT_OK = qw(platform_terms_for_tenant
+                    platform_entitlement_terms platform_version_terms rate_fraction
+                    platform_offers_to_tenants $SOLO_OFFER_ID);
 
 use Mojo::JSON qw( from_json );
 use Registry::DAO::Entitlement;
 
 # The resource a tenant's platform entitlement buys; named, never a plan name.
 my $PAYMENT_PROCESSING = 'payment processing';
+
+# Solo, the offer signup preselects: the bootstrap seed's fixed offer id
+# (bootstrap-platform-offers), never its name or its place in the listing.
+our $SOLO_OFFER_ID = '00000000-0000-0000-0002-000000000001';
 
 # What every terms lookup returns about an offer version and one of its plans.
 my $TERMS_COLUMNS = q{
@@ -89,6 +94,36 @@ sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
     return _entitlement_terms( $row, "offer version '$offer_version_id'" );
 }
 
+# platform_offers_to_tenants($db)
+#   -> [ { id, offer_id, plan_id, name, amount_cents, currency, fraction, refund_policy } ]
+#
+# The platform's current published offers to tenants, cheapest first: each
+# registry payment-processing version with a percentage-of-sales plan and
+# without the holder_is_offerer condition, which marks the platform's offers
+# to itself. Registry only: a studio's own offers live in its own schema.
+# Only versions with no price: signup takes no card, so it cannot be paid for
+# one with a monthly base, and does not offer what it cannot accept.
+sub platform_offers_to_tenants ($db) {
+    $db = $db->db if $db isa Registry::DAO;
+
+    return $db->query( qq{
+        SELECT $TERMS_COLUMNS, v.currency, v.offer_id
+          FROM registry.offer_versions v
+          JOIN registry.offers o ON o.id = v.offer_id
+          JOIN registry.resources r ON r.id = v.resource_id
+          JOIN registry.offer_version_payment_plans p
+            ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
+         WHERE r.name = ?
+           AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+           AND v.price_cents = 0
+           AND NOT v.conditions \@> '[{"kind": "holder_is_offerer"}]'
+         ORDER BY p.fraction, o.name
+    }, $PAYMENT_PROCESSING )->hashes->map( sub ($row) {
+        +{ %{ _entitlement_terms( $row, "offer version '$row->{id}'" ) }, currency => $row->{currency},
+            offer_id => $row->{offer_id} };
+    } )->to_array;
+}
+
 sub _entitlement_terms ( $row, $context ) {
     return {
         id            => $row->{id},
@@ -98,38 +133,6 @@ sub _entitlement_terms ( $row, $context ) {
         fraction      => rate_fraction( $row->{fraction}, $context ),
         refund_policy => from_json( $row->{refund_policy} // 'null' )
             // die "No refund policy on $context.\n",
-    };
-}
-
-# platform_default_terms($db) -> { id, name, fraction, amount_cents }
-#
-# The platform's default ("Free") pricing plan. No charge reads it: only the
-# signup page's quoted rate, which the Free-plan removal takes away. Current
-# versions only: this is a SEARCH by mark, and a retired version still
-# carries the mark.
-sub platform_default_terms ($db) {
-    $db = $db->db if $db isa Registry::DAO;
-
-    my $row = $db->query(q{
-        SELECT id, plan_name, amount_cents,
-               pricing_configuration->>'percentage' AS pct
-          FROM registry.pricing_plans
-         WHERE plan_scope = 'platform'
-           AND metadata->>'default' = 'true'
-           AND superseded_at IS NULL
-         LIMIT 1
-    })->hash;
-
-    die "No platform default (Free) plan found in registry.pricing_plans "
-      . "(plan_scope='platform', metadata->>'default'='true'). "
-      . "This is a deployment bug - run the seed-free-platform-plan migration."
-        unless $row;
-
-    return {
-        id           => $row->{id},
-        name         => $row->{plan_name},
-        fraction     => rate_fraction( $row->{pct}, "platform default (Free) plan" ),
-        amount_cents => $row->{amount_cents},
     };
 }
 

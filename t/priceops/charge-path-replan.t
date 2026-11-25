@@ -1,18 +1,17 @@
 #!/usr/bin/env perl
-# ABOUTME: The charge path re-resolves the selected plan instead of trusting run data.
-# ABOUTME: A run started before a price change must charge the current price, not the remembered one.
+# ABOUTME: The charge path re-reads the chosen offer version instead of trusting run data.
+# ABOUTME: A run whose chosen version was superseded or withdrawn is never charged that version's price.
 
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
-use Registry::DAO::PricingPlan;
-use Registry::DAO::WorkflowSteps::PricingPlanSelection;
-use Mojo::JSON qw( encode_json );
+use Registry::DAO::Offer;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -26,79 +25,53 @@ my $payment  = Registry::DAO::WorkflowStep->find( $db,
     { workflow_id => $workflow->id, slug => 'review' } );
 ok $payment, 'the signup commit step exists' or BAIL_OUT 'workflow shape changed';
 
-# The plan-choice step is out of the funnel but its class is not, so it is built
-# here rather than looked up. It is used only to enumerate what the platform
-# offers, which is still how this file finds the buyable tier.
-my $choice_workflow = Registry::DAO::Workflow->create( $db, {
-    name => 'Replan Probe', slug => "replan-probe-$$",
-    description => 'Holds a PricingPlanSelection step outside the signup funnel',
-} );
-my $pricing = Registry::DAO::WorkflowSteps::PricingPlanSelection->create( $db, {
-    workflow_id => $choice_workflow->id, slug => 'pricing',
-    class => 'Registry::DAO::WorkflowSteps::PricingPlanSelection',
-    description => 'Select pricing plan',
-} );
+# A platform offer to tenants at its own rate, so a stale rate would show.
+# No monthly base: signup lists no offer it would need a card for.
+sub kiln_terms ($fraction) {
+    return offer_terms( '00000000-0000-0000-0001-000000000001',
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => $fraction } ],
+    );
+}
+my $kiln = Registry::DAO::Offer->create( $db, { name => 'Kiln Share' } );
+my $v1   = $kiln->draft( $db, kiln_terms(0.03) )->publish($db);
 
-# The buyable tier from the shipped seed, reached the way the signup page does.
-my ($solo) = grep { !$_->{metadata}{coming_soon} }
-    @{ $pricing->prepare_pricing_data( $db, $choice_workflow->new_run($db) )->{pricing_plans} };
-ok $solo, 'the seed offers a buyable tier' or BAIL_OUT 'no buyable plan';
-
-# A run that selected the plan and stored the blob, exactly as PricingPlanSelection does.
-sub run_having_selected ( $snapshot ) {
+# A run that carries a chosen version, exactly as the review step stores it.
+sub run_having_chosen ($version_id) {
     my $run = $workflow->new_run($db);
-    $run->update_data( $db, { selected_pricing_plan => $snapshot } );
+    $run->update_data( $db, { selected_offer_version => $version_id } );
     return $run;
 }
 
-subtest 'a current selection is used' => sub {
-    my $run = run_having_selected({
-        id => $solo->{id}, plan_name => $solo->{plan_name},
-        amount_cents => $solo->{amount_cents}, currency => 'USD',
-    });
-
-    my $config = $payment->get_subscription_config( $db, $run );
-    is $config->{plan_name}, $solo->{plan_name}, 'the selected plan is what gets configured';
+subtest 'a current choice is used' => sub {
+    my $config = $payment->get_subscription_config( $db, run_having_chosen( $v1->id ) );
+    is $config->{plan_name}, 'Kiln Share', 'the chosen offer is what gets configured';
+    is $config->{revenue_share_percent}, 3, 'at its version rate';
 };
 
-# The case with no adversary in it. A signup started before a price change and
-# resumed after it charged the amount captured at selection while linking the
-# plan whose rate had since moved -- displayed, charged and linked disagreeing
-# with nobody doing anything wrong.
-subtest 'a price changed after selection is re-read, not remembered' => sub {
-    my $run = run_having_selected({
-        id => $solo->{id}, plan_name => $solo->{plan_name},
-        amount_cents => 999_99, currency => 'USD',
-    });
+# The case with no adversary in it: a signup started before a price change and
+# resumed after it. The run carries a version id, never a rate, and a
+# superseded version is not one anybody can be charged.
+subtest 'a superseded choice is not charged' => sub {
+    my $run = run_having_chosen( $v1->id );
+    $kiln->draft( $db, kiln_terms(0.04) )->publish($db);
 
-    my $config = $payment->get_subscription_config( $db, $run );
-    isnt $config->{monthly_amount}, 999_99,
-        'the stale amount in run data is not what would be charged';
-    is $config->{monthly_amount}, $solo->{amount_cents},
-        'the plan row decides the price';
+    isnt $payment->get_subscription_config( $db, $run )->{revenue_share_percent}, 3,
+        'the superseded rate is not what would be charged';
+    my $result = $payment->process( $db, {}, $run );
+    like "@{ $result->{errors} // [] }", qr/choose one of the plans/i,
+        'and the commit refuses until a current plan is chosen';
 };
 
-# validate_plan_selection refuses a coming_soon plan, but that guard lived only
-# at the moment of selection. A run holding a plan that has since been marked
-# coming_soon must not be able to charge it.
-# With no plan page, an unresolvable selection falls through to the launch plan
-# rather than to undef -- so this asserts the shelved tier is not charged, which
-# is the guarantee, rather than asserting a particular substitute.
-subtest 'a plan that became unavailable is not charged' => sub {
-    my $shelved = Registry::DAO::PricingPlan->create( $db, {
-        plan_scope => 'tenant', plan_name => 'Shelved Tier',
-        amount_cents => 499_00, currency => 'USD',
-        metadata => { coming_soon => 1 },
-    } );
+subtest 'a withdrawn offer is not charged' => sub {
+    my $current = $kiln->current_version($db);
+    my $run = run_having_chosen( $current->id );
+    $db->query( 'UPDATE registry.offer_versions SET superseded_at = now() WHERE id = ?', $current->id );
 
-    my $run = run_having_selected({
-        id => $shelved->id, plan_name => 'Shelved Tier',
-        amount_cents => 499_00, currency => 'USD',
-    });
-
-    my $config = $payment->get_subscription_config( $db, $run );
-    isnt $config->{monthly_amount}, 499_00,
-        'the shelved tier is not what would be charged';
+    isnt $payment->get_subscription_config( $db, $run )->{revenue_share_percent}, 4,
+        'the withdrawn offer is not what would be charged';
+    my $result = $payment->process( $db, {}, $run );
+    like "@{ $result->{errors} // [] }", qr/choose one of the plans/i, 'and the commit refuses';
 };
 
 done_testing;

@@ -1,0 +1,9 @@
+%# ABOUTME: entitlement-change's last screen: the booking has moved to the occurrence the person chose.
+%# ABOUTME: Shown after CompleteChange converts the hold; nothing more to do.
+% extends 'layouts/workflow';
+% title 'Booking changed';
+
+<section class="card">
+  <h2>Your booking has moved</h2>
+  <p>You are booked into the new time you chose.</p>
+</section>

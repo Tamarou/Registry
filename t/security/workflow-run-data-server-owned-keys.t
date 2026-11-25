@@ -193,38 +193,82 @@ subtest 'a bracketed variant cannot smuggle a structure into a server-owned key'
         '__tenant_slug is not a client-built structure';
 };
 
-subtest 'selected_pricing_plan cannot be planted by a client' => sub {
+subtest 'selected_offer_version cannot be planted by a client' => sub {
     my $run = run_on_second_step();
 
     # Same shape as the user_id bracket bypass above, on a different key. Only
-    # the pricing step may write this: it rebuilds the blob from the plan row it
-    # just validated, which is where the coming-soon refusal lives. A client-
-    # authored blob skips that refusal, and both of its consumers trust it --
-    # get_subscription_config bills amount_cents and _provision_tenant links the
-    # id as the charge-time rate authority.
-    #
-    # The damage runs the wrong way from the obvious guess: forcing the most
-    # expensive tier buys its LOWEST revenue share, so the platform cuts its own
-    # take, and an attacker-chosen amount_cents bills nothing for the privilege.
+    # signup's review step may write this, after checking the posted version
+    # is a current published platform offer to tenants; provisioning grants
+    # the version it names, so a planted one picks the terms the tenant gets.
     $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
-        'selected_pricing_plan[id]'           => '00000000-0000-0000-0000-0000000000ff',
-        'selected_pricing_plan[amount_cents]' => 0,
-        'selected_pricing_plan[plan_name]'    => 'Empire',
+        'selected_offer_version[id]' => '00000000-0000-0000-0003-000000000002',
     })->status_is(201);
 
-    ok !exists data_for($run->id)->{selected_pricing_plan},
-        'a posted selected_pricing_plan is not stored';
+    ok !exists data_for($run->id)->{selected_offer_version},
+        'a posted selected_offer_version is not stored';
 
     # The flat form too. The strip matches (?:\[|\z), and the \z branch is
     # load-bearing only for this key -- user_id and __tenant_slug are re-derived
     # immediately below it, so a bare posted value would be overwritten anyway.
     $run = run_on_second_step();
     $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
-        selected_pricing_plan => 'Empire',
+        selected_offer_version => '00000000-0000-0000-0003-000000000002',
     })->status_is(201);
 
-    ok !exists data_for($run->id)->{selected_pricing_plan},
-        'a posted selected_pricing_plan is not stored';
+    ok !exists data_for($run->id)->{selected_offer_version},
+        'a posted selected_offer_version is not stored';
+};
+
+subtest 'a change and its targets cannot be planted by a client' => sub {
+    # The change steps write these; the fee charge reads change_hold.fee_cents as
+    # the amount owed, so a planted one would set its own price.
+    # change_needs_admin marks a paid change an admin must settle; a planted one hides it.
+    for my $key (qw( change_hold change_entitlement_id change_targets change_needs_admin )) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
+            "${key}[fee_cents]" => 0,
+            "${key}[hold_id]"   => '00000000-0000-0000-0000-000000000099',
+        })->status_is(201);
+        ok !exists data_for($run->id)->{$key}, "a bracketed posted $key is not stored";
+
+        $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => { $key => 'planted' })->status_is(201);
+        ok !exists data_for($run->id)->{$key}, "a flat posted $key is not stored";
+    }
+};
+
+subtest 'a refund target cannot be planted by a client' => sub {
+    # refund_entitlement_id names the booking ApplyRefundPolicy refunds; only
+    # the refund chooser writes it, once the booking is the asker's.
+    for my $form ( { refund_entitlement_id => '00000000-0000-0000-0000-000000000099' },
+                   { 'refund_entitlement_id[id]' => '00000000-0000-0000-0000-000000000099' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{refund_entitlement_id}, 'a posted refund_entitlement_id is not stored';
+    }
+};
+
+subtest 'a stored Stripe event cannot be named by a client' => sub {
+    # stripe_event_id names the stored Connect event an entitlement-stripe-move
+    # run applies; only the Connect endpoint sets it, when it creates the run.
+    for my $form ( { stripe_event_id => 'evt_planted' }, { 'stripe_event_id[x]' => 'evt_planted' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{stripe_event_id}, 'a posted stripe_event_id is not stored';
+    }
+    $t->post_ok('/run-data-test' => form => { stripe_event_id => 'evt_planted' })->status_is(302);
+    my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+    ok !exists data_for($run_id)->{stripe_event_id}, 'nor at run creation';
+};
+
+subtest 'a step result signal cannot be planted in run data' => sub {
+    # retry is a step's "fail this driver attempt" signal; stored in run data it
+    # would make every later driver attempt fail and halt the run.
+    for my $form ( { retry => 'Not your call' }, { 'retry[x]' => 'Not your call' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{retry}, 'a posted retry is not stored';
+    }
 };
 
 subtest 'submitted seller account or tenant slug is ignored' => sub {
@@ -311,7 +355,10 @@ subtest 'a posted tenant id is ignored and signup provisions a new tenant' => su
         admin_username => 'planted_admin', admin_user_type => 'admin', tenant => $existing,
     } )->status_is(302);
     $url = $t->tx->res->headers->location;
-    $t->post_ok( $url => form => { terms_accepted => 1, tenant => $existing } )->status_is(302);
+    $t->post_ok( $url => form => {
+        terms_accepted => 1, tenant => $existing,
+        offer_version  => '00000000-0000-0000-0003-000000000001',
+    } )->status_is(302);
 
     my ($run_id) = $url =~ m{/tenant-signup/([^/]+)/};
     my $tenant = data_for($run_id)->{tenant};

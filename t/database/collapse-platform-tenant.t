@@ -230,7 +230,6 @@ subtest 'the deploy succeeds with no dependants on the deleted row' => sub {
     for my $table (qw( tenant_users tenant_profiles tenant_domains subscription_events )) {
         $db->query( "DELETE FROM registry.$table WHERE tenant_id = ?", $deleted );
     }
-    $db->query( q{DELETE FROM registry.pricing_relationships WHERE provider_id = ?}, $deleted );
 
     lives_ok { deploy($uri) } 'the change deploys';
 

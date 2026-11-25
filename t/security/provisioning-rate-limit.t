@@ -30,6 +30,7 @@ defer { done_testing };
 
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowSteps::TenantPayment;
 
@@ -109,7 +110,7 @@ sub sign_up ( $name, %extra ) {
     my $review = $t->tx->res->headers->location;
     $t->get_ok($review)->status_is(200);
 
-    $t->post_ok( $review => form => { terms_accepted => 1 } );
+    $t->post_ok( $review => form => { terms_accepted => 1, offer_version => platform_solo_offer_version_id($db) } );
     return $review;
 }
 

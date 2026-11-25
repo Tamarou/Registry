@@ -1,12 +1,11 @@
-# ABOUTME: Workflow step that handles payment/subscription setup for new tenants.
-# ABOUTME: Provisions the tenant via Tenant->provision at payment-completion time.
+# ABOUTME: Signup's commit step: the tenant accepts its chosen platform offer, with no card and no subscription.
+# ABOUTME: Provisions the tenant via Tenant->provision when the review page's button is pressed.
 use 5.42.0;
 use utf8;
 
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowStep) {
-    use Registry::DAO::Subscription;
     use Registry::DAO::User;
     use Registry::DAO::Tenant;
     use Registry::DAO::MagicLinkToken;
@@ -18,9 +17,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Carp qw(croak);
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
-    use Registry::PriceOps::RevenueShare ();
+    use Registry::PriceOps::PlatformTerms qw(platform_offers_to_tenants $SOLO_OFFER_ID);
     use Registry::Utility::BaseDomain ();
-    use Registry::DAO::PricingPlan;
+
+    use constant SIGNUP_UNAVAILABLE =>
+        'Signup is unavailable right now: the platform has no plan on offer. Please try again later.';
 
     method process($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -31,9 +32,18 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             return { next_step => 'complete', tenant_created => 1, %$done };
         }
 
-        # Refuse a signup with no single offer to grant before any user is
-        # written or Stripe is called; _provision_tenant asks again to grant it.
-        $self->_platform_offer_to_tenants($db);
+        # The choice, refused before any user is written. The review page
+        # posts it; a post without one re-checks the one carried. Only listed
+        # offers are accepted, and none is listed with a monthly base.
+        my $offers = platform_offers_to_tenants($db);
+        return { next_step => $self->id, errors => [SIGNUP_UNAVAILABLE] } unless @$offers;
+        my $posted = exists $form_data->{offer_version}
+            ? $form_data->{offer_version}
+            : $run->data->{selected_offer_version};
+        my ($chosen) = grep { $_->{id} eq ( $posted // '' ) } @$offers;
+        return { next_step => $self->id, errors => ['Please choose one of the plans listed.'] }
+            unless $chosen;
+        $run->update_data( $db, { selected_offer_version => $chosen->{id} } );
 
         # Check for rate limiting
         if (my $rate_limit_error = $self->check_rate_limits($db, $run)) {
@@ -50,9 +60,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         }
         
         # Absent Stripe keys in production is a misconfiguration -- a
-        # half-finished key rotation, say -- not a green light. It used to be
-        # checked only on the card-collection branch, which a free plan no
-        # longer reaches; checked here it still holds for every signup. A
+        # half-finished key rotation, say -- not a green light. A
         # tenant provisioned while the platform cannot reach Stripe is one that
         # can never take a payment, and therefore one we can never earn a
         # revenue share from. Fail closed.
@@ -92,58 +100,11 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             return { next_step => $self->id, errors => [$why] };
         }
 
-        # Nothing to collect and nothing to charge. Solo has no monthly base
-        # -- the platform is paid out of the revenue share on each customer
-        # payment -- so the button on this page is the commit, not a step
-        # towards a card form that would only ever total $0.00. This is the
-        # ordinary path; everything below it is the paid-tier machinery,
-        # waiting for a tier with a monthly base to go on sale.
-        my $config = $self->get_subscription_config( $db, $run );
-        unless ( $config->{monthly_amount} ) {
-            my $result = $self->_provision_tenant( $db, $run );
-            return { next_step => 'complete', tenant_created => 1, %$result };
-        }
-
-        # Handle setup intent completion
-        if ($form_data->{setup_intent_id}) {
-            return $self->handle_setup_completion($db, $run, $form_data);
-        }
-        
-        # Handle payment method collection
-        if ($form_data->{collect_payment_method}) {
-            
-            # No Stripe keys configured: provision directly without payment.
-            # This handles the test/dev path where no Stripe keys are set.
-            if (!$ENV{STRIPE_PUBLISHABLE_KEY} && !$ENV{STRIPE_SECRET_KEY}) {
-
-                # Production already returned above -- absent keys there is a
-                # misconfiguration, and reading it as "payment is not required"
-                # would turn anonymous signup into a tenant factory: a cloned
-                # schema and a live wildcard subdomain on our own TLS per
-                # request, plus invitation email to any address the caller
-                # names.
-
-                # Build a mock subscription record so the run data is consistent
-                my $mock_subscription = {
-                    stripe_subscription_id => 'sub_test_' . time(),
-                    trial_ends_at => time() + (30 * 24 * 60 * 60), # 30 days from now
-                    status => 'trialing',
-                };
-
-                $run->update_data($db, { subscription => $mock_subscription });
-
-                my $result = $self->_provision_tenant($db, $run);
-                return { next_step => 'complete', tenant_created => 1, %$result };
-            }
-            
-            return $self->create_setup_intent($db, $run, $form_data);
-        }
-        
-        # Initial payment page load
-        return {
-            next_step => $self->id,
-            data => $self->prepare_payment_data($db, $run)
-        };
+        # Nothing to collect and nothing to charge: every listed offer has no
+        # monthly base -- the platform is paid out of the revenue share on each
+        # customer payment -- so the button on the review page is the commit.
+        # A card form would only ever total $0.00.
+        return $self->_provision_tenant( $db, $run );
     }
 
     method prepare_payment_data($db, $run) {
@@ -160,117 +121,51 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         };
 
         return {
-            billing_summary => $billing_summary,
-            stripe_publishable_key => $ENV{STRIPE_PUBLISHABLE_KEY},
+            billing_summary     => $billing_summary,
             subscription_config => $subscription_config,
-            show_payment_form => 0,
         };
     }
 
+    # The offer version the run carries, re-read so a superseded or withdrawn
+    # one is never quoted or charged; until one is carried, Solo's current
+    # version, which the review page preselects, or the first listed when Solo
+    # is not on offer. Undef when nothing
+    # is on offer: absence is not zero, so no rate is invented.
     # The run is passed in, never looked up: latest_run is scoped to the
-    # workflow alone, so re-resolving it here would price this visitor's signup
-    # from whichever run on the platform happens to be newest.
-    # The selected plan, re-read and re-checked at the moment it matters.
-    #
-    # validate_plan_selection already refuses a plan that is not a tenant-scoped
-    # plan on active offer from the platform, and refuses a coming_soon tier
-    # outright -- but it lived only at the moment of selection, guarding the
-    # step and nothing after it. This puts the same refusal on the path where
-    # the money actually moves.
-    #
-    # When no plan was selected, or a selected one no longer resolves, returns
-    # the platform's launch plan from _launch_plan instead (undef if that is not
-    # on offer): a stale or shelved selection is never the plan charged.
-    # Refusing the run outright would be stronger still, but get_subscription_config
-    # is also called to RENDER the payment page, where an error has nowhere to
-    # go -- see #347 for the restructuring that would allow it.
-    method resolve_selected_plan ($db, $run) {
-        my $selected = $run && $run->data && $run->data->{selected_pricing_plan};
-
-        if ( ref $selected eq 'HASH' && $selected->{id} && !ref $selected->{id} ) {
-            my $plan = Registry::DAO::PricingPlan->offered_platform_plan(
-                $db, $selected->{id} );
-            return $plan if $plan;
-        }
-
-        # Nothing chosen, or what was chosen is no longer on offer. Signup no
-        # longer asks which plan -- everyone starts on the one the platform
-        # sells -- so this is the ordinary path, not the exceptional one.
-        return $self->_launch_plan($db);
+    # workflow alone and would price this signup from someone else's run.
+    method chosen_offer ( $db, $run ) {
+        my $offers  = platform_offers_to_tenants($db);
+        my $carried = ( $run && $run->data || {} )->{selected_offer_version} // '';
+        my ($chosen) = grep { $_->{id} eq $carried } @$offers;
+        ($chosen) = grep { $_->{offer_id} eq $SOLO_OFFER_ID } @$offers unless $chosen;
+        return $chosen // $offers->[0];
     }
 
-    method _launch_plan ($db) {
-        my $id = Registry::PriceOps::RevenueShare::platform_launch_plan_id($db);
-        return Registry::DAO::PricingPlan->offered_platform_plan( $db, $id );
+    # The quoted and charged terms of the chosen offer version, all from the
+    # version's own data; {} when nothing is on offer.
+    method get_subscription_config ( $db, $run ) {
+        my $offer = $self->chosen_offer( $db, $run ) or return {};
+        return $self->_offer_config($offer);
     }
 
-    method get_subscription_config($db, $run) {
-        # Run data carries a plan ID and nothing else worth trusting. The
-        # snapshot stored at selection -- plan_name, amount_cents, currency --
-        # was handed straight to Stripe as items[0][price_data][unit_amount],
-        # so a signup started before a price change and resumed after it charged
-        # the remembered amount while linking the plan whose rate had moved.
-        # Displayed, charged and linked could disagree with nobody doing
-        # anything wrong.
-        my $plan = $self->resolve_selected_plan($db, $run);
-        my $selected_plan = $plan && {
-            id                    => $plan->id,
-            plan_name             => $plan->plan_name,
-            amount_cents          => $plan->amount_cents,
-            currency              => $plan->currency,
-            pricing_configuration => $plan->pricing_configuration,
-            metadata              => $plan->metadata,
-        };
-
-        # Reached only when no plan resolves at all -- the launch plan is
-        # missing its active platform relationship, or is marked coming_soon.
-        # That is a misconfiguration, and the signup page says as little as it
-        # can truthfully say rather than inventing a rate.
-        unless ($selected_plan) {
-            my $revenue_share_percent = $self->_platform_default_revenue_share_percent($db);
-            return {
-                plan_name => 'Solo',
-                monthly_amount => 0,
-                currency => 'usd',
-                trial_days => 0,
-                revenue_share_percent => $revenue_share_percent,
-                description => $revenue_share_percent . '% of processed revenue. No monthly fee.',
-                features => $self->_baseline_features,
-                billing_cycle => 'monthly',
-                formatted_price => 'Free'
-            };
-        }
-
-        # Use selected plan configuration.
-        #
-        # A plan declares its own trial length; silence means no trial. The old
-        # default of 30 handed a free plan a free trial -- Solo costs $0 and
-        # always will, so "your trial ends March 4th" was both meaningless and
-        # alarming, and the copy that quoted it ran all the way to the
-        # confirmation page.
-        my $config = $selected_plan->{pricing_configuration} || {};
-        my $amount = $selected_plan->{amount_cents};
+    method _offer_config ($offer) {
+        my $amount  = $offer->{amount_cents};
+        my $percent = $offer->{fraction} * 100;
         return {
-            plan_name => $selected_plan->{plan_name},
-            monthly_amount => $amount,
-            currency => lc($selected_plan->{currency} || 'usd'),
-            trial_days => $config->{trial_days} // 0,
-            revenue_share_percent => ( $config->{percentage} // 0 ) * 100,
-            description => $config->{description} || $selected_plan->{plan_name},
-            features => $config->{features} || $self->_baseline_features,
-            billing_cycle => $config->{billing_cycle} || 'monthly',
-            formatted_price => $amount
-                ? format_price($amount, $selected_plan->{currency}, suffix => '/month')
-                : 'Free'
+            offer_version_id      => $offer->{id},
+            plan_name             => $offer->{name},
+            monthly_amount        => $amount,
+            currency              => lc $offer->{currency},
+            revenue_share_percent => $percent,
+            description           => format_price( $amount, $offer->{currency} )
+                . " a month, $percent% of each payment you take",
+            features              => $self->_baseline_features,
+            formatted_price       => $amount
+                ? format_price( $amount, $offer->{currency}, suffix => '/month' )
+                : 'Free',
         };
     }
 
-    # _platform_default_revenue_share_percent: the no-plan ("Free") revenue-share
-    # rate as a percent number (e.g. 0 for the Free 0% plan). Delegates to
-    # Registry::PriceOps::RevenueShare::platform_default_fraction so the displayed
-    # rate reads the SAME source -- and fails loud the same way -- as the
-    # charge-time path; a missing Free plan can never make display and charge
-    # disagree.
     # Twenty, not five. Five bounds the cost just as well and breaks legitimate
     # bursts: a school district behind one NAT signing up a few sites, or the
     # Playwright suite, which shares one database across a run and provisions a
@@ -350,241 +245,27 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         ];
     }
 
-    method _platform_default_revenue_share_percent($db) {
-        return Registry::PriceOps::RevenueShare::platform_default_fraction($db) * 100;
-    }
-
-    # Price formatting delegated to Registry::Utility::PriceFormat
-
-    method create_setup_intent($db, $run, $form_data) {
-        my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
-        my $error_handler = Registry::Utility::ErrorHandler->new();
-        
-        # Get tenant and profile data from workflow
-        my $tenant_data = $run->data->{tenant} || {};
-        my $profile_data = $run->data->{profile} || {};
-        
-        # For backward compatibility, also check for flat data structure
-        my $billing_email = $profile_data->{billing_email} || $run->data->{billing_email};
-        my $organization_name = $profile_data->{organization_name} || $run->data->{name};
-        
-        # Validate required data
-        unless ($billing_email && $organization_name) {
-            my $validation_error = $error_handler->handle_validation_error(
-                'billing_info', 
-                'Missing required billing information. Please complete the profile step first.'
-            );
-            return {
-                next_step => $self->id,
-                errors => [$validation_error->{user_message}],
-                data => $self->prepare_payment_data($db, $run)
-            };
-        }
-
-        # Check retry count and apply exponential backoff if needed
-        my $retry_count = $self->get_retry_count($run);
-        if ($retry_count >= $self->max_retries) {
-            return {
-                next_step => $self->id,
-                errors => ['Maximum payment attempts exceeded. Please contact support for assistance.'],
-                data => $self->prepare_payment_data($db, $run),
-                retry_exceeded => 1
-            };
-        }
-
-        # Two dependent Stripe calls. Each keeps the error branch it had; the
-        # eval blocks became ->catch, because Registry::Service::Stripe rejects
-        # where the old client warned and returned undef.
-        my $customer;
-
-        return $subscription_dao->create_customer_async({
-            name => $organization_name,
-            id => $tenant_data->{id} // 'temp_' . time()
-        }, $profile_data)->catch(sub ($err) {
-            $self->increment_retry_count($db, $run);
-            my $error_details = $error_handler->handle_system_error('stripe_customer', $err, {
-                organization_name => $organization_name,
-                retry_count => $retry_count + 1
-            });
-
-            $error_handler->log_error($error_details, {
-                workflow_id => $run->workflow($db)->id,
-                run_id => $run->id,
-                step => 'create_customer'
-            });
-
-            # A step result, not a rethrow: the chain below checks for it and
-            # stops, so the customer failure is answered with its own message
-            # rather than the setup-intent one.
-            return {
-                next_step => $self->id,
-                errors => [$error_details->{user_message}],
-                data => $self->prepare_payment_data($db, $run),
-                retry_count => $retry_count + 1,
-                retry_delay => $error_details->{retry_delay}
-            };
-        })->then(sub ($result) {
-            return $result if ref $result eq 'HASH' && $result->{errors};
-            $customer = $result;
-
-            return $subscription_dao->create_setup_intent_async($customer->{id}, {
-                usage => 'off_session',
-                metadata => {
-                    tenant_workflow => $run->id,
-                    organization_name => $organization_name
-                }
-            });
-        })->then(sub ($setup_intent) {
-            return $setup_intent if ref $setup_intent eq 'HASH' && $setup_intent->{errors};
-
-            # Store setup intent data in workflow
-            $run->update_data($db, {
-                payment_setup => {
-                    stripe_customer_id => $customer->{id},
-                    setup_intent_id => $setup_intent->{id},
-                    client_secret => $setup_intent->{client_secret},
-                    created_at => time()
-                }
-            });
-
-            return {
-                next_step => $self->id,
-                data => {
-                    %{$self->prepare_payment_data($db, $run)},
-                    show_payment_form => 1,
-                    client_secret => $setup_intent->{client_secret},
-                    setup_intent_id => $setup_intent->{id}
-                }
-            };
-        })->catch(sub ($err) {
-            $self->increment_retry_count($db, $run);
-            my $error_details = $error_handler->handle_payment_error($@, {
-                step => 'create_setup_intent',
-                customer_id => $customer->{id},
-                retry_count => $retry_count + 1
-            });
-            
-            $error_handler->log_error($error_details, {
-                workflow_id => $run->workflow($db)->id,
-                run_id => $run->id,
-                step => 'create_setup_intent'
-            });
-
-            return {
-                next_step => $self->id,
-                errors => [$error_details->{user_message}],
-                data => $self->prepare_payment_data($db, $run),
-                retry_count => $retry_count + 1,
-                should_retry => $error_details->{should_retry}
-            };
-        });
-    }
-
-    method handle_setup_completion($db, $run, $form_data) {
-        my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
-        my $setup_data = $run->data->{payment_setup} || {};
-
-        # The run must carry the setup intent it created. This check used to be
-        # folded into the comparison below, which meant a run that never reached
-        # create_setup_intent skipped it entirely -- leaving only Stripe's own
-        # lookup, and that resolves an intent belonging to any OTHER run on this
-        # account just as happily. Payment for one signup must not complete a
-        # different one.
-        unless ( $setup_data->{setup_intent_id} ) {
-            return {
-                next_step => $self->id,
-                errors    => ['Payment setup was not started for this signup. Please start again.'],
-                data      => $self->prepare_payment_data($db, $run),
-            };
-        }
-
-        # Validate the setup_intent_id matches what was stored
-        if ($setup_data->{setup_intent_id} ne $form_data->{setup_intent_id}) {
-            return {
-                next_step => $self->id,
-                errors => ['Invalid payment setup. Please try again.'],
-                data => $self->prepare_payment_data($db, $run)
-            };
-        }
-
-        # Retrieve and verify the setup intent, then create the subscription.
-        # Two dependent Stripe calls; the eval blocks became ->catch, because
-        # Registry::Service::Stripe rejects where the old client returned undef.
-        my $setup_failed = sub ($setup_intent = undef) {
-            my $error_msg = 'Payment method setup failed.';
-            if ($setup_intent && $setup_intent->{last_setup_error}) {
-                $error_msg .= ' ' . $setup_intent->{last_setup_error}->{message};
-            }
-
-            return {
-                next_step => $self->id,
-                errors => [$error_msg],
-                data => $self->prepare_payment_data($db, $run)
-            };
-        };
-
-        # Each ->catch sits directly on the call it answers, not at the end of
-        # the chain. A trailing catch would also swallow a _provision_tenant
-        # failure and report it as a payment problem, which is the one thing
-        # this step must not do: the schema is what the money bought.
-        return $subscription_dao->get_setup_intent_async($form_data->{setup_intent_id})
-            ->catch(sub ($err) { $setup_failed->() })
-            ->then(sub ($setup_intent) {
-                return $setup_intent
-                    if ref $setup_intent eq 'HASH' && $setup_intent->{errors};
-
-                # A setup intent that exists but did not succeed is a failure
-                # with a message of its own, so it is graded here rather than
-                # left to the ->catch below.
-                return $setup_failed->($setup_intent)
-                    unless $setup_intent && ($setup_intent->{status} // '') eq 'succeeded';
-
-                my $config = $self->get_subscription_config($db, $run);
-
-                return $subscription_dao->create_subscription_with_config_async(
-                    $setup_data->{stripe_customer_id},
-                    $setup_intent->{payment_method},
-                    $config
-                )->catch(sub ($err) {
-                    return {
-                        next_step => $self->id,
-                        errors => ['Failed to create subscription. Please contact support.'],
-                        data => $self->prepare_payment_data($db, $run)
-                    };
-                })->then(sub ($subscription) {
-                    return $subscription
-                        if ref $subscription eq 'HASH' && $subscription->{errors};
-
-                    # Store subscription info in workflow data
-                    $run->update_data($db, {
-                        subscription => {
-                            stripe_subscription_id => $subscription->{id},
-                            trial_ends_at => $subscription->{trial_end},
-                            status => $subscription->{status}
-                        }
-                    });
-
-                    # Payment successful -- provision the tenant and move to
-                    # completion.
-                    # Outside every catch above, deliberately: a provisioning
-                    # failure is not a payment failure and must not be reported
-                    # as one.
-                    my $result = $self->_provision_tenant($db, $run);
-                    return { next_step => 'complete', tenant_created => 1, %$result };
-                });
-            });
-    }
-
     # _provision_tenant: builds the user list from run data, calls Tenant->provision,
-    # marks team members invite_pending for the admin to invite later, stores
-    # tenant info in run data, and returns a result hash with
-    # tenant/organization_name/subdomain/admin_email keys.  This is the single
-    # provisioning path for all completion scenarios (no-Stripe mock, real-Stripe).
+    # which accepts the run's chosen platform offer for the new tenant, marks
+    # team members invite_pending for the admin to invite later, stores tenant
+    # info in run data, and returns the step result: complete, with
+    # tenant/organization_name/subdomain/admin_email keys, or the review page
+    # again re-quoting the offer when the choice is no longer on offer. Users,
+    # tenant, schema and entitlement are written in one transaction.
     method _provision_tenant($db, $run) {
-        if ( my $done = $self->_provisioned( $db, $run ) ) { return $done }
+        if ( my $done = $self->_provisioned( $db, $run ) ) {
+            return { next_step => 'complete', tenant_created => 1, %$done };
+        }
         my $data = $run->data;
+
+        # Re-read before any write: only a platform offer to tenants, never its
+        # offer to itself or another tenant's; the accept re-checks it is
+        # still current under a lock. Its plan is the version's, never the form's.
+        my ($offer) = grep { $_->{id} eq ( $data->{selected_offer_version} // '' ) }
+            platform_offers_to_tenants($db)->@*;
+        return $self->_requote( $db, $run ) unless $offer;
+        my $tx = $db->begin;
         my $profile = $data->{profile} || {};
-        my $subscription_data = $data->{subscription} || {};
 
         # Resolve user list — support both the old 'users' array format and the
         # new admin_*/team_members format stored across workflow steps.
@@ -624,7 +305,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             push @user_objects, $user if $user;
         }
 
-        # Merge subscription billing data into the provision call
         my $org_name = $profile->{name} || $data->{name} || 'Organization';
 
         # A subdomain the applicant typed is their choosing, and it wins over
@@ -648,33 +328,17 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             if $data->{__remote_address};
         $provision_data{slug} = $slug if $slug;
 
-        # The new tenant holds the platform's offer to tenants from the moment
-        # it exists; Tenant->provision grants it in the same transaction.
-        $provision_data{platform_entitlement} = $self->_platform_offer_to_tenants($db);
+        # The new tenant accepts its chosen offer from the moment it exists.
+        $provision_data{platform_entitlement} =
+            { offer_version_id => $offer->{id}, payment_plan_id => $offer->{plan_id} };
 
-        if ($subscription_data->{stripe_subscription_id}) {
-            $provision_data{stripe_subscription_id} = $subscription_data->{stripe_subscription_id};
-            $provision_data{billing_status}          = 'trial';
-            my $trial_ends_at = $subscription_data->{trial_ends_at};
-            if ($trial_ends_at && $trial_ends_at =~ /^\d+$/) {
-                $trial_ends_at = DateTime->from_epoch(epoch => $trial_ends_at)->iso8601();
-            }
-            $provision_data{trial_ends_at}           = $trial_ends_at;
-            $provision_data{subscription_started_at} = DateTime->now->iso8601();
-        } else {
-            # No Stripe subscription because there is nothing to subscribe to:
-            # the plan has no monthly base and the platform is paid out of the
-            # revenue share on each customer payment. The tenant is live, so
-            # 'active' -- not 'trial', which would promise an end date that
-            # never arrives. ('test' used to go here and is not one of the five
-            # values tenants_billing_status_check allows; the insert died. It
-            # never fired before because signup always minted a subscription,
-            # real or mock.)
-            $provision_data{billing_status}          = 'active';
-            $provision_data{subscription_started_at} = DateTime->now->iso8601();
+        my $tenant;
+        try { $tenant = Registry::DAO::Tenant->provision( $db, \%provision_data ) }
+        catch ($e) {
+            die $e unless $e isa Registry::DAO::Entitlement::Refused;
+            undef $tx;    # rolls back the users and tenant
+            return $self->_requote( $db, $run );
         }
-
-        my $tenant = Registry::DAO::Tenant->provision($db, \%provision_data);
 
         # Deliberately NOT sending the invitations here.
         #
@@ -700,31 +364,27 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         };
 
         $run->update_data($db, $result);
+        $tx->commit;
 
-        return $result;
+        return { next_step => 'complete', tenant_created => 1, %$result };
     }
 
-    # The platform's current published offer to tenants and its
-    # percentage-of-sales plan, as { offer_version_id, payment_plan_id }: a
-    # payment-processing version without the holder_is_offerer condition,
-    # which marks the platform's offers to itself.
-    # shortcut: grants the one offer without asking; 01a20416-6d40 replaces
-    # this with the tenant's own choice through the accept primitive.
-    method _platform_offer_to_tenants ($db) {
-        my $offers = $db->query( q{
-            SELECT v.id AS offer_version_id, p.id AS payment_plan_id
-              FROM registry.offer_versions v
-              JOIN registry.resources r ON r.id = v.resource_id
-              JOIN registry.offer_version_payment_plans p
-                ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
-             WHERE r.name = 'payment processing'
-               AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
-               AND NOT v.conditions @> '[{"kind": "holder_is_offerer"}]'
-        } )->hashes;
-        die sprintf "Signup needs exactly one published platform offer to tenants; found %d.\n",
-            $offers->size
-            unless $offers->size == 1;
-        return $offers->first;
+    # The review page again, when the run's choice is no longer on offer: the
+    # run now carries its offer's current version, if it has one, so the page
+    # quotes those terms for the person to accept again.
+    method _requote ( $db, $run ) {
+        my $current = $db->query( q{
+            SELECT n.id FROM registry.offer_versions o
+              JOIN registry.offer_versions n ON n.offer_id = o.offer_id
+             WHERE o.id::text = ? AND n.published_at IS NOT NULL AND n.superseded_at IS NULL
+        }, $run->data->{selected_offer_version} // '' )->array;
+        $run->update_data( $db, { selected_offer_version => $current && $current->[0] } );
+        return {
+            next_step => $self->id,
+            errors    => [ 'The plan you chose has changed or is no longer offered. '
+                         . 'Please review the current terms and accept again.' ],
+            data      => $self->prepare_payment_data( $db, $run ),
+        };
     }
 
     # The result _provision_tenant stored for $run, when the tenant it names
@@ -737,15 +397,10 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                  qw( tenant organization_name subdomain admin_email success_timestamp ) };
     }
 
-    method template { 'tenant-signup/payment' }
-
-    # Provide data for template rendering on GET requests.
-    #
-    # One step class now backs two pages -- the review page a free signup ends
-    # on, and the payment page a paid tier would need -- so this returns what
-    # both templates read and lets each take its half.
+    # Provide data for the review page on GET requests.
     method prepare_template_data($db, $run, $params = {}) {
         my $raw = $run->data || {};
+        my @offers = map { $self->_offer_config($_) } platform_offers_to_tenants($db)->@*;
 
         return {
             %{ $self->prepare_payment_data($db, $run) },
@@ -771,26 +426,14 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
                 },
                 team_members => $raw->{team_members} || [],
             },
-            # The plan nobody was asked to choose, resolved by the same code
-            # that provisions -- so the page states the terms the tenant is
-            # actually about to be put on.
+            # Every offer to choose between, each quoted from its own version,
+            # and the one preselected: what the run carries, else the first.
+            offers      => \@offers,
             plan        => $self->get_subscription_config($db, $run),
+            unavailable => @offers ? undef : SIGNUP_UNAVAILABLE,
             base_domain => Registry::Utility::BaseDomain::primary_base_domain(),
         };
     }
-
-    # Retry logic for failed attempts
-    method get_retry_count($run) {
-        return ($run->data->{payment_retry_count} || 0);
-    }
-
-    method increment_retry_count($db, $run) {
-        my $new_count = $self->get_retry_count($run) + 1;
-        $run->update_data($db, { payment_retry_count => $new_count });
-        return $new_count;
-    }
-
-    method max_retries { 3 }
 
     # Rate limiting to prevent abuse
     method check_rate_limits($db, $run) {
@@ -821,54 +464,5 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         $run->update_data($db, { payment_attempts => \@recent });
         
         return;  # No rate limit hit
-    }
-
-    # Session timeout and recovery
-    method check_session_validity($db, $run) {
-        my $session_timeout_hours = 24;  # 24 hour session timeout
-        my $payment_setup = $run->data->{payment_setup} || {};
-        
-        if (my $created_at = $payment_setup->{created_at}) {
-            my $elapsed_hours = (time() - $created_at) / 3600;
-            
-            if ($elapsed_hours > $session_timeout_hours) {
-                # Session expired, clear payment setup data
-                $run->update_data($db, { payment_setup => undef });
-                
-                my $error_handler = Registry::Utility::ErrorHandler->new();
-                return $error_handler->handle_workflow_interruption(
-                    $run->workflow_id, 
-                    $self->id, 
-                    'session_timeout',
-                    { 
-                        elapsed_hours => $elapsed_hours,
-                        timeout_hours => $session_timeout_hours,
-                        can_restart => 1
-                    }
-                );
-            }
-        }
-        
-        return;  # Session is valid
-    }
-
-    # Validate Stripe service availability
-    method check_stripe_service($db) {
-        my $subscription_dao = Registry::DAO::Subscription->new(db => $db);
-        
-        eval {
-            # Simple API call to check if Stripe is available
-            $subscription_dao->check_api_health();
-        };
-        
-        if ($@) {
-            my $error_handler = Registry::Utility::ErrorHandler->new();
-            return $error_handler->handle_system_error('stripe_api', $@, {
-                service => 'stripe',
-                check_type => 'api_health'
-            });
-        }
-        
-        return;  # Service is available
     }
 }

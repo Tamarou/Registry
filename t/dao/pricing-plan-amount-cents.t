@@ -68,6 +68,11 @@ subtest 'the seeded plans are backfilled by meaning, not blindly' => sub {
         SELECT plan_name, pricing_model_type, amount_cents,
                pricing_configuration->>'percentage' AS rate
           FROM registry.pricing_plans
+        UNION ALL
+        -- Standard and Plus were later retired; the retirement keeps them as they were.
+        SELECT plan_name, pricing_model_type, amount_cents,
+               pricing_configuration->>'percentage' AS rate
+          FROM public.retired_platform_plans
     })->hashes->@*;
 
     my $standard = $seeded{'Registry Standard - $200/month'};
@@ -91,10 +96,6 @@ subtest 'the seeded plans are backfilled by meaning, not blindly' => sub {
         'its rate survives, in pricing_configuration';
     cmp_ok $share->{rate}, '<=', 1,
         'and it is still a fraction, not a rate multiplied into cents';
-
-    my $free = $seeded{'Registry Free'};
-    is $free->{amount_cents}, 0, 'the Free plan has no dollar amount either';
-    is $free->{rate}, '0.00',    'and keeps its 0% rate';
 };
 
 subtest 'the revenue-share rate no longer comes from the money column' => sub {

@@ -42,14 +42,14 @@ For organizations that prefer a managed solution:
 
 **Benefits:**
 - **Worry-Free**: Fully managed hosting, maintenance, and updates
-- **Quick Setup**: Get started in minutes with 30-day free trial
+- **Quick Setup**: Get started in minutes, with no card required
 - **24/7 Support**: Email support and 99.9% uptime SLA
 - **Automatic Backups**: Daily backups and disaster recovery
 - **SSL & Security**: Enterprise-grade security included
 
-**Pricing:** $200/month with 30-day free trial
+**Pricing:** Solo -- $0 a month plus 2.5% of each sale
 
-[Start Free Trial](https://registry-demo.onrender.com) • [View Documentation](DEPLOYMENT.md)
+[Get Started](https://registry-demo.onrender.com) • [View Documentation](DEPLOYMENT.md)
 
 ### Understanding Registry
 

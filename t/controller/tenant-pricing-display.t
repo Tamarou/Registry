@@ -1,5 +1,5 @@
-# ABOUTME: Tests the plan-choice step's data and rendering, and that the review page states the plan.
-# ABOUTME: The plan-choice page is out of the signup funnel until a paid tier launches; the step class is not.
+# ABOUTME: Tests the plan-choice step's data and rendering, and that the review page lists the published plan.
+# ABOUTME: The plan-choice page is out of the signup funnel; the step class lists the platform's published offers.
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer);
@@ -14,9 +14,10 @@ use Mojo::File qw(curfile);
 use Registry;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
-use Registry::DAO::PricingPlan;
-use Registry::DAO::PricingRelationship;
+use Test::Registry::Helpers;
 use Registry::DAO::WorkflowSteps::PricingPlanSelection;
+use Registry::DAO::Offer;
+use Test::Registry::Offers qw(offer_terms);
 
 # Setup test database
 my $t_db = Test::Registry::DB->new;
@@ -30,30 +31,23 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 $db->current_tenant('registry');
 
-# No plan fixtures. This file used to seed its own Solo/Studio/Empire, which is
-# why it stayed green for as long as the rendering worked -- while the deployed
-# database carried a single plan called "Registry Revenue Share" and the
-# coming-soon branch below had never executed against real data. A page that
-# renders invented tiers correctly says nothing about what a prospect sees.
-#
-# seed-tier-pricing-options ships the ladder now, so this file renders the real
-# one. t/priceops/tier-options.t asserts the seed's shape; this one asserts what
-# the template does with it.
-my $platform_uuid = '00000000-0000-0000-0000-000000000000';
-
-my ($solo_plan_id, $studio_plan_id, $empire_plan_id) = map {
-    $db->db->query(
-        'SELECT id FROM registry.pricing_plans WHERE plan_name = ? AND plan_scope = ?',
-        $_, 'tenant' )->array->[0]
-} qw( Solo Studio Empire );
-
-ok $solo_plan_id && $studio_plan_id && $empire_plan_id,
-    'the shipped seed provides the Solo/Studio/Empire ladder';
+# This file renders what the shipped seed publishes, which on day one is Solo
+# alone. The one fixture is an unpublished draft that would otherwise qualify
+# as a platform offer to tenants: payment processing, percentage of sales.
+my $solo_version_id = platform_solo_offer_version_id($db);
+my $draft_version_id = Registry::DAO::Offer->create( $db->db, { name => 'Studio' } )->draft(
+    $db->db,
+    offer_terms(
+        $db->db->query(q{SELECT id FROM registry.resources WHERE name = 'payment processing'})
+            ->array->[0],
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
+    ) )->id;
 
 # The plan-choice page left the signup funnel when Solo became the only tier on
-# sale: it offered one real choice and two server-side refusals. The step class
-# and its template stay for the day Studio or Empire launches, so the step is
-# built here directly rather than reached through tenant-signup.
+# sale. The step class and its template stay, listing the platform's published
+# offers, so the step is built here directly rather than reached through
+# tenant-signup.
 my $choice_workflow = Registry::DAO::Workflow->create($db->db, {
     name        => 'Plan Choice Probe',
     slug        => "plan-choice-$$",
@@ -78,46 +72,29 @@ subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
     ok $template_data->{pricing_plans}, 'template data includes pricing_plans';
 
     my $plans = $template_data->{pricing_plans};
-    cmp_ok scalar(@$plans), '>=', 3, 'at least the three test plans are returned (plus any seeded platform plans)';
-    is $plans->[0]{plan_name}, 'Solo', 'first plan is Solo (sorted by display_order)';
-    is $plans->[1]{plan_name}, 'Studio', 'second plan is Studio';
-    is $plans->[2]{plan_name}, 'Empire', 'third plan is Empire';
-
-    # Coming-soon metadata is passed through
-    ok $plans->[1]{metadata}{coming_soon}, 'Studio is marked coming_soon';
-    ok $plans->[2]{metadata}{coming_soon}, 'Empire is marked coming_soon';
-    ok !$plans->[0]{metadata}{coming_soon}, 'Solo is not coming_soon';
+    is_deeply [ map { $_->{plan_name} } @$plans ], ['Solo'], 'the published Solo version alone';
+    is $plans->[0]{id}, $solo_version_id, 'by its version id';
 };
 
-# A greyed-out card is CSS. The plan still has an active relationship -- it must,
-# or prepare_pricing_data would not return it to be rendered at all -- so the
-# only thing standing between a client and a tier the business has not launched
-# is the disabled attribute on a radio button. Posting the id directly skips it.
-#
-# The cost is not cosmetic: Studio and Empire carry a monthly base, so a signup
-# on one of them creates a subscription for a product that does not exist yet.
-subtest 'a coming-soon plan cannot be selected, however it is posted' => sub {
+# Posting an unpublished version's id directly must be refused server-side.
+subtest 'an unpublished offer cannot be selected' => sub {
     my $step = $choice_step;
 
-    ok !$step->validate_plan_selection( $db->db, $studio_plan_id ),
-        'Studio is refused: it is on offer to look at, not to buy';
-    ok !$step->validate_plan_selection( $db->db, $empire_plan_id ),
-        'Empire is refused too';
-
-    ok $step->validate_plan_selection( $db->db, $solo_plan_id ),
-        'and the tier that IS launched still selects';
+    ok !$step->validate_plan_selection( $db->db, $draft_version_id ), 'the draft is refused';
+    ok $step->validate_plan_selection( $db->db, $solo_version_id ),
+        'and the published Solo version selects';
 
     my $run = $choice_workflow->new_run($db->db);
     my $result = $step->process( $db->db,
-        { selected_plan_id => $studio_plan_id }, $run );
+        { selected_plan_id => $draft_version_id }, $run );
 
     ok $result->{_validation_errors},
-        'processing the step with a coming-soon plan is rejected';
-    ok !$run->data->{selected_pricing_plan},
+        'processing the step with an unpublished plan is rejected';
+    ok !$run->data->{selected_offer_version},
         'and nothing is written to the run';
 };
 
-subtest 'the plan-choice template renders the ladder it is given' => sub {
+subtest 'the plan-choice template renders the plans it is given' => sub {
     # Rendered directly rather than fetched: the page has no URL in the signup
     # funnel any more. The attributes below are the escaping fix -- the card
     # markup carries the plan identity, not just its styling.
@@ -129,19 +106,13 @@ subtest 'the plan-choice template renders the ladder it is given' => sub {
         %{ $choice_step->prepare_pricing_data($db->db, $run) },
     );
 
-    like $html, qr/data-plan="Solo"/,   'renders the Solo card';
-    like $html, qr/data-plan="Studio"/, 'renders the Studio card';
-    like $html, qr/data-plan="Empire"/, 'renders the Empire card';
+    like $html, qr/data-plan="Solo"/, 'renders the Solo card';
+    unlike $html, qr/data-plan="Studio"/, 'and not the unpublished draft';
     like $html, qr/<input[^>]*name="selected_plan_id"/,
         'renders a plan selection radio';
-    like $html, qr/Coming Soon/, 'badges the unlaunched tiers';
-    like $html, qr/<article[^>]*data-coming-soon="true"/,
-        'marks coming-soon cards';
-    like $html, qr/<article[^>]*data-featured="true"/,
-        'and marks the featured card -- the other half of the same escaping fix';
 };
 
-subtest 'the review page states the plan the tenant will be put on' => sub {
+subtest 'the review page lists the published plan, preselected' => sub {
     $t->post_ok('/tenant-signup')->status_is(302);
     my $url = $t->tx->res->headers->location;
     $t->get_ok($url)->status_is(200);
@@ -161,8 +132,9 @@ subtest 'the review page states the plan the tenant will be put on' => sub {
 
     $t->get_ok($review_url)
       ->status_is(200)
-      ->content_like(qr{<div class="pricing-badge">\s*Solo},
-            'review page names the plan, resolved rather than chosen')
+      ->element_exists(qq{input[name="offer_version"][value="$solo_version_id"][checked]},
+            'review page preselects the published Solo version')
+      ->content_like(qr{<strong>Solo</strong>}, 'and names it')
       ->content_unlike(qr/\$200\/month/, 'review page does not hardcode $200/month');
 };
 

@@ -44,6 +44,16 @@ my @CHANGES = qw(
     self-offer-guard
     platform-entitlement-one-in-effect
     platform-entitlement-replaces-plan-link
+    drop-pricing-relationships
+    remove-free-platform-plan
+    entitlement-uses
+    holds-placed-at
+    entitlement-refunds-per-entitlement
+    retire-unpublished-platform-plans
+    holds-lifetime
+    retire-launch-rate-marker
+    entitlement-stripe-move-adds-dispute-step
+    drop-tenant-billing-columns
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
@@ -103,7 +113,7 @@ my $sqitch = App::Sqitch->new();
 # that introduced it.  Verified against live Postgres -- clone_schema('default')
 # succeeds and pg_dump renders it "default".enrollments, so the quoted assertion
 # below matches.
-my @SLUGS = qw( order user group default table check select where having limit offset fetch union lateral window returning using );
+my @SLUGS = qw( order user group default table check select where having limit offset fetch union lateral window returning using references constraint primary foreign natural grant cross column inner unique );
 @CHANGES <= @SLUGS
     or die sprintf 'revert-round-trip needs one reserved-word slug per change: %d changes, %d slugs',
         scalar @CHANGES, scalar @SLUGS;
@@ -151,5 +161,42 @@ for my $change (@CHANGES) {
         # is a forward move rather than a no-op.
     };
 }
+
+# The loop above grades the revert as a whole-database diff.  This names the
+# part of drop-pricing-relationships' revert that is easiest to get half right:
+# a LIKE copy brings back the tables in a tenant schema but not their foreign
+# keys, and nothing at all of the view.  Its own database, so it holds however
+# far the loop above happens to leave its one.
+subtest 'revert restores pricing relationship view and keys' => sub {
+    my $pg  = Test::PostgreSQL->new or return fail $Test::PostgreSQL::errstr;
+    my $to  = $pg->uri;
+    my $pgh = Mojo::Pg->new($to);
+    my $db  = $pgh->db;
+
+    $sqitch->run( 'sqitch', 'deploy', '-t', $to, '--to', 'drop-pricing-relationships^' );
+    my @schemas = ( 'registry', 'returning', 'rt_pricing' );
+    for my $slug ( @schemas[ 1 .. $#schemas ] ) {
+        $db->query( 'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', "Pricing $slug", $slug );
+        $db->query( 'SELECT registry.clone_schema(?)', $slug );
+    }
+
+    $sqitch->run( 'sqitch', 'deploy', '-t', $to, '--to', 'drop-pricing-relationships' );
+    $sqitch->run( 'sqitch', 'revert', '-t', $to, '--to', 'drop-pricing-relationships^', '-y' );
+
+    for my $schema (@schemas) {
+        my $q = $db->query( 'SELECT quote_ident(?)', $schema )->array->[0];
+        ok $db->query( q{SELECT to_regclass(?) IS NOT NULL AS ok},
+                "$q.pricing_relationship_current_state" )->hash->{ok},
+            "$schema has the pricing_relationship_current_state view again";
+        is $db->query( q{
+                SELECT pg_get_constraintdef(c.oid) AS def
+                  FROM pg_constraint c
+                 WHERE c.conrelid = to_regclass(?)
+                   AND c.conname  = 'billing_periods_pricing_relationship_id_new_fkey'
+            }, "$q.billing_periods" )->arrays->[0][0],
+            "FOREIGN KEY (pricing_relationship_id) REFERENCES $q.pricing_relationships(id)",
+            "$schema.billing_periods keys into its own pricing_relationships again";
+    }
+};
 
 done_testing;

@@ -26,22 +26,20 @@ BEGIN
     -- If table doesn't exist, that's OK - it's dropped in consolidate-pricing-relationships
 END $$;
 
--- Verify billing_periods table exists with correct structure
-SELECT
-    id,
-    pricing_relationship_id,
-    period_start,
-    period_end,
-    calculated_amount,
-    payment_status,
-    stripe_invoice_id,
-    stripe_payment_intent_id,
-    processed_at,
-    metadata,
-    created_at,
-    updated_at
-FROM registry.billing_periods
-WHERE FALSE;
+-- Verify billing_periods table exists with correct structure.  Guarded:
+-- drop-pricing-relationships drops it, and every verify runs again against
+-- the final schema.
+DO $$
+BEGIN
+    IF to_regclass('registry.billing_periods') IS NOT NULL THEN
+        PERFORM id, pricing_relationship_id, period_start, period_end,
+                calculated_amount, payment_status, stripe_invoice_id,
+                stripe_payment_intent_id, processed_at, metadata,
+                created_at, updated_at
+        FROM registry.billing_periods
+        WHERE FALSE;
+    END IF;
+END $$;
 
 -- Verify platform tenant exists
 SELECT id, name, slug

@@ -13,7 +13,8 @@ use Registry::PriceOps::RevenueShare;
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers;
+use Test::Registry::Helpers qw( join_tenant publish_offer );
+use Test::Registry::Fixtures;
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Template;
@@ -142,7 +143,7 @@ subtest 'alignment section with pricing' => sub {
     # page keeps quoting it. t/priceops/tier-options.t holds the one place the
     # rate's value is written down.
     my $pct = 0 + sprintf '%g',
-        Registry::PriceOps::RevenueShare::platform_launch_fraction(
+        Registry::PriceOps::RevenueShare::platform_offered_fraction(
             $t->app->dao->db ) * 100;
 
     $t->content_like(qr/(?<![\d.])\Q$pct\E%/,
@@ -169,6 +170,60 @@ subtest 'no raw session data on landing page' => sub {
 
     $t->content_unlike(qr/999999 spots left/, 'No raw capacity shown')
       ->content_unlike(qr/2036-01-01/, 'No evergreen end date shown');
+};
+
+# The rate on both pages, as rendered text: undef when neither quotes one.
+sub quoted_rates () {
+    my %rate;
+    for my $page ( [ landing => '/' ], [ signup => '/tenant-signup' ] ) {
+        $t->get_ok( $page->[1] )->status_is(200);
+        my $text = $t->tx->res->dom->all_text;
+        $rate{ $page->[0] } = $text =~ /(?<![\d.])(\d+(?:\.\d+)?)%\s+(?:revenue|of processed revenue)/ ? $1 : undef;
+    }
+    return \%rate;
+}
+
+my $platform_admin = Test::Registry::Fixtures::create_user( $dao,
+    { username => 'reglp_admin', name => 'Platform Admin', email => 'admin@reglp.test', user_type => 'admin' } );
+join_tenant( $dao, $platform_admin, 'admin', 'registry' );
+
+subtest 'landing and signup index quote the published solo rate' => sub {
+    is_deeply quoted_rates(), { landing => '2.5', signup => '2.5' }, 'both pages quote Solo v1\'s 2.5%';
+
+    publish_offer( $dao, 'registry', $platform_admin, {
+        'offer-basics'                => { resource_id => '00000000-0000-0000-0001-000000000001',
+                                           offer_id    => '00000000-0000-0000-0002-000000000001' },
+        'offer-price'                 => { price_cents => 0, currency => 'usd',
+                                           units_per_acceptance => 1, per_booking_cap => 1 },
+        'one-time-payment'            => { one_time => 'declined' },
+        'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.4' },
+        refund                        => 'keep_fee_with_admin_exception',
+    } );
+
+    is_deeply quoted_rates(), { landing => '2.4', signup => '2.4' }, 'both pages quote Solo v2\'s 2.4%';
+    $t->get_ok($_)->content_unlike(qr/(?<![\d.])2\.5%/, "$_ no longer says 2.5%") for '/', '/tenant-signup';
+};
+
+subtest 'no template hard codes the rate' => sub {
+    for my $file ( map { Mojo::Home->new->child( 'templates', $_ )->list_tree->grep(qr/\.html\.ep$/)->each }
+                   qw( registry-storefront tenant-signup ) ) {
+        unlike $file->slurp, qr/(?<![\d.])2\.5%/, "$file quotes no literal 2.5%";
+    }
+};
+
+# Last: it leaves registry with no platform offer, which the database refuses
+# outside replica mode.
+subtest 'no published offer quotes no rate' => sub {
+    my $db = $dao->db;
+    $db->query('SET session_replication_role = replica');
+    $db->query(q{UPDATE registry.offer_versions SET superseded_at = now()
+                  WHERE id IN (SELECT id FROM registry.offer_versions WHERE superseded_at IS NULL)
+                    AND id IN (SELECT offer_version_id FROM registry.offer_version_payment_plans
+                                WHERE kind = 'percentage_of_sales' AND fraction > 0)});
+    $db->query('SET session_replication_role = DEFAULT');
+
+    is_deeply quoted_rates(), { landing => undef, signup => undef }, 'neither page quotes a rate';
+    $t->get_ok($_)->content_unlike(qr/(?<![\d.])(?:0|2\.5)%/, "$_ says neither 0% nor 2.5%") for '/', '/tenant-signup';
 };
 
 done_testing;

@@ -52,11 +52,6 @@ Nancy accepts one by enrolling, and pays.
 her payment, taken through Jordan's Connect account as the money passes. The
 platform is paid out of tenant transactions.
 
-This is why Jordan's own card is irrelevant under revenue share, and it is the
-substance of #365: the signup funnel still collects a card, because it was
-built when a monthly subscription was the revenue event. Under revenue share
-that acceptance never produces a charge.
-
 ## What the pattern explains
 
 **Why a tenant's platform entitlement needs a switch path (#277).** It is a

@@ -1,0 +1,26 @@
+%# ABOUTME: entitlement-change step: the person picks the occurrence to move to; its seats are held while they pay.
+%# ABOUTME: Lists the run's change_targets, which ChooseChangeTarget wrote: still to start and with room.
+% extends 'layouts/workflow';
+% title 'Choose a new time';
+% stash description => 'The seats are held for you while you finish.';
+% my $targets = stash('change_targets') // [];
+%= include 'entitlement-change/_errors'
+
+<form method="POST" action="<%= $action %>">
+  % if (@$targets) {
+  <fieldset>
+    <legend>Move to</legend>
+    % for my $target (@$targets) {
+    <div>
+      <input type="radio" id="target-<%= $target->{id} %>" name="target_occurrence_id" value="<%= $target->{id} %>" required>
+      <label for="target-<%= $target->{id} %>"><%= $target->{name} %></label>
+    </div>
+    % }
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Hold this time</button>
+  </div>
+  % } else {
+  <p>There is no other time with room for this booking.</p>
+  % }
+</form>

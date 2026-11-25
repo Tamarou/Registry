@@ -7,6 +7,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use Digest::SHA qw(hmac_sha256_hex);
     use Mojo::Promise;
     use Registry::Service::Stripe;
+    use Registry::DAO::Workflow;
+    use Registry::DAO::WorkflowSteps::ApplyStripeDispute;
+    use Registry::DAO::WorkflowSteps::ApplyStripeRefund;
 
     method stripe() {
         my $event = $self->_verified_event('STRIPE_WEBHOOK_SECRET') or return;
@@ -22,53 +25,25 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $db       = $dao->db;
         my $event_id = $event->{id};
 
-        # Prefetch before the transaction, and skip it for an event we have
-        # already handled.
-        #
-        # The lookup is a Stripe round trip. Inside the transaction it would
-        # hold the dedup claim open for its duration, so it cannot go there --
-        # and the claim is the transaction, so there is no "after the claim but
-        # outside it". Resolving it first is what lets the settlement stay
-        # entirely on the database.
-        #
-        # Unconditionally above it, every duplicate redelivery paid for a live
-        # Stripe call before discovering it had nothing to do, blocking the
-        # IOLoop each time. This cheap SELECT is not the claim and does not need
-        # to be authoritative: the real ON CONFLICT claim below still decides.
-        # It only spares the common case -- a redelivery of an event already
-        # processed -- from the network.
+        # Cheap and not authoritative -- the ON CONFLICT claim decides -- but it
+        # spares a redelivery of a processed fee refund its Stripe charge read.
         my $seen = $db->select( 'registry.webhook_events', ['id'],
             { stripe_event_id => $event_id } )->hash;
 
-        # A fee the platform took on a seller's charge, returned. Never tenant
-        # billing, so it never reaches the subscription handler below.
         return $self->_settle_fee_refunded( $db, $event, $seen )
             if ( $event->{type} // '' ) eq 'application_fee.refunded';
 
-        # The prefetch is the only Stripe call on this path, and it resolves
-        # before the transaction opens. Everything inside the chain below is
-        # database work on one connection.
+        # Events on the platform's own account settle in the registry schema
+        # (no slug). A seller's events arrive at stripe_connect, which finds
+        # the tenant from event.account, never from metadata.
         $self->render_later;
-
-        return (
-            $seen
-            ? Mojo::Promise->resolve(undef)
-            : $self->_prefetch_subscription_async( $dao, $event )
-          )->then( sub ($subscription) {
-            # Events on the platform's own account settle in the registry
-            # schema (no slug). A seller's events arrive at stripe_connect,
-            # which finds the tenant from event.account, never from metadata.
-            $self->_settle_event( $dao, $db, $event, $event_id, undef, $subscription );
-          } )->catch( sub ($err) {
-            # Reached when the prefetch rejects, or when _settle_event throws
-            # outside its own try -- opening the transaction, say. Its internal
-            # failures render there and never arrive here, so this cannot
-            # double-render. Nothing to release either way: a prefetch failure
-            # has not claimed, and a claim that was taken rolls back with its
-            # transaction. A 500 asks Stripe to redeliver.
+        try { $self->_settle_event( $dao, $db, $event, $event_id, undef ) }
+        catch ($err) {
+            # Opening the transaction failed; _settle_event renders its own
+            # failures inside it. Nothing claimed, so a 500 asks Stripe to retry.
             $self->app->log->error("Webhook failed before settlement: $err");
             $self->render( status => 500, text => 'Webhook processing failed' );
-          } );
+        }
     }
 
     # application_fee.refunded: Stripe reports how much of the fee on a
@@ -225,7 +200,32 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        $self->_start_stripe_move( $tenant->{slug}, $event ) if $tenant;
         $self->render( status => 200, text => 'OK' );
+    }
+
+    # A stored refund or dispute of a payment Registry made in $slug is applied
+    # by an entitlement-stripe-move run that the driver continues; nobody waits
+    # on it. One whose intent is on none of $slug's payments starts nothing.
+    method _start_stripe_move ($slug, $event) {
+        my @intents = map { $_->{payment_intent} }
+            Registry::DAO::WorkflowSteps::ApplyStripeRefund->refunds($event),
+            Registry::DAO::WorkflowSteps::ApplyStripeDispute->disputes($event);
+        return unless @intents;
+        my $dao = $self->app->dao;
+        $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
+            my $tdb = $dao->connect_schema($slug)->db;
+            return unless $tdb->select( 'payments', 'id',
+                { stripe_payment_intent_id => { -in => \@intents } } )->rows;
+            my $workflow = Registry::DAO::Workflow->find( $tdb, { slug => 'entitlement-stripe-move' } )
+                or die "tenant $slug has no entitlement-stripe-move workflow\n";
+            my $run = $workflow->new_run( $tdb, { data => { stripe_event_id => $event->{id} } } );
+            # Three attempts: the driver marks the run halted only on the last.
+            $minion->enqueue( continue_workflow_run =>
+                [ { tenant => $slug, run_id => $run->id } ], { attempts => 3 } );
+        }, 'entitlement-stripe-move', "event $event->{id}",
+           "Stripe event $event->{id} was stored but not applied to entitlements: apply it by hand.",
+           { stripe_event_id => $event->{id} } );
     }
 
     # Events that happened on a connected account. Stripe names that account
@@ -259,8 +259,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
         my $slug = $tenant->{slug};
 
-        # A refund Registry made that Stripe answered pending is settled, not
-        # stored: that is our own refund finishing, not a move by the seller.
+        # A refund Registry made that Stripe answered pending is settled here;
+        # one that succeeds is then also stored and applied as a Stripe move.
         # shortcut: a refund.updated that beats _apply_refund_result's hold is
         # stored unapplied, and charge.refund.updated is never matched; settle
         # those from the stored events if they turn up.
@@ -284,7 +284,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 if defined $named && !ref $named && $named ne $slug;
 
             $self->render_later;
-            return $self->_settle_event( $self->app->dao, $db, $event, $event_id, $slug, undef );
+            return $self->_settle_event( $self->app->dao, $db, $event, $event_id, $slug );
         }
 
         # An instalment invoice names its subscription, never the schedule
@@ -338,6 +338,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $tx = $db->begin;
         return unless $self->_claim_event( $db, $event );
 
+        # Set when a refund Registry made settles as succeeded: then it is
+        # also a Stripe move, applied to entitlements after the COMMIT.
+        my $move;
+
         try {
             # Transaction-local, as in _settle_event.
             $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" );
@@ -372,16 +376,23 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 $self->_process_account_updated($db, $event);
             }
             elsif ( $event->{type} eq 'refund.updated' ) {
-                $self->_process_refund_updated($db, $event);
+                $move = ( $self->_process_refund_updated($db, $event) // '' ) eq 'succeeded';
             }
             else {
                 $self->app->log->info(
                     "Connect webhook event $event_id ($event->{type}) for tenant $slug not handled");
             }
 
+            # A settled refund is stored as _store_stripe_move stores one,
+            # left unapplied for the entitlement-stripe-move run.
             $db->query(
-                q{UPDATE registry.webhook_events SET processed_at = now()
-                  WHERE stripe_event_id = ?}, $event_id
+                $move
+                ? ( q{UPDATE registry.webhook_events
+                         SET account = ?, payload = ?::jsonb,
+                             tenant_id = (SELECT id FROM registry.tenants WHERE slug = ?)
+                       WHERE stripe_event_id = ?}, $account, { json => $event }, $slug, $event_id )
+                : ( q{UPDATE registry.webhook_events SET processed_at = now()
+                       WHERE stripe_event_id = ?}, $event_id )
             );
             $tx->commit;
         }
@@ -392,12 +403,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        $self->_start_stripe_move( $slug, $event ) if $move;
         $self->render( status => 200, text => 'OK' );
     }
 
-    # The settlement itself: claim, work, commit. Called with the subscription
-    # already in hand, so nothing here reaches the network.
-    method _settle_event ($dao, $db, $event, $event_id, $slug, $subscription) {
+    # The settlement itself: claim, work, commit. Nothing here reaches the
+    # network.
+    method _settle_event ($dao, $db, $event, $event_id, $slug) {
 
         # Claim and work are one transaction on one connection. A failure rolls
         # the claim back with the work, so Stripe's retry re-claims and
@@ -418,6 +430,9 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # Set when a superseded intent was paid: the refund owed, after COMMIT.
         my $superseded;
 
+        # Set when an offer payment completed: the run to continue, after COMMIT.
+        my $continue_run;
+
         try {
             # Transaction-local, so it reverts at COMMIT and cannot ride back
             # into the connection pool the way a session-level setting would.
@@ -429,19 +444,15 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # One-time program payment finalized by Stripe (e.g. 3DS/redirect
             # cards confirmed off-site). Idempotent with the parent-return path.
             if ($event->{type} eq 'payment_intent.succeeded') {
-                $refund_for = $self->_process_payment_intent_succeeded($db, $event, \$superseded);
+                $refund_for = $self->_process_payment_intent_succeeded($db, $event,
+                    \$superseded, \$continue_run);
                 $schedule_for = $self->_instalment_to_schedule($db, $event);
             }
             else {
-                # Handle tenant billing events (existing logic)
-                my $subscription_dao = Registry::DAO::Subscription->new(db => $dao);
-                $subscription_dao->process_webhook_event(
-                    $db,
-                    $event->{id},
-                    $event->{type},
-                    $event->{data},
-                    $subscription,
-                );
+                # Revenue share bills no tenant by subscription, so tenant
+                # billing and anything else unknown is acknowledged, not acted on.
+                $self->app->log->info(
+                    "Webhook event $event_id (" . _printable( $event->{type} // '' ) . ') not handled');
             }
 
             # received_at to processed_at is the latency of the money path.
@@ -494,6 +505,20 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             }, 'instalment_schedule', "payment $schedule_for",
                "Schedule the remaining instalments of payment $schedule_for by hand in Stripe.",
                { payment_id => $schedule_for } );
+        }
+
+        # The run an offer payment was taken for goes on whether or not anyone
+        # is there to come back: a job drives it from where it was parked
+        # (Job::ContinueWorkflowRun). Queued once, by the delivery that
+        # completed the payment.
+        if ($continue_run) {
+            $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
+                # Three attempts: the driver marks the run halted only on the last.
+                $minion->enqueue( continue_workflow_run =>
+                    [ { tenant => $slug // 'registry', run_id => $continue_run } ], { attempts => 3 } );
+            }, 'continue_workflow_run', "run $continue_run",
+               "Workflow run $continue_run was paid for but not continued: continue it by hand.",
+               { workflow_run_id => $continue_run } );
         }
 
         # The refund of a paid superseded intent, in a job for the attempts a
@@ -555,7 +580,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $what = 'refund ' . _printable( $refund->{id} ) . " on payment $row->{id}";
         if ( $outcome eq 'succeeded' ) {
             $self->app->log->info("Connect webhook event $event->{id}: $what succeeded");
-            return;
+            return $outcome;
         }
         $self->app->log->error( "Connect webhook event $event->{id}: $what is "
               . _printable($outcome) . '; it is still owed' );
@@ -864,22 +889,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         });
     }
 
-    # Subscription lookups for invoice events are the one blocking Stripe call
-    # on this path. Fetch it up front so the settlement transaction never waits
-    # on the network; process_webhook_event falls back to fetching it itself
-    # when this returns undef, which keeps its other callers working unchanged.
-    method _prefetch_subscription_async ($dao, $event) {
-        return Mojo::Promise->resolve(undef)
-            unless $event->{type} eq 'invoice.payment_failed'
-            || $event->{type} eq 'invoice.payment_succeeded';
-
-        my $subscription_id = $event->{data}{object}{subscription}
-            or return Mojo::Promise->resolve(undef);
-
-        return Registry::DAO::Subscription->new(db => $dao)
-            ->get_subscription_async($subscription_id);
-    }
-
     # Finalize a one-time program payment when Stripe confirms the intent. This
     # is the safety net for cards finalized off-site (3DS / redirect) where the
     # parent may never return to the success page. finalize_enrollment is
@@ -887,7 +896,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     # $db arrives inside the caller's transaction with search_path already
     # pointing at the tenant, so every unqualified name below resolves there.
     # $superseded, if given, is set when the intent is one this row replaced.
-    method _process_payment_intent_succeeded ($db, $event, $superseded = \my $unused) {
+    # $continue_run, if given, is set to the workflow run an offer payment was
+    # taken for, when this delivery completed it.
+    method _process_payment_intent_succeeded ($db, $event, $superseded = \my $unused,
+                                              $continue_run = \my $unused_run) {
         my $intent     = $event->{data}{object} // {};
         my $payment_id = $intent->{metadata}{payment_id};
 
@@ -982,6 +994,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # the row, so a redelivery or a later event cannot overwrite it.
         if ( $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} ) ) {
             $payment->record_platform_fee( $db, $intent );
+            # Only a payment sold under an offer version: a cart's run is
+            # finished by the parent, and its enrollment just below.
+            $$continue_run = $meta->{workflow_run_id}
+                if $payment->offer_version_id && $meta->{workflow_run_id};
         }
         else {
             $self->app->log->info(

@@ -6,9 +6,10 @@ use utf8;
 use Object::Pad;
 
 class Registry::Job::SendNotifications {
+    use Registry::Job::Recurring;
 
     sub register ($class, $app) {
-        $app->minion->add_task( send_notifications => sub ($job, @args) {
+        Registry::Job::Recurring->add_task( $app, send_notifications => sub ($job, @args) {
             $class->perform( $job, @args );
         } );
     }

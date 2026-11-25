@@ -1,62 +1,15 @@
+# ABOUTME: attendance-check workflow step kept as a no-op: the job now schedules its own next run.
+# ABOUTME: Left in place so stored runs that point at it still resolve; removal waits on ruling 01a20490.
 use 5.42.0;
 
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext :isa(Registry::DAO::WorkflowStep) {
 
+    # Nothing to do: the attendance_check job queues its own next run
+    # (Registry::Job::Recurring). This step once did it from an app object in
+    # run data, which a jsonb column cannot hold, so it never scheduled.
     method process($db, $continuation, $run = undef) {
-        $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
-        
-        my $data = $run->data || {};
-        
-        # Get the app instance from the run context
-        my $app = $data->{workflow_context}->{app};
-        
-        # Skip scheduling in test environments
-        if ($ENV{TEST_MODE} || $ENV{HARNESS_ACTIVE}) {
-            $run->update_data($db, {
-                next_run_scheduled => 0,
-                schedule_error => "Skipped in test environment"
-            });
-            return;
-        }
-        
-        if ($app && $app->can('minion')) {
-            try {
-                # Use generic workflow executor for scheduling
-                use Registry::Job::WorkflowExecutor;
-                Registry::Job::WorkflowExecutor->enqueue_workflow(
-                    $app,
-                    'attendance-check',
-                    reschedule => {
-                        enabled => 1,
-                        delay => 60,
-                        attempts => 3,
-                        priority => 5
-                    },
-                    delay => 60
-                );
-                
-                $run->update_data($db, {
-                    next_run_scheduled => 1,
-                    scheduled_at => time()
-                });
-            }
-            catch ($e) {
-                warn "Failed to schedule next attendance check: $e";
-                $run->update_data($db, {
-                    next_run_scheduled => 0,
-                    schedule_error => "$e"
-                });
-            }
-        } else {
-            warn "No app context available for scheduling next run";
-            $run->update_data($db, {
-                next_run_scheduled => 0,
-                schedule_error => "No app context available"
-            });
-        }
-        
         return;
     }
 }

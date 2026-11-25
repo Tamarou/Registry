@@ -185,20 +185,3 @@ subtest 'charge lookup failure leaves event unclaimed' => sub {
         charge => 'ch_feeref_retry', amount_refunded => 250 )->status_is(200);
     is refunded_cents( $A, $id ), 250, "Stripe's redelivery is recorded";
 };
-
-subtest 'fee refunded event never reaches subscription handler' => sub {
-    require Registry::DAO::Subscription;
-    my $calls = 0;
-    no warnings 'redefine';
-    local *Registry::DAO::Subscription::process_webhook_event = sub { $calls++ };
-    use warnings 'redefine';
-
-    my $id = completed_payment( $A, 'pi_feeref_sub' );
-    $CHARGES{ch_feeref_sub} = { id => 'ch_feeref_sub', payment_intent => 'pi_feeref_sub' };
-    fee_refunded( account => $A->{account}, charge => 'ch_feeref_sub',
-        amount_refunded => 50 )->status_is(200);
-    fee_refunded( account => 'acct_nobody_sub', charge => 'ch_feeref_sub',
-        amount_refunded => 50 )->status_is(200);
-    is $calls, 0, 'the subscription handler is never called';
-    is refunded_cents( $A, $id ), 50, 'the fee refund is recorded instead';
-};

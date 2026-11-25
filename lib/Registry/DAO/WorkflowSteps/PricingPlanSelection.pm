@@ -1,17 +1,14 @@
-# ABOUTME: Workflow step for tenant pricing plan selection during signup
-# ABOUTME: Fetches active platform pricing plans and handles plan selection
+# ABOUTME: Workflow step for choosing a platform offer during tenant signup; no shipped workflow uses it.
+# ABOUTME: Lists the platform's published offers to tenants and carries the chosen version.
 
 use 5.42.0;
 
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::WorkflowStep) {
-    use Registry::DAO::PricingPlan;
-    use Registry::DAO::PricingRelationship;
     use Carp qw(croak);
     use Registry::Utility::PriceFormat qw(format_price);
-
-    use constant PLATFORM_UUID => '00000000-0000-0000-0000-000000000000';
+    use Registry::PriceOps::PlatformTerms qw(platform_offers_to_tenants);
 
     method process($db, $form_data, $run = undef) {
         # Check if plan selection was submitted
@@ -58,17 +55,9 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
             };
         }
 
-        # Return selected plan data for WorkflowRun::process to persist.
-        # The run's update_data merges this into the accumulated workflow data.
-        return {
-            selected_pricing_plan => {
-                id => $selected_plan->id,
-                plan_name => $selected_plan->plan_name,
-                amount_cents => $selected_plan->amount_cents,
-                currency => $selected_plan->currency,
-                pricing_configuration => $selected_plan->pricing_configuration
-            }
-        };
+        # The version id only, under the server-owned key signup provisions
+        # from; its terms are re-read wherever they are quoted or granted.
+        return { selected_offer_version => $selected_plan->{id} };
     }
 
     # Provide pricing plans and org info to the template via the controller's
@@ -77,51 +66,32 @@ class Registry::DAO::WorkflowSteps::PricingPlanSelection :isa(Registry::DAO::Wor
         return $self->prepare_pricing_data($db, $run);
     }
 
+    # The platform's published offers to tenants, in the shape the plan
+    # template renders: the offer's name, the version's price and its
+    # percentage-of-sales rate as pricing_configuration's percentage.
     method prepare_pricing_data($db, $run = undef) {
-        my $platform_uuid = PLATFORM_UUID;
-
-        # Get active pricing plans available for new tenant signups
-        my @relationships = Registry::DAO::PricingRelationship->find($db, {
-            provider_id => $platform_uuid,
-            status => 'active'
-        });
-
-        my @pricing_plans;
-        for my $relationship (@relationships) {
-            my $plan = $relationship->get_pricing_plan($db);
-            next unless $plan;
-            next unless $plan->plan_scope eq 'tenant';  # Only tenant-scoped plans
-
-            # Format plan data for template
-            push @pricing_plans, {
-                id => $plan->id,
-                plan_name => $plan->plan_name,
-                plan_type => $plan->plan_type,
-                amount_cents => $plan->amount_cents,
-                currency => $plan->currency,
-                pricing_configuration => $plan->pricing_configuration,
-                metadata => $plan->metadata,
-                formatted_price => format_price($plan->amount_cents, $plan->currency),
-            };
-        }
-
-        # Sort plans by display order (if available) or by price
-        @pricing_plans = sort {
-            my $order_a = $a->{metadata}->{display_order} // 999;
-            my $order_b = $b->{metadata}->{display_order} // 999;
-            $order_a <=> $order_b || $a->{amount_cents} <=> $b->{amount_cents}
-        } @pricing_plans;
-
         return {
-            pricing_plans => \@pricing_plans,
+            pricing_plans => $self->_plans($db),
             organization_info => $self->get_organization_preview($db, $run)
         };
     }
 
-    # Delegates: the rule belongs to the DAO so the payment step can apply the
-    # same one without reaching across workflow steps to borrow it (#347).
+    method _plans ($db) {
+        return [ map { +{
+            id                    => $_->{id},
+            plan_name             => $_->{name},
+            amount_cents          => $_->{amount_cents},
+            currency              => $_->{currency},
+            pricing_configuration => { percentage => $_->{fraction} },
+            metadata              => {},
+            formatted_price       => format_price( $_->{amount_cents}, $_->{currency} ),
+        } } platform_offers_to_tenants($db)->@* ];
+    }
+
+    # The chosen offer if it is a current published platform offer to tenants.
     method validate_plan_selection($db, $plan_id) {
-        return Registry::DAO::PricingPlan->offered_platform_plan( $db, $plan_id );
+        my ($plan) = grep { $_->{id} eq ( $plan_id // '' ) } $self->_plans($db)->@*;
+        return $plan;
     }
 
     method get_organization_preview($db, $run = undef) {

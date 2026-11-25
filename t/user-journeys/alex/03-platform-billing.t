@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: Alex (platform owner) journey: Registry bills the tenant for the
-# ABOUTME: platform subscription established during signup.
+# ABOUTME: Alex (platform owner) journey: Registry bills the tenant through the
+# ABOUTME: Solo entitlement it accepts at signup, not through a subscription.
 #
 # Asserts at the DAO and job layer on purpose. Alex has no screens -- no
 # platform-owner route, template or nav exists -- so unlike the other personas
@@ -9,8 +9,8 @@
 # enumerated in #426, and this suite should be reshaped only when they exist.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
-# The payment step provisions directly when no Stripe keys are configured.
-# Ambient keys would send it to create_setup_intent and a live API call.
+# Signup calls no Stripe API; unset ambient keys all the same, so nothing
+# here can reach the live one.
 BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 use 5.42.0;
@@ -30,10 +30,8 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 
 # ---------------------------------------------------------------------------
-# Non-goal: recurring usage-based billing.
-# The _get_usage_data branch is deliberately non-functional pending redesign
-# (issue #263).  This leg asserts that the subscription is *established* at
-# signup time, not that monthly invoices flow afterwards.
+# Non-goal: the revenue-share charge itself. This leg asserts the terms the
+# tenant accepts at signup, not that a sale is charged on them afterwards.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -77,10 +75,9 @@ $t->app->helper(dao => sub { $dao });
 #                 whatever it receives); 'admin_user_type' must be 'admin' to
 #                 avoid the invite-pending warning path in _provision_tenant.
 #   review      — 'terms_accepted' required by the controller (Workflows.pm:337-
-#                 358) BEFORE calling step->process; the step itself accepts
-#                 empty body but the controller gate refuses without it. This
-#                 POST also provisions: no plan is chosen and nothing is
-#                 charged, so review is the commit point.
+#                 358) BEFORE calling step->process; 'offer_version', the
+#                 preselected Solo, is required by the step. This POST also
+#                 provisions: nothing is charged, so review is the commit point.
 # ---------------------------------------------------------------------------
 
 # -- Step: land (starts the run) -------------------------------------------
@@ -138,7 +135,10 @@ like $review_page, qr/Solo/,
 # that is how "Registry Revenue Share - 2%" survived a move to 2.5%, and the
 # name is not a place the rate is allowed to live.
 my ($displayed_rate_str) =
-    $review_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+the\s+payments/i;
+    $review_page =~ /(\d+(?:\.\d+)?)\s*%\s*of\s+each\s+payment/i;
+
+# The plan the review page preselects, which is what the applicant submits.
+my $preselected = $t->tx->res->dom->at('input[name="offer_version"][checked]');
 
 # -- Step: review (POST) --------------------------------------------------
 # The controller (Workflows.pm:337-358) validates terms_accepted and checks
@@ -147,6 +147,7 @@ my ($displayed_rate_str) =
 # all other required data must have been collected in earlier steps.
 $t->post_ok($review_url => form => {
     terms_accepted => 1,    # required by controller review-step validation
+    offer_version  => $preselected && $preselected->attr('value'),
 })->status_is(302);
 
 my $complete_url = $t->tx->res->headers->location;
@@ -164,85 +165,48 @@ ok $run, 'workflow run exists after funnel walk';
 my $run_data = $run->data;
 
 # ---------------------------------------------------------------------------
-# Assertion 1a: nothing is stashed about a choice nobody was offered
+# Assertion 1a: the run carries the preselected Solo version as the choice
 # ---------------------------------------------------------------------------
-subtest 'run data carries no plan selection' => sub {
-    ok !$run_data->{selected_pricing_plan},
-        'no selected_pricing_plan: the applicant was never asked';
+subtest 'run data carries the chosen offer version' => sub {
+    is $run_data->{selected_offer_version}, $SOLO_V1,
+        'the preselected Solo v1 is the choice carried';
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 1b: the provisioned tenant row carries billing fields
+# Assertion 1b: the platform bills the tenant through its Solo entitlement --
+# $0 and 2.5% of each sale -- and through no Stripe subscription.
 # ---------------------------------------------------------------------------
-subtest 'provisioned tenant row carries billing fields' => sub {
-    # _provision_tenant writes the tenant slug into run_data as 'subdomain'.
+subtest 'platform billing is solo not a subscription' => sub {
     my $slug = $run_data->{subdomain};
     ok $slug, "provisioned tenant slug present in run data ($slug)";
 
-    my $tenant_row = $db->query(
-        q{SELECT stripe_subscription_id, billing_status, trial_ends_at
-          FROM registry.tenants WHERE slug = ?},
-        $slug
-    )->hash;
-    ok $tenant_row, 'provisioned tenant row found in registry.tenants';
+    my $terms = platform_entitlement_terms( $db, $slug );
+    is $terms->{name},         'Solo', 'the tenant is billed through Solo';
+    is $terms->{amount_cents}, 0,      'Solo has no monthly base to subscribe to';
+    is $terms->{fraction},     0.025,  'Solo bills 2.5% of each sale';
 
-    is $tenant_row->{stripe_subscription_id}, undef,
-        'no Stripe subscription: a $0 plan has nothing to subscribe to';
-    is $tenant_row->{billing_status}, 'active',
-        'billing_status is "active" -- the tenant is live, not on a clock';
-    is $tenant_row->{trial_ends_at}, undef,
-        'no trial end date, because there is no trial';
+    ok !exists $db->query( q{SELECT * FROM registry.tenants WHERE slug = ?}, $slug )->hash->{stripe_subscription_id},
+        'no Stripe subscription bills the tenant';
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 2: no tenant<->plan pricing_relationship exists post-signup.
-#
-# PricingPlanSelection only stashes the selected plan in run data; it does not
-# INSERT a registry.pricing_relationships row linking the new tenant as
-# provider or consumer.  _provision_tenant writes billing fields onto the
-# tenant row but also does not create a pricing_relationship.
+# Assertion 2: the tenant's platform terms are an entitlement.
 #
 # The tenant's platform terms are an entitlement it holds in registry to the
-# platform's published offer, NOT a pricing_relationships row.  So two things
-# must hold: (a) the tenant holds an entitlement to the offer on sale, and (b)
-# no pricing_relationships row was created with the new tenant as provider or
-# consumer (a spurious one would mean the rate could be read from the wrong
-# place).
+# platform's published offer -- the one record of what a tenant holds.
 # ---------------------------------------------------------------------------
 subtest '#267: tenant holds an entitlement to the published platform offer' => sub {
     my $slug = $run_data->{subdomain};
     ok $slug, "tenant slug available ($slug)";
 
-    # Look up the provisioned tenant's id.
     my $tenant_row = $db->query(
         q{SELECT id FROM registry.tenants WHERE slug = ?}, $slug
     )->hash;
     ok $tenant_row, 'provisioned tenant row found';
 
-    my $tenant_id = $tenant_row->{id};
-
-    # (a) The tenant holds an entitlement to the offer on sale.
+    # The tenant holds an entitlement to the offer on sale.
     is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V1,
         'the tenant holds an entitlement to Solo v1, the offer on sale';
-
-    # (b) Assert zero pricing_relationships rows where the new tenant is either
-    # provider or consumer -- those are the two roles a tenant could occupy in
-    # a platform-billing relationship.  The only relationship in the table
-    # should be the fixture we inserted above (provider = platform UUID).
-    my $as_provider = $db->query(q{
-        SELECT count(*) AS n FROM registry.pricing_relationships
-        WHERE provider_id = ?
-    }, $tenant_id)->hash->{n};
-
-    my $as_consumer = $db->query(q{
-        SELECT count(*) AS n FROM registry.pricing_relationships
-        WHERE consumer_id = ?
-    }, $tenant_id)->hash->{n};
-
-    is $as_provider + 0, 0,
-        'no pricing_relationships row with the new tenant as provider (#267 dependency)';
-    is $as_consumer + 0, 0,
-        'no pricing_relationships row with the new tenant as consumer (#267 dependency)';
 };
 
 # ---------------------------------------------------------------------------

@@ -27,15 +27,11 @@ my $parent = $dao->create(User => {
 my $studio = Test::Registry::Fixtures::create_tenant( $db, {
     name => 'Earning Studio', slug => 'earning_studio' } );
 give_tenant_terms( $db, 'earning_studio', { rate => '0.025', name => 'Earning Terms' } );
-$db->query( 'UPDATE registry.tenants SET billing_status = ? WHERE id = ?',
-    'active', $studio->id );
 my $earning_terms = platform_terms_for_tenant( $db, 'earning_studio' );
 
-my $arrears = Test::Registry::Fixtures::create_tenant( $db, {
+Test::Registry::Fixtures::create_tenant( $db, {
     name => 'Owing Studio', slug => 'owing_studio' } );
 give_tenant_terms( $db, 'owing_studio', { rate => '0.025' } );
-$db->query( 'UPDATE registry.tenants SET billing_status = ? WHERE id = ?',
-    'past_due', $arrears->id );
 
 # Charges: two recorded, one not. The unrecorded one is every charge made
 # before the fee column existed.
@@ -111,12 +107,14 @@ subtest 'the rate each tenant is on comes from their plan row' => sub {
         'at the rate that plan actually declares, not a constant';
 };
 
-subtest 'arrears are surfaced' => sub {
-    # #426: billing_status of past_due or incomplete with nothing surfacing it.
+subtest 'revenue view works without billing columns' => sub {
     my $revenue = Registry::DAO::Tenant->platform_revenue($db);
+    my %by_slug = map { $_->{slug} => $_ } @{ $revenue->{tenants} };
 
-    is_deeply [ map { $_->{slug} } @{ $revenue->{arrears} } ], ['owing_studio'],
-        'a past_due tenant is listed';
+    ok $by_slug{owing_studio}, 'every tenant is listed';
+    ok !exists $revenue->{arrears}, 'with no billing arrears list';
+    ok !exists $by_slug{owing_studio}{$_}, "and no $_ on a tenant"
+        for qw( billing_status stripe_subscription_id );
 };
 
 subtest 'a charge written where production writes it is counted' => sub {
@@ -126,7 +124,7 @@ subtest 'a charge written where production writes it is counted' => sub {
     # <tenant>.payments; a reader pointed at registry.payments finds nothing and
     # says zero.
     #
-    # Webhooks.pm:330 and PricingRelationships.pm:228 both already warn about
+    # Webhooks.pm:330 already warns about
     # exactly this: a registry-scoped query "would hit registry.payments, match
     # no rows, and return quietly".
     my $slug = 'earning_studio';

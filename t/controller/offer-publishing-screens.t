@@ -16,6 +16,7 @@ use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant
 use Registry;
 use Registry::DAO;
 use Registry::DAO::OfferVersion;
+use Registry::DAO::WorkflowRun;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -193,6 +194,70 @@ subtest 'a new version pre-fills every payment and policy screen from the curren
         };
     };
     is_deeply $terms->( $versions[1] ), $terms->( $versions[0] ), 'with the same terms as the version it supersedes';
+};
+
+# The seeded platform offers: Solo has every policy and declines one-time
+# payment; email sending has only a refund policy and declines a share of sales.
+my ( $solo, $email ) = map { $db->query( 'SELECT id FROM offers WHERE name = ?', $_ )->hash->{id} }
+    'Solo', 'Platform email sending';
+my %SOLO = (
+    'offer-price'                 => { price_cents => '0', currency => 'USD', units_per_acceptance => '1', per_booking_cap => '1' },
+    'one-time-payment'            => { one_time => 'declined' },
+    'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.5' },
+    'refund-policy'               => { refund => 'keep_fee_with_admin_exception' },
+    'change-policy'               => { change => 'none', targets => 'same_offer' },
+    'use-policy'                  => { use => 'none' },
+    'expiry-policy'               => { expiry => 'never' },
+);
+my @TERM_SCREENS = qw( offer-price one-time-payment percentage-of-sales-payment
+    refund-policy change-policy use-policy expiry-policy );
+
+# From the price screen, walks every term screen checking it shows
+# $expect->{$screen}, blank by default (the change screen always carries its
+# fixed target); a blank screen is answered from %SOLO to move on.
+sub walk_terms ( $t, $expect ) {
+    for my $screen (@TERM_SCREENS) {
+        my $blank = $screen eq 'change-policy' ? { targets => 'same_offer' } : {};
+        is_deeply { prefilled($t) }, $expect->{$screen} // $blank, "$screen shows the expected answer";
+        submit_step( $t, $screen, %{ $SOLO{$screen} }, %{ $expect->{$screen} // {} } );
+    }
+}
+
+# Answers offer-basics again on $t's run, then opens the price screen. The
+# screens only accept the run's next step, so this goes through the run itself.
+sub answer_basics_again ( $t, %fields ) {
+    my ($run_id) = $t->tx->req->url->path->to_string =~ m{/offer-publishing/([^/]+)/};
+    my $run      = Registry::DAO::WorkflowRun->find( $db, { id => $run_id } );
+    my $step     = $dao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $db, { slug => 'offer-basics' } );
+    ok !$run->process( $db, $step, \%fields )->{errors}, 'offer-basics is answered again';
+    $t->get_ok("/offer-publishing/$run_id/offer-price")->status_is(200);
+}
+
+subtest 'choosing another offer replaces every copied term, clearing those it lacks' => sub {
+    my $t = client($admin);
+    $t->get_ok('/offer-publishing')->status_is(200);
+    submit_step( $t, 'resource', resource_mode => 'existing' );
+    submit_step( $t, 'offer-basics', resource_id => $seats->id, offer_id => $solo );
+    walk_terms( $t, \%SOLO );
+
+    answer_basics_again( $t, resource_id => $seats->id, offer_id => $email );
+    walk_terms( $t, {
+        'offer-price'                 => $SOLO{'offer-price'},
+        'one-time-payment'            => { one_time => 'offered' },
+        'percentage-of-sales-payment' => { percentage_of_sales => 'declined' },
+        'refund-policy'               => { refund => 'none' },
+    } );
+};
+
+subtest 'choosing a new offer after a version clears every copied term' => sub {
+    my $t = client($admin);
+    $t->get_ok('/offer-publishing')->status_is(200);
+    submit_step( $t, 'resource', resource_mode => 'existing' );
+    submit_step( $t, 'offer-basics', resource_id => $seats->id, offer_id => $solo );
+    walk_terms( $t, \%SOLO );
+
+    answer_basics_again( $t, %BASICS, offer_id => '' );
+    walk_terms( $t, { 'offer-price' => { currency => 'USD', units_per_acceptance => '1', per_booking_cap => '1' } } );
 };
 
 subtest 'offer name is escaped' => sub {

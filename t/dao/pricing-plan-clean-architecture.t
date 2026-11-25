@@ -62,8 +62,9 @@ subtest 'get_tenant_id resolves registry and a provisioned tenant by lookup' => 
     my $step = $workflow->get_step($db, { slug => 'basics' });
 
     my $platform = Registry::DAO::Tenant->platform($db);
-    is $platform->id, '00000000-0000-0000-0000-000000000000',
-        'the registry row has the all-zeros id';
+    is $platform->id,
+        $db->query(q{SELECT id FROM registry.tenants WHERE slug = 'registry'})->hash->{id},
+        'platform() is the registry row';
 
     my $platform_run = $workflow->new_run($db);
     $platform_run->update_data($db, { __tenant_slug => 'registry' });

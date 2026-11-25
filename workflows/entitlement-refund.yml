@@ -1,0 +1,17 @@
+# ABOUTME: A customer, or an admin or staff member for them, asks for a refund of an entitlement.
+# ABOUTME: Choose the booking, read its stamped refund terms and ask; the outcome is the policy's. Stripe's report ends it.
+
+name: Entitlement Refund
+description: Ask for a refund of a booking, under the refund policy it was sold with
+slug: entitlement-refund
+
+steps:
+  - slug: choose
+    description: Choose the booking to refund
+    class: Registry::DAO::WorkflowSteps::SelectEntitlementForRefund
+  - slug: apply
+    description: Read the booking's refund terms and ask for the refund
+    class: Registry::DAO::WorkflowSteps::ApplyRefundPolicy
+  - slug: done
+    description: The refund has been requested, or the offer's refusal
+    class: Registry::DAO::WorkflowStep

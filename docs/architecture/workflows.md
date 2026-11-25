@@ -185,6 +185,42 @@ Workflow steps are connected in a linear sequence using the `depends_on` field. 
 - Get the next step after a given step
 - Get the last step of a workflow
 
+### Runs no person is waiting on
+
+Some steps happen after the person has left: a refund settling, the second half
+of a change, a move Stripe reports, an expiry. The Minion task
+`continue_workflow_run` (`lib/Registry/Job/ContinueWorkflowRun.pm`) drives those.
+It takes `{ tenant => <schema slug>, run_id => <uuid> }`, connects to that
+tenant's schema, and processes the run's next step, then the next, from
+`latest_step_id`, until the run completes or a step needs a person. A step's
+result and the advance of `latest_step_id` are written in one statement, so a
+step whose result was persisted is never run again.
+
+Only one driver works on a run at a time. The job takes a Postgres advisory lock
+keyed by the run id; a second job for the same run waits for it, then finds the
+run where the first left it.
+
+When a step dies, the job records on the run, under the server-owned key
+`__driver`, `{ step, attempt, error, at }`, and fails, and Minion retries it
+(enqueue it with `attempts => 3`). The last failed attempt also records
+`state => 'halted'`. A drive that ends without dying clears `__driver`. Clients
+cannot write `__driver`: the workflow controller strips it from every form.
+
+**A half-finished run** is one parked at `latest_step_id` with
+`__driver.state = 'halted'`. Every step up to and including `latest_step_id` has
+fully happened; the step named in `__driver.step` (the next one) and every step
+after it has not been persisted. If that step moves money, its call may have
+reached Stripe before the job died: Stripe is the truth. The webhook Stripe sends
+for it, or re-running the step, settles it, because a money-moving step sends
+Stripe an idempotency key derived from state it saved before the call (the
+payment row it links to the run, as `pi-create:<token>`; `refund:capacity:...`
+for a capacity refund), and Stripe answers a repeated key with its first answer
+rather than moving the money again.
+
+To resume a halted run, an admin fixes what `__driver.error` names, then
+enqueues `continue_workflow_run` again with the same arguments. The driver
+starts at the halted step, not the first one.
+
 ## Advanced Features
 
 ### Continuations

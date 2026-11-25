@@ -63,7 +63,7 @@ subtest 'a signup naming a stranger sends them nothing' => sub {
 
     my $review = $t->tx->res->headers->location;
     $t->get_ok($review)->status_is(200);
-    $t->post_ok( $review => form => { terms_accepted => 1 } )->status_is(302);
+    $t->post_ok( $review => form => { terms_accepted => 1, offer_version => platform_solo_offer_version_id($db) } )->status_is(302);
 
     my $row = $db->query(
         'SELECT slug FROM registry.tenants WHERE name = ?', 'Relay Test Studio' )->hash;

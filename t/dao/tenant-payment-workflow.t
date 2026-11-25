@@ -7,9 +7,10 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::WorkflowSteps::TenantPayment;
-use Registry::PriceOps::RevenueShare ();
+use Registry::PriceOps::PlatformTerms qw( platform_offers_to_tenants );
 use Registry::DAO::Workflow;
-use Registry::DAO::PricingPlan;
+use Registry::DAO::Offer;
+use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO::WorkflowRun;
 use JSON;
 
@@ -19,8 +20,8 @@ my $db = $dao->db;
 
 # Create test tenant with schema cloning  
 $db->query(q{
-    INSERT INTO registry.tenants (id, name, slug, billing_status)
-    VALUES ('00000000-0000-4000-8000-000000000001', 'Test Tenant', 'test-tenant', 'active')
+    INSERT INTO registry.tenants (id, name, slug)
+    VALUES ('00000000-0000-4000-8000-000000000001', 'Test Tenant', 'test-tenant')
 });
 $db->query("SET search_path TO tenant_00000000_0000_4000_8000_000000000001, registry, public");
 
@@ -38,24 +39,22 @@ my $payment_step = Registry::DAO::WorkflowSteps::TenantPayment->create($db, {
     description => 'Payment step'
 });
 
-# A run with no selected_pricing_plan -- which is now every signup, since the
-# flow stopped asking. The two configuration subtests below exercise what the
-# resolver hands the page in that case.
+# A run that carries no choice yet: the review page quotes the offer it
+# preselects, Solo on day one.
 my $no_plan_run = Registry::DAO::WorkflowRun->create($db, {
     workflow_id => $workflow->id,
     data => encode_json({})
 });
 
 subtest 'TenantPayment workflow step creation' => sub {
-    plan tests => 3;
-    
+    plan tests => 2;
+
     isa_ok($payment_step, 'Registry::DAO::WorkflowSteps::TenantPayment');
     can_ok($payment_step, qw(process prepare_payment_data get_subscription_config));
-    is($payment_step->template, 'tenant-signup/payment', 'Correct template');
 };
 
 subtest 'Subscription configuration' => sub {
-    plan tests => 6;
+    plan tests => 7;
 
     my $config = $payment_step->get_subscription_config($db, $no_plan_run);
 
@@ -63,15 +62,14 @@ subtest 'Subscription configuration' => sub {
     is($config->{plan_name}, 'Solo', 'Plan name correct');
     is($config->{monthly_amount}, 0, 'Monthly amount is $0 (Solo tier)');
     is($config->{currency}, 'usd', 'Currency is USD');
-    is($config->{trial_days}, 0, 'No trial period (Solo is already free)');
+    ok(!exists $config->{$_}, "No $_: the platform runs no subscription") for qw( trial_days billing_cycle );
     ok($config->{features} && @{$config->{features}} > 0, 'Features list provided');
 };
 
 subtest 'revenue share percent is the rate the platform sells' => sub {
     plan tests => 3;
 
-    # The constant must be gone; the rate is derived from the plan a signup
-    # actually lands on.
+    # The constant must be gone; the rate is the offer version's own.
     ok( !Registry::DAO::WorkflowSteps::TenantPayment->can('REVENUE_SHARE_PERCENT'),
         'REVENUE_SHARE_PERCENT constant removed from TenantPayment'
     );
@@ -81,11 +79,10 @@ subtest 'revenue share percent is the rate the platform sells' => sub {
     # Read from the database rather than written here as a literal: a test that
     # hardcodes 2.5 passes on the day someone changes the plan and the page
     # starts quoting something else.
-    my $launch_percent =
-        Registry::PriceOps::RevenueShare::platform_launch_fraction($db) * 100;
+    my $solo_percent = platform_offers_to_tenants($db)->[0]{fraction} * 100;
 
-    is( $config->{revenue_share_percent}, $launch_percent,
-        'the page quotes the launch plan rate'
+    is( $config->{revenue_share_percent}, $solo_percent,
+        'the page quotes the preselected Solo version rate'
     );
 
     # The old failure mode this guards: with no plan resolved the config fell
@@ -120,8 +117,8 @@ subtest 'Payment data preparation' => sub {
 };
 
 subtest 'Initial payment page process' => sub {
-    plan tests => 3;
-    
+    plan tests => 2;
+
     my $run = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
         data => encode_json({
@@ -131,31 +128,11 @@ subtest 'Initial payment page process' => sub {
             }
         })
     });
-    
+
     my $result = $payment_step->prepare_payment_data($db, $run);
-    
+
     ok($result, 'Process result returned');
     ok(exists $result->{billing_summary}, 'Billing summary in result');
-    ok(!$result->{show_payment_form}, 'Payment form not shown initially');
-};
-
-subtest 'Retry logic' => sub {
-    plan tests => 4;
-
-    my $run = Registry::DAO::WorkflowRun->create($db, {
-        workflow_id => $workflow->id,
-        data => {}
-    });
-    
-    is($payment_step->get_retry_count($run), 0, 'Initial retry count is 0');
-    
-    my $count1 = $payment_step->increment_retry_count($db, $run);
-    is($count1, 1, 'First increment returns 1');
-    
-    my $count2 = $payment_step->increment_retry_count($db, $run);
-    is($count2, 2, 'Second increment returns 2');
-    
-    is($payment_step->max_retries, 3, 'Max retries is 3');
 };
 
 subtest 'Validation error handling' => sub {
@@ -175,37 +152,23 @@ subtest 'Validation error handling' => sub {
     is($result->{billing_summary}->{organization_name}, 'Your Organization', 'Default organization name used');
 };
 
-# A plan a signup may actually buy: tenant-scoped, on active offer from the
-# platform, and not coming_soon -- the three things offered_platform_plan checks.
-sub buyable_plan ( $name, $cents ) {
-    my $plan = Registry::DAO::PricingPlan->create( $db, {
-        plan_scope => 'tenant', plan_name => $name, plan_type => 'standard',
-        pricing_model_type => 'hybrid', amount_cents => $cents, currency => 'USD',
-        pricing_configuration => { percentage => 0.02, trial_days => 14, description => "$name plan" },
-        metadata => {},
-    } );
-    my $admin = $db->query(
-        q{SELECT user_id FROM registry.tenant_users
-           WHERE tenant_id = '00000000-0000-0000-0000-000000000000' LIMIT 1} )->array->[0];
-    $db->query(
-        q{INSERT INTO registry.pricing_relationships
-              (provider_id, consumer_id, pricing_plan_id, status, metadata)
-          VALUES ('00000000-0000-0000-0000-000000000000', ?, ?, 'active', '{}'::jsonb)},
-        $admin, $plan->id );
-    return $plan;
+# A platform offer to tenants a signup may choose: no monthly base, since
+# signup takes no card.
+sub buyable_offer ( $name, $fraction ) {
+    my $offer = Registry::DAO::Offer->create( $db, { name => $name } );
+    return $offer->draft( $db, offer_terms( '00000000-0000-0000-0001-000000000001',
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => $fraction } ],
+    ) )->publish($db);
 }
 
 subtest 'Subscription config follows the run in hand, not the newest run' => sub {
     plan tests => 4;
 
-    # Two genuinely buyable plans. The blob in run data used to carry
-    # plan_name and amount_cents and was used verbatim; since #347 it carries
-    # an id and the row is re-read, so these have to be real offers -- a
-    # tenant-scoped plan with an active platform relationship, not coming_soon.
-    # The seeded Studio and Empire tiers are coming_soon and would rightly be
-    # refused, so they cannot stand in here.
-    my $mine_plan  = buyable_plan( 'Studio Test Tier', 4900 );
-    my $their_plan = buyable_plan( 'Empire Test Tier', 19900 );
+    # Two published platform offers. The run carries only a version id and
+    # the version is re-read, so these have to be real current offers.
+    my $mine_plan  = buyable_offer( 'Studio Test Tier', 0.03 );
+    my $their_plan = buyable_offer( 'Empire Test Tier', 0.04 );
 
     my $mine = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
@@ -214,7 +177,7 @@ subtest 'Subscription config follows the run in hand, not the newest run' => sub
                 organization_name => 'My Organization',
                 billing_email     => 'me@example.org',
             },
-            selected_pricing_plan => { id => $mine_plan->id },
+            selected_offer_version => $mine_plan->id,
         })
     });
 
@@ -222,7 +185,7 @@ subtest 'Subscription config follows the run in hand, not the newest run' => sub
     my $theirs = Registry::DAO::WorkflowRun->create($db, {
         workflow_id => $workflow->id,
         data => encode_json({
-            selected_pricing_plan => { id => $their_plan->id },
+            selected_offer_version => $their_plan->id,
         })
     });
 
@@ -236,14 +199,112 @@ subtest 'Subscription config follows the run in hand, not the newest run' => sub
     my $data = $payment_step->prepare_payment_data($db, $mine);
     is($data->{subscription_config}{plan_name}, 'Studio Test Tier',
         'payment page prices my run with my plan');
-    is($data->{subscription_config}{monthly_amount}, 4900,
-        'and with my amount');
+    is($data->{subscription_config}{revenue_share_percent}, 3,
+        'and with my rate');
     is($data->{billing_summary}{plan_details}{plan_name}, 'Studio Test Tier',
         'billing summary agrees');
 
     my $config = eval { $payment_step->get_subscription_config($db, $mine) };
     is(($config ? $config->{plan_name} : undef), 'Studio Test Tier',
         'get_subscription_config prices the run it is handed');
+};
+
+my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+
+# A run that has reached the review page, enough for provisioning to succeed.
+sub signup_run ($slug, %extra) {
+    return Registry::DAO::WorkflowRun->create( $db, {
+        workflow_id => $workflow->id,
+        data        => {
+            name            => "Studio $slug",
+            subdomain       => $slug,
+            admin_name      => 'Signup Admin',
+            admin_email     => "${slug}_admin\@test.example",
+            admin_username  => "${slug}_admin",
+            admin_user_type => 'admin',
+            profile         => { name => "Studio $slug", slug => $slug },
+            %extra,
+        },
+    } );
+}
+
+sub tenant_row ($slug) {
+    return $db->query( q{
+        SELECT * FROM registry.tenants WHERE slug = ?
+    }, $slug )->hash;
+}
+
+subtest 'signup provisions with no card or subscription' => sub {
+    local $ENV{MOJO_MODE} = 'development';
+    delete local $ENV{STRIPE_SECRET_KEY};
+    delete local $ENV{STRIPE_PUBLISHABLE_KEY};
+
+    my $run = signup_run('nocard');
+
+    # The review step offers no card collection.
+    my $page = $payment_step->prepare_template_data( $db, $run );
+    ok !exists $page->{$_}, "the review page carries no $_"
+        for qw( show_payment_form stripe_publishable_key client_secret setup_intent_id );
+    ok !$payment_step->can($_), "the step has no $_"
+        for qw( create_setup_intent handle_setup_completion check_stripe_service check_session_validity );
+
+    my $result = $run->process( $db, $payment_step, { offer_version => $SOLO_V1 } );
+    ok $result->{tenant}, 'the tenant is provisioned';
+
+    my $data = Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data;
+    ok !exists $data->{subscription}, 'no subscription is written into the run';
+    ok !exists $data->{payment_setup}, 'and no card setup';
+
+    my $tenant = tenant_row('nocard');
+    ok $tenant, 'the tenant row exists';
+    ok !exists $tenant->{$_}, "and carries no $_: the platform runs no subscription"
+        for qw( stripe_subscription_id billing_status trial_ends_at );
+};
+
+subtest 'client card or subscription fields ignored' => sub {
+    local $ENV{MOJO_MODE} = 'development';
+    delete local $ENV{STRIPE_SECRET_KEY};
+    delete local $ENV{STRIPE_PUBLISHABLE_KEY};
+
+    # A subscription an earlier signup page stored: those pages keep what is
+    # posted to them, so a client can put one in the run.
+    my $run = signup_run( 'clientcard', subscription => {
+        stripe_subscription_id => 'sub_client_chosen',
+        trial_ends_at          => time() + 86400,
+        status                 => 'trialing',
+    } );
+
+    my $result = $run->process( $db, $payment_step, {
+        offer_version          => $SOLO_V1,
+        collect_payment_method => 1,
+        setup_intent_id        => 'seti_client_chosen',
+        payment_method_id      => 'pm_client_chosen',
+        'subscription[stripe_subscription_id]' => 'sub_client_posted',
+    } );
+    ok $result->{tenant}, 'the tenant is provisioned';
+
+    my $data = Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data;
+    ok !exists $data->{$_}, "the review step stores no $_"
+        for qw( setup_intent_id payment_method_id payment_setup ), 'subscription[stripe_subscription_id]';
+
+    my $tenant = tenant_row('clientcard');
+    ok $tenant, 'the tenant row exists';
+    ok !exists $tenant->{$_}, "and no client-chosen $_ reaches it"
+        for qw( stripe_subscription_id billing_status trial_ends_at );
+};
+
+# Signup takes no card, so an offer with a monthly base is not one it lists.
+subtest 'a priced platform offer is not listed' => sub {
+    my $priced = Registry::DAO::Offer->create( $db, { name => 'Priced Test Tier' } )->draft( $db,
+        offer_terms( '00000000-0000-0000-0001-000000000001',
+            price_cents   => 4900,
+            payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
+        ) )->publish($db);
+
+    ok !( grep { $_->{id} eq $priced->id } platform_offers_to_tenants($db)->@* ), 'it is not listed';
+    my $run = signup_run( 'pricedchoice', selected_offer_version => $priced->id );
+    isnt $payment_step->get_subscription_config( $db, $run )->{plan_name}, 'Priced Test Tier',
+        'and a run carrying it is not quoted it';
 };
 
 done_testing();

@@ -20,7 +20,8 @@ my $db      = $dao->db;
 # An unquoted identifier here ("SET search_path TO my-tenant, ...")
 # is a syntax error in PostgreSQL, so the schema must be quoted.
 my $schema = 'test-hyphen-tenant';
-$db->query(qq{CREATE SCHEMA IF NOT EXISTS "$schema"});
+# A real tenant schema: the steps no longer fall back to registry's tables.
+$db->query('SELECT clone_schema(?)', $schema);
 
 my $workflow = Registry::DAO::Workflow->create($db, {
     name        => 'Attendance Check',

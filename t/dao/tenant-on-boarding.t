@@ -8,6 +8,7 @@ defer { done_testing };
 use Mojo::Home;
 use Registry::DAO      qw(WorkflowStep);
 use Test::Registry::DB ();
+use Test::Registry::Helpers;
 use YAML::XS           qw( Load );
 
 my $test_db = Test::Registry::DB->new();
@@ -74,7 +75,8 @@ Registry::DAO::Template->import_from_file( $dao, $_ )
     local $ENV{STRIPE_PUBLISHABLE_KEY} = undef;
     local $ENV{STRIPE_SECRET_KEY} = undef;
 
-    $run->process( $dao->db, $run->next_step( $dao->db ), { terms_accepted => 1 } );
+    $run->process( $dao->db, $run->next_step( $dao->db ),
+        { terms_accepted => 1, offer_version => platform_solo_offer_version_id($dao) } );
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
     $run->process( $dao->db, $run->next_step( $dao->db ), {} );
     is $run->next_step( $dao->db ), undef, 'Next step is correct';

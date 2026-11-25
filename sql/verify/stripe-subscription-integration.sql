@@ -5,9 +5,9 @@ BEGIN;
 SET client_min_messages = 'warning';
 SET search_path TO registry, public;
 
--- Verify Stripe columns exist on tenants table
-SELECT stripe_customer_id, stripe_subscription_id, billing_status, trial_ends_at, subscription_started_at
-FROM tenants LIMIT 1;
+-- The tenants billing columns this change added are dropped by
+-- drop-tenant-billing-columns, whose verify asserts their absence; nothing
+-- about them is true both here and at the end of the plan.
 
 -- Verify billing columns exist on tenant_profiles table
 SELECT billing_email, billing_phone, billing_address, organization_type

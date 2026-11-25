@@ -1,5 +1,5 @@
-# ABOUTME: Verifies TenantPayment quotes the launch plan and grants the platform's published offer at signup
-# ABOUTME: including when nobody chose a plan, which is now every signup.
+# ABOUTME: Verifies TenantPayment quotes the preselected Solo version before any choice is carried,
+# ABOUTME: and grants the platform offer the run carries at signup.
 use 5.42.0;
 use lib qw(lib t/lib);
 use Test::More;
@@ -9,7 +9,6 @@ use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::WorkflowSteps::TenantPayment;
-use Registry::PriceOps::RevenueShare ();
 use Registry::PriceOps::PlatformTerms qw( platform_entitlement_terms );
 use Registry::DAO::User;
 
@@ -31,7 +30,7 @@ my $step = Registry::DAO::WorkflowSteps::TenantPayment->create($db, {
     description => 'Payment step',
 });
 
-subtest 'a run with no plan selection resolves the launch plan' => sub {
+subtest 'a run with no choice yet quotes the preselected Solo version' => sub {
     plan tests => 3;
 
     my $run = Registry::DAO::WorkflowRun->create($db, {
@@ -39,15 +38,11 @@ subtest 'a run with no plan selection resolves the launch plan' => sub {
         data        => { profile => { organization_name => 'NoPlan Org' } },
     });
 
-    my $plan = $step->resolve_selected_plan($db, $run);
-    ok $plan, 'a plan resolves even though nothing was selected';
-    is $plan->id, Registry::PriceOps::RevenueShare::platform_launch_plan_id($db),
-        'and it is the plan the platform sells';
-
     my $config = $step->get_subscription_config($db, $run);
-    is $config->{revenue_share_percent},
-        Registry::PriceOps::RevenueShare::platform_launch_fraction($db) * 100,
-        'the quoted rate is that plan rate, not the Free plan 0%';
+    is $config->{offer_version_id}, '00000000-0000-0000-0003-000000000001', 'Solo v1 is quoted';
+    is $config->{plan_name}, 'Solo', 'by its offer name';
+    is $config->{revenue_share_percent}, 2.5,
+        'at its own rate, not the Free plan 0%';
 };
 
 subtest 'provisioning grants the published platform offer' => sub {
@@ -64,11 +59,7 @@ subtest 'provisioning grants the published platform offer' => sub {
             admin_email           => "planadmin_$$\@test.example",
             admin_username        => "planadmin_$$",
             admin_user_type       => 'admin',
-            subscription          => {
-                stripe_subscription_id => 'sub_test_' . time(),
-                trial_ends_at          => time() + (30 * 24 * 60 * 60),
-                status                 => 'trialing',
-            },
+            selected_offer_version => '00000000-0000-0000-0003-000000000001',
         },
     });
 

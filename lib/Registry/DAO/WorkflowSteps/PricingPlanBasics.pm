@@ -8,6 +8,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::WorkflowStep) {
     use Carp qw( croak );
+    use Registry::DAO::PricingPlan;
 
     method process ($db, $form_data, $run = undef) {
         $run //= do { my $w = $self->workflow($db); $w->latest_run($db) };
@@ -24,6 +25,10 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
                 errors => \@errors
             };
         }
+
+        # Authorship comes from the server-stamped run tenant, never the form.
+        my $offering_tenant_id = $self->get_tenant_id($db, $run)
+            or return { stay => 1, errors => ["This plan has no tenant to author it"] };
 
         # Validate plan name uniqueness globally
         # Since plans are now relationship-agnostic, ensure global uniqueness
@@ -45,6 +50,7 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
                 plan_description => $form_data->{plan_description} || '',
                 plan_type => $form_data->{plan_type},
                 plan_scope => $form_data->{plan_scope},
+                offering_tenant_id => $offering_tenant_id,
             }
         });
 
@@ -53,19 +59,13 @@ class Registry::DAO::WorkflowSteps::PricingPlanBasics :isa(Registry::DAO::Workfl
         return { next_step => $next_step ? $next_step->slug : undef };
     }
 
+    # The run's tenant by slug, registry included; undef when there is none.
     method get_tenant_id($db, $run) {
-        # Get tenant ID from session or run data
-        my $data = $run->data || {};
-
-        # Check if we have tenant context
-        if ($data->{__tenant_slug}) {
-            require Registry::DAO::Tenant;
-            my $tenant = Registry::DAO::Tenant->find($db, { slug => $data->{__tenant_slug} });
-            return $tenant->id if $tenant;
-        }
-
-        # Default to platform tenant
-        return '00000000-0000-0000-0000-000000000000';
+        my $slug = ($run->data || {})->{__tenant_slug};
+        return undef unless defined $slug && length $slug;
+        require Registry::DAO::Tenant;
+        my $tenant = Registry::DAO::Tenant->find($db, { slug => $slug });
+        return $tenant ? $tenant->id : undef;
     }
 
     method prepare_template_data($db, $run, $params = {}) {

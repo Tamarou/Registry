@@ -7,149 +7,31 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
-use Registry::DAO::PricingPlan;
-use Registry::DAO::PricingRelationship;
+use Registry::DAO::Offer;
+use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO::WorkflowSteps::PricingPlanSelection;
 
 my $test_db = Test::Registry::DB->new;
 my $dao = $test_db->db;
 
-# Create platform tenant pricing plans in registry schema
-my $platform_uuid = '00000000-0000-0000-0000-000000000000';
+# The resource every platform offer to tenants buys.
+my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
+
+# A platform offer to tenants at its own rate: a draft, published unless asked
+# otherwise. No monthly base: signup lists no offer it would need a card for.
+sub platform_offer ( $name, $fraction, %opt ) {
+    my $offer = Registry::DAO::Offer->create( $dao->db, { name => $name } );
+    my $version = $offer->draft( $dao->db, offer_terms( $PAYMENT_PROCESSING,
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => $fraction } ],
+    ) );
+    return $opt{draft} ? $version : $version->publish( $dao->db );
+}
 
 subtest 'Test data setup' => sub {
-    # First create a system user for the platform tenant
-    # The platform tenant should already exist from migrations
-    my $platform_user_id = $dao->db->query('SELECT gen_random_uuid()')->array->[0];
-
-    $dao->db->query(q{
-        INSERT INTO registry.users (id, username, passhash, user_type)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT (username) DO NOTHING
-    }, $platform_user_id, 'platform_admin', '$2b$12$DummyHashForSystemUser', 'admin');
-
-    # Reuse whichever row owns the username (seeded by create-default-pricing-relationships, or just inserted).
-    $platform_user_id = $dao->db->query(
-        q{SELECT id FROM registry.users WHERE username = 'platform_admin'}
-    )->hash->{id};
-
-    $dao->db->query(q{
-        INSERT INTO registry.user_profiles (user_id, email, name)
-        VALUES (?, ?, ?)
-        ON CONFLICT DO NOTHING
-    }, $platform_user_id, 'admin@registry.platform', 'Platform Admin');
-
-    $dao->db->query(q{
-        INSERT INTO registry.tenant_users (tenant_id, user_id, is_primary)
-        VALUES (?, ?, ?)
-        ON CONFLICT DO NOTHING
-    }, $platform_uuid, $platform_user_id, 1);
-
-    # Create test pricing plans for the platform tenant
-    my $basic_plan = Registry::DAO::PricingPlan->create($dao->db, {
-        plan_name => 'Registry Basic',
-        plan_type => 'standard',
-        plan_scope => 'tenant',
-        pricing_model_type => 'fixed',
-        amount_cents => 10000,  # $100.00 in cents
-        currency => 'USD',
-        pricing_configuration => {
-            trial_days => 14,
-            billing_cycle => 'monthly',
-            description => 'Perfect for small programs',
-            features => [
-                'Up to 50 student enrollments',
-                'Basic attendance tracking',
-                'Email support'
-            ]
-        },
-        metadata => {
-            display_order => 1,
-            suitable_for => 'small_programs'
-        }
-    });
-
-    my $professional_plan = Registry::DAO::PricingPlan->create($dao->db, {
-        plan_name => 'Registry Professional',
-        plan_type => 'standard',
-        plan_scope => 'tenant',
-        pricing_model_type => 'fixed',
-        amount_cents => 20000,  # $200.00 in cents
-        currency => 'USD',
-        pricing_configuration => {
-            trial_days => 30,
-            billing_cycle => 'monthly',
-            description => 'Complete after-school program management solution',
-            features => [
-                'Unlimited student enrollments',
-                'Attendance tracking and reporting',
-                'Parent communication tools',
-                'Payment processing',
-                'Waitlist management',
-                'Staff scheduling',
-                'Custom reporting'
-            ]
-        },
-        metadata => {
-            display_order => 2,
-            suitable_for => 'medium_programs'
-        }
-    });
-
-    my $enterprise_plan = Registry::DAO::PricingPlan->create($dao->db, {
-        plan_name => 'Registry Enterprise',
-        plan_type => 'standard',
-        plan_scope => 'tenant',
-        pricing_model_type => 'fixed',
-        amount_cents => 50000,  # $500.00 in cents
-        currency => 'USD',
-        pricing_configuration => {
-            trial_days => 30,
-            billing_cycle => 'monthly',
-            description => 'Advanced features for large organizations',
-            features => [
-                'Everything in Professional',
-                'Advanced analytics and reporting',
-                'White-label customization',
-                'Priority support',
-                'Custom integrations',
-                'Multi-location management'
-            ]
-        },
-        metadata => {
-            display_order => 3,
-            suitable_for => 'large_programs'
-        }
-    });
-
-    # Create pricing relationships to link plans to platform tenant
-    Registry::DAO::PricingRelationship->create($dao->db, {
-        provider_id => $platform_uuid,
-        consumer_id => $platform_user_id,  # Use platform user as consumer
-        pricing_plan_id => $basic_plan->id,
-        status => 'active',
-        metadata => { plan_type => 'tenant_subscription' }
-    });
-
-    Registry::DAO::PricingRelationship->create($dao->db, {
-        provider_id => $platform_uuid,
-        consumer_id => $platform_user_id,
-        pricing_plan_id => $professional_plan->id,
-        status => 'active',
-        metadata => { plan_type => 'tenant_subscription' }
-    });
-
-    Registry::DAO::PricingRelationship->create($dao->db, {
-        provider_id => $platform_uuid,
-        consumer_id => $platform_user_id,
-        pricing_plan_id => $enterprise_plan->id,
-        status => 'active',
-        metadata => { plan_type => 'tenant_subscription' }
-    });
-
-    ok $basic_plan->id, 'Basic plan created';
-    ok $professional_plan->id, 'Professional plan created';
-    ok $enterprise_plan->id, 'Enterprise plan created';
+    ok platform_offer( 'Registry Basic',        0.03 )->id, 'Basic offer published';
+    ok platform_offer( 'Registry Professional', 0.04 )->id, 'Professional offer published';
+    ok platform_offer( 'Registry Enterprise',   0.05 )->id, 'Enterprise offer published';
 };
 
 subtest 'Create workflow with pricing plan selection step' => sub {
@@ -205,10 +87,10 @@ subtest 'PricingPlanSelection step functionality' => sub {
     ok $result->{data}->{pricing_plans}, 'Pricing plans available';
     cmp_ok scalar(@{$result->{data}->{pricing_plans}}), '>=', 3, 'At least three pricing plans available';
 
-    # By name, not by position. This file seeds its own plans, and the shipped
-    # seed offers the Solo/Studio/Empire ladder alongside them -- so an index is
-    # a statement about what else happens to be on offer, which is not what this
-    # subtest is about. Their relative order is asserted directly instead.
+    # By name, not by position. This file publishes its own offers, and the
+    # shipped seed publishes Solo alongside them -- so an index is a statement
+    # about what else happens to be on offer, which is not what this subtest is
+    # about. Their relative order is asserted directly instead.
     my $plans = $result->{data}->{pricing_plans};
     my %pos   = map { $plans->[$_]{plan_name} => $_ } 0 .. $#$plans;
 
@@ -224,11 +106,9 @@ subtest 'PricingPlanSelection step functionality' => sub {
     # Verify plan data structure
     my $basic_plan = $plans->[ $pos{'Registry Basic'} ];
     ok $basic_plan->{id}, 'Plan has ID';
-    is $basic_plan->{amount_cents}, 10000, 'Plan amount correct';
-    is $basic_plan->{currency}, 'USD', 'Plan currency correct';
-    ok $basic_plan->{pricing_configuration}, 'Plan has pricing configuration';
-    ok $basic_plan->{pricing_configuration}->{features}, 'Plan has features list';
-    like $basic_plan->{pricing_configuration}->{description}, qr/small programs/, 'Plan has description';
+    is $basic_plan->{amount_cents}, 0, 'Plan has no monthly base';
+    is $basic_plan->{currency}, 'usd', 'Plan currency correct';
+    is $basic_plan->{pricing_configuration}{percentage}, '0.03', 'Plan carries its version rate';
 };
 
 subtest 'Plan selection processing' => sub {
@@ -256,16 +136,10 @@ subtest 'Plan selection processing' => sub {
     });
 
     ok !$result->{_validation_errors}, 'No errors when selecting valid plan';
-    ok $result->{selected_pricing_plan}, 'Moves to next step after selection';
 
-    # Verify plan was stored in workflow data
-    my $stored_plan = $run->data->{selected_pricing_plan};
-
-    ok $stored_plan, 'Pricing plan stored in workflow data';
-    is $stored_plan->{id}, $professional_plan->{id}, 'Correct plan ID stored';
-    is $stored_plan->{plan_name}, 'Registry Professional', 'Correct plan name stored';
-    is $stored_plan->{amount_cents}, 20000, 'Correct amount stored';
-    ok $stored_plan->{pricing_configuration}, 'Pricing configuration stored';
+    # Only the version id is carried; its terms are re-read where quoted.
+    is $run->data->{selected_offer_version}, $professional_plan->{id},
+        'the chosen offer version is stored in workflow data';
 };
 
 subtest 'Error handling' => sub {
@@ -296,17 +170,8 @@ subtest 'Error handling' => sub {
     ok $result->{_validation_errors}, 'Error when invalid plan selected';
     like $result->{_validation_errors}->[0], qr/not available/i, 'Appropriate error message for invalid plan';
 
-    # Test plan that exists but isn't active for platform
-    my $inactive_plan = Registry::DAO::PricingPlan->create($dao->db, {
-        plan_name => 'Inactive Plan',
-        plan_type => 'standard',
-        plan_scope => 'tenant',
-        amount_cents => 15000,
-        currency => 'USD',
-        pricing_configuration => { trial_days => 14 }
-    });
-
-    # Don't create a pricing relationship for this plan
+    # An offer version that exists but is not published
+    my $inactive_plan = platform_offer( 'Inactive Plan', 0.035, draft => 1 );
 
     $result = $pricing_step->process($dao->db, {
         selected_plan_id => $inactive_plan->id
@@ -314,6 +179,18 @@ subtest 'Error handling' => sub {
 
     ok $result->{_validation_errors}, 'Error when plan not available for platform';
     like $result->{_validation_errors}->[0], qr/not available/i, 'Appropriate error message for unavailable plan';
+
+    # A published offer with a monthly base: signup takes no card, so it is
+    # neither listed nor selectable.
+    my $priced = Registry::DAO::Offer->create( $dao->db, { name => 'Priced Plan' } )->draft( $dao->db,
+        offer_terms( $PAYMENT_PROCESSING,
+            price_cents   => 15000,
+            payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
+        ) )->publish( $dao->db );
+    ok !( grep { $_->{id} eq $priced->id } $pricing_step->process( $dao->db, {} )->{data}{pricing_plans}->@* ),
+        'a priced plan is not listed';
+    $result = $pricing_step->process( $dao->db, { selected_plan_id => $priced->id } );
+    like $result->{_validation_errors}->[0], qr/not available/i, 'and selecting it is refused';
 };
 
 subtest 'Template method' => sub {

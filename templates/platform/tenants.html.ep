@@ -43,7 +43,7 @@
             <thead>
                 <tr>
                     <th>Tenant</th><th>Created</th><th>Plan</th>
-                    <th>Billing</th><th>Payments</th><th>Provisioning</th>
+                    <th>Payments</th><th>Provisioning</th>
                 </tr>
             </thead>
             <tbody>
@@ -58,12 +58,6 @@
                         </td>
                         <td><%= substr($t->{created_at} // '', 0, 10) %></td>
                         <td><%= $t->{plan_name} // 'none' %></td>
-                        <td>
-                            <%= $t->{billing_status} // 'unknown' %>
-                            % if ($t->{trial_ends_at}) {
-                                <br><span class="text-secondary">trial ends <%= substr($t->{trial_ends_at}, 0, 10) %></span>
-                            % }
-                        </td>
                         <td>
                             %# The three columns the publish gate reads. Diagnosing
                             %# "this tenant cannot publish a paid session" was

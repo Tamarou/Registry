@@ -47,6 +47,55 @@ active and the period covers T (in_effect_sql).
         return $class->SUPER::create( $db, \%row );
     }
 
+    # Accepts offer version $data->{offer_version_id} under its payment plan
+    # $data->{payment_plan_id} for the one holder $data names, in effect from
+    # starts_at (default now): the one way a schedule-type offer is accepted.
+    # Throws Registry::DAO::Entitlement::Refused, creating nothing, when the
+    # version is not published and current at this moment, does not offer the
+    # plan, the plan is one-time (an entitlement follows its payment, not an
+    # accept), or the holder already has this offer in effect. Joins the
+    # caller's transaction.
+    sub accept ( $class, $db, $data ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my %row = ( starts_at => 'now', %$data );
+        my ( $version_id, $plan_id ) = @row{qw( offer_version_id payment_plan_id )};
+        my $refuse = sub ($why) { Registry::DAO::Entitlement::Refused->throw("$why\n") };
+        my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+
+        # Locked: a supersede waits for this accept to commit, or this accept
+        # waits for the supersede and then reads the version as retired.
+        my ($offer_id) = @{ $db->query( q{
+            SELECT offer_id FROM offer_versions
+             WHERE id::text = ? AND published_at IS NOT NULL AND superseded_at IS NULL FOR SHARE
+        }, $version_id // '' )->array // [] };
+        $refuse->("Offer version $version_id is not on offer: it is unpublished or has been replaced.")
+            unless $offer_id;
+
+        my $kind = $db->select( 'offer_version_payment_plans', 'kind',
+            { offer_version_id => $version_id, id => $plan_id // '' } )->array;
+        $refuse->( sprintf "Offer version %s does not offer payment plan '%s'.", $version_id, $plan_id // '' )
+            unless $kind;
+        $refuse->("Payment plan '$plan_id' is one-time: it is accepted by paying for it.")
+            if $kind->[0] eq 'one_time';
+
+        # One phase of a schedule offer per holder at a time, as the exclusion
+        # constraint has it; two accepts for one holder and offer take turns,
+        # so the second reads the first and is refused here, not by it.
+        my $holder = $row{holder_user_id} // $row{holder_family_member_id} // $row{holder_tenant_id};
+        $db->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', "accept:$holder:$offer_id" );
+        $refuse->('This holder already holds this offer in effect.')
+            if $db->query( q{
+                SELECT EXISTS (SELECT 1 FROM entitlements
+                    WHERE coalesce(holder_user_id, holder_family_member_id, holder_tenant_id) = ?
+                      AND offer_id = ? AND plan_kind <> 'one_time'
+                      AND in_effect && tstzrange(?::timestamptz, ?::timestamptz, '[)'))
+            }, $holder, $offer_id, @row{qw( starts_at ends_at )} )->array->[0];
+
+        my $entitlement = $class->create( $db, \%row );
+        $tx->commit if $tx;
+        return $entitlement;
+    }
+
     # Grants $data's entitlement holding units of $data->{resource_id}: either
     # `units` (a count, lowest free numbers first) or `unit_numbers` (named).
     # All or nothing, under the resource's lock.
@@ -125,6 +174,60 @@ active and the period covers T (in_effect_sql).
         return __PACKAGE__->new(%$row);
     }
 
+    # Ends as `expired` each active entitlement whose stamped expiry policy is
+    # end_of_occurrence and whose units are on an occurrence that has ended,
+    # at that occurrence's end. Its units are read under its row lock, so a
+    # change that moved it is followed and a concurrent sweep expires it once.
+    # Returns the ids it expired.
+    sub expire_ended_occurrences ( $class, $db ) {
+        $db = $db->db if $db isa Registry::DAO;
+        # shortcut: every active end_of_occurrence entitlement is read each run;
+        # prefilter on its events' times if this grows slow.
+        my $candidates = $db->query( q{
+            SELECT e.id FROM entitlements e JOIN offer_versions v ON v.id = e.offer_version_id
+             WHERE e.state = 'active' AND v.policies->'expiry'->>'kind' = 'end_of_occurrence'
+        } )->arrays->flatten;
+
+        my @expired;
+        for my $id (@$candidates) {
+            my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+            next unless $db->query( q{SELECT 1 FROM entitlements WHERE id = ? AND state = 'active' FOR UPDATE},
+                $id )->rows;
+            my @ends = map { ( $_->occurrence_window($db) )[1] }
+                grep { $_->event_id } map { scalar Registry::DAO::Resource->find( $db, { id => $_ } ) }
+                $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
+                ->arrays->flatten->each;
+            my ( $over, $ended ) = $db->query(
+                'SELECT max(e) <= now(), max(e) FROM unnest(?::timestamptz[]) e', \@ends )->array->@*;
+            next unless $over;
+            scalar( $class->find( $db, { id => $id } ) )->end( $db, 'expired', 'occurrence ended', $ended );
+            $tx->commit if $tx;
+            push @expired, $id;
+        }
+        return \@expired;
+    }
+
+    # Records that it was used at occurrence $occurrence_id, marked by
+    # $recorded_by. Use is optional attendance: nothing requires a use, and
+    # recording one changes no state, units, period or money. Throws
+    # Registry::DAO::Entitlement::Refused, recording nothing, unless it is in
+    # effect now, its stamped use policy is optional attendance, and it holds
+    # units of that occurrence. A second record of the pair keeps the first.
+    method record_use ( $db, $occurrence_id, $recorded_by = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $refuse = sub ($why) { Registry::DAO::Entitlement::Refused->throw("$why\n") };
+        $refuse->('This booking is not in effect: it has ended or been refunded.')
+            unless $self->is_in_effect($db);
+        $refuse->("This booking's offer does not record attendance.")
+            unless ( ( $self->offer_version($db)->policies->{use} // {} )->{kind} // '' ) eq 'optional_attendance';
+        $refuse->('This booking holds no place in that occurrence.')
+            unless $self->units( $db, $occurrence_id )->@*;
+        $db->insert( 'entitlement_uses',
+            { entitlement_id => $id, occurrence_id => $occurrence_id, recorded_by => $recorded_by },
+            { on_conflict => undef } );
+        return $self;
+    }
+
     # Entitlements $payment_id created: what its refunds and disputes match.
     sub created_by_payment ( $class, $db, $payment_id ) {
         return $class->find( $db, { payment_id => $payment_id } );
@@ -138,8 +241,9 @@ active and the period covers T (in_effect_sql).
         return scalar Registry::DAO::Payment->find( $db, { id => $payment_id } );
     }
 
-    # Records a partial refund Stripe reported: $refund names amount_cents and
-    # stripe_refund_id. It stays in effect. The same refund id records once.
+    # Records its part of a refund Stripe reported: $refund names amount_cents
+    # and stripe_refund_id. It changes no state. The same refund id records
+    # once per entitlement; one refund may be shared among several.
     method record_refund ( $db, $refund ) {
         $db = $db->db if $db isa Registry::DAO;
         $db->insert( 'entitlement_refunds', { %$refund, entitlement_id => $id },
@@ -191,5 +295,8 @@ active and the period covers T (in_effect_sql).
         ] } );
     }
 }
+
+# What accept refuses with: a message for the person accepting, never a database error.
+package Registry::DAO::Entitlement::Refused { use Mojo::Base 'Mojo::Exception' }
 
 1;

@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: The tier ladder a prospect actually sees, asserted against the SHIPPED seed.
-# ABOUTME: t/controller/tenant-pricing-display.t seeds its own Solo/Studio/Empire; this one must not.
+# ABOUTME: The plans a prospect actually sees, asserted against the SHIPPED seed: the published Solo version alone.
+# ABOUTME: t/controller/tenant-pricing-display.t publishes its own offers; this one must not.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -11,7 +11,6 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::WorkflowSteps::PricingPlanSelection;
 use Registry::PriceOps::RevenueShare;
-use Mojo::File qw( path );
 
 # The point of this file. The display test builds its own Solo/Studio/Empire
 # fixtures, so it passed for as long as the machinery worked -- while the
@@ -27,9 +26,8 @@ my $db      = $dao->db;
 
 # The plan-choice page left the signup funnel when Solo became the only tier on
 # sale, so the step is built here rather than looked up in tenant-signup. What
-# this file asserts is unchanged: the ladder the seed ships, the rate it
-# carries, and the refusal that keeps an anchor from being bought. The ladder
-# still has to be right -- it is what Studio and Empire launch onto.
+# this file asserts: what the seed publishes, the rate it
+# carries, and the refusal that keeps an unpublished tier from being bought.
 my $workflow = Registry::DAO::Workflow->create( $db, {
     name        => 'Tier Ladder Probe',
     slug        => "tier-ladder-$$",
@@ -47,57 +45,31 @@ ok $step, 'the plan-choice step is available to render the ladder';
 my $run   = $workflow->new_run($db);
 my $plans = $step->prepare_pricing_data($db, $run)->{pricing_plans};
 
-subtest 'the signup page offers the tier ladder, in order' => sub {
-    is scalar @$plans, 3, 'three tiers are on offer'
+subtest 'the signup page offers exactly the published Solo version' => sub {
+    is_deeply [ map { $_->{plan_name} } @$plans ], ['Solo'], 'Solo alone is on offer'
         or diag 'got: ' . join( ', ', map { $_->{plan_name} } @$plans );
-
-    is_deeply [ map { $_->{plan_name} } @$plans ], [qw( Solo Studio Empire )],
-        'Solo, Studio, Empire';
-
-    # The sort key itself. display_order and amount_cents happen to be monotone
-    # in the same direction, so the order above cannot tell which one produced
-    # it -- prepare_pricing_data falls back to amount_cents when display_order
-    # is absent, and the list comes out identical either way.
-    is_deeply [ map { $_->{metadata}{display_order} } @$plans ], [ 1, 2, 3 ],
-        'and every tier carries an explicit display_order, which is what sorts them';
+    is $plans->[0]{id}, '00000000-0000-0000-0003-000000000001',
+        'as the version the bootstrap publishes';
 };
 
-subtest 'one tier is buyable and the rest anchor it' => sub {
-    my ($solo, $studio, $empire) = @$plans;
+subtest 'an unpublished offer cannot be selected' => sub {
+    # The seed no longer carries Studio or Empire at all; the one legacy
+    # pricing_plans row left is Solo's own, which is not a published version.
+    is $db->query( q{
+        SELECT count(*) FROM registry.pricing_plans
+         WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'
+           AND superseded_at IS NULL
+    } )->array->[0], 0, 'no seeded Studio or Empire plan is current';
 
-    ok !$solo->{metadata}{coming_soon},   'Solo is buyable';
-    ok $studio->{metadata}{coming_soon},  'Studio is an anchor';
-    ok $empire->{metadata}{coming_soon},  'Empire is an anchor';
+    my $legacy = $db->query(
+        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' AND superseded_at IS NULL}
+    )->array->[0];
 
-    # The ladder only anchors if the prices climb. A free tier beside two other
-    # free tiers is not a price ladder, it is three identical cards.
-    cmp_ok $solo->{amount_cents},   '<', $studio->{amount_cents},
-        'Studio costs more than Solo';
-    cmp_ok $studio->{amount_cents}, '<', $empire->{amount_cents},
-        'and Empire more than Studio';
+    # Fatal precondition. The refusal below would pass on an undef id.
+    ok defined $legacy, "Solo's legacy plan id resolved" or return;
 
-    # And the revenue share falls as the base rises -- that is the trade the
-    # ladder is selling. If it ever inverts, the anchors argue against upgrading.
-    my @rates = map { $_->{pricing_configuration}{percentage} } @$plans;
-    cmp_ok $rates[0], '>', $rates[1], 'Studio takes a smaller share than Solo';
-    cmp_ok $rates[1], '>', $rates[2], 'and Empire smaller than Studio';
-};
-
-subtest 'the anchors cannot be bought, however they are posted' => sub {
-    my ($solo, $studio, $empire) = @$plans;
-
-    # Fatal precondition. validate_plan_selection returns early on a falsy id,
-    # so every refusal below would pass on an undef -- and these four lines are
-    # the whole mutation surface for the guard this ladder depends on.
-    ok defined $solo->{id} && defined $studio->{id} && defined $empire->{id},
-        'all three tier ids resolved' or return;
-
-    ok $step->validate_plan_selection( $db, $solo->{id} ),
-        'the launched tier selects';
-    ok !$step->validate_plan_selection( $db, $studio->{id} ),
-        'Studio is refused server-side, not merely greyed out';
-    ok !$step->validate_plan_selection( $db, $empire->{id} ),
-        'and Empire likewise';
+    ok $step->validate_plan_selection( $db, $plans->[0]{id} ), 'the published Solo version selects';
+    ok !$step->validate_plan_selection( $db, $legacy ), 'a legacy plan id is refused server-side';
 };
 
 # The one place the launch DECISION is written down in a test.
@@ -111,43 +83,22 @@ subtest 'the anchors cannot be bought, however they are posted' => sub {
 # The rate is a decision, not a derived value, so it is pinned once, here, to
 # the number the signup copy quotes.
 subtest 'the launch rate is the rate the platform advertises' => sub {
-    my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    my $launch = Registry::PriceOps::RevenueShare::platform_offered_fraction($db);
 
     cmp_ok abs( $launch - 0.025 ), '<', 1e-9,
         'the launch rate is 2.5%';
 
-    # And the static copy agrees with it. This is the loop the whole rate
-    # exercise exists to close: a number in a template that nothing compares
-    # against the database is how three rates came to be live at once.
-    my $pct = 0 + sprintf '%g', $launch * 100;
-
-    # Every template that quotes a rate, not just the one that prompted this.
-    # Closing the loop on a single file makes a rate move update that file and
-    # leave its siblings saying the old number -- which is the same drift, minus
-    # one door. Adding marketing copy that quotes a rate means adding it here.
-    for my $tpl (
-        'templates/tenant-signup/index.html.ep',
-        'templates/registry-storefront/landing.html.ep',
-    ) {
-        my $copy = path($tpl)->slurp;
-
-        # (?<![\d.]) or "12.5%" satisfies a check for "2.5%" -- the typo the
-        # assertion exists to catch would have passed it.
-        like $copy, qr/(?<![\d.])\Q$pct\E%/,
-            "$tpl quotes ${pct}%, the rate the platform actually charges";
-
-        unlike $copy,
-            qr/(?<![\d.])(?!\Q$pct\E%)\d+(?:\.\d+)?%\s+(?:of\s+)?(?:processed\s+)?revenue/,
-            "$tpl quotes no other rate alongside it, in the phrasings this checks";
-    }
+    # The copy renders this rate rather than restating it:
+    # t/controller/registry-landing-page.t checks both pages and that no
+    # storefront or signup template hard-codes a rate.
 };
 
 subtest 'the buyable tier is the one carrying the advertised rate' => sub {
     my ($solo) = @$plans;
 
-    my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    my $launch = Registry::PriceOps::RevenueShare::platform_offered_fraction($db);
     cmp_ok abs( $solo->{pricing_configuration}{percentage} - $launch ), '<', 1e-9,
-        'Solo charges the rate platform_launch_fraction advertises';
+        'Solo charges the rate platform_offered_fraction advertises';
 
     # The signup copy quotes a rate; the page renders one; the charge path
     # resolves one. This is the seam where they were allowed to differ.

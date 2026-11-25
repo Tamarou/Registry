@@ -11,6 +11,7 @@ use App::Sqitch;
 use File::Temp qw(tempdir);
 use File::Spec;
 use Mojo::Pg;
+use Registry::DAO::Tenant;
 
 # The dump is a generated artefact that goes stale in silence. `make test`
 # regenerates it through its sql/deploy/*.sql dependency, but CI runs a bare
@@ -174,8 +175,6 @@ subtest 'the seeded money configuration matches what the migrations produce' => 
         SELECT plan_scope, plan_name, plan_type, pricing_model_type, amount_cents,
                pricing_configuration->>'description'             AS blurb,
                metadata->>'coming_soon'                          AS coming_soon,
-               metadata->>'launch_rate'                          AS launch_rate,
-               metadata->>'display_order'                        AS display_order,
                pricing_configuration->>'percentage'             AS pct,
                pricing_configuration->>'monthly_base'           AS base,
                pricing_configuration->>'refund_application_fee' AS refund_fee
@@ -197,45 +196,60 @@ subtest 'the seeded money configuration matches what the migrations produce' => 
 };
 
 
-# The plans projection above answers "what rates exist". It does not answer
-# "which of them is on offer", and that is a separate row in a separate table:
-# registry.pricing_relationships carries the status, and two whole migrations
-# exist only to move rows in it -- suspend-rateless-tenant-plans and
-# retire-registry-plus-plan. A dump that still shows a retired plan as active
-# leaves the plans comparison green, because the plan itself did not change.
-#
-# Measured in that direction: flipping the suspend-rateless-tenant-plans row
-# from 'suspended' back to 'active' in the committed dump left both this file
-# and t/priceops/revenue-share.t passing, with the suite running against a
-# rateless plan the migrations had retired.
-#
-# Same stability property as the plans projection: no ids, no timestamps.
-subtest 'the seeded plan relationships match what the migrations produce' => sub {
-    my $projection = q{
-        SELECT r.status, p.plan_scope, p.plan_name,
-               -- The SNAPSHOT, not the joined name. p.plan_name comes through
-               -- the join and is current by construction, so comparing it
-               -- grades nothing about this row. The denormalised copy is the
-               -- one that goes stale when a plan is renamed, and it did.
-               r.metadata->>'plan_name'              AS name_snapshot,
-               r.metadata->>'created_by_migration'   AS created_by,
-               r.metadata->>'suspended_by_migration' AS suspended_by
-          FROM registry.pricing_relationships r
-          JOIN registry.pricing_plans p ON p.id = r.pricing_plan_id
-         ORDER BY p.plan_name, r.status
+# Step 3 of the PriceOps model: the tenant's entitlement is the one record of
+# what a tenant holds, so registry.pricing_relationships is gone, and with it
+# everything that hung off it -- its event log, the view over that log and
+# billing_periods. clone_schema copied all of them into every tenant schema, so
+# a newly provisioned tenant must not carry them either.
+my @DROPPED = qw(
+    pricing_relationships pricing_relationship_events
+    pricing_relationship_current_state billing_periods
+);
+my $DROPPED_RE = join '|', @DROPPED;
+
+my $mpg        = Mojo::Pg->new( $migrated->uri );    # held: a db outlives its Pg only weakly
+my $mdb        = $mpg->db;
+my $new_tenant = 'after_pricing_drop';
+
+subtest 'tenant creation succeeds after the drop' => sub {
+    my $ok = eval {
+        Registry::DAO::Tenant->create( $mdb, { name => 'After Pricing Drop', slug => $new_tenant } );
+        $mdb->query( 'SELECT registry.clone_schema(?)', $new_tenant );
+        1;
     };
+    ok $ok, 'a tenant is created and its schema cloned' or diag $@;
+    ok $mdb->query( 'SELECT to_regnamespace(?) IS NOT NULL AS ok', $new_tenant )->hash->{ok},
+        'and the tenant schema exists';
+};
 
-    my $from_migrations =
-        Mojo::Pg->new( $migrated->uri )->db->query($projection)->hashes->to_array;
-    my $from_dump =
-        Mojo::Pg->new( $restored->uri )->db->query($projection)->hashes->to_array;
+subtest 'pricing relationship tables are dropped' => sub {
+    for my $schema ( 'registry', $new_tenant ) {
+        for my $rel (@DROPPED) {
+            ok !$mdb->query( 'SELECT to_regclass(?) IS NOT NULL AS present',
+                    $mdb->dbh->quote_identifier($schema) . ".$rel" )->hash->{present},
+                "$schema.$rel is gone";
+        }
+    }
+};
 
-    ok scalar @$from_migrations, 'the migrations seed at least one relationship'
-        or return;
-    is_deeply $from_dump, $from_migrations,
-        'the committed dump offers the same plans as sql/deploy/'
-        or diag 'run `make test-schema` -- a plan retired by a migration is '
-              . 'still on offer in this dump';
+# A function, trigger function or view that still names a dropped table
+# deploys fine and fails only when something calls it. public is included:
+# the event log's sequence guard and its point-in-time reader were created
+# there, unqualified.
+subtest 'no routine references a dropped pricing table' => sub {
+    my $stale = $mdb->query( q{
+        SELECT n.nspname || '.' || p.proname AS name
+          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = ANY (?) AND p.prosrc ~ ?
+        UNION ALL
+        SELECT schemaname || '.' || viewname
+          FROM pg_views
+         WHERE schemaname = ANY (?) AND definition ~ ?
+         ORDER BY 1
+    }, [ 'registry', 'public', $new_tenant ], $DROPPED_RE,
+       [ 'registry', 'public', $new_tenant ], $DROPPED_RE )->arrays->map( sub { $_->[0] } )->to_array;
+    is_deeply $stale, [], 'no function or view body names a dropped table'
+        or diag "still referenced by: @$stale";
 };
 
 

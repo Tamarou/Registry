@@ -1,0 +1,44 @@
+%# ABOUTME: entitlement-change step: the person pays the change fee while the target's seats are held.
+%# ABOUTME: Posting starts the one-time payment; Stripe's form then confirms it and returns here with payment_intent.
+% extends 'layouts/workflow';
+% title 'Pay the change fee';
+% my $change = stash('change_hold') // {};
+% my $step_data = stash('step_data') // {};
+%= include 'entitlement-change/_errors'
+
+<section class="card">
+  <p>Change fee: $<%= sprintf '%.2f', ($change->{fee_cents} // 0) / 100 %></p>
+  % if (my $message = $step_data->{message}) {
+  <p><%= $message %></p>
+  % }
+</section>
+
+% if ($step_data->{show_stripe_form}) {
+<form id="payment-form">
+  <div id="payment-element"></div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Pay $<%= sprintf '%.2f', ($change->{fee_cents} // 0) / 100 %></button>
+  </div>
+</form>
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+  // A direct charge's intent confirms only on the seller's account it was created on.
+  const stripe = Stripe(<%== Mojo::JSON::encode_json($ENV{STRIPE_PUBLISHABLE_KEY} // '') %>,
+    { stripeAccount: <%== Mojo::JSON::encode_json($step_data->{stripe_account} // '') %> });
+  const elements = stripe.elements({ clientSecret: <%== Mojo::JSON::encode_json($step_data->{client_secret} // '') %> });
+  elements.create('payment').mount('#payment-element');
+  document.getElementById('payment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const { error } = await stripe.confirmPayment({ elements, confirmParams: {
+      return_url: <%== Mojo::JSON::encode_json(url_for('workflow_step', workflow => 'entitlement-change', run => $run->id, step => 'pay')->to_abs->to_string) %>,
+    } });
+    if (error) alert(error.message);
+  });
+</script>
+% } else {
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Pay the change fee</button>
+  </div>
+</form>
+% }

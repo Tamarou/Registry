@@ -12,21 +12,29 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
 
     my $UUID = qr/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
 
+    # Every run key _terms_of may copy.
+    my @TERMS = qw( offer_price one_time_payment percentage_of_sales_payment
+        refund_policy change_policy use_policy expiry_policy );
+
     method process ( $db, $form_data, $run = undef ) {
         my ( $resource_id, $name ) = $form_data->@{qw( resource_id offer_name )};
         $name = ref $name ? '' : ( $name // '' ) =~ s/\A\s+|\s+\z//gr;
 
         # A new version of one of this schema's published offers, keeping its
         # name; the later steps start from its current version's terms.
+        # The run's data only merges, so copied terms are cleared with nulls: all
+        # of them before copying an offer's, and after one when a new offer is chosen.
+        my %cleared  = map { $_ => undef } @TERMS;
         my $offer_id = $form_data->{offer_id};
-        my ( %basis, %prefill );
+        my %basis;
+        my %prefill = $run && ( $run->data->{offer_basics} // {} )->{based_on_version_id} ? %cleared : ();
         if ( defined $offer_id && !ref $offer_id && length $offer_id ) {
             my $offer   = $offer_id =~ $UUID && Registry::DAO::Offer->find( $db, { id => $offer_id } );
             my $current = $offer && $offer->current_version($db)
                 or return { stay => 1, errors => ['Choose one of your published offers'] };
             $name    = $offer->name;
             %basis   = ( offer_id => $offer->id, based_on_version_id => $current->id );
-            %prefill = _terms_of( $db, $current );
+            %prefill = ( %cleared, _terms_of( $db, $current ) );
         }
 
         # Class mode: the resource step wrote the class key, re-checked here

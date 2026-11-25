@@ -13,6 +13,7 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor 
         my $tenant_schemas = $data->{tenant_schemas} || [];
         
         my $processed_count = 0;
+        my @skipped;
         my $notifications_sent = 0;
 
         # The loop points the search_path at each tenant schema in turn; a
@@ -25,14 +26,16 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor 
                 # Set schema search path. Quote the tenant schema so names
                 # containing hyphens (e.g. "my-tenant") stay valid.
                 my $quoted = $db->dbh->quote_identifier($schema);
-                $db->query("SET search_path TO $quoted, registry, public");
+                # No registry fallback: a tenant missing a table must fail, not reread registry.
+                $db->query("SET search_path TO $quoted, public");
                 
                 my $result = $self->check_tenant_missing_attendance($db, $schema);
                 $processed_count++;
                 $notifications_sent += $result->{notifications_sent} || 0;
             }
             catch ($e) {
-                warn "Error processing missing attendance for tenant $schema: $e";
+                ( my $reason = "$e" ) =~ s{\s+}{ }g;
+                push @skipped, { slug => $schema, error => $reason };
             }
         }
 
@@ -40,7 +43,8 @@ class Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor 
         
         $run->update_data($db, {
             missing_attendance_processed => $processed_count,
-            missing_attendance_notifications => $notifications_sent
+            missing_attendance_notifications => $notifications_sent,
+            missing_attendance_skipped => \@skipped
         });
         
         return;

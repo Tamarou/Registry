@@ -4,11 +4,12 @@ use utf8;
 use Object::Pad;
 
 class Registry::Job::AttendanceCheck {
+    use Registry::Job::Recurring;
     use Registry::Job::WorkflowExecutor;
     
     # Register this job with Minion
     sub register ($class, $app) {
-        $app->minion->add_task(attendance_check => sub ($job, @args) {
+        Registry::Job::Recurring->add_task( $app, attendance_check => sub ($job, @args) {
             $class->new->run($job, @args);
         });
     }
@@ -21,34 +22,23 @@ class Registry::Job::AttendanceCheck {
         my $workflow_opts = {
             workflow_slug => 'attendance-check',
             context => $opts->{context} || {},
-            reschedule => {
-                enabled => 1,
-                delay => 60,        # 1 minute
-                attempts => 3,
-                priority => 5
-            }
         };
         
         # Delegate to generic workflow executor
         my $executor = Registry::Job::WorkflowExecutor->new;
-        $executor->run($job, $workflow_opts);
+        my $run = $executor->run($job, $workflow_opts) or return;    # the executor has failed the job
+
+        # Finish with the tenants covered and skipped, as the other sweeps do.
+        # Re-read: the steps wrote their results through their own run object.
+        my $data = Registry::DAO::WorkflowRun->find( $job->app->dao->db, { id => $run->id } )->data;
+        my %skipped = map { $_->{slug} => $_ }
+            map { @{ $data->{$_} // [] } } qw( missing_attendance_skipped upcoming_events_skipped );
+        $job->finish( {
+            tenants_covered => [ grep { !$skipped{$_} } @{ $data->{tenant_schemas} // [] } ],
+            tenants_skipped => [ map { $skipped{$_} } sort keys %skipped ],
+        } );
     }
-    
-    # Helper method to start attendance check
-    sub start_monitoring ($class, $app, %opts) {
-        return Registry::Job::WorkflowExecutor->enqueue_workflow(
-            $app, 
-            'attendance-check',
-            reschedule => {
-                enabled => 1,
-                delay => $opts{interval} || 60,
-                attempts => 3,
-                priority => 5
-            },
-            %opts
-        );
-    }
-    
+
     # Backward compatibility method for tests
     method check_tenant_attendance ($job, $db, $schema) {
         my $notifications_sent = 0;

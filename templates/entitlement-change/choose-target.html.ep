@@ -1,0 +1,26 @@
+%# ABOUTME: entitlement-change step: the person picks which of their bookings to move.
+%# ABOUTME: Lists only the bookings they hold or paid for that are in effect; an admin arrives with entitlement_id instead.
+% extends 'layouts/workflow';
+% title 'Change a booking';
+% stash description => 'Move a booking to another time of the same class.';
+% my $bookings = stash('bookings') // [];
+%= include 'entitlement-change/_errors'
+
+<form method="POST" action="<%= $action %>">
+  % if (@$bookings) {
+  <fieldset>
+    <legend>Which booking?</legend>
+    % for my $booking (@$bookings) {
+    <div>
+      <input type="radio" id="booking-<%= $booking->{id} %>" name="entitlement_id" value="<%= $booking->{id} %>" required>
+      <label for="booking-<%= $booking->{id} %>"><%= $booking->{name} %></label>
+    </div>
+    % }
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+  % } else {
+  <p>You have no bookings that can be changed.</p>
+  % }
+</form>

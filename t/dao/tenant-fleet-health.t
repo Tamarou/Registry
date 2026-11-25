@@ -54,7 +54,7 @@ my $healthy = Registry::DAO::Tenant->provision( $db, {
     name => 'Healthy Studio', slug => 'healthy_studio',
     users => [ $owner ],
 } );
-state_platform_terms( $db, $healthy->slug, { rate => 0 } );
+state_platform_terms( $db, $healthy->slug, { rate => 0, name => 'Fleet Terms' } );
 
 # And one whose schema was never built: a tenant row with nothing behind it.
 # This is the shape #265 is about -- the sweeps isolate these and nothing
@@ -76,7 +76,6 @@ subtest 'every tenant is listed, with what Alex is asked to know' => sub {
     my $row = $fleet->{healthy_studio};
     is $row->{name}, 'Healthy Studio', 'name';
     ok $row->{created_at}, 'created';
-    ok exists $row->{billing_status}, 'billing status';
     ok exists $row->{canonical_domain}, 'canonical domain';
     ok exists $row->{stripe_connect_account_id}, 'Connect account';
     ok exists $row->{stripe_charges_enabled}, 'and whether it can take money';
@@ -127,6 +126,22 @@ subtest 'a half-provisioned schema does not take the fleet down' => sub {
 
     # The others are still reported, which is the reason to catch rather than die.
     ok $fleet->{healthy_studio}{healthy}, 'the healthy tenant is unaffected';
+};
+
+subtest 'fleet view reports platform offer from entitlement' => sub {
+    my $row = fleet_by_slug()->{healthy_studio};
+
+    is $row->{plan_name}, 'Fleet Terms', 'the offer named is the one its entitlement holds';
+    ok !exists $row->{$_}, "and no $_ is reported"
+        for qw( billing_status trial_ends_at stripe_subscription_id );
+};
+
+subtest 'tenant without entitlement shows no platform offer' => sub {
+    my $row = fleet_by_slug()->{broken_studio};
+
+    is $row->{plan_name}, undef, 'no offer is named, so the screen shows none';
+    ok scalar( grep { /holds no platform entitlement/ } @{ $row->{problems} } ),
+        'and the missing entitlement is a stated problem, not Solo, 0% or Free';
 };
 
 done_testing;

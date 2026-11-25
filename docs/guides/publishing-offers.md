@@ -86,8 +86,9 @@ Whether the offer is bound to an occurrence decides which policies it may
 carry later (see the [policy table](#the-day-one-policies)). An offer is bound
 when its resource is an occurrence or it covers a class.
 
-The resource is created when you continue. Going back and submitting again does
-not create a second one.
+The resource is created when you continue, once per run: if the same run
+answers this screen again, it keeps the resource it already made. (The screens
+don't yet let you go back to an earlier step in the browser.)
 
 ### Name your offer
 
@@ -102,8 +103,18 @@ If the tenant already has published offers, an **Offer** choice appears:
   payment plan with its rate, and each policy with its cutoff, window and fee
   are already chosen and filled in. Change only what differs; submitting each
   screen unchanged publishes a version with the same terms. A screen you have
-  already answered in this run shows your answer; choosing the offer again on
-  **Name your offer** starts the later screens from its current terms once more.
+  already answered in this run shows your answer.
+
+When **Name your offer** is answered again later in the run, the terms are
+reset:
+
+- Choosing an offer, the same one or another, replaces every answer on the
+  later screens with that offer's current terms. A screen whose policy that
+  version lacks starts blank.
+- Choosing **A new offer** after a version clears every answer on the later
+  screens: the price screen starts from its defaults, and every payment-plan
+  and policy screen starts blank.
+- Choosing **A new offer** when no version was chosen before keeps your answers.
 
 ### Price your offer
 
