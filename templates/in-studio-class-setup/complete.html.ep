@@ -1,0 +1,20 @@
+%# ABOUTME: in-studio-class-setup's last screen: the class's offer version is published and can no longer change.
+%# ABOUTME: Starts a new run for another offer on the same class, and the schedule workflow.
+% extends 'layouts/workflow';
+% title 'Offer published';
+% my $basics = stash('offer_basics') // {};
+% my $class_id = (stash('resource_choice') // {})->{class_project_id};
+
+<section class="card">
+  <h2><%= $basics->{offer_name} %> is published</h2>
+  <p>This version of the offer cannot be changed. It covers every occurrence of the class, now and later.</p>
+  %# A new run each time: the session's run is not complete until this step is.
+  <form method="POST" action="<%= url_for('workflow_start', workflow => 'in-studio-class-setup') %>">
+    <input type="hidden" name="class_mode" value="existing">
+    <input type="hidden" name="class_project_id" value="<%= $class_id %>">
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Add another offer to this class</button>
+      <a class="btn btn-secondary" href="<%= url_for('workflow_index', workflow => 'in-studio-schedule') %>">Schedule occurrences</a>
+    </div>
+  </form>
+</section>

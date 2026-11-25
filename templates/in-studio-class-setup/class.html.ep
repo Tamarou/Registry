@@ -1,0 +1,64 @@
+%# ABOUTME: in-studio-class-setup's first step: pick one of this tenant's classes, or create one.
+%# ABOUTME: A new class has a name, a location and a whole number of seats per occurrence.
+% extends 'layouts/workflow';
+% title 'Class';
+% stash description => 'Choose the class this offer is for, or create it.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Class</legend>
+    <div>
+      <input type="radio" id="class_mode-existing" name="class_mode" value="existing" required>
+      <label for="class_mode-existing">One of my classes</label>
+    </div>
+    <div>
+      <input type="radio" id="class_mode-create" name="class_mode" value="create" required>
+      <label for="class_mode-create">Create a new class</label>
+    </div>
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="class_project_id">Existing class</label>
+    <select class="form-select" id="class_project_id" name="class_project_id">
+      <option value="">None</option>
+      % for my $class (@{ stash('classes') // [] }) {
+      <option value="<%= $class->id %>"><%= $class->name %></option>
+      % }
+    </select>
+  </div>
+
+  <fieldset>
+    <legend>New class</legend>
+    <div class="form-group">
+      <label class="form-label" for="class_name">Name</label>
+      <input class="form-input" type="text" id="class_name" name="class_name">
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="location_id">Location</label>
+      <select class="form-select" id="location_id" name="location_id">
+        <option value="">Choose a location</option>
+        % for my $location (@{ stash('locations') // [] }) {
+        <option value="<%= $location->id %>"><%= $location->name %></option>
+        % }
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="seats_per_occurrence">Seats per occurrence</label>
+      <input class="form-input" type="number" id="seats_per_occurrence" name="seats_per_occurrence" min="1" step="1">
+    </div>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
