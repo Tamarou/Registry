@@ -410,11 +410,15 @@ class Registry::DAO::InitiateProjectWorkflow :isa(Registry::DAO::WorkflowStep) {
 
 ### Multi-tenant Support
 
-Registry supports multi-tenant deployments, where workflows can be copied between tenants. The system ensures that all workflow components (steps, templates, etc.) are properly copied to maintain functionality across tenants.
+A tenant runs its own copy of a platform workflow, in its own schema. The copy arrives when the tenant accepts the platform's offer that grants the workflow's run right (`run:<slug>`): `Registry::DAO::Tenant->accept_platform_offer`, which tenant signup's accept step (`TenantPayment`, through `provision`) calls. Never a CLI or a migration. Accepting copies each workflow the offer version grants, from `registry` only, into the accepting tenant's schema only; submitted data naming another tenant or schema is ignored. The copy brings the workflow's steps with their classes, its templates, the outcome definitions its steps use, and its role data (`roles` or the `public` mark). The accept and the copies are one transaction: a copy that fails leaves no entitlement and no partial workflow.
 
-When copying workflows between tenants, it's essential to preserve the class information for specialized workflow steps. The `copy_workflow` function handles this by including the `class` column when duplicating workflow steps.
+A tenant that already holds a copy of the slug:
 
-Each tenant's copies are made once, at provisioning, and migrations that reset a workflow change only `registry`'s copy, so a tenant's copy can fall behind or be edited away from the platform's. To see how, run:
+- keeps it when it is the same as the platform's, by the divergence comparison below, so there is still one copy;
+- has it replaced by the platform's definition only under a `Ruling: replace <tenant>/<slug>` line in `docs/reviews/tenant-workflow-divergence.md`, perigrin's recorded rulings;
+- otherwise keeps it: under a `Ruling: merge <tenant>/<slug>` line, which needs a hand merge, or with no ruling. The accept's result names each kept copy, why, and its differences.
+
+Until 01a20415-6a27, provisioning still copies every other `registry` workflow (all but `tenant-signup` and `registry-storefront`) after signup's accept, skipping any the accept copied. Migrations that reset a workflow change only `registry`'s copy, so a tenant's copy can fall behind or be edited away from the platform's. To see how, run:
 
 ```bash
 carton exec ./registry workflow divergence registry
