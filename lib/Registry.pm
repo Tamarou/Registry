@@ -37,8 +37,8 @@ class Registry :isa(Mojolicious) {
     #                          database, silently.
     #   BASE_URL               AccountCheck builds magic-link URLs with '' as
     #                          the base.
-    #   STRIPE_SECRET_KEY      WorkflowSteps::Payment routes every priced cart
-    #                          to create_demo_enrollments: enrolled, not charged.
+    #   STRIPE_SECRET_KEY      every priced payment (Payment, OneTimePayment)
+    #                          is refused; only a $0 cart completes.
     #   STRIPE_WEBHOOK_SECRET  Webhooks refuses every delivery with a 500, so no
     #                          payment ever settles.
     #   STRIPE_CONNECT_WEBHOOK_SECRET  the Connect endpoint refuses every
@@ -54,7 +54,7 @@ class Registry :isa(Mojolicious) {
         { key => 'BASE_URL',
           cost => 'magic-link URLs are built with an empty base' },
         { key => 'STRIPE_SECRET_KEY', secret => 1,
-          cost => 'priced enrolments complete WITHOUT charging' },
+          cost => 'every priced payment is refused' },
         { key => 'STRIPE_WEBHOOK_SECRET', secret => 1,
           cost => 'webhooks are refused, so no payment settles' },
         { key => 'STRIPE_CONNECT_WEBHOOK_SECRET', secret => 1,

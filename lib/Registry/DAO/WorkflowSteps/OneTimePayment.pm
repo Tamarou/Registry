@@ -89,7 +89,12 @@ method owed_payment ( $db, $run ) {
         unless defined $user_id && !ref $user_id && $user_id =~ $UUID;
 
     # The seller is the tenant the run is in, and the charge is made on its own
-    # account; there is no fallback to the platform's.
+    # account; there is no fallback to the platform's. Without the platform's
+    # key (unset or empty) nothing can be charged, so no row is written either.
+    unless ( $ENV{STRIPE_SECRET_KEY} ) {
+        warn "one-time payment refused: STRIPE_SECRET_KEY is not set\n";
+        return refuse($UNAVAILABLE);
+    }
     my $slug = $run->data->{__tenant_slug};
     my $row  = defined $slug && !ref $slug
         ? $db->query( 'SELECT * FROM registry.tenants WHERE slug = ?', $slug )->hash

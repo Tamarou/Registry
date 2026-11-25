@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Verifies that parents get an enrollment_confirmation email
-# ABOUTME: after a successful Stripe payment (and in demo mode).
+# ABOUTME: after a successful Stripe payment (and for a $0 cart, which needs no Stripe).
 use 5.42.0;
 use warnings;
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
@@ -15,6 +15,7 @@ use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
 use Registry::DAO::Location;
 use Registry::DAO::Session;
+use Registry::DAO::PricingPlan;
 use Registry::DAO::Event;
 use Registry::DAO::Project;
 use Registry::DAO::FamilyMember;
@@ -97,10 +98,16 @@ $workflow->add_step($db, {
     description => 'Payment',
     class       => 'Registry::DAO::WorkflowSteps::Payment',
 });
+# Free: only a $0 cart completes without Stripe.
+Registry::DAO::PricingPlan->create($db, {
+    session_id => $session->id, plan_name => 'Free', plan_type => 'standard', amount_cents => 0,
+});
 my $run = $workflow->new_run($db);
 $run->update_data($db, {
-    user_id          => $parent->id,
-    enrollment_items => [{ session_id => $session->id, child_id => $child->id }],
+    user_id            => $parent->id,
+    children           => [{ id => $child->id, first_name => 'Kiddo', last_name => '' }],
+    session_selections => { $child->id => $session->id },
+    enrollment_items   => [{ session_id => $session->id, child_id => $child->id }],
 });
 
 my $step = Registry::DAO::WorkflowStep->find($db, {
@@ -116,15 +123,13 @@ sub confirmation_count ($db, $user_id) {
     )->array->[0];
 }
 
-subtest 'demo mode (no Stripe key) queues a confirmation' => sub {
+subtest '$0 cart without a Stripe key queues a confirmation' => sub {
     my $before = confirmation_count($db, $parent->id);
 
     local $ENV{STRIPE_SECRET_KEY};
     delete $ENV{STRIPE_SECRET_KEY};
 
-    my $result = $step->create_demo_enrollments($db, $run, {
-        agreeTerms => 1,
-    });
+    my $result = $step->process($db, { agreeTerms => 1 }, $run);
     is($result->{next_step}, 'complete', 'advances to complete');
 
     my $after = confirmation_count($db, $parent->id);
@@ -133,7 +138,7 @@ subtest 'demo mode (no Stripe key) queues a confirmation' => sub {
 
 subtest 'ensure_enrollment_confirmation is one-per-item and idempotent' => sub {
     # Notification->ensure_enrollment_confirmation is the shared queuer used by
-    # the demo, parent-return, and webhook finalization paths. Exercise it
+    # the free, parent-return, and webhook finalization paths. Exercise it
     # directly: one notification per new (session, child) item, and repeat
     # calls add nothing (the dual-path idempotency #205 relies on).
     my @fresh;
@@ -177,7 +182,7 @@ subtest 'ensure_enrollment_confirmation is one-per-item and idempotent' => sub {
 };
 
 subtest 'confirmation carries session and location details' => sub {
-    # Pull the first notification we created (demo-mode subtest)
+    # Pull the first notification we created ($0-cart subtest)
     my $row = $db->query(
         "SELECT subject, metadata FROM notifications
          WHERE user_id = ? AND type = 'enrollment_confirmation'

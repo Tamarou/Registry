@@ -62,11 +62,11 @@ method process ($db, $form_data, $run = undef) {
             { payment_plan => $offered ? $chosen : 'full' } );
 
         # Whether payment is taken is a function of the program's pricing, not
-        # the environment. A $0 total enrolls without the gateway regardless of
-        # whether Stripe is configured. Demo/dev (no Stripe key) also skips it.
-        # Anything with a balance due goes through Stripe.
-        if (($info->{total} // 0) == 0 || !$ENV{STRIPE_SECRET_KEY}) {
-            return $self->create_demo_enrollments($db, $run, $form_data);
+        # the environment. Only a $0 total enrolls without the gateway; anything
+        # with a balance due goes to create_payment, which refuses it when Stripe
+        # is not configured or the tenant cannot take charges.
+        if (($info->{total} // 0) == 0) {
+            return $self->create_free_enrollments($db, $run, $form_data);
         }
 
         return $self->create_payment($db, $run, $form_data);
@@ -244,17 +244,20 @@ method create_payment ($db, $run, $form_data) {
             ? $db->query('SELECT * FROM registry.tenants WHERE slug = ?', $tenant_slug)->hash
             : undef;
         my $tenant = $row ? Registry::DAO::Tenant->new(%$row) : undef;
-        unless ($tenant && $tenant->stripe_connect_ready) {
+        # No platform key (unset or empty) is a misconfiguration, never a free
+        # enrollment: fail closed, exactly as for a tenant that cannot charge.
+        unless ($ENV{STRIPE_SECRET_KEY} && $tenant && $tenant->stripe_connect_ready) {
             # Logged at error, not warn: a parent has reached checkout for a
             # session the platform cannot sell, which means the publish gate was
             # passed before the Connect account went away (Stripe restricting an
             # account does that) or the session was published around it. Nothing
             # else records that this happened, and the parent has no reason to
             # tell anybody.
-            warn sprintf
-                "checkout refused: tenant '%s' is not Stripe Connect ready, "
-                . "so a priced cart cannot be charged\n",
-                $tenant_slug // '(unknown)';
+            warn $ENV{STRIPE_SECRET_KEY}
+                ? sprintf( "checkout refused: tenant '%s' is not Stripe Connect ready, "
+                    . "so a priced cart cannot be charged\n", $tenant_slug // '(unknown)' )
+                : "checkout refused: STRIPE_SECRET_KEY is not set, "
+                    . "so a priced cart cannot be charged\n";
 
             return Mojo::Promise->resolve({
                 next_step => $self->id,
@@ -636,7 +639,7 @@ method _settle_callback ($db, $run, $payment, $result) {
     }
 }
 
-method create_demo_enrollments ($db, $run, $form_data) {
+method create_free_enrollments ($db, $run, $form_data) {
     my $user_id = $run->data->{user_id} or die "No user_id in workflow data";
 
     require Registry::DAO::Enrollment;
