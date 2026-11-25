@@ -143,6 +143,19 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         # reads it: not 1, not "true", not yes.
         $data->{public} = builtin::is_bool( $data->{public} ) && $data->{public} ? 1 : 0;
 
+        # Roles are a non-empty list of the application's roles: a typo would
+        # store a guard nobody passes, and an empty list must never read as
+        # "everyone". Neither roles nor the mark is "no entry", refused at the gate.
+        if ( exists $data->{roles} ) {
+            die "$data->{slug} declares both roles and the public mark\n" if $data->{public};
+            my $roles = $data->{roles};
+            die "$data->{slug}: roles must be a non-empty list\n"
+              unless ref $roles eq 'ARRAY' && @$roles;
+            require Registry::DAO::User;
+            my %known = map { $_ => 1 } @Registry::DAO::User::USER_TYPES;
+            $known{$_} or die "$data->{slug}: unknown role $_\n" for @$roles;
+        }
+
         if ( my $workflow =
             $db->find( 'Registry::DAO::Workflow', { slug => $data->{slug} } ) )
         {

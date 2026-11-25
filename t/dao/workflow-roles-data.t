@@ -14,6 +14,8 @@ use Mojo::Home;
 use Mojo::Pg;
 use App::Sqitch;
 use Test::PostgreSQL;
+use File::Temp;
+use Mojo::File;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -56,6 +58,47 @@ subtest 'copy_workflow carries roles and the public mark into a tenant schema' =
         my $id = $db->query( 'SELECT id FROM registry.workflows WHERE slug = ?', $slug )->array->[0];
         $db->query( 'SELECT registry.copy_workflow(?, ?)', 'copytarget', $id );
         is_deeply row( $slug, 'copytarget' ), row($slug), "$slug keeps its entry in the tenant's copy";
+    }
+};
+
+# Each refusal goes through import_workflows, the path every import takes, so
+# the error it reports is the one an operator reads.
+sub import_one ( $slug, $head ) {
+    my $dir  = File::Temp->newdir;
+    my $file = Mojo::File->new("$dir/$slug.yml");
+    $file->spew( workflow_yaml( $slug, $head ) );
+    return ( $dao->import_workflows( [$file] ) // '', "$file" );
+}
+
+sub refused ( $slug, $head, $why ) {
+    my ( $output, $file ) = import_one( $slug, $head );
+    like $output, qr/Error importing workflow \Q$file\E: .*$why/, "$slug is refused naming $file";
+    ok !row($slug), "and $slug stores no row";
+}
+
+subtest 'roles and public mark together rejected' => sub {
+    refused( 'both-flow', "public: true\nroles: [admin]\n", 'both roles and the public mark' );
+};
+
+subtest 'unknown role name rejected' => sub {
+    refused( 'typo-flow',  "roles: [admn]\n",              'unknown role admn' );
+    refused( 'super-flow', "roles: [admin, superadmin]\n", 'unknown role superadmin' );
+};
+
+subtest 'empty roles list rejected' => sub {
+    refused( 'empty-flow', "roles: []\n", 'roles must be a non-empty list' );
+};
+
+subtest 'non list roles rejected' => sub {
+    refused( 'scalar-flow', "roles: admin\n",            'roles must be a non-empty list' );
+    refused( 'hash-flow',   "roles:\n  admin: true\n",   'roles must be a non-empty list' );
+};
+
+subtest 'falsy public mark is not public' => sub {
+    my %not_the_mark = ( 'zero-flow' => '0', 'no-flow' => 'no', 'string-flow' => '"false"' );
+    for my $slug ( sort keys %not_the_mark ) {
+        import_one( $slug, "public: $not_the_mark{$slug}\n" );
+        is row($slug)->{public}, 0, "public: $not_the_mark{$slug} does not mark $slug public";
     }
 };
 
