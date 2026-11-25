@@ -11,6 +11,7 @@ use Test::PostgreSQL;
 # Create a temporary test database
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
 my $target_uri = $pgsql->uri;
+my $fresh_pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
 
 # Use App::Sqitch with command-line style arguments
 my $sqitch = App::Sqitch->new();
@@ -48,8 +49,7 @@ subtest 'Verify all migrations' => sub {
 # schema dumps.  Asserting it again here would only duplicate a full deploy.
 
 subtest 'Fresh database deployment' => sub {
-    # Create another fresh database and deploy from scratch
-    my $fresh_pgsql = Test::PostgreSQL->new() or skip 'Cannot create second test database';
+    # Deploy from scratch into the second database made at the top
     my $fresh_uri = $fresh_pgsql->uri;
 
     my $fresh_sqitch = App::Sqitch->new();
