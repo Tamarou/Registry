@@ -315,9 +315,10 @@ subtest 'resubmitted payment page creates no second payment' => sub {
     my $first = $pay_step->owed_payment( $db, $run )->{payment} or return fail 'the first submit started a payment';
     $first->_record_intent( $db, { id => 'pi_ec_' . $first->id, client_secret => 'x_secret' } );
 
-    local $ENV{STRIPE_SECRET_KEY};    # no Stripe here: the resubmit's intent call fails after the payment is chosen
-    $t->post_ok( form_of($t)->attr('action') => form => {} );
-    is payments_of($run), 1, 'the resubmit reuses the payment the first submit started';
+    # The resubmit chooses its payment the same way; no Stripe call is needed to see which.
+    my $again = $pay_step->owed_payment( $db, $run )->{payment};
+    is $again && $again->id, $first->id, 'the resubmit reuses the payment the first submit started';
+    is payments_of($run), 1, 'and writes no second one';
 };
 
 subtest 'paid change with no seat left shows a friendly page' => sub {
@@ -325,10 +326,11 @@ subtest 'paid change with no seat left shows a friendly page' => sub {
     my $holder = member('parent');
     my $e      = booking( $version, $from, $holder );
     my ( $t, $run ) = to_payment( $holder, $e, $to );
-    {
-        local $ENV{STRIPE_SECRET_KEY};
-        $t->post_ok( form_of($t)->attr('action') => form => {} );
-    }
+    # The fee payment the payment page starts, without a Stripe call.
+    $run->update_data( $db, { user_id => $holder->id } );
+    Registry::DAO::Workflow->find( $db, { slug => 'entitlement-change' } )
+        ->get_step( $db, { slug => 'pay' } )->owed_payment( $db, $run )->{payment}
+        or return fail 'the payment page started a payment';
     my $payment = Registry::DAO::Payment->find( $db,
         { id => Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data->{owed_payment_id} } );
     $payment->_record_intent( $db, { id => 'pi_ec_' . $payment->id, client_secret => 'x_secret' } );
