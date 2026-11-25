@@ -247,16 +247,24 @@
                 }
             }
         </script>
+    <% } elsif (($step_data->{total} // 0) > 0 && !$ENV{STRIPE_SECRET_KEY}) { %>
+        %# A priced cart with no Stripe key is refused at submit; say so here.
+        <div class="alert alert-error" role="alert">
+            <p><%= Registry::DAO::WorkflowSteps::Payment->payment_unavailable_message %></p>
+        </div>
+        <a href="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'session-selection') %>"
+           class="btn" data-variant="secondary">Back</a>
     <% } else { %>
+        % my $free = ($step_data->{total} // 0) == 0;
         <!-- Initial Agreement Form -->
         <form method="POST" action="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'payment') %>"
               class="bg-white shadow rounded-lg p-6">
             <h2 class="text-2xl font-semibold mb-4">Payment Method</h2>
             
-            <% if ($ENV{STRIPE_SECRET_KEY}) { %>
-                <p class="text-gray-600 mb-4">You will be redirected to a secure payment form to complete your registration.</p>
+            <% if ($free) { %>
+                <p class="text-gray-600 mb-4">No payment is needed for this registration.</p>
             <% } else { %>
-                <p class="text-gray-600 mb-4">For demo purposes, no actual payment information will be collected. In a production environment, this would integrate with a payment processor.</p>
+                <p class="text-gray-600 mb-4">You will be redirected to a secure payment form to complete your registration.</p>
             <% } %>
             
             <div class="mb-6">
@@ -281,10 +289,10 @@
                         Processing...
                     </span>
                     <span class="submit-text">
-                        <% if ($ENV{STRIPE_SECRET_KEY}) { %>
-                            Proceed to Payment
+                        <% if ($free) { %>
+                            Complete Registration
                         <% } else { %>
-                            Complete Registration (Demo)
+                            Proceed to Payment
                         <% } %>
                     </span>
                 </button>
