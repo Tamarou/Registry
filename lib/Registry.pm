@@ -127,6 +127,12 @@ class Registry :isa(Mojolicious) {
             die "MOJO_SECRET environment variable is required in production";
         }
 
+        # Keyed on the mode, not the request scheme, so a proxied or misspelt
+        # mode fails closed. Lax keeps the session on the Stripe 3-D Secure
+        # return and magic-link login, both top-level GETs. HttpOnly is Mojo's.
+        $self->sessions->samesite('Lax');
+        $self->sessions->secure(1) unless $self->mode =~ /\A(?:development|test)\z/;
+
         # Static asset URL prefix. When STATIC_URL is set, CSS/JS/images are
         # served from an external static site (e.g. Render static service or CDN).
         # When unset, assets are served from the app itself (same-origin).
