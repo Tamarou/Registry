@@ -95,6 +95,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # change_hold, change_entitlement_id and change_targets are what the
         # change steps decide; the fee charge reads change_hold.fee_cents as the amount owed.
         # change_needs_admin marks a paid change an admin must settle.
+        # refund_entitlement_id is the booking a refund is asked of; only the
+        # refund chooser writes it, once the booking is the asker's.
         # owed_payment is what OneTimePayment charges -- amount, offer version
         # and plan, written by the step before it -- and owed_payment_id the
         # payment it started; a posted one is a price of the client's choosing.
@@ -104,7 +106,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # retry is a step's signal to fail a driver attempt; planted, it halts the run.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in

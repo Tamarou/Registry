@@ -237,6 +237,17 @@ subtest 'a change and its targets cannot be planted by a client' => sub {
     }
 };
 
+subtest 'a refund target cannot be planted by a client' => sub {
+    # refund_entitlement_id names the booking ApplyRefundPolicy refunds; only
+    # the refund chooser writes it, once the booking is the asker's.
+    for my $form ( { refund_entitlement_id => '00000000-0000-0000-0000-000000000099' },
+                   { 'refund_entitlement_id[id]' => '00000000-0000-0000-0000-000000000099' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{refund_entitlement_id}, 'a posted refund_entitlement_id is not stored';
+    }
+};
+
 subtest 'a stored Stripe event cannot be named by a client' => sub {
     # stripe_event_id names the stored Connect event an entitlement-stripe-move
     # run applies; only the Connect endpoint sets it, when it creates the run.
