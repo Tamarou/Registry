@@ -8,13 +8,17 @@ package Registry::PriceOps::PlatformTerms;
 use Exporter 'import';
 our @EXPORT_OK = qw(platform_terms_for_tenant
                     platform_entitlement_terms platform_version_terms rate_fraction
-                    platform_offers_to_tenants);
+                    platform_offers_to_tenants $SOLO_OFFER_ID);
 
 use Mojo::JSON qw( from_json );
 use Registry::DAO::Entitlement;
 
 # The resource a tenant's platform entitlement buys; named, never a plan name.
 my $PAYMENT_PROCESSING = 'payment processing';
+
+# Solo, the offer signup preselects: the bootstrap seed's fixed offer id
+# (bootstrap-platform-offers), never its name or its place in the listing.
+our $SOLO_OFFER_ID = '00000000-0000-0000-0002-000000000001';
 
 # What every terms lookup returns about an offer version and one of its plans.
 my $TERMS_COLUMNS = q{
@@ -91,7 +95,7 @@ sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
 }
 
 # platform_offers_to_tenants($db)
-#   -> [ { id, plan_id, name, amount_cents, currency, fraction, refund_policy } ]
+#   -> [ { id, offer_id, plan_id, name, amount_cents, currency, fraction, refund_policy } ]
 #
 # The platform's current published offers to tenants, cheapest first: each
 # registry payment-processing version with a percentage-of-sales plan and
@@ -103,7 +107,7 @@ sub platform_offers_to_tenants ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
     return $db->query( qq{
-        SELECT $TERMS_COLUMNS, v.currency
+        SELECT $TERMS_COLUMNS, v.currency, v.offer_id
           FROM registry.offer_versions v
           JOIN registry.offers o ON o.id = v.offer_id
           JOIN registry.resources r ON r.id = v.resource_id
@@ -115,7 +119,8 @@ sub platform_offers_to_tenants ($db) {
            AND NOT v.conditions \@> '[{"kind": "holder_is_offerer"}]'
          ORDER BY p.fraction, o.name
     }, $PAYMENT_PROCESSING )->hashes->map( sub ($row) {
-        +{ %{ _entitlement_terms( $row, "offer version '$row->{id}'" ) }, currency => $row->{currency} };
+        +{ %{ _entitlement_terms( $row, "offer version '$row->{id}'" ) }, currency => $row->{currency},
+            offer_id => $row->{offer_id} };
     } )->to_array;
 }
 

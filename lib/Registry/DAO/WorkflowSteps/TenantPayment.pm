@@ -17,7 +17,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     use Carp qw(croak);
     use DateTime;
     use Registry::Utility::PriceFormat qw(format_price);
-    use Registry::PriceOps::PlatformTerms qw(platform_offers_to_tenants);
+    use Registry::PriceOps::PlatformTerms qw(platform_offers_to_tenants $SOLO_OFFER_ID);
     use Registry::Utility::BaseDomain ();
 
     use constant SIGNUP_UNAVAILABLE =>
@@ -127,8 +127,9 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
     }
 
     # The offer version the run carries, re-read so a superseded or withdrawn
-    # one is never quoted or charged; until one is carried, the first listed
-    # (Solo on day one), which the review page preselects. Undef when nothing
+    # one is never quoted or charged; until one is carried, Solo's current
+    # version, which the review page preselects, or the first listed when Solo
+    # is not on offer. Undef when nothing
     # is on offer: absence is not zero, so no rate is invented.
     # The run is passed in, never looked up: latest_run is scoped to the
     # workflow alone and would price this signup from someone else's run.
@@ -136,6 +137,7 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         my $offers  = platform_offers_to_tenants($db);
         my $carried = ( $run && $run->data || {} )->{selected_offer_version} // '';
         my ($chosen) = grep { $_->{id} eq $carried } @$offers;
+        ($chosen) = grep { $_->{offer_id} eq $SOLO_OFFER_ID } @$offers unless $chosen;
         return $chosen // $offers->[0];
     }
 

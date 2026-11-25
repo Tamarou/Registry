@@ -135,6 +135,14 @@ subtest 'new solo version replaces old and drafts are hidden' => sub {
     unlike page_text(), qr/4%/, 'not the draft';
 };
 
+subtest 'solo preselected beside a cheaper offer' => sub {
+    my $cheaper = publish_platform_offer( 'Aardvark Plan', 0.01 );
+    to_review();
+    is_deeply_list( choices(), [ current_solo(), $cheaper->id ], 'both are listed' );
+    is checked(), current_solo(), 'Solo is preselected, not the cheaper offer';
+    withdraw($cheaper);
+};
+
 subtest 'only a published platform offer is carried' => sub {
     my $kiln = publish_platform_offer( 'Kiln Plan', 0.02 );
     my $review = to_review();
