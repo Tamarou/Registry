@@ -19,6 +19,7 @@ use Registry::DAO;
 use Registry::DAO::Offer;
 use Registry::DAO::Project;
 use Registry::DAO::Resource;
+use Registry::Terms;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -101,6 +102,10 @@ subtest 'the booking page lists the occurrence\'s offers with price, seats and p
         ->content_like( qr/Sales are final\./, 'the refund policy in plain words' )
         ->content_like( qr/Reschedule up to 48 hours before, for \$10\.00\./, 'and the change policy' );
     $t->element_exists( '#workflow-content a[href="/terms"]', 'the page links /terms' );
+    $t->element_exists( '#workflow-content input[type="checkbox"][name="agree_to_terms"][required]',
+        'with a box to agree to them' );
+    $t->element_exists( sprintf( '#workflow-content input[type="hidden"][name="terms_version_shown"][value="%s"]',
+        Registry::Terms::VERSION ), 'naming the version shown' );
     $t->element_exists( '#workflow-content input[name="count"][value="1"][min="1"]', 'the count starts at 1' );
 };
 
@@ -116,7 +121,8 @@ subtest 'a signed-in visitor holds the seats and reaches payment' => sub {
         ->status_is(302);
     $t->get_ok( $t->tx->res->headers->location )->status_is(200);
     $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') =>
-        form => { offer_version_id => $version->id, count => 2 } )->status_is(302);
+        form => { offer_version_id => $version->id, count => 2, agree_to_terms => 1,
+            terms_version_shown => Registry::Terms::VERSION } )->status_is(302);
     like my $account = $t->tx->res->headers->location, qr{/account\z}, 'on to the account page';
     $t->get_ok($account)->status_is(200)->content_like( qr/Signed in as Book Sam/, 'which knows who is signed in' );
     check_screen( $t, 'account' );

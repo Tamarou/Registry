@@ -19,6 +19,10 @@ use Registry::DAO::Workflow;
 use Registry::Utility::WorkflowProcessor;
 use Registry::WorkflowStepClasses;
 use Registry::PriceOps::Hold;
+use Registry::Terms;
+
+# What the offer page posts when the booker ticks the terms box.
+my %AGREE = ( agree_to_terms => 1, terms_version_shown => Registry::Terms::VERSION );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -81,7 +85,7 @@ sub book ( $resource, $version, $count ) {
     my $run = start();
     my %r;
     $r{occurrence} = $run->process( $tdb, step('occurrence'), { occurrence_id => $resource->id } );
-    $r{offer}      = $run->process( $tdb, step('offer'), { offer_version_id => $version->id, count => $count } );
+    $r{offer}      = $run->process( $tdb, step('offer'), { offer_version_id => $version->id, count => $count, %AGREE } );
     $r{account}    = $run->process( $tdb, step('account'), { action => 'continue_logged_in' } );
     $r{hold}       = $run->process( $tdb, step('hold'), {} );
     return ( $run, \%r );
@@ -175,7 +179,7 @@ subtest 'full occurrence refused' => sub {
     my $v2 = offer( $c2, 'Seat' );
     $run = start();
     $run->process( $tdb, step('occurrence'), { occurrence_id => $two->id } );
-    $run->process( $tdb, step('offer'), { offer_version_id => $v2->id, count => 1 } );
+    $run->process( $tdb, step('offer'), { offer_version_id => $v2->id, count => 1, %AGREE } );
     $run->process( $tdb, step('account'), { action => 'continue_logged_in' } );
     book( $two, $v2, 2 );
     like errors_of( $run->process( $tdb, step('hold'), {} ) ), qr/no longer has room for 1/,
@@ -204,7 +208,7 @@ sub entitlements_on ($resource) {
 sub chosen ( $resource, $version, $count ) {
     my $run = start();
     $run->process( $tdb, step('occurrence'), { occurrence_id => $resource->id } );
-    $run->process( $tdb, step('offer'), { offer_version_id => $version->id, count => $count } );
+    $run->process( $tdb, step('offer'), { offer_version_id => $version->id, count => $count, %AGREE } );
     $run->process( $tdb, step('account'), { action => 'continue_logged_in' } );
     return $run;
 }
@@ -344,12 +348,40 @@ subtest 'other tenant occurrence not found' => sub {
     my $run = start();
     like errors_of( $run->process( $tdb, step('occurrence'), { occurrence_id => $kseats->id } ) ),
         qr/Choose one of the listed classes/, 'another tenant\'s occurrence is not found';
-    $run->update_data( $tdb, { booking_occurrence_id => $kseats->id } );
+    # Everything else in place, so only the occurrence can refuse it.
+    $run->update_data( $tdb, { booking_occurrence_id => $kseats->id, agreed_terms_version => Registry::Terms::VERSION } );
     is_deeply step('offer')->prepare_template_data( $tdb, $run )->{offers}, [], 'and has no offers here';
     like errors_of( $run->process( $tdb, step('hold'), {} ) ), qr/Choose one of the listed classes/,
         'nor is it held when written into the run';
     is $kdb->query( 'SELECT count(*) FROM holds' )->array->[0], 0, 'nothing is held in the other tenant';
     is run_holds($run), 0, 'or here';
+};
+
+subtest 'booking refused without agreeing to terms' => sub {
+    my ( $class, $seats ) = occurrence(10);
+    my $version = offer( $class, 'Seat' );
+    for my $form ( {}, { agree_to_terms => 1 }, { agree_to_terms => 1, terms_version_shown => 'v0' },
+                   { terms_version_shown => Registry::Terms::VERSION } ) {
+        my $run = start();
+        $run->process( $tdb, step('occurrence'), { occurrence_id => $seats->id } );
+        my $r = $run->process( $tdb, step('offer'), { offer_version_id => $version->id, count => 1, %$form } );
+        like errors_of($r), qr/terms of service/, 'the offer step is refused with a message';
+        $run = reload($run);
+        is $run->next_step($tdb)->slug, 'offer', 'and stays on the offer page';
+        ok !$run->data->{agreed_terms_version}, 'recording no agreement';
+    }
+};
+
+subtest 'no hold without agreed terms' => sub {
+    my ( $class, $seats ) = occurrence(10);
+    my $version = offer( $class, 'Seat' );
+    my $run = chosen( $seats, $version, 1 );
+    is reload($run)->data->{agreed_terms_version}, Registry::Terms::VERSION, 'an agreeing booker is recorded';
+    $run->update_data( $tdb, { agreed_terms_version => undef } );
+    like errors_of( $run->process( $tdb, step('hold'), {} ) ), qr/Agree to the terms of service/,
+        'a run reaching the hold step with no agreement is refused';
+    is run_holds($run), 0, 'and holds nothing';
+    ok !reload($run)->data->{owed_payment}, 'and owes nothing';
 };
 
 done_testing;

@@ -32,7 +32,11 @@
     <label class="form-label" for="count">How many</label>
     <input class="form-input" type="number" id="count" name="count" value="1" min="1" step="1" required>
   </div>
-  <p>Booking is under the <a href="/terms">terms of service</a> and the offer's policies above.</p>
+  <div>
+    <input type="checkbox" id="agree_to_terms" name="agree_to_terms" value="1" required>
+    <label for="agree_to_terms">I agree to the <a href="/terms">terms of service</a> and the offer's policies above.</label>
+    <input type="hidden" name="terms_version_shown" value="<%= Registry::Terms::VERSION %>">
+  </div>
   <div class="form-actions">
     <button type="submit" class="btn btn-primary">Continue</button>
   </div>

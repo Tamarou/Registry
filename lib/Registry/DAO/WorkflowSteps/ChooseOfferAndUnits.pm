@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::ChooseOfferAndUnits :isa(Registry::DAO::Work
     use Registry::DAO::Event;
     use Registry::DAO::Offer;
     use Registry::DAO::Resource;
+    use Registry::Terms ();
     use Registry::DAO::WorkflowSteps::ChooseOccurrence;
 
     method process ( $db, $form_data, $run = undef ) {
@@ -16,6 +17,10 @@ class Registry::DAO::WorkflowSteps::ChooseOfferAndUnits :isa(Registry::DAO::Work
         my $occurrence_id = $run && $run->data->{booking_occurrence_id};
         if ( my $refusal = __PACKAGE__->refusal( $db, $occurrence_id, $version, $count ) ) {
             return { stay => 1, errors => [$refusal] };
+        }
+        # The agreement is taken here, on the page that links /terms (ADR 005, ruling 12).
+        if ( my $why = Registry::Terms::record_agreement( $db, $run, $form_data ) ) {
+            return { stay => 1, errors => [$why] };
         }
         return { booking_offer_version_id => $version, booking_count => 0 + $count };
     }

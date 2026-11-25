@@ -34,6 +34,8 @@ class Registry::DAO::WorkflowSteps::HoldSeats :isa(Registry::DAO::WorkflowStep) 
 
         my $user = ref $data->{user} eq 'HASH' ? $data->{user} : {};
         return refuse('Sign in to book') unless length( $user->{id} // '' );
+        # Stamped on the booking when it is granted, so none is held without it.
+        return refuse('Agree to the terms of service to book.') unless length( $data->{agreed_terms_version} // '' );
         my ( $occurrence_id, $version_id, $count ) = $data->@{qw( booking_occurrence_id booking_offer_version_id booking_count )};
         # The occurrence may have started or closed, or the offer changed, since they were chosen.
         if ( my $refusal = Registry::DAO::WorkflowSteps::ChooseOfferAndUnits->refusal( $db, $occurrence_id, $version_id, $count ) ) {
