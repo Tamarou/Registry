@@ -148,4 +148,22 @@ subtest 'full until cutoff honoured only before cutoff' => sub {
     is request_on( $dated_paid, $dated ), undef, 'and no refund is requested';
 };
 
+subtest 'a new version with another refund policy changes no existing entitlement' => sub {
+    my $occurrence = occurrence();
+    my $offer      = Registry::DAO::Offer->create( $tdb, { name => 'Reprice ' . ++$made } );
+    my $publish    = sub ($refund) {
+        $offer->draft( $tdb, offer_terms( $occurrence->id, policies => { refund => $refund } ) )->publish($tdb);
+    };
+
+    my $sold_final = booking( $publish->( { kind => 'none' } ), $occurrence, payment(), 2000 );
+    my $v2         = $publish->( { kind => 'full_until_cutoff', cutoff_hours => 24 } );
+    my $sold_full  = booking( $v2, $occurrence, my $full_paid = payment(), 2000 );
+    $publish->( { kind => 'none' } );
+
+    like apply($sold_final)->{refund_refused}, qr/all sales are final/,
+        'sold under none, it is refused although a later version gave refunds';
+    ok !apply($sold_full)->{refund_refused}, 'sold under full until cutoff, it is honoured although the current version is none';
+    is +( request_on( $full_paid, $sold_full ) // {} )->{amount_cents}, 2000, 'and its refund is requested';
+};
+
 done_testing;
