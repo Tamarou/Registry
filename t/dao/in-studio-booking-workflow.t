@@ -102,10 +102,11 @@ subtest 'the workflow is public, with the design\'s steps' => sub {
     ok $workflow, 'in-studio-booking is imported into the tenant' or return;
     my @slugs;
     for ( my $s = $workflow->first_step($tdb) ; $s ; $s = $s->next_step($tdb) ) { push @slugs, $s->slug }
-    is_deeply \@slugs, [qw( occurrence offer account hold payment )], 'occurrence, offer, account, hold, then payment';
+    is_deeply \@slugs, [qw( occurrence offer account hold payment complete done )],
+        'occurrence, offer, account, hold, payment, complete, then done';
     ok $workflow->public, 'it carries the public mark';
     ok Registry::WorkflowStepClasses::is_allowed("Registry::DAO::WorkflowSteps::$_"), "$_ is on the allowlist"
-        for qw( ChooseOccurrence ChooseOfferAndUnits HoldSeats );
+        for qw( ChooseOccurrence ChooseOfferAndUnits HoldSeats CompleteBooking );
 };
 
 subtest 'two units of a two-seat offer hold four seats for a limited time and park at payment' => sub {
