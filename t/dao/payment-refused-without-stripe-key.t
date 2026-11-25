@@ -23,6 +23,7 @@ use Registry::DAO::Event;
 use Registry::DAO::Location;
 use Registry::DAO::Offer;
 use Registry::DAO::Resource;
+use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
 use Registry::PriceOps::Hold;
 use Test::Registry::Async qw( settle );
@@ -254,6 +255,10 @@ my $odd = cart_tenant( sessions => {
                     requirements => { min_children => 3 } } ],
     Negative => [ { plan_name => 'Over-discounted', amount_cents => 10000,
                     requirements => { percentage_discount => 150 } } ],
+    # 10000 x (1 - 2.5), rounded: -14999, exactly cancelling a 14999 sibling.
+    Cancelling => [ { plan_name => 'Far over-discounted', amount_cents => 10000,
+                      requirements => { percentage_discount => 250 } } ],
+    Sibling    => [ { plan_name => 'Standard', amount_cents => 14999 } ],
 } );
 
 subtest 'undefined total refused not free' => sub {
@@ -287,6 +292,39 @@ subtest 'negative or non numeric total refused' => sub {
             'total ' . ( defined $total ? "'$total'" : 'undef' ) . ' is refused';
     }
     is $step->unpriced_cart_refusal( { total => 0, items => [] }, [] ), undef, 'a $0 total is priced';
+};
+
+subtest 'negative line cannot cancel a priced line' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
+
+    my $sibling = Registry::DAO::Family->add_child( $odd->{db}, $odd->{parent}->id, {
+        child_name => 'Sib', birth_date => '2015-01-01', grade => '4',
+        medical_info => {}, emergency_contact => { name => 'E', phone => '555-0123' } } );
+    my ( $kid, $sib ) = ( $odd->{child}->id, $sibling->id );
+    my ( $priced, $cancelling ) = map { $odd->{session}{$_}->id } qw( Sibling Cancelling );
+
+    my $run = $odd->{workflow}->new_run( $odd->{db} );
+    $run->update_data( $odd->{db}, {
+        user_id            => $odd->{parent}->id,
+        __tenant_slug      => $odd->{slug},
+        children           => [ map { { id => $_, first_name => 'Kid', last_name => '' } } $kid, $sib ],
+        session_selections => { $kid => $priced, $sib => $cancelling },
+        enrollment_items   => [ { child_id => $kid, session_id => $priced },
+                                { child_id => $sib, session_id => $cancelling } ],
+    } );
+
+    my $quote = Registry::DAO::Payment->calculate_enrollment_total( $odd->{db}, {
+        children => $run->data->{children}, session_selections => $run->data->{session_selections} } );
+    is $quote->{total}, 0, 'the lines total $0';
+
+    my ( $out ) = checkout( $odd, $run );
+    is_deeply $out->{errors}, [$UNPRICED], 'a cart with a line below zero is refused';
+    is $odd->{db}->query( 'SELECT count(*) FROM enrollments WHERE family_member_id IN (?, ?)', $kid, $sib )
+        ->array->[0], 0, 'neither child is enrolled';
+
+    is 'Registry::DAO::WorkflowSteps::Payment'->unpriced_cart_refusal(
+        { total => 100, items => [ { amount_cents => -1, metadata => {} } ] }, [] ),
+        $UNPRICED, 'one cent below zero on any line is refused';
 };
 
 subtest 'empty stripe key treated as missing' => sub {
