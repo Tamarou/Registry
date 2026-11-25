@@ -150,6 +150,72 @@ subtest 'refused request creates no run' => sub {
     is runs_of('unguarded-flow'), $before, 'no run was created';
 };
 
+sub run_state ($id) {
+    $here_dao->db->query( 'SELECT data::text, latest_step_id FROM workflow_runs WHERE id = ?', $id )->hash;
+}
+
+# The gate reads the URL's slug; the run must belong to that slug's workflow, or
+# any run is reachable through a public slug. 404: the run's existence is not
+# confirmed to someone who may not see it.
+subtest 'a run cannot be continued through another workflow slug' => sub {
+    for my $slug (qw( unguarded-flow program-creation )) {
+        my $run    = $here_dao->find( 'Registry::DAO::Workflow', { slug => $slug } )->new_run( $here_dao->db );
+        my $step   = $run->next_step( $here_dao->db )->slug;
+        my $before = run_state( $run->id );
+        my $url    = "/tenant-storefront/@{[ $run->id ]}/$step";
+        for my $who ( [ anonymous => undef ], [ parent => $parent ] ) {
+            my $t = app_as( $who->[1] );
+            $t->get_ok( $url => $HOST )->status_is( 404, "$slug GET step, $who->[0]" );
+            $t->post_ok( $url => $HOST => form => { x => 1 } )->status_is( 404, "$slug POST step, $who->[0]" );
+            $t->get_ok( "$url?payment_intent=pi_gate_probe&redirect_status=succeeded" => $HOST )
+              ->status_is( 404, "$slug Stripe return, $who->[0]" );
+        }
+        is_deeply run_state( $run->id ), $before, "the $slug run is unchanged";
+    }
+};
+
+subtest 'callcc refuses a source run of another workflow' => sub {
+    my $source = $here_dao->find( 'Registry::DAO::Workflow', { slug => 'unguarded-flow' } )->new_run( $here_dao->db );
+    my $count  = sub {
+        $here_dao->db->query( 'SELECT count(*) FROM workflow_runs WHERE continuation_id = ?', $source->id )->array->[0];
+    };
+    app_as()->post_ok( "/tenant-storefront/@{[ $source->id ]}/callcc/tenant-storefront" => $HOST => form => {} )
+      ->status_is(404);
+    is $count->(), 0, 'no run continues the foreign run';
+};
+
+# Routes that name their workflow in the route rather than the URL go through
+# the same row-based check, so a tenant narrowing its row takes effect there.
+subtest 'fixed-slug routes are gated by the tenant row' => sub {
+    my $staff = member( 'gate_staff', 'staff' );
+    for my $case (
+        [ 'admin-dashboard',         get  => '/admin/dashboard' ],
+        [ 'admin-drop-approval',     post => '/admin/dashboard/process_drop_request' ],
+        [ 'admin-transfer-approval', post => '/admin/dashboard/process_transfer_request' ],
+        [ 'template-editor',         get  => '/admin/templates' ],
+        [ 'template-editor',         post => '/admin/templates' ],
+      )
+    {
+        my ( $slug, $method, $path ) = @$case;
+        $here_dao->db->update( 'workflows', { roles => ['admin'] }, { slug => $slug } );
+        my $before = runs_of($slug);
+        my $m      = "${method}_ok";
+        app_as($staff)->$m( $path => $HOST => form => {} )
+          ->status_is( 403, "$method $path refuses staff once narrowed" );
+        is runs_of($slug), $before, "no $slug run created";
+        $here_dao->db->update( 'workflows', { roles => [qw(admin staff)] }, { slug => $slug } );
+    }
+
+    $here_dao->db->update( 'workflows', { roles => ['admin'], public => 'false' }, { slug => 'tenant-storefront' } );
+    my $before = runs_of('tenant-storefront');
+    my $t      = app_as($parent);    # anonymous would be sent to log in instead
+    $t->get_ok( '/' => $HOST )->status_is( 403, 'GET / follows the narrowed storefront row' );
+    $t->post_ok( '/' => $HOST => form => {} )->status_is( 403, 'POST / follows the narrowed storefront row' );
+    is runs_of('tenant-storefront'), $before, 'no storefront run created';
+    $here_dao->db->update( 'workflows', { roles => undef, public => 'true' }, { slug => 'tenant-storefront' } );
+    app_as()->get_ok( '/' => $HOST )->status_is( 200, 'the shipped storefront row still serves /' );
+};
+
 subtest 'malformed slug never bypasses guard' => sub {
     my $before = runs_of('program-creation');
     my $t      = app_as($parent);
