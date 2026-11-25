@@ -308,7 +308,10 @@ subtest 'partial refund across two entitlements follows allocation' => sub {
     is reread($one)->state, 'active', 'still neither ends';
     is reread($two)->state, 'active', 'short of its full amount';
 
-    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_cart3_$$", "pi_cart_$$", 5000 ) ) );
+    {
+        local $SIG{__WARN__} = sub { };    # a deliberate over-refund, logged; its line is the next subtest's
+        deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_cart3_$$", "pi_cart_$$", 5000 ) ) );
+    }
     is_deeply [ $one->refunded_cents($adb), $two->refunded_cents($adb) ], [ 2000, 4000 ],
         'the rest of the payment reaches each full amount, and no more';
     is reread($one)->state, 'refunded', 'ending the first';
@@ -448,6 +451,24 @@ subtest 'charge refunded without a refunds list applies nothing' => sub {
     is count('workflow_runs'), $runs, 'it starts no run';
     is reread($e)->state, 'active', 'and leaves the entitlement in effect';
     is_deeply records($e), [], 'with nothing recorded';
+};
+
+subtest 'an over-refund is capped and logged' => sub {
+    my $paid = payment( 2000, "pi_over_$$" );
+    my ($e) = booking( $paid, 2000 );
+    my $event = refund_event( 'refund.created', $ACCOUNT_A, refund( "re_over_$$", "pi_over_$$", 2500 ) );
+    $event->{id} = "evt_over_$$";
+    Test::Registry::StripeWebhook::post_connect( $t, {%$event} )->status_is(200);
+
+    my @warned;
+    local $SIG{__WARN__} = sub { push @warned, @_ };
+    my $run = move_run("evt_over_$$");
+    $run->process( $adb, $run->next_step($adb), {} );
+    is $e->refunded_cents($adb), 2000, 'no more than its share is recorded';
+    is reread($e)->state, 'refunded', 'and it ends';
+    is scalar @warned, 1, 'one line is logged';
+    like $warned[0], qr/re_over_$$.*2500.*2000/, 'naming the refund, what Stripe reported and what was applied';
+    $minion->perform_jobs;    # the endpoint's own run finds it applied
 };
 
 done_testing;

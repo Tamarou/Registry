@@ -6,7 +6,7 @@ use utf8;
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ApplyStripeRefund :isa(Registry::DAO::WorkflowStep) {
-    use List::Util qw( min sum0 );
+    use List::Util qw( sum0 );
     use Registry::DAO::Entitlement;
 
     # The refunds stored Connect event $event reports, each naming its
@@ -69,8 +69,12 @@ class Registry::DAO::WorkflowSteps::ApplyStripeRefund :isa(Registry::DAO::Workfl
 
         my @left  = map { my $l = $_->payment_share_cents - $_->refunded_cents($db); $l > 0 ? $l : 0 } @entitlements;
         my $total = sum0(@left) or return;
-        $amount = min( $amount, $total );
-        my @part = map { int( $amount * $_ / $total ) } @left;
+        if ( $amount > $total ) {
+            warn "Stripe refund $refund->{id} of $amount cents on payment $payment->{id} is more than its "
+               . "entitlements' unrefunded $total cents; $total applied\n";
+            $amount = $total;
+        }
+        my @part = do { use integer; map { $amount * $_ / $total } @left };
         my $rest = $amount - sum0(@part);
         $part[$_]++ for ( sort { ( $amount * $left[$b] ) % $total <=> ( $amount * $left[$a] ) % $total || $a <=> $b }
             0 .. $#left )[ 0 .. $rest - 1 ];

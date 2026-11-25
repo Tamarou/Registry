@@ -187,8 +187,9 @@ account wins and a warning is logged.
 | `payment_intent.succeeded` for an intent Registry created and later replaced (listed in the payment's `metadata.superseded_intent_ids`) | nothing settles, staff are alerted, and the `superseded_refund` job refunds it in full (section 6) |
 | `invoice.paid`, `invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible` | the subscription is read from SACP's account with `expand[]=schedule`; only an invoice whose schedule Registry recorded, with `billing_reason` `subscription_create`, `subscription_cycle` or `subscription_update`, marks an instalment row |
 | `account.updated` | mirrors `charges_enabled` and `details_submitted` onto the tenant row, when the account in the event is the one it was delivered for |
-| `refund.updated` for a refund Registry holds as pending | settles that refund (section 6, "Refunds") |
-| other refund, dispute and customer events (`charge.refunded`, `charge.refund.updated`, `refund.*`, `charge.dispute.*`, `customer.*`) | **stored, not applied**: the row in `registry.webhook_events` keeps the account, tenant and payload, with `processed_at` NULL. Nothing in Registry changes. |
+| `refund.updated` for a refund Registry holds as pending | settles that refund (section 6, "Refunds"); once it has succeeded it is also stored and applied to the bookings, as below |
+| a refund (`refund.*`, `charge.refund.updated`, or `charge.refunded` when it lists its refunds) of a payment Registry made for SACP | **stored, then applied**: the row in `registry.webhook_events` keeps the account, tenant and payload, and an `entitlement-stripe-move` run applies it in the background, setting `processed_at`. A succeeded full refund ends the bookings that payment bought and frees their seats; a partial one is recorded against them and leaves them in effect; pending, failed and canceled refunds change nothing. The offer's refund policy does not gate this: Stripe has already moved the money. If the run fails three times, SACP's admins are alerted. |
+| other refund, dispute and customer events (`charge.dispute.*`, `customer.*`, and refunds of payments Registry did not make) | **stored, not applied**: the row keeps the account, tenant and payload, with `processed_at` NULL. Nothing in Registry changes. |
 | anything else | claimed, logged as not handled, 200 |
 
 To see what has been stored unapplied:
@@ -200,9 +201,9 @@ SELECT stripe_event_id, event_type, account, tenant_id, received_at
  ORDER BY received_at DESC;
 ```
 
-A refund or dispute SACP makes in its own Stripe dashboard shows up here and
-nowhere else in Registry. Act on it by hand until Registry applies these
-events.
+A refund SACP makes in its own Stripe dashboard is applied to the bookings its
+payment bought (above). A dispute is still only stored here: act on it by hand
+until Registry applies those events.
 
 ### 3.4 Instalment invoices Stripe collected but Registry did not record
 

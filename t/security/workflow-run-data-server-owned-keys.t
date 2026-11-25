@@ -237,6 +237,19 @@ subtest 'a change and its targets cannot be planted by a client' => sub {
     }
 };
 
+subtest 'a stored Stripe event cannot be named by a client' => sub {
+    # stripe_event_id names the stored Connect event an entitlement-stripe-move
+    # run applies; only the Connect endpoint sets it, when it creates the run.
+    for my $form ( { stripe_event_id => 'evt_planted' }, { 'stripe_event_id[x]' => 'evt_planted' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{stripe_event_id}, 'a posted stripe_event_id is not stored';
+    }
+    $t->post_ok('/run-data-test' => form => { stripe_event_id => 'evt_planted' })->status_is(302);
+    my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+    ok !exists data_for($run_id)->{stripe_event_id}, 'nor at run creation';
+};
+
 subtest 'submitted seller account or tenant slug is ignored' => sub {
     # The host tenant sells on its own account; the victim's account is what an
     # attacker would like the charge to land on instead.
