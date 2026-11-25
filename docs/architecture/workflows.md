@@ -294,6 +294,14 @@ To resume a halted run, an admin fixes what `__driver.error` names, then
 enqueues `continue_workflow_run` again with the same arguments. The driver
 starts at the halted step, not the first one.
 
+The `attendance_check` sweep (`lib/Registry/Job/AttendanceCheck.pm`) uses the
+same driver in-process: each check starts an `attendance-check` run in the
+registry schema and drives it to the end. The driver returns where the run
+stopped and leaves finishing the Minion job to its caller, so the sweep finishes
+with the tenants it covered. The sweep's next run is queued by
+`Registry::Job::Recurring`, never from run data. A check gets one attempt, so a
+step that dies halts that run and alerts registry's admins at once.
+
 ## Advanced Features
 
 ### Continuations

@@ -12,10 +12,12 @@ class Registry::Job::ContinueWorkflowRun {
 
     sub register ($class, $app) {
         $app->minion->add_task( continue_workflow_run => sub ($job, @args) {
-            $class->new->run( $job, @args );
+            $job->finish( $class->new->run( $job, @args ) );
         } );
     }
 
+    # Drives the run and returns where it stopped; the caller finishes the job,
+    # so a job that drives a run as part of its work can report its own result.
     method run ( $job, $args ) {
         my ( $tenant, $run_id ) = ref $args eq 'HASH' ? $args->@{qw(tenant run_id)} : ();
         die "continue_workflow_run needs a tenant and a run_id\n"
@@ -56,7 +58,7 @@ class Registry::Job::ContinueWorkflowRun {
                 die $result->{retry} if $result->{retry};
 
                 # A step that did not advance the run is waiting on a person.
-                return _finish( $job, $db, $run, $step->slug, 'needs_person' )
+                return _stopped( $db, $run, $step->slug, 'needs_person' )
                     if $result->{stay} || $result->{errors} || $result->{_validation_errors};
             }
         }
@@ -82,13 +84,13 @@ class Registry::Job::ContinueWorkflowRun {
             die $e;
         }
 
-        return _finish( $job, $db, $run, $run->latest_step($db)->slug, 'completed' );
+        return _stopped( $db, $run, $run->latest_step($db)->slug, 'completed' );
     }
 
     # A drive that ended without dying clears any failure an earlier one recorded.
-    sub _finish ( $job, $db, $run, $stopped_at, $reason ) {
+    sub _stopped ( $db, $run, $stopped_at, $reason ) {
         $run->update_data( $db, { __driver => undef } ) if $run->data->{__driver};
-        return $job->finish( { run_id => $run->id, stopped_at => $stopped_at, reason => $reason } );
+        return { run_id => $run->id, stopped_at => $stopped_at, reason => $reason };
     }
 
     # A step that talks to Stripe returns a promise. The job runs outside the

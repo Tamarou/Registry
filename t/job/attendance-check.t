@@ -9,7 +9,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Registry::Job::AttendanceCheck;
-use Registry::Job::WorkflowExecutor;
+use Test::Registry::Mojo;
 use Registry::DAO::User;
 use Registry::DAO::Location;
 use Registry::DAO::Project;
@@ -357,29 +357,11 @@ subtest 'Prevent duplicate reminder notifications' => sub {
         metadata => { event_id => $event_starting_soon->id }
     });
 
-    # Mock minion for scheduling
-    my $scheduled_jobs2 = [];
-    my $mock_minion2 = bless {
-        enqueue => sub {
-            my ($self, $task, $args, $opts) = @_;
-            push @$scheduled_jobs2, { task => $task, args => $args, opts => $opts };
-            return 'job_id_456';
-        }
-    }, 'MockMinion';
-    
-    # Mock job and run check
-    my $mock_logger2 = bless {}, 'MockLogger';
-    my $mock_app2 = bless {
-        log => $mock_logger2,
-        dao => sub { $dao },
-        minion => $mock_minion2
-    }, 'MockApp';
-    my $mock_job2 = bless {
-        app => $mock_app2
-    }, 'MockJob';
-
-    my $job_instance = Registry::Job::AttendanceCheck->new;
-    $job_instance->run($mock_job2);
+    # The real job, through Minion's own worker.
+    my $minion = Test::Registry::Mojo->new('Registry')->app->minion;
+    my $id     = $minion->enqueue('attendance_check');
+    $minion->perform_jobs_in_foreground( { id => $id } );
+    is $minion->job($id)->info->{state}, 'finished', 'the attendance check ran';
 
     # Should still only have 1 reminder notification (no duplicates)
     my $reminder_count = $db->query(
