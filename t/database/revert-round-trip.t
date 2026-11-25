@@ -49,6 +49,7 @@ my @CHANGES = qw(
     entitlement-uses
     holds-placed-at
     entitlement-refunds-per-entitlement
+    retire-unpublished-platform-plans
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
@@ -108,7 +109,7 @@ my $sqitch = App::Sqitch->new();
 # that introduced it.  Verified against live Postgres -- clone_schema('default')
 # succeeds and pg_dump renders it "default".enrollments, so the quoted assertion
 # below matches.
-my @SLUGS = qw( order user group default table check select where having limit offset fetch union lateral window returning using references constraint primary foreign natural );
+my @SLUGS = qw( order user group default table check select where having limit offset fetch union lateral window returning using references constraint primary foreign natural grant );
 @CHANGES <= @SLUGS
     or die sprintf 'revert-round-trip needs one reserved-word slug per change: %d changes, %d slugs',
         scalar @CHANGES, scalar @SLUGS;

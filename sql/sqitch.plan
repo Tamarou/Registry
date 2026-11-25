@@ -124,3 +124,4 @@ remove-free-platform-plan [drop-pricing-relationships] 2026-11-24T23:00:00Z Chri
 entitlement-uses [remove-free-platform-plan] 2026-11-25T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Marking attendance records one use of the entitlement held for that occurrence, with who and when
 holds-placed-at [entitlement-uses] 2026-11-25T01:00:00Z Chris Prather <chris.prather@tamarou.com> # A hold records when it was placed, so a charge can extend it by its own length
 entitlement-refunds-per-entitlement [holds-placed-at] 2026-11-25T02:00:00Z Chris Prather <chris.prather@tamarou.com> # A Stripe refund is recorded once per entitlement, so one refund can be shared among a payment's entitlements
+retire-unpublished-platform-plans [entitlement-refunds-per-entitlement] 2026-11-25T03:00:00Z Chris Prather <chris.prather@tamarou.com> # Studio, Empire, Registry Plus and Standard stop being platform plans: Solo is the one offer
