@@ -1,0 +1,26 @@
+%# ABOUTME: entitlement-refund step: the person picks which of their bookings to ask a refund of.
+%# ABOUTME: Lists only the bookings they hold or paid for that are in effect; an admin arrives with entitlement_id instead.
+% extends 'layouts/workflow';
+% title 'Refund a booking';
+% stash description => 'Ask for a refund of a booking.';
+% my $bookings = stash('bookings') // [];
+%= include 'entitlement-refund/_errors'
+
+<form method="POST" action="<%= $action %>">
+  % if (@$bookings) {
+  <fieldset>
+    <legend>Which booking?</legend>
+    % for my $booking (@$bookings) {
+    <div>
+      <input type="radio" id="booking-<%= $booking->{id} %>" name="entitlement_id" value="<%= $booking->{id} %>" required>
+      <label for="booking-<%= $booking->{id} %>"><%= $booking->{name} %></label>
+    </div>
+    % }
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+  % } else {
+  <p>You have no bookings that can be refunded.</p>
+  % }
+</form>

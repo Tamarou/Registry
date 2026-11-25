@@ -40,13 +40,14 @@ class Registry::DAO::WorkflowSteps::ChooseChangeTarget :isa(Registry::DAO::Workf
     # Why $user (the run's server-owned user) may not act on $entitlement, or
     # nothing: it is theirs when they hold or paid for it, and a tenant's
     # admin or staff acts for its holder. Asked again at hold and at charge,
-    # so another person posting to the run's URLs gets no further.
-    sub stranger ( $class, $entitlement, $user ) {
+    # so another person posting to the run's URLs gets no further. $verb
+    # names the act in the refusal (entitlement-refund asks it too).
+    sub stranger ( $class, $entitlement, $user, $verb = 'change' ) {
         my $id = ref $user eq 'HASH' ? $user->{id} // '' : '';
-        return 'Sign in to change a booking' unless length $id;
+        return "Sign in to $verb a booking" unless length $id;
         return undef if grep { ( $_ // '' ) eq $id } $entitlement->holder_user_id, $entitlement->payer_user_id;
         return undef if ( $user->{role} // '' ) =~ /\A(?:admin|staff)\z/;
-        return 'That booking is not yours to change';
+        return "That booking is not yours to $verb";
     }
 
     # Why $entitlement may not change now under the change policy it was sold

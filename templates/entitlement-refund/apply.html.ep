@@ -1,0 +1,28 @@
+%# ABOUTME: entitlement-refund step: the booking's refund terms, from the offer version it was sold under, and the ask.
+%# ABOUTME: ApplyRefundPolicy decides on submit; the offer's name is its own words and is always escaped.
+% extends 'layouts/workflow';
+% title 'Refund terms';
+% my $refund = stash('refund') // {};
+% my $kind   = $refund->{kind} // '';
+%= include 'entitlement-refund/_errors'
+
+<section class="card">
+  <h2><%= stash('offer_name') // 'Your booking' %></h2>
+  % if ($kind eq 'none') {
+  <p>All sales are final: this offer gives no refunds.</p>
+  % } elsif ($kind eq 'full_until_cutoff' && defined $refund->{cutoff_hours}) {
+  <p>A full refund until <%= $refund->{cutoff_hours} %> hours before the class starts.</p>
+  % } elsif ($kind eq 'full_until_cutoff') {
+  <p>A full refund until <%= $refund->{cutoff_at} %>.</p>
+  % } elsif ($kind eq 'keep_fee_with_admin_exception') {
+  <p>A refund keeps the platform fee; the studio's admin can return it through the fee-refund exception.</p>
+  % } else {
+  <p>This offer states no refund terms.</p>
+  % }
+</section>
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Ask for a refund</button>
+  </div>
+</form>

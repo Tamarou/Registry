@@ -98,7 +98,8 @@ my $step = Registry::DAO::WorkflowStep->find( $tdb, { workflow_id => $workflow->
 
 sub apply ($entitlement) {
     my $run = $workflow->new_run($tdb);
-    $run->update_data( $tdb, { refund_entitlement_id => $entitlement->id } );
+    # An admin of the tenant asks, as the workflow's chooser lets them.
+    $run->update_data( $tdb, { refund_entitlement_id => $entitlement->id, user => { id => $admin->id, role => 'admin' } } );
     return settle( $run->process( $tdb, $step, {} ) );
 }
 
@@ -256,8 +257,8 @@ subtest 'unrecognised policy refused' => sub {
 
     my $fee = booking( version( $occurrence, { kind => 'keep_fee_with_admin_exception' } ), $occurrence,
         my $fee_paid = payment(), 2000 );
-    like apply($fee)->{refund_refused}, qr/no refund policy this step applies \(keep_fee_with_admin_exception\)/,
-        'keep the fee is refused here, naming it';
+    like apply($fee)->{refund_refused}, qr/keeps the platform fee.*admin.*fee-refund exception/,
+        'keep the fee is refused here, pointing to the fee-refund exception an admin applies';
     is request_on( $fee_paid, $fee ), undef, 'and no refund is requested';
 };
 

@@ -103,7 +103,8 @@ my $step = Registry::DAO::WorkflowStep->find( $tdb, { workflow_id => $workflow->
 
 sub apply ($e) {
     my $run = $workflow->new_run($tdb);
-    $run->update_data( $tdb, { refund_entitlement_id => $e->id } );
+    # The tenant's owner asks, as the workflow's chooser lets an admin.
+    $run->update_data( $tdb, { refund_entitlement_id => $e->id, user => { id => $owner->id, role => 'admin' } } );
     return settle( $run->process( $tdb, $step, {} ) );
 }
 

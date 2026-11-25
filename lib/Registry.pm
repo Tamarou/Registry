@@ -1460,10 +1460,12 @@ class Registry :isa(Mojolicious) {
             'entitlement-stripe-move' => ['admin'],
 
             # A parent acts on their own enrollment; staff and admins reach the
-            # same flows on a family's behalf. entitlement-change's steps also
-            # refuse a booking the parent neither holds nor paid for.
+            # same flows on a family's behalf. entitlement-change's and
+            # entitlement-refund's steps also refuse a booking the parent
+            # neither holds nor paid for.
             ( map { $_ => [ 'parent', 'admin', 'staff' ] } qw(
                 entitlement-change
+                entitlement-refund
                 parent-drop-request
                 parent-transfer-request
             ) ),

@@ -1,0 +1,11 @@
+%# ABOUTME: entitlement-refund partial: the refusals a step handed back, flashed or rendered with the page.
+%# ABOUTME: Each is a plain message for the person; nothing technical is shown.
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }

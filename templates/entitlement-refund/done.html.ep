@@ -1,0 +1,15 @@
+%# ABOUTME: entitlement-refund's last screen: the refund has been requested, or the offer's refusal in its own words.
+%# ABOUTME: The booking ends only when Stripe reports the refund; nothing more to do here.
+% extends 'layouts/workflow';
+% title 'Refund';
+% my $data = $run ? $run->data : {};
+
+<section class="card">
+  % if (my $refused = $data->{refund_refused}) {
+  <h2>No refund</h2>
+  <p><%= $refused %></p>
+  % } else {
+  <h2>Your refund has been requested</h2>
+  <p>The money goes back to the card that paid once Stripe confirms the refund.</p>
+  % }
+</section>

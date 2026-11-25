@@ -10,6 +10,7 @@ class Registry::DAO::WorkflowSteps::ApplyRefundPolicy :isa(Registry::DAO::Workfl
     use Mojo::Promise;
     use Registry::DAO::Entitlement;
     use Registry::DAO::Payment;
+    use Registry::DAO::WorkflowSteps::ChooseChangeTarget;
 
     # Why $entitlement gets no refund at $at (default the clock) under the
     # refund policy it was sold under (its stamped version, never the current
@@ -21,9 +22,10 @@ class Registry::DAO::WorkflowSteps::ApplyRefundPolicy :isa(Registry::DAO::Workfl
         my $policy = $entitlement->offer_version($db)->policies->{refund} // {};
         my $kind   = $policy->{kind} // '';
         return "This booking's offer says all sales are final: it gives no refunds" if $kind eq 'none';
-        # Anything else is refused, never read as a full refund. Keeping the
-        # fee is the platform's term with a tenant, which the fee-refund
-        # exception applies.
+        return "This booking's offer keeps the platform fee on a refund: ask the studio's admin, "
+            . 'who can return it through the fee-refund exception'
+            if $kind eq 'keep_fee_with_admin_exception';
+        # Anything else is refused, never read as a full refund.
         return "This booking's offer has no refund policy this step applies ($kind): nothing is refunded"
             unless $kind eq 'full_until_cutoff' && ( defined $policy->{cutoff_at} xor defined $policy->{cutoff_hours} );
         return 'This booking was not paid for, so there is nothing to refund'
@@ -68,12 +70,31 @@ class Registry::DAO::WorkflowSteps::ApplyRefundPolicy :isa(Registry::DAO::Workfl
         return { %request, payment => $entitlement->payment($db) };
     }
 
+    # The refund terms its page shows: the offer's name and its stamped refund
+    # policy, in the offer's words.
+    method prepare_template_data ( $db, $run, $params = {} ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $id = $run->data->{refund_entitlement_id};
+        my $entitlement = defined $id && !ref $id && Registry::DAO::Entitlement->find( $db, { id => $id } )
+            or return {};
+        my $version = $entitlement->offer_version($db);
+        return {
+            offer_name => $db->select( 'offers', 'name', { id => $version->offer_id } )->array->[0],
+            refund     => $version->policies->{refund} // {},
+        };
+    }
+
     # The run names the entitlement (refund_entitlement_id).
     method process ( $db, $form_data, $run = undef ) {
         $db = $db->db if $db isa Registry::DAO;
         my $id = $run ? $run->data->{refund_entitlement_id} : undef;
         my $entitlement = defined $id && !ref $id && Registry::DAO::Entitlement->find( $db, { id => $id } );
         return { stay => 1, errors => ['Choose a booking to refund'] } unless $entitlement;
+        # Asked again here: another person posting to this run's URL gets no further.
+        if ( my $stranger = Registry::DAO::WorkflowSteps::ChooseChangeTarget->stranger( $entitlement,
+                $run->data->{user}, 'refund' ) ) {
+            return { stay => 1, errors => [$stranger] };
+        }
 
         if ( my $refusal = __PACKAGE__->refusal( $db, $entitlement ) ) {
             return { refund_refused => $refusal };
