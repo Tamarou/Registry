@@ -356,6 +356,35 @@ subtest 'concurrent generation creates no duplicates' => sub {
         'the first created them and the second skipped them';
 };
 
+subtest 'a class deleted while the run waits for it is refused' => sub {
+    my $class = new_class();
+    my ( $blocked, undef, $b ) = race( sub ( $adb, $step ) { $adb->delete( 'projects', { id => $class->id } ) },
+        start(), pattern($class) );
+    ok $blocked, 'the run waits on the deletion';
+    is $b->{died}, undef, 'and does not die';
+    like join( ' ', ( $b->{errors} // [] )->@* ), qr/Choose one of your classes/, 'it is refused with the step\'s message';
+    is $tdb->query( 'SELECT count(*) FROM events WHERE project_id = ?', $class->id )->array->[0], 0,
+        'and nothing is created';
+};
+
+subtest 'a running generation does not hold up inserts that reference the class' => sub {
+    my $class = new_class();
+    my $adb   = Registry::DAO->new( url => $test_db->uri, schema => $SLUG )->db;
+    my $tx    = $adb->begin;
+    is errors_of( start()->process( $adb, schedule_step(), pattern($class) ) ), '', 'a run holds the class mid-transaction';
+    my $other = Registry::DAO->new( url => $test_db->uri, schema => $SLUG )->db;
+    $other->query(q{SET statement_timeout = '3s'});
+    my $inserted = eval {
+        Registry::DAO::Event->create( $other, {
+            project_id => $class->id, location_id => $room->id, teacher_id => $user{staff}->id,
+            time => '2027-06-05T14:00:00Z', duration => 60, capacity => 8,
+        } );
+        1;
+    };
+    ok $inserted, 'another connection still inserts an event for the class' or diag $@;
+    $tx->commit;
+};
+
 subtest 'regeneration leaves booked occurrences untouched' => sub {
     my $class = new_class(8);
     my ($run) = generate( pattern($class) );

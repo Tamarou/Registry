@@ -82,9 +82,13 @@ class Registry::DAO::WorkflowSteps::GenerateOccurrences :isa(Registry::DAO::Work
 
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
         # Locked, so the seats every occurrence gets are the class's as of
-        # this run, and concurrent runs for the class take turns.
-        my $seats = $db->query( 'SELECT seats_per_occurrence FROM projects WHERE id = ? FOR UPDATE', $class->id )
-            ->array->[0];
+        # this run, and concurrent runs for the class take turns. NO KEY, so
+        # unrelated inserts that reference the class are not held up.
+        my $locked = $db->query( 'SELECT seats_per_occurrence FROM projects WHERE id = ? FOR NO KEY UPDATE', $class->id )
+            ->array;
+        # Deleted since it was listed: $tx, if ours, rolls back as it goes.
+        return { stay => 1, errors => ['Choose one of your classes'] } unless $locked;
+        my $seats = $locked->[0];
 
         for ( my $day = $first->clone ; $day <= $last ; $day->add( days => 1 ) ) {
             next unless $on{ $day->day_of_week };
