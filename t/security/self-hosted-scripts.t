@@ -40,6 +40,10 @@ subtest 'CSP script-src allows Stripe but no public CDN' => sub {
     unlike $script_src // '', qr/unpkg\.com/,        'script-src does not allow unpkg.com';
     unlike $script_src // '', qr/cdn\.jsdelivr\.net/, 'script-src does not allow cdn.jsdelivr.net';
     like $script_src // '', qr/\bjs\.stripe\.com\b/, 'script-src still allows js.stripe.com';
+    like $script_src // '', qr/'self'/, "script-src still allows 'self'";
+    my $csp = $t->tx->res->headers->header('Content-Security-Policy') // '';
+    like $csp, qr/(?:^|;\s*)frame-src[^;]*\bjs\.stripe\.com\b/,  'frame-src still allows js.stripe.com';
+    like $csp, qr/(?:^|;\s*)connect-src[^;]*\bapi\.stripe\.com\b/, 'connect-src still allows api.stripe.com';
 };
 
 subtest 'vendored scripts are served locally' => sub {
