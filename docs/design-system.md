@@ -1087,7 +1087,7 @@ The design system is **fully integrated** into Registry's Mojolicious templates:
     <link rel="stylesheet" href="/css/app.css">
 
     <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="/js/vendor/htmx.min.js"></script>
 
     <!-- Web Components -->
     <script src="/js/components/workflow-progress.js"></script>

@@ -90,6 +90,6 @@
         <p>&copy; 2024 Registry. Powered by classless CSS and semantic HTML.</p>
     </footer>
 
-    <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+    <script src="<%= static_url %>/js/vendor/htmx.min.js"></script>
 </body>
 </html>
