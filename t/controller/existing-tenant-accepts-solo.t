@@ -31,14 +31,15 @@ my $SOLO = platform_solo_offer_version_id($dao);
 
 # A tenant as sql/seed/sacp-tenant.sql creates SACP: its registry row and a
 # cloned schema, no platform entitlement. Then the seed README's one-time step,
-# `./registry workflow import <slug>`, which imports every workflow into it.
+# `./registry workflow import <slug> workflows/platform-offer-acceptance.yml`,
+# which imports that workflow alone: never tenant-signup, which no tenant holds.
 # Returns the tenant's id, an admin and a staff member of it, and its Host header.
 sub sacp_like ($slug) {
     $db->query( 'INSERT INTO registry.tenants (slug, name) VALUES (?, ?)', $slug, "Studio $slug" );
     $db->query( 'SELECT registry.clone_schema(?)', $slug );
     $db->query('SET search_path = registry, public');
     $dao->connect_schema($slug)
-        ->import_workflows( [ Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each ] );
+        ->import_workflows( [ Mojo::Home->new->child('workflows/platform-offer-acceptance.yml') ] );
     my %user;
     for my $role (qw(admin staff)) {
         $user{$role} = Test::Registry::Fixtures::create_user( $dao, {
@@ -80,7 +81,8 @@ sub check_screen ( $t, $screen ) {
 
 # $t's own session CSRF token, for a hand-made POST.
 sub csrf ( $t, $host ) {
-    $t->get_ok( '/' => $host );
+    # This workflow's page: the tenant holds no storefront to serve at /.
+    $t->get_ok( '/platform-offer-acceptance' => $host );
     my $meta = $t->tx->res->dom->at('meta[name="csrf-token"]');
     return $meta ? $meta->attr('content') : '';
 }
@@ -249,6 +251,39 @@ subtest 'unpublished or foreign offer version refused' => sub {
     is scalar entitlements_of($id)->@*, 0, 'nothing is accepted';
     is $db->query( 'SELECT count(*) FROM registry.entitlements WHERE offer_version_id IN (?, ?)',
         $draft->id, $foreign->id )->array->[0], 0, 'by anyone, of either version';
+};
+
+subtest 'readme import gives the tenant no tenant signup' => sub {
+    my ( undef, $admin, undef, $host ) = sacp_like('signup_free');
+    is $db->query(q{SELECT count(*) FROM signup_free.workflows WHERE slug = 'tenant-signup'})->array->[0], 0,
+        'the tenant schema has no tenant-signup row';
+    client()->get_ok( '/tenant-signup' => $host )->status_is( 403, 'tenant signup is refused on its host' );
+    client($admin)->get_ok( '/tenant-signup' => $host )->status_is( 403, 'even to its admin' );
+};
+
+subtest 'the platform tenant cannot accept a platform offer' => sub {
+    my $admin = Test::Registry::Fixtures::create_user( $dao,
+        { username => 'own_offer_admin', name => 'Platform Admin', email => 'admin@platform.test', user_type => 'admin' } );
+    join_tenant( $dao, $admin, 'admin' );
+    my $platform_id = $db->query(q{SELECT id FROM registry.tenants WHERE slug = 'registry'})->array->[0];
+    my $before = scalar entitlements_of($platform_id)->@*;
+
+    # Straight to the accept, however the platform's own terms stand.
+    my $host = {};
+    my $t    = client($admin);
+    $t->get_ok('/platform-offer-acceptance')->status_is(200);
+    my $run = $db->query( q{SELECT r.id FROM registry.workflow_runs r JOIN registry.workflows w ON w.id = r.workflow_id
+                             WHERE w.slug = 'platform-offer-acceptance' ORDER BY r.created_at DESC LIMIT 1} )->array->[0];
+    $db->query( q{UPDATE registry.workflow_runs SET data = jsonb_set(data, '{platform_offer_version}', to_jsonb(?::text)),
+                         latest_step_id = (SELECT s.id FROM registry.workflow_steps s JOIN registry.workflows w ON w.id = s.workflow_id
+                                            WHERE w.slug = 'platform-offer-acceptance' AND s.slug = 'choose')
+                   WHERE id = ?}, $SOLO, $run );
+    $db->query( q{UPDATE registry.entitlements SET in_effect = tstzrange(lower(in_effect), lower(in_effect) + interval '1 second')
+                   WHERE holder_tenant_id = ?}, $platform_id );
+    $t->get_ok("/platform-offer-acceptance/$run/accept")->status_is(200);
+    refused_step( $t, $host, 'accept', action => 'accept' );
+    $t->content_like( qr/platform cannot accept/, 'saying the platform cannot accept its own offer' );
+    is scalar entitlements_of($platform_id)->@*, $before, 'and no entitlement is created';
 };
 
 subtest 'double submit creates one entitlement' => sub {

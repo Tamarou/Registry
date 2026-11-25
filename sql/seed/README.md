@@ -40,11 +40,14 @@ The seed writes no platform entitlement, and absence is not zero: until
 SACP holds one, its sales are refused. SACP's admin accepts Solo once
 through the accept path signup uses, never by a hand-written row:
 
-1. Import the workflows into SACP's schema, since the seed's
-   `clone_schema` copies structure, not workflows (ADR 005, ruling 10:
-   a one-time bridge until step 6 grants workflows as entitlements):
+1. Import `platform-offer-acceptance`, and only it, into SACP's schema,
+   since the seed's `clone_schema` copies structure, not workflows
+   (ADR 005, ruling 10: a one-time bridge until step 6 grants workflows
+   as entitlements). Name the file: a bare `workflow import sacp`
+   imports every workflow, including the public `tenant-signup`, which
+   no tenant may hold.
 
-       carton exec ./registry workflow import sacp
+       carton exec ./registry workflow import sacp workflows/platform-offer-acceptance.yml
 
 2. SACP's admin signs in on SACP's host and accepts Solo at
    `/platform-offer-acceptance`. Registry then holds SACP's entitlement

@@ -21,6 +21,9 @@ class Registry::DAO::WorkflowSteps::AcceptPlatformOffer :isa(Registry::DAO::Work
         my $slug = $db->query('SELECT current_schema()')->array->[0];
         return { stay => 1, errors => ["Only an administrator of this tenant can accept the platform's terms."] }
             unless ( Registry::DAO::Tenant->role_in( $db, $slug, $user->{id} ) // '' ) eq 'admin';
+        # The platform is the offerer of these terms, never their holder.
+        return { stay => 1, errors => ['The platform cannot accept its own offer to tenants.'] }
+            if $slug eq 'registry';
         my $tenant_id = $db->query( 'SELECT id FROM registry.tenants WHERE slug = ?', $slug )->array
             or return { stay => 1, errors => ['This tenant cannot accept platform terms.'] };
 
@@ -41,7 +44,12 @@ class Registry::DAO::WorkflowSteps::AcceptPlatformOffer :isa(Registry::DAO::Work
             } );
         };
         my $refused = $@;
-        die $refused unless $entitlement || $refused isa Registry::DAO::Entitlement::Refused;
+        unless ( $entitlement || $refused isa Registry::DAO::Entitlement::Refused ) {
+            # Best effort: in a transaction the error aborted this fails too, and
+            # that transaction's rollback reverts the local search path anyway.
+            eval { $db->query( q{SELECT set_config('search_path', ?, true)}, $path ) };
+            die $refused;
+        }
         $db->query( q{SELECT set_config('search_path', ?, true)}, $path );
         return { stay => 1, errors => [ $refused->message =~ s/\s+\z//r ] } unless $entitlement;
         $tx->commit if $tx;
