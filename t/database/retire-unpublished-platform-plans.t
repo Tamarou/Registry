@@ -9,7 +9,6 @@ use Test::Exception;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
-use Registry::PriceOps::PlatformTerms qw(platform_offers_to_tenants);
 use experimental 'signatures';
 
 my $CHANGE = 'retire-unpublished-platform-plans';
@@ -26,6 +25,26 @@ my $db = Mojo::Pg->new($uri)->db;
 sub deploy ()  { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', $CHANGE ) }
 sub revert ()  { $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', "$CHANGE^", '-y' ) }
 sub plans ()   { $db->query(q{SELECT * FROM registry.pricing_plans ORDER BY id})->hashes->to_array }
+
+# The platform's current published offers to tenants as signup read them at
+# this change, in this schema's SQL: registry payment-processing versions with
+# a percentage-of-sales plan, priced $0, not the platform's offer to itself.
+# Today's reader reads tables later changes add.
+sub offers_to_tenants () {
+    return $db->query(q{
+        SELECT o.name, v.price_cents AS amount_cents, p.fraction
+          FROM registry.offer_versions v
+          JOIN registry.offers o ON o.id = v.offer_id
+          JOIN registry.resources r ON r.id = v.resource_id
+          JOIN registry.offer_version_payment_plans p
+            ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
+         WHERE r.name = 'payment processing'
+           AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+           AND v.price_cents = 0
+           AND NOT v.conditions @> '[{"kind": "holder_is_offerer"}]'
+         ORDER BY p.fraction, o.name
+    })->hashes->to_array;
+}
 
 # The platform's plans for tenants still current: what signup could ever show.
 sub current_platform_plans () {
@@ -57,7 +76,7 @@ subtest 'platform publishes only solo after deploy' => sub {
 
     lives_ok { deploy() } 'the deploy runs';
 
-    my $offers = platform_offers_to_tenants($db);
+    my $offers = offers_to_tenants();
     is scalar @$offers, 1, 'the platform publishes exactly one offer to tenants';
     is $offers->[0]{name},         'Solo',  'and it is Solo';
     is $offers->[0]{amount_cents}, 0,       'at $0';

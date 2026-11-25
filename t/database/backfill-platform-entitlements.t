@@ -109,9 +109,22 @@ subtest 'backfill grants solo v1 and drops the link' => sub {
 };
 
 subtest 'registry resolves zero after backfill' => sub {
-    require Registry::PriceOps::RevenueShare;
-    is Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, 'registry' ), 0,
-        'the platform takes exactly 0 of its own sales';
+    # The fee resolver's question at this change, in this schema's SQL: the
+    # fraction of registry's one active, in-effect entitlement to payment
+    # processing. Today's resolver reads tables later changes add.
+    my $fractions = $db->query( q{
+        SELECT p.fraction
+          FROM registry.entitlements e
+          JOIN registry.offer_versions v ON v.id = e.offer_version_id
+          JOIN registry.resources r ON r.id = v.resource_id
+          JOIN registry.offer_version_payment_plans p
+            ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
+         WHERE e.holder_tenant_id = '00000000-0000-0000-0000-000000000000'
+           AND r.name = 'payment processing'
+           AND e.state = 'active' AND e.in_effect @> now()
+    } )->arrays->flatten->to_array;
+    is scalar @$fractions, 1, 'the platform holds one platform term in effect';
+    cmp_ok $fractions->[0], '==', 0, 'the platform takes exactly 0 of its own sales';
     ok !grep( { $_->{offer_version_id} eq $SOLO_V1 }
             @{ platform_entitlements('00000000-0000-0000-0000-000000000000') } ),
         'and holds no Solo entitlement, though its row was linked to Solo';
