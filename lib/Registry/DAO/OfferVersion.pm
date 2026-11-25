@@ -51,6 +51,12 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         return !!grep { $_->id eq $resource_id } $self->covered_resources($db)->@*;
     }
 
+    # The seats a booking of $count acceptances takes: $count times its seats
+    # per unit. Capacity is then the resource's one check (Resource->claim).
+    method seats_for ($count) {
+        return $count * $units_per_acceptance;
+    }
+
     # Drafting and publishing both read the offer's versions and then write
     # one, so two writers to the same offer take turns on the offer row. Without
     # it the second computes the same next number, or retires a version the
