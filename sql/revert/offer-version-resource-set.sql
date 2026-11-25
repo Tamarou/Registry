@@ -86,6 +86,7 @@ DECLARE
     n bigint;
     draft uuid;
     fn text;
+    search text := current_setting('search_path');
 BEGIN
     FOR s IN
         SELECT 'registry'::name
@@ -122,22 +123,23 @@ BEGIN
             EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_resources_no_truncate()', s);
             -- Its copies of the guards name offer_version_resources unqualified,
             -- and PL/pgSQL plans the whole IF, so each is rebuilt from registry's
-            -- restored body the way clone_schema copies it.
+            -- restored body exactly as clone_schema copies it: every registry.
+            -- stripped, created on the tenant's search_path. Stripping after
+            -- qualifying would eat a slug that ends in "registry".
+            PERFORM set_config('search_path', quote_ident(s), true);
             FOREACH fn IN ARRAY ARRAY['entitlement_one_platform_term', 'offer_versions_keep_platform_offer',
                                       'resources_keep_platform_offer_name']
             LOOP
                 CONTINUE WHEN to_regprocedure(format('%I.%I()', s, fn)) IS NULL;
-                EXECUTE replace(
-                    replace(pg_get_functiondef(format('registry.%I()', fn)::regprocedure),
-                            format('FUNCTION registry.%s()', fn), format('FUNCTION %I.%I()', s, fn)),
-                    'registry.', '');
+                EXECUTE replace(pg_get_functiondef(format('registry.%I()', fn)::regprocedure), 'registry.', '');
             END LOOP;
+            PERFORM set_config('search_path', search, true);
         END IF;
     END LOOP;
 END $$;
 
 DROP FUNCTION registry.offer_version_resource_set_guard();
 DROP FUNCTION registry.offer_version_requires_purchase();
-DROP FUNCTION registry.offer_version_resources_no_truncate();
+DROP FUNCTION IF EXISTS registry.offer_version_resources_no_truncate();
 
 COMMIT;
