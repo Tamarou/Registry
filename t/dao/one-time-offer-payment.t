@@ -25,6 +25,8 @@ use Registry::PriceOps::PlatformTerms qw( platform_terms_for_tenant );
 
 local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_local_one_time_offer';
 local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_local_one_time_offer_connect';
+# A priced payment is refused outright without a key; no Stripe call is made here.
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
