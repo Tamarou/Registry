@@ -14,6 +14,7 @@ A workflow consists of:
 - A description of its purpose
 - A series of ordered steps
 - A designated first step
+- Who may run it: a `roles` list, or the `public` mark
 
 Workflows are usually defined by users via a Workflow construction workflow through the Registry Web UI. The system is bootstrapped using serialized workflows in YAML format for better readability and familiarity with other workflow systems (like Kubernetes, Ansible, or GitHub Actions).
 
@@ -25,6 +26,9 @@ description: |
   Handles the complete student registration process
   from initial application through confirmation.
 slug: student-registration
+# Who may run it. Exactly one of:
+roles: [parent, admin, staff]
+# public: true
 
 steps:
   - name: Initial Application
@@ -45,6 +49,24 @@ steps:
 ```
 
 ## Workflow Components
+
+### Roles and the Public Mark
+
+Each workflow YAML declares exactly one of:
+
+- `roles`: a non-empty list of the application's roles (`parent`, `student`,
+  `staff`, `admin` -- `Registry::DAO::User::USER_TYPES`). An unknown name, an
+  empty list, or anything but a list is refused at import.
+- `public: true`: anyone may walk into it. Only a YAML boolean `true` is the
+  mark; `1`, `yes`, `"true"` and every false value are not.
+
+Declaring both is refused at import, with the file named in the error.
+`from_yaml` stores the entry on the `workflows` row (`roles`, `public`),
+`to_yaml` round-trips it, and `copy_workflow` carries it into a tenant's
+schema. A row with neither has no entry. The route gate still reads the
+`workflow_roles` map in `lib/Registry.pm`, which these rows were backfilled
+from (`workflow-roles-data`), so for now the two must agree;
+`t/dao/workflow-roles-data.t` checks that every shipped workflow does.
 
 ### Workflow Steps
 
