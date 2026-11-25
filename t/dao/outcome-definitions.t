@@ -100,11 +100,13 @@ subtest 'Import from file' => sub {
 # Test Registry import_schemas method
 subtest 'Registry import_schemas' => sub {
     my $app = Test::Mojo->new('Registry')->app;
-    
-    # Add temporary schema files to the app's home/schemas directory
-    my $schemas_dir = path($app->home, 'schemas');
-    $schemas_dir->make_path unless -d $schemas_dir;
-    
+
+    # A home of its own: writing into the repo's schemas/ raced other test
+    # files that read that directory while this one ran.
+    my $home = tempdir;
+    $app->home( Mojo::Home->new($home) );
+    my $schemas_dir = $home->child('schemas')->make_path;
+
     my $test_schema = $schemas_dir->child('test-outcome.json');
     $test_schema->spew(encode_json({
         name => 'App Schema',
@@ -127,7 +129,5 @@ subtest 'Registry import_schemas' => sub {
     ok($outcome, 'Schema was imported');
     is($outcome->description, 'A schema imported by the app', 'Description matches');
     is(scalar @{$outcome->schema->{fields}}, 1, 'One field defined');
-    
-    # Clean up
-    $test_schema->remove;
+    ok !-e path('schemas', 'test-outcome.json'), "nothing was written to the repo's schemas/";
 };
