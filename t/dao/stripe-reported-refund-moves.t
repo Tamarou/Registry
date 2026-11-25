@@ -21,6 +21,9 @@ use Registry::DAO::Resource;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::DAO::Workflow;
+use Registry::DAO::WorkflowRun;
+use Mojo::JSON ();
+use POSIX ();
 
 local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_local_platform_refund_moves';
 local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_local_connect_refund_moves';
@@ -228,6 +231,183 @@ subtest 'entitlement-stripe-move admits admin and refuses staff' => sub {
     my $before = runs();
     a_user( 'srm_gate_staff', 'staff' )->get_ok('/entitlement-stripe-move')->status_is(403);
     is runs(), $before, 'no run is created for staff';
+};
+
+sub records ($e) {
+    $adb->query( 'SELECT amount_cents FROM entitlement_refunds WHERE entitlement_id = ? ORDER BY recorded_at',
+        $e->id )->arrays->flatten->to_array;
+}
+
+subtest 'unmatched refund creates no run' => sub {
+    my $runs = count('workflow_runs');
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_nowhere_$$", "pi_nowhere_$$", 2000 ) ) );
+    is count('workflow_runs'), $runs, 'a refund of a payment Registry did not make starts no run';
+
+    # The refund Registry sends for a paid superseded intent comes back as a
+    # refund of that intent, which is not the one the payment kept.
+    my $kept = payment( 2000, "pi_kept_$$", $adb, superseded_intent_ids => ["pi_superseded_$$"] );
+    my ($e) = booking( $kept, 2000 );
+    my $row = $adb->query( 'SELECT * FROM payments WHERE id = ?', $kept->id )->hash;
+    deliver( charge_refunded( $ACCOUNT_A, "pi_superseded_$$", refund( "re_superseded_$$", "pi_superseded_$$", 2000 ) ) );
+    is count('workflow_runs'), $runs, 'nor does the refund of a superseded intent';
+    is reread($e)->state, 'active', 'which leaves the entitlement in effect';
+    is_deeply records($e), [], 'with nothing recorded against it';
+    is_deeply $adb->query( 'SELECT * FROM payments WHERE id = ?', $kept->id )->hash, $row,
+        "and the payment's status and refunded total unchanged";
+};
+
+subtest 'cross account refund changes nothing' => sub {
+    my ( $B, $ACCOUNT_B, $bdb ) = tenant('b');
+    my $paid = payment( 2000, "pi_cross_$$" );
+    my ( $e, $occurrence ) = booking( $paid, 2000 );
+    my ( $runs_a, $runs_b ) = ( count('workflow_runs'), count( 'workflow_runs', $bdb ) );
+
+    my $event = refund_event( 'refund.created', $ACCOUNT_B, refund( "re_cross_$$", "pi_cross_$$", 2000 ) );
+    $event->{id} = "evt_cross_$$";
+    deliver($event);
+    is count( 'workflow_runs', $bdb ), $runs_b, "tenant B has no payment with that intent, so no run";
+    is count('workflow_runs'), $runs_a, 'and none starts in tenant A';
+
+    is drive( move_run("evt_cross_$$") )->{state}, 'finished', "a run in A for B's stored event finishes";
+    is reread($e)->state, 'active', "tenant A's entitlement stays in effect";
+    is_deeply records($e), [], 'with nothing recorded';
+    is $occurrence->free_units($adb), 3, 'holding its seat';
+    ok !processed_at("evt_cross_$$"), "and B's event is left unapplied";
+};
+
+subtest 'pending or failed refund does not end' => sub {
+    my $paid = payment( 2000, "pi_pend_$$" );
+    my ($e) = booking( $paid, 2000 );
+
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_pend_$$", "pi_pend_$$", 2000, 'pending' ) ) );
+    is reread($e)->state, 'active', 'a pending refund leaves it in effect';
+    is_deeply records($e), [], 'and records nothing';
+
+    deliver( refund_event( 'refund.updated', $ACCOUNT_A, refund( "re_pend_$$", "pi_pend_$$", 2000, 'failed' ) ) );
+    is reread($e)->state, 'active', 'a failed refund leaves it in effect';
+    is_deeply records($e), [], 'and records nothing';
+
+    deliver( refund_event( 'refund.updated', $ACCOUNT_A, refund( "re_pend2_$$", "pi_pend_$$", 2000, 'pending' ) ) );
+    deliver( refund_event( 'refund.updated', $ACCOUNT_A, refund( "re_pend2_$$", "pi_pend_$$", 2000 ) ) );
+    is reread($e)->state, 'refunded', 'a pending refund that then succeeds ends it';
+};
+
+subtest 'partial refund across two entitlements follows allocation' => sub {
+    my $cart = payment( 6000, "pi_cart_$$" );
+    my ($one) = booking( $cart, 2000, 1 );
+    my ($two) = booking( $cart, 4000, 2 );
+
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_cart1_$$", "pi_cart_$$", 2000 ) ) );
+    is_deeply [ records($one), records($two) ], [ [667], [1333] ],
+        "shared in proportion to each one's unrefunded share, the leftover cent to the larger remainder";
+    is reread($one)->state, 'active', 'a refund the size of one share does not end the first';
+    is reread($two)->state, 'active', 'nor the second';
+
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_cart2_$$", "pi_cart_$$", 3998 ) ) );
+    is_deeply [ $one->refunded_cents($adb), $two->refunded_cents($adb) ], [ 1999, 3999 ], 'a cent short of each';
+    is reread($one)->state, 'active', 'still neither ends';
+    is reread($two)->state, 'active', 'short of its full amount';
+
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_cart3_$$", "pi_cart_$$", 5000 ) ) );
+    is_deeply [ $one->refunded_cents($adb), $two->refunded_cents($adb) ], [ 2000, 4000 ],
+        'the rest of the payment reaches each full amount, and no more';
+    is reread($one)->state, 'refunded', 'ending the first';
+    is reread($two)->state, 'refunded', 'and the second';
+};
+
+subtest 'ending frees only own units' => sub {
+    my $occurrence = occurrence();
+    my ($ended) = booking( payment( 2000, "pi_own1_$$" ), 2000, 2, $occurrence );
+    my ($kept)  = booking( payment( 1000, "pi_own2_$$" ), 1000, 1, $occurrence );
+    my $kept_units = $kept->units( $adb, $occurrence->id );
+
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_own_$$", "pi_own1_$$", 2000 ) ) );
+    is reread($ended)->state, 'refunded', 'the refunded entitlement ends';
+    is reread($kept)->state, 'active', 'the other on the occurrence does not';
+    is_deeply $occurrence->held_units($adb), $kept_units, 'which still holds its own seat, and only it is held';
+    is $occurrence->free_units($adb), 3, 'so the two refunded seats are free';
+};
+
+subtest 'partial apply failure rolls back' => sub {
+    my $paid = payment( 2000, "pi_fail_$$" );
+    my ( $e, $occurrence ) = booking( $paid, 2000, 1 );
+    # A failure between recording the refund and ending the entitlement.
+    $adb->query(q{CREATE FUNCTION srm_fail() RETURNS trigger LANGUAGE plpgsql
+                  AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$});
+    $adb->query('CREATE TRIGGER srm_fail BEFORE UPDATE ON entitlements FOR EACH ROW EXECUTE FUNCTION srm_fail()');
+    my $runs = count('workflow_runs');
+
+    my $event = refund_event( 'refund.created', $ACCOUNT_A, refund( "re_fail_$$", "pi_fail_$$", 2000 ) );
+    $event->{id} = "evt_fail_$$";
+    deliver($event);
+    $adb->query('DROP TRIGGER srm_fail ON entitlements');
+    $adb->query('DROP FUNCTION srm_fail()');
+
+    is reread($e)->state, 'active', 'the entitlement is not ended';
+    is $occurrence->free_units($adb), 3, 'its seat is still taken';
+    is_deeply records($e), [], 'the refund record rolled back with it';
+    ok !processed_at("evt_fail_$$"), 'and the event is left unapplied';
+    my ($run) = Registry::DAO::WorkflowRun->find( $adb, { id => $adb->query(
+        'SELECT id FROM workflow_runs ORDER BY created_at DESC LIMIT 1')->array->[0] } );
+    is count('workflow_runs'), $runs + 1, 'one run was started';
+    like $run->data->{__driver}{error}, qr/injected failure/, 'which records the failure for its retry';
+
+    is drive($run)->{state}, 'finished', 'once the fault is gone, the retry applies it';
+    is reread($e)->state, 'refunded', 'ending the entitlement';
+    is $occurrence->free_units($adb), 4, 'and freeing its seat';
+};
+
+# Holds $first's transaction open in one connection while $second runs in a
+# forked one; once $second waits on $first's locks, $first commits. Returns
+# whether $second waited and what it returned.
+sub race ( $first, $second ) {
+    my $uri = $test_db->uri;
+    pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
+    my $hdb = Registry::DAO->new( url => $uri, schema => $A )->db;
+    my $tx  = $hdb->begin;
+    $first->($hdb);
+    my $holder = $hdb->query('SELECT pg_backend_pid()')->array->[0];
+    my $pid    = fork() // die "fork: $!";
+    unless ($pid) {
+        close $parent_reads;
+        my $cdb = Registry::DAO->new( url => $uri, schema => $A )->db;
+        my $out = eval { Mojo::JSON::to_json( $second->($cdb) ) } // Mojo::JSON::to_json( { died => "$@" } );
+        print $child_writes $out;
+        close $child_writes;
+        POSIX::_exit(0);
+    }
+    close $child_writes;
+    my ( $blocked, $deadline ) = ( 0, time + 30 );
+    until ( $blocked || waitpid( $pid, POSIX::WNOHANG() ) || time > $deadline ) {
+        select undef, undef, undef, 0.05;
+        $blocked = $adb->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))',
+            $holder )->array->[0];
+    }
+    $tx->commit;
+    waitpid $pid, 0;
+    return ( $blocked, Mojo::JSON::from_json( do { local $/; readline $parent_reads } ) );
+}
+
+subtest 'concurrent duplicate event applied once' => sub {
+    my $paid = payment( 3000, "pi_race_$$" );
+    my ($e) = booking( $paid, 3000 );
+    my $event = refund_event( 'refund.created', $ACCOUNT_A, refund( "re_race_$$", "pi_race_$$", 1000 ) );
+    $event->{id} = "evt_race_$$";
+    Test::Registry::StripeWebhook::post_connect( $t, {%$event} )->status_is(200);
+
+    my @runs = map { move_run("evt_race_$$") } 1 .. 2;
+    my sub apply ( $run, $h ) {
+        my $r = Registry::DAO::WorkflowRun->find( $h, { id => $run->id } );
+        return $r->process( $h, $r->next_step($h), {} );
+    }
+    my ( $blocked, $second ) = race( sub ($h) { apply( $runs[0], $h ) }, sub ($h) { apply( $runs[1], $h ) } );
+    ok $blocked, 'the second application waited for the first';
+    ok !$second->{died}, 'and then finished without error' or diag $second->{died};
+    is_deeply records($e), [1000], 'the refund is recorded once';
+    is reread($e)->state, 'active', 'and the entitlement stays in effect';
+    ok processed_at("evt_race_$$"), 'the event is applied';
+    $minion->perform_jobs;
+    is_deeply records($e), [1000], 'and the queued run for it adds nothing';
 };
 
 done_testing;

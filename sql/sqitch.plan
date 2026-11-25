@@ -123,3 +123,4 @@ drop-pricing-relationships [payments-offer-version-stamp] 2026-11-24T22:00:00Z C
 remove-free-platform-plan [drop-pricing-relationships] 2026-11-24T23:00:00Z Chris Prather <chris.prather@tamarou.com> # The platform Free plan goes: absence is not zero, so no tenant falls back to 0%
 entitlement-uses [remove-free-platform-plan] 2026-11-25T00:00:00Z Chris Prather <chris.prather@tamarou.com> # Marking attendance records one use of the entitlement held for that occurrence, with who and when
 holds-placed-at [entitlement-uses] 2026-11-25T01:00:00Z Chris Prather <chris.prather@tamarou.com> # A hold records when it was placed, so a charge can extend it by its own length
+entitlement-refunds-per-entitlement [holds-placed-at] 2026-11-25T02:00:00Z Chris Prather <chris.prather@tamarou.com> # A Stripe refund is recorded once per entitlement, so one refund can be shared among a payment's entitlements

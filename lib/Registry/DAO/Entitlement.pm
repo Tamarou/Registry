@@ -208,8 +208,9 @@ active and the period covers T (in_effect_sql).
         return scalar Registry::DAO::Payment->find( $db, { id => $payment_id } );
     }
 
-    # Records a partial refund Stripe reported: $refund names amount_cents and
-    # stripe_refund_id. It stays in effect. The same refund id records once.
+    # Records its part of a refund Stripe reported: $refund names amount_cents
+    # and stripe_refund_id. It changes no state. The same refund id records
+    # once per entitlement; one refund may be shared among several.
     method record_refund ( $db, $refund ) {
         $db = $db->db if $db isa Registry::DAO;
         $db->insert( 'entitlement_refunds', { %$refund, entitlement_id => $id },

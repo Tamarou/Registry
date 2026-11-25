@@ -50,9 +50,9 @@ class Registry::DAO::WorkflowSteps::ApplyStripeRefund :isa(Registry::DAO::Workfl
 
     # A succeeded refund of a payment Registry made here, matched by the intent
     # stored on that payment. It is shared among the payment's entitlements in
-    # proportion to what each has not yet had refunded, rounding down, with
-    # the leftover cents one each in the order they were created. One whose
-    # refunds reach its share ends as refunded.
+    # proportion to what each has not yet had refunded, rounding down, the
+    # leftover cents one each to the largest remainders (ties: the one created
+    # first). One whose refunds reach its share ends as refunded.
     method _apply ( $db, $refund ) {
         return unless ( $refund->{status} // '' ) eq 'succeeded';
         my ($amount) = grep { /\A[1-9][0-9]{0,11}\z/ } $refund->{amount} // '';
@@ -72,12 +72,8 @@ class Registry::DAO::WorkflowSteps::ApplyStripeRefund :isa(Registry::DAO::Workfl
         $amount = min( $amount, $total );
         my @part = map { int( $amount * $_ / $total ) } @left;
         my $rest = $amount - sum0(@part);
-        for my $i ( 0 .. $#part ) {
-            last unless $rest;
-            next unless $part[$i] < $left[$i];
-            $part[$i]++;
-            $rest--;
-        }
+        $part[$_]++ for ( sort { ( $amount * $left[$b] ) % $total <=> ( $amount * $left[$a] ) % $total || $a <=> $b }
+            0 .. $#left )[ 0 .. $rest - 1 ];
 
         for my $i ( 0 .. $#entitlements ) {
             next unless $part[$i];
