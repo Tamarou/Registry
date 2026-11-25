@@ -71,7 +71,8 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
             $run->update_data( $db, { change_hold => { %$change, hold_id => $hold->id } } );
         }
 
-        my $entitlement = Registry::DAO::Entitlement->find( $db, { id => $change->{entitlement_id} } );
+        # Read again now it is locked, so convert sees its current state.
+        $entitlement = Registry::DAO::Entitlement->find( $db, { id => $change->{entitlement_id} } );
         $hold->convert( $db, $entitlement );
         $tx->commit if $tx;
         return {};
