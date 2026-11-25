@@ -26,6 +26,7 @@ my $UNAVAILABLE = 'This payment cannot be taken right now. Nothing has been char
 method process ( $db, $form_data, $run = undef ) {
     $run //= $self->workflow($db)->latest_run($db);
     $db = $db->db if $db isa Registry::DAO;
+    if ( my $moved = $self->moved_on( $db, $run ) ) { return $moved }
 
     # Paid, whether the webhook settled it with nobody present or the person
     # came back first: hand the run on. Both arriving is harmless.
@@ -62,6 +63,19 @@ method process ( $db, $form_data, $run = undef ) {
         sub ($error) { $self->_stay( errors => ["Payment processing error: $error"] ) },
     );
 }
+
+# The person's return from Stripe can land after the driver moved the run on;
+# processing this step again would wind it back, so they are sent to where
+# the run is: a redirect, or undef while the run is at this step.
+method moved_on ( $db, $run ) {
+    my $at = $run->next_step($db) // $run->latest_step($db);
+    return undef if $at->id eq $self->id;
+    return { redirect => join '/', '', $self->workflow($db)->slug, $run->id, $at->slug };
+}
+
+# Stripe's return leg arrives as a GET carrying payment_intent; the
+# controller hands it to process only for a step that has this.
+method handle_payment_callback ( $db, $run, $form_data ) { $self->process( $db, $form_data, $run ) }
 
 # owed_payment($db, $run) -> { payment => Payment } | { errors => [...] }
 #

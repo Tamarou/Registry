@@ -17,6 +17,7 @@ use Test::Registry::Offers qw( offer_terms );
 use Registry;
 use Registry::DAO;
 use Registry::DAO::Offer;
+use Registry::DAO::Payment;
 use Registry::DAO::Project;
 use Registry::DAO::Resource;
 use Registry::Terms;
@@ -207,6 +208,34 @@ subtest 'a lapsed hold at payment offers a new booking' => sub {
     isnt $new, $old, 'in a new run';
     $t->get_ok($next)->status_is(200)
         ->element_exists( qq{#workflow-content input[name="occurrence_id"][value="${\ $seats->id }"]}, 'listing the class again' );
+};
+
+subtest 'a paid booker returning from Stripe sees the booking' => sub {
+    my ( $t, $seats, $at ) = at_payment('returning');
+    my ($run_id) = $at =~ m{/in-studio-booking/([^/]+)/payment\z} or return fail 'at payment';
+    my $run  = $dao->find( WorkflowRun => { id => $run_id } );
+    my $owed = $run->data->{owed_payment};
+    # The charge the payment step started, already completed by the Connect
+    # webhook (t/dao/in-studio-booking-payment.t) when the booker comes back.
+    my $payment = Registry::DAO::Payment->create( $db, {
+        user_id => $run->data->{user_id}, amount_cents => $owed->{amount_cents},
+        offer_version_id => $owed->{offer_version_id},
+        metadata => { workflow_run_id => $run_id, payment_plan_id => $owed->{payment_plan} } } );
+    $payment->_record_intent( $db, { id => "pi_returning_$$" } );
+    $payment->mark_completed( $db, "pi_returning_$$" ) or return fail 'payment not completed';
+    $run->update_data( $db, { owed_payment_id => $payment->id } );
+
+    $t->get_ok("$at?payment_intent=pi_returning_$$&redirect_status=succeeded")->status_is(302);
+    like my $done = $t->tx->res->headers->location, qr{/in-studio-booking/\Q$run_id\E/done\z}, 'on to the booking';
+    $t->get_ok($done)->status_is(200)
+        ->content_like( qr/You are booked/, 'the booking is shown' )
+        ->content_like( qr/One seat x 1: 1 seat/, 'with the offer and seats' )
+        ->content_like( qr/Sales are final\./, 'and the policies it was sold under' );
+    check_screen( $t, 'done' );
+    my $change = $t->tx->res->dom->at('#workflow-content form[action="/entitlement-change"]');
+    ok $change, 'with a form that starts a reschedule' or return;
+    like $change->all_text, qr/Reschedule/, 'labelled so';
+    is $seats->free_units($db), 5, 'the booker holds the seat';
 };
 
 done_testing;

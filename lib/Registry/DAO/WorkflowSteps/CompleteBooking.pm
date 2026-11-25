@@ -137,8 +137,14 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
         );
     }
 
-    # Nothing to ask: the controller completes it as soon as the run reaches it.
-    method nothing_to_ask ( $db, $run ) { 1 }
+    # Nothing to ask until the booking is made: the controller completes it as
+    # soon as the run reaches it, and shows the done page once it is made.
+    method nothing_to_ask ( $db, $run ) {
+        my $booking = $run->data->{booking_hold};
+        my $hold_id = ref $booking eq 'HASH' ? $booking->{hold_id} : undef;
+        return 1 unless defined $hold_id && !ref $hold_id && $hold_id =~ $UUID;
+        return ( $db->select( 'holds', 'state', { id => $hold_id } )->array // [''] )->[0] ne 'converted';
+    }
 
     # The booking this run made, as its pages show it: the offer, how many,
     # the seats, the class's local start and the policies it was sold under.
