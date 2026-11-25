@@ -163,6 +163,16 @@ When managing capacity:
 - Enrollment should check capacity for each Event before confirming
 - System may need to handle waitlists if some Event have different capacities
 
+An in-studio occurrence's capacity counts seats held, not family members.
+A booking of N units of an offer takes N × the offer version's
+`units_per_acceptance` seats (`OfferVersion->seats_for`), refused unless N is a
+whole number from 1 to its `per_booking_cap`. The seats are then claimed by the
+occurrence resource's one check (`Resource->claim`, under `Resource->locked`'s
+row lock): capacity less units held by entitlements in effect and by unexpired
+holds. Ended entitlements free their seats; partly refunded ones keep them.
+After-school enrollment still counts one `enrollments` row per family member
+(`Enrollment.pm`) until step 8 replaces it.
+
 ### Date Handling
 
 For date-based operations:
