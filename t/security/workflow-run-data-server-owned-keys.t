@@ -238,6 +238,17 @@ subtest 'a change and its targets cannot be planted by a client' => sub {
     }
 };
 
+subtest 'a booking hold cannot be planted by a client' => sub {
+    # HoldSeats writes booking_hold with the hold it placed; completing the
+    # booking converts the hold it names, so a planted one picks the seats.
+    for my $form ( { booking_hold => 'planted' },
+                   { 'booking_hold[hold_id]' => '00000000-0000-0000-0000-000000000099' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{booking_hold}, 'a posted booking_hold is not stored';
+    }
+};
+
 subtest 'a refund target cannot be planted by a client' => sub {
     # refund_entitlement_id names the booking ApplyRefundPolicy refunds; only
     # the refund chooser writes it, once the booking is the asker's.

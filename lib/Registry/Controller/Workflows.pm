@@ -108,9 +108,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # a halted run or fake one. stripe_event_id names the stored Connect
         # event an entitlement-stripe-move run applies; only the endpoint sets it.
         # retry is a step's signal to fail a driver attempt; planted, it halts the run.
+        # booking_hold names the hold a booking's completion converts; only HoldSeats writes it.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in
