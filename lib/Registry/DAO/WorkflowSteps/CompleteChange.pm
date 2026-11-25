@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
     use Registry::DAO::Entitlement;
     use Registry::DAO::Notification;
     use Registry::DAO::Payment;
+    use Registry::DAO::WorkflowSteps::ChooseChangeTarget;
     use Registry::PriceOps::Hold;
 
     my $UUID = qr/\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
@@ -26,6 +27,13 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
             && Registry::PriceOps::Hold->find( $db, { id => $hold_id, workflow_run_id => $run->id }, 'id' );
         return $self->_stay('Choose an occurrence to change to') unless $hold;
         return {} if $hold->state eq 'converted';
+
+        # Whoever completes it must be allowed to change this booking, as at
+        # choose, hold and pay; the controller puts the requester on the run.
+        my $entitlement = Registry::DAO::Entitlement->find( $db, { id => $change->{entitlement_id} } );
+        my $refusal     = $entitlement
+            && Registry::DAO::WorkflowSteps::ChooseChangeTarget->stranger( $entitlement, $data->{user} );
+        return $self->_stay($refusal) if $refusal;
 
         my $payment = $self->_paid( $db, $run, $data );
         return $self->_stay('The change fee has not been paid yet') unless $payment;

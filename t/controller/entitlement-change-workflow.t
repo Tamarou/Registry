@@ -203,6 +203,17 @@ subtest 'stranger cannot change entitlement' => sub {
     my ( undef, $run ) = to_payment( $holder, $e, $to );
     $other->post_ok( '/entitlement-change/' . $run->id . '/pay' => form => {} );
     is payments_of($run), 0, 'and posting its payment page starts no payment';
+
+    # Nor complete a zero-fee change the holder has held but not confirmed.
+    my ( $free, $free_from, $free_to ) = occurrences( 0, 4, 72, 96 );
+    my $free_e = booking( $free, $free_from, $holder );
+    my $mine   = client($holder);
+    $mine->get_ok( '/entitlement-change?entitlement_id=' . $free_e->id )->status_is(200);
+    my $complete = submit( $mine, target_occurrence_id => $free_to->id );
+    like $complete, qr{/complete-change\z}, 'the holder reaches the confirmation';
+    $other->post_ok( $complete => form => {} );
+    is_deeply $free_e->units( $db, $free_to->id ), [], 'posting the holder\'s confirmation moves nothing';
+    is_deeply $free_e->units( $db, $free_from->id ), [1], 'the booking stays where it was';
 };
 
 subtest 'unauthenticated visitor sent to sign in' => sub {
