@@ -410,4 +410,44 @@ subtest 'concurrent duplicate event applied once' => sub {
     is_deeply records($e), [1000], 'and the queued run for it adds nothing';
 };
 
+subtest 'a refund Registry made that settles from pending ends the entitlement' => sub {
+    my $paid = payment( 2000, "pi_held_$$" );
+    my ( $e, $occurrence ) = booking( $paid, 2000 );
+    # Registry's own refund call, answered pending by Stripe: held on the payment.
+    my $pending = refund( "re_held_$$", "pi_held_$$", 2000, 'pending' );
+    $paid->_apply_refund_result( $adb, $pending, 2000, 'requested_by_customer', 0, "refund:direct:$$" );
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, $pending ) );
+    is reread($e)->state, 'active', 'held while Stripe says pending';
+    my $runs = count('workflow_runs');
+
+    my $done = refund_event( 'refund.updated', $ACCOUNT_A, refund( "re_held_$$", "pi_held_$$", 2000 ) );
+    $done->{id} = "evt_held_done_$$";
+    deliver($done);
+    is $adb->query( 'SELECT refunded_cents FROM payments WHERE id = ?', $paid->id )->array->[0], 2000,
+        "the payment's held refund is settled";
+    is reread($e)->state,        'refunded',   'and the entitlement ends';
+    is reread($e)->ended_reason, "re_held_$$", 'naming the refund';
+    is $occurrence->free_units($adb), 4, 'with its seat freed';
+    ok processed_at("evt_held_done_$$"), 'the event is applied';
+    is count('workflow_runs'), $runs + 1, 'by one run';
+
+    Test::Registry::StripeWebhook::post_connect( $t, {%$done} )->status_is(200)->content_is('OK (duplicate)');
+    $minion->perform_jobs;
+    is count('workflow_runs'), $runs + 1, 'a redelivery starts no second run';
+    is $e->refunded_cents($adb), 2000, 'and records nothing more';
+};
+
+subtest 'charge refunded without a refunds list applies nothing' => sub {
+    my $paid = payment( 2000, "pi_nolist_$$" );
+    my ($e) = booking( $paid, 2000 );
+    my $runs  = count('workflow_runs');
+    my $event = charge_refunded( $ACCOUNT_A, "pi_nolist_$$" );
+    delete $event->{data}{object}{refunds};
+    $event->{data}{object}{amount_refunded} = 2000;
+    deliver($event);
+    is count('workflow_runs'), $runs, 'it starts no run';
+    is reread($e)->state, 'active', 'and leaves the entitlement in effect';
+    is_deeply records($e), [], 'with nothing recorded';
+};
+
 done_testing;

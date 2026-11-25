@@ -91,7 +91,7 @@ sub post_refund_updated ($refund_id, $status, %object) {
 
 sub event_row ($event_id) {
     $db->select('registry.webhook_events', [qw( processed_at payload )],
-        { stripe_event_id => $event_id })->hash;
+        { stripe_event_id => $event_id })->expand->hash;
 }
 sub payment_row ($payment) { $tdb->select('payments', '*', { id => $payment->id })->expand->hash }
 sub refund_status_of ($enrollment) {
@@ -115,7 +115,10 @@ subtest 'a pending refund that succeeds is recorded once' => sub {
     is $row->{refunded_cents}, 4000, 'the refund is counted';
     is $row->{status}, 'partially_refunded', 'and the payment status follows it';
     is refund_status_of($enrollment), 'processed', 'the dropped seat reads processed';
-    ok event_row($event_id)->{processed_at}, 'the event is applied';
+    my $stored = event_row($event_id);
+    is $stored->{processed_at}, undef, 'the event is stored for the entitlement move';
+    is $stored->{payload}{data}{object}{id}, 're_ru_ok', 'with its payload';
+    # Applying it to entitlements is t/dao/stripe-reported-refund-moves.t's.
 
     Test::Registry::StripeWebhook::post_connect($t, {
         id => $event_id, type => 'refund.updated', account => $account,

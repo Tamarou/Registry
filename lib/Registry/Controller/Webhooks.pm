@@ -257,8 +257,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         }
         my $slug = $tenant->{slug};
 
-        # A refund Registry made that Stripe answered pending is settled, not
-        # stored: that is our own refund finishing, not a move by the seller.
+        # A refund Registry made that Stripe answered pending is settled here;
+        # one that succeeds is then also stored and applied as a Stripe move.
         # shortcut: a refund.updated that beats _apply_refund_result's hold is
         # stored unapplied, and charge.refund.updated is never matched; settle
         # those from the stored events if they turn up.
@@ -336,6 +336,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $tx = $db->begin;
         return unless $self->_claim_event( $db, $event );
 
+        # Set when a refund Registry made settles as succeeded: then it is
+        # also a Stripe move, applied to entitlements after the COMMIT.
+        my $move;
+
         try {
             # Transaction-local, as in _settle_event.
             $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" );
@@ -370,16 +374,23 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                 $self->_process_account_updated($db, $event);
             }
             elsif ( $event->{type} eq 'refund.updated' ) {
-                $self->_process_refund_updated($db, $event);
+                $move = ( $self->_process_refund_updated($db, $event) // '' ) eq 'succeeded';
             }
             else {
                 $self->app->log->info(
                     "Connect webhook event $event_id ($event->{type}) for tenant $slug not handled");
             }
 
+            # A settled refund is stored as _store_stripe_move stores one,
+            # left unapplied for the entitlement-stripe-move run.
             $db->query(
-                q{UPDATE registry.webhook_events SET processed_at = now()
-                  WHERE stripe_event_id = ?}, $event_id
+                $move
+                ? ( q{UPDATE registry.webhook_events
+                         SET account = ?, payload = ?::jsonb,
+                             tenant_id = (SELECT id FROM registry.tenants WHERE slug = ?)
+                       WHERE stripe_event_id = ?}, $account, { json => $event }, $slug, $event_id )
+                : ( q{UPDATE registry.webhook_events SET processed_at = now()
+                       WHERE stripe_event_id = ?}, $event_id )
             );
             $tx->commit;
         }
@@ -390,6 +401,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        $self->_start_stripe_move( $slug, $event ) if $move;
         $self->render( status => 200, text => 'OK' );
     }
 
@@ -566,7 +578,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         my $what = 'refund ' . _printable( $refund->{id} ) . " on payment $row->{id}";
         if ( $outcome eq 'succeeded' ) {
             $self->app->log->info("Connect webhook event $event->{id}: $what succeeded");
-            return;
+            return $outcome;
         }
         $self->app->log->error( "Connect webhook event $event->{id}: $what is "
               . _printable($outcome) . '; it is still owed' );
