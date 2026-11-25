@@ -80,7 +80,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     # the workflow state.
     my @TRANSIENT_KEYS = qw(
         next_step errors data _validation_errors stay redirect
-        retry_count retry_delay retry_exceeded should_retry
+        retry retry_count retry_delay retry_exceeded should_retry
     );
 
     method process ( $db, $step, $new_data = {} ) {

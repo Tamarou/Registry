@@ -250,6 +250,16 @@ subtest 'a stored Stripe event cannot be named by a client' => sub {
     ok !exists data_for($run_id)->{stripe_event_id}, 'nor at run creation';
 };
 
+subtest 'a step result signal cannot be planted in run data' => sub {
+    # retry is a step's "fail this driver attempt" signal; stored in run data it
+    # would make every later driver attempt fail and halt the run.
+    for my $form ( { retry => 'Not your call' }, { 'retry[x]' => 'Not your call' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{retry}, 'a posted retry is not stored';
+    }
+};
+
 subtest 'submitted seller account or tenant slug is ignored' => sub {
     # The host tenant sells on its own account; the victim's account is what an
     # attacker would like the charge to land on instead.

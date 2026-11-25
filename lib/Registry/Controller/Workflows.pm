@@ -101,9 +101,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # __driver is the run driver's failure record; a planted one could hide
         # a halted run or fake one. stripe_event_id names the stored Connect
         # event an entitlement-stripe-move run applies; only the endpoint sets it.
+        # retry is a step's signal to fail a driver attempt; planted, it halts the run.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|stripe_event_id)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in
