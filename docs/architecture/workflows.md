@@ -361,7 +361,7 @@ When copying workflows between tenants, it's essential to preserve the class inf
 Each tenant's copies are made once, at provisioning, and migrations that reset a workflow change only `registry`'s copy, so a tenant's copy can fall behind or be edited away from the platform's. To see how, run:
 
 ```bash
-carton exec ./registry workflow registry divergence
+carton exec ./registry workflow divergence registry
 ```
 
 It compares every tenant schema in `registry.tenants` with `registry`, and is read-only: it only runs `SELECT`s. For each tenant it reports:

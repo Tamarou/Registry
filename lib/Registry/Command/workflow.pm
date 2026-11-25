@@ -16,7 +16,7 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
 
     field $description :reader = 'Workflow management commands';
     field $usage :reader       = <<~"END";
-        usage: $0 workflow <tenant> <command> [<args>]
+        usage: $0 workflow <command> <tenant> [<args>]
 
           list available tenants: $0 tenant list
 

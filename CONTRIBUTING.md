@@ -97,7 +97,7 @@ carton exec ./registry workflow import registry
 carton exec ./registry template import registry
 
 # Report, read-only, how each tenant's workflow copies differ from registry's
-carton exec ./registry workflow registry divergence
+carton exec ./registry workflow divergence registry
 ```
 
 #### 4. Environment Configuration
