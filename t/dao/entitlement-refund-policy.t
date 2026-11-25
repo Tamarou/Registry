@@ -119,4 +119,33 @@ subtest 'none policy refuses refund' => sub {
     is reread($e)->state, 'active', 'the entitlement is unchanged';
 };
 
+sub key_for ($e) { 'refund:entitlement:' . $e->id }
+sub starts ($occurrence) { ( $occurrence->occurrence_window($tdb) )[0] }
+sub hours_before ( $occurrence, $hours ) {
+    $tdb->query( 'SELECT ?::timestamptz - make_interval(hours => ?)', starts($occurrence), $hours )->array->[0];
+}
+my $refusal = sub { Registry::DAO::WorkflowSteps::ApplyRefundPolicy->refusal( $tdb, @_ ) };
+
+subtest 'full until cutoff honoured only before cutoff' => sub {
+    my $occurrence = occurrence();
+    my $version    = version( $occurrence, { kind => 'full_until_cutoff', cutoff_hours => 24 } );
+    my $paid       = payment(5000);
+    my $e          = booking( $version, $occurrence, $paid, 3000 );
+
+    is $refusal->( $e, hours_before( $occurrence, 25 ) ), undef, 'an hour before the cutoff it is honoured';
+    like $refusal->( $e, hours_before( $occurrence, 23 ) ), qr/24 hours before/,
+        'an hour after the cutoff it is refused';
+
+    my $result = apply($e);
+    ok !$result->{refund_refused}, 'asked now, 47 hours before the start, it is not refused';
+    is_deeply request_on( $paid, $e ), { amount_cents => 3000, idempotency_key => key_for($e) },
+        "a refund of this entitlement's 3000 cents of the 5000-cent payment is requested, keyed on the entitlement";
+    is reread($e)->state, 'active', 'and the entitlement is still active';
+
+    my $dated = booking( version( $occurrence, { kind => 'full_until_cutoff', cutoff_at => '2020-06-01T00:00:00Z' } ),
+        $occurrence, my $dated_paid = payment(2000), 2000 );
+    like apply($dated)->{refund_refused}, qr/until 2020-06-01/, 'a dated cutoff that has passed is refused';
+    is request_on( $dated_paid, $dated ), undef, 'and no refund is requested';
+};
+
 done_testing;
