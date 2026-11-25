@@ -43,6 +43,8 @@ $dao->import_workflows(['workflows/tenant-signup.yml']);
 
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper( dao => sub { $dao } );
+# Production marks the session cookie Secure, which the jar sends only over https.
+$t->ua->server->url('https');
 $dao->current_tenant('registry');
 
 my $LIMIT = Registry::DAO::WorkflowSteps::TenantPayment->PROVISIONINGS_PER_HOUR;
