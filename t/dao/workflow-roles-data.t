@@ -102,6 +102,16 @@ subtest 'falsy public mark is not public' => sub {
     }
 };
 
+# Truthy but not a YAML boolean: still not the mark.
+subtest 'truthy non boolean public mark is not public' => sub {
+    my %not_the_mark =
+      ( 'one-flow' => '1', 'yes-flow' => 'yes', 'quoted-flow' => '"true"', 'capital-flow' => 'True' );
+    for my $slug ( sort keys %not_the_mark ) {
+        import_one( $slug, "public: $not_the_mark{$slug}\n" );
+        is row($slug)->{public}, 0, "public: $not_the_mark{$slug} does not mark $slug public";
+    }
+};
+
 # The map this data replaces. Every entry must carry over exactly.
 $ENV{DB_URL} = $test_db->uri;
 my $app = Test::Registry::Mojo->new('Registry')->app;
@@ -163,6 +173,9 @@ subtest 'every shipped workflow imports with the roles the map gives it, or the 
         is_deeply $entry->( $_, 'unlisted-flow' ), { roles => undef, public => 0 },
           "$_.unlisted-flow has no entry" for qw(registry backfilled);
     };
+
+    # The handle goes before the server does, or its DESTROY talks to a dead one.
+    undef $db;
 }
 
 done_testing;

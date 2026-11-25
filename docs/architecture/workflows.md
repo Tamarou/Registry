@@ -26,7 +26,7 @@ description: |
   Handles the complete student registration process
   from initial application through confirmation.
 slug: student-registration
-# Who may run it. Exactly one of:
+# Who may run it. One of:
 roles: [parent, admin, staff]
 # public: true
 
@@ -52,7 +52,7 @@ steps:
 
 ### Roles and the Public Mark
 
-Each workflow YAML declares exactly one of:
+Each workflow YAML declares one of:
 
 - `roles`: a non-empty list of the application's roles (`parent`, `student`,
   `staff`, `admin` -- `Registry::DAO::User::USER_TYPES`). An unknown name, an
@@ -60,7 +60,10 @@ Each workflow YAML declares exactly one of:
 - `public: true`: anyone may walk into it. Only a YAML boolean `true` is the
   mark; `1`, `yes`, `"true"` and every false value are not.
 
-Declaring both is refused at import, with the file named in the error.
+Import enforces at most one: declaring both is refused, with the file named
+in the error. `t/security/workflow-roles-cover-every-workflow.t` enforces at
+least one for every shipped workflow; import still accepts a YAML with
+neither.
 `from_yaml` stores the entry on the `workflows` row (`roles`, `public`),
 `to_yaml` round-trips it, and `copy_workflow` carries it into a tenant's
 schema. A row with neither has no entry. The route gate still reads the
