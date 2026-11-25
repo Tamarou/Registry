@@ -14,6 +14,10 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
     field $first_step :param = undef;
 
+    # Who may run it: a list of roles, or the public mark. Neither is "no entry".
+    field $roles :param :reader = undef;
+    field $public :param :reader = 0;
+
     sub table { 'workflows' }
 
     sub create ( $class, $db, $data ) {
@@ -101,6 +105,9 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         # Always include first_step value from database
         $workflow->{first_step} = $first_step if $first_step;
 
+        $workflow->{roles}  = $roles if $roles;
+        $workflow->{public} = builtin::true if $public;
+
 
         # Start with the first step and traverse
         my $current_step = $self->first_step($db);
@@ -130,10 +137,10 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         my $steps = delete $data->{steps};
         die "Missing required field: steps" unless $steps;
 
-        # `public: true` is a declaration in the file that the workflow has no
-        # workflow_roles entry on purpose (enforced by
-        # t/security/workflow-roles-cover-every-workflow.t), not a column.
-        delete $data->{public};
+        # `public: true` declares that anyone may walk in. Only a YAML boolean
+        # true is the mark, as t/security/workflow-roles-cover-every-workflow.t
+        # reads it: not 1, not "true", not yes.
+        $data->{public} = builtin::is_bool( $data->{public} ) && $data->{public} ? 1 : 0;
 
         if ( my $workflow =
             $db->find( 'Registry::DAO::Workflow', { slug => $data->{slug} } ) )
