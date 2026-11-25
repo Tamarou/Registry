@@ -84,8 +84,14 @@ class Registry::Service::Stripe {
             my $tx = $ua->build_tx($method => $url => $headers => form => $data);
             $promise = $ua->start_p($tx);
         }
-        
+
+        # The request holds its client's user agent until Stripe answers. A
+        # client nobody else holds (one made for a single call) would otherwise
+        # be freed mid-request, and Mojo::UserAgent's DESTROY closes the
+        # connection: "Premature connection close".
+        my $held_ua = $ua;
         return $promise->then(sub ($tx) {
+            undef $held_ua;
             my $res = $tx->result;
             
             unless ($res->is_success) {
