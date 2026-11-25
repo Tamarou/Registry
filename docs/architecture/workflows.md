@@ -72,9 +72,11 @@ may run a workflow" below).
 ### Who may run a workflow
 
 The gate (`require_workflow_role` in `lib/Registry.pm`) guards every entry to
-a workflow: the `/:workflow` routes (starting a run, and every later step of
-one) and the callcc leg, which names its target workflow in another
-placeholder. It reads the current tenant's own `workflows` row for the slug:
+a workflow: the `/:workflow` routes, the routes that name their workflow in
+the route rather than the URL (`/`, `/admin/dashboard`, the drop and transfer
+approvals, `/admin/templates`), and the callcc leg, which names its target
+workflow in another placeholder. It reads the current tenant's own
+`workflows` row for the slug:
 
 - the public mark admits anyone, signed in or not;
 - roles admit a user whose role in this tenant is one of them (an anonymous
@@ -86,14 +88,24 @@ placeholder. It reads the current tenant's own `workflows` row for the slug:
   tenant host, and one tenant's public copy never opens another's.
 
 A slug with no row and no legacy `{slug}/index` template is a 404 before the
-gate runs. A refused request creates no run. The hard-coded `%ROLES` map that
+gate runs. A refused request creates no run.
+
+The gate checks the slug, not the run. A step URL (`/:workflow/:run/:step`,
+including Stripe's return to it) and a callcc's source run are served only
+when the run belongs to the URL's workflow in this tenant's schema; any other
+run id is a 404, so a run of an admin-only workflow cannot be continued
+through a public slug, nor its existence confirmed. Runs the
+`ContinueWorkflowRun` job or the Stripe Connect webhook create never pass
+through these routes. The hard-coded `%ROLES` map that
 `lib/Registry.pm` once held is gone; the rows are the only source.
 
 A tenant-chosen registration workflow (a project's `registration_workflow`
 metadata) stays reachable because its YAML carries the public mark, as
 `summer-camp-registration`'s does. A workflow a tenant writes through
-`workflow-creation` gets that authoring workflow's own roles (ADR 004(b): the
-right to create workflows covers running them).
+`workflow-creation` gets that authoring workflow's own roles. That is an
+inference, not a ruling: ADR 004(b) settles the tenant's entitlement to
+create workflows, not which users may run them. It fails closed, admitting
+no one the authoring workflow would not.
 
 **Changing who may run an existing workflow ships a migration.** `from_yaml`
 returns an existing row unchanged and a tenant's copies are written only by
@@ -102,8 +114,9 @@ changes only fresh databases. The change needs a sqitch migration that
 updates `registry` and every tenant schema, looping over `registry.tenants`
 as `workflow-roles-data` does. Clearing the stored workflow so import rebuilds
 it, as `entitlement-stripe-move-adds-dispute-step` does, reaches `registry`
-only; the tenants' copies still need the update. `t/dao/workflow-roles-data.t` fails for a shipped YAML whose
-entry disagrees with the row migrations carried forward, and
+only; the tenants' copies still need the update.
+`t/dao/workflow-roles-data.t` fails for a shipped YAML whose entry disagrees
+with the row migrations carried forward, and
 `t/security/workflow-gate-closed-by-default.t` proves the gate's refusals.
 
 ### Workflow Steps

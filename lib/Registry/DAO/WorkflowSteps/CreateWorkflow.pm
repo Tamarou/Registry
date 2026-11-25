@@ -24,9 +24,10 @@ use Carp qw(croak);
             $_->{class} // 'Registry::DAO::WorkflowStep' )
           for $data->{steps}->@*;
 
-        # ADR 004(b): the right to create workflows covers running them, so
-        # the new workflow admits exactly whoever this authoring workflow's
-        # own row admits. Without an entry the gate would refuse it to all.
+        # The new workflow admits exactly whoever this authoring workflow's
+        # own row admits. An inference that fails closed, not a ruling: ADR
+        # 004(b) settles the tenant's entitlement to create workflows, not
+        # per-user roles. Without an entry the gate would refuse it to all.
         my ($authoring) = $self->workflow($db);
 
         # Create the new workflow
