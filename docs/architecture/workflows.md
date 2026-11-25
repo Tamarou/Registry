@@ -69,6 +69,43 @@ neither.
 schema. A row with neither has no entry, and the gate refuses it (see "Who
 may run a workflow" below).
 
+### Who may run a workflow
+
+The gate (`require_workflow_role` in `lib/Registry.pm`) guards every entry to
+a workflow: the `/:workflow` routes (starting a run, and every later step of
+one) and the callcc leg, which names its target workflow in another
+placeholder. It reads the current tenant's own `workflows` row for the slug:
+
+- the public mark admits anyone, signed in or not;
+- roles admit a user whose role in this tenant is one of them (an anonymous
+  visitor is sent to log in, a signed-in user with another role gets 403);
+- anything else is refused 403, for everyone, admins included: a row with no
+  roles (or an empty list) and no public mark, or no row at all in this
+  tenant's schema. The gate never falls back to `registry`'s row, so
+  `tenant-signup`, which a tenant is not provisioned with, is refused on a
+  tenant host, and one tenant's public copy never opens another's.
+
+A slug with no row and no legacy `{slug}/index` template is a 404 before the
+gate runs. A refused request creates no run. The hard-coded `%ROLES` map that
+`lib/Registry.pm` once held is gone; the rows are the only source.
+
+A tenant-chosen registration workflow (a project's `registration_workflow`
+metadata) stays reachable because its YAML carries the public mark, as
+`summer-camp-registration`'s does. A workflow a tenant writes through
+`workflow-creation` gets that authoring workflow's own roles (ADR 004(b): the
+right to create workflows covers running them).
+
+**Changing who may run an existing workflow ships a migration.** `from_yaml`
+returns an existing row unchanged and a tenant's copies are written only by
+`copy_workflow` at provisioning, so editing a YAML's `roles` or `public` alone
+changes only fresh databases. The change needs a sqitch migration that
+updates `registry` and every tenant schema, looping over `registry.tenants`
+as `workflow-roles-data` does. Clearing the stored workflow so import rebuilds
+it, as `entitlement-stripe-move-adds-dispute-step` does, reaches `registry`
+only; the tenants' copies still need the update. `t/dao/workflow-roles-data.t` fails for a shipped YAML whose
+entry disagrees with the row migrations carried forward, and
+`t/security/workflow-gate-closed-by-default.t` proves the gate's refusals.
+
 ### Workflow Steps
 
 A workflow step is a single unit of work that users interact with. Each step is defined by:
