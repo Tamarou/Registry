@@ -185,4 +185,145 @@ subtest 'refund against offer-publishing version honoured' => sub {
         'its refund is requested';
 };
 
+# Stripe's answer to a refund sent under $key, written as refund_async writes it.
+sub stripe_answered ( $payment, $refund_id, $status, $key, $cents ) {
+    fresh($payment)->_apply_refund_result( $tdb, { id => $refund_id, status => $status }, $cents,
+        'requested_by_customer', 0, $key );
+}
+
+# A seat sold under a 24-hour full refund cutoff on an occurrence 48 hours off.
+sub refundable ( $paid = payment(5000), $share = 3000 ) {
+    my $occurrence = occurrence();
+    my $version    = version( $occurrence, { kind => 'full_until_cutoff', cutoff_hours => 24 } );
+    return ( booking( $version, $occurrence, $paid, $share ), $paid, $occurrence );
+}
+
+subtest 'honoured request asks stripe for entitlement amount once' => sub {
+    my $paid = payment(5000);
+    my ($e)       = refundable( $paid, 3000 );
+    my ($sibling) = refundable( $paid, 2000 );
+
+    apply($e);
+    is_deeply request_on( $paid, $e ), { amount_cents => 3000, idempotency_key => key_for($e) },
+        "the refund asked for is this entitlement's 3000 cents, not the cart's 5000";
+    is request_on( $paid, $sibling ), undef, 'and nothing for the other entitlement on the payment';
+
+    # Stripe answered the first request; the next one under the same key sends nothing.
+    stripe_answered( $paid, 're_once', 'succeeded', key_for($e), 3000 );
+    my $again = apply($e);
+    ok !$again->{errors}, 'asked again, nothing is sent' or diag explain $again->{errors};
+    is $again->{refund_requested}{refund_id}, 're_once', "the first refund is Stripe's answer";
+    is reread($e)->state, 'active', "and ending the entitlement is left to Stripe's report";
+};
+
+subtest 'step does not end entitlement' => sub {
+    my ( $e, $paid, $occurrence ) = refundable();
+    stripe_answered( $paid, 're_done', 'succeeded', key_for($e), 3000 );
+
+    my $result = apply($e);
+    is $result->{refund_requested}{status}, 'succeeded', 'the refund request succeeds';
+    my $after = reread($e);
+    is $after->state, 'active', 'the entitlement is still active';
+    is_deeply $after->units( $tdb, $occurrence->id ), [1], 'and still holds its seat';
+    is $occurrence->free_units($tdb), 3, 'which is not freed';
+};
+
+subtest 'ended or fully refunded entitlement refused' => sub {
+    my ( $ended, $ended_paid ) = refundable();
+    $ended->end( $tdb, 'refunded', 're_dashboard' );
+    like apply($ended)->{refund_refused}, qr/has ended/, 'an ended entitlement is refused';
+    is request_on( $ended_paid, $ended ), undef, 'and no refund is requested';
+
+    my ( $spent, $spent_paid ) = refundable();
+    $spent->record_refund( $tdb, { amount_cents => 3000, stripe_refund_id => 're_partials' } );
+    like apply($spent)->{refund_refused}, qr/already been refunded/, 'one refunded in full is refused';
+    is request_on( $spent_paid, $spent ), undef, 'and no refund is requested';
+};
+
+subtest 'unrecognised policy refused' => sub {
+    my $occurrence = occurrence();
+    # The database refuses an unknown kind and a published version with no
+    # refund policy, so what can reach the step is a full refund with no
+    # cutoff, written past draft's check as only a bypass could, and the
+    # platform's keep-the-fee term, which the fee-refund exception applies.
+    my $draft = Registry::DAO::Offer->create( $tdb, { name => 'Odd ' . ++$made } )
+        ->draft( $tdb, offer_terms( $occurrence->id ) );
+    $tdb->query( q{UPDATE offer_versions SET policies = '{"refund":{"kind":"full_until_cutoff"}}' WHERE id = ?},
+        $draft->id );
+    my $odd = booking( $draft->publish($tdb), $occurrence, my $odd_paid = payment(), 2000 );
+    like apply($odd)->{refund_refused}, qr/no refund policy this step applies/, 'a full refund with no cutoff is refused';
+    is request_on( $odd_paid, $odd ), undef, 'never treated as a full refund';
+
+    my $fee = booking( version( $occurrence, { kind => 'keep_fee_with_admin_exception' } ), $occurrence,
+        my $fee_paid = payment(), 2000 );
+    like apply($fee)->{refund_refused}, qr/no refund policy this step applies \(keep_fee_with_admin_exception\)/,
+        'keep the fee is refused here, naming it';
+    is request_on( $fee_paid, $fee ), undef, 'and no refund is requested';
+};
+
+subtest 'no linked payment refused' => sub {
+    my $occurrence = occurrence();
+    my $e = booking( version( $occurrence, { kind => 'full_until_cutoff', cutoff_hours => 24 } ), $occurrence );
+    like apply($e)->{refund_refused}, qr/not paid for/, 'an entitlement no payment bought is refused';
+    is $tdb->query( q{SELECT count(*) FROM payments WHERE metadata->'entitlement_refund_requests'->? IS NOT NULL},
+        $e->id )->array->[0], 0,
+        'and no refund, of zero or any amount, is requested';
+};
+
+subtest 'refund capped at remaining amount' => sub {
+    my ( $e, $paid ) = refundable();
+    $e->record_refund( $tdb, { amount_cents => 1000, stripe_refund_id => 're_partial' } );
+    apply($e);
+    is request_on( $paid, $e )->{amount_cents}, 2000,
+        'with 1000 of its 3000 cents already refunded, 2000 is requested';
+};
+
+subtest 'request at or after cutoff refused' => sub {
+    my ( $e, $paid, $occurrence ) = refundable();
+    my $cutoff = hours_before( $occurrence, 24 );
+    my $after  = $tdb->query( q{SELECT ?::timestamptz + interval '1 second'}, $cutoff )->array->[0];
+    like $refusal->( $e, $after ), qr/only until 24 hours before/, 'a second after the cutoff it is refused';
+    like $refusal->( $e, hours_before( $occurrence, 1 ) ), qr/only until/, 'an hour before the start it is refused';
+
+    my $late = booking( version( $occurrence, { kind => 'full_until_cutoff', cutoff_at => '2020-06-01T00:00:00Z' } ),
+        $occurrence, my $late_paid = payment(), 2000 );
+    like apply($late)->{refund_refused}, qr/only until/, 'asked after a dated cutoff, the step refuses';
+    is request_on( $late_paid, $late ), undef, 'and no refund is requested';
+};
+
+subtest 'request at exactly the cutoff honoured' => sub {
+    # ADR 005 8b: the boundary is inclusive (now <= cutoff).
+    my ( $e, $paid, $occurrence ) = refundable();
+    is $refusal->( $e, hours_before( $occurrence, 24 ) ), undef, 'exactly 24 hours before, it is honoured';
+    my $dated = booking( version( $occurrence, { kind => 'full_until_cutoff', cutoff_at => '2030-06-01T00:00:00Z' } ),
+        $occurrence, payment(), 2000 );
+    is $refusal->( $dated, '2030-06-01T00:00:00Z' ), undef, 'and so is one at exactly a dated cutoff';
+};
+
+subtest 'pending refund blocks second request' => sub {
+    my ( $e, $paid ) = refundable();
+    stripe_answered( $paid, 're_pending', 'pending', key_for($e), 3000 );
+
+    # The payment names no seller account: anything sent would come back an error.
+    my $result = apply($e);
+    ok !$result->{errors}, 'no second refund is sent' or diag explain $result->{errors};
+    is $result->{refund_requested}{refund_id}, 're_pending', 'the pending one is the answer';
+    is $result->{refund_requested}{status}, 'pending', 'still pending';
+    is fresh($paid)->refunded_cents, 0, 'and nothing is counted as refunded';
+};
+
+subtest 'stripe error leaves entitlement active' => sub {
+    # Refused by refund_async before any request: the same failure branch a
+    # Stripe error takes. A real Stripe error is in t/stripe-live/.
+    my ( $e, $paid ) = refundable();
+    my $result = apply($e);
+    like "@{ $result->{errors} // [] }", qr/Refund not requested.*no seller Stripe account/,
+        'the error is surfaced';
+    is reread($e)->state, 'active', 'the entitlement stays active';
+    is reread($e)->refunded_cents($tdb), 0, 'nothing is recorded as refunded against it';
+    is fresh($paid)->refunded_cents, 0, 'or against the payment';
+    is fresh($paid)->metadata->{refund_last_failure}{classification}, 'not_sent',
+        'and the payment says nothing was sent';
+};
+
 done_testing;
