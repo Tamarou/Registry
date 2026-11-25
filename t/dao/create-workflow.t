@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw(done_testing is ok diag skip)];
+use Test::More import => [qw(done_testing is is_deeply ok diag skip)];
 defer { done_testing };
 
 use Mojo::Home;
@@ -123,6 +123,15 @@ else {
     is $created_workflow->description,
       'A test workflow created through the workflow creation workflow',
       'New workflow has correct description';
+
+    # ADR 004(b): the right to create workflows covers running them, so what
+    # is authored is admitted to whoever workflow-creation admits, and no
+    # wider. With no entry the gate would refuse it to its own author.
+    is_deeply $created_workflow->roles, [qw(admin staff)],
+      'New workflow is run by the roles that may author it';
+    is_deeply $created_workflow->roles, $workflow->roles,
+      "read from the authoring workflow's own row";
+    ok !$created_workflow->public, 'and is not public';
 
     # Verify steps were created in correct order
     my $first_step = $created_workflow->first_step( $dao->db );
