@@ -82,6 +82,8 @@ sub _differences ( $db, $tenant ) {
     for my $slug ( sort keys %$platform ) {
         push @lines, "- `$slug`: missing from the tenant"
           unless $copy->{$slug} || $NOT_COPIED{$slug};
+        push @lines, "- `$slug`: the tenant holds a copy; provisioning never copies it"
+          if $copy->{$slug} && $NOT_COPIED{$slug};
         push @lines, _compare( $slug, $platform->{$slug}, $copy->{$slug} ) if $copy->{$slug};
     }
     return @lines;
@@ -90,12 +92,21 @@ sub _differences ( $db, $tenant ) {
 # The Markdown report: a section per tenant schema, registry excluded.
 sub report ($db) {
     my @tenants = $db->query(q{
-        SELECT slug FROM registry.tenants WHERE slug <> 'registry' ORDER BY slug
-    })->arrays->map( sub { $_->[0] } )->each;
+        SELECT t.slug,
+               EXISTS ( SELECT 1 FROM pg_namespace n WHERE n.nspname = t.slug ) AS present
+          FROM registry.tenants t
+         WHERE t.slug <> 'registry'
+         ORDER BY t.slug
+    })->hashes->each;
 
     my $md = "# Tenant workflow divergence\n";
-    for my $tenant (@tenants) {
-        my @lines = _differences( $db, $tenant );
+    for my $row (@tenants) {
+        my $tenant = $row->{slug};
+        # One broken tenant is a line in the report, not the end of it.
+        my @lines =
+            !$row->{present} ? ("- error: schema `$tenant` does not exist")
+          : eval { _differences( $db, $tenant ) };
+        if ( my $err = $@ ) { $err =~ s/\s+/ /g; @lines = ("- error: $err") }
         $md .= "\n## $tenant\n\n" . ( @lines ? join( "\n", @lines ) : 'No differences.' ) . "\n";
     }
     return $md . "\n";

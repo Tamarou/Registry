@@ -186,4 +186,78 @@ subtest 'the workflow divergence command prints the report and writes nothing' =
     is_deeply $counts->(), $before, 'no workflow, step or template row changed in any schema';
 };
 
+subtest 'missing tenant schema reported not fatal' => sub {
+    my $slug = provision();
+    Registry::DAO::Tenant->create( $db, { name => 'Ghost', slug => 'div_0_ghost' } );    # sorts first
+    in_tenant( $slug, q{INSERT INTO workflows (slug, name) VALUES ('after-ghost', 'Ours')} );
+    my $report = eval { Registry::WorkflowDivergence::report($db) };
+    ok defined $report, 'the report does not die' or diag $@;
+    like section( $report, 'div_0_ghost' ), qr/^- error: schema `div_0_ghost` does not exist$/m,
+      'the missing schema is an error line for that tenant';
+    like section( $report, $slug ), qr/^- `after-ghost`: only in the tenant$/m,
+      'and the tenants after it are still compared';
+    $db->query(q{DELETE FROM registry.tenants WHERE slug = 'div_0_ghost'});
+};
+
+subtest 'tenant schema names are quoted' => sub {
+    my $slug   = provision();
+    my $quoted = 'div-q"x';
+    $db->query( "ALTER SCHEMA $slug RENAME TO " . $db->dbh->quote_identifier($quoted) );
+    $db->query( 'UPDATE registry.tenants SET slug = ? WHERE slug = ?', $quoted, $slug );
+    in_tenant( $quoted, q{INSERT INTO workflows (slug, name) VALUES ('quoted-own', 'Ours')} );
+
+    my $report = Registry::WorkflowDivergence::report($db);
+    my $body   = section( $report, $quoted );
+    like $body, qr/^- `quoted-own`: only in the tenant$/m, 'read from its own schema';
+    unlike $body, qr/error/, 'not an error';
+    unlike $report =~ s/\Q$body\E//r, qr/quoted-own/, 'and from no other';
+};
+
+subtest 'platform schema not reported as a tenant' => sub {
+    $db->query(q{
+        INSERT INTO registry.tenants (name, slug) VALUES ('Registry', 'registry') ON CONFLICT (slug) DO NOTHING
+    });
+    unlike Registry::WorkflowDivergence::report($db), qr/^## registry$/m, 'registry has no section';
+};
+
+subtest 'missing template on one side reported' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{
+        UPDATE workflow_steps s SET template_id = NULL FROM workflows w
+         WHERE w.slug = 'offer-publishing' AND s.workflow_id = w.id AND s.slug = 'publish'
+    } );
+    my @warnings;
+    local $SIG{__WARN__} = sub { push @warnings, @_ };
+    my $body = section( Registry::WorkflowDivergence::report($db), $slug );
+    like $body, qr/^- `offer-publishing` step `publish`: template: registry `offer-publishing\/publish`; tenant \(none\)$/m;
+    like $body, qr/^- `offer-publishing` step `publish`: template content: registry sha256 `[0-9a-f]{12}` \(\d+ bytes\); tenant \(none\)$/m;
+    is_deeply \@warnings, [], 'no warnings';
+};
+
+subtest 'unexpected skipped slug copy reported' => sub {
+    my $slug = provision();
+    for my $wf (qw( tenant-signup registry-storefront )) {
+        my ($id) = $db->query( 'SELECT id FROM registry.workflows WHERE slug = ?', $wf )->array->@*;
+        $db->query( 'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $slug, $id );
+    }
+    my $body = section( Registry::WorkflowDivergence::report($db), $slug );
+    like $body, qr/^- `$_`: the tenant holds a copy; provisioning never copies it$/m, $_
+      for qw( tenant-signup registry-storefront );
+};
+
+subtest 'whitespace only template change reported' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{UPDATE templates SET content = content || ' ' WHERE name = 'offer-publishing/publish'} );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `offer-publishing` step `publish`: template content: /m;
+};
+
+subtest 'report output is deterministic' => sub {
+    my $first = Registry::WorkflowDivergence::report($db);
+    like $first, qr/^- /m, 'over a report with differences in it';
+    # Perl randomises each hash's order, so repeat runs to catch one left unsorted.
+    is_deeply [ map { Registry::WorkflowDivergence::report($db) } 1 .. 20 ], [ ($first) x 20 ],
+      'repeated runs are byte-identical';
+};
+
 done_testing;
