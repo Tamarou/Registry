@@ -29,6 +29,8 @@ for my $wf (qw( session-creation event-creation )) {
         for $home->child( 'templates', $wf )->list->grep(qr/\.html\.ep$/)->each;
     Registry::DAO::Workflow->from_yaml( $dao, $home->child( 'workflows', "$wf.yml" )->slurp );
 }
+# And one that carries the public mark rather than roles.
+Registry::DAO::Workflow->from_yaml( $dao, $home->child(qw( workflows tenant-storefront.yaml ))->slurp );
 
 # A step of S carries an outcome definition, so the copy must bring it too.
 my $outcome = $db->insert( 'registry.outcome_definitions',
@@ -166,6 +168,140 @@ subtest 'signup accepting the offer copies each workflow once' => sub {
     is_deeply definition( 'accept_signup', 'session-creation' ), definition( 'registry', 'session-creation' ),
         "the platform's definition";
     is entitlements($tenant), 1, 'and one entitlement';
+};
+
+sub refusal_of ($code) { eval { $code->(); 1 } ? undef : $@ }
+
+subtest 'accepting twice yields one copy and one entitlement' => sub {
+    my $tenant = bare_tenant('accept_twice');
+    Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant() );
+    my $again = refusal_of( sub { Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant() ) } );
+    isa_ok $again, 'Registry::DAO::Entitlement::Refused', 'the second accept';
+    is copies( 'accept_twice', $_ ), 1, "one copy of $_" for qw( session-creation event-creation );
+    is entitlements($tenant), 1, 'one entitlement';
+};
+
+subtest 'failed copy leaves no entitlement and no partial workflow' => sub {
+    my $tenant = bare_tenant('accept_fails');
+    # A template already named as one session-creation's copy inserts, so the
+    # copy fails partway: after event-creation and session-creation's steps.
+    $db->insert( 'accept_fails.templates',
+        { name => 'session-creation/info', slug => 'stray-info', content => 'stray' } );
+    ok refusal_of( sub { Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant() ) } ),
+        'the accept fails';
+    is entitlements($tenant), 0, 'no entitlement';
+    is $db->query('SELECT count(*) FROM accept_fails.workflows')->array->[0], 0, 'no workflow';
+    is $db->query('SELECT count(*) FROM accept_fails.workflow_steps')->array->[0], 0, 'no steps';
+    is_deeply $db->query('SELECT slug FROM accept_fails.templates')->arrays->flatten->to_array, ['stray-info'],
+        'no copied template, and the stray one untouched';
+};
+
+subtest 'replace ruling applies only to its tenant and slug' => sub {
+    my ( $a, $b ) = map { bare_tenant($_) } qw( ruled_a ruled_b );
+    for my $schema (qw( ruled_a ruled_b )) {
+        for my $slug (qw( session-creation event-creation )) { held_copy( $schema, $slug ); diverge( $schema, $slug ) }
+    }
+    my %before;
+    for my $schema (qw( ruled_a ruled_b )) {
+        $before{"$schema/$_"} = definition( $schema, $_ ) for qw( session-creation event-creation );
+    }
+    my $rulings = Registry::WorkflowDivergence::rulings("Ruling: replace ruled_a/session-creation\n");
+    Registry::DAO::Tenant->accept_platform_offer( $db, $_, grant(), $rulings ) for $a, $b;
+
+    is_deeply definition( 'ruled_a', 'session-creation' ), definition( 'registry', 'session-creation' ),
+        "the ruled tenant's ruled slug is replaced";
+    is_deeply definition( 'ruled_a', 'event-creation' ), $before{'ruled_a/event-creation'},
+        'its other slug is not';
+    is_deeply definition( 'ruled_b', $_ ), $before{"ruled_b/$_"}, "another tenant's $_ is not"
+        for qw( session-creation event-creation );
+};
+
+subtest 'merge ruling does not overwrite' => sub {
+    my $tenant = bare_tenant('accept_merge');
+    held_copy( 'accept_merge', 'session-creation' );
+    diverge( 'accept_merge', 'session-creation' );
+    my $before = definition( 'accept_merge', 'session-creation' );
+    my $result = Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant(),
+        Registry::WorkflowDivergence::rulings("Ruling: merge accept_merge/session-creation\n") );
+    is_deeply definition( 'accept_merge', 'session-creation' ), $before, 'its copy is left as it was';
+    like $result->{workflows}{'session-creation'}, qr/^kept: merge ruling, needs a hand merge\n/,
+        'and the accept records that it needs a hand merge';
+};
+
+subtest 'copy target is the accepting tenant only' => sub {
+    my ( $mine, $other ) = map { bare_tenant($_) } qw( target_mine target_other );
+    my %named = ( holder_tenant_id => $other->id, slug => 'target_other', schema => 'target_other',
+        tenant => 'target_other', dest_schema => 'target_other' );
+    Registry::DAO::Tenant->accept_platform_offer( $db, $mine, { %{ grant() }, %named } );
+    is copies( 'target_mine', 'session-creation' ), 1, 'the accepting tenant has the copy';
+    is $db->query('SELECT count(*) FROM target_other.workflows')->array->[0], 0, 'the named tenant has none';
+    is entitlements($mine), 1, 'the accepting tenant holds the entitlement';
+    is entitlements($other), 0, 'the named tenant holds none';
+};
+
+subtest 'unpublished offer acceptance refused without copy' => sub {
+    my $tenant = bare_tenant('accept_stale');
+    my $offer  = Registry::DAO::Offer->create( $db, { name => 'Stale bundle' } );
+    my $terms  = offer_terms( undef, resource_ids => [ run_resource('session-creation')->id ], price_cents => 0,
+        payment_plans => [ { id => 'share', kind => 'percentage_of_sales', fraction => 0.01 } ] );
+    my $old    = $offer->draft( $db, $terms )->publish($db);
+    $offer->draft( $db, $terms )->publish($db);    # supersedes $old
+    my $draft  = $offer->draft( $db, $terms );
+
+    # A version the tenant `elsewhere` offers in its own schema: not the platform's.
+    my $elsewhere = bare_tenant('accept_elsewhere');
+    my $own       = $elsewhere->dao($dao)->db;
+    my $foreign   = Registry::DAO::Offer->create( $own, { name => 'Foreign bundle' } )->draft( $own,
+        { %$terms, resource_ids => [ Registry::DAO::Resource->create( $own,
+            { name => 'run:session-creation', kind => 'unbounded' } )->id ] } )->publish($own);
+
+    for my $case ( [ unpublished => $db, $draft ], [ superseded => $db, $old ],
+                   [ 'not the platform\'s' => $db, $foreign ], [ 'not the platform\'s, on its own connection' => $own, $foreign ] ) {
+        my ( $why, $conn, $version ) = @$case;
+        isa_ok refusal_of( sub { Registry::DAO::Tenant->accept_platform_offer( $conn, $tenant, grant($version) ) } ),
+            'Registry::DAO::Entitlement::Refused', "$why: refused";
+    }
+    is copies( 'accept_stale', 'session-creation' ), 0, 'no copy';
+    is entitlements($tenant), 0, 'no entitlement in registry';
+    is $own->query('SELECT count(*) FROM entitlements')->array->[0], 0, "none in the offering tenant's schema";
+};
+
+subtest 'platform definition untouched by accept' => sub {
+    my $platform = sub {
+        return {
+            map( { $_ => definition( 'registry', $_ ) } qw( session-creation event-creation tenant-storefront ) ),
+            templates => $db->query('SELECT id, name, slug, content FROM registry.templates ORDER BY id')->hashes->to_array,
+            outcomes  => $db->query('SELECT id, name, schema::text FROM registry.outcome_definitions ORDER BY id')->hashes->to_array,
+        };
+    };
+    my $before = $platform->();
+    my $tenant = bare_tenant('accept_untouched');
+    held_copy( 'accept_untouched', 'session-creation' );
+    diverge( 'accept_untouched', 'session-creation' );
+    Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant(),
+        Registry::WorkflowDivergence::rulings("Ruling: replace accept_untouched/session-creation\n") );
+    is copies( 'accept_untouched', 'session-creation' ), 1, 'the tenant copy was replaced';
+    is_deeply $platform->(), $before, "registry's workflows, templates and outcome definitions are unchanged";
+};
+
+subtest 'copied workflow keeps roles or public mark' => sub {
+    my $tenant = bare_tenant('accept_roles');
+    held_copy( 'accept_roles', 'session-creation' );
+    diverge( 'accept_roles', 'session-creation' );
+    Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant( platform_bundle(qw( session-creation tenant-storefront )) ),
+        Registry::WorkflowDivergence::rulings("Ruling: replace accept_roles/session-creation\n") );
+    my $row = sub ( $schema, $slug ) {
+        $db->query( "SELECT roles, public FROM $schema.workflows WHERE slug = ?", $slug )->hash;
+    };
+    is_deeply $row->( 'accept_roles', 'session-creation' ), { roles => [qw( admin staff )], public => 0 },
+        'a replaced copy keeps its roles';
+    is_deeply $row->( 'accept_roles', 'tenant-storefront' ), $row->( 'registry', 'tenant-storefront' ),
+        'a new copy keeps the public mark';
+    ok $row->( 'accept_roles', 'tenant-storefront' )->{public}, 'which is set';
+};
+
+subtest 'the recorded report rules nothing today' => sub {
+    is_deeply Registry::WorkflowDivergence::rulings(), {}, '"Ruling: none needed" names no tenant or slug';
 };
 
 done_testing;
