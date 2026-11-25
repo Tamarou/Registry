@@ -99,6 +99,7 @@ END {
                 name       => 'Test Session',
                 time       => $time->datetime,
                 teacher_id => $tenant->primary_user( $dao->db )->id,
+                time_zone  => 'America/New_York',    # location-creation asks for it
             },
             { 'X-As-Tenant' => $tenant->slug }
         );

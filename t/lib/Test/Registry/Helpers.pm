@@ -36,7 +36,7 @@ package Test::Registry::Helpers {
         return unless $action;
 
         my @fields =
-          $form->find('input')
+          $form->find('input, select')
           ->grep( sub ( $field = $_ ) { $field->attr('name') } )
           ->map( sub ( $f      = $_ ) { $f->attr('name') } )->to_array->@*;
 
