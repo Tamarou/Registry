@@ -52,8 +52,11 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     }
 
     # The seats a booking of $count acceptances takes: $count times its seats
-    # per unit. Capacity is then the resource's one check (Resource->claim).
+    # per unit, refused above the per-booking cap. Capacity is then the
+    # resource's one check (Resource->claim).
     method seats_for ($count) {
+        croak "a booking of this offer takes at most $per_booking_cap: $count asked for"
+            if $count > $per_booking_cap;
         return $count * $units_per_acceptance;
     }
 

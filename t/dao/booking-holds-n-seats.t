@@ -95,4 +95,39 @@ subtest 'seats held leave the rest' => sub {
     is $seats->free_units($studio), 0, 'and the occurrence is full';
 };
 
+subtest 'an offer of 2 seats per unit booked twice takes 4' => sub {
+    my ( $version, $seats ) = occurrences( 1, units_per_acceptance => 2 );
+    is book( $studio, $version, $seats, 2 )->units, 4, 'the hold is for 4 seats';
+    is $seats->free_units($studio), 6, 'leaving 6';
+};
+
+subtest 'a booking above the per-booking cap is refused' => sub {
+    my ( $version, $seats ) = occurrences( 1, per_booking_cap => 3 );
+    ok book( $studio, $version, $seats, 3 ), 'the cap itself is allowed';
+    throws_ok { book( $studio, $version, $seats, 4 ) } qr/at most 3/, 'one more than the cap is refused';
+    is $seats->free_units($studio), 7, 'and holds nothing';
+};
+
+# A second connection to the studio, giving up on a lock after a moment
+# rather than waiting.
+sub impatient () {
+    my $other = Registry::DAO->new( url => $test_db->uri, schema => $SLUG )->db;
+    $other->query(q{SET lock_timeout = '500ms'});
+    return $other;
+}
+
+subtest 'concurrent requests for the last seats cannot both succeed' => sub {
+    my ( $version, $seats ) = occurrences(1);
+    booked( $version, $seats, 8 );
+    my ( $first, $second ) = ( impatient(), impatient() );
+    my $tx = $first->begin;
+    ok book( $first, $version, $seats, 2 ), 'the first takes the last 2 seats, uncommitted';
+    throws_ok { book( $second, $version, $seats, 2 ) } qr/lock timeout/,
+        'the second waits on the occurrence lock rather than reading 2 free';
+    $tx->commit;
+    throws_ok { book( $second, $version, $seats, 2 ) } qr/0 of 10 units free/,
+        'once the first commits, the second is refused';
+    is holds_on($seats), 1, 'one hold stands';
+};
+
 done_testing;
