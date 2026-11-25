@@ -413,9 +413,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # "already logged in" branch.
         #
         # This mutates run data on a GET. It is safe: idempotent (guarded by
-        # !$run->data->{user_id}), scoped to the account-check step, and merely
-        # records the already-authenticated session user — no external effect.
-        if ($step && $step->slug eq 'account-check') {
+        # !$run->data->{user_id}), scoped to an AccountCheck step (by class, not
+        # slug: in-studio-booking's is `account`), and merely records the
+        # already-authenticated session user — no external effect.
+        if ($step && $step isa Registry::DAO::WorkflowSteps::AccountCheck) {
             my $current_user = $self->stash('current_user');
             if ($current_user && !$run->data->{user_id}) {
                 my $uid  = ref $current_user ? $current_user->{id} : undef;

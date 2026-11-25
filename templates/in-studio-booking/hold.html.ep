@@ -1,0 +1,19 @@
+%# ABOUTME: in-studio-booking step: the quote for the chosen offer and count; posting holds the seats while the visitor pays.
+%# ABOUTME: The hold is time-limited; HoldSeats re-checks the occurrence and offer before taking it.
+% extends 'layouts/workflow';
+% title 'Hold your seats';
+% stash description => 'Your seats are held for a few minutes while you pay.';
+% my $quote = stash('quote');
+%= include 'in-studio-booking/_errors'
+
+% if ($quote) {
+<section class="card">
+  <p><%= $quote->{offer} %> x <%= $quote->{count} %>: <%= $quote->{seats} %> <%= $quote->{seats} == 1 ? 'seat' : 'seats' %></p>
+  <p>Total: $<%= $quote->{total} %></p>
+</section>
+% }
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Hold and continue to payment</button>
+  </div>
+</form>
