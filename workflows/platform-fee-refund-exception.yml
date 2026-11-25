@@ -4,6 +4,7 @@
 name: Platform Fee Refund Exception
 description: Return the platform fee on a tenant's refunded payment when the fault was the platform's
 slug: platform-fee-refund-exception
+roles: [admin]
 
 steps:
   - slug: find-payment

@@ -143,7 +143,7 @@ class Registry::DAO {
                 }
             }
             catch ($e) {
-                my $error = "Error importing workflow: $e";
+                my $error = "Error importing workflow $file: $e";
                 if ($verbose) {
                     warn $error;
                 } else {

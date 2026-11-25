@@ -100,10 +100,12 @@ subtest 'tenant-signup is anonymous on the registry host, and advances' => sub {
         'the run advanced to the profile step' );
 };
 
-subtest 'tenant-signup is not redirected to login on a tenant host' => sub {
+# tenant-signup has no row in a tenant's schema, and the gate reads only the
+# current tenant's rows, never registry's: on a tenant host it is refused, not
+# served from registry's public mark (t/security/workflow-gate-closed-by-default.t).
+subtest 'tenant-signup is refused on a tenant host, where it has no row' => sub {
     $t->get_ok( '/tenant-signup' => { Host => $TENANT_HOST } )
-      ->status_is(200, 'served to an anonymous prospect')
-      ->content_like( qr/Let's Build Your Empire/, 'the signup landing rendered' );
+      ->status_is( 403, 'refused, not sent to login' );
 };
 
 subtest 'summer-camp-registration is anonymous on a tenant host, and advances' => sub {

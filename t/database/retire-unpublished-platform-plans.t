@@ -9,7 +9,7 @@ use Test::Exception;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
-use Registry::PriceOps::PlatformTerms qw(platform_offers_to_tenants);
+use Test::Registry::HistoricOffers qw( offers_to_tenants );
 use experimental 'signatures';
 
 my $CHANGE = 'retire-unpublished-platform-plans';
@@ -57,7 +57,7 @@ subtest 'platform publishes only solo after deploy' => sub {
 
     lives_ok { deploy() } 'the deploy runs';
 
-    my $offers = platform_offers_to_tenants($db);
+    my $offers = offers_to_tenants($db);
     is scalar @$offers, 1, 'the platform publishes exactly one offer to tenants';
     is $offers->[0]{name},         'Solo',  'and it is Solo';
     is $offers->[0]{amount_cents}, 0,       'at $0';

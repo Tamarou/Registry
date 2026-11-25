@@ -57,6 +57,8 @@ sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
           JOIN registry.offer_versions v ON v.id = e.offer_version_id
           JOIN registry.offers o ON o.id = v.offer_id
           JOIN registry.resources r ON r.id = v.resource_id
+              OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                          WHERE s.offer_version_id = v.id)
           JOIN registry.offer_version_payment_plans p
             ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
          WHERE t.slug = ? AND r.name = ? AND $in_effect
@@ -83,6 +85,8 @@ sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
           FROM registry.offer_versions v
           JOIN registry.offers o ON o.id = v.offer_id
           JOIN registry.resources r ON r.id = v.resource_id
+              OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                          WHERE s.offer_version_id = v.id)
           JOIN registry.offer_version_payment_plans p ON p.offer_version_id = v.id
          WHERE v.id = ? AND p.id = ? AND r.name = ?
     }, $offer_version_id, $payment_plan_id, $PAYMENT_PROCESSING )->hash;
@@ -111,6 +115,8 @@ sub platform_offers_to_tenants ($db) {
           FROM registry.offer_versions v
           JOIN registry.offers o ON o.id = v.offer_id
           JOIN registry.resources r ON r.id = v.resource_id
+              OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                          WHERE s.offer_version_id = v.id)
           JOIN registry.offer_version_payment_plans p
             ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
          WHERE r.name = ?

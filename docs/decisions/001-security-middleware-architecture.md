@@ -63,7 +63,7 @@ An `after_dispatch` hook appends the following headers to every response:
   (`X-Forwarded-Proto: https`).
 
 The Content-Security-Policy value is built once at startup and shared across
-all requests:
+all requests (as originally decided; since 2026-11-25 htmx and chart.js are self-hosted and `unpkg.com` and `cdn.jsdelivr.net` are no longer in `script-src`, see issue 01a2141b):
 
 ```
 default-src 'self';

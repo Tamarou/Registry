@@ -27,7 +27,7 @@ subtest 'Workflow Layout Integration' => sub {
     like($content, qr/workflow-progress\.js/, 'Layout includes component script');
     
     # Check that HTMX is included for navigation
-    like($content, qr/htmx\.org/, 'Layout includes HTMX for navigation');
+    like($content, qr{/js/vendor/htmx\.min\.js}, 'Layout includes HTMX for navigation');
     
     # The layout emits the element the script defines, and reads the stash key
     # the controller sets. Both halves matter: for most of this file's life the

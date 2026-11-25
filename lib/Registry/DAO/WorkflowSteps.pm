@@ -30,7 +30,6 @@ use Registry::DAO::WorkflowSteps::TenantPayment;
 use Registry::DAO::WorkflowSteps::AttendanceCheck::TenantProcessor;
 use Registry::DAO::WorkflowSteps::AttendanceCheck::MissingAttendanceProcessor;
 use Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor;
-use Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext;
 
 # Drop request processing workflow steps
 use Registry::DAO::WorkflowSteps::ValidateDropRequest;

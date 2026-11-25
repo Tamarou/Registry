@@ -14,6 +14,7 @@ A workflow consists of:
 - A description of its purpose
 - A series of ordered steps
 - A designated first step
+- Who may run it: a `roles` list, or the `public` mark
 
 Workflows are usually defined by users via a Workflow construction workflow through the Registry Web UI. The system is bootstrapped using serialized workflows in YAML format for better readability and familiarity with other workflow systems (like Kubernetes, Ansible, or GitHub Actions).
 
@@ -25,6 +26,9 @@ description: |
   Handles the complete student registration process
   from initial application through confirmation.
 slug: student-registration
+# Who may run it. One of:
+roles: [parent, admin, staff]
+# public: true
 
 steps:
   - name: Initial Application
@@ -45,6 +49,110 @@ steps:
 ```
 
 ## Workflow Components
+
+### Roles and the Public Mark
+
+Each workflow YAML declares one of:
+
+- `roles`: a non-empty list of the application's roles (`parent`, `student`,
+  `staff`, `admin` -- `Registry::DAO::User::USER_TYPES`). An unknown name, an
+  empty list, or anything but a list is refused at import.
+- `public: true`: anyone may walk into it. Only a YAML boolean `true` is the
+  mark; `1`, `yes`, `"true"` and every false value are not.
+
+Import enforces at most one: declaring both is refused, with the file named
+in the error. `t/security/workflow-roles-cover-every-workflow.t` enforces at
+least one for every shipped workflow; import still accepts a YAML with
+neither.
+`from_yaml` stores the entry on the `workflows` row (`roles`, `public`),
+`to_yaml` round-trips it, and `copy_workflow` carries it into a tenant's
+schema. A row with neither has no entry, and the gate refuses it (see "Who
+may run a workflow" below).
+
+### Who may run a workflow
+
+The gate (`require_workflow_role` in `lib/Registry.pm`) guards every entry to
+a workflow: the `/:workflow` routes, the routes that name their workflow in
+the route rather than the URL (`/`, `/admin/dashboard`, the drop and transfer
+approvals, `/admin/templates`), and the callcc leg, which names its target
+workflow in another placeholder. It reads the current tenant's own
+`workflows` row for the slug:
+
+- the public mark admits anyone, signed in or not;
+- roles admit a user whose role in this tenant is one of them (an anonymous
+  visitor is sent to log in, a signed-in user with another role gets 403);
+- anything else is refused 403, for everyone, admins included: a row with no
+  roles (or an empty list) and no public mark, or no row at all in this
+  tenant's schema. The gate never falls back to `registry`'s row, so
+  `tenant-signup`, which a tenant is not provisioned with, is refused on a
+  tenant host, and one tenant's public copy never opens another's.
+
+A slug with no row and no legacy `{slug}/index` template is a 404 before the
+gate runs. A refused request creates no run.
+
+The gate checks the slug, not the run. A step URL (`/:workflow/:run/:step`,
+including Stripe's return to it) and a callcc's source run are served only
+when the run belongs to the URL's workflow in this tenant's schema; any other
+run id is a 404, so a run of an admin-only workflow cannot be continued
+through a public slug, nor its existence confirmed. Runs the
+`ContinueWorkflowRun` job or the Stripe Connect webhook create never pass
+through these routes. The hard-coded `%ROLES` map that
+`lib/Registry.pm` once held is gone; the rows are the only source.
+
+A tenant-chosen registration workflow (a project's `registration_workflow`
+metadata) stays reachable because its YAML carries the public mark, as
+`summer-camp-registration`'s does. A workflow a tenant writes through
+`workflow-creation` gets that authoring workflow's own roles. That is an
+inference, not a ruling: ADR 004(b) settles the tenant's entitlement to
+create workflows, not which users may run them. It fails closed, admitting
+no one the authoring workflow would not.
+
+#### Run rights: what a tenant is entitled to run
+
+Separately from roles, a tenant's right to run a workflow is an entitlement
+it holds from the platform tenant `registry` (PriceOps spec, "The platform
+tenant's offers"). Each workflow slug the platform offers is a resource named
+`run:<slug>`. The right to create workflows is `run:workflow-creation`, and it
+also covers running the workflows the tenant wrote (ADR 004, ruling (b)).
+Nothing reads run rights yet; `01a20415-69df` makes the gate require them.
+
+- **The check.** `Registry::DAO::Entitlement->may_run($db, $tenant_id, $slug)`
+  answers from live rows through `Registry::DAO::Tenant->holds`. It is true
+  only when the tenant holds `run:$slug` in `registry`, in effect now (active,
+  its period covering now), under a single-resource version or a set version.
+  The name must match exactly, so a pattern, another case or a trailing space
+  answers false. A right a tenant records in its own schema grants nothing,
+  and neither does another tenant's right.
+- **One at a time.** A holder holds at most one in-effect run right per
+  workflow, whatever the payment plan. The `entitlement_one_run_right` trigger
+  enforces this in `registry`, looking through set versions. An ended right
+  never blocks its successor.
+- **The backfill** (`workflow-run-entitlements`). `registry` holds one run
+  right per workflow in `registry.workflows` at deploy, through its own
+  per-slug offer to itself (`holder_is_offerer`), as the bootstrap seeded the
+  five product-design rights. Those five are reused, never duplicated.
+  Workflows imported after deploy get no run right from this change.
+- **How a new workflow reaches a Solo holder.** perigrin's ruling (a) in
+  ADR 004: "(a) New Solo version". A new Solo version lists the workflow set
+  as a set version, published through offer-publishing, and holders move to
+  it. The rule for moving them waits until real holders exist. Day one still
+  sells a single-resource Solo.
+- **Studios have no run rights yet.** So the backfill refuses to deploy while
+  any studio tenant holds workflow copies, naming each. Production has none.
+  A dev database with a seeded SACP tenant must re-create it (see
+  `sql/seed/README.md`).
+
+**Changing who may run an existing workflow ships a migration.** `from_yaml`
+returns an existing row unchanged and a tenant's copies are written only by
+`copy_workflow` at provisioning, so editing a YAML's `roles` or `public` alone
+changes only fresh databases. The change needs a sqitch migration that
+updates `registry` and every tenant schema, looping over `registry.tenants`
+as `workflow-roles-data` does. Clearing the stored workflow so import rebuilds
+it, as `entitlement-stripe-move-adds-dispute-step` does, reaches `registry`
+only; the tenants' copies still need the update.
+`t/dao/workflow-roles-data.t` fails for a shipped YAML whose entry disagrees
+with the row migrations carried forward, and
+`t/security/workflow-gate-closed-by-default.t` proves the gate's refusals.
 
 ### Workflow Steps
 
@@ -221,6 +329,14 @@ To resume a halted run, an admin fixes what `__driver.error` names, then
 enqueues `continue_workflow_run` again with the same arguments. The driver
 starts at the halted step, not the first one.
 
+The `attendance_check` sweep (`lib/Registry/Job/AttendanceCheck.pm`) uses the
+same driver in-process: each check starts an `attendance-check` run in the
+registry schema and drives it to the end. The driver returns where the run
+stopped and leaves finishing the Minion job to its caller, so the sweep finishes
+with the tenants it covered. The sweep's next run is queued by
+`Registry::Job::Recurring`, never from run data. A check gets one attempt, so a
+step that dies halts that run and alerts registry's admins at once.
+
 ## Advanced Features
 
 ### Continuations
@@ -265,7 +381,7 @@ In Registry, workflows can be composed by using specialized workflow steps that 
 2. Reusability - Common workflows can be reused across different processes
 3. Role separation - Different workflows can be assigned to different user roles
 
-Who may reach a workflow directly is the `workflow_roles` map in `lib/Registry.pm`. A slug with no entry is open to anyone, so every imported workflow must either have an entry there or carry `public: true` at the top of its own YAML file, a reviewed declaration that anyone may walk into it (the two storefronts, `summer-camp-registration`, `tenant-signup` and `__default__` today). `t/security/workflow-roles-cover-every-workflow.t` fails, naming the file and slug, for a workflow with neither, for one with both, and for a file that does not parse. Only a YAML boolean `true` counts as the mark, and `from_yaml` does not store it.
+Who may reach a workflow directly is its stored roles or public mark; see "Who may run a workflow" above.
 
 Example of a specialized workflow step that initiates another workflow:
 
@@ -297,6 +413,19 @@ class Registry::DAO::InitiateProjectWorkflow :isa(Registry::DAO::WorkflowStep) {
 Registry supports multi-tenant deployments, where workflows can be copied between tenants. The system ensures that all workflow components (steps, templates, etc.) are properly copied to maintain functionality across tenants.
 
 When copying workflows between tenants, it's essential to preserve the class information for specialized workflow steps. The `copy_workflow` function handles this by including the `class` column when duplicating workflow steps.
+
+Each tenant's copies are made once, at provisioning, and migrations that reset a workflow change only `registry`'s copy, so a tenant's copy can fall behind or be edited away from the platform's. To see how, run:
+
+```bash
+carton exec ./registry workflow divergence registry
+```
+
+It compares every tenant schema in `registry.tenants` with `registry`, and is read-only: it only runs `SELECT`s. For each tenant it reports:
+
+- a slug the tenant has that `registry` does not, and a `registry` slug the tenant lacks. `tenant-signup` and `registry-storefront` are never copied at provisioning, so their absence is expected and not reported; a tenant that does hold one is reported;
+- for a shared slug, the step order (the `first_step`/`depends_on` walk), and for each shared step its `class`, its template by name, and its template by exact content (no whitespace normalising; content is shown as a sha256 prefix and byte length). One template difference is expected and not reported: provisioning unlinks the tenant's `tenant-storefront` `program-listing` template on purpose (#173, #229), because registry's is the platform's marketing page and a tenant must fall back to its catalog on disk. Only the tenant having no template there is excused; a tenant step linked to some other template is still reported.
+
+Every difference names the field and both values. `registry` itself is never a section, and a tenant whose schema is missing or unreadable gets an error line while the others are still compared. The output is Markdown, one section per tenant in slug order, and is what `docs/reviews/tenant-workflow-divergence.md` records.
 
 ## YAML Examples
 

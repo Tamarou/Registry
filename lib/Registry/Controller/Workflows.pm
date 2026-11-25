@@ -13,9 +13,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $dao->find( Workflow => { slug => $slug } );
     }
 
+    # A run named in the URL, only if it belongs to the URL's workflow. The
+    # gate checks the slug, so a run of any other workflow -- admin-only, or one
+    # with no roles -- would otherwise be reachable through a public slug.
+    # undef either way, so callers answer 404 without confirming the run exists.
     method run ( $id = $self->param('run') ) {
-        my $dao = $self->dao;
-        ( $dao->find( WorkflowRun => { id => $id } ) )[0];
+        my $workflow = $self->workflow or return undef;
+        ( $self->dao->find( WorkflowRun => { id => $id, workflow_id => $workflow->id } ) )[0];
     }
 
     method new_run ( $workflow, $config //= {} ) {
@@ -164,6 +168,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
           // $self->app->storefront_workflow( $self->tenant );
         my $workflow = $self->workflow($workflow_slug);
 
+        # The row-based gate here as well as on /:workflow: `/` and the /admin
+        # routes name their workflow in the route, not the URL, and never pass
+        # through that guard.
+        return unless $self->require_workflow_role($workflow_slug);
+
         # Backwards compatibility: if a {workflow}/index template exists,
         # use the old rendering path (no auto-run).
         my $index_template = $workflow_slug . '/index';
@@ -251,9 +260,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
 
     method start_workflow() {
         my $dao = $self->dao;
-        my $workflow = $self->workflow(
-            $self->param('workflow')
-              // $self->app->storefront_workflow( $self->tenant ) );
+        my $workflow_slug = $self->param('workflow')
+          // $self->app->storefront_workflow( $self->tenant );
+        # Same gate as index(), for the same routes.
+        return unless $self->require_workflow_role($workflow_slug);
+        my $workflow = $self->workflow($workflow_slug);
         
         # Now try to start the run with auto-repair in the new_run method
         my $run;
@@ -478,16 +489,9 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     method process_workflow_run_step {
         my $dao = $self->dao;
 
-        my ($run) = $dao->find(
-            WorkflowRun => {
-                id => $self->param('run'),
-            }
-        );
-
-        # Same refusal as the GET. This one resolves the run itself rather than
-        # through run(), which is why it needed its own guard -- and a POST is
-        # what a crawler replaying a form does. #431.
-        return $self->reply->not_found unless $run;
+        # Same refusal as the GET, through the same run() -- a POST is what a
+        # crawler replaying a form does (#431), and what advances a run.
+        my $run = $self->run() or return $self->reply->not_found;
 
         # if we're done, stop now
         if ( $run->completed( $dao->db ) ) {
@@ -901,6 +905,9 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # any public storefront starts an admin run that the guard only
         # notices on the redirect back, after the first step has already run.
         return unless $self->require_workflow_role( $self->param('target') );
+
+        # The source run must be the URL workflow's, as on the step routes.
+        $self->run() or return $self->reply->not_found;
 
         my $dao = $self->dao;
         my $workflow = $dao->find(

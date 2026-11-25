@@ -9,13 +9,14 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     use Carp          qw(carp);
     use Mojo::File    qw(path);
     use Registry::DAO qw(Workflow);
+    use Registry::WorkflowDivergence;
     use YAML::XS      qw(Load);
 
     field $app :param = undef;
 
     field $description :reader = 'Workflow management commands';
     field $usage :reader       = <<~"END";
-        usage: $0 workflow <tenant> <command> [<args>]
+        usage: $0 workflow <command> <tenant> [<args>]
 
           list available tenants: $0 tenant list
 
@@ -24,6 +25,7 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
             * show - show details about a workflow
             * import - import workflows from YAML files
             * export - export a workflow to YAML
+            * divergence - report, read-only, how each tenant's workflow copies differ from registry's
 
         END
 
@@ -89,6 +91,14 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
 
         print "\n";
 
+        return;
+    }
+
+    method divergence () {
+        # Per connection, not one READ ONLY transaction: a failing tenant
+        # would abort that, and the report goes on past it.
+        $dao->db->query('SET default_transaction_read_only = on');
+        print Registry::WorkflowDivergence::report( $dao->db );
         return;
     }
 

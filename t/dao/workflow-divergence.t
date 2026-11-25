@@ -1,0 +1,309 @@
+#!/usr/bin/env perl
+# ABOUTME: Pins the read-only report of how each tenant's workflow copies differ from registry's:
+# ABOUTME: slug, step order, step class and template (name and exact content), as committable Markdown.
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::DB;
+use Test::Registry::Fixtures;
+use Registry::DAO::Tenant;
+use Registry::DAO::Workflow;
+use Registry::WorkflowDivergence;
+use Mojo::Home;
+use YAML::XS qw(Load);
+use Registry;
+use Registry::Command::template;
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
+my $db      = $dao->db;
+
+# Workflows and templates in registry the way production has them, so a
+# provisioned tenant holds real copies of both.
+for my $file ( Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each ) {
+    next if Load( $file->slurp )->{draft};
+    Registry::DAO::Workflow->from_yaml( $dao, $file->slurp );
+}
+{
+    local $ENV{DB_URL} = $test_db->uri;
+    my $out = '';
+    local *STDOUT;
+    open STDOUT, '>', \$out;
+    Registry::Command::template->new( app => Registry->new )->load('registry');
+}
+
+# Production links registry's tenant-storefront/program-listing step to the
+# platform's marketing template ('template import' does it; see
+# t/dao/tenant-storefront-provision.t), and provisioning unlinks the tenant's.
+is $db->query(q{
+    UPDATE registry.workflow_steps s
+       SET template_id = (SELECT id FROM registry.templates WHERE name = 'tenant-storefront/program-listing')
+      FROM registry.workflows w
+     WHERE w.id = s.workflow_id AND w.slug = 'tenant-storefront' AND s.slug = 'program-listing'
+})->rows, 1, 'registry program-listing step linked to its template, as in production';
+
+my $owner = Test::Registry::Fixtures::create_user( $db,
+    { username => 'div_owner', name => 'Div Owner', email => 'owner@div.test', user_type => 'admin' } );
+
+my $n = 0;
+sub provision () {
+    my $slug = 'div_' . ++$n;
+    Registry::DAO::Tenant->provision( $db, { name => "Div $n", slug => $slug, users => [$owner] } );
+    return $slug;
+}
+
+# The report's section for $slug: the lines after its heading, up to the next.
+sub section ( $report, $slug ) {
+    my ($body) = $report =~ /^## \Q$slug\E\n(.*?)(?=^## |\z)/ms;
+    return $body;
+}
+
+subtest 'an untouched tenant copy reports no differences' => sub {
+    my $slug   = provision();
+    my $report = Registry::WorkflowDivergence::report($db);
+    is section( $report, $slug ), "\nNo differences.\n\n", 'the section says so'
+      or diag $report;
+};
+
+# Run $sql against tenant $slug's schema (search_path set, then reset).
+sub in_tenant ( $slug, $sql, @bind ) {
+    $db->query( 'SET search_path = ' . $db->dbh->quote_identifier($slug) . ', public' );
+    $db->query( $sql, @bind );
+    $db->query('SET search_path = registry, public');
+}
+
+# Make $step follow $parent in workflow $wf of tenant $slug.
+sub set_parent ( $slug, $wf, $step, $parent ) {
+    in_tenant( $slug, q{
+        UPDATE workflow_steps s SET depends_on = p.id
+          FROM workflow_steps p, workflows w
+         WHERE w.slug = ? AND s.workflow_id = w.id AND p.workflow_id = w.id
+           AND s.slug = ? AND p.slug = ?
+    }, $wf, $step, $parent );
+}
+
+subtest 'a step class change is reported with both values' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{
+        UPDATE workflow_steps s SET class = 'Registry::DAO::WorkflowStep'
+          FROM workflows w
+         WHERE w.slug = 'offer-publishing' AND s.workflow_id = w.id AND s.slug = 'publish'
+    } );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `offer-publishing` step `publish`: class: registry `Registry::DAO::WorkflowSteps::PublishOfferVersion`; tenant `Registry::DAO::WorkflowStep`$/m;
+};
+
+subtest 'a removed step is reported in the step order' => sub {
+    my $slug = provision();
+    set_parent( $slug, 'offer-publishing', 'expiry-policy', 'change-policy' );
+    in_tenant( $slug, q{
+        DELETE FROM workflow_steps s USING workflows w
+         WHERE w.slug = 'offer-publishing' AND s.workflow_id = w.id AND s.slug = 'use-policy'
+    } );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `offer-publishing`: steps: registry `.*change-policy, use-policy, expiry-policy.*`; tenant `.*change-policy, expiry-policy.*`$/m;
+};
+
+subtest 'an added step is reported in the step order' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{
+        INSERT INTO workflow_steps (slug, workflow_id, depends_on)
+        SELECT 'extra', w.id, s.id FROM workflows w JOIN workflow_steps s ON s.workflow_id = w.id
+         WHERE w.slug = 'offer-publishing' AND s.slug = 'complete'
+    } );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `offer-publishing`: steps: registry `.*publish, complete`; tenant `.*publish, complete, extra`$/m;
+};
+
+subtest 'a reordered step is reported in the step order' => sub {
+    my $slug = provision();
+    set_parent( $slug, 'offer-publishing', 'offer-price',  'resource' );
+    set_parent( $slug, 'offer-publishing', 'offer-basics', 'offer-price' );
+    set_parent( $slug, 'offer-publishing', 'one-time-payment', 'offer-basics' );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `offer-publishing`: steps: registry `resource, offer-basics, offer-price, one-time-payment, .*`; tenant `resource, offer-price, offer-basics, one-time-payment, .*`$/m;
+};
+
+# The tenant's template for one step that has one: [step, workflow, template name].
+sub a_templated_step ($slug) {
+    my $schema = $db->dbh->quote_identifier($slug);
+    return $db->query( qq{
+        SELECT s.slug, w.slug, t.name FROM $schema.workflow_steps s
+          JOIN $schema.workflows w ON w.id = s.workflow_id
+          JOIN $schema.templates t ON t.id = s.template_id
+         WHERE w.slug = 'offer-publishing' AND s.slug = 'publish'
+    } )->array;
+}
+
+subtest 'a template content change is reported' => sub {
+    my $slug = provision();
+    my ( $step, $wf, $name ) = a_templated_step($slug)->@*;
+    ok $name, 'the step has a template to change';
+    in_tenant( $slug, q{UPDATE templates SET content = content || '<p>ours</p>' WHERE name = ?}, $name );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `$wf` step `$step`: template content: registry sha256 `[0-9a-f]{12}` \(\d+ bytes\); tenant sha256 `[0-9a-f]{12}` \(\d+ bytes\)$/m;
+};
+
+subtest 'a template name change is reported' => sub {
+    my $slug = provision();
+    my ( $step, $wf, $name ) = a_templated_step($slug)->@*;
+    in_tenant( $slug, q{UPDATE templates SET name = 'ours/publish' WHERE name = ?}, $name );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `$wf` step `$step`: template: registry `\Q$name\E`; tenant `ours\/publish`$/m;
+};
+
+subtest 'a tenant-only slug is reported' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{INSERT INTO workflows (slug, name) VALUES ('studio-own', 'Ours')} );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `studio-own`: only in the tenant$/m;
+};
+
+subtest 'a registry slug missing from the tenant is reported, the two provisioning skips are not' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{
+        DELETE FROM workflow_steps s USING workflows w
+         WHERE w.slug = 'offer-publishing' AND s.workflow_id = w.id
+    } );
+    in_tenant( $slug, q{DELETE FROM workflows WHERE slug = 'offer-publishing'} );
+    my $section = section( Registry::WorkflowDivergence::report($db), $slug );
+    like $section, qr/^- `offer-publishing`: missing from the tenant$/m;
+    unlike $section, qr/tenant-signup|registry-storefront/, 'expected absences are not reported';
+};
+
+subtest 'the workflow divergence command prints the report and writes nothing' => sub {
+    require Registry::Command::workflow;
+    my @schemas = ( 'registry', map { $_->[0] } $db->query(
+        q{SELECT slug FROM registry.tenants WHERE slug <> 'registry' ORDER BY slug})->arrays->each );
+    my $counts = sub {
+        [ map { my $s = $db->dbh->quote_identifier($_);
+                $db->query("SELECT (SELECT count(*) FROM $s.workflows), (SELECT count(*) FROM $s.workflow_steps),
+                                   (SELECT count(*) FROM $s.templates), (SELECT max(updated_at) FROM $s.templates)")->array }
+          @schemas ];
+    };
+    my $before = $counts->();
+
+    local $ENV{DB_URL} = $test_db->uri;
+    my $out = '';
+    my $read_only;
+    {
+        # Observe the connection the command hands the report, then report as usual.
+        no warnings 'redefine';
+        my $report = \&Registry::WorkflowDivergence::report;
+        local *Registry::WorkflowDivergence::report = sub ($cmd_db) {
+            ($read_only) = $cmd_db->query('SHOW default_transaction_read_only')->array->@*;
+            $report->($cmd_db);
+        };
+        local *STDOUT;
+        open STDOUT, '>', \$out;
+        Registry::Command::workflow->new( app => Registry->new )->run( 'divergence', 'registry' );
+    }
+    is $read_only, 'on', 'on a connection whose every transaction is read-only';
+    is $out, Registry::WorkflowDivergence::report($db), 'it prints the Markdown report';
+    like $out, qr/^# Tenant workflow divergence$/m, 'with its heading';
+    is_deeply $counts->(), $before, 'no workflow, step or template row changed in any schema';
+};
+
+subtest 'missing tenant schema reported not fatal' => sub {
+    my $slug = provision();
+    Registry::DAO::Tenant->create( $db, { name => 'Ghost', slug => 'div_0_ghost' } );    # sorts first
+    in_tenant( $slug, q{INSERT INTO workflows (slug, name) VALUES ('after-ghost', 'Ours')} );
+    my $report = eval { Registry::WorkflowDivergence::report($db) };
+    ok defined $report, 'the report does not die' or diag $@;
+    like section( $report, 'div_0_ghost' ), qr/^- error: schema `div_0_ghost` does not exist$/m,
+      'the missing schema is an error line for that tenant';
+    like section( $report, $slug ), qr/^- `after-ghost`: only in the tenant$/m,
+      'and the tenants after it are still compared';
+    $db->query(q{DELETE FROM registry.tenants WHERE slug = 'div_0_ghost'});
+};
+
+subtest 'a missing schema after an unreadable one reports its own error' => sub {
+    $db->query('CREATE SCHEMA div_0_a_bad');    # present, but holds no workflows table
+    Registry::DAO::Tenant->create( $db, { name => 'Bad',     slug => 'div_0_a_bad' } );
+    Registry::DAO::Tenant->create( $db, { name => 'Missing', slug => 'div_0_b_missing' } );
+    my $report = Registry::WorkflowDivergence::report($db);
+    like section( $report, 'div_0_a_bad' ), qr/^- error: .*workflows/m, 'the unreadable schema names its error';
+    is section( $report, 'div_0_b_missing' ), "\n- error: schema `div_0_b_missing` does not exist\n\n",
+      'the missing one reports only its own';
+    $db->query(q{DELETE FROM registry.tenants WHERE slug IN ('div_0_a_bad', 'div_0_b_missing')});
+    $db->query('DROP SCHEMA div_0_a_bad');
+};
+
+subtest 'program-listing with a template of its own is still reported' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{
+        INSERT INTO templates (name, slug, content) VALUES ('ours/listing', 'ours-listing', '<p>ours</p>')
+    } );
+    in_tenant( $slug, q{
+        UPDATE workflow_steps s SET template_id = (SELECT id FROM templates WHERE name = 'ours/listing')
+          FROM workflows w
+         WHERE w.slug = 'tenant-storefront' AND s.workflow_id = w.id AND s.slug = 'program-listing'
+    } );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `tenant-storefront` step `program-listing`: template: registry `tenant-storefront\/program-listing`; tenant `ours\/listing`$/m,
+      'only its unlinking is expected';
+};
+
+subtest 'tenant schema names are quoted' => sub {
+    my $slug   = provision();
+    my $quoted = 'div-q"x';
+    $db->query( "ALTER SCHEMA $slug RENAME TO " . $db->dbh->quote_identifier($quoted) );
+    $db->query( 'UPDATE registry.tenants SET slug = ? WHERE slug = ?', $quoted, $slug );
+    in_tenant( $quoted, q{INSERT INTO workflows (slug, name) VALUES ('quoted-own', 'Ours')} );
+
+    my $report = Registry::WorkflowDivergence::report($db);
+    my $body   = section( $report, $quoted );
+    like $body, qr/^- `quoted-own`: only in the tenant$/m, 'read from its own schema';
+    unlike $body, qr/error/, 'not an error';
+    unlike $report =~ s/\Q$body\E//r, qr/quoted-own/, 'and from no other';
+};
+
+subtest 'platform schema not reported as a tenant' => sub {
+    $db->query(q{
+        INSERT INTO registry.tenants (name, slug) VALUES ('Registry', 'registry') ON CONFLICT (slug) DO NOTHING
+    });
+    unlike Registry::WorkflowDivergence::report($db), qr/^## registry$/m, 'registry has no section';
+};
+
+subtest 'missing template on one side reported' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{
+        UPDATE workflow_steps s SET template_id = NULL FROM workflows w
+         WHERE w.slug = 'offer-publishing' AND s.workflow_id = w.id AND s.slug = 'publish'
+    } );
+    my @warnings;
+    local $SIG{__WARN__} = sub { push @warnings, @_ };
+    my $body = section( Registry::WorkflowDivergence::report($db), $slug );
+    like $body, qr/^- `offer-publishing` step `publish`: template: registry `offer-publishing\/publish`; tenant \(none\)$/m;
+    like $body, qr/^- `offer-publishing` step `publish`: template content: registry sha256 `[0-9a-f]{12}` \(\d+ bytes\); tenant \(none\)$/m;
+    is_deeply \@warnings, [], 'no warnings';
+};
+
+subtest 'unexpected skipped slug copy reported' => sub {
+    my $slug = provision();
+    for my $wf (qw( tenant-signup registry-storefront )) {
+        my ($id) = $db->query( 'SELECT id FROM registry.workflows WHERE slug = ?', $wf )->array->@*;
+        $db->query( 'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $slug, $id );
+    }
+    my $body = section( Registry::WorkflowDivergence::report($db), $slug );
+    like $body, qr/^- `$_`: the tenant holds a copy; provisioning never copies it$/m, $_
+      for qw( tenant-signup registry-storefront );
+};
+
+subtest 'whitespace only template change reported' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{UPDATE templates SET content = content || ' ' WHERE name = 'offer-publishing/publish'} );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `offer-publishing` step `publish`: template content: /m;
+};
+
+subtest 'report output is deterministic' => sub {
+    my $first = Registry::WorkflowDivergence::report($db);
+    like $first, qr/^- /m, 'over a report with differences in it';
+    # Perl randomises each hash's order, so repeat runs to catch one left unsorted.
+    is_deeply [ map { Registry::WorkflowDivergence::report($db) } 1 .. 20 ], [ ($first) x 20 ],
+      'repeated runs are byte-identical';
+};
+
+done_testing;

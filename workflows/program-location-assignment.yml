@@ -1,5 +1,6 @@
 name: Program Location Assignment
 slug: program-location-assignment
+roles: [admin, staff]
 description: Workflow for assigning programs to locations and generating events
 first_step: select-program
 steps:

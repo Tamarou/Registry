@@ -16,7 +16,7 @@ While we strive to keep documentation up-to-date, the source code is the ultimat
 
 ## Directory Structure
 
-- `/architecture` - System architecture documents and design decisions
+- `/architecture` - System architecture documents and design decisions, such as the [PriceOps model](architecture/priceops-model.md)
 - `/deployment` - Instructions and configurations for deploying Registry
 - `/guides` - Task guides, such as [publishing offers](guides/publishing-offers.md) as a tenant admin
 - `/operations` - Operator runbooks, such as [bootstrapping the platform tenant](operations/platform-tenant-bootstrap.md)

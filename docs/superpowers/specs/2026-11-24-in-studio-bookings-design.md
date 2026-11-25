@@ -1,6 +1,9 @@
 # In-studio bookings — design
 
-Status: draft
+Status: approved
+
+Approved by perigrin on 2026-11-25 (https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5)
+Source: "the in studio bookings design looks good" https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5
 
 Base commit: `main` at 6202ea6 (PriceOps step 3 merged).
 
@@ -413,9 +416,9 @@ Gaps in steps 3–6 that step 7 needs. Named here, not designed around.
 Under the placeholder key, no skips, through the real workflows
 (`01a20415-6d02` parts 3 and 4):
 
-1. SACP, provisioned as `sql/seed/sacp-tenant.sql` does, accepts the Solo
-   version listing the in-studio workflows and holds their run rights and
-   copies.
+1. SACP, created through tenant signup (then seeded by
+   `sql/seed/sacp-tenant.sql`), accepts the Solo version listing the
+   in-studio workflows and holds their run rights and copies.
 2. An SACP admin runs `in-studio-class-setup`: one class, a one-seat offer with
    a one-time plan, `per_booking_cap`, and SACP's four policies.
 3. The admin runs `in-studio-schedule`; occurrences exist with the class's

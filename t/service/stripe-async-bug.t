@@ -11,8 +11,6 @@ use Registry::Service::Stripe;
 
 # Test the actual bug in production code
 subtest 'Demonstrate async bug in Stripe Service' => sub {
-    plan skip_all => "Requires STRIPE_SECRET_KEY" unless $ENV{STRIPE_SECRET_KEY} || 1; # Always run for testing
-
     # Set a fake API key for testing
     local $ENV{STRIPE_SECRET_KEY} = 'sk_test_fake';
 

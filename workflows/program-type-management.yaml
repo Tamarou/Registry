@@ -4,6 +4,7 @@
 name: Program Type Management
 description: Create or edit the program types that programs can be associated with
 slug: program-type-management
+roles: [admin, staff]
 first_step: list-or-create
 
 steps:

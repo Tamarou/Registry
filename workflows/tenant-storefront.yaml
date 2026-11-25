@@ -1,7 +1,8 @@
 name: Tenant Storefront
 slug: tenant-storefront
-# Anyone may walk into this workflow, deliberately: it has no workflow_roles
-# entry. t/security/workflow-roles-cover-every-workflow.t enforces the choice.
+# Anyone may walk into this workflow, deliberately: the gate admits anyone to a
+# workflow with the public mark. t/security/workflow-roles-cover-every-workflow.t
+# enforces that every workflow declares roles or this mark.
 public: true
 description: Public-facing landing page and program listing for a tenant
 first_step: program-listing

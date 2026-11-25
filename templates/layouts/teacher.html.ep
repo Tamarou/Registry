@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="<%= static_url %>/css/app.css">
 
     <!-- HTMX for dynamic interactions -->
-    <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+    <script src="<%= static_url %>/js/vendor/htmx.min.js"></script>
 
     <!-- Modern Web Components support check -->
     <script>

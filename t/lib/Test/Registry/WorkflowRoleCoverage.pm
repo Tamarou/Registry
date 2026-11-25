@@ -1,18 +1,16 @@
-# ABOUTME: Test helper: which workflow files in a directory are neither role-guarded nor marked public.
+# ABOUTME: Test helper: which workflow files in a directory imported to a row with neither roles nor the public mark.
 # ABOUTME: Used by t/security/workflow-roles-cover-every-workflow.t on the real workflows and on fixtures.
 use 5.42.0;
 
 package Test::Registry::WorkflowRoleCoverage;
 
-use builtin qw(is_bool);
-no warnings 'experimental::builtin';
 use Mojo::File qw(path);
 use YAML::XS qw(Load);
 
 # Walks the directory with list_tree, as the importers do, so a workflow in a
 # subdirectory is checked too. Returns one line per problem, each naming the file and (where it has one)
-# the slug. $roles is a code ref: slug -> the workflow_roles entry or undef.
-sub problems ( $dir, $roles ) {
+# the slug. $entry is a code ref: slug -> the stored row ({ roles, public }) or undef.
+sub problems ( $dir, $entry ) {
     my @problems;
     for my $file ( path($dir)->list_tree->grep(qr/\.ya?ml\z/)->sort->each ) {
         my $name = $file->to_rel($dir)->to_string;
@@ -29,16 +27,18 @@ sub problems ( $dir, $roles ) {
         # The slug from_yaml would store, not the file name.
         my $slug = $data->{slug} // lc( ( $data->{name} // '' ) =~ s/\s+/-/gr );
 
-        # Only a YAML boolean true is the mark: not 1, not "true", not yes.
-        my $public = is_bool( $data->{public} ) && $data->{public};
-        my $guarded = defined $roles->($slug);
-
-        if ( $guarded && $public ) {
-            push @problems,
-              "$name ($slug) has a workflow_roles entry and the public mark, which contradict each other";
+        my $row = $entry->($slug);
+        if ( !$row ) {
+            push @problems, "$name ($slug) has no stored workflow row";
+            next;
         }
-        elsif ( !$guarded && !$public ) {
-            push @problems, "$name ($slug) has no workflow_roles entry and no public mark";
+
+        my $guarded = $row->{roles} && @{ $row->{roles} };
+        if ( $guarded && $row->{public} ) {
+            push @problems, "$name ($slug) has roles and the public mark, which contradict each other";
+        }
+        elsif ( !$guarded && !$row->{public} ) {
+            push @problems, "$name ($slug) has no roles and no public mark";
         }
     }
     return @problems;

@@ -6,8 +6,13 @@ environment, typically once, when standing up a new customer.
 
 ## `sacp-tenant.sql`
 
-Creates (if missing) the `sacp` tenant for Super Awesome Cool Pottery,
-clones the registry schema, and seeds:
+Adds Super Awesome Cool Pottery's program data to the `sacp` tenant.
+It does not create the tenant: SACP signs up like any studio, by walking
+`/tenant-signup` with subdomain `sacp` and accepting Solo, which
+provisions the tenant and its platform entitlement together. Run against
+a database without `sacp`, the script exits non-zero and writes nothing.
+
+It seeds:
 
 - Program types: afterschool, summer-camp, workshop, wheel-class,
   pyop, field-trip, birthday-party
@@ -23,6 +28,9 @@ The script is idempotent -- running it repeatedly leaves the same rows.
 
 ### Usage
 
+First sign up `sacp` through `/tenant-signup` (dev or production),
+accepting Solo. Then:
+
 Local dev:
 
     psql registry -f sql/seed/sacp-tenant.sql
@@ -33,6 +41,20 @@ Production (Render):
 
 Safe to re-run on either. Run from a trusted shell (Render shell /
 deploy job / your admin laptop), not a developer's CI environment.
+
+### A dev database that already has `sacp`
+
+The `workflow-run-entitlements` migration refuses to deploy while any
+studio tenant holds workflow copies, and names each one. No platform offer
+grants a studio run rights yet; a later Solo version will list them (ADR 004,
+ruling (a)). A dev database where `sacp` was signed up before that migration
+stops there. To get past it:
+
+1. Run `make reset`, which drops, re-creates and deploys the dev database.
+2. Sign `sacp` up again through `/tenant-signup`.
+3. Re-run this script.
+
+Production has no studio tenants, so it deploys cleanly.
 
 ### Data currency
 

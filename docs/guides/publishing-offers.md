@@ -15,14 +15,14 @@ Who each section serves ([personas](../personas/README.md)):
 The workflow is defined in `workflows/offer-publishing.yml`; each screen's
 checks are in its step class under `lib/Registry/DAO/WorkflowSteps/`. The model
 behind it is described in
-[Offers and Subscriptions](../architecture/offers-and-subscriptions.md).
+[PriceOps Model](../architecture/priceops-model.md).
 
 ---
 
 ## 1. Who may publish
 
 Only an admin of the tenant may run `offer-publishing`. The route is gated to
-the `admin` role (`workflow_roles` in `lib/Registry.pm`): a staff member of the
+the `admin` role (the tenant's `offer-publishing` row): a staff member of the
 tenant, or an admin of a different tenant, gets a 403. Staff run programs; they
 do not set prices.
 

@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="<%= static_url %>/css/app.css">
 
     <meta name="csrf-token" content="<%= csrf_token %>">
-    <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+    <script src="<%= static_url %>/js/vendor/htmx.min.js"></script>
     <%= content 'head' %>
 </head>
 <body data-layout="dashboard" data-theme="light">

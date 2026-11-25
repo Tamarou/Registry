@@ -4,6 +4,7 @@
 name: Entitlement Refund
 description: Ask for a refund of a booking, under the refund policy it was sold with
 slug: entitlement-refund
+roles: [parent, admin, staff]
 
 steps:
   - slug: choose

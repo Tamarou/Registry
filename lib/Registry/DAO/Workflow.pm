@@ -3,6 +3,7 @@ use Object::Pad;
 
 class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     use YAML::XS;
+    no warnings 'experimental::builtin';
     use Mojo::JSON qw(decode_json);
     use Carp qw(croak);
 
@@ -13,6 +14,10 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     field $description :param :reader;
 
     field $first_step :param = undef;
+
+    # Who may run it: a list of roles, or the public mark. Neither is "no entry".
+    field $roles :param :reader = undef;
+    field $public :param :reader = 0;
 
     sub table { 'workflows' }
 
@@ -101,6 +106,9 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         # Always include first_step value from database
         $workflow->{first_step} = $first_step if $first_step;
 
+        $workflow->{roles}  = $roles if $roles;
+        $workflow->{public} = builtin::true if $public;
+
 
         # Start with the first step and traverse
         my $current_step = $self->first_step($db);
@@ -130,10 +138,23 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
         my $steps = delete $data->{steps};
         die "Missing required field: steps" unless $steps;
 
-        # `public: true` is a declaration in the file that the workflow has no
-        # workflow_roles entry on purpose (enforced by
-        # t/security/workflow-roles-cover-every-workflow.t), not a column.
-        delete $data->{public};
+        # `public: true` declares that anyone may walk in. Only a YAML boolean
+        # true is the mark, as t/security/workflow-roles-cover-every-workflow.t
+        # reads it: not 1, not "true", not yes.
+        $data->{public} = builtin::is_bool( $data->{public} ) && $data->{public} ? 1 : 0;
+
+        # Roles are a non-empty list of the application's roles: a typo would
+        # store a guard nobody passes, and an empty list must never read as
+        # "everyone". Neither roles nor the mark is "no entry", refused at the gate.
+        if ( exists $data->{roles} ) {
+            die "$data->{slug} declares both roles and the public mark\n" if $data->{public};
+            my $roles = $data->{roles};
+            die "$data->{slug}: roles must be a non-empty list\n"
+              unless ref $roles eq 'ARRAY' && @$roles;
+            require Registry::DAO::User;
+            my %known = map { $_ => 1 } @Registry::DAO::User::USER_TYPES;
+            $known{$_} or die "$data->{slug}: unknown role $_\n" for @$roles;
+        }
 
         if ( my $workflow =
             $db->find( 'Registry::DAO::Workflow', { slug => $data->{slug} } ) )

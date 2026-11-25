@@ -93,11 +93,9 @@ END_YAML
     like $@, qr/Missing required field/, 'missing required fields throws error';
 }
 
-# `public: true` declares, in the workflow's own file, that it deliberately
-# has no workflow_roles entry (t/security/workflow-roles-cover-every-workflow.t).
-# It is a declaration about the file, not a column: from_yaml must not try to
-# store it.
-subtest 'a workflow with the public mark imports without a public column' => sub {
+# `public: true` declares, in the workflow's own file, that anyone may walk
+# into it; the gate reads it from the stored row (t/dao/workflow-roles-data.t).
+subtest 'a workflow with the public mark imports' => sub {
     my $yaml = <<~'YAML';
         name: Marked Public
         slug: marked-public
@@ -187,10 +185,6 @@ subtest 'a workflow with the public mark imports without a public column' => sub
     if (!exists $original->{first_step} && exists $from_db->{first_step}) {
         delete $from_db->{first_step};
     }
-
-    # The public mark is a declaration in the file, never stored, so it
-    # cannot come back out of the database.
-    delete $original->{public};
 
             is_deeply $from_db, $original, "able to round trip $file";
         }

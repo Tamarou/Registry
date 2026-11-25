@@ -4,6 +4,7 @@
 name: Entitlement Change
 description: Move a booking to another occurrence of the same offer, under the change policy it was sold with
 slug: entitlement-change
+roles: [parent, admin, staff]
 
 steps:
   - slug: choose-target

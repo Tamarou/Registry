@@ -75,6 +75,7 @@ TEMPLATE
     my $workflow = $dao->create('Registry::DAO::Workflow' => {
         name => 'Test UTF-8 Workflow',
         slug => 'test-utf8',
+        public => 1,    # the gate refuses a workflow with no entry
     });
 
     # Create workflow step
@@ -136,6 +137,7 @@ TEMPLATE
     my $form_workflow = $dao->create('Registry::DAO::Workflow' => {
         name => 'Test UTF-8 Form Workflow',
         slug => 'test-utf8-form',
+        public => 1,    # the gate refuses a workflow with no entry
     });
 
     # A landing step first, then the form.
@@ -270,6 +272,7 @@ TEMPLATE
     my $dynamic_workflow = $dao->create('Registry::DAO::Workflow' => {
         name => 'Test UTF-8 Dynamic Workflow',
         slug => 'test-utf8-dynamic',
+        public => 1,    # the gate refuses a workflow with no entry
     });
 
     # Landing first, then the form -- see the form subtest above.

@@ -2,6 +2,7 @@
 description: A workflow to create new locations
 name: Location Creation
 slug: location-creation
+roles: [admin, staff]
 steps:
 - class: Registry::DAO::WorkflowStep
   description: New Location Landing page

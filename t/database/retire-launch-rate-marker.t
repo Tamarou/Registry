@@ -9,7 +9,7 @@ use Test::Exception;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
-use Registry::PriceOps::RevenueShare qw(platform_offered_fraction);
+use Test::Registry::HistoricOffers qw( offers_to_tenants );
 use experimental 'signatures';
 
 my $CHANGE = 'retire-launch-rate-marker';
@@ -47,7 +47,9 @@ subtest 'no row carries the launch rate marker' => sub {
          WHERE o.name = 'Solo' AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
     })->array->[0];
     cmp_ok $solo, '==', 0.025, 'Solo is published at 2.5%';
-    is platform_offered_fraction($db), '0.025', 'the platform quotes the published Solo version\'s rate';
+    my $offers = offers_to_tenants($db);
+    is scalar @$offers, 1, 'the platform offers exactly one version to tenants, so it quotes one rate';
+    is $offers->[0]{fraction}, '0.025', 'the platform quotes the published Solo version\'s rate';
 
     lives_ok { $sqitch->run( 'sqitch', 'revert', '-t', $uri, '--to', "$CHANGE^", '-y' ) } 'the revert runs';
     is_deeply plans(), $before, 'the revert restores the stripped keys row by row';

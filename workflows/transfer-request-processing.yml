@@ -1,5 +1,6 @@
 name: Transfer Request Processing
 slug: transfer-request-processing
+roles: [admin, staff]
 description: Admin workflow for processing enrollment transfer requests
 first_step: validate-request
 steps:

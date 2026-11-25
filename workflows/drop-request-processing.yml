@@ -1,5 +1,6 @@
 name: Drop Request Processing
 slug: drop-request-processing
+roles: [admin, staff]
 description: Admin workflow for processing enrollment drop requests
 first_step: validate-request
 steps:

@@ -1,12 +1,15 @@
 #!/usr/bin/env perl
-# ABOUTME: Verifies the SACP tenant seed script creates the tenant,
-# ABOUTME: clones the schema, and populates expected rows.
+# ABOUTME: Verifies the SACP seed refuses without a signed-up sacp tenant, and
+# ABOUTME: adds program data to the one tenant signup created, which holds Solo.
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use File::Spec;
+use Registry::DAO::Workflow;
+use Registry::Utility::WorkflowProcessor;
+use Registry::PriceOps::PlatformTerms qw( platform_terms_for_tenant );
 
 my $tdb   = Test::Registry::DB->new;
 my $dao   = $tdb->db;
@@ -15,24 +18,55 @@ my $db    = $dao->db;
 my $seed_path = File::Spec->rel2abs('sql/seed/sacp-tenant.sql');
 
 # Test::Registry::DB gives us a Test::PostgreSQL instance with a URI we
-# can hand to psql. Run the seed script against it.
+# can hand to psql.
 my $uri = $tdb->uri;
-my $rc  = system(qq{psql -v ON_ERROR_STOP=1 "$uri" -f "$seed_path" >/dev/null 2>&1});
-is($rc, 0, 'seed script runs without error');
+sub run_seed { system(qq{psql -v ON_ERROR_STOP=1 "$uri" -f "$seed_path" >/dev/null 2>&1}) }
 
-subtest 'tenant row created' => sub {
+# Tenant rows plus the sacp schema: what creating a tenant would write.
+sub written {
+    return $db->query(q{
+        SELECT (SELECT count(*) FROM registry.tenants)
+             + (SELECT count(*) FROM pg_namespace WHERE nspname = 'sacp')
+    })->array->[0];
+}
+
+subtest 'seed refuses without a signed-up sacp tenant' => sub {
+    my $before = written();
+    my $out = `psql -v ON_ERROR_STOP=1 "$uri" -f "$seed_path" 2>&1`;
+    isnt($? >> 8, 0, 'exits non-zero');
+    like($out, qr/sign up 'sacp' through tenant signup/, 'saying to sign up through tenant signup');
+    is(written(), $before, 'creates no tenant and no schema');
+};
+
+# SACP signs up as any studio does: the tenant-signup workflow, accepting Solo.
+$dao->import_workflows( ['workflows/tenant-signup.yml'] );
+my ($workflow) = Registry::DAO::Workflow->find( $db, { slug => 'tenant-signup' } );
+my $processor  = Registry::WorkflowProcessor->new( dao => $db );
+my $run        = $processor->new_run( $workflow, {
+    name            => 'Super Awesome Cool Pottery',
+    subdomain       => 'sacp',
+    admin_name      => 'Victoria',
+    admin_email     => 'sacp_admin@test.example',
+    admin_username  => 'sacp_admin',
+    admin_user_type => 'admin',
+    profile         => { name => 'Super Awesome Cool Pottery', slug => 'sacp' },
+} );
+$processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => $_ } ), {} )
+    for qw( profile users );
+$processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => 'review' } ),
+    { offer_version => '00000000-0000-0000-0003-000000000001' } );    # Solo v1
+$processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => 'complete' } ), {} );
+$db->query('SET search_path = registry, public');
+
+is(run_seed(), 0, 'seed script runs without error after signup');
+
+subtest 'signup tenant holds solo' => sub {
     my $tenant = $db->query(
         "SELECT slug, name FROM registry.tenants WHERE slug = 'sacp'"
     )->hash;
     ok($tenant, 'sacp tenant exists');
     is($tenant->{name}, 'Super Awesome Cool Pottery', 'correct name');
-};
-
-subtest 'schema created' => sub {
-    my $exists = $db->query(
-        "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'sacp'"
-    )->hash;
-    ok($exists, 'sacp schema exists');
+    is(platform_terms_for_tenant( $db, 'sacp' )->{fraction}, '0.025', 'holds Solo at 2.5%');
 };
 
 subtest 'program types seeded' => sub {
@@ -41,7 +75,7 @@ subtest 'program types seeded' => sub {
     )->hashes;
     my @slugs = map { $_->{slug} } @$rows;
 
-    for my $want (qw(afterschool summer-camp workshop wheel-class pyop)) {
+    for my $want (qw(afterschool summer-camp workshop wheel-class pyop field-trip birthday-party)) {
         ok((grep { $_ eq $want } @slugs), "has $want program type");
     }
 };
@@ -72,18 +106,16 @@ subtest 'projects seeded as draft' => sub {
 };
 
 subtest 'seed script is idempotent' => sub {
-    my $rc = system(qq{psql -v ON_ERROR_STOP=1 "$uri" -f "$seed_path" >/dev/null 2>&1});
-    is($rc, 0, 'running again is a no-op');
+    my $types = $db->query("SELECT COUNT(*) FROM sacp.program_types")->array->[0];
+    is(run_seed(), 0, 'running again is a no-op');
 
     my $tenant_count = $db->query(
         "SELECT COUNT(*) FROM registry.tenants WHERE slug = 'sacp'"
     )->array->[0];
     is($tenant_count, 1, 'still exactly one sacp tenant row');
 
-    my $type_count = $db->query(
-        "SELECT COUNT(*) FROM sacp.program_types"
-    )->array->[0];
-    is($type_count, 7, 'program types still present, not duplicated');
+    is($db->query("SELECT COUNT(*) FROM sacp.program_types")->array->[0], $types,
+        'program types still present, not duplicated');
 };
 
 done_testing();

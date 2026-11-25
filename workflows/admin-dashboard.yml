@@ -1,6 +1,7 @@
 ---
 name: Admin Dashboard
 slug: admin-dashboard
+roles: [admin, staff]
 description: |
   Single-step admin dashboard. Loads overview stats, program data,
   events, waitlist, and notifications. Filter actions use stay

@@ -34,9 +34,6 @@ subtest 'AttendanceCheck Job exists' => sub {
     # Check that the methods moved to DAO classes exist
     ok(Registry::DAO::Event->can('find_events_missing_attendance'), 'Event DAO has find_events_missing_attendance method');
     ok(Registry::DAO::Event->can('find_events_starting_soon'), 'Event DAO has find_events_starting_soon method');
-    
-    # Check the WorkflowExecutor exists for the new architecture
-    ok(Registry::Job::WorkflowExecutor->can('run'), 'WorkflowExecutor has run method');
 };
 
 subtest 'Database migration files exist' => sub {

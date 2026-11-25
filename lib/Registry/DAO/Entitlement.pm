@@ -53,7 +53,8 @@ active and the period covers T (in_effect_sql).
     # Throws Registry::DAO::Entitlement::Refused, creating nothing, when the
     # version is not published and current at this moment, does not offer the
     # plan, the plan is one-time (an entitlement follows its payment, not an
-    # accept), or the holder already has this offer in effect. Joins the
+    # accept), the holder already has this offer in effect, or a tenant
+    # holder already has platform terms for payment processing. Joins the
     # caller's transaction.
     sub accept ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
@@ -90,6 +91,29 @@ active and the period covers T (in_effect_sql).
                       AND offer_id = ? AND plan_kind <> 'one_time'
                       AND in_effect && tstzrange(?::timestamptz, ?::timestamptz, '[)'))
             }, $holder, $offer_id, @row{qw( starts_at ends_at )} )->array->[0];
+
+        # A tenant's platform terms for payment processing, one at a time across
+        # offers: platform-entitlement-one-in-effect's rule, asked under its lock
+        # so the refusal is this message rather than its trigger's error.
+        if ( my $tenant = $row{holder_tenant_id} ) {
+            $db->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', "platform_entitlement:$tenant" );
+            $refuse->('This tenant already holds platform terms in effect: they must end before it accepts another platform offer.')
+                if $db->query( q{
+                    SELECT EXISTS (SELECT 1 FROM offer_versions v
+                                     JOIN resources r ON r.id = v.resource_id
+                                         OR r.id IN (SELECT s.resource_id FROM offer_version_resources s
+                                                     WHERE s.offer_version_id = v.id)
+                                    WHERE v.id = ? AND r.name = 'payment processing')
+                       AND EXISTS (SELECT 1 FROM entitlements e
+                                     JOIN offer_versions v ON v.id = e.offer_version_id
+                                     JOIN resources r ON r.id = v.resource_id
+                                         OR r.id IN (SELECT s.resource_id FROM offer_version_resources s
+                                                     WHERE s.offer_version_id = v.id)
+                                    WHERE e.holder_tenant_id = ? AND e.state = 'active'
+                                      AND r.name = 'payment processing'
+                                      AND e.in_effect && tstzrange(?::timestamptz, ?::timestamptz, '[)'))
+                }, $version_id, $tenant, @row{qw( starts_at ends_at )} )->array->[0];
+        }
 
         my $entitlement = $class->create( $db, \%row );
         $tx->commit if $tx;
@@ -143,6 +167,17 @@ active and the period covers T (in_effect_sql).
                  WHERE u.resource_id = ? AND $in_effect
                    AND ? IN (e.holder_user_id, e.holder_family_member_id, e.holder_tenant_id))
         }, $resource_id, $holder_id )->array->[0];
+    }
+
+    # May tenant $tenant_id run workflow $slug? Only when it holds, in effect
+    # now, the run:$slug resource from the platform tenant registry, by a
+    # single-resource or a set version. Exact name match, live rows; through
+    # Tenant->holds, the one seam, so a right recorded in a tenant's own schema
+    # grants nothing.
+    sub may_run ( $class, $db, $tenant_id, $slug ) {
+        return 0 unless defined $slug && !ref $slug && length $slug;
+        require Registry::DAO::Tenant;
+        return Registry::DAO::Tenant->holds( $db, $tenant_id, "run:$slug" );
     }
 
     # The one in-effect rule, as SQL over entitlement row $e (an alias or table

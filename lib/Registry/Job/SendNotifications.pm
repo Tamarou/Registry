@@ -173,6 +173,8 @@ class Registry::Job::SendNotifications {
                   JOIN registry.tenants t        ON t.id = e.holder_tenant_id
                   JOIN registry.offer_versions v ON v.id = e.offer_version_id
                   JOIN registry.resources r      ON r.id = v.resource_id
+                      OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                                  WHERE s.offer_version_id = v.id)
                  WHERE t.slug = ? AND r.name = 'email sending' AND r.kind = 'unbounded'
                    AND $in_effect
             )

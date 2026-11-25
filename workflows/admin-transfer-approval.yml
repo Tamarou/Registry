@@ -2,6 +2,7 @@
 description: Admin workflow for reviewing and approving/denying transfer requests
 name: Admin Transfer Request Approval
 slug: admin-transfer-approval
+roles: [admin, staff]
 first_step: load-request
 steps:
 - class: Registry::DAO::WorkflowSteps::LoadTransferRequest

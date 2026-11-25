@@ -2,6 +2,7 @@
 description: A workflow to create new sessions
 name: Session Creation
 slug: session-creation
+roles: [admin, staff]
 steps:
 - class: Registry::DAO::WorkflowStep
   description: New Session Landing page

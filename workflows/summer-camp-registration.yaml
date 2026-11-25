@@ -1,7 +1,8 @@
 name: Summer Camp Registration
 slug: summer-camp-registration
-# Anyone may walk into this workflow, deliberately: it has no workflow_roles
-# entry. t/security/workflow-roles-cover-every-workflow.t enforces the choice.
+# Anyone may walk into this workflow, deliberately: the gate admits anyone to a
+# workflow with the public mark. t/security/workflow-roles-cover-every-workflow.t
+# enforces that every workflow declares roles or this mark.
 public: true
 description: Registration workflow for summer camp programs with account creation
 first_step: landing

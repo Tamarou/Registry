@@ -11,12 +11,17 @@ class Registry::Job::ContinueWorkflowRun {
     use Registry::DAO::WorkflowRun;
 
     sub register ($class, $app) {
+        # Only the run's arguments: options such as alert_admins are for code, never job args.
         $app->minion->add_task( continue_workflow_run => sub ($job, @args) {
-            $class->new->run( $job, @args );
+            $job->finish( $class->new->run( $job, $args[0] ) );
         } );
     }
 
-    method run ( $job, $args ) {
+    # Drives the run and returns where it stopped; the caller finishes the job,
+    # so a job that drives a run as part of its work can report its own result.
+    # A caller that owns the run's retries passes alert_admins => 0: a halt is
+    # then logged, not put in front of the tenant's admins.
+    method run ( $job, $args, %opt ) {
         my ( $tenant, $run_id ) = ref $args eq 'HASH' ? $args->@{qw(tenant run_id)} : ();
         die "continue_workflow_run needs a tenant and a run_id\n"
             unless defined $tenant && defined $run_id && !ref $tenant && !ref $run_id;
@@ -33,7 +38,7 @@ class Registry::Job::ContinueWorkflowRun {
         my $lock = q{SELECT %s(hashtextextended('workflow_run:' || ?, 0))};
         $db->query( sprintf( $lock, 'pg_advisory_lock' ), $run_id );
         my $done;
-        try { $done = $self->_drive( $job, $db, $tenant, $run_id ) }
+        try { $done = $self->_drive( $job, $db, $tenant, $run_id, $opt{alert_admins} // 1 ) }
         catch ($e) {
             $db->query( sprintf( $lock, 'pg_advisory_unlock' ), $run_id );
             die $e;
@@ -42,7 +47,7 @@ class Registry::Job::ContinueWorkflowRun {
         return $done;
     }
 
-    method _drive ( $job, $db, $tenant, $run_id ) {
+    method _drive ( $job, $db, $tenant, $run_id, $alert_admins ) {
         my $run = Registry::DAO::WorkflowRun->find( $db, { id => $run_id } )
             or die "continue_workflow_run: run not found: $run_id in tenant $tenant\n";
 
@@ -56,7 +61,7 @@ class Registry::Job::ContinueWorkflowRun {
                 die $result->{retry} if $result->{retry};
 
                 # A step that did not advance the run is waiting on a person.
-                return _finish( $job, $db, $run, $step->slug, 'needs_person' )
+                return _stopped( $db, $run, $step->slug, 'needs_person' )
                     if $result->{stay} || $result->{errors} || $result->{_validation_errors};
             }
         }
@@ -73,22 +78,25 @@ class Registry::Job::ContinueWorkflowRun {
                 at      => Mojo::Date->new->to_datetime,
                 ( $halted ? ( state => 'halted' ) : () ),
             } } );
+            my $why = sprintf( 'Workflow run %s stopped at step %s after %d attempts: %s',
+                $run->id, $step->slug, $attempt, "$e" =~ s/\s+\z//r );
             # Nobody is waiting on the run, so its halt is put in front of
             # the tenant's admins rather than left on the run alone.
-            Registry::DAO::Notification->alert_admins( $db, 'A background task stopped: finish it by hand',
-                sprintf( 'Workflow run %s stopped at step %s after %d attempts: %s',
-                    $run->id, $step->slug, $attempt, "$e" =~ s/\s+\z//r ),
-                { workflow_run_id => $run->id, step => $step->slug } ) if $halted;
+            if ( $halted && $alert_admins ) {
+                Registry::DAO::Notification->alert_admins( $db, 'A background task stopped: finish it by hand',
+                    $why, { workflow_run_id => $run->id, step => $step->slug } );
+            }
+            elsif ($halted) { $job->app->log->error($why) }
             die $e;
         }
 
-        return _finish( $job, $db, $run, $run->latest_step($db)->slug, 'completed' );
+        return _stopped( $db, $run, $run->latest_step($db)->slug, 'completed' );
     }
 
     # A drive that ended without dying clears any failure an earlier one recorded.
-    sub _finish ( $job, $db, $run, $stopped_at, $reason ) {
+    sub _stopped ( $db, $run, $stopped_at, $reason ) {
         $run->update_data( $db, { __driver => undef } ) if $run->data->{__driver};
-        return $job->finish( { run_id => $run->id, stopped_at => $stopped_at, reason => $reason } );
+        return { run_id => $run->id, stopped_at => $stopped_at, reason => $reason };
     }
 
     # A step that talks to Stripe returns a promise. The job runs outside the

@@ -4,6 +4,7 @@
 name: Entitlement Stripe Move
 description: Apply a refund or dispute Stripe reported on the tenant's account to the entitlements it paid for
 slug: entitlement-stripe-move
+roles: [admin]
 
 steps:
   - slug: apply-refund

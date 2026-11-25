@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw(done_testing is ok diag skip)];
+use Test::More import => [qw(done_testing is is_deeply ok)];
 defer { done_testing };
 
 use Mojo::Home;
@@ -106,14 +106,8 @@ else {
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
 
     # Complete the workflow creation process
-    # Note: We need the CreateWorkflow class to be implemented for this to work
-    eval { $run->process( $dao->db, $run->next_step( $dao->db ), {} ); };
-    if ($@) {
-        diag "Error processing complete step: $@";
-
-   # If the CreateWorkflow class isn't implemented yet, we'll skip further tests
-        skip "CreateWorkflow implementation required for further tests", 5;
-    }
+    ok $run->process( $dao->db, $run->next_step( $dao->db ), {} ),
+      'Processed complete step, which creates the workflow';
 
     # Verify the workflow was created
     my ($created_workflow) = $dao->find( Workflow => { slug => 'test-workflow' } );
@@ -123,6 +117,15 @@ else {
     is $created_workflow->description,
       'A test workflow created through the workflow creation workflow',
       'New workflow has correct description';
+
+    # ADR 004(b): the right to create workflows covers running them, so what
+    # is authored is admitted to whoever workflow-creation admits, and no
+    # wider. With no entry the gate would refuse it to its own author.
+    is_deeply $created_workflow->roles, [qw(admin staff)],
+      'New workflow is run by the roles that may author it';
+    is_deeply $created_workflow->roles, $workflow->roles,
+      "read from the authoring workflow's own row";
+    ok !$created_workflow->public, 'and is not public';
 
     # Verify steps were created in correct order
     my $first_step = $created_workflow->first_step( $dao->db );
