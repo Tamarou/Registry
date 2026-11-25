@@ -180,6 +180,24 @@ subtest 'invalid capacity refused' => sub {
     }
 };
 
+subtest 'a duplicate class name is refused' => sub {
+    my %t = terms();
+    answer( start(), 'class', $t{class} );
+    ok class_named( $t{class}{class_name} ), 'the first class is defined' or return;
+    my $count = sub { $tdb->query( 'SELECT count(*) FROM projects WHERE name = ?', $t{class}{class_name} )->array->[0] };
+
+    my $run = start();
+    like errors_of( answer( $run, 'class', $t{class} ) ), qr/name already in use/, 'a second class of that name is refused';
+    is $count->(), 1, 'and none is created';
+    ok !$run->data->{resource_choice}, 'nor chosen for the offer';
+
+    # In a caller's transaction the refusal leaves that transaction usable.
+    my $tx = $tdb->begin;
+    like errors_of( answer( start(), 'class', $t{class} ) ), qr/name already in use/, 'refused inside a transaction too';
+    ok eval { $tdb->query('SELECT 1'); 1 }, 'and the caller\'s transaction is not aborted' or diag $@;
+    undef $tx;
+};
+
 subtest 'an offer of another class is refused' => sub {
     my %a = terms( 'offer-basics' => { offer_name => 'Wheel drop-in' } );
     my ( $first ) = walk( admin => %a );

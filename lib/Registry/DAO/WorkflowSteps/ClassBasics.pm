@@ -58,6 +58,9 @@ class Registry::DAO::WorkflowSteps::ClassBasics :isa(Registry::DAO::WorkflowStep
             SELECT data->>'created_class_id' FROM workflow_runs WHERE id = ? FOR UPDATE
         }, $run->id )->array->[0];
         unless ($created) {
+            # In a caller's transaction, a savepoint, so a refused insert
+            # leaves that transaction usable, as PublishOfferVersion does.
+            $db->query('SAVEPOINT class_basics') unless $tx;
             # The location goes in metadata, as Session keeps its location_id.
             $created = eval {
                 Registry::DAO::Project->create( $db, {
@@ -65,7 +68,12 @@ class Registry::DAO::WorkflowSteps::ClassBasics :isa(Registry::DAO::WorkflowStep
                     seats_per_occurrence => 0 + $f{seats_per_occurrence},
                     metadata             => { location_id => $f{location_id} },
                 } )->id;
-            } or return { stay => 1, errors => ['Could not create the class: is the name already in use?'] };
+            };
+            unless ($created) {
+                $db->query('ROLLBACK TO SAVEPOINT class_basics') unless $tx;
+                return { stay => 1, errors => ['Could not create the class: is the name already in use?'] };
+            }
+            $db->query('RELEASE SAVEPOINT class_basics') unless $tx;
             $run->update_data( $db, { created_class_id => $created } );
         }
         $tx->commit if $tx;
