@@ -1,9 +1,0 @@
-%# ABOUTME: platform-offer-acceptance's last screen: the studio now holds the platform terms it accepted.
-%# ABOUTME: Names the offer from the run's accept step.
-% extends 'layouts/workflow';
-% title 'Terms accepted';
-
-<section class="card">
-  <h2>This studio now holds <%= stash('platform_offer_name') %></h2>
-  <p>Sales through the platform are taken on these terms from now on.</p>
-</section>
