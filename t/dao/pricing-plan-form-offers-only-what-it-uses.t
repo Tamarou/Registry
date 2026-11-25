@@ -47,20 +47,15 @@ subtest 'nothing downstream still expects it' => sub {
 subtest 'pricing_model_type is NOT removed, because it is load-bearing' => sub {
     # Deliberately pinned. It reads like the same kind of dead vocabulary --
     # no price calculation consults it -- but PricingModel.pm branches on it to
-    # decide which pricing_configuration shape to build, and
-    # PriceOps::RevenueShare calls pricing_configuration->>'percentage' "the
-    # only source" for the platform's rate. Drop the field and there is no way
-    # left to author the plan shape Registry's own revenue share runs on.
+    # decide which pricing_configuration shape to build. Drop the field and
+    # there is no way left to author a percentage plan. (The platform's own
+    # rate no longer reads it: that comes from its published offer version.)
     my $step = Mojo::File->new(
         'lib/Registry/DAO/WorkflowSteps/PricingModel.pm' )->slurp;
     like $step, qr/\$type eq 'percentage'/,
         'the percentage branch still exists';
     like $step, qr/percentage\s*=>\s*\$form_data->\{percentage_rate\}/,
-        'and still writes the key RevenueShare reads';
-
-    my $share = Mojo::File->new( 'lib/Registry/PriceOps/RevenueShare.pm' )->slurp;
-    like $share, qr/pricing_configuration->>'percentage'/,
-        'RevenueShare still reads it from the plan row';
+        'and still writes the percentage key';
 };
 
 subtest 'a plan can still be created without naming an audience' => sub {

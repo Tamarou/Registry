@@ -8,12 +8,22 @@ BEGIN;
 DO $$
 DECLARE
     marked   integer;
+    marked_ids uuid[];
     rate     numeric;
     the_name text;
 BEGIN
-    SELECT COUNT(*) INTO marked
-      FROM registry.pricing_plans
-     WHERE metadata->>'launch_rate' = 'true';
+    -- retire-launch-rate-marker later strips the mark and keeps the stripped
+    -- metadata in its own table, so read the mark there once that change deploys.
+    IF to_regclass('public.launch_rate_marker_metadata') IS NOT NULL THEN
+        EXECUTE $q$SELECT array_agg(id) FROM public.launch_rate_marker_metadata
+                    WHERE metadata->>'launch_rate' = 'true'$q$
+           INTO marked_ids;
+    ELSE
+        SELECT array_agg(id) INTO marked_ids
+          FROM registry.pricing_plans
+         WHERE metadata->>'launch_rate' = 'true';
+    END IF;
+    marked := coalesce(cardinality(marked_ids), 0);
 
     IF marked <> 1 THEN
         RAISE EXCEPTION 'expected exactly one launch_rate plan, found %', marked;
@@ -22,7 +32,7 @@ BEGIN
     SELECT (pricing_configuration->>'percentage')::numeric, plan_name
       INTO rate, the_name
       FROM registry.pricing_plans
-     WHERE metadata->>'launch_rate' = 'true';
+     WHERE id = marked_ids[1];
 
     -- A rate, not THE rate. sqitch re-runs every verify against the final
     -- schema (t/database/migration-verification.t), so a verify that pins a
