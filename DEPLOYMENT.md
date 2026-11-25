@@ -102,7 +102,11 @@ Set these environment variables in your Render dashboard:
 **Required:**
 - `DB_URL` - Automatically set from database
 - `REGISTRY_SECRET` - Auto-generated secure secret
-- `MOJO_MODE` - Set to `production`
+- `MOJO_MODE` - Set to `production`. In every mode except `development` and
+  `test` the session cookie (and the `as-tenant` cookie, should the app ever set
+  one) is `Secure`, `HttpOnly` and `SameSite=Lax`. This keys on the mode, not the
+  request scheme, so a production deploy must be served over HTTPS, and a local
+  run over plain HTTP must set `MOJO_MODE=development` or login will not stick
 
 **Optional (for Stripe integration):**
 - `STRIPE_PUBLIC_KEY` - Your Stripe publishable key
@@ -224,7 +228,11 @@ Check the `DB_URL` environment variable and database status in Render dashboard.
 - CSRF protection on all forms
 - SQL injection prevention
 - XSS protection
-- Secure session management
+- Secure session management: the session cookie and the `as-tenant` cookie are
+  `Secure`, `HttpOnly` and `SameSite=Lax` in every `MOJO_MODE` except
+  `development` and `test`, keyed on the mode and not the request scheme.
+  `Lax` keeps the session on the Stripe 3-D Secure return and on magic-link
+  login, both top-level GET navigations
 - Environment-based configuration
 
 ### Monitoring & Logs
