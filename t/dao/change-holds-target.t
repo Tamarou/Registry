@@ -85,9 +85,11 @@ my $hold_step = Registry::DAO::WorkflowStep->create( $studio, {
 } );
 $_ = Registry::DAO::WorkflowStep->find( $studio, { id => $_->id } ) for $choose, $hold_step;
 
-# A run that chose to change $entitlement; returns it and ChooseChangeTarget's result.
+# A run in which $entitlement's holder, signed in as the controller records
+# it, chose to change it; returns it and ChooseChangeTarget's result.
 sub chosen ($entitlement) {
     my $run    = $workflow->new_run($studio);
+    $run->update_data( $studio, { user => { id => $entitlement->holder_user_id } } );
     my $result = $run->process( $studio, $choose, { entitlement_id => $entitlement->id } );
     return ( $run, $result );
 }

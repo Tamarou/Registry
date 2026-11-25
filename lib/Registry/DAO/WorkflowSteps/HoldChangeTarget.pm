@@ -28,8 +28,8 @@ class Registry::DAO::WorkflowSteps::HoldChangeTarget :isa(Registry::DAO::Workflo
         my $entitlement_id = $data->{change_entitlement_id};
         my $entitlement    = $entitlement_id && Registry::DAO::Entitlement->find( $db, { id => $entitlement_id } );
         return { stay => 1, errors => ['Choose a booking to change'] } unless $entitlement;
-        # The window may have closed while the page was open.
-        if ( my $refusal = $choose->refusal( $db, $entitlement ) ) {
+        # The window may have closed while the page was open; the poster may not be the run's person.
+        if ( my $refusal = $choose->stranger( $entitlement, $data->{user} ) // $choose->refusal( $db, $entitlement ) ) {
             return { stay => 1, errors => [$refusal] };
         }
         my $live = Registry::PriceOps::Hold->live_sql('holds');

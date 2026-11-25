@@ -107,7 +107,8 @@ sub reload ($run) { Registry::DAO::WorkflowRun->find( $studio, { id => $run->id 
 # A run that chose to change $entitlement and holds $target for it.
 sub held_run ( $entitlement, $target ) {
     my $run = $workflow->new_run( $studio, {} );
-    $run->update_data( $studio, { user_id => $entitlement->holder_user_id, __tenant_slug => $SLUG } );
+    $run->update_data( $studio, { user_id => $entitlement->holder_user_id, __tenant_slug => $SLUG,
+        user => { id => $entitlement->holder_user_id } } );
     $run->process( $studio, step('choose-target'), { entitlement_id => $entitlement->id } );
     my $held = $run->process( $studio, step('hold-target'), { target_occurrence_id => $target->id } );
     die 'hold refused: ' . explain $held->{errors} if $held->{errors};

@@ -13,7 +13,8 @@ class Registry::DAO::WorkflowSteps::ChooseChangeTarget :isa(Registry::DAO::Workf
         my $id = $form_data->{entitlement_id};
         my $entitlement = defined $id && !ref $id && Registry::DAO::Entitlement->find( $db, { id => $id } );
         return { stay => 1, errors => ['Choose a booking to change'] } unless $entitlement;
-        if ( my $refusal = __PACKAGE__->refusal( $db, $entitlement ) ) {
+        if ( my $refusal = __PACKAGE__->stranger( $entitlement, $run && $run->data->{user} )
+            // __PACKAGE__->refusal( $db, $entitlement ) ) {
             return { stay => 1, errors => [$refusal] };
         }
         return {
@@ -21,6 +22,31 @@ class Registry::DAO::WorkflowSteps::ChooseChangeTarget :isa(Registry::DAO::Workf
             change_targets        => [ map { { id => $_->id, name => $_->name } }
                 __PACKAGE__->targets( $db, $entitlement )->@* ],
         };
+    }
+
+    # The signed-in person's bookings that are in effect, to choose from.
+    method prepare_template_data ( $db, $run, $params = {} ) {
+        my $user_id = ( $run->data->{user} // {} )->{id} or return { bookings => [] };
+        my $current = Registry::DAO::Entitlement->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );
+        return { bookings => $db->query( qq{
+            SELECT DISTINCT e.id, r.name FROM entitlements e
+              JOIN entitlement_units u ON u.entitlement_id = e.id
+              JOIN resources r ON r.id = u.resource_id
+             WHERE $current AND ( e.holder_user_id = ? OR e.payer_user_id = ? )
+             ORDER BY r.name
+        }, $user_id, $user_id )->hashes->to_array };
+    }
+
+    # Why $user (the run's server-owned user) may not act on $entitlement, or
+    # nothing: it is theirs when they hold or paid for it, and a tenant's
+    # admin or staff acts for its holder. Asked again at hold and at charge,
+    # so another person posting to the run's URLs gets no further.
+    sub stranger ( $class, $entitlement, $user ) {
+        my $id = ref $user eq 'HASH' ? $user->{id} // '' : '';
+        return 'Sign in to change a booking' unless length $id;
+        return undef if grep { ( $_ // '' ) eq $id } $entitlement->holder_user_id, $entitlement->payer_user_id;
+        return undef if ( $user->{role} // '' ) =~ /\A(?:admin|staff)\z/;
+        return 'That booking is not yours to change';
     }
 
     # Why $entitlement may not change now under the change policy it was sold
