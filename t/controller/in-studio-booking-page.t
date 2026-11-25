@@ -158,4 +158,55 @@ subtest 'no offer preselected' => sub {
         'and neither is chosen for the visitor';
 };
 
+# A signed-in booker's client walked to the payment page for one seat of a
+# fresh class; returns the client, the occurrence and the payment page's URL.
+sub at_payment ($who) {
+    my ( $class, $seats ) = occurrence("Class for $who");
+    my $version = offer( $class, 'One seat', price_cents => 3000 );
+    my $booker  = Test::Registry::Fixtures::create_user( $dao,
+        { username => "book_$who", name => "Book \u$who", email => "$who\@book.test", user_type => 'parent' } );
+    my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $booker );
+    $t->get_ok('/in-studio-booking')->status_is(200);
+    my $post = sub (%form) {
+        $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => \%form )->status_is(302);
+        my $next = $t->tx->res->headers->location;
+        $t->get_ok($next)->status_is(200);
+        return $next;
+    };
+    $post->( occurrence_id => $seats->id );
+    $post->( offer_version_id => $version->id, count => 1, agree_to_terms => 1,
+        terms_version_shown => Registry::Terms::VERSION );
+    $post->( action => 'continue_logged_in' );
+    return ( $t, $seats, $post->() );
+}
+
+subtest 'a lapsed hold at payment offers a new booking' => sub {
+    my ( $t, $seats, $payment ) = at_payment('lapsed');
+    my ($old) = $payment =~ m{/in-studio-booking/([^/]+)/payment\z} or return fail 'at payment';
+    $db->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 minute' WHERE workflow_run_id = ?}, $old );
+
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => {} )->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )->status_is(200)
+        ->content_like( qr/The seats held for this payment lapsed\. Nothing has been charged\./, 'the refusal is shown' );
+    check_screen( $t, 'payment refused' );
+    my $start = $t->tx->res->dom->at('#workflow-content form[action="/in-studio-booking"]');
+    ok $start, 'with a form that starts a new booking' or return;
+    is lc $start->attr('method'), 'post', 'by POST, since a GET resumes this run';
+    like $start->all_text, qr/Start a new booking/, 'labelled so';
+
+    is $db->query( q{SELECT count(*) FROM payments WHERE metadata->>'workflow_run_id' = ?}, $old )->array->[0], 0,
+        'the abandoned run started no payment';
+    is $db->query( q{SELECT count(*) FROM holds WHERE workflow_run_id = ? AND state = 'held'}, $old )->array->[0], 0,
+        'and holds nothing';
+    is $seats->free_units($db), 6, 'every seat is free';
+
+    $t->post_ok( '/in-studio-booking' => form => {} )->status_is(302);
+    like my $next = $t->tx->res->headers->location, qr{/in-studio-booking/([^/]+)/occurrence\z}, 'on to choosing a class';
+    my ($new) = $next =~ m{/in-studio-booking/([^/]+)/occurrence\z};
+    isnt $new, $old, 'in a new run';
+    $t->get_ok($next)->status_is(200)
+        ->element_exists( qq{#workflow-content input[name="occurrence_id"][value="${\ $seats->id }"]}, 'listing the class again' );
+};
+
 done_testing;

@@ -1,11 +1,21 @@
 %# ABOUTME: in-studio-booking step: the visitor pays what the hold step owes while the seats are held.
-%# ABOUTME: Posting starts the one-time payment; Stripe's form then confirms it on the studio's own account.
+%# ABOUTME: Posting starts the one-time payment on the studio's own account; a refusal offers a new booking.
 % extends 'layouts/workflow';
 % title 'Pay for your booking';
 % my $owed = $run ? ( $run->data // {} )->{owed_payment} // {} : {};
 % my $step_data = stash('step_data') // {};
 % my $amount = sprintf '%.2f', ( $owed->{amount_cents} // 0 ) / 100;
 %= include 'in-studio-booking/_errors'
+
+% if (@{ stash('errors') // [] }) {
+%# Refused (a lapsed hold, nothing owed): a way out. A new run each time,
+%# so a POST: a GET of the workflow resumes this run, still at payment.
+<form method="POST" action="<%= url_for('workflow_start', workflow => 'in-studio-booking') %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Start a new booking</button>
+  </div>
+</form>
+% }
 
 <section class="card">
   <p><%= $owed->{description} // '' %>: $<%= $amount %></p>
